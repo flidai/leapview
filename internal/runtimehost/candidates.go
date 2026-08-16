@@ -3,7 +3,6 @@ package runtimehost
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -25,25 +25,12 @@ var (
 	ErrCandidateRuntimeClosed       = errors.New("candidate runtime registry closed")
 )
 
-// CandidateBindingVersion is the non-secret identity of one validated target
-// connection generation used to prepare a candidate runtime.
 type CandidateBindingVersion struct {
-	BindingID          string
-	LogicalConnection  string
-	ConnectorKind      string
-	Revision           int64
-	ProviderVersion    string
-	EndpointConfigHash string
+	BindingID, LogicalConnection, ConnectorKind string
+	Revision                                    int64
+	ProviderVersion, EndpointConfigHash         string
 }
-
-type CandidateRestriction struct {
-	ID             string
-	WorkspaceID    string
-	ObjectID       string
-	PolicyType     string
-	ExpressionJSON string
-}
-
+type CandidateRestriction struct{ ID, ObjectID, PolicyType, ExpressionJSON string }
 type CandidateDataMode string
 
 const (
@@ -51,57 +38,37 @@ const (
 	CandidateDataRefreshSources CandidateDataMode = "refresh_sources"
 )
 
-type CandidateAuthoredConnection struct {
-	LogicalConnection string
-	ConnectorKind     string
-}
-
-// CandidateCompatibility describes every runtime-wide boundary that must
-// remain equal before a private candidate generation can be leased.
-//
-// Query-specific semantic and effective-policy fingerprints remain part of
-// query/result cache keys. AuthorizationFingerprint is the effective
-// principal/policy boundary for acquiring this runtime generation.
+type CandidateAuthoredConnection struct{ LogicalConnection, ConnectorKind string }
 type CandidateCompatibility struct {
-	ArtifactDigest           string
-	DataRevision             string
-	DataMode                 CandidateDataMode
-	RuntimeVersion           string
-	AuthorizationFingerprint string
-	Bindings                 []CandidateBindingVersion
-	AuthoredConnections      []CandidateAuthoredConnection
-	ManagedDataConnections   []string
-	Restrictions             []CandidateRestriction
+	ArtifactDigest, DataRevision             string
+	DataMode                                 CandidateDataMode
+	RuntimeVersion, AuthorizationFingerprint string
+	Bindings                                 []CandidateBindingVersion
+	AuthoredConnections                      []CandidateAuthoredConnection
+	ManagedDataConnections                   []string
+	Restrictions                             []CandidateRestriction
 }
-
 type CandidateRegistration struct {
-	CandidateID   string
-	OwnerID       string
-	WorkspaceID   servingstate.WorkspaceID
-	ExpiresAt     time.Time
-	Compatibility CandidateCompatibility
+	CandidateID, OwnerID string
+	ProjectID            projectgraph.ResourceID
+	ExpiresAt            time.Time
+	Compatibility        CandidateCompatibility
 }
-
 type CandidateLeaseRequest struct {
-	CandidateID   string
-	OwnerID       string
-	WorkspaceID   servingstate.WorkspaceID
-	Compatibility CandidateCompatibility
+	CandidateID, OwnerID string
+	ProjectID            projectgraph.ResourceID
+	Compatibility        CandidateCompatibility
 }
-
 type CandidatePreparation struct {
 	Registration   CandidateRegistration
 	ServingStateID string
 	Lifetime       RuntimeLifetime
 }
 
-type candidateRuntimeKey struct {
-	candidateID string
-	workspaceID servingstate.WorkspaceID
-}
-
+type candidateRuntimeKey struct{ candidateID string }
 type candidateGeneration struct {
 	key           candidateRuntimeKey
+	projectID     projectgraph.ResourceID
 	ownerID       string
 	expiresAt     time.Time
 	compatibility CandidateCompatibility
@@ -112,47 +79,15 @@ type candidateGeneration struct {
 	closing       bool
 	cleanupDone   chan struct{}
 	cleanupOnce   sync.Once
+	cleanupErr    error
 }
 
-// OwnedCandidateView is server-resolved metadata for an authenticated
-// candidate owner. Compatibility details never need to round-trip through the
-// browser before the private runtime can be acquired.
 type OwnedCandidateView struct {
-	CandidateID string
-	Workspaces  []OwnedCandidateWorkspace
-}
-
-type OwnedCandidateWorkspace struct {
-	WorkspaceID              servingstate.WorkspaceID
-	AuthorizationFingerprint string
+	CandidateID              string
+	ProjectID                projectgraph.ResourceID
 	Provider                 Provider
 	Restrictions             []CandidateRestriction
-}
-
-type ownedCandidateProvider struct {
-	registry    *Registry
-	candidateID string
-	ownerID     string
-	workspaceID servingstate.WorkspaceID
-}
-
-func (p ownedCandidateProvider) Acquire(ctx context.Context) (Lease, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if p.registry == nil || p.registry.candidates == nil {
-		return nil, ErrCandidateRuntimeClosed
-	}
-	generation, retired, err := p.registry.candidates.acquireOwned(
-		p.candidateID,
-		p.ownerID,
-		p.workspaceID,
-	)
-	p.registry.cleanupCandidateGeneration(retired)
-	if err != nil {
-		return nil, err
-	}
-	return &candidateRuntimeLease{registry: p.registry, generation: generation}, nil
+	AuthorizationFingerprint string
 }
 
 type candidateRuntimeRegistry struct {
@@ -167,616 +102,435 @@ func newCandidateRuntimeRegistry(now func() time.Time) *candidateRuntimeRegistry
 	if now == nil {
 		now = time.Now
 	}
-	return &candidateRuntimeRegistry{
-		now: now, current: map[candidateRuntimeKey]*candidateGeneration{},
-		retired: map[*candidateGeneration]struct{}{},
-	}
+	return &candidateRuntimeRegistry{now: now, current: map[candidateRuntimeKey]*candidateGeneration{}, retired: map[*candidateGeneration]struct{}{}}
 }
 
-// RegisterPreparedCandidate transfers an isolated prepared runtime into the
-// private candidate registry without publishing it as an active generation.
-func (r *Registry) RegisterPreparedCandidate(
-	registration CandidateRegistration,
-	candidate servingstate.PreparedRuntime,
-) error {
-	generation, err := r.consumePreparedCandidate(registration, candidate)
-	if err != nil {
-		return err
-	}
-	retired, err := r.candidates.register(generation)
-	if err != nil {
-		r.cleanupUnregisteredCandidate(generation)
-		return err
-	}
-	r.cleanupCandidateGeneration(retired)
-	return nil
-}
-
-func (r *Registry) consumePreparedCandidate(
-	registration CandidateRegistration,
-	candidate servingstate.PreparedRuntime,
-) (*candidateGeneration, error) {
-	if r == nil || r.candidates == nil {
+func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparation) (result servingstate.PreparedRuntime, resultErr error) {
+	ownedLifetime := input.Lifetime
+	defer func() {
+		if ownedLifetime != nil {
+			resultErr = errors.Join(resultErr, closeRuntimeLifetime(ownedLifetime))
+		}
+	}()
+	if r == nil || r.manager == nil {
 		return nil, ErrCandidateRuntimeClosed
 	}
-	normalized, fingerprint, err := normalizeCandidateRegistration(registration, r.candidates.now())
+	normalized, fingerprint, err := normalizeRegistration(input.Registration, r.now())
 	if err != nil {
 		return nil, err
 	}
-	prepared, ok := candidate.(*RegistryPrepared)
-	if !ok || prepared == nil || prepared.registry != r {
-		return nil, fmt.Errorf("%w: prepared runtime belongs to a different host", ErrCandidateRuntimeInvalid)
+	if normalized.ProjectID != r.ProjectID() {
+		return nil, fmt.Errorf("%w: candidate project does not match runtime host", ErrCandidateRuntimeIncompatible)
 	}
-	if prepared.workspaceID != normalized.WorkspaceID {
-		return nil, fmt.Errorf(
-			"%w: prepared workspace %q does not match registration workspace %q",
-			ErrCandidateRuntimeInvalid, prepared.workspaceID, normalized.WorkspaceID,
-		)
-	}
-	sealed, err := r.sealRegistryPrepared(prepared)
+	state, err := r.manager.repo.ByID(ctx, servingstate.ID(input.ServingStateID))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCandidateRuntimeInvalid, err)
+		return nil, err
 	}
-	if sealed.candidateID != normalized.CandidateID ||
-		sealed.candidateOwner != normalized.OwnerID ||
-		!sealed.candidateExpiry.Equal(normalized.ExpiresAt) ||
-		sealed.candidateHash != fingerprint {
-		return nil, errors.Join(ErrCandidateRuntimeIncompatible, sealed.abort())
+	if state.ProjectID != r.ProjectID() || servingstate.NormalizeEnvironment(state.Environment) != r.Environment() {
+		return nil, fmt.Errorf("%w: candidate serving state is outside project environment", ErrCandidateRuntimeIncompatible)
+	}
+	artifact, err := r.manager.repo.ArtifactByServingState(ctx, state.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.manager.validateGeneration(state, artifact); err != nil {
+		return nil, err
+	}
+	managedData, err := r.manager.resolveManagedData(ctx, state.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCandidateDataMode(state, normalized.Compatibility, managedData); err != nil {
+		return nil, errors.Join(err, releaseManaged(managedData.Lifetime))
+	}
+	candidate := &candidatePreparationContext{runtime: CandidateRuntimeContext{
+		CandidateID: normalized.CandidateID, OwnerID: normalized.OwnerID,
+		AuthorizationFingerprint: normalized.Compatibility.AuthorizationFingerprint,
+		BindingFingerprint:       fingerprintCandidateBindings(normalized.Compatibility.Bindings),
+		CompatibilityFingerprint: "sha256:" + fmt.Sprintf("%x", fingerprint),
+	}, expiresAt: normalized.ExpiresAt, fingerprint: fingerprint, lifetime: input.Lifetime}
+	// Ownership transfers to the prepared candidate; manager preparation closes
+	// it on every subsequent failure path.
+	ownedLifetime = nil
+	prepared, err := r.manager.prepareResolvedWithCandidate(ctx, state, artifact, managedData, candidate)
+	if err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+func (r *Registry) registerPreparedCandidate(reg CandidateRegistration, candidate servingstate.PreparedRuntime) error {
+	if r == nil || r.candidates == nil {
+		return ErrCandidateRuntimeClosed
+	}
+	normalized, fingerprint, err := normalizeRegistration(reg, r.now())
+	if err != nil {
+		return err
+	}
+	prepared, ok := candidate.(*Prepared)
+	if !ok || prepared == nil || prepared.owner != r.manager {
+		return fmt.Errorf("%w: prepared runtime belongs to a different host", ErrCandidateRuntimeInvalid)
+	}
+	prepared.mu.Lock()
+	if prepared.candidateID != normalized.CandidateID || prepared.candidateOwner != normalized.OwnerID || prepared.candidateHash != fingerprint {
+		prepared.mu.Unlock()
+		return errors.Join(ErrCandidateRuntimeIncompatible, prepared.Close())
+	}
+	prepared.mu.Unlock()
+	sealed, err := r.manager.sealPrepared(prepared)
+	if err != nil {
+		return err
 	}
 	managed, err := sealed.consumeCandidate()
 	if err != nil {
-		return nil, err
-	}
-	return &candidateGeneration{
-		key: candidateRuntimeKey{
-			candidateID: normalized.CandidateID, workspaceID: normalized.WorkspaceID,
-		},
-		ownerID: normalized.OwnerID, expiresAt: normalized.ExpiresAt,
-		compatibility: normalized.Compatibility, fingerprint: fingerprint,
-		manager: sealed.manager, managed: managed, cleanupDone: make(chan struct{}),
-	}, nil
-}
-
-func (r *Registry) PrepareCandidate(
-	ctx context.Context,
-	input CandidatePreparation,
-) (_ servingstate.PreparedRuntime, resultErr error) {
-	if r == nil || r.candidates == nil {
-		return nil, ErrCandidateRuntimeClosed
-	}
-	current, err := r.repo.ByID(ctx, servingstate.ID(strings.TrimSpace(input.ServingStateID)))
-	if err != nil {
-		return nil, errors.Join(err, closeRuntimeLifetime(input.Lifetime))
-	}
-	if servingstate.NormalizeEnvironment(current.Environment) != r.environment {
-		return nil, errors.Join(
-			fmt.Errorf(
-				"serving state %s environment = %q, want %q",
-				input.ServingStateID,
-				current.Environment,
-				r.environment,
-			),
-			closeRuntimeLifetime(input.Lifetime),
-		)
-	}
-	if input.Registration.WorkspaceID != current.WorkspaceID {
-		return nil, errors.Join(
-			fmt.Errorf(
-				"%w: serving state workspace %q does not match registration workspace %q",
-				ErrCandidateRuntimeInvalid,
-				current.WorkspaceID,
-				input.Registration.WorkspaceID,
-			),
-			closeRuntimeLifetime(input.Lifetime),
-		)
-	}
-	normalized, fingerprint, err := normalizeCandidateRegistration(
-		input.Registration,
-		r.candidates.now(),
-	)
-	if err != nil {
-		return nil, errors.Join(err, closeRuntimeLifetime(input.Lifetime))
-	}
-	artifact, err := r.repo.ArtifactByServingState(ctx, current.ID)
-	if err != nil {
-		return nil, errors.Join(err, closeRuntimeLifetime(input.Lifetime))
-	}
-	managedData, err := r.managerForWorkspace(current.WorkspaceID).resolveManagedData(ctx, current.ID)
-	if err != nil {
-		return nil, errors.Join(err, closeRuntimeLifetime(input.Lifetime))
-	}
-	if err := validateCandidateDataMode(
-		current,
-		normalized.Compatibility,
-		managedData,
-	); err != nil {
-		return nil, errors.Join(
-			err,
-			releaseManagedDataLifetime(managedData.Lifetime),
-			closeRuntimeLifetime(input.Lifetime),
-		)
-	}
-	candidate := &candidatePreparationContext{
-		runtime: CandidateRuntimeContext{
-			CandidateID:              normalized.CandidateID,
-			OwnerID:                  normalized.OwnerID,
-			AuthorizationFingerprint: normalized.Compatibility.AuthorizationFingerprint,
-			BindingFingerprint:       fingerprintCandidateBindings(normalized.Compatibility.Bindings),
-			CompatibilityFingerprint: "sha256:" + hex.EncodeToString(fingerprint[:]),
-		},
-		expiresAt: normalized.ExpiresAt, fingerprint: fingerprint, lifetime: input.Lifetime,
-	}
-	manager := r.managerForWorkspace(current.WorkspaceID)
-	r.prepareMu.Lock()
-	prepared, err := manager.prepareResolvedWithCandidate(
-		ctx,
-		current,
-		artifact,
-		managedData,
-		candidate,
-	)
-	r.prepareMu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	return &RegistryPrepared{
-		registry: r, workspaceID: current.WorkspaceID, manager: manager, prepared: prepared,
-	}, nil
-}
-
-func fingerprintCandidateBindings(bindings []CandidateBindingVersion) string {
-	encoded, _ := json.Marshal(bindings)
-	sum := sha256.Sum256(encoded)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func (r *Registry) PrepareAndRegisterCandidate(
-	ctx context.Context,
-	input CandidatePreparation,
-) error {
-	prepared, err := r.PrepareCandidate(ctx, input)
-	if err != nil {
 		return err
 	}
-	defer prepared.Close()
-	return r.RegisterPreparedCandidate(input.Registration, prepared)
-}
-
-func (r *Registry) PrepareAndRegisterCandidateSet(
-	ctx context.Context,
-	inputs []CandidatePreparation,
-) (resultErr error) {
-	if len(inputs) == 0 {
-		return fmt.Errorf("%w: candidate preparation set is empty", ErrCandidateRuntimeInvalid)
+	generation := &candidateGeneration{key: candidateRuntimeKey{candidateID: normalized.CandidateID}, projectID: normalized.ProjectID, ownerID: normalized.OwnerID, expiresAt: normalized.ExpiresAt, compatibility: normalized.Compatibility, fingerprint: fingerprint, manager: r.manager, managed: managed, cleanupDone: make(chan struct{})}
+	r.candidates.mu.Lock()
+	if r.candidates.closed {
+		r.candidates.mu.Unlock()
+		return errors.Join(ErrCandidateRuntimeClosed, r.manager.closeManaged(managed))
 	}
-	ownedLifetimes := make([]bool, len(inputs))
-	for index := range ownedLifetimes {
-		ownedLifetimes[index] = true
+	key := generation.key
+	if existing := r.candidates.current[key]; existing != nil && !existing.closing && existing.ownerID != normalized.OwnerID {
+		r.candidates.mu.Unlock()
+		return errors.Join(ErrCandidateRuntimeConflict, r.manager.closeManaged(managed))
 	}
-	defer func() {
-		for index, owned := range ownedLifetimes {
-			if owned {
-				resultErr = errors.Join(resultErr, closeRuntimeLifetime(inputs[index].Lifetime))
-			}
-		}
-	}()
-	candidateID := strings.TrimSpace(inputs[0].Registration.CandidateID)
-	ownerID := strings.TrimSpace(inputs[0].Registration.OwnerID)
-	expiresAt := inputs[0].Registration.ExpiresAt.UTC()
-	workspaces := map[servingstate.WorkspaceID]struct{}{}
-	for _, input := range inputs {
-		if strings.TrimSpace(input.Registration.CandidateID) != candidateID ||
-			strings.TrimSpace(input.Registration.OwnerID) != ownerID ||
-			!input.Registration.ExpiresAt.UTC().Equal(expiresAt) {
-			return fmt.Errorf(
-				"%w: candidate set identity, owner, and expiry must match",
-				ErrCandidateRuntimeInvalid,
-			)
-		}
-		workspaceID := servingstate.WorkspaceID(
-			strings.TrimSpace(string(input.Registration.WorkspaceID)),
-		)
-		if _, duplicate := workspaces[workspaceID]; duplicate {
-			return fmt.Errorf(
-				"%w: duplicate candidate workspace %q",
-				ErrCandidateRuntimeInvalid,
-				workspaceID,
-			)
-		}
-		workspaces[workspaceID] = struct{}{}
+	old := r.candidates.current[key]
+	var drained *candidateGeneration
+	if old != nil {
+		drained = r.candidates.retireLocked(old)
 	}
-	prepared := make([]servingstate.PreparedRuntime, 0, len(inputs))
-	defer func() {
-		for _, item := range prepared {
-			_ = item.Close()
-		}
-	}()
-	for index, input := range inputs {
-		// PrepareCandidate accepts ownership on both success and failure.
-		ownedLifetimes[index] = false
-		item, err := r.PrepareCandidate(ctx, input)
-		if err != nil {
-			return err
-		}
-		prepared = append(prepared, item)
-	}
-	generations := make([]*candidateGeneration, 0, len(inputs))
-	for index, item := range prepared {
-		generation, err := r.consumePreparedCandidate(inputs[index].Registration, item)
-		if err != nil {
-			for _, generation := range generations {
-				r.cleanupUnregisteredCandidate(generation)
-			}
-			return err
-		}
-		generations = append(generations, generation)
-	}
-	retired, err := r.candidates.registerSet(generations)
-	if err != nil {
-		for _, generation := range generations {
-			r.cleanupUnregisteredCandidate(generation)
-		}
-		return err
-	}
-	for _, generation := range retired {
-		r.cleanupCandidateGeneration(generation)
+	r.candidates.current[key] = generation
+	r.candidates.mu.Unlock()
+	if drained != nil {
+		r.cleanupCandidateGeneration(drained)
 	}
 	return nil
 }
 
-func (r *Registry) cleanupUnregisteredCandidate(generation *candidateGeneration) {
-	if generation == nil || generation.managed == nil {
-		return
+func normalizeRegistration(input CandidateRegistration, now time.Time) (CandidateRegistration, [sha256.Size]byte, error) {
+	if input.CandidateID != strings.TrimSpace(input.CandidateID) || input.OwnerID != strings.TrimSpace(input.OwnerID) {
+		return CandidateRegistration{}, [sha256.Size]byte{}, fmt.Errorf("%w: candidate and owner IDs must be canonical", ErrCandidateRuntimeInvalid)
 	}
-	generation.closing = true
-	generation.managed.closing = true
-	r.cleanupCandidateGeneration(generation)
-}
-
-func (r *Registry) AcquireCandidate(ctx context.Context, request CandidateLeaseRequest) (Lease, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if !input.ProjectID.Valid() || input.CandidateID == "" || input.OwnerID == "" {
+		return CandidateRegistration{}, [sha256.Size]byte{}, fmt.Errorf("%w: candidate identity is incomplete", ErrCandidateRuntimeInvalid)
 	}
-	if r == nil || r.candidates == nil {
-		return nil, ErrCandidateRuntimeClosed
+	if input.ExpiresAt.IsZero() {
+		return CandidateRegistration{}, [sha256.Size]byte{}, fmt.Errorf("%w: candidate expiry is required", ErrCandidateRuntimeInvalid)
 	}
-	normalized, fingerprint, err := normalizeCandidateLeaseRequest(request)
+	if !input.ExpiresAt.After(now) {
+		return CandidateRegistration{}, [sha256.Size]byte{}, ErrCandidateRuntimeExpired
+	}
+	compatibility, err := normalizeCompatibility(input.Compatibility)
 	if err != nil {
-		return nil, err
+		return CandidateRegistration{}, [sha256.Size]byte{}, err
 	}
-	generation, retired, err := r.candidates.acquire(
-		normalized.CandidateID,
-		normalized.OwnerID,
-		normalized.WorkspaceID,
-		fingerprint,
-	)
-	r.cleanupCandidateGeneration(retired)
+	input.Compatibility = compatibility
+	data, err := json.Marshal(input.Compatibility)
 	if err != nil {
-		return nil, err
+		return CandidateRegistration{}, [sha256.Size]byte{}, err
 	}
-	return &candidateRuntimeLease{registry: r, generation: generation}, nil
+	return input, sha256.Sum256(data), nil
 }
 
-// ResolveOwnedCandidate returns deterministic workspace providers for the
-// current private generation. Foreign candidate identities are concealed.
-func (r *Registry) ResolveOwnedCandidate(candidateID, ownerID string) (OwnedCandidateView, error) {
-	candidateID = strings.TrimSpace(candidateID)
-	ownerID = strings.TrimSpace(ownerID)
-	if candidateID == "" || ownerID == "" {
-		return OwnedCandidateView{}, ErrCandidateRuntimeNotFound
+func normalizeLeaseRequest(input CandidateLeaseRequest, now time.Time) (CandidateLeaseRequest, [sha256.Size]byte, error) {
+	if input.CandidateID != strings.TrimSpace(input.CandidateID) || input.OwnerID != strings.TrimSpace(input.OwnerID) {
+		return CandidateLeaseRequest{}, [sha256.Size]byte{}, fmt.Errorf("%w: candidate and owner IDs must be canonical", ErrCandidateRuntimeInvalid)
 	}
-	if r == nil || r.candidates == nil {
-		return OwnedCandidateView{}, ErrCandidateRuntimeClosed
+	if !input.ProjectID.Valid() || input.CandidateID == "" || input.OwnerID == "" {
+		return CandidateLeaseRequest{}, [sha256.Size]byte{}, fmt.Errorf("%w: candidate identity is incomplete", ErrCandidateRuntimeInvalid)
 	}
-	generations, retired, err := r.candidates.resolveOwned(candidateID, ownerID)
-	for _, generation := range retired {
-		r.cleanupCandidateGeneration(generation)
+	if now.IsZero() {
+		now = time.Now()
 	}
+	compatibility, err := normalizeCompatibility(input.Compatibility)
 	if err != nil {
-		return OwnedCandidateView{}, err
+		return CandidateLeaseRequest{}, [sha256.Size]byte{}, err
 	}
-	view := OwnedCandidateView{
-		CandidateID: candidateID,
-		Workspaces:  make([]OwnedCandidateWorkspace, 0, len(generations)),
+	input.Compatibility = compatibility
+	data, err := json.Marshal(input.Compatibility)
+	if err != nil {
+		return CandidateLeaseRequest{}, [sha256.Size]byte{}, err
 	}
-	for _, generation := range generations {
-		view.Workspaces = append(view.Workspaces, OwnedCandidateWorkspace{
-			WorkspaceID:              generation.key.workspaceID,
-			AuthorizationFingerprint: generation.compatibility.AuthorizationFingerprint,
-			Restrictions: append(
-				[]CandidateRestriction(nil),
-				generation.compatibility.Restrictions...,
-			),
-			Provider: ownedCandidateProvider{
-				registry: r, candidateID: candidateID, ownerID: ownerID,
-				workspaceID: generation.key.workspaceID,
-			},
-		})
-	}
-	return view, nil
+	return input, sha256.Sum256(data), nil
 }
 
-// RetireCandidate stops all new acquisitions for a candidate while allowing
-// existing query leases to drain safely.
-func (r *Registry) RetireCandidate(candidateID string) int {
-	if r == nil || r.candidates == nil {
-		return 0
+func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibility, error) {
+	value.ArtifactDigest = strings.TrimSpace(value.ArtifactDigest)
+	value.DataRevision = strings.TrimSpace(value.DataRevision)
+	value.RuntimeVersion = strings.TrimSpace(value.RuntimeVersion)
+	value.AuthorizationFingerprint = strings.TrimSpace(value.AuthorizationFingerprint)
+	if value.ArtifactDigest == "" || value.DataRevision == "" || value.RuntimeVersion == "" || value.AuthorizationFingerprint == "" {
+		return CandidateCompatibility{}, fmt.Errorf("%w: artifact, data, runtime, and authorization fingerprints are required", ErrCandidateRuntimeInvalid)
 	}
-	retired, count := r.candidates.retireCandidate(strings.TrimSpace(candidateID))
-	for _, generation := range retired {
-		r.cleanupCandidateGeneration(generation)
+	if err := platformdigest.ValidateSHA256Identity(value.ArtifactDigest); err != nil {
+		return CandidateCompatibility{}, fmt.Errorf("%w: artifact digest: %v", ErrCandidateRuntimeInvalid, err)
 	}
-	return count
-}
-
-func (r *Registry) ReapExpiredCandidates(now time.Time) int {
-	if r == nil || r.candidates == nil {
-		return 0
+	if value.DataMode != CandidateDataReuseSnapshot && value.DataMode != CandidateDataRefreshSources {
+		return CandidateCompatibility{}, fmt.Errorf("%w: candidate data mode is required", ErrCandidateRuntimeInvalid)
 	}
-	retired, count := r.candidates.reapExpired(now.UTC())
-	for _, generation := range retired {
-		r.cleanupCandidateGeneration(generation)
-	}
-	return count
-}
-
-func (r *Registry) cleanupCandidateGeneration(generation *candidateGeneration) {
-	if generation == nil || generation.manager == nil || generation.managed == nil {
-		return
-	}
-	generation.cleanupOnce.Do(func() {
-		generation.manager.cleanupRetired(generation.managed)
-		go func() {
-			generation.manager.mu.RLock()
-			done := generation.managed.cleanupDone
-			generation.manager.mu.RUnlock()
-			if done != nil {
-				<-done
-			}
-			close(generation.cleanupDone)
-		}()
-	})
-}
-
-func (r *candidateRuntimeRegistry) register(
-	generation *candidateGeneration,
-) (*candidateGeneration, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return nil, ErrCandidateRuntimeClosed
-	}
-	current := r.current[generation.key]
-	if current != nil && current.ownerID != generation.ownerID {
-		return nil, ErrCandidateRuntimeConflict
-	}
-	r.current[generation.key] = generation
-	return r.retireLocked(current), nil
-}
-
-func (r *candidateRuntimeRegistry) registerSet(
-	generations []*candidateGeneration,
-) ([]*candidateGeneration, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return nil, ErrCandidateRuntimeClosed
-	}
-	keys := make(map[candidateRuntimeKey]struct{}, len(generations))
-	for _, generation := range generations {
-		if generation == nil || generation.managed == nil {
-			return nil, ErrCandidateRuntimeInvalid
+	bindings := append([]CandidateBindingVersion(nil), value.Bindings...)
+	for i := range bindings {
+		b := &bindings[i]
+		if b.BindingID != strings.TrimSpace(b.BindingID) || b.LogicalConnection != strings.TrimSpace(b.LogicalConnection) || b.ConnectorKind != strings.TrimSpace(b.ConnectorKind) || b.ProviderVersion != strings.TrimSpace(b.ProviderVersion) || b.EndpointConfigHash != strings.TrimSpace(b.EndpointConfigHash) {
+			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity must be canonical", ErrCandidateRuntimeInvalid)
 		}
-		if _, duplicate := keys[generation.key]; duplicate {
-			return nil, ErrCandidateRuntimeConflict
+		if b.BindingID == "" || b.LogicalConnection == "" || b.ConnectorKind == "" || b.Revision < 1 || b.ProviderVersion == "" {
+			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity, positive revision, and provider version are required", ErrCandidateRuntimeInvalid)
 		}
-		keys[generation.key] = struct{}{}
-		if current := r.current[generation.key]; current != nil &&
-			current.ownerID != generation.ownerID {
-			return nil, ErrCandidateRuntimeConflict
+		if err := platformdigest.ValidateSHA256Identity(b.EndpointConfigHash); err != nil {
+			return CandidateCompatibility{}, fmt.Errorf("%w: endpoint config hash: %v", ErrCandidateRuntimeInvalid, err)
 		}
 	}
-	var drained []*candidateGeneration
-	for _, generation := range generations {
-		current := r.current[generation.key]
-		r.current[generation.key] = generation
-		if retired := r.retireLocked(current); retired != nil {
-			drained = append(drained, retired)
+	sort.Slice(bindings, func(i, j int) bool { return bindings[i].BindingID < bindings[j].BindingID })
+	for i := 1; i < len(bindings); i++ {
+		if bindings[i-1].BindingID == bindings[i].BindingID {
+			return CandidateCompatibility{}, fmt.Errorf("%w: duplicate binding %q", ErrCandidateRuntimeInvalid, bindings[i].BindingID)
 		}
 	}
-	return drained, nil
+	value.Bindings = bindings
+	connections := append([]CandidateAuthoredConnection(nil), value.AuthoredConnections...)
+	for i := range connections {
+		if connections[i].LogicalConnection != strings.TrimSpace(connections[i].LogicalConnection) || connections[i].ConnectorKind != strings.TrimSpace(connections[i].ConnectorKind) || connections[i].LogicalConnection == "" || connections[i].ConnectorKind == "" {
+			return CandidateCompatibility{}, fmt.Errorf("%w: authored connection identity and connector kind are required and canonical", ErrCandidateRuntimeInvalid)
+		}
+	}
+	sort.Slice(connections, func(i, j int) bool { return connections[i].LogicalConnection < connections[j].LogicalConnection })
+	for i := 1; i < len(connections); i++ {
+		if connections[i-1].LogicalConnection == connections[i].LogicalConnection {
+			return CandidateCompatibility{}, fmt.Errorf("%w: duplicate authored connection %q", ErrCandidateRuntimeInvalid, connections[i].LogicalConnection)
+		}
+	}
+	value.AuthoredConnections = connections
+	managed := append([]string(nil), value.ManagedDataConnections...)
+	for i := range managed {
+		if managed[i] != strings.TrimSpace(managed[i]) || managed[i] == "" {
+			return CandidateCompatibility{}, fmt.Errorf("%w: managed-data connection identity is required and canonical", ErrCandidateRuntimeInvalid)
+		}
+	}
+	sort.Strings(managed)
+	for i := 1; i < len(managed); i++ {
+		if managed[i-1] == managed[i] {
+			return CandidateCompatibility{}, fmt.Errorf("%w: duplicate managed-data connection %q", ErrCandidateRuntimeInvalid, managed[i])
+		}
+	}
+	value.ManagedDataConnections = managed
+	restrictions := append([]CandidateRestriction(nil), value.Restrictions...)
+	for i := range restrictions {
+		p := &restrictions[i]
+		if p.ID != strings.TrimSpace(p.ID) || p.ObjectID != strings.TrimSpace(p.ObjectID) || p.PolicyType != strings.TrimSpace(p.PolicyType) || p.ExpressionJSON != strings.TrimSpace(p.ExpressionJSON) || p.ID == "" || p.ObjectID == "" || p.ExpressionJSON == "" {
+			return CandidateCompatibility{}, fmt.Errorf("%w: candidate restriction identity and expression are required and canonical", ErrCandidateRuntimeInvalid)
+		}
+		if p.PolicyType != "row_filter" && p.PolicyType != "column_mask" {
+			return CandidateCompatibility{}, fmt.Errorf("%w: unsupported candidate restriction type %q", ErrCandidateRuntimeInvalid, p.PolicyType)
+		}
+	}
+	sort.Slice(restrictions, func(i, j int) bool { return restrictions[i].ID < restrictions[j].ID })
+	for i := 1; i < len(restrictions); i++ {
+		if restrictions[i-1].ID == restrictions[i].ID {
+			return CandidateCompatibility{}, fmt.Errorf("%w: duplicate candidate restriction %q", ErrCandidateRuntimeInvalid, restrictions[i].ID)
+		}
+	}
+	value.Restrictions = restrictions
+	return value, nil
 }
 
-func (r *candidateRuntimeRegistry) acquire(
-	candidateID string,
-	ownerID string,
-	workspaceID servingstate.WorkspaceID,
-	compatibility [sha256.Size]byte,
-) (generation *candidateGeneration, retired *candidateGeneration, err error) {
+func fingerprintCandidateBindings(bindings []CandidateBindingVersion) string {
+	data, _ := json.Marshal(bindings)
+	sum := sha256.Sum256(data)
+	return "sha256:" + fmt.Sprintf("%x", sum)
+}
+
+func validateCandidateDataMode(state servingstate.State, compatibility CandidateCompatibility, data ManagedDataResolution) error {
+	if data.RevisionID != "" && data.RevisionID != compatibility.DataRevision {
+		return fmt.Errorf("%w: managed-data revision changed during preparation", ErrCandidateRuntimeIncompatible)
+	}
+	switch compatibility.DataMode {
+	case CandidateDataReuseSnapshot:
+		if state.DuckLakeSnapshotID <= 0 || len(compatibility.AuthoredConnections) != 0 {
+			return fmt.Errorf("%w: immutable snapshot reuse requires an existing snapshot and no authored refresh connections", ErrCandidateRuntimeIncompatible)
+		}
+	case CandidateDataRefreshSources:
+		if state.DuckLakeSnapshotID != 0 || (len(compatibility.Bindings) == 0 && len(compatibility.ManagedDataConnections) == 0 && len(compatibility.AuthoredConnections) == 0) {
+			return fmt.Errorf("%w: source refresh requires an unmaterialized state and declared connections", ErrCandidateRuntimeIncompatible)
+		}
+	default:
+		return ErrCandidateRuntimeInvalid
+	}
+	resolved := make([]string, 0, len(data.Roots))
+	for connection, root := range data.Roots {
+		if connection == "" || connection != strings.TrimSpace(connection) || strings.TrimSpace(root) == "" {
+			return fmt.Errorf("%w: resolved managed-data roots are invalid", ErrCandidateRuntimeIncompatible)
+		}
+		resolved = append(resolved, connection)
+	}
+	sort.Strings(resolved)
+	if len(resolved) != len(compatibility.ManagedDataConnections) {
+		return fmt.Errorf("%w: managed-data connection set changed during runtime preparation", ErrCandidateRuntimeIncompatible)
+	}
+	for i := range resolved {
+		if resolved[i] != compatibility.ManagedDataConnections[i] {
+			return fmt.Errorf("%w: managed-data connection set changed during runtime preparation", ErrCandidateRuntimeIncompatible)
+		}
+	}
+	return nil
+}
+
+func (r *candidateRuntimeRegistry) acquire(candidateID, ownerID string, projectID projectgraph.ResourceID, fingerprint [sha256.Size]byte) (*candidateGeneration, []*candidateGeneration, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
 		return nil, nil, ErrCandidateRuntimeClosed
 	}
-	key := candidateRuntimeKey{candidateID: candidateID, workspaceID: workspaceID}
-	current := r.current[key]
-	if current == nil || current.ownerID != ownerID {
+	g := r.current[candidateRuntimeKey{candidateID: candidateID}]
+	if g == nil || g.projectID != projectID || g.ownerID != ownerID {
 		return nil, nil, ErrCandidateRuntimeNotFound
 	}
-	if !r.now().UTC().Before(current.expiresAt) {
-		delete(r.current, key)
-		return nil, r.retireLocked(current), ErrCandidateRuntimeExpired
+	if !g.expiresAt.After(r.now()) {
+		return nil, r.retireLockedList(g), ErrCandidateRuntimeExpired
 	}
-	if current.fingerprint != compatibility {
+	if g.closing {
+		return nil, nil, ErrCandidateRuntimeNotFound
+	}
+	if g.fingerprint != fingerprint {
 		return nil, nil, ErrCandidateRuntimeIncompatible
 	}
-	current.refs++
-	return current, nil, nil
+	g.refs++
+	return g, nil, nil
 }
-
-func (r *candidateRuntimeRegistry) acquireOwned(
-	candidateID string,
-	ownerID string,
-	workspaceID servingstate.WorkspaceID,
-) (generation *candidateGeneration, retired *candidateGeneration, err error) {
+func (r *candidateRuntimeRegistry) acquireOwned(candidateID, ownerID string, projectID projectgraph.ResourceID) (*candidateGeneration, []*candidateGeneration, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
 		return nil, nil, ErrCandidateRuntimeClosed
 	}
-	key := candidateRuntimeKey{candidateID: candidateID, workspaceID: workspaceID}
-	current := r.current[key]
-	if current == nil || current.ownerID != ownerID {
+	g := r.current[candidateRuntimeKey{candidateID: candidateID}]
+	if g == nil || g.projectID != projectID || g.ownerID != ownerID {
 		return nil, nil, ErrCandidateRuntimeNotFound
 	}
-	if !r.now().UTC().Before(current.expiresAt) {
-		delete(r.current, key)
-		return nil, r.retireLocked(current), ErrCandidateRuntimeExpired
+	if !g.expiresAt.After(r.now()) {
+		return nil, r.retireLockedList(g), ErrCandidateRuntimeExpired
 	}
-	current.refs++
-	return current, nil, nil
+	if g.closing {
+		return nil, nil, ErrCandidateRuntimeNotFound
+	}
+	g.refs++
+	return g, nil, nil
 }
-
-func (r *candidateRuntimeRegistry) resolveOwned(
-	candidateID string,
-	ownerID string,
-) (generations []*candidateGeneration, drained []*candidateGeneration, err error) {
+func (r *candidateRuntimeRegistry) resolveOwned(candidateID, ownerID string, projectID projectgraph.ResourceID, registry *Registry) (OwnedCandidateView, []*candidateGeneration, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed {
-		return nil, nil, ErrCandidateRuntimeClosed
+	g := r.current[candidateRuntimeKey{candidateID: candidateID}]
+	if g == nil || g.ownerID != ownerID || g.projectID != projectID || g.closing {
+		return OwnedCandidateView{}, nil, ErrCandidateRuntimeNotFound
 	}
-	now := r.now().UTC()
-	for key, generation := range r.current {
-		if key.candidateID != candidateID || generation.ownerID != ownerID {
-			continue
-		}
-		if !now.Before(generation.expiresAt) {
-			delete(r.current, key)
-			if retired := r.retireLocked(generation); retired != nil {
-				drained = append(drained, retired)
+	if !g.expiresAt.After(r.now()) {
+		return OwnedCandidateView{}, r.retireLockedList(g), ErrCandidateRuntimeExpired
+	}
+	return OwnedCandidateView{CandidateID: g.key.candidateID, ProjectID: g.projectID, Provider: &candidateRuntimeProvider{registry: registry, candidateID: g.key.candidateID, ownerID: g.ownerID}, Restrictions: append([]CandidateRestriction(nil), g.compatibility.Restrictions...), AuthorizationFingerprint: g.compatibility.AuthorizationFingerprint}, nil, nil
+}
+func (r *candidateRuntimeRegistry) retire(id string) ([]*candidateGeneration, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if g := r.current[candidateRuntimeKey{candidateID: id}]; g != nil {
+		return r.retireLockedList(g), 1
+	}
+	return nil, 0
+}
+func (r *candidateRuntimeRegistry) reap(now time.Time) ([]*candidateGeneration, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now = now.UTC()
+	var drained []*candidateGeneration
+	count := 0
+	for _, g := range r.current {
+		if !g.expiresAt.After(now) && !g.closing {
+			if d := r.retireLocked(g); d != nil {
+				drained = append(drained, d)
 			}
-			continue
-		}
-		generations = append(generations, generation)
-	}
-	if len(generations) == 0 {
-		return nil, drained, ErrCandidateRuntimeNotFound
-	}
-	sort.Slice(generations, func(i, j int) bool {
-		return generations[i].key.workspaceID < generations[j].key.workspaceID
-	})
-	return generations, drained, nil
-}
-
-func (r *candidateRuntimeRegistry) retireCandidate(
-	candidateID string,
-) (drained []*candidateGeneration, count int) {
-	if candidateID == "" {
-		return nil, 0
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for key, generation := range r.current {
-		if key.candidateID != candidateID {
-			continue
-		}
-		delete(r.current, key)
-		count++
-		if generation := r.retireLocked(generation); generation != nil {
-			drained = append(drained, generation)
+			count++
 		}
 	}
 	return drained, count
 }
-
-func (r *candidateRuntimeRegistry) reapExpired(
-	now time.Time,
-) (drained []*candidateGeneration, count int) {
+func (r *candidateRuntimeRegistry) retireLockedList(g *candidateGeneration) []*candidateGeneration {
+	if d := r.retireLocked(g); d != nil {
+		return []*candidateGeneration{d}
+	}
+	return nil
+}
+func (r *candidateRuntimeRegistry) retireLocked(g *candidateGeneration) *candidateGeneration {
+	if g == nil || g.closing {
+		return g
+	}
+	g.closing = true
+	delete(r.current, g.key)
+	r.retired[g] = struct{}{}
+	if g.refs == 0 {
+		return g
+	}
+	return nil
+}
+func (r *candidateRuntimeRegistry) release(g *candidateGeneration) *candidateGeneration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for key, generation := range r.current {
-		if now.Before(generation.expiresAt) {
-			continue
-		}
-		delete(r.current, key)
-		count++
-		if generation := r.retireLocked(generation); generation != nil {
-			drained = append(drained, generation)
-		}
+	if g == nil || g.refs == 0 {
+		return nil
 	}
-	return drained, count
+	g.refs--
+	if g.refs == 0 && g.closing {
+		delete(r.retired, g)
+		return g
+	}
+	return nil
 }
-
-func (r *candidateRuntimeRegistry) retireLocked(
-	generation *candidateGeneration,
-) *candidateGeneration {
-	if generation == nil || generation.closing {
-		return nil
-	}
-	generation.closing = true
-	generation.managed.closing = true
-	if generation.refs > 0 {
-		r.retired[generation] = struct{}{}
-		return nil
-	}
-	return generation
-}
-
-func (r *candidateRuntimeRegistry) release(generation *candidateGeneration) *candidateGeneration {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if generation == nil || generation.refs == 0 {
-		return nil
-	}
-	generation.refs--
-	if generation.refs != 0 || !generation.closing {
-		return nil
-	}
-	delete(r.retired, generation)
-	return generation
-}
-
-func (r *candidateRuntimeRegistry) close() (drained, targets []*candidateGeneration) {
+func (r *candidateRuntimeRegistry) close() ([]*candidateGeneration, []*candidateGeneration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
 		return nil, nil
 	}
 	r.closed = true
+	var drained, targets []*candidateGeneration
 	seen := map[*candidateGeneration]struct{}{}
-	for generation := range r.retired {
-		seen[generation] = struct{}{}
-		targets = append(targets, generation)
-	}
-	for key, generation := range r.current {
-		delete(r.current, key)
-		if _, ok := seen[generation]; !ok {
-			seen[generation] = struct{}{}
-			targets = append(targets, generation)
+	for _, g := range r.current {
+		if d := r.retireLocked(g); d != nil {
+			drained = append(drained, d)
 		}
-		if closed := r.retireLocked(generation); closed != nil {
-			drained = append(drained, closed)
+		if _, ok := seen[g]; !ok {
+			seen[g] = struct{}{}
+			targets = append(targets, g)
+		}
+	}
+	for g := range r.retired {
+		if _, ok := seen[g]; !ok {
+			seen[g] = struct{}{}
+			targets = append(targets, g)
 		}
 	}
 	return drained, targets
 }
 
-func (r *candidateRuntimeRegistry) leasedSnapshots() []int64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	snapshots := map[int64]struct{}{}
-	for _, generation := range r.current {
-		if generation.managed.snapshotLease != nil && generation.managed.snapshotID > 0 {
-			snapshots[generation.managed.snapshotID] = struct{}{}
-		}
+type candidateRuntimeProvider struct {
+	registry             *Registry
+	candidateID, ownerID string
+}
+
+func (p *candidateRuntimeProvider) Acquire(ctx context.Context) (Lease, error) {
+	if p == nil || p.registry == nil {
+		return nil, ErrCandidateRuntimeClosed
 	}
-	for generation := range r.retired {
-		if generation.managed.snapshotLease != nil && generation.managed.snapshotID > 0 {
-			snapshots[generation.managed.snapshotID] = struct{}{}
-		}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return snapshotKeys(snapshots)
+	g, retired, err := p.registry.candidates.acquireOwned(p.candidateID, p.ownerID, p.registry.ProjectID())
+	for _, x := range retired {
+		p.registry.cleanupCandidateGeneration(x)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &candidateRuntimeLease{registry: p.registry, generation: g}, nil
 }
 
 type candidateRuntimeLease struct {
@@ -786,287 +540,30 @@ type candidateRuntimeLease struct {
 }
 
 func (l *candidateRuntimeLease) Runtime() Runtime {
-	if l == nil || l.generation == nil || l.generation.managed == nil {
+	if l == nil || l.generation == nil {
 		return nil
 	}
 	return l.generation.managed.runtime
 }
-
-func (l *candidateRuntimeLease) ServingStateID() servingstate.ID {
-	if l == nil || l.generation == nil || l.generation.managed == nil {
-		return ""
+func (l *candidateRuntimeLease) Identity() projectgraph.ServingIdentity {
+	if l == nil || l.generation == nil {
+		return projectgraph.ServingIdentity{}
 	}
-	return l.generation.managed.servingStateID
+	return l.generation.managed.identity
 }
-
 func (l *candidateRuntimeLease) DuckLakeSnapshotID() int64 {
-	if l == nil || l.generation == nil || l.generation.managed == nil {
+	if l == nil || l.generation == nil {
 		return 0
 	}
 	return l.generation.managed.snapshotID
 }
-
 func (l *candidateRuntimeLease) Release() {
-	if l == nil || l.registry == nil || l.registry.candidates == nil || l.generation == nil {
+	if l == nil || l.registry == nil {
 		return
 	}
 	l.once.Do(func() {
-		l.registry.cleanupCandidateGeneration(l.registry.candidates.release(l.generation))
+		if g := l.registry.candidates.release(l.generation); g != nil {
+			l.registry.cleanupCandidateGeneration(g)
+		}
 	})
-}
-
-func normalizeCandidateRegistration(
-	registration CandidateRegistration,
-	now time.Time,
-) (CandidateRegistration, [sha256.Size]byte, error) {
-	registration.CandidateID = strings.TrimSpace(registration.CandidateID)
-	registration.OwnerID = strings.TrimSpace(registration.OwnerID)
-	registration.WorkspaceID = servingstate.WorkspaceID(strings.TrimSpace(string(registration.WorkspaceID)))
-	registration.ExpiresAt = registration.ExpiresAt.UTC()
-	if registration.CandidateID == "" || registration.OwnerID == "" || registration.WorkspaceID == "" {
-		return CandidateRegistration{}, [sha256.Size]byte{}, fmt.Errorf(
-			"%w: candidate, owner, and workspace are required",
-			ErrCandidateRuntimeInvalid,
-		)
-	}
-	if registration.ExpiresAt.IsZero() || !registration.ExpiresAt.After(now.UTC()) {
-		return CandidateRegistration{}, [sha256.Size]byte{}, fmt.Errorf(
-			"%w: expiry must be in the future",
-			ErrCandidateRuntimeInvalid,
-		)
-	}
-	compatibility, fingerprint, err := normalizeCandidateCompatibility(registration.Compatibility)
-	if err != nil {
-		return CandidateRegistration{}, [sha256.Size]byte{}, err
-	}
-	registration.Compatibility = compatibility
-	return registration, fingerprint, nil
-}
-
-func normalizeCandidateLeaseRequest(
-	request CandidateLeaseRequest,
-) (CandidateLeaseRequest, [sha256.Size]byte, error) {
-	request.CandidateID = strings.TrimSpace(request.CandidateID)
-	request.OwnerID = strings.TrimSpace(request.OwnerID)
-	request.WorkspaceID = servingstate.WorkspaceID(strings.TrimSpace(string(request.WorkspaceID)))
-	if request.CandidateID == "" || request.OwnerID == "" || request.WorkspaceID == "" {
-		return CandidateLeaseRequest{}, [sha256.Size]byte{}, fmt.Errorf(
-			"%w: candidate, owner, and workspace are required",
-			ErrCandidateRuntimeInvalid,
-		)
-	}
-	compatibility, fingerprint, err := normalizeCandidateCompatibility(request.Compatibility)
-	if err != nil {
-		return CandidateLeaseRequest{}, [sha256.Size]byte{}, err
-	}
-	request.Compatibility = compatibility
-	return request, fingerprint, nil
-}
-
-func normalizeCandidateCompatibility(
-	compatibility CandidateCompatibility,
-) (CandidateCompatibility, [sha256.Size]byte, error) {
-	compatibility.ArtifactDigest = strings.TrimSpace(compatibility.ArtifactDigest)
-	compatibility.DataRevision = strings.TrimSpace(compatibility.DataRevision)
-	compatibility.RuntimeVersion = strings.TrimSpace(compatibility.RuntimeVersion)
-	compatibility.AuthorizationFingerprint = strings.TrimSpace(compatibility.AuthorizationFingerprint)
-	if compatibility.ArtifactDigest == "" || compatibility.DataRevision == "" ||
-		compatibility.RuntimeVersion == "" || compatibility.AuthorizationFingerprint == "" {
-		return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-			"%w: artifact, data, runtime, and authorization fingerprints are required",
-			ErrCandidateRuntimeInvalid,
-		)
-	}
-	if compatibility.DataMode != CandidateDataReuseSnapshot &&
-		compatibility.DataMode != CandidateDataRefreshSources {
-		return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-			"%w: candidate data mode is required",
-			ErrCandidateRuntimeInvalid,
-		)
-	}
-	normalizedBindings := append([]CandidateBindingVersion(nil), compatibility.Bindings...)
-	for index := range normalizedBindings {
-		normalizedBindings[index].BindingID = strings.TrimSpace(normalizedBindings[index].BindingID)
-		normalizedBindings[index].LogicalConnection = strings.TrimSpace(normalizedBindings[index].LogicalConnection)
-		normalizedBindings[index].ConnectorKind = strings.TrimSpace(normalizedBindings[index].ConnectorKind)
-		normalizedBindings[index].ProviderVersion = strings.TrimSpace(normalizedBindings[index].ProviderVersion)
-		normalizedBindings[index].EndpointConfigHash = strings.TrimSpace(normalizedBindings[index].EndpointConfigHash)
-		if normalizedBindings[index].BindingID == "" || normalizedBindings[index].LogicalConnection == "" ||
-			normalizedBindings[index].ConnectorKind == "" || normalizedBindings[index].Revision < 1 ||
-			normalizedBindings[index].ProviderVersion == "" ||
-			platformdigest.ValidateSHA256Identity(normalizedBindings[index].EndpointConfigHash) != nil {
-			return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-				"%w: binding identity, positive revision, and provider version are required",
-				ErrCandidateRuntimeInvalid,
-			)
-		}
-	}
-	sort.Slice(normalizedBindings, func(i, j int) bool {
-		return normalizedBindings[i].BindingID < normalizedBindings[j].BindingID
-	})
-	for index := 1; index < len(normalizedBindings); index++ {
-		if normalizedBindings[index-1].BindingID == normalizedBindings[index].BindingID {
-			return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-				"%w: duplicate binding %q",
-				ErrCandidateRuntimeInvalid,
-				normalizedBindings[index].BindingID,
-			)
-		}
-	}
-	compatibility.Bindings = normalizedBindings
-	normalizedAuthoredConnections := append(
-		[]CandidateAuthoredConnection(nil),
-		compatibility.AuthoredConnections...,
-	)
-	for index := range normalizedAuthoredConnections {
-		normalizedAuthoredConnections[index].LogicalConnection = strings.TrimSpace(
-			normalizedAuthoredConnections[index].LogicalConnection,
-		)
-		normalizedAuthoredConnections[index].ConnectorKind = strings.TrimSpace(
-			normalizedAuthoredConnections[index].ConnectorKind,
-		)
-	}
-	sort.Slice(normalizedAuthoredConnections, func(i, j int) bool {
-		return normalizedAuthoredConnections[i].LogicalConnection <
-			normalizedAuthoredConnections[j].LogicalConnection
-	})
-	for index, connection := range normalizedAuthoredConnections {
-		if connection.LogicalConnection == "" || connection.ConnectorKind == "" ||
-			index > 0 && normalizedAuthoredConnections[index-1].LogicalConnection ==
-				connection.LogicalConnection {
-			return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-				"%w: authored connection identity and connector kind are required and unique",
-				ErrCandidateRuntimeInvalid,
-			)
-		}
-	}
-	compatibility.AuthoredConnections = normalizedAuthoredConnections
-	normalizedManagedDataConnections := append(
-		[]string(nil),
-		compatibility.ManagedDataConnections...,
-	)
-	for index := range normalizedManagedDataConnections {
-		normalizedManagedDataConnections[index] = strings.TrimSpace(
-			normalizedManagedDataConnections[index],
-		)
-		if normalizedManagedDataConnections[index] == "" {
-			return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-				"%w: managed-data connection identity is required",
-				ErrCandidateRuntimeInvalid,
-			)
-		}
-	}
-	sort.Strings(normalizedManagedDataConnections)
-	for index := 1; index < len(normalizedManagedDataConnections); index++ {
-		if normalizedManagedDataConnections[index-1] ==
-			normalizedManagedDataConnections[index] {
-			return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-				"%w: duplicate managed-data connection %q",
-				ErrCandidateRuntimeInvalid,
-				normalizedManagedDataConnections[index],
-			)
-		}
-	}
-	compatibility.ManagedDataConnections = normalizedManagedDataConnections
-	normalizedRestrictions := append([]CandidateRestriction(nil), compatibility.Restrictions...)
-	for index := range normalizedRestrictions {
-		restriction := &normalizedRestrictions[index]
-		restriction.ID = strings.TrimSpace(restriction.ID)
-		restriction.WorkspaceID = strings.TrimSpace(restriction.WorkspaceID)
-		restriction.ObjectID = strings.TrimSpace(restriction.ObjectID)
-		restriction.PolicyType = strings.TrimSpace(restriction.PolicyType)
-		restriction.ExpressionJSON = strings.TrimSpace(restriction.ExpressionJSON)
-		if restriction.ID == "" || restriction.WorkspaceID == "" ||
-			restriction.ObjectID == "" || restriction.ExpressionJSON == "" {
-			return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-				"%w: candidate restriction identity, workspace, object, and expression are required",
-				ErrCandidateRuntimeInvalid,
-			)
-		}
-		if restriction.PolicyType != "row_filter" && restriction.PolicyType != "column_mask" {
-			return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-				"%w: unsupported candidate restriction type %q",
-				ErrCandidateRuntimeInvalid,
-				restriction.PolicyType,
-			)
-		}
-	}
-	sort.Slice(normalizedRestrictions, func(i, j int) bool {
-		return normalizedRestrictions[i].ID < normalizedRestrictions[j].ID
-	})
-	for index := 1; index < len(normalizedRestrictions); index++ {
-		if normalizedRestrictions[index-1].ID == normalizedRestrictions[index].ID {
-			return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-				"%w: duplicate candidate restriction %q",
-				ErrCandidateRuntimeInvalid,
-				normalizedRestrictions[index].ID,
-			)
-		}
-	}
-	compatibility.Restrictions = normalizedRestrictions
-	encoded, err := json.Marshal(compatibility)
-	if err != nil {
-		return CandidateCompatibility{}, [sha256.Size]byte{}, fmt.Errorf(
-			"%w: encode compatibility: %v",
-			ErrCandidateRuntimeInvalid,
-			err,
-		)
-	}
-	return compatibility, sha256.Sum256(encoded), nil
-}
-
-func validateCandidateDataMode(
-	state servingstate.State,
-	compatibility CandidateCompatibility,
-	managedData ManagedDataResolution,
-) error {
-	switch compatibility.DataMode {
-	case CandidateDataReuseSnapshot:
-		if state.DuckLakeSnapshotID <= 0 || len(compatibility.AuthoredConnections) != 0 {
-			return fmt.Errorf(
-				"%w: immutable snapshot reuse requires an existing snapshot and no authored refresh connections",
-				ErrCandidateRuntimeIncompatible,
-			)
-		}
-	case CandidateDataRefreshSources:
-		if state.DuckLakeSnapshotID != 0 ||
-			len(compatibility.Bindings) == 0 &&
-				len(compatibility.ManagedDataConnections) == 0 &&
-				len(compatibility.AuthoredConnections) == 0 {
-			return fmt.Errorf(
-				"%w: source refresh requires an unmaterialized state and declared target, managed-data, or authored connections",
-				ErrCandidateRuntimeIncompatible,
-			)
-		}
-	default:
-		return ErrCandidateRuntimeInvalid
-	}
-	resolvedManagedConnections := make([]string, 0, len(managedData.Roots))
-	for connection, root := range managedData.Roots {
-		if strings.TrimSpace(connection) == "" ||
-			connection != strings.TrimSpace(connection) ||
-			strings.TrimSpace(root) == "" {
-			return fmt.Errorf(
-				"%w: resolved managed-data roots are invalid",
-				ErrCandidateRuntimeIncompatible,
-			)
-		}
-		resolvedManagedConnections = append(resolvedManagedConnections, connection)
-	}
-	sort.Strings(resolvedManagedConnections)
-	if len(resolvedManagedConnections) != len(compatibility.ManagedDataConnections) {
-		return fmt.Errorf(
-			"%w: managed-data connection set changed during runtime preparation",
-			ErrCandidateRuntimeIncompatible,
-		)
-	}
-	for index, connection := range compatibility.ManagedDataConnections {
-		if resolvedManagedConnections[index] != connection {
-			return fmt.Errorf(
-				"%w: managed-data connection set changed during runtime preparation",
-				ErrCandidateRuntimeIncompatible,
-			)
-		}
-	}
-	return nil
 }

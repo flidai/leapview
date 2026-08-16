@@ -1,5 +1,11 @@
 package runtimehost
 
+// This file owns the process-local lifecycle for exactly one project and
+// environment.  A serving generation is prepared privately, optionally
+// installs its authorization snapshot, and is then published under one
+// cutover lock.  Retired generations remain leaseable until their readers
+// drain; cleanup is deliberately detached from publication.
+
 import (
 	"context"
 	"errors"
@@ -10,39 +16,47 @@ import (
 	"sync/atomic"
 	"time"
 
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 type ServingStateRepository interface {
-	ActiveArtifact(ctx context.Context, workspaceID servingstate.WorkspaceID, environment servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
-	ByID(ctx context.Context, id servingstate.ID) (servingstate.State, error)
-	ArtifactByServingState(ctx context.Context, servingStateID servingstate.ID) (servingstate.Artifact, error)
-	RecordDuckLakeSnapshot(ctx context.Context, servingStateID servingstate.ID, snapshotID int64) error
+	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
+	ByID(context.Context, servingstate.ID) (servingstate.State, error)
+	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
+	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
 }
 
-type Runtime interface {
-	Close() error
+type SnapshotLeaseRepository interface {
+	CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error)
+	ReleaseQuerySnapshotLease(context.Context, string) error
+	ExtendQuerySnapshotLease(context.Context, string, time.Time) error
 }
 
-type RuntimeSnapshot interface {
-	DuckLakeSnapshotID() int64
+// AuthorizationSnapshotInstaller is intentionally tiny. Its implementation
+// belongs to access persistence; runtimehost only binds the graph-validated
+// immutable snapshot to the exact generation that is about to become visible.
+type AuthorizationSnapshotInstaller interface {
+	InstallAuthorizationSnapshot(context.Context, accesssnapshot.AuthorizationSnapshot) error
 }
 
-type RuntimeLifetime interface {
-	Close() error
+type Runtime = projectruntime.Runtime
+type RuntimeSnapshot interface{ DuckLakeSnapshotID() int64 }
+type RuntimeLifetime interface{ Close() error }
+
+// PreparedRuntime is the mandatory factory result. The authorization
+// snapshot must have been built from the validated graph and exact serving
+// identity before the runtime can be activated.
+type PreparedRuntime interface {
+	Runtime
+	AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
 }
 
-type Lease interface {
-	Runtime() Runtime
-	ServingStateID() servingstate.ID
-	DuckLakeSnapshotID() int64
-	Release()
-}
-
-// Provider exposes an active runtime only through a lifetime-bearing lease.
-type Provider interface {
-	Acquire(ctx context.Context) (Lease, error)
-}
+type Lease = projectruntime.Lease
+type Provider = projectruntime.Provider
 
 type CleanupResource string
 
@@ -53,10 +67,8 @@ const (
 	CleanupResourceDependency    CleanupResource = "runtime_dependency"
 )
 
-// CleanupFailure describes a post-publication retirement failure. Such a
-// failure is operationally significant, but never reverses an activation.
 type CleanupFailure struct {
-	WorkspaceID        servingstate.WorkspaceID
+	ProjectID          projectgraph.ResourceID
 	ServingStateID     servingstate.ID
 	DuckLakeSnapshotID int64
 	Resource           CleanupResource
@@ -64,7 +76,7 @@ type CleanupFailure struct {
 }
 
 type RuntimeFactory interface {
-	Prepare(ctx context.Context, input RuntimeInput) (Runtime, error)
+	Prepare(context.Context, RuntimeInput) (PreparedRuntime, error)
 }
 
 type ManagedDataResolution struct {
@@ -72,20 +84,16 @@ type ManagedDataResolution struct {
 	Roots      map[string]string
 	Lifetime   ManagedDataLifetime
 }
-
-// ManagedDataLifetime keeps all roots in a resolution available to its runtime.
-type ManagedDataLifetime interface {
-	Release() error
-}
-
+type ManagedDataLifetime interface{ Release() error }
 type ManagedDataResolver interface {
-	ResolveManagedData(ctx context.Context, servingStateID servingstate.ID) (ManagedDataResolution, error)
+	ResolveManagedData(context.Context, servingstate.ID) (ManagedDataResolution, error)
 }
 
-type SnapshotLeaseRepository interface {
-	CreateQuerySnapshotLease(ctx context.Context, input servingstate.SnapshotLeaseInput) (string, error)
-	ReleaseQuerySnapshotLease(ctx context.Context, id string) error
-	ExtendQuerySnapshotLease(ctx context.Context, id string, expiresAt time.Time) error
+func (m *Manager) resolveManagedData(ctx context.Context, id servingstate.ID) (ManagedDataResolution, error) {
+	if m == nil || m.managedData == nil {
+		return ManagedDataResolution{}, nil
+	}
+	return m.managedData.ResolveManagedData(ctx, id)
 }
 
 type RuntimeInput struct {
@@ -105,13 +113,33 @@ type CandidateRuntimeContext struct {
 	CompatibilityFingerprint string
 }
 
+type ManagerOptions struct {
+	Repo                        ServingStateRepository
+	ProjectID                   projectgraph.ResourceID
+	Environment                 servingstate.Environment
+	Factory                     RuntimeFactory
+	ManagedData                 ManagedDataResolver
+	Authorization               AuthorizationSnapshotInstaller
+	OnDrained                   func(servingstate.ID, int64)
+	LeaseTTL                    time.Duration
+	LeaseOwner                  string
+	Logger                      *slog.Logger
+	OnLeaseRenewalFailure       func(error)
+	OnCleanupFailure            func(CleanupFailure)
+	LeaseReleaseQueueCapacity   int
+	LeaseReleaseShutdownTimeout time.Duration
+	CleanupDrainTimeout         time.Duration
+}
+
 type Manager struct {
 	mu                     sync.RWMutex
+	cutoverMu              sync.RWMutex
 	repo                   ServingStateRepository
-	workspaceID            servingstate.WorkspaceID
+	projectID              projectgraph.ResourceID
 	environment            servingstate.Environment
 	factory                RuntimeFactory
 	managedData            ManagedDataResolver
+	authorization          AuthorizationSnapshotInstaller
 	onDrained              func(servingstate.ID, int64)
 	leaseTTL               time.Duration
 	leaseOwner             string
@@ -119,38 +147,12 @@ type Manager struct {
 	onLeaseRenewalFailure  func(error)
 	onCleanupFailure       func(CleanupFailure)
 	leaseRenewalErrors     map[string]error
-	activeServingStateID   servingstate.ID
-	activeDigest           string
-	activeManagedRevision  string
-	activeSnapshotID       int64
 	current                *managedRuntime
 	retired                []*managedRuntime
 	cleanupWorkerRunning   bool
 	cleanupDrainTimeout    time.Duration
 	releaseQueue           *snapshotLeaseReleaseQueue
 	releaseShutdownTimeout time.Duration
-}
-
-type ManagerOptions struct {
-	Repo                  ServingStateRepository
-	WorkspaceID           servingstate.WorkspaceID
-	Environment           servingstate.Environment
-	Factory               RuntimeFactory
-	ManagedData           ManagedDataResolver
-	OnDrained             func(servingstate.ID, int64)
-	LeaseTTL              time.Duration
-	LeaseOwner            string
-	Logger                *slog.Logger
-	OnLeaseRenewalFailure func(error)
-	OnCleanupFailure      func(CleanupFailure)
-	// LeaseReleaseQueueCapacity bounds asynchronous snapshot-lease release
-	// work. Releases never block callers when the queue is full.
-	LeaseReleaseQueueCapacity int
-	// LeaseReleaseShutdownTimeout bounds shutdown while draining release work.
-	LeaseReleaseShutdownTimeout time.Duration
-	// CleanupDrainTimeout bounds Close while the serialized cleanup worker
-	// drains generations that no longer have readers.
-	CleanupDrainTimeout time.Duration
 }
 
 type Prepared struct {
@@ -164,12 +166,21 @@ type Prepared struct {
 	managedData     ManagedDataLifetime
 	snapshotLease   *persistentSnapshotLease
 	runtimeLifetime RuntimeLifetime
+	snapshotID      int64
+	authorization   accesssnapshot.AuthorizationSnapshot
+	noChange        bool
+	baseActiveID    servingstate.ID
 	candidateID     string
 	candidateOwner  string
 	candidateExpiry time.Time
 	candidateHash   [32]byte
-	noChange        bool
-	snapshotID      int64
+}
+
+type candidatePreparationContext struct {
+	runtime     CandidateRuntimeContext
+	expiresAt   time.Time
+	fingerprint [32]byte
+	lifetime    RuntimeLifetime
 }
 
 type preparedState uint8
@@ -192,20 +203,8 @@ func (p *Prepared) Close() error {
 		return nil
 	}
 	p.state = preparedStateClosed
-	var runtimeErr error
-	if p.runtime != nil {
-		runtimeErr = p.runtime.Close()
-		p.runtime = nil
-	}
-	managedDataErr := releaseManagedDataLifetime(p.managedData)
-	p.managedData = nil
-	snapshotLeaseErr := p.snapshotLease.Close()
-	p.snapshotLease = nil
-	runtimeLifetimeErr := closeRuntimeLifetime(p.runtimeLifetime)
-	p.runtimeLifetime = nil
-	return errors.Join(runtimeErr, managedDataErr, snapshotLeaseErr, runtimeLifetimeErr)
+	return errors.Join(closeRuntime(p.runtime), releaseManaged(p.managedData), closeSnapshotLease(p.snapshotLease), closeRuntimeLifetime(p.runtimeLifetime))
 }
-
 func (p *Prepared) DuckLakeSnapshotID() int64 {
 	if p == nil {
 		return 0
@@ -224,94 +223,91 @@ func NewManagerWithFactory(options ManagerOptions) *Manager {
 	if capacity <= 0 {
 		capacity = 64
 	}
-	shutdownTimeout := options.LeaseReleaseShutdownTimeout
-	if shutdownTimeout <= 0 {
-		shutdownTimeout = 5 * time.Second
+	shutdown := options.LeaseReleaseShutdownTimeout
+	if shutdown <= 0 {
+		shutdown = 5 * time.Second
 	}
-	m := &Manager{
-		repo:                   options.Repo,
-		workspaceID:            options.WorkspaceID,
-		environment:            servingstate.NormalizeEnvironment(options.Environment),
-		factory:                options.Factory,
-		managedData:            options.ManagedData,
-		onDrained:              options.OnDrained,
-		leaseTTL:               normalizedLeaseTTL(options.LeaseTTL),
-		logger:                 logger,
-		onLeaseRenewalFailure:  options.OnLeaseRenewalFailure,
-		onCleanupFailure:       options.OnCleanupFailure,
-		leaseRenewalErrors:     map[string]error{},
-		leaseOwner:             firstNonEmpty(options.LeaseOwner, "runtimehost"),
-		cleanupDrainTimeout:    normalizedCleanupDrainTimeout(options.CleanupDrainTimeout),
-		releaseShutdownTimeout: shutdownTimeout,
-	}
+	m := &Manager{repo: options.Repo, projectID: options.ProjectID, environment: servingstate.NormalizeEnvironment(options.Environment), factory: options.Factory, managedData: options.ManagedData, authorization: options.Authorization, onDrained: options.OnDrained, leaseTTL: normalizedLeaseTTL(options.LeaseTTL), leaseOwner: firstNonEmpty(options.LeaseOwner, "runtimehost"), logger: logger, onLeaseRenewalFailure: options.OnLeaseRenewalFailure, onCleanupFailure: options.OnCleanupFailure, leaseRenewalErrors: map[string]error{}, cleanupDrainTimeout: normalizedCleanupDrainTimeout(options.CleanupDrainTimeout), releaseShutdownTimeout: shutdown}
 	m.releaseQueue = newSnapshotLeaseReleaseQueue(capacity, m.releaseSnapshotLease)
 	return m
 }
 
+func (m *Manager) ProjectID() projectgraph.ResourceID {
+	if m == nil {
+		return ""
+	}
+	return m.projectID
+}
+func (m *Manager) Environment() servingstate.Environment {
+	if m == nil {
+		return ""
+	}
+	return m.environment
+}
 func (m *Manager) LeaseRenewalError() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	errs := make([]error, 0, len(m.leaseRenewalErrors))
-	for _, err := range m.leaseRenewalErrors {
-		errs = append(errs, err)
+	var errs []error
+	for _, e := range m.leaseRenewalErrors {
+		errs = append(errs, e)
 	}
 	return errors.Join(errs...)
 }
-
-// SnapshotLeaseReleaseBacklog reports queued (not currently executing)
-// release operations. It is intended for readiness and shutdown telemetry.
 func (m *Manager) SnapshotLeaseReleaseBacklog() int {
 	if m == nil || m.releaseQueue == nil {
 		return 0
 	}
 	return m.releaseQueue.len()
 }
-
-func (m *Manager) setLeaseRenewalError(leaseID string, err error) {
+func (m *Manager) setLeaseRenewalError(id string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err == nil {
-		delete(m.leaseRenewalErrors, leaseID)
-		return
+		delete(m.leaseRenewalErrors, id)
+	} else {
+		m.leaseRenewalErrors[id] = err
 	}
-	m.leaseRenewalErrors[leaseID] = err
 }
 
 func (m *Manager) Reload(ctx context.Context) error {
-	return m.ReloadBeforePrepare(ctx, nil)
-}
-
-func (m *Manager) ReloadBeforePrepare(ctx context.Context, beforePrepare func() error) error {
-	current, artifact, err := m.repo.ActiveArtifact(ctx, m.workspaceID, m.environment)
-	if err != nil {
-		if errors.Is(err, servingstate.ErrNotFound) {
-			return m.Close()
+	current, artifact, err := m.repo.ActiveArtifact(ctx, m.projectID, m.environment)
+	if errors.Is(err, servingstate.ErrNotFound) {
+		// A no-active read is only authoritative while serialized with
+		// activation. Re-check under the cutover lock before retiring anything;
+		// if another actor published meanwhile, let the normal active path load
+		// that exact generation.
+		m.cutoverMu.Lock()
+		_, _, confirmErr := m.repo.ActiveArtifact(ctx, m.projectID, m.environment)
+		if confirmErr == nil {
+			m.cutoverMu.Unlock()
+			return m.Reload(ctx)
 		}
-		return err
-	}
-	// The validated artifact is immutable and its digest includes the managed-data
-	// revision pins. Avoid reconstructing and verifying those revisions on every
-	// runtime acquisition when the active artifact has not changed.
-	if !m.needsArtifactPrepare(current, artifact) {
+		if !errors.Is(confirmErr, servingstate.ErrNotFound) {
+			m.cutoverMu.Unlock()
+			return confirmErr
+		}
+		m.mu.Lock()
+		current := m.current
+		m.current = nil
+		retired := m.retireLocked(current)
+		m.mu.Unlock()
+		m.cutoverMu.Unlock()
+		m.cleanupRetired(retired)
 		return nil
 	}
-	managedData, err := m.resolveManagedData(ctx, current.ID)
 	if err != nil {
 		return err
 	}
-	if !m.needsPrepare(current, artifact, managedData.RevisionID) {
+	if err := m.validateGeneration(current, artifact); err != nil {
+		return err
+	}
+	m.mu.RLock()
+	unchanged := m.current != nil && m.current.servingStateID == current.ID && m.current.digest == artifact.Digest && m.current.snapshotID == current.DuckLakeSnapshotID
+	m.mu.RUnlock()
+	if unchanged {
 		return nil
 	}
-	// A caller may provide owner-scoped quiescence for a backend that requires
-	// it. The registry deliberately leaves this nil: the production DuckLake
-	// environment serializes writers while allowing pinned readers, so closing
-	// unrelated workspace managers would violate runtime ownership.
-	if beforePrepare != nil && current.DuckLakeSnapshotID == 0 {
-		if err := beforePrepare(); err != nil {
-			return err
-		}
-	}
-	prepared, err := m.prepareResolved(ctx, current, artifact, managedData)
+	prepared, err := m.prepare(ctx, current, artifact, nil)
 	if err != nil {
 		return err
 	}
@@ -321,154 +317,161 @@ func (m *Manager) ReloadBeforePrepare(ctx context.Context, beforePrepare func() 
 			return err
 		}
 	}
-	return m.PublishPrepared(prepared)
+	return m.activatePreparedContext(ctx, prepared, func() error { return nil })
 }
 
-func (m *Manager) needsArtifactPrepare(current servingstate.State, artifact servingstate.Artifact) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.current == nil ||
-		m.activeServingStateID != current.ID ||
-		m.activeDigest != artifact.Digest ||
-		m.activeSnapshotID != current.DuckLakeSnapshotID
-}
-
-func (m *Manager) needsPrepare(current servingstate.State, artifact servingstate.Artifact, managedRevision string) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.current == nil ||
-		m.activeServingStateID != current.ID ||
-		m.activeDigest != artifact.Digest ||
-		m.activeManagedRevision != managedRevision ||
-		m.activeSnapshotID != current.DuckLakeSnapshotID
-}
-
-func (m *Manager) PrepareServingState(ctx context.Context, servingStateID string) (servingstate.PreparedRuntime, error) {
-	current, err := m.repo.ByID(ctx, servingstate.ID(servingStateID))
+func (m *Manager) PrepareServingState(ctx context.Context, id string) (*Prepared, error) {
+	state, err := m.repo.ByID(ctx, servingstate.ID(id))
 	if err != nil {
 		return nil, err
 	}
-	if current.WorkspaceID != m.workspaceID {
-		return nil, fmt.Errorf("serving state %s is not in workspace %s", servingStateID, m.workspaceID)
-	}
-	artifact, err := m.repo.ArtifactByServingState(ctx, current.ID)
+	artifact, err := m.repo.ArtifactByServingState(ctx, state.ID)
 	if err != nil {
 		return nil, err
 	}
-	return m.prepare(ctx, current, artifact)
-}
-
-func (m *Manager) prepare(ctx context.Context, current servingstate.State, artifact servingstate.Artifact) (*Prepared, error) {
-	managedData, err := m.resolveManagedData(ctx, current.ID)
-	if err != nil {
+	if err := m.validateGeneration(state, artifact); err != nil {
 		return nil, err
 	}
-	return m.prepareResolved(ctx, current, artifact, managedData)
+	return m.prepare(ctx, state, artifact, nil)
 }
 
-func (m *Manager) resolveManagedData(ctx context.Context, servingStateID servingstate.ID) (ManagedDataResolution, error) {
-	if m.managedData == nil {
-		return ManagedDataResolution{}, nil
+func (m *Manager) validateGeneration(state servingstate.State, artifact servingstate.Artifact) error {
+	if state.ProjectID != m.projectID {
+		return fmt.Errorf("serving state %s project = %q, want %q", state.ID, state.ProjectID, m.projectID)
 	}
-	return m.managedData.ResolveManagedData(ctx, servingStateID)
+	if servingstate.NormalizeEnvironment(state.Environment) != m.environment {
+		return fmt.Errorf("serving state %s environment = %q, want %q", state.ID, state.Environment, m.environment)
+	}
+	if !state.CanActivate() {
+		return fmt.Errorf("serving state %s has status %q and cannot be prepared", state.ID, state.Status)
+	}
+	if _, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID)); err != nil {
+		return err
+	}
+	if artifact.ServingStateID != state.ID {
+		return fmt.Errorf("artifact serving state = %q, want %q", artifact.ServingStateID, state.ID)
+	}
+	if err := platformdigest.ValidateSHA256Identity(artifact.Digest); err != nil {
+		return fmt.Errorf("artifact digest is invalid: %w", err)
+	}
+	return nil
 }
 
-func (m *Manager) prepareResolved(ctx context.Context, current servingstate.State, artifact servingstate.Artifact, managedData ManagedDataResolution) (*Prepared, error) {
-	return m.prepareResolvedWithCandidate(ctx, current, artifact, managedData, nil)
-}
-
-type candidatePreparationContext struct {
-	runtime     CandidateRuntimeContext
-	expiresAt   time.Time
-	fingerprint [32]byte
-	lifetime    RuntimeLifetime
-}
-
-func (m *Manager) prepareResolvedWithCandidate(
-	ctx context.Context,
-	current servingstate.State,
-	artifact servingstate.Artifact,
-	managedData ManagedDataResolution,
-	candidate *candidatePreparationContext,
-) (*Prepared, error) {
-	m.mu.RLock()
-	if candidate == nil && m.current != nil && m.activeServingStateID == current.ID && m.activeDigest == artifact.Digest && m.activeManagedRevision == managedData.RevisionID && m.activeSnapshotID == current.DuckLakeSnapshotID {
-		m.mu.RUnlock()
-		if err := releaseManagedDataLifetime(managedData.Lifetime); err != nil {
+func (m *Manager) prepare(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, candidate *candidatePreparationContext) (*Prepared, error) {
+	var data ManagedDataResolution
+	var err error
+	if m.managedData != nil {
+		data, err = m.managedData.ResolveManagedData(ctx, state.ID)
+		if err != nil {
 			return nil, err
 		}
-		return &Prepared{owner: m, servingStateID: current.ID, digest: artifact.Digest, managedRevision: managedData.RevisionID, noChange: true}, nil
 	}
-	m.mu.RUnlock()
-	factoryManagedData := managedData
-	factoryManagedData.Lifetime = nil
+	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, candidate)
+}
+
+func (m *Manager) prepareResolvedWithCandidate(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, data ManagedDataResolution, candidate *candidatePreparationContext) (*Prepared, error) {
+	if err := m.validateGeneration(state, artifact); err != nil {
+		return nil, errors.Join(err, releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
+	}
+	if m.factory == nil {
+		return nil, errors.Join(errors.New("runtime factory is required"), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
+	}
+	factoryData := data
+	factoryData.Lifetime = nil
 	var candidateInput *CandidateRuntimeContext
 	if candidate != nil {
 		copy := candidate.runtime
 		candidateInput = &copy
 	}
-	runtime, err := m.factory.Prepare(ctx, RuntimeInput{
-		State: current, Artifact: artifact, ManagedData: factoryManagedData,
-		Candidate: candidateInput,
-	})
+	runtime, err := m.factory.Prepare(ctx, RuntimeInput{State: state, Artifact: artifact, ManagedData: factoryData, Candidate: candidateInput})
 	if err != nil {
-		return nil, errors.Join(
-			err,
-			releaseManagedDataLifetime(managedData.Lifetime),
-			closeCandidatePreparationLifetime(candidate),
-		)
+		return nil, errors.Join(err, releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
 	if runtime == nil {
-		return nil, errors.Join(
-			errors.New("runtime factory returned nil"),
-			releaseManagedDataLifetime(managedData.Lifetime),
-			closeCandidatePreparationLifetime(candidate),
-		)
+		return nil, errors.Join(errors.New("runtime factory returned nil"), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
-	var snapshotID int64
-	if snapshot, ok := runtime.(RuntimeSnapshot); ok {
-		snapshotID = snapshot.DuckLakeSnapshotID()
-	}
-	if snapshotID == 0 {
-		snapshotID = current.DuckLakeSnapshotID
-	}
-	snapshotLease, err := m.createPersistentLease(ctx, current.ID, snapshotID)
+	expectedIdentity, err := projectgraph.NewServingIdentity(state.ProjectID, string(servingstate.NormalizeEnvironment(state.Environment)), string(state.ID))
 	if err != nil {
-		return nil, errors.Join(
-			err,
-			runtime.Close(),
-			releaseManagedDataLifetime(managedData.Lifetime),
-			closeCandidatePreparationLifetime(candidate),
-		)
+		return nil, errors.Join(err, closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
-	prepared := &Prepared{
-		owner:          m,
-		servingStateID: current.ID, digest: artifact.Digest, managedRevision: managedData.RevisionID,
-		runtime: runtime, managedData: managedData.Lifetime, snapshotLease: snapshotLease, snapshotID: snapshotID,
+	authorization := runtime.AuthorizationSnapshot()
+	if authorization.Identity() != expectedIdentity {
+		return nil, errors.Join(fmt.Errorf("authorization snapshot identity = %#v, want %#v", authorization.Identity(), expectedIdentity), closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
 	}
+	if err := authorization.ValidateBound(); err != nil {
+		return nil, errors.Join(fmt.Errorf("authorization snapshot is invalid: %w", err), closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
+	}
+	snapshotID := state.DuckLakeSnapshotID
+	if snap, ok := runtime.(RuntimeSnapshot); ok && snap.DuckLakeSnapshotID() > 0 {
+		snapshotID = snap.DuckLakeSnapshotID()
+	}
+	lease, err := m.createPersistentLease(ctx, state.ID, snapshotID)
+	if err != nil {
+		return nil, errors.Join(err, closeRuntime(runtime), releaseManaged(data.Lifetime), closeCandidatePreparationLifetime(candidate))
+	}
+	m.mu.RLock()
+	baseActiveID := servingstate.ID("")
+	if m.current != nil {
+		baseActiveID = m.current.servingStateID
+	}
+	m.mu.RUnlock()
+	p := &Prepared{owner: m, servingStateID: state.ID, digest: artifact.Digest, managedRevision: data.RevisionID, runtime: runtime, managedData: data.Lifetime, snapshotLease: lease, snapshotID: snapshotID, authorization: authorization, baseActiveID: baseActiveID}
 	if candidate != nil {
-		prepared.runtimeLifetime = candidate.lifetime
+		p.runtimeLifetime = candidate.lifetime
 		candidate.lifetime = nil
-		prepared.candidateID = candidate.runtime.CandidateID
-		prepared.candidateOwner = candidate.runtime.OwnerID
-		prepared.candidateExpiry = candidate.expiresAt
-		prepared.candidateHash = candidate.fingerprint
+		p.candidateID = candidate.runtime.CandidateID
+		p.candidateOwner = candidate.runtime.OwnerID
+		p.candidateExpiry = candidate.expiresAt
+		p.candidateHash = candidate.fingerprint
 	}
-	return prepared, nil
+	return p, nil
 }
 
-// PublishPrepared publishes an already-durable serving state. Cleanup of the
-// retired generation is observed separately and cannot fail publication.
-func (m *Manager) PublishPrepared(candidate servingstate.PreparedRuntime) error {
+// ActivatePrepared publishes a durable generation only after authorization
+// installation and the caller's durable activation callback both succeed.
+func (m *Manager) ActivatePrepared(candidate *Prepared, activate func() error) error {
+	return m.activatePreparedContext(context.Background(), candidate, activate)
+}
+func (m *Manager) activatePreparedContext(ctx context.Context, candidate *Prepared, activate func() error) error {
 	sealed, err := m.sealPrepared(candidate)
 	if err != nil {
 		return err
 	}
 	if sealed.candidateID != "" {
-		return errors.Join(
-			fmt.Errorf("private candidate runtime cannot be published as active"),
-			sealed.abort(),
-		)
+		return errors.Join(errors.New("private candidate runtime cannot be activated"), sealed.abort())
+	}
+	m.cutoverMu.Lock()
+	defer m.cutoverMu.Unlock()
+	m.mu.RLock()
+	currentID := servingstate.ID("")
+	if m.current != nil {
+		currentID = m.current.servingStateID
+	}
+	m.mu.RUnlock()
+	if currentID != sealed.baseActiveID {
+		return errors.Join(errors.New("prepared runtime is stale"), sealed.abort())
+	}
+	expectedIdentity, err := projectgraph.NewServingIdentity(m.projectID, string(m.environment), string(sealed.servingStateID))
+	if err != nil || sealed.authorization.Identity() != expectedIdentity {
+		if err == nil {
+			err = fmt.Errorf("authorization snapshot identity = %#v, want %#v", sealed.authorization.Identity(), expectedIdentity)
+		}
+		return errors.Join(err, sealed.abort())
+	}
+	if err := sealed.authorization.ValidateBound(); err != nil {
+		return errors.Join(fmt.Errorf("authorization snapshot is invalid: %w", err), sealed.abort())
+	}
+	if m.authorization == nil {
+		return errors.Join(errors.New("authorization snapshot installer is required"), sealed.abort())
+	}
+	if err := m.authorization.InstallAuthorizationSnapshot(ctx, sealed.authorization); err != nil {
+		return errors.Join(err, sealed.abort())
+	}
+	if activate == nil {
+		return errors.Join(errors.New("metadata activation is required"), sealed.abort())
+	}
+	if err := activate(); err != nil {
+		return errors.Join(err, sealed.abort())
 	}
 	retired := sealed.publish()
 	m.cleanupRetired(retired)
@@ -476,187 +479,166 @@ func (m *Manager) PublishPrepared(candidate servingstate.PreparedRuntime) error 
 }
 
 type sealedPrepared struct {
-	manager         *Manager
-	source          *Prepared
-	servingStateID  servingstate.ID
-	digest          string
-	managedRevision string
-	runtime         Runtime
-	managedData     ManagedDataLifetime
-	snapshotLease   *persistentSnapshotLease
-	runtimeLifetime RuntimeLifetime
-	candidateID     string
-	candidateOwner  string
-	candidateExpiry time.Time
-	candidateHash   [32]byte
-	snapshotID      int64
-	noChange        bool
+	manager                     *Manager
+	source                      *Prepared
+	servingStateID              servingstate.ID
+	digest, managedRevision     string
+	runtime                     Runtime
+	managedData                 ManagedDataLifetime
+	snapshotLease               *persistentSnapshotLease
+	runtimeLifetime             RuntimeLifetime
+	snapshotID                  int64
+	authorization               accesssnapshot.AuthorizationSnapshot
+	noChange                    bool
+	candidateID, candidateOwner string
+	candidateExpiry             time.Time
+	candidateHash               [32]byte
+	baseActiveID                servingstate.ID
 }
 
-func (m *Manager) sealPrepared(candidate servingstate.PreparedRuntime) (*sealedPrepared, error) {
-	prepared, ok := candidate.(*Prepared)
-	if !ok || prepared == nil {
-		return nil, fmt.Errorf("prepared runtime belongs to a different host")
+func (m *Manager) sealPrepared(candidate *Prepared) (*sealedPrepared, error) {
+	if candidate == nil {
+		return nil, errors.New("prepared runtime is nil")
 	}
-	prepared.mu.Lock()
-	defer prepared.mu.Unlock()
-	if prepared.owner != m {
-		return nil, fmt.Errorf("prepared runtime belongs to a different host")
+	candidate.mu.Lock()
+	defer candidate.mu.Unlock()
+	if candidate.owner != m {
+		return nil, errors.New("prepared runtime belongs to a different host")
 	}
-	if prepared.state != preparedStateOpen {
-		return nil, fmt.Errorf("prepared runtime is already consumed")
+	if candidate.state != preparedStateOpen {
+		return nil, errors.New("prepared runtime is already consumed")
 	}
-	if !prepared.noChange && prepared.runtime == nil {
-		return nil, fmt.Errorf("prepared runtime is incomplete")
+	if candidate.runtime == nil && !candidate.noChange {
+		return nil, errors.New("prepared runtime is incomplete")
 	}
-	sealed := &sealedPrepared{
-		manager: m, source: prepared,
-		servingStateID: prepared.servingStateID, digest: prepared.digest, managedRevision: prepared.managedRevision,
-		runtime: prepared.runtime, managedData: prepared.managedData, snapshotLease: prepared.snapshotLease,
-		runtimeLifetime: prepared.runtimeLifetime,
-		candidateID:     prepared.candidateID, candidateOwner: prepared.candidateOwner,
-		candidateExpiry: prepared.candidateExpiry, candidateHash: prepared.candidateHash,
-		snapshotID: prepared.snapshotID, noChange: prepared.noChange,
-	}
-	prepared.runtime = nil
-	prepared.managedData = nil
-	prepared.snapshotLease = nil
-	prepared.runtimeLifetime = nil
-	prepared.state = preparedStateSealed
-	return sealed, nil
+	s := &sealedPrepared{manager: m, source: candidate, servingStateID: candidate.servingStateID, digest: candidate.digest, managedRevision: candidate.managedRevision, runtime: candidate.runtime, managedData: candidate.managedData, snapshotLease: candidate.snapshotLease, runtimeLifetime: candidate.runtimeLifetime, snapshotID: candidate.snapshotID, authorization: candidate.authorization, noChange: candidate.noChange, candidateID: candidate.candidateID, candidateOwner: candidate.candidateOwner, candidateExpiry: candidate.candidateExpiry, candidateHash: candidate.candidateHash, baseActiveID: candidate.baseActiveID}
+	candidate.runtime = nil
+	candidate.managedData = nil
+	candidate.snapshotLease = nil
+	candidate.runtimeLifetime = nil
+	candidate.state = preparedStateSealed
+	return s, nil
 }
-
-func (p *sealedPrepared) publish() *managedRuntime {
-	if p == nil {
+func (s *sealedPrepared) publish() *managedRuntime {
+	if s == nil {
 		return nil
 	}
-	if p.noChange {
-		p.finish(preparedStatePublished)
+	if s.noChange {
+		s.finish(preparedStatePublished)
 		return nil
 	}
-	managed := &managedRuntime{
-		servingStateID:  p.servingStateID,
-		digest:          p.digest,
-		runtime:         p.runtime,
-		managedData:     p.managedData,
-		snapshotLease:   p.snapshotLease,
-		runtimeLifetime: p.runtimeLifetime,
-		snapshotID:      p.snapshotID,
-	}
-	p.manager.mu.Lock()
-	old := p.manager.current
-	p.manager.current = managed
-	p.manager.activeServingStateID = p.servingStateID
-	p.manager.activeDigest = p.digest
-	p.manager.activeManagedRevision = p.managedRevision
-	p.manager.activeSnapshotID = p.snapshotID
-	retired := p.manager.retireLocked(old)
-	p.manager.mu.Unlock()
-	p.runtime = nil
-	p.managedData = nil
-	p.snapshotLease = nil
-	p.runtimeLifetime = nil
-	p.finish(preparedStatePublished)
+	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID}
+	s.manager.mu.Lock()
+	old := s.manager.current
+	s.manager.current = next
+	retired := s.manager.retireLocked(old)
+	s.manager.mu.Unlock()
+	s.runtime = nil
+	s.managedData = nil
+	s.snapshotLease = nil
+	s.runtimeLifetime = nil
+	s.finish(preparedStatePublished)
 	return retired
 }
-
-func (p *sealedPrepared) consumeCandidate() (*managedRuntime, error) {
-	if p == nil {
-		return nil, fmt.Errorf("%w: prepared runtime is nil", ErrCandidateRuntimeInvalid)
+func (s *sealedPrepared) consumeCandidate() (*managedRuntime, error) {
+	if s == nil || s.noChange || s.runtime == nil || s.candidateID == "" {
+		if s != nil {
+			s.finish(preparedStateClosed)
+		}
+		return nil, errors.New("candidate preparation must own an isolated runtime")
 	}
-	if p.noChange || p.runtime == nil || p.candidateID == "" {
-		p.finish(preparedStateClosed)
-		return nil, fmt.Errorf(
-			"%w: candidate preparation must own an isolated runtime",
-			ErrCandidateRuntimeInvalid,
-		)
-	}
-	managed := &managedRuntime{
-		servingStateID:  p.servingStateID,
-		digest:          p.digest,
-		runtime:         p.runtime,
-		managedData:     p.managedData,
-		snapshotLease:   p.snapshotLease,
-		runtimeLifetime: p.runtimeLifetime,
-		snapshotID:      p.snapshotID,
-	}
-	p.runtime = nil
-	p.managedData = nil
-	p.snapshotLease = nil
-	p.runtimeLifetime = nil
-	p.finish(preparedStateRegistered)
-	return managed, nil
+	next := &managedRuntime{identity: projectgraph.ServingIdentity{ProjectID: s.manager.projectID, Environment: string(s.manager.environment), GenerationID: string(s.servingStateID)}, servingStateID: s.servingStateID, digest: s.digest, managedRevision: s.managedRevision, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID}
+	s.runtime = nil
+	s.managedData = nil
+	s.snapshotLease = nil
+	s.runtimeLifetime = nil
+	s.finish(preparedStateRegistered)
+	return next, nil
 }
-
-func (p *sealedPrepared) abort() error {
-	if p == nil {
+func (s *sealedPrepared) abort() error {
+	if s == nil {
 		return nil
 	}
-	managed := &managedRuntime{
-		servingStateID: p.servingStateID, runtime: p.runtime, managedData: p.managedData,
-		snapshotLease: p.snapshotLease, snapshotID: p.snapshotID,
-		runtimeLifetime: p.runtimeLifetime,
-	}
-	p.runtime = nil
-	p.managedData = nil
-	p.snapshotLease = nil
-	p.runtimeLifetime = nil
-	p.finish(preparedStateClosed)
-	return p.manager.closeManaged(managed)
+	err := s.manager.closeManaged(&managedRuntime{servingStateID: s.servingStateID, runtime: s.runtime, managedData: s.managedData, snapshotLease: s.snapshotLease, runtimeLifetime: s.runtimeLifetime, snapshotID: s.snapshotID})
+	s.runtime = nil
+	s.managedData = nil
+	s.snapshotLease = nil
+	s.runtimeLifetime = nil
+	s.finish(preparedStateClosed)
+	return err
 }
-
-func (p *sealedPrepared) finish(state preparedState) {
-	if p == nil || p.source == nil {
+func (s *sealedPrepared) finish(state preparedState) {
+	if s == nil || s.source == nil {
 		return
 	}
-	p.source.mu.Lock()
-	p.source.state = state
-	p.source.mu.Unlock()
+	s.source.mu.Lock()
+	s.source.state = state
+	s.source.mu.Unlock()
 }
 
+func (m *Manager) Acquire(context.Context) (Lease, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.current == nil || m.current.closing {
+		return nil, errors.New("no active LeapView serving state")
+	}
+	m.current.refs++
+	return &runtimeLease{manager: m, managed: m.current}, nil
+}
+func (m *Manager) LeasedSnapshots() []int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	set := map[int64]struct{}{}
+	if m.current != nil && m.current.snapshotID > 0 {
+		set[m.current.snapshotID] = struct{}{}
+	}
+	for _, r := range m.retired {
+		if r.snapshotID > 0 {
+			set[r.snapshotID] = struct{}{}
+		}
+	}
+	return snapshotKeys(set)
+}
 func (m *Manager) Close() error {
+	return m.close(false)
+}
+
+func (m *Manager) closeWithoutReleaseQueue() error {
+	return m.close(true)
+}
+
+func (m *Manager) close(skipReleaseQueue bool) error {
 	m.mu.Lock()
 	current := m.current
 	m.current = nil
-	m.activeServingStateID = ""
-	m.activeDigest = ""
-	m.activeManagedRevision = ""
-	m.activeSnapshotID = 0
-	currentToClose := m.retireLocked(current)
-	targets := m.scheduledCleanupLocked()
+	targets := m.retireLocked(current)
+	waiting := m.scheduledCleanupLocked()
 	m.mu.Unlock()
-	m.cleanupRetired(currentToClose)
-	cleanupErr := m.waitForCleanup(targets)
-	queueErr := error(nil)
-	if m.releaseQueue != nil {
+	m.cleanupRetired(targets)
+	cleanupErr := m.waitForCleanup(waiting)
+	if cleanupErr != nil {
+		// Keep the release queue alive while reader-draining generations still
+		// own persistent snapshot leases. A later Release can then enqueue its
+		// cleanup after the caller resolves the shutdown timeout.
+		go m.closeReleaseQueueAfterCleanup(waiting)
+		return cleanupErr
+	}
+	var queueErr error
+	if !skipReleaseQueue && m.releaseQueue != nil {
 		queueErr = m.releaseQueue.close(m.releaseShutdownTimeout)
 	}
 	return errors.Join(cleanupErr, queueErr)
 }
 
-func (m *Manager) Acquire() (Lease, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.current == nil || m.current.closing {
-		return nil, fmt.Errorf("no active LeapView serving state")
-	}
-	m.current.refs++
-	return &runtimeLease{manager: m, managed: m.current}, nil
-}
-
-func (m *Manager) LeasedSnapshots() []int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	snapshots := map[int64]struct{}{}
-	if m.current != nil && m.current.snapshotLease != nil && m.current.snapshotID > 0 {
-		snapshots[m.current.snapshotID] = struct{}{}
-	}
-	for _, runtime := range m.retired {
-		if runtime.snapshotLease != nil && runtime.snapshotID > 0 {
-			snapshots[runtime.snapshotID] = struct{}{}
+func (m *Manager) closeReleaseQueueAfterCleanup(targets []*managedRuntime) {
+	for _, runtime := range targets {
+		if runtime != nil && runtime.cleanupDone != nil {
+			<-runtime.cleanupDone
 		}
 	}
-	return snapshotKeys(snapshots)
+	if m.releaseQueue != nil {
+		_ = m.releaseQueue.close(m.releaseShutdownTimeout)
+	}
 }
 
 func (m *Manager) retireLocked(runtime *managedRuntime) *managedRuntime {
@@ -664,23 +646,18 @@ func (m *Manager) retireLocked(runtime *managedRuntime) *managedRuntime {
 		return nil
 	}
 	if runtime.closing {
-		if runtime.refs == 0 && runtime.cleanupState == generationCleanupDraining {
-			runtime.cleanupState = generationCleanupPending
-			return runtime
-		}
 		return nil
 	}
 	runtime.closing = true
 	runtime.cleanupState = generationCleanupDraining
 	runtime.cleanupDone = make(chan struct{})
 	m.retired = append(m.retired, runtime)
-	if runtime.refs > 0 {
-		return nil
+	if runtime.refs == 0 {
+		runtime.cleanupState = generationCleanupPending
+		return runtime
 	}
-	runtime.cleanupState = generationCleanupPending
-	return runtime
+	return nil
 }
-
 func (m *Manager) release(runtime *managedRuntime) {
 	var drained *managedRuntime
 	m.mu.Lock()
@@ -688,348 +665,30 @@ func (m *Manager) release(runtime *managedRuntime) {
 		runtime.refs--
 		if runtime.refs == 0 && runtime.closing {
 			drained = runtime
-			if runtime.cleanupState == generationCleanupDraining {
-				runtime.cleanupState = generationCleanupPending
-			}
+			runtime.cleanupState = generationCleanupPending
 		}
 	}
 	m.mu.Unlock()
 	m.cleanupRetired(drained)
 }
 
-type snapshotLeaseReleaseTask struct {
-	repo           SnapshotLeaseRepository
-	leaseID        string
-	servingStateID servingstate.ID
-	snapshotID     int64
+type managedRuntime struct {
+	identity                projectgraph.ServingIdentity
+	servingStateID          servingstate.ID
+	digest, managedRevision string
+	runtime                 Runtime
+	managedData             ManagedDataLifetime
+	snapshotLease           *persistentSnapshotLease
+	runtimeLifetime         RuntimeLifetime
+	snapshotID              int64
+	refs                    int
+	closing                 bool
+	cleanupState            generationCleanupState
+	cleanupDone             chan struct{}
+	cleanupErr              error
+	cleanupOnce             sync.Once
+	cleanupResults          []cleanupResult
 }
-
-// snapshotLeaseReleaseQueue owns the slow, retrying portion of lease release.
-// The queue is deliberately bounded: when saturated, callers get an error
-// immediately and the lease remains fenced until its expiry.
-type snapshotLeaseReleaseQueue struct {
-	mu         sync.Mutex
-	queue      chan snapshotLeaseReleaseTask
-	accepting  bool
-	workerDone chan struct{}
-	process    func(snapshotLeaseReleaseTask) error
-	queued     atomic.Int64
-	inflight   atomic.Int64
-	pending    atomic.Int64
-}
-
-func newSnapshotLeaseReleaseQueue(capacity int, process func(snapshotLeaseReleaseTask) error) *snapshotLeaseReleaseQueue {
-	if capacity <= 0 {
-		capacity = 1
-	}
-	q := &snapshotLeaseReleaseQueue{
-		queue: make(chan snapshotLeaseReleaseTask, capacity), accepting: true,
-		workerDone: make(chan struct{}), process: process,
-	}
-	go q.run()
-	return q
-}
-
-func (q *snapshotLeaseReleaseQueue) enqueue(task snapshotLeaseReleaseTask) error {
-	if q == nil || task.repo == nil || task.leaseID == "" {
-		return nil
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if !q.accepting {
-		return errors.New("snapshot lease release queue is closed")
-	}
-	q.pending.Add(1)
-	select {
-	case q.queue <- task:
-		q.queued.Add(1)
-		return nil
-	default:
-		q.pending.Add(-1)
-		return errors.New("snapshot lease release queue is full")
-	}
-}
-
-func (q *snapshotLeaseReleaseQueue) run() {
-	defer close(q.workerDone)
-	for task := range q.queue {
-		q.queued.Add(-1)
-		q.inflight.Add(1)
-		var err error
-		if q.process != nil {
-			err = q.process(task)
-		}
-		if err != nil {
-			// The manager's processor records the failure and preserves lease
-			// expiry/fencing safety. There is no synchronous caller to return to.
-		}
-		q.pending.Add(-1)
-		q.inflight.Add(-1)
-	}
-}
-
-func (q *snapshotLeaseReleaseQueue) close(timeout time.Duration) error {
-	if q == nil {
-		return nil
-	}
-	q.mu.Lock()
-	if q.accepting {
-		q.accepting = false
-		close(q.queue)
-	}
-	q.mu.Unlock()
-	if timeout <= 0 {
-		<-q.workerDone
-		return nil
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-q.workerDone:
-		return nil
-	case <-timer.C:
-		return fmt.Errorf("snapshot lease release queue did not drain before shutdown (remaining=%d)", q.backlog())
-	}
-}
-
-func (q *snapshotLeaseReleaseQueue) len() int {
-	if q == nil {
-		return 0
-	}
-	return int(q.backlog())
-}
-
-func (q *snapshotLeaseReleaseQueue) backlog() int64 {
-	if q == nil {
-		return 0
-	}
-	return q.pending.Load()
-}
-
-func (m *Manager) releaseSnapshotLease(task snapshotLeaseReleaseTask) error {
-	err := releaseSnapshotLease(task.repo, task.leaseID)
-	if err == nil {
-		return nil
-	}
-	failure := CleanupFailure{WorkspaceID: m.workspaceID, ServingStateID: task.servingStateID, DuckLakeSnapshotID: task.snapshotID, Resource: CleanupResourceSnapshotLease, Err: err}
-	m.logger.Error("snapshot lease release failed", "workspace_id", failure.WorkspaceID, "serving_state_id", failure.ServingStateID, "ducklake_snapshot_id", failure.DuckLakeSnapshotID, "resource", failure.Resource, "error", failure.Err)
-	if m.onCleanupFailure != nil {
-		m.onCleanupFailure(failure)
-	}
-	return err
-}
-
-func releaseSnapshotLease(repo SnapshotLeaseRepository, leaseID string) error {
-	if repo == nil || leaseID == "" {
-		return nil
-	}
-	delay := 25 * time.Millisecond
-	var lastErr error
-	for attempt := 0; attempt < 5; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		err := repo.ReleaseQuerySnapshotLease(ctx, leaseID)
-		cancel()
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		time.Sleep(delay)
-		delay *= 2
-	}
-	return lastErr
-}
-
-func (m *Manager) removeRetiredLocked(runtime *managedRuntime) {
-	for index, retired := range m.retired {
-		if retired == runtime {
-			m.retired = append(m.retired[:index], m.retired[index+1:]...)
-			return
-		}
-	}
-}
-
-func (m *Manager) closeManaged(runtime *managedRuntime) error {
-	results := m.closeManagedResources(runtime)
-	errs := make([]error, 0, len(results))
-	for _, result := range results {
-		errs = append(errs, result.err)
-	}
-	return errors.Join(errs...)
-}
-
-type cleanupResult struct {
-	resource CleanupResource
-	err      error
-}
-
-func (m *Manager) closeManagedResources(runtime *managedRuntime) []cleanupResult {
-	if runtime == nil {
-		return nil
-	}
-	runtime.cleanupOnce.Do(func() {
-		results := make([]cleanupResult, 0, 4)
-		if runtime.runtime != nil {
-			if err := runtime.runtime.Close(); err != nil {
-				results = append(results, cleanupResult{resource: CleanupResourceRuntime, err: err})
-			}
-		}
-		if err := releaseManagedDataLifetime(runtime.managedData); err != nil {
-			results = append(results, cleanupResult{resource: CleanupResourceManagedData, err: err})
-		}
-		if err := runtime.snapshotLease.Close(); err != nil {
-			results = append(results, cleanupResult{resource: CleanupResourceSnapshotLease, err: err})
-		}
-		if err := closeRuntimeLifetime(runtime.runtimeLifetime); err != nil {
-			results = append(results, cleanupResult{resource: CleanupResourceDependency, err: err})
-		}
-		runtime.cleanupResults = results
-	})
-	return append([]cleanupResult(nil), runtime.cleanupResults...)
-}
-
-func (m *Manager) cleanupRetired(runtime *managedRuntime) {
-	if runtime == nil {
-		return
-	}
-	m.mu.Lock()
-	if runtime.cleanupState == generationCleanupNone {
-		runtime.closing = true
-		runtime.cleanupState = generationCleanupPending
-		runtime.cleanupDone = make(chan struct{})
-		m.retired = append(m.retired, runtime)
-	}
-	if runtime.cleanupState == generationCleanupDraining && runtime.refs == 0 {
-		runtime.cleanupState = generationCleanupPending
-	}
-	if runtime.cleanupState == generationCleanupPending && !m.cleanupWorkerRunning {
-		m.cleanupWorkerRunning = true
-		go m.runCleanupWorker()
-	}
-	m.mu.Unlock()
-}
-
-func (m *Manager) runCleanupWorker() {
-	for {
-		m.mu.Lock()
-		runtime := m.nextPendingCleanupLocked()
-		if runtime == nil {
-			m.cleanupWorkerRunning = false
-			m.mu.Unlock()
-			return
-		}
-		runtime.cleanupState = generationCleanupRunning
-		m.mu.Unlock()
-
-		results := m.closeManagedResources(runtime)
-		m.reportCleanupFailures(runtime, results)
-		errList := make([]error, 0, len(results))
-		for _, result := range results {
-			errList = append(errList, result.err)
-		}
-
-		m.mu.Lock()
-		runtime.cleanupErr = errors.Join(errList...)
-		runtime.cleanupState = generationCleanupFinished
-		m.removeRetiredLocked(runtime)
-		close(runtime.cleanupDone)
-		m.mu.Unlock()
-		if runtime.closing && m.onDrained != nil {
-			m.onDrained(runtime.servingStateID, runtime.snapshotID)
-		}
-	}
-}
-
-func (m *Manager) nextPendingCleanupLocked() *managedRuntime {
-	for _, runtime := range m.retired {
-		if runtime.cleanupState == generationCleanupPending {
-			return runtime
-		}
-	}
-	return nil
-}
-
-func (m *Manager) reportCleanupFailures(runtime *managedRuntime, results []cleanupResult) {
-	for _, result := range results {
-		failure := CleanupFailure{
-			WorkspaceID: m.workspaceID, ServingStateID: runtime.servingStateID,
-			DuckLakeSnapshotID: runtime.snapshotID, Resource: result.resource, Err: result.err,
-		}
-		m.logger.Error("retired runtime cleanup failed",
-			"workspace_id", failure.WorkspaceID, "serving_state_id", failure.ServingStateID,
-			"ducklake_snapshot_id", failure.DuckLakeSnapshotID, "resource", failure.Resource, "error", failure.Err)
-		if m.onCleanupFailure != nil {
-			m.onCleanupFailure(failure)
-		}
-	}
-}
-
-func (m *Manager) scheduledCleanupLocked() []*managedRuntime {
-	targets := make([]*managedRuntime, 0, len(m.retired))
-	for _, runtime := range m.retired {
-		if runtime.cleanupState == generationCleanupPending || runtime.cleanupState == generationCleanupRunning {
-			targets = append(targets, runtime)
-		}
-	}
-	return targets
-}
-
-func (m *Manager) waitForCleanup(targets []*managedRuntime) error {
-	if len(targets) == 0 {
-		return nil
-	}
-	timer := time.NewTimer(m.cleanupDrainTimeout)
-	defer timer.Stop()
-	errs := make([]error, 0, len(targets))
-	for _, runtime := range targets {
-		select {
-		case <-runtime.cleanupDone:
-			errs = append(errs, runtime.cleanupErr)
-		case <-timer.C:
-			return errors.Join(errors.Join(errs...), fmt.Errorf("runtime cleanup did not drain within %s", m.cleanupDrainTimeout))
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// GenerationCleanupState is the observable lifecycle of a retired runtime.
-type GenerationCleanupState string
-
-const (
-	GenerationCleanupDraining GenerationCleanupState = "draining_readers"
-	GenerationCleanupPending  GenerationCleanupState = "cleanup_pending"
-	GenerationCleanupRunning  GenerationCleanupState = "cleanup_running"
-)
-
-// RetiredGeneration is a tombstone retained until cleanup finishes.
-type RetiredGeneration struct {
-	ServingStateID     servingstate.ID
-	DuckLakeSnapshotID int64
-	Readers            int
-	CleanupState       GenerationCleanupState
-}
-
-// RetiredGenerations returns a consistent snapshot of draining and cleaning
-// generations.
-func (m *Manager) RetiredGenerations() []RetiredGeneration {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	out := make([]RetiredGeneration, 0, len(m.retired))
-	for _, runtime := range m.retired {
-		state := GenerationCleanupDraining
-		switch runtime.cleanupState {
-		case generationCleanupPending:
-			state = GenerationCleanupPending
-		case generationCleanupRunning:
-			state = GenerationCleanupRunning
-		}
-		out = append(out, RetiredGeneration{
-			ServingStateID: runtime.servingStateID, DuckLakeSnapshotID: runtime.snapshotID,
-			Readers: runtime.refs, CleanupState: state,
-		})
-	}
-	return out
-}
-
 type generationCleanupState uint8
 
 const (
@@ -1040,44 +699,153 @@ const (
 	generationCleanupFinished
 )
 
-type managedRuntime struct {
-	servingStateID  servingstate.ID
-	digest          string
-	runtime         Runtime
-	managedData     ManagedDataLifetime
-	snapshotLease   *persistentSnapshotLease
-	runtimeLifetime RuntimeLifetime
-	snapshotID      int64
-	refs            int
-	closing         bool
-	cleanupState    generationCleanupState
-	cleanupDone     chan struct{}
-	cleanupErr      error
-	cleanupOnce     sync.Once
-	cleanupResults  []cleanupResult
+type GenerationCleanupState string
+
+const (
+	GenerationCleanupDraining GenerationCleanupState = "draining_readers"
+	GenerationCleanupPending  GenerationCleanupState = "cleanup_pending"
+	GenerationCleanupRunning  GenerationCleanupState = "cleanup_running"
+)
+
+type RetiredGeneration struct {
+	ServingStateID     servingstate.ID
+	DuckLakeSnapshotID int64
+	Readers            int
+	CleanupState       GenerationCleanupState
 }
 
-func releaseManagedDataLifetime(lifetime ManagedDataLifetime) error {
-	if lifetime == nil {
+func (m *Manager) RetiredGenerations() []RetiredGeneration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]RetiredGeneration, 0, len(m.retired))
+	for _, r := range m.retired {
+		state := GenerationCleanupDraining
+		if r.cleanupState == generationCleanupPending {
+			state = GenerationCleanupPending
+		} else if r.cleanupState == generationCleanupRunning {
+			state = GenerationCleanupRunning
+		}
+		out = append(out, RetiredGeneration{r.servingStateID, r.snapshotID, r.refs, state})
+	}
+	return out
+}
+func (m *Manager) cleanupRetired(runtime *managedRuntime) {
+	if runtime == nil {
+		return
+	}
+	m.mu.Lock()
+	if runtime.cleanupState == generationCleanupPending && !m.cleanupWorkerRunning {
+		m.cleanupWorkerRunning = true
+		go m.runCleanupWorker()
+	}
+	m.mu.Unlock()
+}
+func (m *Manager) runCleanupWorker() {
+	for {
+		m.mu.Lock()
+		var runtime *managedRuntime
+		for _, r := range m.retired {
+			if r.cleanupState == generationCleanupPending {
+				runtime = r
+				break
+			}
+		}
+		if runtime == nil {
+			m.cleanupWorkerRunning = false
+			m.mu.Unlock()
+			return
+		}
+		runtime.cleanupState = generationCleanupRunning
+		m.mu.Unlock()
+		results := m.closeManagedResources(runtime)
+		for _, result := range results {
+			if result.err != nil && m.onCleanupFailure != nil {
+				m.onCleanupFailure(CleanupFailure{ProjectID: m.projectID, ServingStateID: runtime.servingStateID, DuckLakeSnapshotID: runtime.snapshotID, Resource: result.resource, Err: result.err})
+			}
+		}
+		m.mu.Lock()
+		var errs []error
+		for _, result := range results {
+			errs = append(errs, result.err)
+		}
+		runtime.cleanupErr = errors.Join(errs...)
+		runtime.cleanupState = generationCleanupFinished
+		m.removeRetiredLocked(runtime)
+		close(runtime.cleanupDone)
+		m.mu.Unlock()
+		if m.onDrained != nil {
+			m.onDrained(runtime.servingStateID, runtime.snapshotID)
+		}
+	}
+}
+func (m *Manager) removeRetiredLocked(runtime *managedRuntime) {
+	for i, r := range m.retired {
+		if r == runtime {
+			m.retired = append(m.retired[:i], m.retired[i+1:]...)
+			return
+		}
+	}
+}
+func (m *Manager) scheduledCleanupLocked() []*managedRuntime {
+	out := make([]*managedRuntime, 0, len(m.retired))
+	for _, r := range m.retired {
+		if r.cleanupState != generationCleanupFinished {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+func (m *Manager) waitForCleanup(targets []*managedRuntime) error {
+	if len(targets) == 0 {
 		return nil
 	}
-	return lifetime.Release()
+	timer := time.NewTimer(m.cleanupDrainTimeout)
+	defer timer.Stop()
+	var errs []error
+	for _, r := range targets {
+		select {
+		case <-r.cleanupDone:
+			errs = append(errs, r.cleanupErr)
+		case <-timer.C:
+			return errors.Join(errors.Join(errs...), fmt.Errorf("runtime cleanup did not drain within %s", m.cleanupDrainTimeout))
+		}
+	}
+	return errors.Join(errs...)
 }
 
-func closeRuntimeLifetime(lifetime RuntimeLifetime) error {
-	if lifetime == nil {
-		return nil
-	}
-	return lifetime.Close()
+type cleanupResult struct {
+	resource CleanupResource
+	err      error
 }
 
-func closeCandidatePreparationLifetime(candidate *candidatePreparationContext) error {
-	if candidate == nil {
+func (m *Manager) closeManaged(runtime *managedRuntime) error {
+	var errs []error
+	for _, result := range m.closeManagedResources(runtime) {
+		errs = append(errs, result.err)
+	}
+	return errors.Join(errs...)
+}
+func (m *Manager) closeManagedResources(runtime *managedRuntime) []cleanupResult {
+	if runtime == nil {
 		return nil
 	}
-	err := closeRuntimeLifetime(candidate.lifetime)
-	candidate.lifetime = nil
-	return err
+	runtime.cleanupOnce.Do(func() {
+		var out []cleanupResult
+		if err := closeRuntime(runtime.runtime); err != nil {
+			out = append(out, cleanupResult{CleanupResourceRuntime, err})
+		}
+		if err := releaseManaged(runtime.managedData); err != nil {
+			out = append(out, cleanupResult{CleanupResourceManagedData, err})
+		}
+		if err := closeSnapshotLease(runtime.snapshotLease); err != nil {
+			out = append(out, cleanupResult{CleanupResourceSnapshotLease, err})
+		}
+		if err := closeRuntimeLifetime(runtime.runtimeLifetime); err != nil {
+			out = append(out, cleanupResult{CleanupResourceDependency, err})
+		}
+		runtime.cleanupResults = out
+	})
+	return append([]cleanupResult(nil), runtime.cleanupResults...)
 }
 
 type runtimeLease struct {
@@ -1092,28 +860,23 @@ func (l *runtimeLease) Runtime() Runtime {
 	}
 	return l.managed.runtime
 }
-
-func (l *runtimeLease) ServingStateID() servingstate.ID {
+func (l *runtimeLease) Identity() projectgraph.ServingIdentity {
 	if l == nil || l.managed == nil {
-		return ""
+		return projectgraph.ServingIdentity{}
 	}
-	return l.managed.servingStateID
+	return l.managed.identity
 }
-
 func (l *runtimeLease) DuckLakeSnapshotID() int64 {
 	if l == nil || l.managed == nil {
 		return 0
 	}
 	return l.managed.snapshotID
 }
-
 func (l *runtimeLease) Release() {
-	if l == nil || l.manager == nil || l.managed == nil {
+	if l == nil || l.manager == nil {
 		return
 	}
-	l.once.Do(func() {
-		l.manager.release(l.managed)
-	})
+	l.once.Do(func() { l.manager.release(l.managed) })
 }
 
 type persistentSnapshotLease struct {
@@ -1143,31 +906,21 @@ func (l *persistentSnapshotLease) Close() error {
 	})
 	return l.err
 }
-
-func (m *Manager) createPersistentLease(ctx context.Context, servingStateID servingstate.ID, snapshotID int64) (*persistentSnapshotLease, error) {
+func (m *Manager) createPersistentLease(ctx context.Context, id servingstate.ID, snapshotID int64) (*persistentSnapshotLease, error) {
 	repo, ok := m.repo.(SnapshotLeaseRepository)
 	if !ok || snapshotID <= 0 {
 		return nil, nil
 	}
-	expiresAt := time.Now().Add(m.leaseTTL)
-	leaseID, err := repo.CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{
-		WorkspaceID:        m.workspaceID,
-		Environment:        m.environment,
-		ServingStateID:     servingStateID,
-		DuckLakeSnapshotID: snapshotID,
-		OwnerID:            m.leaseOwner,
-		ExpiresAt:          expiresAt,
-	})
+	leaseID, err := repo.CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{ServingStateID: id, DuckLakeSnapshotID: snapshotID, OwnerID: m.leaseOwner, ExpiresAt: time.Now().Add(m.leaseTTL)})
 	if err != nil {
 		return nil, err
 	}
 	heartbeatCtx, cancel := context.WithCancel(context.Background())
 	go m.heartbeatLease(heartbeatCtx, repo, leaseID)
-	return &persistentSnapshotLease{repo: repo, id: leaseID, servingStateID: servingStateID, snapshotID: snapshotID, cancel: cancel, enqueue: m.releaseQueue.enqueue}, nil
+	return &persistentSnapshotLease{repo: repo, id: leaseID, servingStateID: id, snapshotID: snapshotID, cancel: cancel, enqueue: m.releaseQueue.enqueue}, nil
 }
-
-func (m *Manager) heartbeatLease(ctx context.Context, repo SnapshotLeaseRepository, leaseID string) {
-	defer m.setLeaseRenewalError(leaseID, nil)
+func (m *Manager) heartbeatLease(ctx context.Context, repo SnapshotLeaseRepository, id string) {
+	defer m.setLeaseRenewalError(id, nil)
 	interval := m.leaseTTL / 2
 	if interval <= 0 {
 		interval = time.Minute
@@ -1179,75 +932,194 @@ func (m *Manager) heartbeatLease(ctx context.Context, repo SnapshotLeaseReposito
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			err := renewSnapshotLease(ctx, repo, leaseID, time.Now().Add(m.leaseTTL), 3, 100*time.Millisecond)
-			m.setLeaseRenewalError(leaseID, err)
-			if err != nil {
-				m.logger.Error("snapshot lease renewal failed", "lease_id", leaseID, "workspace_id", m.workspaceID, "error", err)
-				if m.onLeaseRenewalFailure != nil {
-					m.onLeaseRenewalFailure(err)
-				}
+			err := renewSnapshotLease(ctx, repo, id, time.Now().Add(m.leaseTTL), 3, 100*time.Millisecond)
+			m.setLeaseRenewalError(id, err)
+			if err != nil && m.onLeaseRenewalFailure != nil {
+				m.onLeaseRenewalFailure(err)
 			}
 		}
 	}
 }
-
-func renewSnapshotLease(ctx context.Context, repo SnapshotLeaseRepository, leaseID string, expiresAt time.Time, attempts int, backoff time.Duration) error {
-	if attempts < 1 {
-		attempts = 1
-	}
-	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		lastErr = repo.ExtendQuerySnapshotLease(requestCtx, leaseID, expiresAt)
+func renewSnapshotLease(ctx context.Context, repo SnapshotLeaseRepository, id string, expires time.Time, attempts int, backoff time.Duration) error {
+	var last error
+	for i := 0; i < attempts; i++ {
+		request, cancel := context.WithTimeout(ctx, 5*time.Second)
+		last = repo.ExtendQuerySnapshotLease(request, id, expires)
 		cancel()
-		if lastErr == nil {
+		if last == nil {
 			return nil
 		}
-		if attempt == attempts-1 {
-			break
+		if i+1 < attempts {
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+			backoff *= 2
 		}
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-		backoff *= 2
 	}
-	return fmt.Errorf("extend snapshot lease %q after %d attempts: %w", leaseID, attempts, lastErr)
+	return fmt.Errorf("extend snapshot lease %q after %d attempts: %w", id, attempts, last)
+}
+func releaseSnapshotLease(repo SnapshotLeaseRepository, id string) error {
+	if repo == nil || id == "" {
+		return nil
+	}
+	delay := 25 * time.Millisecond
+	var last error
+	for i := 0; i < 5; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		last = repo.ReleaseQuerySnapshotLease(ctx, id)
+		cancel()
+		if last == nil {
+			return nil
+		}
+		time.Sleep(delay)
+		delay *= 2
+	}
+	return last
+}
+func (m *Manager) releaseSnapshotLease(task snapshotLeaseReleaseTask) error {
+	err := releaseSnapshotLease(task.repo, task.leaseID)
+	if err != nil && m.onCleanupFailure != nil {
+		m.onCleanupFailure(CleanupFailure{ProjectID: m.projectID, ServingStateID: task.servingStateID, DuckLakeSnapshotID: task.snapshotID, Resource: CleanupResourceSnapshotLease, Err: err})
+	}
+	return err
 }
 
+type snapshotLeaseReleaseTask struct {
+	repo           SnapshotLeaseRepository
+	leaseID        string
+	servingStateID servingstate.ID
+	snapshotID     int64
+}
+type snapshotLeaseReleaseQueue struct {
+	mu         sync.Mutex
+	queue      chan snapshotLeaseReleaseTask
+	accepting  bool
+	workerDone chan struct{}
+	process    func(snapshotLeaseReleaseTask) error
+	pending    atomic.Int64
+}
+
+func newSnapshotLeaseReleaseQueue(capacity int, process func(snapshotLeaseReleaseTask) error) *snapshotLeaseReleaseQueue {
+	q := &snapshotLeaseReleaseQueue{queue: make(chan snapshotLeaseReleaseTask, capacity), accepting: true, workerDone: make(chan struct{}), process: process}
+	go q.run()
+	return q
+}
+func (q *snapshotLeaseReleaseQueue) enqueue(task snapshotLeaseReleaseTask) error {
+	if q == nil || task.repo == nil || task.leaseID == "" {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.accepting {
+		return errors.New("snapshot lease release queue is closed")
+	}
+	select {
+	case q.queue <- task:
+		q.pending.Add(1)
+		return nil
+	default:
+		return errors.New("snapshot lease release queue is full")
+	}
+}
+func (q *snapshotLeaseReleaseQueue) run() {
+	defer close(q.workerDone)
+	for task := range q.queue {
+		if q.process != nil {
+			_ = q.process(task)
+		}
+		q.pending.Add(-1)
+	}
+}
+func (q *snapshotLeaseReleaseQueue) close(timeout time.Duration) error {
+	if q == nil {
+		return nil
+	}
+	q.mu.Lock()
+	if q.accepting {
+		q.accepting = false
+		close(q.queue)
+	}
+	q.mu.Unlock()
+	if timeout <= 0 {
+		<-q.workerDone
+		return nil
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-q.workerDone:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("snapshot lease release queue did not drain before shutdown (remaining=%d)", q.len())
+	}
+}
+func (q *snapshotLeaseReleaseQueue) len() int {
+	if q == nil {
+		return 0
+	}
+	return int(q.pending.Load())
+}
+
+func closeRuntime(runtime Runtime) error {
+	if runtime == nil {
+		return nil
+	}
+	return runtime.Close()
+}
+func releaseManaged(value ManagedDataLifetime) error {
+	if value == nil {
+		return nil
+	}
+	return value.Release()
+}
+func closeRuntimeLifetime(value RuntimeLifetime) error {
+	if value == nil {
+		return nil
+	}
+	return value.Close()
+}
+func closeSnapshotLease(value *persistentSnapshotLease) error {
+	if value == nil {
+		return nil
+	}
+	return value.Close()
+}
+func closeCandidatePreparationLifetime(candidate *candidatePreparationContext) error {
+	if candidate == nil {
+		return nil
+	}
+	err := closeRuntimeLifetime(candidate.lifetime)
+	candidate.lifetime = nil
+	return err
+}
 func normalizedLeaseTTL(value time.Duration) time.Duration {
 	if value <= 0 {
 		return 5 * time.Minute
 	}
 	return value
 }
-
 func normalizedCleanupDrainTimeout(value time.Duration) time.Duration {
 	if value <= 0 {
 		return 15 * time.Second
 	}
 	return value
 }
-
 func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
+	for _, v := range values {
+		if v != "" {
+			return v
 		}
 	}
 	return ""
 }
-
 func snapshotKeys(values map[int64]struct{}) []int64 {
-	if len(values) == 0 {
-		return nil
-	}
 	keys := make([]int64, 0, len(values))
-	for value := range values {
-		keys = append(keys, value)
+	for k := range values {
+		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	return keys

@@ -7,19 +7,23 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
+// Registry is retained as the process-local composition object, but owns one
+// manager only.  There is no workspace/target map and no partial graph swap.
 type RegistryOptions struct {
 	Repo                        ServingStateRepository
-	WorkspaceIDs                []servingstate.WorkspaceID
+	ProjectID                   projectgraph.ResourceID
 	Environment                 servingstate.Environment
 	Factory                     RuntimeFactory
 	ManagedData                 ManagedDataResolver
+	Authorization               AuthorizationSnapshotInstaller
 	Now                         func() time.Time
 	OnDrained                   func(servingstate.ID, int64)
 	Logger                      *slog.Logger
@@ -33,633 +37,333 @@ type RegistryOptions struct {
 }
 
 type Registry struct {
-	mu                          sync.RWMutex
-	prepareMu                   sync.Mutex
-	cutoverMu                   sync.RWMutex
-	repo                        ServingStateRepository
-	environment                 servingstate.Environment
-	factory                     RuntimeFactory
-	managedData                 ManagedDataResolver
-	onDrained                   func(servingstate.ID, int64)
-	logger                      *slog.Logger
-	onCleanupFailure            func(CleanupFailure)
-	onLeaseRenewalFailure       func(error)
-	leaseTTL                    time.Duration
-	leaseOwner                  string
-	leaseReleaseQueueCapacity   int
-	leaseReleaseShutdownTimeout time.Duration
-	cleanupDrainTimeout         time.Duration
-	managers                    map[servingstate.WorkspaceID]*Manager
-	candidates                  *candidateRuntimeRegistry
-	closed                      bool
-	closeDone                   chan struct{}
-	closeErr                    error
+	mu         sync.Mutex
+	manager    *Manager
+	candidates *candidateRuntimeRegistry
+	now        func() time.Time
+	closed     bool
+	closeErr   error
+	closeDone  chan struct{}
 }
 
 var ErrRegistryClosed = errors.New("runtime registry closed")
 
-type RegistryPrepared struct {
-	registry    *Registry
-	workspaceID servingstate.WorkspaceID
-	manager     *Manager
-	prepared    servingstate.PreparedRuntime
-}
+type PreparedVerification struct{ Digest string }
+type RuntimeVerifier interface{ Verify(context.Context) error }
 
-// PreparedSet contains candidate runtimes that must become visible as one rollout.
-type PreparedSet struct {
-	mu        sync.Mutex
-	registry  *Registry
-	items     []*RegistryPrepared
-	committed bool
-	consumed  bool
-}
-
-// PreparedSnapshot identifies durable snapshot metadata produced while a
-// serving-state candidate is still private.
-type PreparedSnapshot struct {
-	WorkspaceID        servingstate.WorkspaceID
-	ServingStateID     servingstate.ID
-	DuckLakeSnapshotID int64
-}
-
-type PreparedVerification struct {
-	Digest string
-}
-
-type RuntimeVerifier interface {
-	Verify(context.Context) error
-}
-
-// Snapshots returns candidate snapshot metadata in deterministic workspace
-// order. Callers may persist these values before the atomic activation step.
-func (p *PreparedSet) Snapshots() []PreparedSnapshot {
-	if p == nil {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	out := make([]PreparedSnapshot, 0, len(p.items))
-	for _, item := range p.items {
-		if item == nil {
-			continue
-		}
-		prepared, ok := item.prepared.(*Prepared)
-		if !ok || prepared == nil {
-			continue
-		}
-		out = append(out, PreparedSnapshot{
-			WorkspaceID:        item.workspaceID,
-			ServingStateID:     prepared.servingStateID,
-			DuckLakeSnapshotID: prepared.snapshotID,
-		})
-	}
-	return out
-}
-
-// ServingStateCandidate binds an unpublished runtime preparation to an
-// explicit managed-data resolution. The resolution is committed separately.
 type ServingStateCandidate struct {
 	ServingStateID string
 	ManagedData    ManagedDataResolution
 }
 
-func (p *PreparedSet) Close() error {
-	if p == nil {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	var first error
-	for _, item := range p.items {
-		if err := item.Close(); err != nil && first == nil {
-			first = err
-		}
-	}
-	return first
-}
-
-func (r *Registry) VerifyPreparedSet(
-	ctx context.Context,
-	set *PreparedSet,
-) (PreparedVerification, error) {
-	if set == nil || set.registry != r {
-		return PreparedVerification{}, fmt.Errorf(
-			"prepared set belongs to a different host",
-		)
-	}
-	set.mu.Lock()
-	defer set.mu.Unlock()
-	if set.committed || set.consumed {
-		return PreparedVerification{}, fmt.Errorf(
-			"prepared set is no longer verifiable",
-		)
-	}
-	hash := sha256.New()
-	for _, item := range set.items {
-		if item == nil || item.registry != r {
-			return PreparedVerification{}, fmt.Errorf("prepared runtime is nil")
-		}
-		prepared, ok := item.prepared.(*Prepared)
-		if !ok || prepared == nil {
-			return PreparedVerification{}, fmt.Errorf(
-				"prepared runtime belongs to a different host",
-			)
-		}
-		prepared.mu.Lock()
-		if prepared.state != preparedStateOpen || prepared.runtime == nil {
-			prepared.mu.Unlock()
-			return PreparedVerification{}, fmt.Errorf(
-				"prepared runtime is no longer verifiable",
-			)
-		}
-		verifier, ok := prepared.runtime.(RuntimeVerifier)
-		servingStateID := prepared.servingStateID
-		digest := prepared.digest
-		snapshotID := prepared.snapshotID
-		prepared.mu.Unlock()
-		if !ok {
-			return PreparedVerification{}, fmt.Errorf(
-				"prepared runtime %s does not support verification",
-				servingStateID,
-			)
-		}
-		if err := verifier.Verify(ctx); err != nil {
-			return PreparedVerification{}, fmt.Errorf(
-				"verify prepared runtime %s: %w",
-				servingStateID,
-				err,
-			)
-		}
-		fmt.Fprintf(
-			hash,
-			"%s\x00%s\x00%s\x00%d\n",
-			item.workspaceID,
-			servingStateID,
-			digest,
-			snapshotID,
-		)
-	}
-	return PreparedVerification{
-		Digest: "sha256:" + hex.EncodeToString(hash.Sum(nil)),
-	}, nil
-}
-
-func (p *RegistryPrepared) Close() error {
-	if p == nil || p.prepared == nil {
-		return nil
-	}
-	return p.prepared.Close()
-}
-
-type WorkspaceProvider struct {
-	registry    *Registry
-	workspaceID servingstate.WorkspaceID
-}
-
 func NewRegistryWithFactory(options RegistryOptions) *Registry {
-	registry := &Registry{
-		repo:                        options.Repo,
-		environment:                 servingstate.NormalizeEnvironment(options.Environment),
-		factory:                     options.Factory,
-		managedData:                 options.ManagedData,
-		onDrained:                   options.OnDrained,
-		logger:                      options.Logger,
-		onCleanupFailure:            options.OnCleanupFailure,
-		onLeaseRenewalFailure:       options.OnLeaseRenewalFailure,
-		leaseTTL:                    options.LeaseTTL,
-		leaseOwner:                  options.LeaseOwner,
-		leaseReleaseQueueCapacity:   options.LeaseReleaseQueueCapacity,
-		leaseReleaseShutdownTimeout: options.LeaseReleaseShutdownTimeout,
-		cleanupDrainTimeout:         normalizedCleanupDrainTimeout(options.CleanupDrainTimeout),
-		managers:                    map[servingstate.WorkspaceID]*Manager{},
-		candidates:                  newCandidateRuntimeRegistry(options.Now),
+	now := options.Now
+	if now == nil {
+		now = time.Now
 	}
-	for _, workspaceID := range options.WorkspaceIDs {
-		registry.managerForWorkspace(workspaceID)
-	}
-	return registry
+	r := &Registry{now: now, closeDone: make(chan struct{})}
+	r.manager = NewManagerWithFactory(ManagerOptions{Repo: options.Repo, ProjectID: options.ProjectID, Environment: options.Environment, Factory: options.Factory, ManagedData: options.ManagedData, Authorization: options.Authorization, OnDrained: options.OnDrained, Logger: options.Logger, OnCleanupFailure: options.OnCleanupFailure, OnLeaseRenewalFailure: options.OnLeaseRenewalFailure, LeaseTTL: options.LeaseTTL, LeaseOwner: options.LeaseOwner, LeaseReleaseQueueCapacity: options.LeaseReleaseQueueCapacity, LeaseReleaseShutdownTimeout: options.LeaseReleaseShutdownTimeout, CleanupDrainTimeout: options.CleanupDrainTimeout})
+	r.candidates = newCandidateRuntimeRegistry(now)
+	return r
 }
 
+func (r *Registry) ProjectID() projectgraph.ResourceID {
+	if r == nil || r.manager == nil {
+		return ""
+	}
+	return r.manager.ProjectID()
+}
+func (r *Registry) Environment() servingstate.Environment {
+	if r == nil || r.manager == nil {
+		return ""
+	}
+	return r.manager.Environment()
+}
 func (r *Registry) Reload(ctx context.Context) error {
-	r.prepareMu.Lock()
-	defer r.prepareMu.Unlock()
-	r.cutoverMu.RLock()
-	defer r.cutoverMu.RUnlock()
-	if r.closed {
+	if r == nil || r.manager == nil {
 		return ErrRegistryClosed
 	}
-	for _, workspaceID := range r.workspaceIDs() {
-		manager := r.managerForWorkspace(workspaceID)
-		err := manager.ReloadBeforePrepare(ctx, nil)
-		if err != nil {
-			return err
-		}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return ErrRegistryClosed
 	}
-	return nil
+	return r.manager.Reload(ctx)
 }
-
-func (r *Registry) PrepareServingState(ctx context.Context, servingStateID string) (servingstate.PreparedRuntime, error) {
-	current, err := r.repo.ByID(ctx, servingstate.ID(servingStateID))
+func (r *Registry) PrepareServingState(ctx context.Context, id string) (*Prepared, error) {
+	if r == nil || r.manager == nil {
+		return nil, ErrRegistryClosed
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil, ErrRegistryClosed
+	}
+	prepared, err := r.manager.PrepareServingState(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if servingstate.NormalizeEnvironment(current.Environment) != r.environment {
-		return nil, fmt.Errorf("serving state %s environment = %q, want %q", servingStateID, current.Environment, r.environment)
-	}
-	r.prepareMu.Lock()
-	r.cutoverMu.RLock()
-	if r.closed {
-		r.cutoverMu.RUnlock()
-		r.prepareMu.Unlock()
+	return prepared, nil
+}
+
+func (r *Registry) PrepareServingStateCandidate(ctx context.Context, input ServingStateCandidate) (*Prepared, error) {
+	if r == nil || r.manager == nil {
 		return nil, ErrRegistryClosed
 	}
-	manager := r.managerForWorkspace(current.WorkspaceID)
-	prepared, err := manager.PrepareServingState(ctx, servingStateID)
-	r.cutoverMu.RUnlock()
-	r.prepareMu.Unlock()
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil, ErrRegistryClosed
+	}
+	state, err := r.manager.repo.ByID(ctx, servingstate.ID(input.ServingStateID))
 	if err != nil {
 		return nil, err
 	}
-	return &RegistryPrepared{registry: r, workspaceID: current.WorkspaceID, manager: manager, prepared: prepared}, nil
-}
-
-// LeaseRenewalError aggregates failures for every runtime generation owned by
-// this registry. A non-nil error is a fail-closed readiness signal.
-func (r *Registry) LeaseRenewalError() error {
-	if r == nil {
-		return nil
+	if state.ProjectID != r.ProjectID() || servingstate.NormalizeEnvironment(state.Environment) != r.Environment() {
+		return nil, fmt.Errorf("serving state %s is outside project environment", input.ServingStateID)
 	}
-	r.mu.RLock()
-	managers := make([]*Manager, 0, len(r.managers))
-	for _, manager := range r.managers {
-		managers = append(managers, manager)
-	}
-	r.mu.RUnlock()
-	errs := make([]error, 0, len(managers))
-	for _, manager := range managers {
-		if err := manager.LeaseRenewalError(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// PrepareServingStates prepares one candidate per workspace without exposing a
-// partial rollout. Preparation is serialized because DuckLake has one writer.
-func (r *Registry) PrepareServingStates(ctx context.Context, servingStateIDs []string) (*PreparedSet, error) {
-	candidates := make([]servingStateCandidate, 0, len(servingStateIDs))
-	for _, servingStateID := range servingStateIDs {
-		candidates = append(candidates, servingStateCandidate{servingStateID: servingStateID})
-	}
-	return r.prepareServingStateCandidates(ctx, candidates)
-}
-
-// PrepareServingStateCandidates prepares runtime generations against data
-// that is not durable yet. ActivatePreparedSet must persist the corresponding
-// bindings in its activation callback before exposing these runtimes.
-func (r *Registry) PrepareServingStateCandidates(ctx context.Context, inputs []ServingStateCandidate) (*PreparedSet, error) {
-	candidates := make([]servingStateCandidate, 0, len(inputs))
-	for _, input := range inputs {
-		resolution := input.ManagedData
-		candidates = append(candidates, servingStateCandidate{servingStateID: input.ServingStateID, managedData: &resolution})
-	}
-	return r.prepareServingStateCandidates(ctx, candidates)
-}
-
-type servingStateCandidate struct {
-	servingStateID string
-	managedData    *ManagedDataResolution
-}
-
-func (r *Registry) prepareServingStateCandidates(ctx context.Context, inputs []servingStateCandidate) (_ *PreparedSet, resultErr error) {
-	defer func() {
-		for _, input := range inputs {
-			if input.managedData == nil || input.managedData.Lifetime == nil {
-				continue
-			}
-			resultErr = errors.Join(resultErr, releaseManagedDataLifetime(input.managedData.Lifetime))
-			input.managedData.Lifetime = nil
-		}
-	}()
-	type candidate struct {
-		state       servingstate.State
-		artifact    servingstate.Artifact
-		managedData *ManagedDataResolution
-	}
-	candidates := make([]candidate, 0, len(inputs))
-	workspaces := make(map[servingstate.WorkspaceID]struct{}, len(inputs))
-	for _, input := range inputs {
-		current, err := r.repo.ByID(ctx, servingstate.ID(input.servingStateID))
-		if err != nil {
-			return nil, err
-		}
-		if servingstate.NormalizeEnvironment(current.Environment) != r.environment {
-			return nil, fmt.Errorf("serving state %s environment = %q, want %q", input.servingStateID, current.Environment, r.environment)
-		}
-		if _, duplicate := workspaces[current.WorkspaceID]; duplicate {
-			return nil, fmt.Errorf("multiple serving states supplied for workspace %s", current.WorkspaceID)
-		}
-		workspaces[current.WorkspaceID] = struct{}{}
-		artifact, err := r.repo.ArtifactByServingState(ctx, current.ID)
-		if err != nil {
-			return nil, err
-		}
-		candidates = append(candidates, candidate{state: current, artifact: artifact, managedData: input.managedData})
-	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].state.WorkspaceID < candidates[j].state.WorkspaceID })
-
-	r.prepareMu.Lock()
-	defer r.prepareMu.Unlock()
-	r.cutoverMu.RLock()
-	defer r.cutoverMu.RUnlock()
-	if r.closed {
-		return nil, ErrRegistryClosed
-	}
-	set := &PreparedSet{registry: r, items: make([]*RegistryPrepared, 0, len(candidates))}
-	for _, candidate := range candidates {
-		manager := r.managerForWorkspace(candidate.state.WorkspaceID)
-		var prepared *Prepared
-		var err error
-		if candidate.managedData == nil {
-			prepared, err = manager.prepare(ctx, candidate.state, candidate.artifact)
-		} else {
-			prepared, err = manager.prepareResolved(ctx, candidate.state, candidate.artifact, *candidate.managedData)
-			candidate.managedData.Lifetime = nil
-		}
-		if err != nil {
-			_ = set.Close()
-			return nil, err
-		}
-		set.items = append(set.items, &RegistryPrepared{registry: r, workspaceID: candidate.state.WorkspaceID, manager: manager, prepared: prepared})
-	}
-	return set, nil
-}
-
-// ActivatePrepared serializes a single-workspace durable pointer
-// update with its in-memory runtime swap.
-func (r *Registry) ActivatePrepared(candidate servingstate.PreparedRuntime, activate func() error) error {
-	if activate == nil {
-		return fmt.Errorf("metadata activation is required")
-	}
-	prepared, err := r.sealPrepared(candidate)
+	artifact, err := r.manager.repo.ArtifactByServingState(ctx, state.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if prepared.candidateID != "" {
-		return errors.Join(
-			fmt.Errorf("private candidate runtime cannot be activated"),
-			prepared.abort(),
-		)
+	// Managed data was resolved by the caller and its lifetime is transferred
+	// to the prepared generation exactly once.
+	prepared, err := r.manager.prepareResolved(ctx, state, artifact, input.ManagedData)
+	if err != nil {
+		return nil, err
 	}
-	r.cutoverMu.Lock()
-	if r.closed {
-		r.cutoverMu.Unlock()
-		return errors.Join(ErrRegistryClosed, prepared.abort())
-	}
-	if err := activate(); err != nil {
-		r.cutoverMu.Unlock()
-		return errors.Join(err, prepared.abort())
-	}
-	retired := prepared.publish()
-	r.cutoverMu.Unlock()
-	prepared.manager.cleanupRetired(retired)
-	return nil
+	return prepared, nil
 }
 
-// ActivatePreparedSet serializes the durable pointer transaction with the
-// in-memory swap, so requests cannot observe a mixture of rollout revisions.
-func (r *Registry) ActivatePreparedSet(set *PreparedSet, activate func() error) error {
-	if set == nil || set.registry != r {
-		return fmt.Errorf("prepared set belongs to a different host")
-	}
-	set.mu.Lock()
-	defer set.mu.Unlock()
-	if set.committed {
-		return fmt.Errorf("prepared set is already committed")
-	}
-	if set.consumed {
-		return fmt.Errorf("prepared set is already consumed")
-	}
-	if activate == nil {
-		return fmt.Errorf("metadata activation is required")
-	}
-	workspaces := make(map[servingstate.WorkspaceID]struct{}, len(set.items))
-	for _, item := range set.items {
-		if item == nil || item.registry != r || item.manager == nil || item.prepared == nil {
-			return fmt.Errorf("prepared runtime is nil")
-		}
-		if _, duplicate := workspaces[item.workspaceID]; duplicate {
-			return fmt.Errorf("multiple prepared runtimes supplied for workspace %s", item.workspaceID)
-		}
-		workspaces[item.workspaceID] = struct{}{}
-	}
-	batch := make([]*sealedPrepared, 0, len(set.items))
-	for _, item := range set.items {
-		sealed, err := r.sealRegistryPrepared(item)
-		if err != nil {
-			return errors.Join(err, abortSealed(batch))
-		}
-		if sealed.candidateID != "" {
-			return errors.Join(
-				fmt.Errorf("private candidate runtime cannot be activated"),
-				sealed.abort(),
-				abortSealed(batch),
-			)
-		}
-		batch = append(batch, sealed)
-	}
-	set.consumed = true
-
-	r.cutoverMu.Lock()
-	if r.closed {
-		r.cutoverMu.Unlock()
-		return errors.Join(ErrRegistryClosed, abortSealed(batch))
-	}
-	if err := activate(); err != nil {
-		r.cutoverMu.Unlock()
-		return errors.Join(err, abortSealed(batch))
-	}
-	retired := make([]struct {
-		manager *Manager
-		runtime *managedRuntime
-	}, 0, len(batch))
-	for _, item := range batch {
-		retired = append(retired, struct {
-			manager *Manager
-			runtime *managedRuntime
-		}{manager: item.manager, runtime: item.publish()})
-	}
-	set.committed = true
-	r.cutoverMu.Unlock()
-	for _, item := range retired {
-		item.manager.cleanupRetired(item.runtime)
-	}
-	return nil
+func (m *Manager) prepareResolved(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, data ManagedDataResolution) (*Prepared, error) {
+	return m.prepareResolvedWithCandidate(ctx, state, artifact, data, nil)
 }
 
-func (r *Registry) sealPrepared(candidate servingstate.PreparedRuntime) (*sealedPrepared, error) {
-	prepared, ok := candidate.(*RegistryPrepared)
-	if !ok || prepared == nil {
-		return nil, fmt.Errorf("prepared runtime belongs to a different host")
+func (r *Registry) VerifyPrepared(ctx context.Context, prepared *Prepared) (PreparedVerification, error) {
+	if prepared == nil || prepared.owner != r.manager {
+		return PreparedVerification{}, errors.New("prepared runtime belongs to a different host")
 	}
-	return r.sealRegistryPrepared(prepared)
+	prepared.mu.Lock()
+	if prepared.state != preparedStateOpen {
+		prepared.mu.Unlock()
+		return PreparedVerification{}, errors.New("prepared runtime is no longer verifiable")
+	}
+	runtime := prepared.runtime
+	id := prepared.servingStateID
+	digest := prepared.digest
+	snapshot := prepared.snapshotID
+	prepared.mu.Unlock()
+	if runtime == nil {
+		return PreparedVerification{}, errors.New("prepared runtime is incomplete")
+	}
+	verifier, ok := runtime.(RuntimeVerifier)
+	if !ok {
+		return PreparedVerification{}, fmt.Errorf("prepared runtime %s does not support verification", id)
+	}
+	if err := verifier.Verify(ctx); err != nil {
+		return PreparedVerification{}, fmt.Errorf("verify prepared runtime %s: %w", id, err)
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", id, digest, snapshot)))
+	return PreparedVerification{Digest: "sha256:" + hex.EncodeToString(sum[:])}, nil
 }
 
-func (r *Registry) sealRegistryPrepared(prepared *RegistryPrepared) (*sealedPrepared, error) {
-	if prepared == nil || prepared.registry != r || prepared.manager == nil || prepared.prepared == nil {
-		return nil, fmt.Errorf("prepared runtime belongs to a different host")
+func (r *Registry) ActivatePrepared(candidate *Prepared, activate func() error) error {
+	if candidate == nil || candidate.owner != r.manager {
+		return errors.New("prepared runtime belongs to a different host")
 	}
-	return prepared.manager.sealPrepared(prepared.prepared)
+	if candidate.candidateID != "" {
+		return errors.New("private candidate runtime cannot be activated")
+	}
+	return r.manager.ActivatePrepared(candidate, activate)
+}
+func (r *Registry) ActivatePreparedContext(ctx context.Context, prepared *Prepared, activate func() error) error {
+	if prepared == nil || prepared.owner != r.manager {
+		return errors.New("prepared runtime belongs to a different host")
+	}
+	return r.manager.activatePreparedContext(ctx, prepared, activate)
 }
 
-func abortSealed(items []*sealedPrepared) error {
-	errs := make([]error, 0, len(items))
-	for _, item := range items {
-		if err := item.abort(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
-func (r *Registry) Close() error {
-	r.prepareMu.Lock()
-	r.cutoverMu.Lock()
-	if r.closed {
-		done := r.closeDone
-		r.cutoverMu.Unlock()
-		r.prepareMu.Unlock()
-		if done != nil {
-			<-done
-		}
-		return r.closeErr
-	}
-	r.closed = true
-	r.closeDone = make(chan struct{})
-	done := r.closeDone
-	r.cutoverMu.Unlock()
-	r.prepareMu.Unlock()
-
-	drainedCandidates, candidateTargets := r.candidates.close()
-	for _, generation := range drainedCandidates {
-		r.cleanupCandidateGeneration(generation)
-	}
-	var errs []error
-	for _, workspaceID := range r.workspaceIDs() {
-		if err := r.managerForWorkspace(workspaceID).Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if err := r.waitForCandidateCleanup(candidateTargets); err != nil {
-		errs = append(errs, err)
-	}
-	r.closeErr = errors.Join(errs...)
-	close(done)
-	return r.closeErr
-}
-
-func (r *Registry) AcquireForWorkspace(ctx context.Context, workspaceID servingstate.WorkspaceID) (Lease, error) {
+func (r *Registry) Acquire(ctx context.Context) (Lease, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	r.cutoverMu.RLock()
-	defer r.cutoverMu.RUnlock()
-	if r.closed {
+	if r == nil || r.manager == nil {
 		return nil, ErrRegistryClosed
 	}
-	r.mu.RLock()
-	manager := r.managers[workspaceID]
-	r.mu.RUnlock()
-	if manager == nil {
-		return nil, fmt.Errorf("no active LeapView serving state")
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return nil, ErrRegistryClosed
 	}
-	return manager.Acquire()
+	return r.manager.Acquire(ctx)
+}
+func (r *Registry) Provider() Provider { return r }
+func (r *Registry) LeasedSnapshots() []int64 {
+	if r == nil || r.manager == nil {
+		return nil
+	}
+	return r.manager.LeasedSnapshots()
+}
+func (r *Registry) LeaseRenewalError() error {
+	if r == nil || r.manager == nil {
+		return nil
+	}
+	return r.manager.LeaseRenewalError()
+}
+func (r *Registry) Close() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	if r.closed {
+		done := r.closeDone
+		r.mu.Unlock()
+		<-done
+		return r.closeErr
+	}
+	r.closed = true
+	r.mu.Unlock()
+	var errs []error
+	var candidateTargets []*candidateGeneration
+	var candidateCleanupErr error
+	if r.candidates != nil {
+		drained, targets := r.candidates.close()
+		candidateTargets = targets
+		for _, g := range drained {
+			r.cleanupCandidateGeneration(g)
+		}
+		if candidateCleanupErr = r.waitForCandidateCleanup(targets); candidateCleanupErr != nil {
+			errs = append(errs, candidateCleanupErr)
+		}
+	}
+	if r.manager != nil {
+		if candidateCleanupErr != nil {
+			errs = append(errs, r.manager.closeWithoutReleaseQueue())
+			go func() {
+				_ = r.waitForCandidateCleanup(candidateTargets)
+				if r.manager.releaseQueue != nil {
+					_ = r.manager.releaseQueue.close(r.manager.releaseShutdownTimeout)
+				}
+			}()
+		} else {
+			errs = append(errs, r.manager.Close())
+		}
+	}
+	r.closeErr = errors.Join(errs...)
+	close(r.closeDone)
+	return r.closeErr
 }
 
-func (r *Registry) ProviderForWorkspace(workspaceID servingstate.WorkspaceID) *WorkspaceProvider {
-	r.cutoverMu.RLock()
-	if !r.closed {
-		r.managerForWorkspace(workspaceID)
-	}
-	r.cutoverMu.RUnlock()
-	return &WorkspaceProvider{registry: r, workspaceID: workspaceID}
+// Candidate runtime methods remain project-scoped.  They intentionally do
+// not expose workspace/target selectors.
+func (r *Registry) RegisterPreparedCandidate(reg CandidateRegistration, candidate servingstate.PreparedRuntime) error {
+	return r.registerPreparedCandidate(reg, candidate)
 }
-
+func (r *Registry) PrepareCandidate(ctx context.Context, input CandidatePreparation) (servingstate.PreparedRuntime, error) {
+	return r.prepareCandidate(ctx, input)
+}
+func (r *Registry) PrepareAndRegisterCandidate(ctx context.Context, input CandidatePreparation) error {
+	candidate, err := r.PrepareCandidate(ctx, input)
+	if err != nil {
+		return err
+	}
+	return r.RegisterPreparedCandidate(input.Registration, candidate)
+}
+func (r *Registry) AcquireCandidate(ctx context.Context, request CandidateLeaseRequest) (Lease, error) {
+	if r == nil || r.candidates == nil {
+		return nil, ErrCandidateRuntimeClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	normalized, fingerprint, err := normalizeLeaseRequest(request, r.now())
+	if err != nil {
+		return nil, err
+	}
+	if normalized.ProjectID != r.ProjectID() {
+		return nil, fmt.Errorf("%w: candidate project does not match runtime host", ErrCandidateRuntimeIncompatible)
+	}
+	g, retired, err := r.candidates.acquire(normalized.CandidateID, normalized.OwnerID, normalized.ProjectID, fingerprint)
+	for _, x := range retired {
+		r.cleanupCandidateGeneration(x)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &candidateRuntimeLease{registry: r, generation: g}, nil
+}
+func (r *Registry) ResolveOwnedCandidate(candidateID, ownerID string) (OwnedCandidateView, error) {
+	if r == nil || r.candidates == nil {
+		return OwnedCandidateView{}, ErrCandidateRuntimeClosed
+	}
+	if candidateID != strings.TrimSpace(candidateID) || ownerID != strings.TrimSpace(ownerID) || candidateID == "" || ownerID == "" {
+		return OwnedCandidateView{}, ErrCandidateRuntimeNotFound
+	}
+	view, retired, err := r.candidates.resolveOwned(candidateID, ownerID, r.ProjectID(), r)
+	for _, g := range retired {
+		r.cleanupCandidateGeneration(g)
+	}
+	return view, err
+}
+func (r *Registry) RetireCandidate(id string) int {
+	if r == nil || r.candidates == nil || id != strings.TrimSpace(id) {
+		return 0
+	}
+	retired, count := r.candidates.retire(id)
+	for _, g := range retired {
+		r.cleanupCandidateGeneration(g)
+	}
+	return count
+}
+func (r *Registry) ReapExpiredCandidates(now time.Time) int {
+	if r == nil || r.candidates == nil {
+		return 0
+	}
+	retired, count := r.candidates.reap(now)
+	for _, g := range retired {
+		r.cleanupCandidateGeneration(g)
+	}
+	return count
+}
+func (r *Registry) cleanupCandidateGeneration(g *candidateGeneration) {
+	if g == nil {
+		return
+	}
+	g.cleanupOnce.Do(func() {
+		results := r.manager.closeManagedResources(g.managed)
+		var errs []error
+		for _, result := range results {
+			if result.err != nil {
+				errs = append(errs, result.err)
+				if r.manager.onCleanupFailure != nil {
+					r.manager.onCleanupFailure(CleanupFailure{ProjectID: r.ProjectID(), ServingStateID: g.managed.servingStateID, DuckLakeSnapshotID: g.managed.snapshotID, Resource: result.resource, Err: result.err})
+				}
+			}
+		}
+		g.cleanupErr = errors.Join(errs...)
+		close(g.cleanupDone)
+	})
+}
 func (r *Registry) waitForCandidateCleanup(targets []*candidateGeneration) error {
 	if len(targets) == 0 {
 		return nil
 	}
-	timer := time.NewTimer(r.cleanupDrainTimeout)
+	timer := time.NewTimer(r.manager.cleanupDrainTimeout)
 	defer timer.Stop()
-	for _, generation := range targets {
+	var errs []error
+	for _, g := range targets {
 		select {
-		case <-generation.cleanupDone:
+		case <-g.cleanupDone:
+			errs = append(errs, g.cleanupErr)
 		case <-timer.C:
-			return fmt.Errorf("candidate runtime cleanup did not drain within %s", r.cleanupDrainTimeout)
+			return errors.Join(errors.Join(errs...), fmt.Errorf("candidate cleanup did not drain before shutdown"))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-func (p *WorkspaceProvider) Acquire(ctx context.Context) (Lease, error) {
-	if p == nil || p.registry == nil {
-		return nil, fmt.Errorf("runtime provider is not configured")
-	}
-	return p.registry.AcquireForWorkspace(ctx, p.workspaceID)
-}
-
-func (r *Registry) LeasedSnapshots() []int64 {
-	r.mu.RLock()
-	managers := make([]*Manager, 0, len(r.managers))
-	for _, manager := range r.managers {
-		managers = append(managers, manager)
-	}
-	r.mu.RUnlock()
-	snapshots := map[int64]struct{}{}
-	for _, manager := range managers {
-		for _, snapshotID := range manager.LeasedSnapshots() {
-			snapshots[snapshotID] = struct{}{}
-		}
-	}
-	for _, snapshotID := range r.candidates.leasedSnapshots() {
-		snapshots[snapshotID] = struct{}{}
-	}
-	return snapshotKeys(snapshots)
-}
-
-func (r *Registry) managerForWorkspace(workspaceID servingstate.WorkspaceID) *Manager {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if manager := r.managers[workspaceID]; manager != nil {
-		return manager
-	}
-	manager := NewManagerWithFactory(ManagerOptions{
-		Repo:                        r.repo,
-		WorkspaceID:                 workspaceID,
-		Environment:                 r.environment,
-		Factory:                     r.factory,
-		ManagedData:                 r.managedData,
-		OnDrained:                   r.onDrained,
-		Logger:                      r.logger,
-		OnCleanupFailure:            r.onCleanupFailure,
-		OnLeaseRenewalFailure:       r.onLeaseRenewalFailure,
-		LeaseTTL:                    r.leaseTTL,
-		LeaseOwner:                  r.leaseOwner,
-		LeaseReleaseQueueCapacity:   r.leaseReleaseQueueCapacity,
-		LeaseReleaseShutdownTimeout: r.leaseReleaseShutdownTimeout,
-		CleanupDrainTimeout:         r.cleanupDrainTimeout,
-	})
-	r.managers[workspaceID] = manager
-	return manager
-}
-
-func (r *Registry) workspaceIDs() []servingstate.WorkspaceID {
-	r.mu.RLock()
-	ids := make([]servingstate.WorkspaceID, 0, len(r.managers))
-	for id := range r.managers {
-		ids = append(ids, id)
-	}
-	r.mu.RUnlock()
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids
-}
+var _ Provider = (*Registry)(nil)
