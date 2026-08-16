@@ -138,16 +138,17 @@ type platformServices struct {
 }
 
 type httpPolicy struct {
-	defaultEnvironment string
-	scimBearerToken    string
-	metricsBearerToken string
-	allowedHosts       []string
-	rateLimits         apihttpmiddleware.RateLimitConfig
-	securityHeaders    apihttpmiddleware.SecurityHeadersConfig
-	requestBodyLimit   apihttpmiddleware.RequestBodyLimitConfig
-	requestLogging     bool
-	managedDataTus     http.Handler
-	desktopDiscovery   http.Handler
+	defaultEnvironment   string
+	scimBearerToken      string
+	metricsBearerToken   string
+	allowedHosts         []string
+	rateLimits           apihttpmiddleware.RateLimitConfig
+	securityHeaders      apihttpmiddleware.SecurityHeadersConfig
+	requestBodyLimit     apihttpmiddleware.RequestBodyLimitConfig
+	requestLogging       bool
+	managedDataTus       http.Handler
+	managedDataBootstrap accessmodule.APIGenBootstrapAuthorizer
+	desktopDiscovery     http.Handler
 }
 
 type persistenceInputs struct {
@@ -549,7 +550,10 @@ func buildApplicationSurfaces(
 			}
 			return snapshot, nil
 		}
-		authorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
+		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
+		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection, func(ctx context.Context) (bool, error) {
+			return hasActiveBootstrapServingState(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, policy.defaultEnvironment)
+		})
 		routes.accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
 			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
 			if err != nil {
@@ -563,10 +567,10 @@ func buildApplicationSurfaces(
 		})
 		routes.accessModule.SetCurrentProjectID(runtime.resolveProjectID)
 		if routes.managedDataModule != nil {
-			routes.managedDataModule.SetAuthorizeConnection(authorizeConnection)
+			routes.managedDataModule.SetAuthorizeConnection(manageddatamodule.ConnectionAuthorizer(authorizeConnection))
 		}
 		if routes.releaseModule != nil {
-			routes.releaseModule.SetAuthorizeConnection(authorizeConnection)
+			routes.releaseModule.SetAuthorizeConnection(snapshotAuthorizeConnection)
 		}
 	}
 	moduleWorkflow.deploymentConfig = workflow.DeploymentConfig
@@ -1220,9 +1224,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if !ok {
 			return fmt.Errorf("bootstrap policy store does not expose the durable project claim")
 		}
-		apiGenAuthorizer.SetBootstrapAuthorizer(func(ctx context.Context, _ *http.Request, operationID string, projectID projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+		bootstrapAuthorizer := func(ctx context.Context, _ *http.Request, operationID string, projectID projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
 			return bootstrapAPIGenDecision(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, claimReader, policy.defaultEnvironment, operationID, projectID)
-		})
+		}
+		apiGenAuthorizer.SetBootstrapAuthorizer(bootstrapAuthorizer)
+		policy.managedDataBootstrap = bootstrapAuthorizer
 	}
 	if err := apigencommand.ValidateDependencies(apiaggregate.GetAPIGenCommandRuntimeContracts(), map[apigencommand.Dependency]bool{
 		apigencommand.DependencyAuthorization: apiGenAuthorizer != nil,
@@ -1459,8 +1465,9 @@ func hasActiveBootstrapServingState(
 // bootstrapAPIGenDecision is deliberately a read-only seam. It distinguishes
 // a typed empty active-generation pointer from a serving-state store failure,
 // then evaluates only the durable singleton claim and the explicit candidate
-// operation allowlist. Credential role/capability evidence is enforced by the
-// APIGen wrapper and by deployment's arm/worker revalidator, never here.
+// or managed-data operation allowlist. Credential role/capability evidence is
+// enforced by the APIGen wrapper and by deployment's arm/worker revalidator,
+// never here.
 func bootstrapAPIGenDecision(
 	ctx context.Context,
 	runtimeHost *runtimehostmodule.Module,
@@ -1484,9 +1491,7 @@ func bootstrapAPIGenDecision(
 	}
 	claim, err := claims.GetProjectClaim(ctx)
 	if errors.Is(err, deployment.ErrProjectClaimNotFound) {
-		return accessmodule.APIGenBootstrapDecision{
-			Handled: true, Allowed: operationID == "startProjectCandidate" || operationID == "planProjectCandidateSynchronization",
-		}, nil
+		return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowedWithoutClaim(operationID)}, nil
 	}
 	if err != nil {
 		return accessmodule.APIGenBootstrapDecision{}, fmt.Errorf("read bootstrap project claim: %w", err)
@@ -1494,12 +1499,28 @@ func bootstrapAPIGenDecision(
 	if claim.ProjectID != projectID || claim.Environment != servingstatemodule.Environment(strings.TrimSpace(environment)) {
 		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
 	}
-	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapCandidateOperation(operationID)}, nil
+	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowed(operationID)}, nil
 }
 
-func bootstrapCandidateOperation(operationID string) bool {
+func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization":
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization",
+		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		return true
+	case "managedDataTusTransport":
+		return true
+	default:
+		return false
+	}
+}
+
+func bootstrapOperationAllowedWithoutClaim(operationID string) bool {
+	switch operationID {
+	case "startProjectCandidate", "planProjectCandidateSynchronization",
+		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"managedDataTusTransport":
 		return true
 	default:
 		return false

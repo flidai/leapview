@@ -55,6 +55,16 @@ type tusAccess struct {
 	err       error
 }
 
+type bootstrapTusAccess struct {
+	tusAccess
+	allowed bool
+	err     error
+}
+
+func (a bootstrapTusAccess) AuthorizeBootstrapRequest(context.Context, *http.Request, access.Capability) (bool, error) {
+	return a.allowed, a.err
+}
+
 func (a tusAccess) Authenticate(next http.Handler) http.Handler { return next }
 func (a tusAccess) CurrentPrincipal(*http.Request) (accessmodule.Principal, bool) {
 	return a.principal, a.ok
@@ -249,5 +259,82 @@ func TestProtectManagedDataTransportValidatesBeforeDevBypass(t *testing.T) {
 	}
 	if len(resolved) != 1 || resolved[0] != uploadID {
 		t.Fatalf("resolver calls = %#v, want only validated target %q", resolved, uploadID)
+	}
+}
+
+func TestProtectManagedDataTransportBootstrapUsesExactTargetAndActiveFallback(t *testing.T) {
+	const uploadID = "tus_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	projectID := projectgraph.ResourceID("project_demo")
+	connectionID := projectgraph.ResourceID("connection_sales")
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := tusTargetResolverFunc(func(_ context.Context, id string) (projectgraph.ResourceID, projectgraph.ResourceID, error) {
+		if id != uploadID {
+			return "", "", manageddatacontrol.ErrNotFound
+		}
+		return projectID, connectionID, nil
+	})
+	allowedBootstrap := func(_ context.Context, _ *http.Request, operation string, target projectgraph.ResourceID, capability access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+		if operation != "managedDataTusTransport" || target != projectID || capability != access.CapabilityResourceEdit {
+			t.Fatalf("bootstrap identity = %q/%q/%q", operation, target, capability)
+		}
+		return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+	}
+	activeFallback := func(_ context.Context, _ *http.Request, _ string, _ projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+		return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+	}
+	serve := func(name string, accessValue canonicalAccessModule, runtime canonicalRuntimeHost, bootstrap accessmodule.APIGenBootstrapAuthorizer) {
+		t.Run(name, func(t *testing.T) {
+			handler := protectManagedDataTransportWithBootstrap(accessValue, runtime, resolve, bootstrap, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, tusRequest(http.MethodPatch, uploadID))
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d; body %q", response.Code, http.StatusNoContent, response.Body.String())
+			}
+		})
+	}
+	bootstrapAccess := bootstrapTusAccess{tusAccess: tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true}, allowed: true}
+	serve("bound but unactivated", bootstrapAccess, tusRuntime{project: projectID}, allowedBootstrap)
+	activeAccess := tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true, subjects: []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: "principal_admin"}}}
+	serve("active generation falls through snapshot", activeAccess, tusRuntime{project: projectID, lease: tusLease{identity: identity, snapshot: tusSnapshot(t, "principal_admin", connectionID, true)}}, activeFallback)
+
+	for _, test := range []struct {
+		name      string
+		access    bootstrapTusAccess
+		bootstrap accessmodule.APIGenBootstrapAuthorizer
+		want      int
+	}{
+		{name: "denied bootstrap target", access: bootstrapTusAccess{tusAccess: tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true}, allowed: true}, bootstrap: func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+			return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}, nil
+		}, want: http.StatusNotFound},
+		{name: "bootstrap evidence unavailable", access: bootstrapTusAccess{tusAccess: tusAccess{principal: accessmodule.Principal{ID: "principal_admin"}, ok: true}, allowed: true}, bootstrap: func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+			return accessmodule.APIGenBootstrapDecision{}, errors.New("state unavailable")
+		}, want: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := protectManagedDataTransportWithBootstrap(test.access, tusRuntime{}, resolve, test.bootstrap, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, tusRequest(http.MethodPatch, uploadID))
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d; body %q", response.Code, test.want, response.Body.String())
+			}
+		})
+	}
+	foreignResolve := tusTargetResolverFunc(func(_ context.Context, _ string) (projectgraph.ResourceID, projectgraph.ResourceID, error) {
+		return projectgraph.ResourceID("project_foreign"), connectionID, nil
+	})
+	foreignBootstrap := func(_ context.Context, _ *http.Request, operation string, target projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+		if operation != "managedDataTusTransport" || target != "project_foreign" {
+			t.Fatalf("foreign bootstrap identity = %q/%q", operation, target)
+		}
+		return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}, nil
+	}
+	foreignHandler := protectManagedDataTransportWithBootstrap(bootstrapAccess, tusRuntime{}, foreignResolve, foreignBootstrap, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	foreignResponse := httptest.NewRecorder()
+	foreignHandler.ServeHTTP(foreignResponse, tusRequest(http.MethodPatch, uploadID))
+	if foreignResponse.Code != http.StatusNotFound {
+		t.Fatalf("foreign target status = %d, want %d", foreignResponse.Code, http.StatusNotFound)
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -1056,11 +1057,16 @@ func decodePageToken(value, scope string) (string, error) {
 }
 
 func validScope(project, connection string) bool {
-	return validScopeID(project) && validScopeID(connection)
+	return validProjectResourceID(project) && validProjectResourceID(connection)
 }
 
 func validScopeID(value string) bool {
 	return scopeIDPattern.MatchString(value)
+}
+
+func validProjectResourceID(value string) bool {
+	_, err := projectgraph.NewResourceID(value)
+	return err == nil
 }
 
 func validUploadScope(project, connection, uploadSession string) bool {

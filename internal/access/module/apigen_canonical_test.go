@@ -647,8 +647,45 @@ func TestAPIGenCandidatePreActivationRequiresExplicitRESTTokenPlatformAdmin(t *t
 	if status, _ := serve(newAuthorizer(true), &empty); status != http.StatusForbidden {
 		t.Fatalf("empty token status = %d, want %d", status, http.StatusForbidden)
 	}
+	mismatchedPrincipal := *explicit
+	mismatchedPrincipal.Token.PrincipalID = "other-principal"
+	if status, _ := serve(newAuthorizer(true), &mismatchedPrincipal); status != http.StatusForbidden {
+		t.Fatalf("mismatched token principal status = %d, want %d", status, http.StatusForbidden)
+	}
+	authoring := *explicit
+	authoring.Authoring = &access.AuthoringSession{ID: "authoring_1", PrincipalID: "admin"}
+	if status, _ := serve(newAuthorizer(true), &authoring); status != http.StatusForbidden {
+		t.Fatalf("authoring credential status = %d, want %d", status, http.StatusForbidden)
+	}
 	if status, _ := serve(newAuthorizer(false), explicit); status != http.StatusForbidden {
 		t.Fatalf("non-admin status = %d, want %d", status, http.StatusForbidden)
+	}
+	adminError := browserGuardModule(browserGuardRepository{admin: true, err: errors.New("role store unavailable")}, Principal{ID: "admin"}, true)
+	errorAuthorizer, err := adminError.APIGenAuthorizer(nil, map[string]APIGenOperationContract{"startProjectCandidate": contract}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errorAuthorizer.SetBootstrapAuthorizer(func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error) {
+		return APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+	})
+	if status, _ := serve(errorAuthorizer, explicit); status != http.StatusServiceUnavailable {
+		t.Fatalf("admin role error status = %d, want %d", status, http.StatusServiceUnavailable)
+	}
+}
+
+func TestAPIGenBootstrapAllowlistIncludesManagedDataStagingOnly(t *testing.T) {
+	for _, operation := range []string{
+		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+	} {
+		if !isBootstrapAPIGenOperation(operation) {
+			t.Errorf("managed-data operation %q is not bootstrap-authorized", operation)
+		}
+	}
+	for _, operation := range []string{"listManagedDataRevisions", "getManagedDataRevision", "getActiveManagedDataRevision", "listManagedDataUploadSessions", "listManagedDataUploadSessionEvents", "getDashboard"} {
+		if isBootstrapAPIGenOperation(operation) {
+			t.Errorf("unrelated operation %q is bootstrap-authorized", operation)
+		}
 	}
 }
 

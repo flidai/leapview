@@ -89,8 +89,8 @@ type APIGenBootstrapDecision struct {
 // read-only decision seam: inspect the durable exact project/environment claim
 // and active-generation pointer, but never claim or mutate state here. It must
 // not infer bootstrap from an arbitrary lease error. The operation ID lets the
-// composition layer allow only the explicit pre-claim plan/start operations;
-// commit and all other candidate operations require an existing claim.
+// composition layer allow only the explicit pre-claim candidate and managed
+// data staging operations; unrelated project operations remain denied.
 type APIGenBootstrapAuthorizer func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error)
 
 // SetBootstrapAuthorizer installs the explicit pre-activation candidate
@@ -127,7 +127,7 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 		if err := authorizer.validateOperation(operationID, contract); err != nil {
 			return nil, err
 		}
-		if runtime == nil && apiGenOperationNeedsRuntime(contract) && !isCandidateAPIGenOperation(operationID) {
+		if runtime == nil && apiGenOperationNeedsRuntime(contract) && !isBootstrapAPIGenOperation(operationID) {
 			return nil, fmt.Errorf("APIGen operation %q requires an active runtime host", operationID)
 		}
 	}
@@ -228,12 +228,12 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if resolver == nil {
 		return nil, false
 	}
-	if isCandidateAPIGenOperation(operationID) && a.bootstrap != nil {
+	if isBootstrapAPIGenOperation(operationID) && a.bootstrap != nil {
 		capability, ok := apiGenOperationCapability(contract)
 		if !ok {
 			return nil, false
 		}
-		return a.protectCandidateBootstrap(operationID, capability, next), true
+		return a.protectBootstrapOperation(operationID, capability, next), true
 	}
 	if a.runtime == nil {
 		return nil, false
@@ -241,16 +241,22 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	return a.protectResources(capability, resolver, next), true
 }
 
-func isCandidateAPIGenOperation(operationID string) bool {
+// isBootstrapAPIGenOperation is the exact pre-activation operation allowlist.
+// Candidate lifecycle and managed-data staging operations are the only
+// project-scoped routes that may run before an active serving generation; all
+// other project resource operations must use immutable snapshot authorization.
+func isBootstrapAPIGenOperation(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization":
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization",
+		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
 		return true
 	default:
 		return false
 	}
 }
 
-func (a *APIGenAuthorizer) protectCandidateBootstrap(operationID string, capability access.Capability, next http.Handler) http.Handler {
+func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capability access.Capability, next http.Handler) http.Handler {
 	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r == nil {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
@@ -293,21 +299,16 @@ func (a *APIGenAuthorizer) protectCandidateBootstrap(operationID string, capabil
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
-		credential, found := a.module.requestCredential(r)
-		if !found || credential.Authoring != nil || credential.Token.ID == "" || credential.Token.Capabilities == nil || len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, capability) || credential.Principal.ID != principal.ID {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-		isAdmin, err := a.module.IsPlatformAdmin(r.Context(), principal.ID)
+		authorized, err := a.module.AuthorizeBootstrapRequest(r.Context(), r, capability)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
-		if !isAdmin || !decision.Allowed {
+		if !authorized || !decision.Allowed {
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability)))
 	}))
 }
 

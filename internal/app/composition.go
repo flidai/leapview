@@ -270,7 +270,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 		return snapshot, nil
 	}
-	authorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, accessModule.AuthorizationSubjects)
+	snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, accessModule.AuthorizationSubjects)
+	authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection, func(ctx context.Context) (bool, error) {
+		return hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment))
+	})
 	managedDataModule, err := manageddatamodule.Build(ctx, manageddatamodule.Config{
 		Database: store.SQLDB(), Product: managedDataProductConfig(cfg), ServingStates: servingStateRepo,
 		Environment: string(environment),
@@ -282,7 +285,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			principal, ok := auth.Principal(r)
 			return manageddatamodule.Principal{ID: principal.ID}, ok
 		},
-		AuthorizeConnection: authorizeConnection,
+		AuthorizeConnection: manageddatamodule.ConnectionAuthorizer(authorizeConnection),
 		Jobs:                jobModule, Workflow: jobModule,
 		RecordAudit: managedDataCommandAuditRecorder(accessModule),
 		Worker: manageddatamodule.MaintenanceWorkerConfig{
@@ -311,7 +314,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				principal, ok := auth.Principal(r)
 				return releasemodule.Principal{ID: principal.ID}, ok
 			},
-			AuthorizeConnection: authorizeConnection,
+			AuthorizeConnection: snapshotAuthorizeConnection,
 			Jobs:                jobModule, Workflow: jobModule,
 		},
 	})

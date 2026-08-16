@@ -29,6 +29,34 @@ type canonicalAccessModule interface {
 	AuthorizationSubjects(context.Context, string) ([]access.SubjectRef, error)
 }
 
+type connectionAuthorization func(context.Context, string, string, string, access.Capability) (bool, error)
+
+// bootstrapAwareConnectionAuthorization permits managed-data handlers to
+// consume the opaque request marker emitted by the APIGen bootstrap guard.
+// The marker is accepted only while the durable serving-state repository has
+// no active generation; all active requests continue through the snapshot
+// authorizer, including when snapshot acquisition fails for another reason.
+func bootstrapAwareConnectionAuthorization(
+	snapshot connectionAuthorization,
+	active func(context.Context) (bool, error),
+) connectionAuthorization {
+	return func(ctx context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
+		if marker, ok := accessmodule.BootstrapAuthorizationFromContext(ctx); ok && marker.PrincipalID == strings.TrimSpace(principalID) && marker.ProjectID.String() == strings.TrimSpace(projectID) && marker.Capability == capability {
+			isActive, err := active(ctx)
+			if err != nil {
+				return false, err
+			}
+			if !isActive {
+				return true, nil
+			}
+		}
+		if snapshot == nil {
+			return false, fmt.Errorf("active authorization snapshot is unavailable")
+		}
+		return snapshot(ctx, principalID, projectID, connectionID, capability)
+	}
+}
+
 // authorizeProjectResources evaluates canonical resource grants against the
 // exact leased generation. Group subjects are resolved once per request and
 // any matching subject is sufficient for each resource.
@@ -173,6 +201,23 @@ func protectManagedDataTransport(
 	},
 	next http.Handler,
 ) http.Handler {
+	return protectManagedDataTransportWithBootstrap(accessModule, runtimeHost, managedData, nil, next)
+}
+
+// protectManagedDataTransportWithBootstrap extends the normal generation-bound
+// TUS guard with the same exact durable bootstrap decision used by generated
+// project operations. Only the local managed-data staging operation is
+// admitted before the first serving generation; all active-generation traffic
+// remains on the immutable snapshot path.
+func protectManagedDataTransportWithBootstrap(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	managedData interface {
+		ResolveTusTarget(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
+	},
+	bootstrap accessmodule.APIGenBootstrapAuthorizer,
+	next http.Handler,
+) http.Handler {
 	if accessModule == nil || runtimeHost == nil || managedData == nil || next == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -201,11 +246,6 @@ func protectManagedDataTransport(
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
-		activeProjectID := runtimeHost.ProjectID()
-		if err := activeProjectID.Validate(); err != nil || projectID != activeProjectID {
-			http.NotFound(w, r)
-			return
-		}
 		resource, err := access.NewResourceRef(connectionID, projectgraph.KindConnection)
 		if err != nil {
 			http.NotFound(w, r)
@@ -214,6 +254,42 @@ func protectManagedDataTransport(
 		principal, ok := accessModule.CurrentPrincipal(r)
 		if !ok || strings.TrimSpace(principal.ID) == "" {
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		if bootstrap != nil {
+			decision, decisionErr := bootstrap(r.Context(), r, "managedDataTusTransport", projectID, access.CapabilityResourceEdit)
+			if decisionErr != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if decision.Handled {
+				if !decision.Allowed {
+					http.NotFound(w, r)
+					return
+				}
+				bootstrapModule, bootstrapModuleOK := accessModule.(interface {
+					AuthorizeBootstrapRequest(context.Context, *http.Request, access.Capability) (bool, error)
+				})
+				if !bootstrapModuleOK {
+					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+					return
+				}
+				bootstrapAccess, accessErr := bootstrapModule.AuthorizeBootstrapRequest(r.Context(), r, access.CapabilityResourceEdit)
+				if accessErr != nil {
+					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+					return
+				}
+				if !bootstrapAccess {
+					http.NotFound(w, r)
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		activeProjectID := runtimeHost.ProjectID()
+		if err := activeProjectID.Validate(); err != nil || projectID != activeProjectID {
+			http.NotFound(w, r)
 			return
 		}
 		if principal.DevBypass {

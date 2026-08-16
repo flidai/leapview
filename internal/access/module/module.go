@@ -228,6 +228,36 @@ func (m *Module) RequestPlatformAdmin(ctx context.Context, r *http.Request, prin
 	return containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin), nil
 }
 
+// AuthorizeBootstrapRequest applies the narrow request-side checks shared by
+// pre-activation project operations and managed-data transport requests. A
+// bootstrap request must carry a bearer API token with an explicit capability
+// list, belong to the authenticated principal, and be backed by the durable
+// platform-admin role. The sole exception is the explicit local-development
+// bypass, which production configuration rejects and which still requires its
+// configured development bearer token. It never consults an active project
+// snapshot.
+func (m *Module) AuthorizeBootstrapRequest(ctx context.Context, r *http.Request, required access.Capability) (bool, error) {
+	if m == nil || r == nil || bearerToken(r) == "" {
+		return false, nil
+	}
+	principal, ok := m.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return false, nil
+	}
+	if principal.DevBypass {
+		return m.auth != nil && m.auth.DevBypass() && m.auth.AcceptsPublicBearer(r), nil
+	}
+	credential, found := m.requestCredential(r)
+	if !found || credential.Authoring != nil || credential.Token.ID == "" || credential.Token.Capabilities == nil || len(credential.Token.Capabilities) == 0 || credential.Principal.ID != principal.ID || credential.Token.PrincipalID != principal.ID {
+		return false, nil
+	}
+	isAdmin, err := m.IsPlatformAdmin(ctx, principal.ID)
+	if err != nil {
+		return false, err
+	}
+	return isAdmin && containsCapability(credential.Token.Capabilities, required), nil
+}
+
 func (m *Module) requestCredential(r *http.Request) (access.APICredential, bool) {
 	if r == nil {
 		return access.APICredential{}, false

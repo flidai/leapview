@@ -135,7 +135,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 			r.Use(policy.rateLimits.API())
 			r.Use(publicProtocol)
 			routes.managedDataModule.MountTus(r, policy.managedDataTus, func(next http.Handler) http.Handler {
-				return protectManagedDataTransport(routes.accessModule, runtime.runtimeHostModule, routes.managedDataModule, next)
+				return protectManagedDataTransportWithBootstrap(routes.accessModule, runtime.runtimeHostModule, routes.managedDataModule, policy.managedDataBootstrap, next)
 			})
 			apiaggregate.RegisterAPIGenRoutes(r, platform.apiGenServers)
 		})

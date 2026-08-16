@@ -2,6 +2,8 @@ package module
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -12,6 +14,30 @@ type bootstrapCredentialRepository struct {
 	access.Repository
 	token access.APIToken
 	err   error
+}
+
+func TestAuthorizeBootstrapRequestAllowsOnlyConfiguredLocalDevelopmentBearer(t *testing.T) {
+	module := browserGuardModule(nil, Principal{ID: "dev", DevBypass: true}, true)
+	module.auth = NewAuth(nil, AuthConfig{DevBypass: true, DevAPIToken: "local-secret"})
+	serve := func(token string) (bool, error) {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/connections/connection_demo/upload-sessions", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		var allowed bool
+		var authorizeErr error
+		module.Authenticate(http.HandlerFunc(func(_ http.ResponseWriter, authenticated *http.Request) {
+			allowed, authorizeErr = module.AuthorizeBootstrapRequest(authenticated.Context(), authenticated, access.CapabilityResourceEdit)
+		})).ServeHTTP(httptest.NewRecorder(), request)
+		return allowed, authorizeErr
+	}
+
+	allowed, err := serve("local-secret")
+	if err != nil || !allowed {
+		t.Fatalf("configured local bearer authorization = %t, %v; want true, nil", allowed, err)
+	}
+	allowed, err = serve("wrong-secret")
+	if err != nil || allowed {
+		t.Fatalf("wrong local bearer authorization = %t, %v; want false, nil", allowed, err)
+	}
 }
 
 func (r bootstrapCredentialRepository) BootstrapAPITokenEvidence(context.Context, string, string, time.Time) (access.APIToken, error) {
