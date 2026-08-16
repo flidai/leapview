@@ -156,9 +156,7 @@ CREATE TABLE IF NOT EXISTS managed_data_environment_pointers (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(collection_id, environment),
   FOREIGN KEY(collection_id, revision_id) REFERENCES managed_data_revisions(collection_id, id) ON DELETE RESTRICT,
-  CHECK(length(environment) BETWEEN 1 AND 128 AND environment = trim(environment)),
-  CHECK(length(project_id) > 0 AND project_id = trim(project_id)),
-  CHECK(length(generation_id) > 0 AND generation_id = trim(generation_id))
+  CHECK(length(environment) BETWEEN 1 AND 128 AND environment = trim(environment))
 );
 
 CREATE INDEX IF NOT EXISTS managed_data_environment_pointers_revision_idx
@@ -177,7 +175,11 @@ CREATE TABLE IF NOT EXISTS managed_data_serving_state_bindings (
   PRIMARY KEY(project_id, environment, generation_id, collection_id),
   FOREIGN KEY(generation_id, project_id, environment) REFERENCES serving_states(id, project_id, environment) ON DELETE CASCADE,
   FOREIGN KEY(collection_id, revision_id) REFERENCES managed_data_revisions(collection_id, id) ON DELETE RESTRICT,
-  CHECK(length(environment) BETWEEN 1 AND 128)
+  CHECK(length(environment) BETWEEN 1 AND 128 AND environment = trim(environment)),
+  CHECK(length(project_id) > 0 AND project_id = trim(project_id)),
+  CHECK(length(generation_id) > 0 AND generation_id = trim(generation_id)),
+  CHECK(length(collection_id) > 0 AND collection_id = trim(collection_id)),
+  CHECK(length(revision_id) > 0 AND revision_id = trim(revision_id))
 );
 
 CREATE INDEX IF NOT EXISTS managed_data_serving_state_bindings_revision_idx
