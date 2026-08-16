@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/project"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +19,7 @@ func TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads(t *testing
 	require.NoError(t, err)
 	synchronizer, err := projectmodule.NewCandidateSourceSynchronizer(t.TempDir())
 	require.NoError(t, err)
-	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID.String(), OwnerID: "principal_1"}
+	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
 	request := synchronizationRequest(snapshot)
 
 	missing, err := synchronizer.Plan(t.Context(), scope, request)
@@ -26,7 +27,7 @@ func TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads(t *testing
 		t.Fatalf("plan missing=%d error=%v", len(missing), err)
 	}
 	if err := synchronizer.Upload(t.Context(), project.CandidateSourceScope{
-		ProjectID: snapshot.ProjectID.String(), OwnerID: "principal_2",
+		ProjectID: snapshot.ProjectID, OwnerID: "principal_2",
 	}, missing[0], bytes.NewReader(snapshot.Artifacts[0].Content)); err == nil {
 		t.Fatal("foreign principal uploaded against another author's plan")
 	}
@@ -51,7 +52,7 @@ func TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart(t *testing.T)
 		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
 	}).Build(t.Context())
 	require.NoError(t, err)
-	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID.String(), OwnerID: "principal_1"}
+	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
 	request := synchronizationRequest(snapshot)
 	first, err := projectmodule.NewCandidateSourceSynchronizer(root)
 	require.NoError(t, err)
@@ -71,6 +72,21 @@ func TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart(t *testing.T)
 		t.Context(), scope, missing[0], bytes.NewReader(artifact.Content),
 	); err != nil {
 		t.Fatalf("Upload() after restart error = %v", err)
+	}
+}
+
+func TestCandidateSourceSynchronizerRejectsWhitespaceProjectIdentity(t *testing.T) {
+	snapshot, err := (projectdevloop.FilesystemBuilder{
+		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+	}).Build(t.Context())
+	require.NoError(t, err)
+	synchronizer, err := projectmodule.NewCandidateSourceSynchronizer(t.TempDir())
+	require.NoError(t, err)
+	_, err = synchronizer.Plan(t.Context(), project.CandidateSourceScope{
+		ProjectID: projectgraph.ResourceID(" " + snapshot.ProjectID.String()), OwnerID: "principal_1",
+	}, synchronizationRequest(snapshot))
+	if err == nil {
+		t.Fatal("Plan() accepted whitespace-prefixed project identity")
 	}
 }
 
