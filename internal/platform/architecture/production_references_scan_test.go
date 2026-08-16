@@ -232,7 +232,7 @@ func isTestPath(path string) bool {
 
 func excludedProductionReferenceDirectory(name string) bool {
 	switch strings.ToLower(name) {
-	case ".git", "node_modules", "vendor", "docs", "adr", "static", "generated", "gen", "snapshot", "snapshots", "test", "tests", "testdata":
+	case ".git", "node_modules", "vendor", "docs", "adr", "static", "generated", "gen", "test", "tests", "testdata":
 		return true
 	default:
 		return false

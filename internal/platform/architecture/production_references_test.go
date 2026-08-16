@@ -16,6 +16,7 @@ func TestNoWorkspaceProductionReferences(t *testing.T) {
 func TestProductionReferenceObservationDeterministicAndPreservesMultiplicity(t *testing.T) {
 	root := t.TempDir()
 	writeProductionReferenceFixture(t, root, "internal/a.go", "package a\nvar workspaceRef = \"workspace\"\nvar workspaceRef = \"workspace\"\n")
+	writeProductionReferenceFixture(t, root, "internal/access/snapshot/policy.go", "package snapshot\nvar workspaceRef = \"workspace\"\n")
 	writeProductionReferenceFixture(t, root, "web/a.ts", "export const workspace = true\n")
 	writeProductionReferenceFixture(t, root, "internal/a_test.go", "var ignored = \"workspace\"\n")
 	writeProductionReferenceFixture(t, root, "docs/a.go", "var ignored = \"workspace\"\n")
@@ -32,15 +33,15 @@ func TestProductionReferenceObservationDeterministicAndPreservesMultiplicity(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) != 3 || len(second) != 3 {
-		t.Fatalf("observations = %d and %d, want three each", len(first), len(second))
+	if len(first) != 4 || len(second) != 4 {
+		t.Fatalf("observations = %d and %d, want four each", len(first), len(second))
 	}
 	for index := range first {
 		if first[index] != second[index] {
 			t.Fatalf("observation %d changed between scans: %#v != %#v", index, first, second)
 		}
 	}
-	if first[0].Category != "browser" || first[1].Category != "go" || first[2].Category != "go" {
+	if first[0].Category != "browser" || first[1].Category != "go" || first[2].Category != "go" || first[3].Category != "go" {
 		t.Fatalf("observations are not category sorted: %#v", first)
 	}
 	if first[1].Hash != first[2].Hash {

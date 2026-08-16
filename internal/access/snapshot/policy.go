@@ -1,6 +1,6 @@
 // Package snapshot defines the immutable, project-generation-bound access
 // policy installed at activation. Authorization identity is the canonical
-// graph resource ID plus serving environment and generation; workspace,
+// graph resource ID plus serving environment and generation; namespace,
 // domain, path, and descriptive metadata are intentionally absent.
 package snapshot
 
