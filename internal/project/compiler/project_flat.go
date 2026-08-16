@@ -373,15 +373,14 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	if len(project.Models) > 0 {
-		sourceAliases := make(map[string]string, len(project.Sources))
-		sourceReverse := make(map[string]string, len(project.Sources))
+		sourceAliases, sourceReverse, err := sourceAliasesForProject(project)
+		if err != nil {
+			return err
+		}
 		aliasedSources := make(map[string]semanticmodel.Source, len(project.Sources))
 		for name, source := range project.Sources {
-			alias := localSourceName(name)
-			sourceAliases[name], sourceReverse[alias], aliasedSources[alias] = alias, name, source
-			if id := project.SourceIDs[name]; id != "" {
-				sourceAliases[id] = alias
-			}
+			alias := sourceAliases[name]
+			aliasedSources[alias] = source
 		}
 		validatedModel := &semanticmodel.Model{Name: project.Name, Connections: copyConnections(project.Connections), Sources: aliasedSources, Tables: translatedTablesForRuntime(project.Models, sourceAliases)}
 		if err := validatedModel.ValidateAuthored(); err != nil {

@@ -201,14 +201,13 @@ func projectManifest(project Project) (manifest.Project, error) {
 			table.Sources = authoredNamesByID(table.Sources, project.SourceIDs)
 			runtimeTables[tableName] = table
 		}
-		sourceAliases := make(map[string]string, len(project.Sources))
+		sourceAliases, _, err := sourceAliasesForProject(project)
+		if err != nil {
+			return manifest.Project{}, err
+		}
 		runtimeSources := make(map[string]semanticmodel.Source, len(project.Sources))
 		for sourceName, source := range project.Sources {
-			alias := localSourceName(sourceName)
-			sourceAliases[sourceName] = alias
-			if sourceID := project.SourceIDs[sourceName]; sourceID != "" {
-				sourceAliases[sourceID] = alias
-			}
+			alias := sourceAliases[sourceName]
 			runtimeSources[alias] = source
 		}
 		model := &semanticmodel.Model{Name: name, Title: name, Connections: copyConnections(project.Connections), Sources: runtimeSources, Tables: translatedTablesForRuntime(runtimeTables, sourceAliases)}
@@ -450,6 +449,58 @@ func localSourceName(sourceID string) string {
 		out = "source_" + out
 	}
 	return out
+}
+
+// sourceAliasesForProject builds the runtime source namespace used by model
+// validation and semantic-model execution. Authored names may contain
+// punctuation that is not valid in a semantic identifier, so localSourceName
+// normalizes them. Two distinct names must never normalize to the same alias:
+// silently overwriting one source would make a valid graph resolve to the
+// wrong physical source. Iterating names in sorted order keeps diagnostics
+// deterministic.
+func sourceAliasesForProject(project Project) (map[string]string, map[string]string, error) {
+	aliases := make(map[string]string, len(project.Sources)*2)
+	reverse := make(map[string]string, len(project.Sources))
+	aliasOwners := make(map[string]string, len(project.Sources))
+	keyOwners := make(map[string]string, len(project.Sources)*2)
+	names := make([]string, 0, len(project.Sources))
+	for name := range project.Sources {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		alias := localSourceName(name)
+		if previous, ok := aliasOwners[alias]; ok && previous != name {
+			return nil, nil, fmt.Errorf(
+				"sources %q (id %q) and %q (id %q) map to runtime source alias %q",
+				previous, project.SourceIDs[previous], name, project.SourceIDs[name], alias,
+			)
+		}
+		aliasOwners[alias] = name
+		reverse[alias] = name
+		if err := addSourceAlias(aliases, keyOwners, name, alias, project, name); err != nil {
+			return nil, nil, err
+		}
+		if sourceID := project.SourceIDs[name]; sourceID != "" {
+			if err := addSourceAlias(aliases, keyOwners, sourceID, alias, project, name); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return aliases, reverse, nil
+}
+
+func addSourceAlias(aliases map[string]string, keyOwners map[string]string, key, alias string, project Project, sourceName string) error {
+	if previous, ok := aliases[key]; ok && previous != alias {
+		previousName := keyOwners[key]
+		return fmt.Errorf(
+			"sources %q (id %q) and %q (id %q) map reference %q to different runtime aliases %q and %q",
+			previousName, project.SourceIDs[previousName], sourceName, project.SourceIDs[sourceName], key, previous, alias,
+		)
+	}
+	aliases[key] = alias
+	keyOwners[key] = sourceName
+	return nil
 }
 
 func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticModelSpec) error {

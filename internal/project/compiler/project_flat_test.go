@@ -94,6 +94,71 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 	}
 }
 
+func TestFlatProjectPreservesStableIDForPunctuatedSourceName(t *testing.T) {
+	projectPath := writeFlatProjectFixture(t, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {kind: managed}
+`,
+		"sources/foo-bar.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:foo-bar, name: foo-bar}
+spec: {connection: warehouse, format: csv, path: foo-bar.csv}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec: {source: foo-bar, primaryKey: id}
+`,
+	})
+	project, err := LoadProject(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProject() error = %v", err)
+	}
+	resource, ok := project.Graph.Resource("source:foo-bar")
+	if !ok || resource.Kind != projectgraph.KindSource || resource.Name != "foo-bar" {
+		t.Fatalf("source graph resource = %#v, present=%v; want source:foo-bar/foo-bar", resource, ok)
+	}
+	if got := project.Manifest.Models["model:orders"].Source; got != "source:foo-bar" {
+		t.Fatalf("manifest model source = %q, want stable source ID", got)
+	}
+}
+
+func TestFlatProjectRejectsCollidingSourceAliases(t *testing.T) {
+	projectPath := writeFlatProjectFixture(t, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {kind: managed}
+`,
+		"sources/foo-bar.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:foo-bar, name: foo-bar}
+spec: {connection: warehouse, format: csv, path: foo-bar.csv}
+`,
+		"sources/foo_bar.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:foo_bar, name: foo_bar}
+spec: {connection: warehouse, format: csv, path: foo_bar.csv}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec: {source: foo-bar, primaryKey: id}
+`,
+	})
+	_, err := LoadProject(projectPath)
+	if err == nil {
+		t.Fatal("LoadProject() accepted colliding source aliases")
+	}
+	for _, want := range []string{"foo-bar", "foo_bar", "source:foo-bar", "source:foo_bar", "runtime source alias"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("LoadProject() error = %v, want %q", err, want)
+		}
+	}
+}
+
 func TestFlatAccessRejectsWrongKindAndCapability(t *testing.T) {
 	project := Project{
 		Access:      manifest.AccessPolicy{Groups: map[string]manifest.Group{}, RoleBindings: map[string]manifest.RoleBinding{}, Grants: map[string]manifest.Grant{"bad": {ID: "grant:bad", Name: "bad", Object: manifest.SecurableRef{Kind: "source", ID: "dashboard:one"}, Subject: manifest.Subject{Kind: "principal", Email: "user@example.test"}, Capability: "NOT_A_CAPABILITY"}}, DataPolicies: map[string]manifest.DataPolicy{}},
