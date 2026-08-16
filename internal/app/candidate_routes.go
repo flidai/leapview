@@ -150,35 +150,31 @@ func resolveCandidateDashboardHTTP(
 		return dashboardmodule.HTTP{}, false
 	}
 	projectID := view.ProjectID
-	{
-		metrics := deps.candidateMetrics(view.Provider, projectID)
-		restrictions := make([]dashboardmodule.CandidateRestriction, len(view.Restrictions))
-		for index, restriction := range view.Restrictions {
-			resource, err := access.NewResourceRef(restriction.ObjectID, restriction.ObjectKind)
-			if err != nil {
-				http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
-				return dashboardmodule.HTTP{}, false
-			}
-			restrictions[index] = dashboardmodule.CandidateRestriction{
-				ID: restriction.ID, Resource: resource, Subject: restriction.Subject, PolicyType: restriction.PolicyType,
-				ExpressionJSON: restriction.ExpressionJSON,
-			}
-		}
-		handler, err := deps.dashboards.CandidateHTTP(dashboardmodule.CandidateHTTPConfig{
-			Metrics: metrics, CandidateID: candidate.ID, OwnerPrincipalID: principalID,
-			ProjectID: projectID, ArtifactDigest: candidate.ArtifactDigest,
-			AuthorizationFingerprint: view.AuthorizationFingerprint,
-			RouteBasePath:            candidateRouteBase(candidate.ID),
-			Restrictions:             restrictions,
-		})
+	metrics := deps.candidateMetrics(view.Provider, projectID)
+	restrictions := make([]dashboardmodule.CandidateRestriction, len(view.Restrictions))
+	for index, restriction := range view.Restrictions {
+		resource, err := access.NewResourceRef(restriction.ObjectID, restriction.ObjectKind)
 		if err != nil {
 			http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 			return dashboardmodule.HTTP{}, false
 		}
-		return handler, true
+		restrictions[index] = dashboardmodule.CandidateRestriction{
+			ID: restriction.ID, Resource: resource, Subject: restriction.Subject, PolicyType: restriction.PolicyType,
+			ExpressionJSON: restriction.ExpressionJSON,
+		}
 	}
-	http.NotFound(w, r)
-	return dashboardmodule.HTTP{}, false
+	handler, err := deps.dashboards.CandidateHTTP(dashboardmodule.CandidateHTTPConfig{
+		Metrics: metrics, CandidateID: candidate.ID, OwnerPrincipalID: principalID,
+		ProjectID: projectID, ArtifactDigest: candidate.ArtifactDigest,
+		AuthorizationFingerprint: view.AuthorizationFingerprint,
+		RouteBasePath:            candidateRouteBase(candidate.ID),
+		Restrictions:             restrictions,
+	})
+	if err != nil {
+		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
+		return dashboardmodule.HTTP{}, false
+	}
+	return handler, true
 }
 
 func resolveOwnedCandidate(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request) (deploymentmodule.Candidate, string, bool) {
