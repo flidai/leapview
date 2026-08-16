@@ -10,10 +10,9 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddatasqlite "github.com/flidai/leapview/internal/manageddata/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
-	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestBinderPinsRevisionAfterEnvironmentPointerChanges(t *testing.T) {
@@ -23,32 +22,26 @@ func TestBinderPinsRevisionAfterEnvironmentPointerChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "sales", Title: "Sales"}); err != nil {
-		t.Fatal(err)
-	}
 	servingStates := servingstatesqlite.NewRepository(store.SQLDB())
-	candidate, err := servingStates.Create(ctx, servingstate.CreateInput{WorkspaceID: "sales", Environment: "prod"})
+	candidate, err := servingStates.Create(ctx, servingstate.CreateInput{ProjectID: "project-a", Environment: "prod", Source: servingstate.SourcePublish})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	repository := manageddatasqlite.NewRepository(store.SQLDB())
 	collection, err := repository.CreateCollection(ctx, manageddata.CreateCollectionInput{
-		ID: "orders", ProjectID: "project-a", ConnectionName: "orders", Name: "Orders",
+		ID: "orders", ProjectID: "project-a", ConnectionID: "orders", Name: "Orders",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstRevision := createReadyRevision(t, ctx, repository, collection.ID, "orders-v1.csv", "a")
-	firstTarget := createValidatedState(t, ctx, store, servingStates, "sales", "prod")
+	firstTarget := createValidatedState(t, ctx, store, servingStates, "project-a", "prod")
 	activateRevision(t, ctx, servingStates, repository, collection.ID, firstRevision.ID, firstTarget.ID)
 
-	validation := servingstate.Validation{
-		ProjectID:            "project-a",
-		ManagedDataRevisions: map[string]string{"orders": firstRevision.Digest},
-	}
+	validation := servingstate.Validation{ProjectID: "project-a", ManagedDataRevisions: map[projectgraph.ResourceID]string{"orders": firstRevision.Digest}}
 	secondRevision := createReadyRevision(t, ctx, repository, collection.ID, "orders-v2.csv", "b")
-	secondTarget := createValidatedState(t, ctx, store, servingStates, "sales", "prod")
+	secondTarget := createValidatedState(t, ctx, store, servingStates, "project-a", "prod")
 	activateRevision(t, ctx, servingStates, repository, collection.ID, secondRevision.ID, secondTarget.ID)
 	binder, err := New(repository)
 	if err != nil {
@@ -57,7 +50,8 @@ func TestBinderPinsRevisionAfterEnvironmentPointerChanges(t *testing.T) {
 	if err := binder.AfterArtifactValidation(ctx, candidate, validation); err != nil {
 		t.Fatalf("pin artifact revision: %v", err)
 	}
-	bindings, err := repository.ListServingStateBindings(ctx, string(candidate.ID))
+	identity := servingIdentity("project-a", "prod", string(candidate.ID))
+	bindings, err := repository.ListServingStateBindings(ctx, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +60,7 @@ func TestBinderPinsRevisionAfterEnvironmentPointerChanges(t *testing.T) {
 	}
 }
 
-func createReadyRevision(t *testing.T, ctx context.Context, repository *manageddatasqlite.Repository, collectionID, path, digestCharacter string) manageddata.Revision {
+func createReadyRevision(t *testing.T, ctx context.Context, repository *manageddatasqlite.Repository, collectionID projectgraph.ResourceID, path, digestCharacter string) manageddata.Revision {
 	t.Helper()
 	manifest := manageddata.Manifest{Files: []manageddata.File{{
 		Path: path, Size: 1, SHA256: strings.Repeat(digestCharacter, 64),
@@ -88,27 +82,28 @@ func createReadyRevision(t *testing.T, ctx context.Context, repository *managedd
 	return revision
 }
 
-func createValidatedState(t *testing.T, ctx context.Context, store *platform.Store, repository *servingstatesqlite.Repository, workspaceID string, environment servingstate.Environment) servingstate.State {
+func createValidatedState(t *testing.T, ctx context.Context, store *platform.Store, repository *servingstatesqlite.Repository, projectID projectgraph.ResourceID, environment servingstate.Environment) servingstate.State {
 	t.Helper()
-	state, err := repository.Create(ctx, servingstate.CreateInput{WorkspaceID: servingstate.WorkspaceID(workspaceID), Environment: environment})
+	state, err := repository.Create(ctx, servingstate.CreateInput{ProjectID: projectID, Environment: environment, Source: servingstate.SourcePublish})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE serving_states SET status = 'validated', project_id = 'project-a', project_digest = ?, project_workspaces_json = ? WHERE id = ?`, "sha256:"+strings.Repeat("a", 64), `["`+workspaceID+`"]`, state.ID); err != nil {
+	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE serving_states SET status = 'validated', project_id = ?, project_digest = ? WHERE id = ?`, projectID, "sha256:"+strings.Repeat("a", 64), state.ID); err != nil {
 		t.Fatal(err)
 	}
 	state.Status = servingstate.StatusValidated
 	return state
 }
 
-func activateRevision(t *testing.T, ctx context.Context, states *servingstatesqlite.Repository, repository *manageddatasqlite.Repository, collectionID, revisionID string, targetID servingstate.ID) {
+func activateRevision(t *testing.T, ctx context.Context, states *servingstatesqlite.Repository, repository *manageddatasqlite.Repository, collectionID projectgraph.ResourceID, revisionID manageddata.RevisionID, targetID servingstate.ID) {
 	t.Helper()
-	if err := repository.ReplaceServingStateBindings(ctx, string(targetID), []manageddata.ServingStateBinding{{
-		ServingStateID: string(targetID), CollectionID: collectionID, RevisionID: revisionID, Environment: "prod",
+	identity := servingIdentity("project-a", "prod", string(targetID))
+	if err := repository.InstallServingStateBindings(ctx, identity, []manageddata.ServingStateBinding{{
+		Identity: identity, CollectionID: collectionID, RevisionID: revisionID,
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := states.Activate(ctx, "sales", "prod", targetID); err != nil {
+	if _, err := states.Activate(ctx, "project-a", "prod", targetID, ""); err != nil {
 		t.Fatal(err)
 	}
 }

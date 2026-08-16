@@ -248,10 +248,10 @@ func testDatabase(t *testing.T) (*sql.DB, *managedsqlite.Repository) {
 func createCollection(t *testing.T, repo *managedsqlite.Repository) manageddata.Collection {
 	t.Helper()
 	collection, err := repo.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
-		ID:             "collection-orders",
-		ProjectID:      "project-orders",
-		ConnectionName: "orders",
-		Name:           "Orders",
+		ID:           "collection-orders",
+		ProjectID:    "project-orders",
+		ConnectionID: "orders",
+		Name:         "Orders",
 	})
 	if err != nil {
 		t.Fatalf("create collection: %v", err)

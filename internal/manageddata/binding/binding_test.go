@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/manageddata"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/stretchr/testify/require"
 )
@@ -32,14 +33,14 @@ func TestBinderResolvesPinsWithinEachCollection(t *testing.T) {
 	binder := binderForRepository(repo)
 
 	err := binder.AfterArtifactValidation(t.Context(), servingstate.State{
-		ID: "state-1", WorkspaceID: "sales", Environment: "prod",
+		ID: "state-1", ProjectID: "project-a", Environment: "prod",
 	}, validatedMetadata("project-a", map[string]string{"customers": digestA, "orders": digestA}))
 	if err != nil {
 		t.Fatalf("AfterArtifactValidation() error = %v", err)
 	}
 	want := []manageddata.ServingStateBinding{
-		{ServingStateID: "state-1", CollectionID: "collection-a", RevisionID: "customers-r4", Environment: "prod"},
-		{ServingStateID: "state-1", CollectionID: "collection-z", RevisionID: "orders-r2", Environment: "prod"},
+		{Identity: servingIdentity("project-a", "prod", "state-1"), CollectionID: "collection-a", RevisionID: "customers-r4"},
+		{Identity: servingIdentity("project-a", "prod", "state-1"), CollectionID: "collection-z", RevisionID: "orders-r2"},
 	}
 	if !reflect.DeepEqual(repo.replaced, want) {
 		t.Fatalf("bindings = %#v, want %#v", repo.replaced, want)
@@ -52,7 +53,7 @@ func TestBinderResolvesPinsWithinEachCollection(t *testing.T) {
 func TestBinderCanPinBootstrapRevisionWithoutEnvironmentPointer(t *testing.T) {
 	repo := validFakeRepository()
 	binder := binderForRepository(repo)
-	if err := binder.AfterArtifactValidation(t.Context(), servingstate.State{ID: "bootstrap", Environment: "prod"}, validatedMetadata("project-a", map[string]string{"orders": digestA})); err != nil {
+	if err := binder.AfterArtifactValidation(t.Context(), servingstate.State{ID: "bootstrap", ProjectID: "project-a", Environment: "prod"}, validatedMetadata("project-a", map[string]string{"orders": digestA})); err != nil {
 		t.Fatalf("AfterArtifactValidation() error = %v", err)
 	}
 	if repo.listCalls != 1 || len(repo.replaced) != 1 || repo.replaced[0].RevisionID != "revision-1" {
@@ -85,10 +86,10 @@ func TestBinderResolvesCandidatePinsFromPointerOrLatestBootstrapRevision(t *test
 	binder := binderForRepository(repo)
 
 	pins, err := binder.ResolveCandidatePins(
-		t.Context(), "project-a", []string{"users", "orders"}, "dev",
+		t.Context(), "project-a", []projectgraph.ResourceID{"users", "orders"}, "dev",
 	)
 	require.NoError(t, err)
-	if !reflect.DeepEqual(pins, map[string]string{
+	if !reflect.DeepEqual(pins, map[projectgraph.ResourceID]string{
 		"orders": digestA,
 		"users":  digestA,
 	}) {
@@ -99,17 +100,18 @@ func TestBinderResolvesCandidatePinsFromPointerOrLatestBootstrapRevision(t *test
 func TestBinderValidatesServingStatePinsAgainstReleaseManifest(t *testing.T) {
 	repo := validFakeRepository()
 	repo.storedBindings = map[string][]manageddata.ServingStateBinding{
-		"state-1": {{ServingStateID: "state-1", CollectionID: "orders", RevisionID: "revision-1", Environment: "prod"}},
+		"project-a\x00prod\x00state-1": {{Identity: servingIdentity("project-a", "prod", "state-1"), CollectionID: "orders", RevisionID: "revision-1"}},
 	}
 	binder := binderForRepository(repo)
 
-	if err := binder.ValidateServingStatePins(t.Context(), "state-1", "project-a", map[string]string{"orders": digestA}); err != nil {
+	identity := servingIdentity("project-a", "prod", "state-1")
+	if err := binder.ValidateServingStatePins(t.Context(), identity, map[projectgraph.ResourceID]string{"orders": digestA}); err != nil {
 		t.Fatalf("ValidateServingStatePins() error = %v", err)
 	}
-	if err := binder.ValidateServingStatePins(t.Context(), "state-1", "project-a", map[string]string{"orders": digestB}); !errors.Is(err, ErrPinnedRevisionUnavailable) {
+	if err := binder.ValidateServingStatePins(t.Context(), identity, map[projectgraph.ResourceID]string{"orders": digestB}); !errors.Is(err, ErrPinnedRevisionUnavailable) {
 		t.Fatalf("mismatched manifest error = %v, want %v", err, ErrPinnedRevisionUnavailable)
 	}
-	if err := binder.ValidateServingStatePins(t.Context(), "state-1", "project-a", map[string]string{}); !errors.Is(err, ErrArtifactMetadata) {
+	if err := binder.ValidateServingStatePins(t.Context(), identity, map[projectgraph.ResourceID]string{}); !errors.Is(err, ErrArtifactMetadata) {
 		t.Fatalf("extra artifact binding error = %v, want %v", err, ErrArtifactMetadata)
 	}
 }
@@ -117,7 +119,7 @@ func TestBinderValidatesServingStatePinsAgainstReleaseManifest(t *testing.T) {
 func TestBinderReplacesFullBindingSetWithoutManagedConnections(t *testing.T) {
 	repo := &fakeRepository{replaced: []manageddata.ServingStateBinding{{CollectionID: "stale"}}}
 	binder := binderForRepository(repo)
-	if err := binder.AfterArtifactValidation(t.Context(), servingstate.State{ID: "state-1", Environment: "dev"}, validatedMetadata("project-a", map[string]string{})); err != nil {
+	if err := binder.AfterArtifactValidation(t.Context(), servingstate.State{ID: "state-1", ProjectID: "project-a", Environment: "dev"}, validatedMetadata("project-a", map[string]string{})); err != nil {
 		t.Fatal(err)
 	}
 	if repo.replaceCalls != 1 || len(repo.replaced) != 0 {
@@ -173,7 +175,7 @@ func TestBinderRejectsInvalidOrUnavailablePinsBeforeAtomicReplacement(t *testing
 			validation := validatedMetadata("project-a", map[string]string{"orders": digestA})
 			test.mutate(repo, &validation)
 			binder := binderForRepository(repo)
-			err := binder.AfterArtifactValidation(t.Context(), servingstate.State{ID: "state-1", Environment: "prod"}, validation)
+			err := binder.AfterArtifactValidation(t.Context(), servingstate.State{ID: "state-1", ProjectID: "project-a", Environment: "prod"}, validation)
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
@@ -209,7 +211,7 @@ func TestBinderSanitizesRepositoryErrors(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := test.build().AfterArtifactValidation(t.Context(), servingstate.State{ID: "state-1", Environment: "prod"}, validatedMetadata("project-a", map[string]string{"orders": digestA}))
+			err := test.build().AfterArtifactValidation(t.Context(), servingstate.State{ID: "state-1", ProjectID: "project-a", Environment: "prod"}, validatedMetadata("project-a", map[string]string{"orders": digestA}))
 			if !errors.Is(err, test.want) {
 				t.Fatalf("error = %v, want %v", err, test.want)
 			}
@@ -228,7 +230,7 @@ func validFakeRepository() *fakeRepository {
 }
 
 func activeCollection(id, connection string) manageddata.Collection {
-	return manageddata.Collection{ID: id, ProjectID: "project-a", ConnectionName: connection, Status: manageddata.CollectionStatusActive}
+	return manageddata.Collection{ID: id, ProjectID: "project-a", ConnectionID: connection, Status: manageddata.CollectionStatusActive}
 }
 
 func binderForRepository(repo Repository) *Binder {
@@ -240,7 +242,11 @@ func binderForRepository(repo Repository) *Binder {
 }
 
 func validatedMetadata(projectID string, pins map[string]string) servingstate.Validation {
-	return servingstate.Validation{ProjectID: projectID, ManagedDataRevisions: pins}
+	converted := make(map[projectgraph.ResourceID]string, len(pins))
+	for connectionID, digest := range pins {
+		converted[projectgraph.ResourceID(connectionID)] = digest
+	}
+	return servingstate.Validation{ProjectID: projectgraph.ResourceID(projectID), ManagedDataRevisions: converted}
 }
 
 type fakeRepository struct {
@@ -257,8 +263,8 @@ type fakeRepository struct {
 	replaceCalls      int
 }
 
-func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, projectID, connectionName string) (manageddata.Collection, error) {
-	key := projectID + "\x00" + connectionName
+func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, projectID, connectionID projectgraph.ResourceID) (manageddata.Collection, error) {
+	key := projectID.String() + "\x00" + connectionID.String()
 	r.collectionLookups = append(r.collectionLookups, key)
 	if r.collectionErr != nil {
 		return manageddata.Collection{}, r.collectionErr
@@ -270,20 +276,20 @@ func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, projec
 	return collection, nil
 }
 
-func (r *fakeRepository) ListRevisions(_ context.Context, collectionID string) ([]manageddata.Revision, error) {
+func (r *fakeRepository) ListRevisions(_ context.Context, collectionID projectgraph.ResourceID) ([]manageddata.Revision, error) {
 	r.listCalls++
 	if r.listErr != nil {
 		return nil, r.listErr
 	}
-	return append([]manageddata.Revision(nil), r.revisions[collectionID]...), nil
+	return append([]manageddata.Revision(nil), r.revisions[collectionID.String()]...), nil
 }
 
 func (r *fakeRepository) EnvironmentPointer(
 	_ context.Context,
-	collectionID string,
+	collectionID projectgraph.ResourceID,
 	environment manageddata.Environment,
 ) (manageddata.EnvironmentPointer, error) {
-	pointer, ok := r.pointers[collectionID+"\x00"+string(environment)]
+	pointer, ok := r.pointers[collectionID.String()+"\x00"+string(environment)]
 	if !ok {
 		return manageddata.EnvironmentPointer{}, manageddata.ErrNotFound
 	}
@@ -292,7 +298,7 @@ func (r *fakeRepository) EnvironmentPointer(
 
 func (r *fakeRepository) RevisionByID(
 	_ context.Context,
-	revisionID string,
+	revisionID manageddata.RevisionID,
 ) (manageddata.Revision, error) {
 	for _, revisions := range r.revisions {
 		for _, revision := range revisions {
@@ -304,12 +310,13 @@ func (r *fakeRepository) RevisionByID(
 	return manageddata.Revision{}, manageddata.ErrNotFound
 }
 
-func (r *fakeRepository) ReplaceServingStateBindings(_ context.Context, _ string, bindings []manageddata.ServingStateBinding) error {
+func (r *fakeRepository) InstallServingStateBindings(_ context.Context, _ projectgraph.ServingIdentity, bindings []manageddata.ServingStateBinding) error {
 	r.replaceCalls++
 	r.replaced = append([]manageddata.ServingStateBinding(nil), bindings...)
 	return r.replaceErr
 }
 
-func (r *fakeRepository) ListServingStateBindings(_ context.Context, servingStateID string) ([]manageddata.ServingStateBinding, error) {
-	return append([]manageddata.ServingStateBinding(nil), r.storedBindings[servingStateID]...), nil
+func (r *fakeRepository) ListServingStateBindings(_ context.Context, identity projectgraph.ServingIdentity) ([]manageddata.ServingStateBinding, error) {
+	key := identity.ProjectID.String() + "\x00" + identity.Environment + "\x00" + identity.GenerationID
+	return append([]manageddata.ServingStateBinding(nil), r.storedBindings[key]...), nil
 }
