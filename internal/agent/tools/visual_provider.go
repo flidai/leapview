@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -18,6 +19,7 @@ import (
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -31,6 +33,10 @@ type VisualAuthorizeFunc func(ctx context.Context, scope Scope, request VisualAu
 type VisualQueryContextFunc func(ctx context.Context, scope Scope) context.Context
 
 type VisualModelFunc func(workspaceID, modelID string) (*semanticmodel.Model, bool)
+
+// VisualResourceResolver resolves semantic model IDs through the authorized
+// active-generation catalog before query execution.
+type VisualResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
 
 type VisualAggregateRowsFunc func(ctx context.Context, workspaceID, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error)
 
@@ -49,6 +55,7 @@ type VisualQueryMetadataFunc func(ctx context.Context, workspaceID, modelID stri
 
 type VisualProvider struct {
 	Authorize     VisualAuthorizeFunc
+	Resolve       VisualResourceResolver
 	QueryContext  VisualQueryContextFunc
 	SemanticModel VisualModelFunc
 	AggregateRows VisualAggregateRowsFunc
@@ -67,22 +74,22 @@ type VisualAuthorizationRequest struct {
 }
 
 type agentVisualInput struct {
-	Workspace    string                                 `json:"workspace"`
-	Model        string                                 `json:"model"`
-	Dataset      string                                 `json:"dataset"`
-	Title        string                                 `json:"title"`
-	Type         string                                 `json:"type"`
-	Presentation agentVisualPresentation                `json:"presentation"`
-	Dimensions   []agentVisualFieldRef                  `json:"dimensions"`
-	Series       *agentVisualFieldRef                   `json:"series"`
-	Measures     []agentVisualFieldRef                  `json:"measures"`
-	Fields       []agentVisualFieldRef                  `json:"fields"`
-	Rows         []agentVisualFieldRef                  `json:"rows"`
-	Columns      []dashboard.TableColumn                `json:"columns"`
-	Filters      []agentVisualFilter                    `json:"filters"`
-	Sort         []agentVisualSort                      `json:"sort"`
-	Limit        int                                    `json:"limit"`
-	Calculations []dashboardauthoring.VisualCalculation `json:"calculations"`
+	SemanticModelID string                                 `json:"semanticModelId"`
+	Model           string                                 `json:"-"`
+	Dataset         string                                 `json:"dataset"`
+	Title           string                                 `json:"title"`
+	Type            string                                 `json:"type"`
+	Presentation    agentVisualPresentation                `json:"presentation"`
+	Dimensions      []agentVisualFieldRef                  `json:"dimensions"`
+	Series          *agentVisualFieldRef                   `json:"series"`
+	Measures        []agentVisualFieldRef                  `json:"measures"`
+	Fields          []agentVisualFieldRef                  `json:"fields"`
+	Rows            []agentVisualFieldRef                  `json:"rows"`
+	Columns         []dashboard.TableColumn                `json:"columns"`
+	Filters         []agentVisualFilter                    `json:"filters"`
+	Sort            []agentVisualSort                      `json:"sort"`
+	Limit           int                                    `json:"limit"`
+	Calculations    []dashboardauthoring.VisualCalculation `json:"calculations"`
 }
 
 type agentVisualPresentation = dashboardauthoring.VisualPresentation
@@ -139,10 +146,21 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 		return apigenAgentToolError("invalid_arguments", err.Error())
 	}
 	runScope := scope
-	runScope.WorkspaceID = strings.TrimSpace(input.Workspace)
-	if runScope.WorkspaceID == "" {
-		return apigenAgentToolError("invalid_arguments", "workspace is required")
+	if strings.TrimSpace(runScope.WorkspaceID) == "" {
+		return apigenAgentToolError("authorization_failed", "active project runtime is required")
 	}
+	modelID, err := projectgraph.NewResourceID(input.SemanticModelID)
+	if err != nil {
+		return apigenAgentToolError("invalid_arguments", "semanticModelId is invalid")
+	}
+	if p.Resolve == nil {
+		return apigenAgentToolError("catalog_unavailable", "authorized project catalog is not configured")
+	}
+	resolvedModel, err := p.Resolve(ctx, runScope, modelID, projectgraph.KindSemanticModel, access.CapabilityResourceUse)
+	if err != nil {
+		return apigenAgentToolError("catalog_not_found", "semantic model is unknown or unauthorized")
+	}
+	input.Model = resolvedModel.String()
 	metadata := dataquery.Metadata{
 		WorkspaceID: runScope.WorkspaceID,
 		Surface:     dataquery.SurfaceAgent,
@@ -206,14 +224,16 @@ func decodeAgentVisualInput(rawArgs json.RawMessage) (agentVisualInput, error) {
 		return agentVisualInput{}, fmt.Errorf("arguments must contain exactly one JSON object")
 	}
 	input.Model = strings.TrimSpace(input.Model)
+	input.SemanticModelID = strings.TrimSpace(input.SemanticModelID)
+	input.Model = input.SemanticModelID
 	input.Dataset = strings.TrimSpace(input.Dataset)
 	input.Title = strings.TrimSpace(input.Title)
 	input.Type = strings.ToLower(strings.TrimSpace(input.Type))
 	if !isAgentVisualType(input.Type) {
 		return agentVisualInput{}, fmt.Errorf("type must be a supported visual type")
 	}
-	if input.Model == "" {
-		return agentVisualInput{}, fmt.Errorf("model is required")
+	if input.SemanticModelID == "" {
+		return agentVisualInput{}, fmt.Errorf("semanticModelId is required")
 	}
 	input.Dataset = stripCatalogRefString(input.Dataset, input.Model)
 	normalizeAgentVisualFieldRefs(input.Dimensions, input.Model)
@@ -368,17 +388,17 @@ func compactAgentVisualResult(
 		completenessStatus = "limit_reached"
 	}
 	return agentcontracts.QueryVisualResult{
-		Ok:              true,
-		QueryID:         queryID,
-		ServingSnapshot: metadata.ServingSnapshot,
-		Freshness:       metadata.Freshness,
-		Type:            result.Type,
-		ID:              result.ID,
-		Title:           base.Title,
-		ModelRef:        agentVisualCatalogRef(workspaceID, "semantic_model", input.Model),
-		DatasetRef:      agentVisualCatalogRef(workspaceID, "semantic_table", input.Model+"."+input.Dataset),
-		Fields:          agentVisualFieldUsages(workspaceID, input.Model, model, input),
-		Filters:         agentVisualFilterUsages(workspaceID, input.Model, input.Filters, nil),
+		Ok:               true,
+		QueryID:          queryID,
+		ServingSnapshot:  metadata.ServingSnapshot,
+		Freshness:        metadata.Freshness,
+		Type:             result.Type,
+		ID:               result.ID,
+		Title:            base.Title,
+		SemanticModelRef: agentVisualCatalogRef(workspaceID, "semantic_model", input.Model),
+		DatasetID:        input.Dataset,
+		Fields:           agentVisualFieldUsages(workspaceID, input.Model, model, input),
+		Filters:          agentVisualFilterUsages(workspaceID, input.Model, input.Filters, nil),
 		Completeness: agentcontracts.QueryVisualCompleteness{
 			ReturnedRows: int32(returnedRows),
 			Limit:        int32(input.Limit),
@@ -392,7 +412,8 @@ func compactAgentVisualResult(
 }
 
 func agentVisualCatalogRef(workspaceID, typ, id string) agentcontracts.CatalogRef {
-	return agentcontracts.CatalogRef{WorkspaceID: workspaceID, Type: agentcontracts.CatalogType(typ), ID: id}
+	_ = workspaceID // project-wide resource IDs have no workspace selector
+	return agentcontracts.CatalogRef{Kind: agentcontracts.CatalogType(typ), ID: id}
 }
 
 func agentVisualReturnedRows(envelope visualizationir.VisualizationEnvelope) int {
@@ -458,10 +479,10 @@ func agentVisualFieldUsages(workspaceID, modelID string, model *semanticmodel.Mo
 
 func agentVisualFieldUsage(workspaceID, modelID string, model *semanticmodel.Model, ref agentVisualFieldRef, role string) agentcontracts.QueryVisualFieldUsage {
 	usage := agentcontracts.QueryVisualFieldUsage{
-		Ref:   agentVisualCatalogRef(workspaceID, "field", modelID+"."+ref.Field),
-		Role:  role,
-		Alias: optionalString(ref.Alias),
-		Label: agentFieldAliasForRef(ref),
+		FieldID: ref.Field,
+		Role:    role,
+		Alias:   optionalString(ref.Alias),
+		Label:   agentFieldAliasForRef(ref),
 	}
 	if dimension, err := model.ResolveDimension(ref.Field); err == nil {
 		usage.Label = dimensionLabelForAgent(agentFieldAliasForRef(ref), dimension)
@@ -473,7 +494,6 @@ func agentVisualFieldUsage(workspaceID, modelID string, model *semanticmodel.Mod
 		usage.DataType = optionalString(dimension.Type)
 		return usage
 	}
-	usage.Ref.Type = "measure"
 	if measure, err := model.ResolveMeasure(ref.Field); err == nil {
 		usage.Label = measureLabelForAgent(ref.Field, measure)
 		usage.Unit = optionalString(measure.Unit)
@@ -506,7 +526,7 @@ func agentVisualFilterUsages(
 	for _, filter := range filters {
 		if filter.Field != "" {
 			usage := agentcontracts.QueryVisualFilterUsage{
-				Ref:      agentVisualCatalogRef(workspaceID, "field", modelID+"."+filter.Field),
+				FieldID:  filter.Field,
 				Operator: filter.Operator,
 			}
 			if len(filter.Values) > 0 {
@@ -518,8 +538,8 @@ func agentVisualFilterUsages(
 				usage.Path = &path
 			}
 			if filter.Fact != "" {
-				ref := agentVisualCatalogRef(workspaceID, "semantic_table", modelID+"."+filter.Fact)
-				usage.ResolvedFactRef = &ref
+				factID := filter.Fact
+				usage.ResolvedFactID = &factID
 			}
 			out = append(out, usage)
 		}
