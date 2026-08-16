@@ -303,15 +303,31 @@ func (r *Repository) recordFinalizationEvent(ctx context.Context, tx *sql.Tx, ro
 }
 
 func (r *Repository) LinkDeployment(ctx context.Context, projectID, deploymentID, releaseID, rollbackOf string) error {
-	_, err := r.db.ExecContext(ctx, `INSERT INTO api_deployment_releases (deployment_id,project_id,release_id,rollback_of) VALUES (?,?,?,?) ON CONFLICT(deployment_id) DO UPDATE SET release_id=excluded.release_id,rollback_of=excluded.rollback_of`, strings.TrimSpace(deploymentID), strings.TrimSpace(projectID), strings.TrimSpace(releaseID), nullableString(rollbackOf))
-	return mapError(err)
+	return linkDeployment(ctx, r.db, projectID, deploymentID, releaseID, rollbackOf)
 }
 func (r *Repository) LinkDeploymentTx(ctx context.Context, tx transaction.Transaction, projectID, deploymentID, releaseID, rollbackOf string) error {
 	if tx == nil {
 		return fmt.Errorf("release linkage transaction is required")
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO api_deployment_releases (deployment_id,project_id,release_id,rollback_of) VALUES (?,?,?,?) ON CONFLICT(deployment_id) DO UPDATE SET release_id=excluded.release_id,rollback_of=excluded.rollback_of`, strings.TrimSpace(deploymentID), strings.TrimSpace(projectID), strings.TrimSpace(releaseID), nullableString(rollbackOf))
-	return mapError(err)
+	return linkDeployment(ctx, tx, projectID, deploymentID, releaseID, rollbackOf)
+}
+
+func linkDeployment(ctx context.Context, q queryer, projectID, deploymentID, releaseID, rollbackOf string) error {
+	projectID, deploymentID, releaseID, rollbackOf = strings.TrimSpace(projectID), strings.TrimSpace(deploymentID), strings.TrimSpace(releaseID), strings.TrimSpace(rollbackOf)
+	if projectID == "" || deploymentID == "" || releaseID == "" {
+		return release.ErrInvalid
+	}
+	if _, err := q.ExecContext(ctx, `INSERT INTO api_deployment_releases (deployment_id,project_id,release_id,rollback_of) VALUES (?,?,?,?) ON CONFLICT(deployment_id) DO NOTHING`, deploymentID, projectID, releaseID, nullableString(rollbackOf)); err != nil {
+		return mapError(err)
+	}
+	var existingProject, existingRelease, existingRollback string
+	if err := q.QueryRowContext(ctx, `SELECT project_id,release_id,COALESCE(rollback_of,'') FROM api_deployment_releases WHERE deployment_id=?`, deploymentID).Scan(&existingProject, &existingRelease, &existingRollback); err != nil {
+		return mapError(err)
+	}
+	if existingProject != projectID || existingRelease != releaseID || existingRollback != rollbackOf {
+		return release.ErrConflict
+	}
+	return nil
 }
 func (r *Repository) DeploymentRelease(ctx context.Context, projectID, deploymentID string) (string, string, error) {
 	var rid, rollback string
