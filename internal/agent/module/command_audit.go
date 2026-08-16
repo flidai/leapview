@@ -37,11 +37,10 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	}
 	projectID := strings.TrimSpace(input.Scope.ProjectID)
 	metadata, err := encodeAgentCommandAuditPayload(operationID, agentgen.GenSchemaAgentCommandAuditPayload{
-		OperationId: operationID,
-		ProjectId:   projectID,
-		TargetType:  targetType,
-		TargetId:    strings.TrimSpace(input.TargetID),
-		Surface:     surface,
+		OperationId:  operationID,
+		ResourceKind: targetType,
+		ResourceId:   strings.TrimSpace(input.TargetID),
+		Surface:      surface,
 	})
 	if err != nil {
 		return err

@@ -60,7 +60,7 @@ func TestRecordCommandAuditDerivesGeneratedActionAndCapability(t *testing.T) {
 			t.Fatalf("decode agent audit metadata: %v", err)
 		}
 		if envelope.SchemaVersion != 1 || envelope.Retention != "security" || envelope.PayloadSchema != "AgentCommandAuditPayload" ||
-			envelope.Payload["projectId"] != "sales" || envelope.Payload["targetId"] != "conversation-1" ||
+			envelope.Payload["resourceKind"] != "conversation" || envelope.Payload["resourceId"] != "conversation-1" ||
 			envelope.Payload["surface"] != "api" {
 			t.Fatalf("agent audit envelope = %#v", envelope)
 		}
@@ -69,8 +69,7 @@ func TestRecordCommandAuditDerivesGeneratedActionAndCapability(t *testing.T) {
 
 func TestAgentCommandAuditPayloadRedactsInternalFieldsForLogs(t *testing.T) {
 	encoded, err := agentgen.EncodeGenCreateAgentConversationAuditPayloadForLog(agentgen.GenSchemaAgentCommandAuditPayload{
-		OperationId: "createAgentConversation", ProjectId: "sales", TargetType: "conversation",
-		TargetId: "conversation-1", Surface: "api",
+		OperationId: "createAgentConversation", ResourceKind: "conversation", ResourceId: "conversation-1", Surface: "api",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +77,7 @@ func TestAgentCommandAuditPayloadRedactsInternalFieldsForLogs(t *testing.T) {
 	if strings.Contains(encoded, "sales") || strings.Contains(encoded, "conversation-1") {
 		t.Fatalf("agent log payload leaked internal values: %s", encoded)
 	}
-	if !strings.Contains(encoded, `"targetType":"conversation"`) || !strings.Contains(encoded, `"surface":"api"`) {
+	if !strings.Contains(encoded, `"resourceKind":"conversation"`) || !strings.Contains(encoded, `"surface":"api"`) {
 		t.Fatalf("agent log payload omitted public values: %s", encoded)
 	}
 }
