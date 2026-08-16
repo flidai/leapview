@@ -236,7 +236,7 @@ func loadFlatDashboards(project *Project, includes []string) error {
 		if err := appearanceValidate(spec.Appearance); err != nil {
 			return resourceError(path, id, "spec.appearance", "%s", err)
 		}
-		dashboard := &authoring.Dashboard{ID: id, Appearance: spec.Appearance, Title: firstNonEmpty(spec.Title, envelope.Metadata.DisplayName, envelope.Metadata.Title, name), Description: envelope.Metadata.Description, SemanticModel: strings.TrimSpace(spec.SemanticModel), FilterDefinitions: spec.Filters, FilterBindings: spec.FilterBindings, FilterApplication: spec.FilterApplication, Visuals: spec.Visuals, Pages: projectDashboardPages(spec.Pages)}
+		dashboard := &authoring.Dashboard{ID: projectgraph.ResourceID(id), Appearance: spec.Appearance, Title: firstNonEmpty(spec.Title, envelope.Metadata.DisplayName, envelope.Metadata.Title, name), Description: envelope.Metadata.Description, SemanticModel: projectgraph.ResourceID(strings.TrimSpace(spec.SemanticModel)), FilterDefinitions: spec.Filters, FilterBindings: spec.FilterBindings, FilterApplication: spec.FilterApplication, Visuals: spec.Visuals, Pages: projectDashboardPages(spec.Pages)}
 		project.Dashboards[name] = dashboard
 		project.DashboardIDs[name], project.DashboardPaths[name] = id, path
 		project.DashboardMetadata[name] = projectgraph.Metadata{DisplayName: firstNonEmpty(envelope.Metadata.DisplayName, envelope.Metadata.Title, name), Description: envelope.Metadata.Description, Owner: envelope.Metadata.Owner, Domain: envelope.Metadata.Domain, Tags: append([]string(nil), envelope.Metadata.Tags...), Documentation: envelope.Metadata.Documentation}
@@ -440,7 +440,7 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	for name, dashboard := range project.Dashboards {
-		if _, err := resolver.resolve(dashboard.SemanticModel, projectgraph.KindSemanticModel); err != nil {
+		if _, err := resolver.resolve(dashboard.SemanticModel.String(), projectgraph.KindSemanticModel); err != nil {
 			return resourceError(project.DashboardPaths[name], project.DashboardIDs[name], "spec.semanticModel", "Dashboard %q: %v", name, err)
 		}
 	}
@@ -717,7 +717,7 @@ func compileProjectGraph(project Project) (projectgraph.ProjectGraph, error) {
 	}
 	for name, dashboard := range project.Dashboards {
 		from, _ := resolver.resolve(project.DashboardIDs[name], projectgraph.KindDashboard)
-		to, err := resolver.resolve(dashboard.SemanticModel, projectgraph.KindSemanticModel)
+		to, err := resolver.resolve(dashboard.SemanticModel.String(), projectgraph.KindSemanticModel)
 		if err != nil {
 			return projectgraph.ProjectGraph{}, err
 		}

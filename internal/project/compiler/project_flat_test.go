@@ -10,11 +10,31 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 )
+
+func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
+	document := dashboardauthoring.Dashboard{
+		ID: "dashboard_sales", Title: "Sales", SemanticModel: "semantic_sales",
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+			"total": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}}},
+		}),
+		Pages: []dashboard.Page{{ID: "overview", Title: "Overview"}},
+	}
+	encoded, err := ExportDashboard(document, dashboardauthoring.DashboardExportMetadata{Name: "sales_dashboard"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if !strings.Contains(text, "id: dashboard_sales") || !strings.Contains(text, "name: sales_dashboard") || !strings.Contains(text, "semanticModel: semantic_sales") {
+		t.Fatalf("canonical dashboard omitted ResourceID strings: %s", text)
+	}
+}
 
 func TestResourceResolverRejectsAmbiguousNames(t *testing.T) {
 	_, err := newResourceResolver([]projectgraph.Resource{
@@ -737,12 +757,16 @@ spec:
 	}
 	authored := *project.Dashboards["sales_dashboard"]
 	model := project.Manifest.SemanticModels["semantic:sales"]
-	direct, err := dashboardcompiler.Compile(authored, map[string]*semanticmodel.Model{"sales": model})
+	authored.SemanticModel = "semantic:sales"
+	direct, err := dashboardcompiler.Compile(authored, map[string]*semanticmodel.Model{"semantic:sales": model})
 	if err != nil {
 		t.Fatalf("direct dashboard compilation error = %v", err)
 	}
 	if got := project.Manifest.DashboardDefinitions["dashboard:sales"]; !reflect.DeepEqual(got, direct.Definition) {
 		t.Fatalf("project dashboard definition differs from direct compilation:\nproject=%#v\ndirect=%#v", got, direct.Definition)
+	}
+	if got := project.Manifest.DashboardDefinitions["dashboard:sales"].SemanticModel; got != "semantic:sales" {
+		t.Fatalf("dashboard definition semantic model = %q, want canonical stable ID", got)
 	}
 }
 

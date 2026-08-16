@@ -229,13 +229,11 @@ func projectManifest(project Project) (manifest.Project, error) {
 			return manifest.Project{}, fmt.Errorf("dashboard %q has no stable id", name)
 		}
 		authoredDashboard := *dashboard
-		authoredDashboard.SemanticModel = authoredNameByID(dashboard.SemanticModel, project.SemanticModelIDs)
-		compiled, err := dashboardcompiler.Compile(authoredDashboard, semanticModelsByName(result.SemanticModels, project))
+		authoredDashboard.SemanticModel = projectgraph.ResourceID(canonicalRef(project, "semantic_model", dashboard.SemanticModel.String()))
+		compiled, err := dashboardcompiler.Compile(authoredDashboard, result.SemanticModels)
 		if err != nil {
 			return manifest.Project{}, resourceError(project.DashboardPaths[name], id, "spec", "loading dashboard %q: %s", name, err)
 		}
-		// The dashboard definition's semantic-model field remains in the
-		// authored namespace; SemanticModelNames provides the canonical index.
 		result.DashboardDefinitions[id] = compiled.Definition
 		meta := project.DashboardMetadata[name]
 		result.DashboardSources[id] = manifest.DashboardSource{Document: compiled.Normalized, Metadata: manifest.DashboardSourceMetadata{Name: name, Title: dashboard.Title, Description: dashboard.Description, Owner: meta.Owner, Tags: append([]string(nil), meta.Tags...)}, Path: projectRelativePath(&project, project.DashboardPaths[name])}
@@ -354,16 +352,6 @@ func authoredNamesByID(refs []string, ids map[string]string) []string {
 		out[i] = authoredNameByID(ref, ids)
 	}
 	return out
-}
-
-func semanticModelsByName(models map[string]*semanticmodel.Model, project Project) map[string]*semanticmodel.Model {
-	result := make(map[string]*semanticmodel.Model, len(models))
-	for name, id := range project.SemanticModelIDs {
-		if model := models[id]; model != nil {
-			result[name] = model
-		}
-	}
-	return result
 }
 
 func canonicalAccessPolicy(project Project) (manifest.AccessPolicy, error) {

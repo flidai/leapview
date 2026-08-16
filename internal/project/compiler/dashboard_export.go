@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
@@ -22,10 +23,7 @@ import (
 // never decompiled implicitly.
 var ErrDashboardSourceUnavailable = errors.New("dashboard authored source is unavailable")
 
-// DashboardExportMetadata is retained as an alias for the dashboard-owned
-// export contract. The compiler remains the production implementation while
-// callers can depend on the dashboard capability's narrow port.
-type DashboardExportMetadata = dashboardauthoring.DashboardExportMetadata
+var dashboardResourceNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 
 type canonicalDashboardResource struct {
 	APIVersion string                     `yaml:"apiVersion"`
@@ -35,8 +33,9 @@ type canonicalDashboardResource struct {
 }
 
 type canonicalDashboardMetadata struct {
+	ID          string   `yaml:"id"`
 	Name        string   `yaml:"name"`
-	Title       string   `yaml:"title,omitempty"`
+	DisplayName string   `yaml:"displayName,omitempty"`
 	Description string   `yaml:"description,omitempty"`
 	Owner       string   `yaml:"owner,omitempty"`
 	Tags        []string `yaml:"tags,omitempty"`
@@ -46,6 +45,7 @@ type canonicalDashboardMetadata struct {
 // latter is the loader's decoding shape, while this type owns the exact
 // canonical resource spelling and omission rules.
 type canonicalDashboardSpec struct {
+	Title             string                                     `yaml:"title,omitempty"`
 	Appearance        *dashboardappearance.Patch                 `yaml:"appearance,omitempty"`
 	SemanticModel     string                                     `yaml:"semanticModel"`
 	Filters           map[string]dashboardfilter.Definition      `yaml:"filters,omitempty"`
@@ -347,16 +347,16 @@ func deleteYAMLMapKeys(node *yaml.Node, allowed map[string]struct{}) {
 // ExportDashboard emits one deterministic, schema-validated canonical
 // Dashboard resource. The input is authored state; compiled dashboard
 // definitions are intentionally not accepted by this function.
-func ExportDashboard(document dashboardauthoring.Dashboard, metadata DashboardExportMetadata) ([]byte, error) {
+func ExportDashboard(document dashboardauthoring.Dashboard, metadata dashboardauthoring.DashboardExportMetadata) ([]byte, error) {
 	if err := document.ValidateContract(); err != nil {
 		return nil, fmt.Errorf("validate authored dashboard: %w", err)
 	}
 	name := metadata.Name
 	if name == "" {
-		name = document.ID
+		name = document.ID.String()
 	}
-	if name != document.ID {
-		return nil, fmt.Errorf("dashboard metadata name %q does not match authored dashboard id %q", name, document.ID)
+	if !dashboardResourceNamePattern.MatchString(name) {
+		return nil, fmt.Errorf("dashboard metadata name %q is not a canonical resource name", name)
 	}
 	title := metadata.Title
 	if title == "" {
@@ -370,14 +370,14 @@ func ExportDashboard(document dashboardauthoring.Dashboard, metadata DashboardEx
 		APIVersion: projectAPIVersion,
 		Kind:       "Dashboard",
 		Metadata: canonicalDashboardMetadata{
-			Name: name, Title: title,
+			ID: document.ID.String(), Name: name, DisplayName: title,
 			Description: description, Owner: metadata.Owner,
 			Tags: append([]string(nil), metadata.Tags...),
 		},
 		Spec: canonicalDashboardSpec{
-			SemanticModel: document.SemanticModel,
-			Visuals:       make(map[string]canonicalDashboardVisualization, len(document.Visuals)),
-			Pages:         make([]canonicalDashboardPage, 0, len(document.Pages)),
+			Title: title, SemanticModel: document.SemanticModel.String(),
+			Visuals: make(map[string]canonicalDashboardVisualization, len(document.Visuals)),
+			Pages:   make([]canonicalDashboardPage, 0, len(document.Pages)),
 		},
 	}
 	if document.Appearance.Icon != nil || document.Appearance.Color != nil {
