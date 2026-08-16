@@ -71,7 +71,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	mux.Group(func(r chi.Router) {
 		r.Use(csrf)
 		r.With(policy.rateLimits.Updates()).Get("/updates", runtime.pageStreams.ServeHTTP)
-		r.Get("/", routes.accessModule.Authenticate(http.HandlerFunc(projectHome(runtime))).ServeHTTP)
+		r.Get("/", routes.accessModule.Authenticate(http.HandlerFunc(projectHome(runtime.metrics))).ServeHTTP)
 		candidateProjectGuard := func(next http.HandlerFunc) http.HandlerFunc {
 			return protectProjectResources(
 				routes.accessModule, runtime.runtimeHostModule, access.CapabilityProjectAdmin,
@@ -193,13 +193,13 @@ func isPublicAPIPath(path string) bool {
 // selection. The composed dashboard runtime owns the single project graph;
 // redirecting to its default dashboard preserves the existing shell and
 // Datastar bootstrap flow without inventing a selector.
-func projectHome(runtime *runtimeServices) http.HandlerFunc {
+func projectHome(metrics QueryMetrics) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if runtime == nil || runtime.metrics == nil {
+		if metrics == nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
-		dashboardID := strings.TrimSpace(runtime.metrics.DefaultDashboardID())
+		dashboardID := strings.TrimSpace(metrics.DefaultDashboardID())
 		if dashboardID == "" {
 			http.NotFound(w, r)
 			return
