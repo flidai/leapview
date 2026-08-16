@@ -125,62 +125,20 @@ model DeploymentApprovalResponse {
   revision: int64;
 }
 
-model DeploymentManagedDataPinEvidence {
-  connectionId: string;
-  revisionId: string;
-}
-
-model DeploymentBindingEvidence {
-  bindingId: string;
-  logicalConnection: string;
-  connectorKind: string;
-  revision: int64;
-  validatedVersion: string;
-  endpointConfigHash: string;
-}
-
-model DeploymentWorkspacePublishEvidence {
-  workspaceId: string;
-  servingStateId: string;
-  artifactDigest: string;
-  dataRevision: string;
-  dataMode: string;
-  managedDataPins: DeploymentManagedDataPinEvidence[];
-  bindings: DeploymentBindingEvidence[];
-}
-
 model DeploymentPublishEvidence {
   releaseDigest: string;
-  artifactDigest: string;
+  artifactContentDigest: string;
+  artifactProvenanceDigest: string;
   planDigest: string;
   candidateId: string;
   candidateRevision: int64;
   targetId: string;
-  baseGeneration: string;
+  environment: string;
+  generationId: string;
+  baseGenerationId?: string;
   runtimeVersion: string;
   policyDigest: string;
   sourceRevision?: CandidateSourceRevision;
-  workspaces: DeploymentWorkspacePublishEvidence[];
-}
-
-model DeploymentTargetResponse {
-  workspaceId: string;
-  servingStateId?: string;
-  priorServingStateId?: string;
-  status: string;
-  error?: string;
-}
-
-model DeploymentConnectionResponse {
-  connectionId: string;
-  revisionId: string;
-  priorRevisionId?: string;
-}
-
-model DeploymentProgress {
-  current: int32;
-  total: int32;
-  unit: string;
 }
 
 model DeploymentVerification {
@@ -193,12 +151,12 @@ model DeploymentResponse {
   projectId: string;
   releaseId: string;
   environment: string;
+  generationId: string;
+  artifactDigest: string;
+  priorGenerationId?: string;
   requestDigest: string;
   evidence: DeploymentPublishEvidence;
   status: DeploymentStatus;
-  progress?: DeploymentProgress;
-  targets: DeploymentTargetResponse[];
-  connections: DeploymentConnectionResponse[];
   createdBy: string;
   activationPrincipal?: string;
   verification?: DeploymentVerification;
@@ -442,7 +400,7 @@ model PublicationManagementRequiredFailure {}
   kind: "release_incomplete",
   statusCode: 409,
   code: "RELEASE_INCOMPLETE",
-  publicDetail: "The release is missing a workspace artifact.",
+  publicDetail: "The release is missing its project-generation artifact.",
 })
 model ReleaseIncompleteFailure {}
 

@@ -18475,19 +18475,19 @@ paths:
                   revokedAt: "2026-01-02T15:04:05Z"
                   revokedBy: example
                   status: pending
-                connections:
-                  - connectionId: example
-                    priorRevisionId: example
-                    revisionId: example
+                artifactDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
                 environment: example
                 error: example
                 evidence:
-                  artifactDigest: example
-                  baseGeneration: example
+                  artifactContentDigest: example
+                  artifactProvenanceDigest: example
+                  baseGenerationId: example
                   candidateId: example
                   candidateRevision: 1
+                  environment: example
+                  generationId: example
                   planDigest: example
                   policyDigest: example
                   releaseDigest: example
@@ -18498,39 +18498,15 @@ paths:
                     repository: example
                     revision: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: example
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 finishedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
-                progress:
-                  current: 1
-                  total: 1
-                  unit: example
+                priorGenerationId: example
                 projectId: example
                 releaseId: example
                 requestDigest: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: queued
-                targets:
-                  - error: example
-                    priorServingStateId: example
-                    servingStateId: example
-                    status: example
-                    workspaceId: example
                 verification:
                   digest: example
                   verifiedAt: "2026-01-02T15:04:05Z"
@@ -18854,7 +18830,7 @@ paths:
             status_code: !!float 403
           - code: RELEASE_INCOMPLETE
             kind: release_incomplete
-            public_detail: The release is missing a workspace artifact.
+            public_detail: The release is missing its project-generation artifact.
             status_code: !!float 409
           - code: RELEASE_NOT_READY
             kind: release_not_ready
@@ -24300,19 +24276,19 @@ paths:
                       revokedAt: "2026-01-02T15:04:05Z"
                       revokedBy: example
                       status: pending
-                    connections:
-                      - connectionId: example
-                        priorRevisionId: example
-                        revisionId: example
+                    artifactDigest: example
                     createdAt: "2026-01-02T15:04:05Z"
                     createdBy: example
                     environment: example
                     error: example
                     evidence:
-                      artifactDigest: example
-                      baseGeneration: example
+                      artifactContentDigest: example
+                      artifactProvenanceDigest: example
+                      baseGenerationId: example
                       candidateId: example
                       candidateRevision: 1
+                      environment: example
+                      generationId: example
                       planDigest: example
                       policyDigest: example
                       releaseDigest: example
@@ -24323,39 +24299,15 @@ paths:
                         repository: example
                         revision: example
                       targetId: example
-                      workspaces:
-                        - artifactDigest: example
-                          bindings:
-                            - bindingId: example
-                              connectorKind: example
-                              endpointConfigHash: example
-                              logicalConnection: example
-                              revision: 1
-                              validatedVersion: example
-                          dataMode: example
-                          dataRevision: example
-                          managedDataPins:
-                            - connectionId: example
-                              revisionId: example
-                          servingStateId: example
-                          workspaceId: example
                     finishedAt: "2026-01-02T15:04:05Z"
+                    generationId: example
                     id: example
-                    progress:
-                      current: 1
-                      total: 1
-                      unit: example
+                    priorGenerationId: example
                     projectId: example
                     releaseId: example
                     requestDigest: example
                     startedAt: "2026-01-02T15:04:05Z"
                     status: queued
-                    targets:
-                      - error: example
-                        priorServingStateId: example
-                        servingStateId: example
-                        status: example
-                        workspaceId: example
                     verification:
                       digest: example
                       verifiedAt: "2026-01-02T15:04:05Z"
@@ -24652,19 +24604,19 @@ paths:
                   revokedAt: "2026-01-02T15:04:05Z"
                   revokedBy: example
                   status: pending
-                connections:
-                  - connectionId: example
-                    priorRevisionId: example
-                    revisionId: example
+                artifactDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
                 environment: example
                 error: example
                 evidence:
-                  artifactDigest: example
-                  baseGeneration: example
+                  artifactContentDigest: example
+                  artifactProvenanceDigest: example
+                  baseGenerationId: example
                   candidateId: example
                   candidateRevision: 1
+                  environment: example
+                  generationId: example
                   planDigest: example
                   policyDigest: example
                   releaseDigest: example
@@ -24675,39 +24627,15 @@ paths:
                     repository: example
                     revision: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: example
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 finishedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
-                progress:
-                  current: 1
-                  total: 1
-                  unit: example
+                priorGenerationId: example
                 projectId: example
                 releaseId: example
                 requestDigest: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: queued
-                targets:
-                  - error: example
-                    priorServingStateId: example
-                    servingStateId: example
-                    status: example
-                    workspaceId: example
                 verification:
                   digest: example
                   verifiedAt: "2026-01-02T15:04:05Z"
@@ -25029,7 +24957,7 @@ paths:
             status_code: !!float 403
           - code: RELEASE_INCOMPLETE
             kind: release_incomplete
-            public_detail: The release is missing a workspace artifact.
+            public_detail: The release is missing its project-generation artifact.
             status_code: !!float 409
           - code: RELEASE_NOT_READY
             kind: release_not_ready
@@ -25093,19 +25021,19 @@ paths:
                   revokedAt: "2026-01-02T15:04:05Z"
                   revokedBy: example
                   status: pending
-                connections:
-                  - connectionId: example
-                    priorRevisionId: example
-                    revisionId: example
+                artifactDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
                 environment: example
                 error: example
                 evidence:
-                  artifactDigest: example
-                  baseGeneration: example
+                  artifactContentDigest: example
+                  artifactProvenanceDigest: example
+                  baseGenerationId: example
                   candidateId: example
                   candidateRevision: 1
+                  environment: example
+                  generationId: example
                   planDigest: example
                   policyDigest: example
                   releaseDigest: example
@@ -25116,39 +25044,15 @@ paths:
                     repository: example
                     revision: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: example
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 finishedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
-                progress:
-                  current: 1
-                  total: 1
-                  unit: example
+                priorGenerationId: example
                 projectId: example
                 releaseId: example
                 requestDigest: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: queued
-                targets:
-                  - error: example
-                    priorServingStateId: example
-                    servingStateId: example
-                    status: example
-                    workspaceId: example
                 verification:
                   digest: example
                   verifiedAt: "2026-01-02T15:04:05Z"
@@ -25450,19 +25354,19 @@ paths:
                   revokedAt: "2026-01-02T15:04:05Z"
                   revokedBy: example
                   status: pending
-                connections:
-                  - connectionId: example
-                    priorRevisionId: example
-                    revisionId: example
+                artifactDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
                 environment: example
                 error: example
                 evidence:
-                  artifactDigest: example
-                  baseGeneration: example
+                  artifactContentDigest: example
+                  artifactProvenanceDigest: example
+                  baseGenerationId: example
                   candidateId: example
                   candidateRevision: 1
+                  environment: example
+                  generationId: example
                   planDigest: example
                   policyDigest: example
                   releaseDigest: example
@@ -25473,39 +25377,15 @@ paths:
                     repository: example
                     revision: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: example
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 finishedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
-                progress:
-                  current: 1
-                  total: 1
-                  unit: example
+                priorGenerationId: example
                 projectId: example
                 releaseId: example
                 requestDigest: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: queued
-                targets:
-                  - error: example
-                    priorServingStateId: example
-                    servingStateId: example
-                    status: example
-                    workspaceId: example
                 verification:
                   digest: example
                   verifiedAt: "2026-01-02T15:04:05Z"
@@ -27329,19 +27209,19 @@ paths:
                   revokedAt: "2026-01-02T15:04:05Z"
                   revokedBy: example
                   status: pending
-                connections:
-                  - connectionId: example
-                    priorRevisionId: example
-                    revisionId: example
+                artifactDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
                 environment: example
                 error: example
                 evidence:
-                  artifactDigest: example
-                  baseGeneration: example
+                  artifactContentDigest: example
+                  artifactProvenanceDigest: example
+                  baseGenerationId: example
                   candidateId: example
                   candidateRevision: 1
+                  environment: example
+                  generationId: example
                   planDigest: example
                   policyDigest: example
                   releaseDigest: example
@@ -27352,39 +27232,15 @@ paths:
                     repository: example
                     revision: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: example
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 finishedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
-                progress:
-                  current: 1
-                  total: 1
-                  unit: example
+                priorGenerationId: example
                 projectId: example
                 releaseId: example
                 requestDigest: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: queued
-                targets:
-                  - error: example
-                    priorServingStateId: example
-                    servingStateId: example
-                    status: example
-                    workspaceId: example
                 verification:
                   digest: example
                   verifiedAt: "2026-01-02T15:04:05Z"
@@ -28048,19 +27904,19 @@ paths:
                   revokedAt: "2026-01-02T15:04:05Z"
                   revokedBy: example
                   status: pending
-                connections:
-                  - connectionId: example
-                    priorRevisionId: example
-                    revisionId: example
+                artifactDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
                 environment: example
                 error: example
                 evidence:
-                  artifactDigest: example
-                  baseGeneration: example
+                  artifactContentDigest: example
+                  artifactProvenanceDigest: example
+                  baseGenerationId: example
                   candidateId: example
                   candidateRevision: 1
+                  environment: example
+                  generationId: example
                   planDigest: example
                   policyDigest: example
                   releaseDigest: example
@@ -28071,39 +27927,15 @@ paths:
                     repository: example
                     revision: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: example
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 finishedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
-                progress:
-                  current: 1
-                  total: 1
-                  unit: example
+                priorGenerationId: example
                 projectId: example
                 releaseId: example
                 requestDigest: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: queued
-                targets:
-                  - error: example
-                    priorServingStateId: example
-                    servingStateId: example
-                    status: example
-                    workspaceId: example
                 verification:
                   digest: example
                   verifiedAt: "2026-01-02T15:04:05Z"
@@ -28401,7 +28233,7 @@ paths:
             status_code: !!float 403
           - code: RELEASE_INCOMPLETE
             kind: release_incomplete
-            public_detail: The release is missing a workspace artifact.
+            public_detail: The release is missing its project-generation artifact.
             status_code: !!float 409
           - code: RELEASE_NOT_READY
             kind: release_not_ready
@@ -28478,19 +28310,19 @@ paths:
                   revokedAt: "2026-01-02T15:04:05Z"
                   revokedBy: example
                   status: pending
-                connections:
-                  - connectionId: example
-                    priorRevisionId: example
-                    revisionId: example
+                artifactDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
                 createdBy: example
                 environment: example
                 error: example
                 evidence:
-                  artifactDigest: example
-                  baseGeneration: example
+                  artifactContentDigest: example
+                  artifactProvenanceDigest: example
+                  baseGenerationId: example
                   candidateId: example
                   candidateRevision: 1
+                  environment: example
+                  generationId: example
                   planDigest: example
                   policyDigest: example
                   releaseDigest: example
@@ -28501,39 +28333,15 @@ paths:
                     repository: example
                     revision: example
                   targetId: example
-                  workspaces:
-                    - artifactDigest: example
-                      bindings:
-                        - bindingId: example
-                          connectorKind: example
-                          endpointConfigHash: example
-                          logicalConnection: example
-                          revision: 1
-                          validatedVersion: example
-                      dataMode: example
-                      dataRevision: example
-                      managedDataPins:
-                        - connectionId: example
-                          revisionId: example
-                      servingStateId: example
-                      workspaceId: example
                 finishedAt: "2026-01-02T15:04:05Z"
+                generationId: example
                 id: example
-                progress:
-                  current: 1
-                  total: 1
-                  unit: example
+                priorGenerationId: example
                 projectId: example
                 releaseId: example
                 requestDigest: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: queued
-                targets:
-                  - error: example
-                    priorServingStateId: example
-                    servingStateId: example
-                    status: example
-                    workspaceId: example
                 verification:
                   digest: example
                   verifiedAt: "2026-01-02T15:04:05Z"
@@ -28831,7 +28639,7 @@ paths:
             status_code: !!float 403
           - code: RELEASE_INCOMPLETE
             kind: release_incomplete
-            public_detail: The release is missing a workspace artifact.
+            public_detail: The release is missing its project-generation artifact.
             status_code: !!float 409
           - code: RELEASE_NOT_READY
             kind: release_not_ready
@@ -66924,42 +66732,6 @@ components:
         - revoked
         - expired
       example: pending
-    DeploymentBindingEvidence:
-      type: object
-      required:
-        - bindingId
-        - logicalConnection
-        - connectorKind
-        - revision
-        - validatedVersion
-        - endpointConfigHash
-      properties:
-        bindingId:
-          type: string
-          example: example
-        logicalConnection:
-          type: string
-          example: example
-        connectorKind:
-          type: string
-          example: example
-        revision:
-          type: integer
-          format: int64
-          example: 1
-        validatedVersion:
-          type: string
-          example: example
-        endpointConfigHash:
-          type: string
-          example: example
-      example:
-        bindingId: example
-        connectorKind: example
-        endpointConfigHash: example
-        logicalConnection: example
-        revision: 1
-        validatedVersion: example
     DeploymentCancelledAuditPayload:
       type: object
       required:
@@ -66975,25 +66747,6 @@ components:
       example:
         deploymentId: example
         status: example
-    DeploymentConnectionResponse:
-      type: object
-      required:
-        - connectionId
-        - revisionId
-      properties:
-        connectionId:
-          type: string
-          example: example
-        revisionId:
-          type: string
-          example: example
-        priorRevisionId:
-          type: string
-          example: example
-      example:
-        connectionId: example
-        priorRevisionId: example
-        revisionId: example
     DeploymentCreateRequest:
       type: object
       required:
@@ -67034,19 +66787,19 @@ components:
                 revokedAt: "2026-01-02T15:04:05Z"
                 revokedBy: example
                 status: pending
-              connections:
-                - connectionId: example
-                  priorRevisionId: example
-                  revisionId: example
+              artifactDigest: example
               createdAt: "2026-01-02T15:04:05Z"
               createdBy: example
               environment: example
               error: example
               evidence:
-                artifactDigest: example
-                baseGeneration: example
+                artifactContentDigest: example
+                artifactProvenanceDigest: example
+                baseGenerationId: example
                 candidateId: example
                 candidateRevision: 1
+                environment: example
+                generationId: example
                 planDigest: example
                 policyDigest: example
                 releaseDigest: example
@@ -67057,39 +66810,15 @@ components:
                   repository: example
                   revision: example
                 targetId: example
-                workspaces:
-                  - artifactDigest: example
-                    bindings:
-                      - bindingId: example
-                        connectorKind: example
-                        endpointConfigHash: example
-                        logicalConnection: example
-                        revision: 1
-                        validatedVersion: example
-                    dataMode: example
-                    dataRevision: example
-                    managedDataPins:
-                      - connectionId: example
-                        revisionId: example
-                    servingStateId: example
-                    workspaceId: example
               finishedAt: "2026-01-02T15:04:05Z"
+              generationId: example
               id: example
-              progress:
-                current: 1
-                total: 1
-                unit: example
+              priorGenerationId: example
               projectId: example
               releaseId: example
               requestDigest: example
               startedAt: "2026-01-02T15:04:05Z"
               status: queued
-              targets:
-                - error: example
-                  priorServingStateId: example
-                  servingStateId: example
-                  status: example
-                  workspaceId: example
               verification:
                 digest: example
                 verifiedAt: "2026-01-02T15:04:05Z"
@@ -67116,19 +66845,19 @@ components:
               revokedAt: "2026-01-02T15:04:05Z"
               revokedBy: example
               status: pending
-            connections:
-              - connectionId: example
-                priorRevisionId: example
-                revisionId: example
+            artifactDigest: example
             createdAt: "2026-01-02T15:04:05Z"
             createdBy: example
             environment: example
             error: example
             evidence:
-              artifactDigest: example
-              baseGeneration: example
+              artifactContentDigest: example
+              artifactProvenanceDigest: example
+              baseGenerationId: example
               candidateId: example
               candidateRevision: 1
+              environment: example
+              generationId: example
               planDigest: example
               policyDigest: example
               releaseDigest: example
@@ -67139,99 +66868,42 @@ components:
                 repository: example
                 revision: example
               targetId: example
-              workspaces:
-                - artifactDigest: example
-                  bindings:
-                    - bindingId: example
-                      connectorKind: example
-                      endpointConfigHash: example
-                      logicalConnection: example
-                      revision: 1
-                      validatedVersion: example
-                  dataMode: example
-                  dataRevision: example
-                  managedDataPins:
-                    - connectionId: example
-                      revisionId: example
-                  servingStateId: example
-                  workspaceId: example
             finishedAt: "2026-01-02T15:04:05Z"
+            generationId: example
             id: example
-            progress:
-              current: 1
-              total: 1
-              unit: example
+            priorGenerationId: example
             projectId: example
             releaseId: example
             requestDigest: example
             startedAt: "2026-01-02T15:04:05Z"
             status: queued
-            targets:
-              - error: example
-                priorServingStateId: example
-                servingStateId: example
-                status: example
-                workspaceId: example
             verification:
               digest: example
               verifiedAt: "2026-01-02T15:04:05Z"
         page:
           nextCursor: example
-    DeploymentManagedDataPinEvidence:
-      type: object
-      required:
-        - connectionId
-        - revisionId
-      properties:
-        connectionId:
-          type: string
-          example: example
-        revisionId:
-          type: string
-          example: example
-      example:
-        connectionId: example
-        revisionId: example
-    DeploymentProgress:
-      type: object
-      required:
-        - current
-        - total
-        - unit
-      properties:
-        current:
-          type: integer
-          format: int32
-          example: 1
-        total:
-          type: integer
-          format: int32
-          example: 1
-        unit:
-          type: string
-          example: example
-      example:
-        current: 1
-        total: 1
-        unit: example
     DeploymentPublishEvidence:
       type: object
       required:
         - releaseDigest
-        - artifactDigest
+        - artifactContentDigest
+        - artifactProvenanceDigest
         - planDigest
         - candidateId
         - candidateRevision
         - targetId
-        - baseGeneration
+        - environment
+        - generationId
         - runtimeVersion
         - policyDigest
-        - workspaces
       properties:
         releaseDigest:
           type: string
           example: example
-        artifactDigest:
+        artifactContentDigest:
+          type: string
+          example: example
+        artifactProvenanceDigest:
           type: string
           example: example
         planDigest:
@@ -67247,7 +66919,13 @@ components:
         targetId:
           type: string
           example: example
-        baseGeneration:
+        environment:
+          type: string
+          example: example
+        generationId:
+          type: string
+          example: example
+        baseGenerationId:
           type: string
           example: example
         runtimeVersion:
@@ -67258,31 +66936,14 @@ components:
           example: example
         sourceRevision:
           $ref: '#/components/schemas/CandidateSourceRevision'
-        workspaces:
-          type: array
-          items:
-            $ref: '#/components/schemas/DeploymentWorkspacePublishEvidence'
-          example:
-            - artifactDigest: example
-              bindings:
-                - bindingId: example
-                  connectorKind: example
-                  endpointConfigHash: example
-                  logicalConnection: example
-                  revision: 1
-                  validatedVersion: example
-              dataMode: example
-              dataRevision: example
-              managedDataPins:
-                - connectionId: example
-                  revisionId: example
-              servingStateId: example
-              workspaceId: example
       example:
-        artifactDigest: example
-        baseGeneration: example
+        artifactContentDigest: example
+        artifactProvenanceDigest: example
+        baseGenerationId: example
         candidateId: example
         candidateRevision: 1
+        environment: example
+        generationId: example
         planDigest: example
         policyDigest: example
         releaseDigest: example
@@ -67293,22 +66954,6 @@ components:
           repository: example
           revision: example
         targetId: example
-        workspaces:
-          - artifactDigest: example
-            bindings:
-              - bindingId: example
-                connectorKind: example
-                endpointConfigHash: example
-                logicalConnection: example
-                revision: 1
-                validatedVersion: example
-            dataMode: example
-            dataRevision: example
-            managedDataPins:
-              - connectionId: example
-                revisionId: example
-            servingStateId: example
-            workspaceId: example
     DeploymentQueuedAuditPayload:
       type: object
       required:
@@ -67341,11 +66986,11 @@ components:
         - projectId
         - releaseId
         - environment
+        - generationId
+        - artifactDigest
         - requestDigest
         - evidence
         - status
-        - targets
-        - connections
         - createdBy
         - createdAt
       properties:
@@ -67361,6 +67006,15 @@ components:
         environment:
           type: string
           example: example
+        generationId:
+          type: string
+          example: example
+        artifactDigest:
+          type: string
+          example: example
+        priorGenerationId:
+          type: string
+          example: example
         requestDigest:
           type: string
           example: example
@@ -67368,26 +67022,6 @@ components:
           $ref: '#/components/schemas/DeploymentPublishEvidence'
         status:
           $ref: '#/components/schemas/DeploymentStatus'
-        progress:
-          $ref: '#/components/schemas/DeploymentProgress'
-        targets:
-          type: array
-          items:
-            $ref: '#/components/schemas/DeploymentTargetResponse'
-          example:
-            - error: example
-              priorServingStateId: example
-              servingStateId: example
-              status: example
-              workspaceId: example
-        connections:
-          type: array
-          items:
-            $ref: '#/components/schemas/DeploymentConnectionResponse'
-          example:
-            - connectionId: example
-              priorRevisionId: example
-              revisionId: example
         createdBy:
           type: string
           example: example
@@ -67433,19 +67067,19 @@ components:
           revokedAt: "2026-01-02T15:04:05Z"
           revokedBy: example
           status: pending
-        connections:
-          - connectionId: example
-            priorRevisionId: example
-            revisionId: example
+        artifactDigest: example
         createdAt: "2026-01-02T15:04:05Z"
         createdBy: example
         environment: example
         error: example
         evidence:
-          artifactDigest: example
-          baseGeneration: example
+          artifactContentDigest: example
+          artifactProvenanceDigest: example
+          baseGenerationId: example
           candidateId: example
           candidateRevision: 1
+          environment: example
+          generationId: example
           planDigest: example
           policyDigest: example
           releaseDigest: example
@@ -67456,39 +67090,15 @@ components:
             repository: example
             revision: example
           targetId: example
-          workspaces:
-            - artifactDigest: example
-              bindings:
-                - bindingId: example
-                  connectorKind: example
-                  endpointConfigHash: example
-                  logicalConnection: example
-                  revision: 1
-                  validatedVersion: example
-              dataMode: example
-              dataRevision: example
-              managedDataPins:
-                - connectionId: example
-                  revisionId: example
-              servingStateId: example
-              workspaceId: example
         finishedAt: "2026-01-02T15:04:05Z"
+        generationId: example
         id: example
-        progress:
-          current: 1
-          total: 1
-          unit: example
+        priorGenerationId: example
         projectId: example
         releaseId: example
         requestDigest: example
         startedAt: "2026-01-02T15:04:05Z"
         status: queued
-        targets:
-          - error: example
-            priorServingStateId: example
-            servingStateId: example
-            status: example
-            workspaceId: example
         verification:
           digest: example
           verifiedAt: "2026-01-02T15:04:05Z"
@@ -67502,33 +67112,6 @@ components:
         - cancelled
         - superseded
       example: queued
-    DeploymentTargetResponse:
-      type: object
-      required:
-        - workspaceId
-        - status
-      properties:
-        workspaceId:
-          type: string
-          example: example
-        servingStateId:
-          type: string
-          example: example
-        priorServingStateId:
-          type: string
-          example: example
-        status:
-          type: string
-          example: example
-        error:
-          type: string
-          example: example
-      example:
-        error: example
-        priorServingStateId: example
-        servingStateId: example
-        status: example
-        workspaceId: example
     DeploymentVerification:
       type: object
       required:
@@ -67545,66 +67128,6 @@ components:
       example:
         digest: example
         verifiedAt: "2026-01-02T15:04:05Z"
-    DeploymentWorkspacePublishEvidence:
-      type: object
-      required:
-        - workspaceId
-        - servingStateId
-        - artifactDigest
-        - dataRevision
-        - dataMode
-        - managedDataPins
-        - bindings
-      properties:
-        workspaceId:
-          type: string
-          example: example
-        servingStateId:
-          type: string
-          example: example
-        artifactDigest:
-          type: string
-          example: example
-        dataRevision:
-          type: string
-          example: example
-        dataMode:
-          type: string
-          example: example
-        managedDataPins:
-          type: array
-          items:
-            $ref: '#/components/schemas/DeploymentManagedDataPinEvidence'
-          example:
-            - connectionId: example
-              revisionId: example
-        bindings:
-          type: array
-          items:
-            $ref: '#/components/schemas/DeploymentBindingEvidence'
-          example:
-            - bindingId: example
-              connectorKind: example
-              endpointConfigHash: example
-              logicalConnection: example
-              revision: 1
-              validatedVersion: example
-      example:
-        artifactDigest: example
-        bindings:
-          - bindingId: example
-            connectorKind: example
-            endpointConfigHash: example
-            logicalConnection: example
-            revision: 1
-            validatedVersion: example
-        dataMode: example
-        dataRevision: example
-        managedDataPins:
-          - connectionId: example
-            revisionId: example
-        servingStateId: example
-        workspaceId: example
     DeviceAuthorizationApprovalRequest:
       type: object
       required:
