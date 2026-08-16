@@ -20,7 +20,7 @@ func TestRepositoryCreateRejectsMalformedProjectIdentity(t *testing.T) {
 		t.Fatal("Create() accepted empty project identity")
 	}
 	for _, projectID := range []projectgraph.ResourceID{"project/id", " project", "project "} {
-		if _, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID}); err == nil {
+		if _, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: servingstate.DefaultEnvironment}); err == nil {
 			t.Fatalf("Create() accepted malformed project identity %q", projectID)
 		}
 	}
@@ -67,7 +67,7 @@ func TestRepositoryRejectsMalformedEnvironmentsForScopedOperations(t *testing.T)
 func TestRepositoryRejectsInvalidArtifactDigestAndSize(t *testing.T) {
 	_, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
-	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: servingstate.DefaultEnvironment})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestRepositoryRejectsInvalidArtifactDigestAndSize(t *testing.T) {
 func TestRepositorySaveValidatedBindsProjectGraphAndArtifact(t *testing.T) {
 	store, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
-	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: servingstate.DefaultEnvironment})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestRepositorySaveValidatedBindsProjectGraphAndArtifact(t *testing.T) {
 func TestRepositorySaveValidatedIsIdempotentAndImmutable(t *testing.T) {
 	_, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
-	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: servingstate.DefaultEnvironment})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestRepositorySaveValidatedIsIdempotentAndImmutable(t *testing.T) {
 func TestRepositorySaveValidatedRollsBackInvalidGraphAndArtifact(t *testing.T) {
 	store, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
-	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: servingstate.DefaultEnvironment})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestRepositorySaveValidatedRollsBackInvalidGraphAndArtifact(t *testing.T) {
 func TestRepositorySaveValidatedRejectsProjectGraphAndArtifactMismatches(t *testing.T) {
 	store, repo := openRepo(t)
 	projectID := projectgraph.ResourceID("project")
-	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID})
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectID, Environment: servingstate.DefaultEnvironment})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +247,7 @@ func TestRepositorySaveValidatedRejectsProjectGraphAndArtifactMismatches(t *test
 
 func TestRepositorySaveValidatedRejectsGraphProjectMismatch(t *testing.T) {
 	_, repo := openRepo(t)
-	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectgraph.ResourceID("project")})
+	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: projectgraph.ResourceID("project"), Environment: servingstate.DefaultEnvironment})
 	if err != nil {
 		t.Fatal(err)
 	}
