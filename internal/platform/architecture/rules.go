@@ -87,7 +87,7 @@ var SharedContractPrefixes = map[string][]string{
 	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
 	"manageddata":  {"internal/access", "internal/project/graph"},
 	"refresh":      {"internal/project/graph", "internal/project/manifest"},
-	"release":      {"internal/access/snapshot", "internal/project/graph"},
+	"release":      {"internal/project/graph"},
 	"runtimehost":  {"internal/access/snapshot", "internal/project/graph", "internal/project/runtime"},
 	"servingstate": {"internal/project/graph", "internal/project/manifest"},
 }
