@@ -49,16 +49,13 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
 		return
 	}
-	input := release.CreateInput{ProjectID: project, ProjectDigest: body.ProjectDigest, IdempotencyKey: idempotencyKey, CreatedBy: principal.ID}
+	input := release.CreateInput{ProjectID: project, Environment: body.Environment, GenerationID: body.GenerationID, ProjectDigest: body.ProjectDigest, ArtifactDigest: body.ArtifactDigest, RequestDigest: body.RequestDigest, IdempotencyKey: idempotencyKey, CreatedBy: principal.ID}
 	provenance, err := releaseProvenanceFromAPI(body.Provenance)
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), fmt.Errorf("%w: invalid provenance", release.ErrInvalid))
 		return
 	}
 	input.Provenance = provenance
-	for _, item := range body.Workspaces {
-		input.Workspaces = append(input.Workspaces, release.WorkspaceManifest{WorkspaceID: item.Workspace, ArtifactDigest: item.ArtifactDigest})
-	}
 	for _, item := range body.Connections {
 		input.Connections = append(input.Connections, release.ConnectionPin{ConnectionID: item.Connection, RevisionID: item.RevisionID})
 	}
@@ -107,25 +104,25 @@ func (m *Module) GetRelease(w http.ResponseWriter, r *http.Request, project, rel
 	apitransport.WriteJSON(w, http.StatusOK, response(row))
 }
 
-func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, project, releaseID, workspaceID, contentType, contentDigest string) {
+func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, project, releaseID, generationID, contentType, contentDigest string) {
 	if contentType != "application/octet-stream" {
 		apitransport.WriteProblem(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Release artifacts require application/octet-stream", nil)
 		return
 	}
-	artifact, err := m.service.UploadArtifact(r.Context(), project, releaseID, workspaceID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
+	artifact, err := m.service.UploadArtifact(r.Context(), project, releaseID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), err)
 		return
 	}
-	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, WorkspaceID: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes}
+	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, GenerationID: generationID, Digest: artifact.ExpectedDigest, ActualDigest: artifact.ActualDigest, SizeBytes: artifact.SizeBytes}
 	m.recordBestEffortEvent(
 		r.Context(), string(releasegen.GenOperationUploadReleaseArtifact), releaseID,
 		releaseArtifactUploadedAuditAction, releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{
 			OperationId: string(releasegen.GenOperationUploadReleaseArtifact), ReleaseId: releaseID,
-			WorkspaceId: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes,
+			WorkspaceId: "", Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes,
 		},
 	)
-	w.Header().Set("Location", location(project, releaseID)+"/workspaces/"+workspaceID+"/artifact")
+	w.Header().Set("Location", location(project, releaseID)+"/artifact")
 	apitransport.WriteJSON(w, http.StatusCreated, result)
 }
 
@@ -310,17 +307,11 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 
 func response(row release.Release) releaseapi.Response {
 	result := releaseapi.Response{
-		ID: row.ID, ProjectID: row.ProjectID, ProjectDigest: row.ProjectDigest, Status: releaseapi.Status(row.Status),
-		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Workspaces: make([]releaseapi.WorkspaceManifest, 0, len(row.Manifest.Workspaces)),
+		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID,
+		ArtifactDigest: row.ArtifactDigest, ActualDigest: row.ActualDigest, ArtifactSize: row.ArtifactSizeBytes,
+		ProjectDigest: row.ProjectDigest, Status: releaseapi.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt,
 		Connections: make([]releaseapi.ConnectionPin, 0, len(row.Manifest.Connections)),
 		Provenance:  releaseProvenanceToAPI(row.Provenance),
-	}
-	for _, item := range row.Manifest.Workspaces {
-		mapped := releaseapi.WorkspaceManifest{Workspace: item.WorkspaceID, ArtifactDigest: item.ArtifactDigest}
-		if item.ServingStateID != "" {
-			mapped.ServingStateID = &item.ServingStateID
-		}
-		result.Workspaces = append(result.Workspaces, mapped)
 	}
 	for _, item := range row.Manifest.Connections {
 		result.Connections = append(result.Connections, releaseapi.ConnectionPin{Connection: item.ConnectionID, RevisionID: item.RevisionID})
