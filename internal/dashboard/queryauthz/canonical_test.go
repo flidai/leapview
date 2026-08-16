@@ -30,7 +30,7 @@ func (m canonicalMetrics) Catalog() catalog.Catalog {
 	return catalog.Catalog{Project: catalog.Project{ID: canonicalProject}}
 }
 func (m canonicalMetrics) SemanticModel(id string) (*semanticmodel.Model, bool) {
-	return m.model, m.model != nil && (id == string(m.model.Name) || id == "semantic_model:sales")
+	return m.model, m.model != nil && (id == string(m.model.Name) || id == "semantic_sales")
 }
 func (m canonicalMetrics) ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error) {
 	return m.result, nil
@@ -61,8 +61,8 @@ func canonicalGraph(t testing.TB) (projectgraph.ProjectGraph, projectgraph.Servi
 	t.Helper()
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: canonicalProject, Kind: projectgraph.KindProject, Name: "sales_project"},
-		{ID: "semantic_model:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
-		{ID: "model:ratings", Kind: projectgraph.KindModel, Name: "ratings"},
+		{ID: "semantic_sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
+		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
 		{ID: "dashboard:dash", Kind: projectgraph.KindDashboard, Name: "dash"},
 	}, nil)
 	if err != nil {
@@ -72,8 +72,8 @@ func canonicalGraph(t testing.TB) (projectgraph.ProjectGraph, projectgraph.Servi
 	if err != nil {
 		t.Fatal(err)
 	}
-	semantic, _ := access.NewResourceRef("semantic_model:sales", projectgraph.KindSemanticModel)
-	physical, _ := access.NewResourceRef("model:ratings", projectgraph.KindModel)
+	semantic, _ := access.NewResourceRef("semantic_sales", projectgraph.KindSemanticModel)
+	physical, _ := access.NewResourceRef("model_orders", projectgraph.KindModel)
 	dashboard, _ := access.NewResourceRef("dashboard:dash", projectgraph.KindDashboard)
 	return graph, identity, semantic, physical, dashboard
 }
@@ -110,7 +110,7 @@ func canonicalSnapshot(t testing.TB, grants []struct {
 
 func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.AuthorizationSnapshot, recorder access.CanonicalAuditRecorder, options ...any) Metrics {
 	t.Helper()
-	underlying := canonicalMetrics{model: &semanticmodel.Model{Name: "sales", Sources: map[string]semanticmodel.Source{"ratings": {}}, Tables: map[string]semanticmodel.Table{"ratings": {Source: "ratings", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Field: "ratings.region", Table: "ratings", Name: "region"}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"region": {Name: "region", Bindings: map[string]semanticmodel.DimensionBinding{"ratings": {Field: "ratings.region"}}}}}}
+	underlying := canonicalMetrics{model: &semanticmodel.Model{Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Field: "orders.region", Table: "orders", Name: "region"}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"region": {Name: "region", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.region"}}}}}}
 	principalID, credentialID := "alice", ""
 	stringIndex := 0
 	for _, option := range options {
@@ -151,7 +151,7 @@ func TestCanonicalSemanticAndPhysicalAuthorization(t *testing.T) {
 		capability access.Capability
 	}{{"semantic", semantic, access.CapabilityResourceUse}}, nil)
 	metrics := canonicalMetricsWithSnapshot(t, semanticSnapshot, nil)
-	semanticQuery := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_model:sales", Kind: dataquery.KindSemanticRows}
+	semanticQuery := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows}
 	if _, _, err := metrics.GovernDataQuery(context.Background(), semanticQuery); err != nil {
 		t.Fatalf("semantic authorization: %v", err)
 	}
@@ -161,15 +161,19 @@ func TestCanonicalSemanticAndPhysicalAuthorization(t *testing.T) {
 		capability access.Capability
 	}{{"physical", physical, access.CapabilityResourceUse}}, nil)
 	physicalOnly := canonicalMetricsWithSnapshot(t, physicalOnlySnapshot, nil)
-	physicalQuery := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_model:sales", Target: "model:ratings", Kind: dataquery.KindSemanticRows}
-	if _, _, err := physicalOnly.GovernDataQuery(context.Background(), physicalQuery); err != nil {
+	physicalQuery := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Target: "orders", Kind: dataquery.KindSemanticRows}
+	governed, _, err := physicalOnly.GovernDataQuery(context.Background(), physicalQuery)
+	if err != nil {
 		t.Fatalf("physical authorization: %v", err)
+	}
+	if governed.Target != "orders" {
+		t.Fatalf("physical executable target = %q, want symbolic table name orders", governed.Target)
 	}
 	if _, _, err := physicalOnly.GovernDataQuery(context.Background(), semanticQuery); err == nil {
 		t.Fatal("semantic query unexpectedly used a physical-only grant")
 	}
 	unknownPhysical := physicalQuery
-	unknownPhysical.Target = "model:unknown"
+	unknownPhysical.Target = "unknown"
 	if _, _, err := physicalOnly.GovernDataQuery(context.Background(), unknownPhysical); err == nil {
 		t.Fatal("query with an unbound physical dependency was authorized")
 	}
@@ -177,22 +181,22 @@ func TestCanonicalSemanticAndPhysicalAuthorization(t *testing.T) {
 
 func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 	_, _, _, physical, _ := canonicalGraph(t)
-	row, err := accesspolicy.Compile("rls", "row_filter", `{"field":"ratings.region","operator":"equals","values":["EU"]}`)
+	row, err := accesspolicy.Compile("rls", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mask, err := accesspolicy.Compile("mask", "column_mask", `{"field":"ratings.email","mask":"null"}`)
+	mask, err := accesspolicy.Compile("mask", "column_mask", `{"field":"orders.email","mask":"null"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	policies := []accesssnapshot.DataPolicy{{ID: "rls", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"ratings.region","operator":"equals","values":["EU"]}`, Compiled: row}, {ID: "mask", Resource: physical, PolicyType: "column_mask", ExpressionJSON: `{"field":"ratings.email","mask":"null"}`, Compiled: mask}}
+	policies := []accesssnapshot.DataPolicy{{ID: "rls", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["EU"]}`, Compiled: row}, {ID: "mask", Resource: physical, PolicyType: "column_mask", ExpressionJSON: `{"field":"orders.email","mask":"null"}`, Compiled: mask}}
 	snapshot := canonicalSnapshot(t, []struct {
 		id         string
 		resource   access.ResourceRef
 		capability access.Capability
 	}{{"physical", physical, access.CapabilityResourceUse}}, policies)
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
-	request := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_model:sales", Target: "model:ratings", Kind: dataquery.KindSemanticRows, Fields: []dataquery.Field{{Field: "ratings.email"}}}
+	request := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Target: "orders", Kind: dataquery.KindSemanticRows, Fields: []dataquery.Field{{Field: "orders.email"}}}
 	governed, _, err := metrics.GovernDataQuery(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +207,7 @@ func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 	if governed.EffectivePolicyFingerprint == "" {
 		t.Fatal("effective policy fingerprint is empty")
 	}
-	usCompiled, err := accesspolicy.Compile("rls-us", "row_filter", `{"field":"ratings.region","operator":"equals","values":["US"]}`)
+	usCompiled, err := accesspolicy.Compile("rls-us", "row_filter", `{"field":"orders.region","operator":"equals","values":["US"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +215,7 @@ func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 		id         string
 		resource   access.ResourceRef
 		capability access.Capability
-	}{{"physical", physical, access.CapabilityResourceUse}}, []accesssnapshot.DataPolicy{{ID: "rls-us", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"ratings.region","operator":"equals","values":["US"]}`, Compiled: usCompiled}})
+	}{{"physical", physical, access.CapabilityResourceUse}}, []accesssnapshot.DataPolicy{{ID: "rls-us", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["US"]}`, Compiled: usCompiled}})
 	usGoverned, _, err := canonicalMetricsWithSnapshot(t, usSnapshot, nil).GovernDataQuery(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +267,7 @@ func TestCanonicalTokenAttenuationAndProjectIdentity(t *testing.T) {
 			return access.APICredential{Token: access.APIToken{Capabilities: tokenCaps}}, true
 		},
 	})
-	query := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_model:sales", Kind: dataquery.KindSemanticRows}
+	query := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows}
 	// Nil means dynamic attenuation and follows current effective capabilities.
 	tokenCaps = nil
 	if _, _, err := metrics.GovernDataQuery(context.Background(), query); err != nil {
@@ -301,7 +305,7 @@ func TestCanonicalActiveProjectIdentityRejectsMismatch(t *testing.T) {
 		capability access.Capability
 	}{{"semantic", semantic, access.CapabilityResourceUse}}, nil)
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
-	_, _, err := metrics.GovernDataQuery(context.Background(), dataquery.Query{ProjectID: "project:other", ModelID: "semantic_model:sales", Kind: dataquery.KindSemanticRows})
+	_, _, err := metrics.GovernDataQuery(context.Background(), dataquery.Query{ProjectID: "project:other", ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows})
 	if err == nil {
 		t.Fatal("project mismatch was authorized")
 	}
@@ -342,33 +346,33 @@ func TestCanonicalPublicPublicationAndCandidateClosures(t *testing.T) {
 
 func TestCanonicalPolicyAlgebraAndCandidateRestrictions(t *testing.T) {
 	_, _, semantic, physical, _ := canonicalGraph(t)
-	globalCompiled, err := accesspolicy.Compile("global", "row_filter", `{"field":"ratings.region","operator":"equals","values":["EU"]}`)
+	globalCompiled, err := accesspolicy.Compile("global", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	group, _ := access.NewSubjectRef(access.SubjectKindGroup, "analysts")
-	groupCompiled, err := accesspolicy.Compile("group", "row_filter", `{"field":"ratings.region","operator":"equals","values":["US"]}`)
+	groupCompiled, err := accesspolicy.Compile("group", "row_filter", `{"field":"orders.region","operator":"equals","values":["US"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	composition, err := composeDataPolicies([]accesssnapshot.DataPolicy{{ID: "global", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"ratings.region","operator":"equals","values":["EU"]}`, Compiled: globalCompiled}, {ID: "group", Resource: physical, Subject: &group, PolicyType: "row_filter", ExpressionJSON: `{"field":"ratings.region","operator":"equals","values":["US"]}`, Compiled: groupCompiled}}, nil)
+	composition, err := composeDataPolicies([]accesssnapshot.DataPolicy{{ID: "global", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["EU"]}`, Compiled: globalCompiled}, {ID: "group", Resource: physical, Subject: &group, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["US"]}`, Compiled: groupCompiled}}, nil)
 	if err != nil || len(composition.Filters) != 2 {
 		t.Fatalf("policy algebra = %#v, %v", composition, err)
 	}
-	first, _ := accesspolicy.Compile("mask-null", "column_mask", `{"field":"ratings.email","mask":"null"}`)
-	second, _ := accesspolicy.Compile("mask-redact", "column_mask", `{"field":"ratings.email","mask":"redact"}`)
-	if _, err := composeDataPolicies([]accesssnapshot.DataPolicy{{ID: "null", Resource: physical, PolicyType: "column_mask", ExpressionJSON: `{"field":"ratings.email","mask":"null"}`, Compiled: first}, {ID: "redact", Resource: physical, PolicyType: "column_mask", ExpressionJSON: `{"field":"ratings.email","mask":"redact"}`, Compiled: second}}, nil); err == nil {
+	first, _ := accesspolicy.Compile("mask-null", "column_mask", `{"field":"orders.email","mask":"null"}`)
+	second, _ := accesspolicy.Compile("mask-redact", "column_mask", `{"field":"orders.email","mask":"redact"}`)
+	if _, err := composeDataPolicies([]accesssnapshot.DataPolicy{{ID: "null", Resource: physical, PolicyType: "column_mask", ExpressionJSON: `{"field":"orders.email","mask":"null"}`, Compiled: first}, {ID: "redact", Resource: physical, PolicyType: "column_mask", ExpressionJSON: `{"field":"orders.email","mask":"redact"}`, Compiled: second}}, nil); err == nil {
 		t.Fatal("contradictory masks were accepted")
 	}
-	rowCompiled, _ := accesspolicy.Compile("candidate", "row_filter", `{"field":"ratings.region","operator":"equals","values":["EU"]}`)
+	rowCompiled, _ := accesspolicy.Compile("candidate", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
 	snapshot := canonicalSnapshot(t, []struct {
 		id         string
 		resource   access.ResourceRef
 		capability access.Capability
 	}{{"physical-use", physical, access.CapabilityResourceUse}, {"physical-read", physical, access.CapabilityResourceRead}}, nil)
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
-	ctx := WithCandidateQueryCapability(context.Background(), CandidateQueryCapability{CandidateID: "candidate-1", OwnerPrincipalID: "alice", ProjectID: canonicalProject, PolicyDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Restrictions: []accesssnapshot.DataPolicy{{ID: "candidate", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"ratings.region","operator":"equals","values":["EU"]}`, Compiled: rowCompiled}}})
-	governed, _, err := metrics.GovernDataQuery(ctx, dataquery.Query{ProjectID: canonicalProject, ModelID: semantic.CanonicalID(), Target: physical.CanonicalID(), Kind: dataquery.KindSemanticRows})
+	ctx := WithCandidateQueryCapability(context.Background(), CandidateQueryCapability{CandidateID: "candidate-1", OwnerPrincipalID: "alice", ProjectID: canonicalProject, PolicyDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Restrictions: []accesssnapshot.DataPolicy{{ID: "candidate", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["EU"]}`, Compiled: rowCompiled}}})
+	governed, _, err := metrics.GovernDataQuery(ctx, dataquery.Query{ProjectID: canonicalProject, ModelID: semantic.CanonicalID(), Target: "orders", Kind: dataquery.KindSemanticRows})
 	if err != nil || len(governed.Filters) != 1 {
 		t.Fatalf("candidate restriction = %#v, %v", governed, err)
 	}
@@ -388,7 +392,7 @@ func TestCanonicalViewAsRequiresProjectAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
-	request := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_model:sales", Kind: dataquery.KindSemanticRows}
+	request := dataquery.Query{ProjectID: canonicalProject, ModelID: "semantic_sales", Kind: dataquery.KindSemanticRows}
 	ctx := WithViewAsCapability(context.Background(), ViewAsCapability{ActorPrincipalID: "alice", SubjectPrincipalID: "bob", ProjectID: canonicalProject})
 	if _, err := metrics.authorizeViewAs(ctx, Principal{ID: "alice"}, request, ViewAsCapability{ActorPrincipalID: "alice", SubjectPrincipalID: "bob", ProjectID: canonicalProject}); err != nil {
 		t.Fatal(err)
@@ -401,7 +405,7 @@ func TestCanonicalViewAsRequiresProjectAdmin(t *testing.T) {
 }
 
 func TestCanonicalArrowAuditRecordsSuccessAndFailure(t *testing.T) {
-	_, _, semantic, _, dashboard := canonicalGraph(t)
+	_, _, semantic, physical, dashboard := canonicalGraph(t)
 	snapshot := canonicalSnapshot(t, []struct {
 		id         string
 		resource   access.ResourceRef
@@ -416,12 +420,12 @@ func TestCanonicalArrowAuditRecordsSuccessAndFailure(t *testing.T) {
 	if len(recorder.events) != 1 || recorder.events[0].Status != "success" {
 		t.Fatalf("audit events = %#v", recorder.events)
 	}
-	publication := DashboardPublicationCapability{ProjectID: canonicalProject, Publication: "public", Dashboard: dashboard, ModelID: semantic, DependencyAssetIDs: []access.ResourceRef{dashboard, semantic}}
+	publication := DashboardPublicationCapability{ProjectID: canonicalProject, Publication: "public", Dashboard: dashboard, ModelID: semantic, DependencyAssetIDs: []access.ResourceRef{dashboard, semantic, physical}}
 	publicQuery := query
 	publicQuery.Surface = dataquery.SurfacePublicDashboard
 	publicQuery.Operation = dataquery.OperationDashboardRows
 	publicQuery.Fields = []dataquery.Field{{Field: "region"}}
-	publicQuery.Target = "ratings"
+	publicQuery.Target = "orders"
 	publicCtx := WithDashboardPublicationCapability(context.Background(), publication)
 	publicMetrics := canonicalMetricsWithSnapshot(t, snapshot, recorder)
 	if _, err := publicMetrics.ExecuteDataQueryArrow(publicCtx, publicQuery, nil); err != nil {

@@ -178,6 +178,10 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	if err != nil {
 		return request, nil, err
 	}
+	resourceIndex, err := newProjectResourceIndex(snapshot.Project())
+	if err != nil {
+		return request, nil, err
+	}
 	candidateCapability, candidateQuery := candidateQueryCapabilityFromContext(ctx)
 	capabilityAction := dataQueryCapability(request)
 	if candidateQuery {
@@ -185,10 +189,10 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		// dashboard interaction whose production equivalent uses QUERY_DATA.
 		capabilityAction = access.CapabilityResourceRead
 	}
-	objects := m.dataQueryObjects(snapshot.Project(), request)
+	objects := m.dataQueryObjects(resourceIndex, request)
 	capability, publicationQuery := dashboardPublicationCapabilityFromContext(ctx)
 	viewAs, viewAsQuery := viewAsCapabilityFromContext(ctx)
-	semanticObjects, physicalObjects, err := m.resolvedDependencyObjects(snapshot.Project(), request, publicationQuery)
+	semanticObjects, physicalObjects, err := m.resolvedDependencyObjects(resourceIndex, request, publicationQuery)
 	if err != nil {
 		return request, nil, err
 	}
@@ -209,7 +213,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 			}
 			return request, nil, err
 		}
-		objects = append(objects, m.dataQueryColumnObjects(snapshot.Project(), request)...)
+		objects = append(objects, m.dataQueryColumnObjects(resourceIndex, request)...)
 		request.PrincipalID = dashboardPublicationSubjectID(capability.ProjectID, capability.Publication)
 		if err := validateDashboardPublicationQuery(capability, request, objects); err != nil {
 			if auditErr := m.recordDataAccessAudit(ctx, request, access.CapabilityResourceRead, "denied", err); auditErr != nil {
@@ -217,7 +221,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 			}
 			return request, nil, err
 		}
-		governed, policies, err := m.applyDataPolicies(ctx, request, objects)
+		governed, policies, err := m.applyDataPolicies(ctx, request, objects, resourceIndex)
 		if err != nil {
 			if auditErr := m.recordDataAccessAudit(ctx, request, access.CapabilityResourceRead, "error", err); auditErr != nil {
 				return request, nil, errors.Join(err, auditErr)
@@ -320,7 +324,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	governed, policies, err := m.applyDataPolicies(ctx, request, objects)
+	governed, policies, err := m.applyDataPolicies(ctx, request, objects, resourceIndex)
 	if err != nil {
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
 		return request, nil, err
@@ -426,7 +430,7 @@ func (m Metrics) authorizeDataQuery(ctx context.Context, snapshot accesssnapshot
 	return true, nil
 }
 
-func (m Metrics) resolvedDependencyObjects(project projectgraph.ProjectGraph, request dataquery.Query, includePublicInteractions bool) ([]access.ResourceRef, []access.ResourceRef, error) {
+func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, request dataquery.Query, includePublicInteractions bool) ([]access.ResourceRef, []access.ResourceRef, error) {
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate, dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget, dataquery.KindSemanticSpatialMetadata:
 	case dataquery.KindSemanticRows, dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution:
@@ -469,7 +473,7 @@ func (m Metrics) resolvedDependencyObjects(project projectgraph.ProjectGraph, re
 	if err != nil {
 		return nil, nil, err
 	}
-	modelObject, ok := canonicalModelResource(project, request.ModelID, projectgraph.KindSemanticModel)
+	modelObject, ok := resourceIndex.byID(request.ModelID, projectgraph.KindSemanticModel)
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown semantic model resource %q", request.ModelID)
 	}
@@ -483,7 +487,7 @@ func (m Metrics) resolvedDependencyObjects(project projectgraph.ProjectGraph, re
 	physicalObjects := make([]access.ResourceRef, 0, len(dependencies.Facts)+len(dependencies.PhysicalFields))
 	datasets := map[string]access.ResourceRef{}
 	for _, fact := range dependencies.Facts {
-		dataset, ok := canonicalModelResource(project, fact, projectgraph.KindModel)
+		dataset, ok := resourceIndex.byName(fact, projectgraph.KindModel)
 		if !ok {
 			continue
 		}
@@ -497,7 +501,7 @@ func (m Metrics) resolvedDependencyObjects(project projectgraph.ProjectGraph, re
 		}
 		tableObject, ok := datasets[table]
 		if !ok {
-			tableObject, ok = canonicalModelResource(project, table, projectgraph.KindModel)
+			tableObject, ok = resourceIndex.byName(table, projectgraph.KindModel)
 			if !ok {
 				continue
 			}
@@ -601,7 +605,7 @@ func (m Metrics) recordDataAccessAudit(ctx context.Context, request dataquery.Qu
 	if err != nil {
 		return err
 	}
-	resource, ok := canonicalModelResource(snapshot.Project(), request.ModelID, projectgraph.KindSemanticModel)
+	resource, ok := canonicalResourceByID(snapshot.Project(), request.ModelID, projectgraph.KindSemanticModel)
 	if !ok {
 		resource, err = access.NewResourceRef(request.ProjectID, projectgraph.KindProject)
 		if err != nil {
@@ -754,8 +758,8 @@ func (m Metrics) QueryPublicVisualizationTile(ctx context.Context, publicID, das
 	return port.QueryPublicVisualizationTile(dataquery.WithGovernor(ctx, m), publicID, dashboardID, visualID, revision, zoom, x, y)
 }
 
-func (m Metrics) applyDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ResourceRef) (dataquery.Query, []accesssnapshot.DataPolicy, error) {
-	policies, err := m.effectiveDataPolicies(ctx, request, objects)
+func (m Metrics) applyDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ResourceRef, resourceIndex projectResourceIndex) (dataquery.Query, []accesssnapshot.DataPolicy, error) {
+	policies, err := m.effectiveDataPolicies(ctx, request, objects, resourceIndex)
 	if err != nil {
 		return request, nil, err
 	}
@@ -894,7 +898,7 @@ func (set effectiveDataPolicySet) all() []accesssnapshot.DataPolicy {
 	return append(append([]accesssnapshot.DataPolicy(nil), set.active...), set.mandatory...)
 }
 
-func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ResourceRef) (effectiveDataPolicySet, error) {
+func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Query, objects []access.ResourceRef, resourceIndex projectResourceIndex) (effectiveDataPolicySet, error) {
 	snapshot, err := m.authorizationSnapshot(ctx, request.ProjectID)
 	if err != nil {
 		return effectiveDataPolicySet{}, err
@@ -941,7 +945,7 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 			return effectiveDataPolicySet{}, err
 		}
 	}
-	for _, object := range m.dataQueryColumnObjects(snapshot.Project(), request) {
+	for _, object := range m.dataQueryColumnObjects(resourceIndex, request) {
 		if err := addObject(object); err != nil {
 			return effectiveDataPolicySet{}, err
 		}
@@ -956,7 +960,7 @@ func (m Metrics) effectiveDataPolicies(ctx context.Context, request dataquery.Qu
 		// active policy IDs. An authored policy can therefore never shadow or
 		// replace a currently effective restriction.
 		relevant := map[string]struct{}{}
-		for _, object := range append(append([]access.ResourceRef(nil), objects...), m.dataQueryColumnObjects(snapshot.Project(), request)...) {
+		for _, object := range append(append([]access.ResourceRef(nil), objects...), m.dataQueryColumnObjects(resourceIndex, request)...) {
 			relevant[object.CanonicalID()] = struct{}{}
 		}
 		for _, restriction := range candidate.Restrictions {
@@ -1048,30 +1052,30 @@ func dataQueryCapability(request dataquery.Query) access.Capability {
 	}
 }
 
-func (m Metrics) dataQueryObjects(project projectgraph.ProjectGraph, request dataquery.Query) []access.ResourceRef {
+func (m Metrics) dataQueryObjects(resourceIndex projectResourceIndex, request dataquery.Query) []access.ResourceRef {
 	modelID := request.ModelID
 	objects := []access.ResourceRef{}
 	switch request.Kind {
 	case dataquery.KindModelTableRows:
-		if object, ok := canonicalModelResource(project, request.Target, projectgraph.KindModel); ok {
+		if object, ok := resourceIndex.byName(request.Target, projectgraph.KindModel); ok {
 			objects = append(objects, object)
 		}
 	default:
 		if request.Target != "" {
-			if object, ok := canonicalModelResource(project, request.Target, projectgraph.KindModel); ok {
+			if object, ok := resourceIndex.byName(request.Target, projectgraph.KindModel); ok {
 				objects = append(objects, object)
 			}
 		}
 	}
 	if modelID != "" {
-		if object, ok := canonicalModelResource(project, modelID, projectgraph.KindSemanticModel); ok {
+		if object, ok := resourceIndex.byID(modelID, projectgraph.KindSemanticModel); ok {
 			objects = append(objects, object)
 		}
 	}
 	return objects
 }
 
-func (m Metrics) dataQueryColumnObjects(project projectgraph.ProjectGraph, request dataquery.Query) []access.ResourceRef {
+func (m Metrics) dataQueryColumnObjects(resourceIndex projectResourceIndex, request dataquery.Query) []access.ResourceRef {
 	objects := []access.ResourceRef{}
 	for _, field := range dataQuerySelectedFields(request) {
 		table, column, ok := splitFieldRef(field)
@@ -1079,7 +1083,7 @@ func (m Metrics) dataQueryColumnObjects(project projectgraph.ProjectGraph, reque
 			continue
 		}
 		_ = column
-		if parent, ok := canonicalModelResource(project, table, projectgraph.KindModel); ok {
+		if parent, ok := resourceIndex.byName(table, projectgraph.KindModel); ok {
 			objects = append(objects, parent)
 		}
 	}
@@ -1238,7 +1242,68 @@ func (m Metrics) persistCanonicalAudit(ctx context.Context, snapshot accesssnaps
 	return access.PersistCanonicalAuditEvent(ctx, m.auditRecorder, event)
 }
 
-func canonicalModelResource(project projectgraph.ProjectGraph, id string, kind projectgraph.Kind) (access.ResourceRef, bool) {
+// projectResourceIndex is the immutable identity bridge used while governing a
+// query. Graph IDs identify canonical resources (for example ModelID), while
+// executable table/fact references are symbolic names (for example Target or
+// a resolver dependency). Keeping those lookups separate prevents an opaque
+// graph ID from leaking into the planner's executable table name.
+type projectResourceIndex struct {
+	ids   map[projectgraph.ResourceID]projectgraph.Resource
+	names map[string]projectgraph.Resource
+}
+
+func newProjectResourceIndex(project projectgraph.ProjectGraph) (projectResourceIndex, error) {
+	if err := project.Validate(); err != nil {
+		return projectResourceIndex{}, fmt.Errorf("validate project resource index graph: %w", err)
+	}
+	index := projectResourceIndex{
+		ids:   make(map[projectgraph.ResourceID]projectgraph.Resource),
+		names: make(map[string]projectgraph.Resource),
+	}
+	for _, resource := range project.Resources() {
+		if _, exists := index.ids[resource.ID]; exists {
+			return projectResourceIndex{}, fmt.Errorf("duplicate project resource ID %q", resource.ID)
+		}
+		name := strings.TrimSpace(resource.Name)
+		if name == "" || name != resource.Name {
+			return projectResourceIndex{}, fmt.Errorf("invalid project resource name %q", resource.Name)
+		}
+		if _, exists := index.names[name]; exists {
+			return projectResourceIndex{}, fmt.Errorf("duplicate project resource name %q", name)
+		}
+		index.ids[resource.ID] = resource
+		index.names[name] = resource
+	}
+	return index, nil
+}
+
+func (index projectResourceIndex) byID(id string, kind projectgraph.Kind) (access.ResourceRef, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return access.ResourceRef{}, false
+	}
+	resource, ok := index.ids[projectgraph.ResourceID(id)]
+	if !ok || resource.Kind != kind {
+		return access.ResourceRef{}, false
+	}
+	ref, err := access.NewResourceRef(resource.ID, kind)
+	return ref, err == nil
+}
+
+func (index projectResourceIndex) byName(name string, kind projectgraph.Kind) (access.ResourceRef, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return access.ResourceRef{}, false
+	}
+	resource, ok := index.names[name]
+	if !ok || resource.Kind != kind {
+		return access.ResourceRef{}, false
+	}
+	ref, err := access.NewResourceRef(resource.ID, kind)
+	return ref, err == nil
+}
+
+func canonicalResourceByID(project projectgraph.ProjectGraph, id string, kind projectgraph.Kind) (access.ResourceRef, bool) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return access.ResourceRef{}, false
