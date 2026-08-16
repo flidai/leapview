@@ -319,7 +319,7 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 	if !strings.Contains(string(exported), "semanticModel: sales") || !strings.Contains(string(exported), "title: Project title") {
 		t.Fatalf("exported YAML = %s", exported)
 	}
-	result, err := adapter.Fork(t.Context(), sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project"})
+	result, err := adapter.Fork(t.Context(), sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project", IdempotencyKey: "project-fork"})
 	if err != nil {
 		t.Fatal(err)
 	}

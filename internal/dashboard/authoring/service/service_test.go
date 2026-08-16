@@ -110,6 +110,9 @@ func (r *fakeRepository) LookupCommandResult(_ context.Context, _ graph.Resource
 	}
 	return authoring.CommandResult{Revision: result.token}, true, nil
 }
+func (r *fakeRepository) LookupCreateOperation(context.Context, authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
+	return authoring.CreateOperationResult{}, false, nil
+}
 func (r *fakeRepository) AppendDraft(_ context.Context, input authoring.AppendDraftInput) (authoring.Revision, error) {
 	if r.lifecycle.Draft == nil || r.lifecycle.Draft.Revision != input.ExpectedDraftRevision {
 		return authoring.Revision{}, errors.Join(authoring.ErrConflict, authoring.ErrStaleRevision)
@@ -186,7 +189,7 @@ func newService(t *testing.T, repository authoring.Repository, auth *fakeAuthori
 
 func create(t *testing.T, svc *service.Service) service.Result {
 	t.Helper()
-	result, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI})
+	result, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-helper"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +270,7 @@ func TestCreateEditReplayPublishArchiveAndFailures(t *testing.T) {
 func TestCreateAuthorizationDenialAndStaleConflict(t *testing.T) {
 	repository, auth, compiler := newFakeRepository(), &fakeAuthorizer{err: errors.New("denied")}, &fakeCompiler{}
 	svc := newService(t, repository, auth, compiler)
-	if _, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales"}); err == nil || repository.lifecycle.ID != "" {
+	if _, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales", IdempotencyKey: "create-validation"}); err == nil || repository.lifecycle.ID != "" {
 		t.Fatalf("denied create err=%v lifecycle=%#v", err, repository.lifecycle)
 	}
 	repository, auth, compiler = newFakeRepository(), &fakeAuthorizer{}, &fakeCompiler{}

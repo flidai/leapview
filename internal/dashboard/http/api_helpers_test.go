@@ -10,6 +10,7 @@ import (
 func TestPageSliceForRequestPreservesEmptyArray(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/?limit=10", nil)
+	request.Header.Set("X-Serving-Snapshot", "state-1")
 
 	items, nextCursor, ok := pageSliceForRequest[string](recorder, request, []string{})
 	if !ok {
@@ -24,5 +25,13 @@ func TestPageSliceForRequestPreservesEmptyArray(t *testing.T) {
 	}
 	if string(encoded) != "[]" {
 		t.Fatalf("empty page JSON = %s, want []", encoded)
+	}
+}
+
+func TestPageSliceForRequestRequiresServingSnapshot(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/?limit=10", nil)
+	if _, _, ok := pageSliceForRequest[string](recorder, request, []string{"item"}); ok || recorder.Code != nethttp.StatusServiceUnavailable {
+		t.Fatalf("missing serving snapshot status=%d ok=%v body=%s", recorder.Code, ok, recorder.Body.String())
 	}
 }

@@ -777,9 +777,6 @@ func statusForError(err error) int {
 func revisionSummary(metadata RevisionMetadata, collectionID string) (apigenapi.ManagedDataRevisionSummaryResponse, error) {
 	revision := metadata.Revision
 	publicID := metadata.PublicID
-	if publicID == "" {
-		publicID = revision.Digest
-	}
 	fileCount, err := checkedInt32(revision.FileCount)
 	if err != nil || revision.CollectionID.String() != collectionID || revision.Status != manageddata.RevisionStatusReady || !revisionPattern.MatchString(publicID) || !validResourceID(metadata.UploadSessionID, 160) || revision.CreatedAt == "" {
 		if revision.CollectionID.String() != collectionID {

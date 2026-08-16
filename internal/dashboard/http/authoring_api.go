@@ -38,13 +38,6 @@ type HeadlessAuthoringApplication interface {
 	Fork(context.Context, sourceadapter.ForkRequest) (authoringservice.Result, error)
 	Preview(context.Context, preview.PreviewRequest) (preview.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
-}
-
-// HeadlessAuthoringDraftExporter is the optional current-draft export
-// capability implemented by the composed application. Instance exports use
-// it when available; project exports remain on ExportYAML and resolve the
-// active serving artifact.
-type HeadlessAuthoringDraftExporter interface {
 	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
@@ -413,13 +406,7 @@ func (h AuthoringAPI) Export(w nethttp.ResponseWriter, r *nethttp.Request) {
 	request := sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: kind, ProjectID: projectID, DashboardID: authoring.DashboardID(chi.URLParam(r, "dashboard"))}, ActorID: actor}
 	var body []byte
 	if kind == sourceadapter.SourceInstance {
-		if exporter, ok := h.Application.(HeadlessAuthoringDraftExporter); ok {
-			body, err = exporter.ExportDraftYAML(r.Context(), request)
-		} else {
-			// Compatibility for older application adapters. Production
-			// composition implements the draft-aware capability.
-			body, err = h.Application.ExportYAML(r.Context(), request)
-		}
+		body, err = h.Application.ExportDraftYAML(r.Context(), request)
 	} else {
 		body, err = h.Application.ExportYAML(r.Context(), request)
 	}

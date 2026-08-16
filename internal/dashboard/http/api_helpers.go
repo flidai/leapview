@@ -31,7 +31,12 @@ func pageSliceForRequest[T any](w nethttp.ResponseWriter, r *nethttp.Request, it
 	if !ok {
 		return nil, "", false
 	}
-	scope, snapshot := dashboardRequestCursorScope(r, nil), dashboardServingSnapshot(r)
+	snapshot, snapshotErr := dashboardServingSnapshot(r)
+	if snapshotErr != nil {
+		writeJSONError(w, snapshotErr, nethttp.StatusServiceUnavailable)
+		return nil, "", false
+	}
+	scope := dashboardRequestCursorScope(r, nil)
 	lastKey, err := decodeDashboardKeysetCursor(r.URL.Query().Get("pageToken"), scope, snapshot)
 	if err != nil {
 		status := nethttp.StatusBadRequest
@@ -210,11 +215,11 @@ func dashboardRequestCursorScope(r *nethttp.Request, payload any) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func dashboardServingSnapshot(r *nethttp.Request) string {
+func dashboardServingSnapshot(r *nethttp.Request) (string, error) {
 	if value := strings.TrimSpace(r.Header.Get("X-Serving-Snapshot")); value != "" {
-		return value
+		return value, nil
 	}
-	return "unversioned"
+	return "", errors.New("serving snapshot is unavailable")
 }
 
 func writeJSON(w nethttp.ResponseWriter, status int, value any) {

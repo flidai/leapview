@@ -119,6 +119,7 @@ type AuthoringApplication interface {
 	ExecuteIntent(context.Context, application.IntentRequest) (authoringservice.Result, error)
 	Preview(context.Context, preview.PreviewRequest) (preview.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
+	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
 type SessionKeyFactory func(

@@ -616,7 +616,7 @@ func inputWithNormalizedCreateFields(input createDraftInput, projectID graph.Res
 func (s *Service) createOperation(input createDraftInput) (authoring.CreateOperation, error) {
 	key := strings.TrimSpace(input.IdempotencyKey)
 	if key == "" {
-		return authoring.CreateOperation{}, nil
+		return authoring.CreateOperation{}, fmt.Errorf("%w: create operation idempotency key is required", authoring.ErrInvalidAuthoring)
 	}
 	if input.OperationSeed != nil {
 		seed := *input.OperationSeed
@@ -669,7 +669,7 @@ func (s *Service) forkOperation(projectID graph.ResourceID, actorID string, sour
 func (s *Service) forkIdentityOperation(input ForkIdentityRequest) (authoring.CreateOperation, error) {
 	key := strings.TrimSpace(input.IdempotencyKey)
 	if key == "" {
-		return authoring.CreateOperation{}, nil
+		return authoring.CreateOperation{}, fmt.Errorf("%w: create operation idempotency key is required", authoring.ErrInvalidAuthoring)
 	}
 	origin := input.Origin
 	if origin == "" {

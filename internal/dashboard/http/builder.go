@@ -236,16 +236,7 @@ func (h Handler) DashboardBuilderExportYAML(w nethttp.ResponseWriter, r *nethttp
 		Source:  sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: project, DashboardID: authoring.DashboardID(dashboardID)},
 		ActorID: actorID,
 	}
-	var yaml []byte
-	var err error
-	if draftExporter, ok := h.Authoring.(draftYAMLExporter); ok {
-		yaml, err = draftExporter.ExportDraftYAML(r.Context(), request)
-	} else {
-		// Compatibility for a transport fake or an older composition that has
-		// not adopted the draft-aware capability yet. The production
-		// application always implements draftYAMLExporter.
-		yaml, err = h.Authoring.ExportYAML(r.Context(), request)
-	}
+	yaml, err := h.Authoring.ExportDraftYAML(r.Context(), request)
 	if err != nil {
 		writeBuilderError(w, r, err)
 		return
@@ -271,14 +262,6 @@ type dashboardBuilderCommandSignal struct {
 	Title               string          `json:"title"`
 	Visibility          string          `json:"visibility"`
 	Action              string          `json:"action"`
-}
-
-// draftYAMLExporter is implemented by the composed application. Keeping this
-// as an optional capability preserves the narrow transport interface for
-// tests and older adapters while ensuring production uses the draft-aware
-// source boundary.
-type draftYAMLExporter interface {
-	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
 func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, actorID, dashboardID string) (authoring.Command, error) {

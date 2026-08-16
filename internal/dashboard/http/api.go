@@ -247,7 +247,12 @@ func (h Handler) QueryDashboardVisualData(w nethttp.ResponseWriter, r *nethttp.R
 	start, limit := 0, maxAgentDashboardVisualRows
 	cursorInput := input
 	cursorInput.PageToken = ""
-	scope, snapshot := dashboardRequestCursorScope(r, cursorInput), dashboardServingSnapshot(r)
+	snapshot, snapshotErr := dashboardServingSnapshot(r)
+	if snapshotErr != nil {
+		writeJSONError(w, snapshotErr, nethttp.StatusServiceUnavailable)
+		return
+	}
+	scope := dashboardRequestCursorScope(r, cursorInput)
 	if compact {
 		if input.Limit > 0 {
 			limit = min(input.Limit, maxAgentDashboardVisualRows)
@@ -303,7 +308,12 @@ func (h Handler) queryDashboardTabularVisual(w nethttp.ResponseWriter, r *nethtt
 	}
 	cursorInput := input
 	cursorInput.PageToken = ""
-	scope, snapshot := dashboardRequestCursorScope(r, cursorInput), dashboardServingSnapshot(r)
+	snapshot, snapshotErr := dashboardServingSnapshot(r)
+	if snapshotErr != nil {
+		writeJSONError(w, snapshotErr, nethttp.StatusServiceUnavailable)
+		return
+	}
+	scope := dashboardRequestCursorScope(r, cursorInput)
 	start, err := decodeIndexCursor(input.PageToken, scope, snapshot)
 	if err != nil {
 		status := nethttp.StatusBadRequest

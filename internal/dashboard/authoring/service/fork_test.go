@@ -70,7 +70,7 @@ func TestForkPublishedRevisionIntoPrivateDraft(t *testing.T) {
 	repository, auth, compiler := newFakeRepository(), &fakeAuthorizer{}, &fakeCompiler{}
 	source, published := publishedSource(t, repository, true)
 	svc := newForkService(t, repository, auth, compiler, "forked")
-	result, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: source.ID, ActorID: "actor", Title: "Forked Orders", Slug: "forked-orders", Origin: authoring.OriginAgent})
+	result, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: source.ID, ActorID: "actor", Title: "Forked Orders", Slug: "forked-orders", Origin: authoring.OriginAgent, IdempotencyKey: "fork-published"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestForkDeepCopiesDocumentAndProvenance(t *testing.T) {
 	repository, auth, compiler := newFakeRepository(), &fakeAuthorizer{}, &fakeCompiler{}
 	source, _ := publishedSource(t, repository, false)
 	svc := newForkService(t, repository, auth, compiler, "forked")
-	result, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: source.ID, ActorID: "actor", Source: &authoring.SourceMetadata{Metadata: map[string]string{"channel": "ui"}}})
+	result, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: source.ID, ActorID: "actor", Source: &authoring.SourceMetadata{Metadata: map[string]string{"channel": "ui"}}, IdempotencyKey: "fork-deep-copy"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestForkRejectsIncompleteSourcesAndPreservesErrors(t *testing.T) {
 			lifecycle, _ := publishedSource(t, repository, false)
 			tt.setup(lifecycle, repository)
 			svc := newForkService(t, repository, auth, compiler, "forked")
-			_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: "source", ActorID: "actor"})
+			_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: "source", ActorID: "actor", IdempotencyKey: "fork-" + tt.name})
 			if !errors.Is(err, tt.want) || repository.createCalls != 0 || compiler.calls != 0 {
 				t.Fatalf("err=%v createCalls=%d compilerCalls=%d", err, repository.createCalls, compiler.calls)
 			}
@@ -178,7 +178,7 @@ func TestForkAuthorizationAndInputFailures(t *testing.T) {
 		repository, auth, compiler := newFakeRepository(), &fakeAuthorizer{err: errors.New("view denied"), denyAction: authoring.AuthorizationActionView}, &fakeCompiler{}
 		lifecycle, _ := publishedSource(t, repository, false)
 		svc := newForkService(t, repository, auth, compiler, "forked")
-		_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor"})
+		_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor", IdempotencyKey: "fork-source-denial"})
 		if err == nil || repository.createCalls != 0 || len(auth.requests) != 1 {
 			t.Fatalf("err=%v auth=%#v", err, auth.requests)
 		}
@@ -187,7 +187,7 @@ func TestForkAuthorizationAndInputFailures(t *testing.T) {
 		repository, auth, compiler := newFakeRepository(), &fakeAuthorizer{err: errors.New("edit denied"), denyAction: authoring.AuthorizationActionEdit}, &fakeCompiler{}
 		lifecycle, _ := publishedSource(t, repository, false)
 		svc := newForkService(t, repository, auth, compiler, "forked")
-		_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor"})
+		_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor", IdempotencyKey: "fork-target-denial"})
 		if err == nil || repository.createCalls != 0 || len(auth.requests) != 2 {
 			t.Fatalf("err=%v auth=%#v", err, auth.requests)
 		}
@@ -196,7 +196,7 @@ func TestForkAuthorizationAndInputFailures(t *testing.T) {
 		repository, auth, compiler := newFakeRepository(), &fakeAuthorizer{}, &fakeCompiler{}
 		lifecycle, _ := publishedSource(t, repository, false)
 		svc := newForkService(t, repository, auth, compiler, lifecycle.ID)
-		_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor"})
+		_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor", IdempotencyKey: "fork-collision"})
 		if !errors.Is(err, authoring.ErrInvalidAuthoring) || len(auth.requests) != 1 || repository.createCalls != 0 {
 			t.Fatalf("err=%v auth=%#v createCalls=%d", err, auth.requests, repository.createCalls)
 		}
@@ -205,7 +205,7 @@ func TestForkAuthorizationAndInputFailures(t *testing.T) {
 		repository, auth, compiler := newFakeRepository(), &fakeAuthorizer{}, &fakeCompiler{}
 		lifecycle, _ := publishedSource(t, repository, false)
 		svc := newForkService(t, repository, auth, compiler, "forked")
-		_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor", Origin: authoring.Origin("bad"), Slug: "Not valid"})
+		_, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor", Origin: authoring.Origin("bad"), Slug: "Not valid", IdempotencyKey: "fork-invalid"})
 		if !errors.Is(err, authoring.ErrInvalidAuthoring) || repository.createCalls != 0 {
 			t.Fatalf("err=%v createCalls=%d", err, repository.createCalls)
 		}
@@ -222,7 +222,7 @@ func TestForkInvalidClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.Fork(context.Background(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor"})
+	_, err = svc.Fork(context.Background(), service.ForkRequest{ProjectID: "project", SourceDashboardID: lifecycle.ID, ActorID: "actor", IdempotencyKey: "fork-context"})
 	if err == nil || repository.createCalls != 0 {
 		t.Fatalf("err=%v createCalls=%d", err, repository.createCalls)
 	}

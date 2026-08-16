@@ -51,6 +51,21 @@ func TestAgentVisualInputRejectsLegacyAndUnknownProperties(t *testing.T) {
 	}
 }
 
+func TestAgentVisualQueryRequiresServingSnapshot(t *testing.T) {
+	provider := VisualProvider{Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+		return id, nil
+	}}
+	result := provider.Run(context.Background(), Scope{ProjectID: "project", PrincipalID: "principal"}, agentcore.ToolCall{
+		ID:        "query-without-snapshot",
+		Arguments: json.RawMessage(`{"type":"bar","semanticModelId":"orders","dataset":"orders"}`),
+	})
+	content, _ := result.Content.(map[string]any)
+	failure, _ := content["error"].(map[string]any)
+	if !result.IsError || !strings.Contains(failure["message"].(string), "serving snapshot") {
+		t.Fatalf("result = %#v; want serving snapshot failure", result)
+	}
+}
+
 func TestAgentVisualInputAcceptsAndNormalizesGovernedFilters(t *testing.T) {
 	input, err := decodeAgentVisualInput([]byte(`{
 		"type":"bar",

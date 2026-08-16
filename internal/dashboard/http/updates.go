@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	nethttp "net/http"
 	"strings"
@@ -23,6 +24,8 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+var readStreamInstanceRandom = rand.Read
 
 func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	projectID, projectErr := h.projectIDForRequest(r.Context())
@@ -72,7 +75,11 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	clientID := pagestream.ClientIDFromRequest(r, strings.TrimSpace(r.URL.Query().Get("clientId")))
 	streamInstanceID := strings.TrimSpace(r.URL.Query().Get("streamInstance"))
 	if streamInstanceID == "" {
-		streamInstanceID = fallbackStreamInstanceID()
+		streamInstanceID, err = fallbackStreamInstanceID()
+		if err != nil {
+			nethttp.Error(w, "dashboard stream identity is unavailable", nethttp.StatusServiceUnavailable)
+			return
+		}
 	}
 	filterState, err := reportDefinition.FilterStateFromURL(activePage.ID, r.URL.Query())
 	if err != nil {
@@ -243,12 +250,12 @@ func streamActivePage(pages []dashboard.Page, pageID string) (dashboard.Page, bo
 	return dashboard.Page{}, false
 }
 
-func fallbackStreamInstanceID() string {
+func fallbackStreamInstanceID() (string, error) {
 	var value [16]byte
-	if _, err := rand.Read(value[:]); err == nil {
-		return hex.EncodeToString(value[:])
+	if _, err := readStreamInstanceRandom(value[:]); err != nil {
+		return "", fmt.Errorf("generate dashboard stream identity: %w", err)
 	}
-	return "server-stream"
+	return hex.EncodeToString(value[:]), nil
 }
 
 func (h Handler) refreshObserver(dashboardID, pageID string) dashboardstream.SummaryObserver {

@@ -96,6 +96,13 @@ func TestSemanticQueryResponseUsesTypedColumnsAndPrecisionSafePositionalRows(t *
 	}
 }
 
+func TestQueryIDForRequestRequiresMiddlewareRequestID(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project/semantic-models/model/query", nil)
+	if _, err := queryIDForRequest(request); err == nil {
+		t.Fatal("query ID unexpectedly fabricated without request ID")
+	}
+}
+
 func TestSemanticQueryResponsePreservesNullAndEmptyStringAsDistinctCells(t *testing.T) {
 	response := semanticQueryResponse([]string{"nullable_value", "empty_value"}, reportdef.QueryRows{{
 		"nullable_value": nil,

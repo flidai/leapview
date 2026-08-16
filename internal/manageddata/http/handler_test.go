@@ -80,6 +80,21 @@ func TestRevisionOperationsAreScopedAndPaginated(t *testing.T) {
 	assertPublicError(t, recorder, http.StatusNotFound, "unrelated-secret")
 }
 
+func TestRevisionResponseRejectsMissingPublicID(t *testing.T) {
+	repo := metadataFixture()
+	missingID := "sha256:" + strings.Repeat("d", 64)
+	row := repo.revisions[revisionA]
+	row.PublicID = ""
+	row.Revision.Digest = missingID
+	repo.revisions[missingID] = row
+	handler := newHandler(repo, nil, nil)
+
+	recorder := call(t, ``, func(w http.ResponseWriter, r *http.Request) {
+		handler.GetManagedDataRevision(w, r, "project-a", "orders", missingID)
+	})
+	assertPublicError(t, recorder, http.StatusInternalServerError, "invalid revision metadata")
+}
+
 func TestUploadSessionOperationsUseControlServiceAndPrincipal(t *testing.T) {
 	uploads := &fakeUploads{result: uploadFixture()}
 	handler := newHandler(metadataFixture(), uploads, nil)

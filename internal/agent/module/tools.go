@@ -110,7 +110,7 @@ func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 			if m.queryMetadata != nil {
 				return m.queryMetadata(ctx, projectID, modelID)
 			}
-			return agenttools.VisualQueryMetadata{ServingSnapshot: "unversioned"}
+			return agenttools.VisualQueryMetadata{}
 		},
 	}
 }

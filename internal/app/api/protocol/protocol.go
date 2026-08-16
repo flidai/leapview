@@ -110,7 +110,11 @@ func (p *Protocol) Middleware(next http.Handler) http.Handler {
 		if !p.Authenticate(w, r) {
 			return
 		}
-		r.Header.Set(CursorSnapshotHeader, p.cursorSnapshot(r))
+		if snapshot := p.cursorSnapshot(r); strings.TrimSpace(snapshot) != "" {
+			r.Header.Set(CursorSnapshotHeader, snapshot)
+		} else {
+			r.Header.Del(CursorSnapshotHeader)
+		}
 		if !unwrapAPIPageCursor(w, r) {
 			return
 		}
@@ -167,7 +171,8 @@ func unwrapAPIPageCursor(w http.ResponseWriter, r *http.Request) bool {
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_CURSOR", "The page cursor is invalid or expired", nil)
 		return false
 	}
-	if cursor.Snapshot != apiCursorSnapshotForRequest(r) {
+	snapshot := apiCursorSnapshotForRequest(r)
+	if snapshot == "" || cursor.Snapshot != snapshot {
 		apitransport.WriteProblem(w, r, http.StatusConflict, "SNAPSHOT_UNAVAILABLE", "The serving snapshot bound to this cursor is no longer available", nil)
 		return false
 	}
@@ -181,7 +186,11 @@ func SignPageCursor(r *http.Request, value string) string {
 	if value == "" || strings.HasPrefix(value, "g1.") || hasNativeCursorPrefix(value) {
 		return value
 	}
-	payload, _ := json.Marshal(apiCursor{Value: value, Scope: apiCursorScope(r), Snapshot: apiCursorSnapshotForRequest(r), Expires: time.Now().Add(apiCursorLifetime).Unix()})
+	snapshot := apiCursorSnapshotForRequest(r)
+	if snapshot == "" {
+		return ""
+	}
+	payload, _ := json.Marshal(apiCursor{Value: value, Scope: apiCursorScope(r), Snapshot: snapshot, Expires: time.Now().Add(apiCursorLifetime).Unix()})
 	return cursorsigning.Sign("g1", payload)
 }
 
@@ -199,14 +208,8 @@ func apiCursorSnapshotForRequest(r *http.Request) string {
 		if snapshot := strings.TrimSpace(r.Header.Get(CursorSnapshotHeader)); snapshot != "" {
 			return snapshot
 		}
-		segments := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		for index, segment := range segments {
-			if segment == "projects" && index+1 < len(segments) {
-				return "project:" + segments[index+1] + ":unversioned"
-			}
-		}
 	}
-	return "instance"
+	return ""
 }
 
 func (p *Protocol) cursorSnapshot(r *http.Request) string {

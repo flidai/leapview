@@ -34,6 +34,23 @@ func TestBuildConstructsProtocolPersistence(t *testing.T) {
 	}
 }
 
+func TestCursorSnapshotNeverFabricatesIdentity(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project/semantic-models", nil)
+	if got := apiCursorSnapshotForRequest(request); got != "" {
+		t.Fatalf("cursor snapshot = %q; want unavailable without active identity", got)
+	}
+	if got := SignPageCursor(request, "cursor"); got != "" {
+		t.Fatalf("signed cursor = %q; want no cursor without active identity", got)
+	}
+	request.Header.Set(CursorSnapshotHeader, "deployment:active")
+	if got := apiCursorSnapshotForRequest(request); got != "deployment:active" {
+		t.Fatalf("cursor snapshot = %q", got)
+	}
+	if got := SignPageCursor(request, "cursor"); got == "" {
+		t.Fatal("cursor was not signed with active serving identity")
+	}
+}
+
 func TestAdversarialIdempotencyNeverStoresOneTimeCredentials(t *testing.T) {
 	status, header, body := safeIdempotencyResponse(http.StatusCreated, http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"token":"plaintext-secret","id":"x"}`))
 	if status != http.StatusConflict || header.Get("Content-Type") != "application/problem+json" {

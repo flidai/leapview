@@ -180,12 +180,12 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 			return errResult
 		}
 	}
-	queryMetadata := VisualQueryMetadata{ServingSnapshot: "unversioned"}
-	if p.QueryMetadata != nil {
-		queryMetadata = p.QueryMetadata(ctx, runScope.ProjectID, input.Model)
-		if strings.TrimSpace(queryMetadata.ServingSnapshot) == "" {
-			queryMetadata.ServingSnapshot = "unversioned"
-		}
+	if p.QueryMetadata == nil {
+		return apigenAgentToolError("query_visual_failed", "serving snapshot is unavailable")
+	}
+	queryMetadata := p.QueryMetadata(ctx, runScope.ProjectID, input.Model)
+	if strings.TrimSpace(queryMetadata.ServingSnapshot) == "" {
+		return apigenAgentToolError("query_visual_failed", "serving snapshot is unavailable")
 	}
 	result, model, err := p.queryAgentVisual(ctx, runScope.ProjectID, input, agentVisualID(call.ID))
 	if err != nil {

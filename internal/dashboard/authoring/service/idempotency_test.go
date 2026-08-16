@@ -114,13 +114,15 @@ func TestCreateIdempotencyAuthorizesStoredTargetBeforeReuseConflict(t *testing.T
 }
 
 func TestCreateIdempotencyRejectsUnsupportedRepository(t *testing.T) {
-	repository := newFakeRepository()
+	repository := &noCreateOperationRepository{Repository: newFakeRepository()}
 	svc := newService(t, repository, &fakeAuthorizer{}, &fakeCompiler{})
 	_, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project", ActorID: "actor", Title: "Orders", Slug: "orders", SemanticModel: "sales", IdempotencyKey: "retry-1"})
-	if err == nil || repository.createCalls != 0 {
-		t.Fatalf("unsupported repository err=%v createCalls=%d", err, repository.createCalls)
+	if err == nil {
+		t.Fatalf("unsupported repository unexpectedly accepted create: %v", err)
 	}
 }
+
+type noCreateOperationRepository struct{ authoring.Repository }
 
 func TestCreateOperationIdempotencyKeyLength(t *testing.T) {
 	base := authoring.CreateOperation{ProjectID: "project", ActorID: "actor", Kind: "create", IdempotencyKey: "retry", Fingerprint: "sha256:fingerprint"}
@@ -130,13 +132,16 @@ func TestCreateOperationIdempotencyKeyLength(t *testing.T) {
 	for _, key := range []string{"", string(make([]byte, 201))} {
 		invalid := base
 		invalid.IdempotencyKey = key
-		if key == "" {
-			// Empty keys disable optional idempotency and therefore remain valid.
-			continue
-		}
 		if err := invalid.Validate(); err == nil {
 			t.Fatalf("key length %d unexpectedly valid", len(key))
 		}
+	}
+}
+
+func TestCreateOperationRequiresIdempotencyKey(t *testing.T) {
+	operation := authoring.CreateOperation{ProjectID: "project", ActorID: "actor", Kind: "create", Fingerprint: "sha256:fingerprint"}
+	if err := operation.Validate(); !errors.Is(err, authoring.ErrInvalidAuthoring) {
+		t.Fatalf("missing key validation error = %v", err)
 	}
 }
 

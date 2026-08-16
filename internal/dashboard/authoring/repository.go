@@ -16,16 +16,16 @@ type CreateInput struct {
 	ProjectID graph.ResourceID
 	Lifecycle DashboardLifecycle
 	Revision  Revision
-	// Operation carries optional durable idempotency evidence for create and
-	// fork operations. Repositories that implement CreateOperationRepository
-	// persist and enforce it atomically with the lifecycle rows.
+	// Operation carries the durable idempotency evidence required for every
+	// create and fork operation. Mutation repositories persist and enforce it
+	// atomically with the lifecycle rows.
 	Operation CreateOperation
 }
 
 // CreateOperation identifies one create/fork invocation in its actor scope.
 // IdempotencyKey is a scoped retry identity and is deliberately separate from
-// ToolCallID, which remains provenance evidence. An empty key disables
-// idempotency for legacy UI callers that do not provide one. Fingerprint
+// ToolCallID, which remains provenance evidence. Idempotency is required
+// for every create/fork invocation. Fingerprint
 // covers the normalized request payload and never includes generated
 // dashboard, draft, or revision IDs.
 type CreateOperation struct {
@@ -44,7 +44,7 @@ func (o CreateOperation) Enabled() bool {
 
 func (o CreateOperation) Validate() error {
 	if !o.Enabled() {
-		return nil
+		return fmt.Errorf("%w: create operation idempotency key is required", ErrInvalidAuthoring)
 	}
 	if err := validateResourceID("create operation project id", o.ProjectID); err != nil || strings.TrimSpace(o.ActorID) == "" || o.ActorID != strings.TrimSpace(o.ActorID) {
 		return fmt.Errorf("%w: create operation scope is invalid", ErrInvalidAuthoring)
@@ -73,9 +73,10 @@ type CreateOperationResult struct {
 	Fingerprint string
 }
 
-// CreateOperationRepository is an optional extension of Repository. Keeping
-// the extension separate preserves lightweight in-memory adapters while the
-// SQLite implementation provides durable, transactional idempotency.
+// CreateOperationRepository is the mutation capability required by any
+// repository that accepts CreateInput. It is kept separate from the
+// read-only Repository port so catalog and preview consumers do not gain
+// mutation authority.
 type CreateOperationRepository interface {
 	LookupCreateOperation(context.Context, CreateOperation) (CreateOperationResult, bool, error)
 }

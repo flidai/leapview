@@ -63,7 +63,7 @@ func TestCreateAndExecuteDelegateToTransactionalService(t *testing.T) {
 
 	created, err := app.Create(context.Background(), authoringservice.CreateRequest{
 		ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner",
-		Title: "Orders", Slug: "orders", SemanticModel: "sales", Origin: authoring.OriginUI,
+		Title: "Orders", Slug: "orders", SemanticModel: "sales", Origin: authoring.OriginUI, IdempotencyKey: "application-create",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestProjectForkRejectsCrossProjectTarget(t *testing.T) {
 	})
 	_, err := app.Fork(context.Background(), sourceadapter.ForkRequest{
 		Source:          sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"},
-		TargetProjectID: "other", ActorID: "actor",
+		TargetProjectID: "other", ActorID: "actor", IdempotencyKey: "cross-project-fork",
 	})
 	if err == nil || !strings.Contains(err.Error(), "must remain in the source project") {
 		t.Fatalf("cross-project fork error = %v", err)
@@ -564,6 +564,9 @@ func (r *fakeRepository) GetRevision(_ context.Context, _ projectgraph.ResourceI
 func (r *fakeRepository) LookupCommandResult(_ context.Context, _ projectgraph.ResourceID, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
 	result, ok := r.commands[evidence.ID]
 	return result, ok, nil
+}
+func (r *fakeRepository) LookupCreateOperation(context.Context, authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
+	return authoring.CreateOperationResult{}, false, nil
 }
 func (r *fakeRepository) AppendDraft(_ context.Context, input authoring.AppendDraftInput) (authoring.Revision, error) {
 	r.appendCalls++
