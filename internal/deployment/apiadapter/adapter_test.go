@@ -77,7 +77,7 @@ func TestActivateForwardsTheBoundedActivationPrincipal(t *testing.T) {
 }
 
 func servingIdentity(project, generation string) (identity projectgraph.ServingIdentity) {
-	return projectgraph.ServingIdentity{ProjectID: project, Environment: "prod", GenerationID: generation}
+	return projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(project), Environment: "prod", GenerationID: generation}
 }
 
 type fakeService struct {
