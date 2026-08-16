@@ -410,11 +410,13 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				principalID string,
 				binding analyticsmodule.ConnectionTargetBinding,
 			) error {
-				allowed, err := accessModule.AuthorizeObject(
-					ctx,
-					principalID,
-					accessmodule.PrivilegePreviewData,
-					accessmodule.WorkspaceObject(binding.Scope.WorkspaceID),
+				resource, err := access.NewResourceRef(binding.ConnectionID, projectgraph.KindConnection)
+				if err != nil {
+					return err
+				}
+				allowed, err := authorizeProjectResources(
+					ctx, accessModule, runtimeHostModule, principalID,
+					binding.Scope.ProjectID, []access.ResourceRef{resource}, access.CapabilityResourceUse,
 				)
 				if err != nil {
 					return err

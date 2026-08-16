@@ -15,14 +15,10 @@ func candidateSourceBlobAuditRecorder(
 		if accessModule == nil {
 			return fmt.Errorf("candidate source blob access audit module is unavailable")
 		}
-		privilege, ok := accessmodule.ParsePrivilege(event.Privilege)
-		if !ok {
-			return fmt.Errorf("candidate source blob audit privilege %q is invalid", event.Privilege)
-		}
 		return accessModule.RecordAudit(ctx, accessmodule.AuditEventInput{
 			PrincipalID: event.PrincipalID,
-			Action:      event.Action, TargetType: "project", TargetID: event.ProjectID,
-			Privilege: privilege, Status: event.Status,
+			Action:      event.Action, ResourceKind: "project", ResourceID: event.ProjectID.String(),
+			Capability: event.Capability, Status: event.Status,
 			RequestID: event.RequestID, CorrelationID: event.CorrelationID,
 			MetadataJSON: event.MetadataJSON,
 		})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 )
@@ -41,11 +42,11 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 		return nil
 	}
 	return recorder.record(ctx, accessmodule.AuditEventInput{
-		WorkspaceID: event.WorkspaceID, PrincipalID: principalID,
+		PrincipalID:  principalID,
 		Action:       string(event.Operation),
-		TargetType:   "connection_binding",
-		TargetID:     event.BindingID,
-		Privilege:    accessmodule.PrivilegeTestConnection,
+		ResourceKind: "connection_binding",
+		ResourceID:   event.BindingID.String(),
+		Capability:   access.CapabilityResourceUse,
 		Status:       string(event.Outcome),
 		MetadataJSON: metadata,
 	})
@@ -67,10 +68,10 @@ func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministra
 		return nil
 	}
 	return recorder.record(ctx, accessmodule.AuditEventInput{
-		WorkspaceID: event.WorkspaceID, PrincipalID: event.Actor,
-		Action: string(event.Action), TargetType: "connection_binding", TargetID: event.BindingID,
-		Privilege: accessmodule.PrivilegeManageConnectionMetadata,
-		Status:    string(event.Outcome), MetadataJSON: metadata,
+		PrincipalID: event.Actor,
+		Action:      string(event.Action), ResourceKind: "connection_binding", ResourceID: event.BindingID.String(),
+		Capability: access.CapabilityResourceManage,
+		Status:     string(event.Outcome), MetadataJSON: metadata,
 	})
 }
 

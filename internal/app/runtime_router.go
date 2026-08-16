@@ -528,7 +528,7 @@ func buildApplicationSurfaces(
 	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
 	}
-	if err := configureModules(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
+	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
 	}
 	if platform.asyncJobs != nil {
@@ -552,40 +552,53 @@ func buildApplicationSurfaces(
 	return routes, runtime, platform, policy, nil
 }
 
-func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, database *sql.DB, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs) error {
+func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, database *sql.DB, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs) error {
 	if routes == nil || runtime == nil || platform == nil || policy == nil {
 		return errors.New("runtime router is required")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	canonicalAuthorizeObject := func(ctx context.Context, principalID string, capability access.Capability, resource access.ResourceRef) (bool, error) {
+		return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, runtime.projectID, []access.ResourceRef{resource}, capability)
+	}
 	var connectionAdministration analyticsmodule.ConnectionBindingAdministration
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
-				EnsureScope: func(context.Context, analyticsmodule.ConnectionBindingScope) error { return nil },
+				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
+					if err := scope.ProjectID.Validate(); err != nil {
+						return err
+					}
+					if strings.TrimSpace(scope.Environment) == "" {
+						return errors.New("connection binding environment is required")
+					}
+					return nil
+				},
 				Authorize: func(
 					ctx context.Context,
 					principalID string,
 					permission analyticsmodule.ConnectionAdministrationPermission,
 					binding analyticsmodule.ConnectionTargetBinding,
 				) error {
-					var privilege accessmodule.Privilege
+					var capability access.Capability
 					switch permission {
 					case analyticsmodule.PermissionManageConnectionMetadata:
-						privilege = accessmodule.PrivilegeManageConnectionMetadata
+						capability = access.CapabilityResourceManage
 					case analyticsmodule.PermissionTestConnection:
-						privilege = accessmodule.PrivilegeTestConnection
+						capability = access.CapabilityResourceUse
 					case analyticsmodule.PermissionViewConnectionHealth:
-						privilege = accessmodule.PrivilegeViewConnectionHealth
+						capability = access.CapabilityResourceRead
 					default:
 						return analyticsmodule.ErrConnectionBindingUnauthorized
 					}
-					allowed, err := routes.accessModule.AuthorizeObject(
-						ctx,
-						principalID,
-						privilege,
-						accessmodule.WorkspaceObject(binding.Scope.WorkspaceID),
+					resource, err := access.NewResourceRef(binding.ConnectionID, projectgraph.KindConnection)
+					if err != nil {
+						return err
+					}
+					allowed, err := authorizeProjectResources(
+						ctx, routes.accessModule, runtime.runtimeHostModule, principalID,
+						binding.Scope.ProjectID, []access.ResourceRef{resource}, capability,
 					)
 					if err != nil {
 						return err
@@ -695,7 +708,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		config.API = deploymentmodule.APIConfig{Releases: routes.releaseModule.DeploymentLinkage(), Jobs: platform.asyncJobs, Workflow: platform.jobModule, Committer: platform.jobModule}
 		config.PublicationAuthorization = deploymentmodule.PublicationAuthorizationConfig{
-			States: persistence.servingStateRepo, AuthorizeObject: routes.accessModule.AuthorizeObject,
+			States: persistence.servingStateRepo, AuthorizeObject: canonicalAuthorizeObject,
 			Bypass: func(actor string) bool {
 				return (platform.auth == nil || platform.auth.DevBypass()) && actor == accessmodule.LocalDeveloperPrincipal().ID
 			},
@@ -1237,13 +1250,30 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return routes.dashboardAssets.Verify(ctx)
 			},
 		},
-		ActiveWorkspaces: func(context.Context) ([]string, error) {
-			if runtime.projectID == "" {
-				return nil, nil
+		ActiveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			if runtime.runtimeHostModule == nil {
+				return "", errors.New("runtime host is missing")
 			}
-			return []string{runtime.projectID.String()}, nil
+			projectID := runtime.runtimeHostModule.ProjectID()
+			if err := projectID.Validate(); err != nil {
+				return "", err
+			}
+			return projectID, nil
 		},
-		RuntimeReady:            routes.dashboardModule.RuntimeReady,
+		RuntimeReady: func(ctx context.Context) error {
+			if runtime.runtimeHostModule == nil {
+				return errors.New("runtime host is missing")
+			}
+			lease, err := runtime.runtimeHostModule.Acquire(ctx)
+			if err != nil {
+				return err
+			}
+			if lease == nil {
+				return errors.New("runtime host returned a nil lease")
+			}
+			lease.Release()
+			return nil
+		},
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})
 	platform.workers = platformlifecycle.New(

@@ -6,13 +6,14 @@ import (
 	"time"
 
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type healthConfig struct {
 	Platform          func(context.Context) error
 	Analytics         func() error
-	ActiveWorkspaces  func(context.Context) ([]string, error)
-	RuntimeReady      func(context.Context, string) error
+	ActiveProjectID   func(context.Context) (projectgraph.ResourceID, error)
+	RuntimeReady      func(context.Context) error
 	RuntimeLeaseReady func(context.Context) error
 	// RequireActiveDeployment makes readiness fail closed when the target
 	// contract guarantees a bootstrapped serving state.
@@ -89,28 +90,23 @@ func (h *health) Readyz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *health) runtimeReady(ctx context.Context, checks map[string]string) bool {
-	if h.config.ActiveWorkspaces == nil || h.config.RuntimeReady == nil {
+	if h.config.ActiveProjectID == nil || h.config.RuntimeReady == nil {
 		checks["runtime"] = "missing"
 		return false
 	}
-	workspaces, err := h.config.ActiveWorkspaces(ctx)
+	projectID, err := h.config.ActiveProjectID(ctx)
 	if err != nil {
 		checks["runtime"] = err.Error()
 		return false
 	}
-	if len(workspaces) == 0 {
+	if err := projectID.Validate(); err != nil {
 		checks["runtime"] = "no_active_deployments"
 		return !h.config.RequireActiveDeployment
 	}
-	ready := true
-	for _, workspaceID := range workspaces {
-		checkName := "workspaceRuntime:" + workspaceID
-		if err := h.config.RuntimeReady(ctx, workspaceID); err != nil {
-			checks[checkName] = err.Error()
-			ready = false
-			continue
-		}
-		checks[checkName] = "ok"
+	if err := h.config.RuntimeReady(ctx); err != nil {
+		checks["projectRuntime:"+projectID.String()] = err.Error()
+		return false
 	}
-	return ready
+	checks["projectRuntime:"+projectID.String()] = "ok"
+	return true
 }
