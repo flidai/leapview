@@ -202,6 +202,14 @@ func TestProtectManagedDataTransportEnforcesCanonicalUploadMatrix(t *testing.T) 
 		}), want: http.StatusNotFound},
 		{name: "subject lookup failure", method: http.MethodPatch, id: uploadID, access: tusAccess{principal: accessmodule.Principal{ID: principalID}, ok: true, err: errors.New("identity unavailable")}, runtime: allowedRuntime, resolve: resolveAllowed, want: http.StatusServiceUnavailable},
 		{name: "runtime acquisition failure", method: http.MethodPatch, id: uploadID, access: allowedAccess, runtime: tusRuntime{project: projectID, err: errors.New("generation unavailable")}, resolve: resolveAllowed, want: http.StatusServiceUnavailable},
+		{name: "nil lease failure", method: http.MethodPatch, id: uploadID, access: allowedAccess, runtime: tusRuntime{project: projectID}, resolve: resolveAllowed, want: http.StatusServiceUnavailable},
+		{name: "snapshot generation mismatch", method: http.MethodPatch, id: uploadID, access: allowedAccess, runtime: tusRuntime{project: projectID, lease: tusLease{identity: func() projectgraph.ServingIdentity {
+			mismatched, err := projectgraph.NewServingIdentity(string(projectID), "prod", "generation_2")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return mismatched
+		}(), snapshot: allowedSnapshot}}, resolve: resolveAllowed, want: http.StatusServiceUnavailable},
 		{name: "snapshot failure", method: http.MethodPatch, id: uploadID, access: allowedAccess, runtime: tusRuntime{project: projectID, lease: tusLease{identity: identity}}, resolve: resolveAllowed, want: http.StatusServiceUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {

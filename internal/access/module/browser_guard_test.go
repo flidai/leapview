@@ -12,16 +12,18 @@ import (
 
 type browserGuardRepository struct {
 	access.Repository
-	admin bool
-	err   error
+	admin    bool
+	err      error
+	groups   []string
+	groupErr error
 }
 
 func (r browserGuardRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
 	return r.admin, r.err
 }
 
-func (browserGuardRepository) ListGroupIDsForPrincipal(context.Context, string) ([]string, error) {
-	return nil, nil
+func (r browserGuardRepository) ListGroupIDsForPrincipal(context.Context, string) ([]string, error) {
+	return append([]string(nil), r.groups...), r.groupErr
 }
 
 func browserGuardModule(repo access.Repository, principal Principal, ok bool) *Module {

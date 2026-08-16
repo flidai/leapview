@@ -56,6 +56,9 @@ func authorizeProjectResources(
 	if err != nil {
 		return false, err
 	}
+	if lease == nil {
+		return false, fmt.Errorf("runtime host returned a nil lease")
+	}
 	defer lease.Release()
 	if lease.Identity().ProjectID != projectID {
 		return false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
@@ -71,6 +74,9 @@ func authorizeProjectResources(
 		return false, err
 	}
 	snapshot := authorizedLease.AuthorizationSnapshot()
+	if snapshot.Identity() != lease.Identity() {
+		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
+	}
 	for _, resource := range resources {
 		allowed := false
 		for _, subject := range subjects {

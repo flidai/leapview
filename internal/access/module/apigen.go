@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,11 +10,13 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
+	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/go-chi/chi/v5"
 )
 
 const apiGenObjectScopeExtension = "x-leapview-object-scope"
+
+var errAPIGenResourceNotFound = errors.New("generated API resource not found")
 
 // APIGenResourceResolver resolves the exact graph resources named by one
 // generated route. Resolvers must return canonical ResourceRefs; they may not
@@ -65,12 +68,17 @@ type APIGenCommandTarget struct {
 // operations so authorization is evaluated against the active generation.
 type APIGenAuthorizer struct {
 	module     *Module
-	runtime    *runtimehostmodule.Module
+	runtime    apigenRuntimeHost
 	scopes     map[string]apiGenResourceScope
 	operations map[string]APIGenOperationContract
 }
 
-func (m *Module) APIGenAuthorizer(runtime *runtimehostmodule.Module, operations map[string]APIGenOperationContract, resolvers APIGenResourceResolvers) (*APIGenAuthorizer, error) {
+type apigenRuntimeHost interface {
+	ProjectID() projectgraph.ResourceID
+	Acquire(context.Context) (runtimehost.Lease, error)
+}
+
+func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[string]APIGenOperationContract, resolvers APIGenResourceResolvers) (*APIGenAuthorizer, error) {
 	if m == nil {
 		return nil, fmt.Errorf("access module is required")
 	}
@@ -105,7 +113,7 @@ func (a *APIGenAuthorizer) AuthorizeReplay(r *http.Request) bool {
 	operationID := ""
 	route := routePattern(r)
 	for id, contract := range a.operations {
-		if contract.Method == r.Method && (contract.Path == route || matchOperationPath(contract.Path, r.URL.Path)) {
+		if strings.EqualFold(contract.Method, r.Method) && (contract.Path == route || matchOperationPath(contract.Path, r.URL.Path)) {
 			operationID = id
 			break
 		}
@@ -211,6 +219,10 @@ func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolv
 		}
 		allowed, err := a.authorizeResources(r.Context(), principal.ID, projectID, resources, capability)
 		if err != nil {
+			if errors.Is(err, errAPIGenResourceNotFound) {
+				http.NotFound(w, r)
+				return
+			}
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
@@ -227,6 +239,9 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 	if err != nil {
 		return false, err
 	}
+	if lease == nil {
+		return false, fmt.Errorf("runtime host returned a nil lease")
+	}
 	defer lease.Release()
 	if lease.Identity().ProjectID != projectID {
 		return false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
@@ -242,7 +257,17 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 		return false, err
 	}
 	snapshot := authorizedLease.AuthorizationSnapshot()
+	if snapshot.Identity() != lease.Identity() {
+		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		return false, err
+	}
 	for _, resource := range resources {
+		graphResource, exists := snapshot.Project().Resource(resource.ID())
+		if !exists || graphResource.Kind != resource.Kind() {
+			return false, errAPIGenResourceNotFound
+		}
 		allowed := false
 		for _, subject := range subjects {
 			candidate, err := snapshot.Allows(subject, resource, capability)
@@ -417,6 +442,10 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 
 func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope) APIGenResourceResolver {
 	return func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
+		requestedProject, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+		if err != nil || requestedProject != active {
+			return nil
+		}
 		resources := definition.resolver(r, active)
 		if len(resources) == 0 {
 			return nil
