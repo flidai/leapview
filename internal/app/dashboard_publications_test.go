@@ -202,14 +202,14 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 	}))
 
 	list := httptest.NewRecorder()
-	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test-workspace/dashboard-publications", nil)
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:test/dashboard-publications", nil)
 	listRequest.Header.Set("Authorization", "Bearer local-secret")
 	server.Routes().ServeHTTP(list, listRequest)
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"publicUrl":"https://app.leapview.dev/public/dashboards/opaque-public-id-12345678901234"`) {
 		t.Fatalf("list response = %d %s", list.Code, list.Body.String())
 	}
 
-	path := "/api/v1/workspaces/test-workspace/dashboard-publications/website/suspend"
+	path := "/api/v1/projects/project:test/dashboard-publications/website/suspend"
 	missing := httptest.NewRecorder()
 	missingRequest := httptest.NewRequest(http.MethodPost, path, nil)
 	missingRequest.Header.Set("Authorization", "Bearer local-secret")
