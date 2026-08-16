@@ -318,7 +318,7 @@ var projectRoleOrder = []ProjectRole{
 
 // ParseProjectRole validates a canonical project role name.
 func ParseProjectRole(value string) (ProjectRole, error) {
-	role := ProjectRole(strings.TrimSpace(value))
+	role := ProjectRole(value)
 	if _, ok := projectRoleCapabilities[role]; !ok {
 		return "", fmt.Errorf("%w %q", ErrInvalidProjectRole, value)
 	}
@@ -347,7 +347,7 @@ type PlatformRole string
 const PlatformRoleAdmin PlatformRole = "platform_admin"
 
 func ParsePlatformRole(value string) (PlatformRole, error) {
-	role := PlatformRole(strings.TrimSpace(value))
+	role := PlatformRole(value)
 	if role != PlatformRoleAdmin {
 		return "", fmt.Errorf("%w %q", ErrInvalidPlatformRole, value)
 	}
@@ -375,8 +375,7 @@ func NewSubjectRef(kind SubjectKind, id string) (SubjectRef, error) {
 	if kind != SubjectKindPrincipal && kind != SubjectKindGroup {
 		return SubjectRef{}, fmt.Errorf("%w: kind %q", ErrInvalidSubjectRef, kind)
 	}
-	id = strings.TrimSpace(id)
-	if id == "" || strings.ContainsAny(id, "\x00\r\n\t") {
+	if id == "" || id != strings.TrimSpace(id) || strings.ContainsAny(id, "\x00\r\n\t") {
 		return SubjectRef{}, fmt.Errorf("%w: subject ID is blank or contains control characters", ErrInvalidSubjectRef)
 	}
 	return SubjectRef{Kind: kind, ID: id}, nil

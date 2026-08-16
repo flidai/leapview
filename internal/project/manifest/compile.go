@@ -34,11 +34,14 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 	roleBindings := make([]accesssnapshot.RoleBinding, 0, len(roleNames))
 	for _, name := range roleNames {
 		authored := policy.RoleBindings[name]
-		id := strings.TrimSpace(authored.ID)
+		id := authored.ID
+		if err := requireCanonicalLiteral("role binding", id); err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("role binding %q: %w", name, err)
+		}
 		if id == "" {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("role binding %q requires stable id", name)
 		}
-		role, err := access.ParseProjectRole(strings.TrimSpace(authored.Role))
+		role, err := access.ParseProjectRole(authored.Role)
 		if err != nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("role binding %q role: %w", id, err)
 		}
@@ -53,7 +56,10 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 	grants := make([]accesssnapshot.Grant, 0, len(grantNames))
 	for _, name := range grantNames {
 		authored := policy.Grants[name]
-		id := strings.TrimSpace(authored.ID)
+		id := authored.ID
+		if err := requireCanonicalLiteral("grant", id); err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q: %w", name, err)
+		}
 		if id == "" {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q requires stable id", name)
 		}
@@ -65,7 +71,7 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 		if err != nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q subject: %w", id, err)
 		}
-		capability, err := access.ParseCapability(strings.TrimSpace(authored.Capability))
+		capability, err := access.ParseCapability(authored.Capability)
 		if err != nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("grant %q capability: %w", id, err)
 		}
@@ -80,7 +86,10 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 	dataPolicies := make([]accesssnapshot.DataPolicy, 0, len(policyNames))
 	for _, name := range policyNames {
 		authored := policy.DataPolicies[name]
-		id := strings.TrimSpace(authored.ID)
+		id := authored.ID
+		if err := requireCanonicalLiteral("data policy", id); err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("data policy %q: %w", name, err)
+		}
 		if id == "" {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("data policy %q requires stable id", name)
 		}
@@ -98,7 +107,7 @@ func CompileAuthorizationSnapshot(identity graph.ServingIdentity, project graph.
 		} else if authored.Subject.PrincipalID != "" || authored.Subject.Email != "" || authored.Subject.Group != "" || authored.Subject.Publication != "" {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("data policy %q subject requires an explicit kind", id)
 		}
-		dataPolicies = append(dataPolicies, accesssnapshot.DataPolicy{ID: id, Name: authored.Name, Resource: resource, Subject: subject, PolicyType: strings.TrimSpace(authored.PolicyType), ExpressionJSON: authored.ExpressionJSON})
+		dataPolicies = append(dataPolicies, accesssnapshot.DataPolicy{ID: id, Name: authored.Name, Resource: resource, Subject: subject, PolicyType: authored.PolicyType, ExpressionJSON: authored.ExpressionJSON})
 	}
 	return accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, project, roleBindings, grants, dataPolicies)
 }
@@ -113,11 +122,11 @@ func sortedPolicyKeys[T any](values map[string]T) []string {
 }
 
 func canonicalResource(project graph.ProjectGraph, kind, id string) (access.ResourceRef, error) {
-	parsedKind, err := graph.ParseKind(strings.TrimSpace(kind))
+	parsedKind, err := graph.ParseKind(kind)
 	if err != nil {
 		return access.ResourceRef{}, err
 	}
-	ref, err := access.NewResourceRef(graph.ResourceID(strings.TrimSpace(id)), parsedKind)
+	ref, err := access.NewResourceRef(graph.ResourceID(id), parsedKind)
 	if err != nil {
 		return access.ResourceRef{}, err
 	}
@@ -128,27 +137,34 @@ func canonicalResource(project graph.ProjectGraph, kind, id string) (access.Reso
 }
 
 func canonicalSubject(subject Subject) (access.SubjectRef, error) {
-	kind := strings.TrimSpace(subject.Kind)
+	kind := subject.Kind
 	var subjectKind access.SubjectKind
 	switch kind {
-	case string(access.SubjectKindPrincipal), "service_principal":
+	case string(access.SubjectKindPrincipal):
 		subjectKind = access.SubjectKindPrincipal
 	case string(access.SubjectKindGroup):
 		subjectKind = access.SubjectKindGroup
 	default:
 		return access.SubjectRef{}, fmt.Errorf("unsupported subject kind %q", kind)
 	}
-	if strings.TrimSpace(subject.Email) != "" || strings.TrimSpace(subject.Publication) != "" {
+	if subject.Email != "" || subject.Publication != "" {
 		return access.SubjectRef{}, fmt.Errorf("subject %q must use an explicit principalId or group id", kind)
 	}
-	id := strings.TrimSpace(subject.PrincipalID)
+	id := subject.PrincipalID
 	if subjectKind == access.SubjectKindGroup {
 		if id != "" {
 			return access.SubjectRef{}, fmt.Errorf("group subject cannot include principalId")
 		}
-		id = strings.TrimSpace(subject.Group)
-	} else if strings.TrimSpace(subject.Group) != "" {
+		id = subject.Group
+	} else if subject.Group != "" {
 		return access.SubjectRef{}, fmt.Errorf("principal subject cannot include group")
 	}
 	return access.NewSubjectRef(subjectKind, id)
+}
+
+func requireCanonicalLiteral(field, value string) error {
+	if value != strings.TrimSpace(value) {
+		return fmt.Errorf("%s must not contain leading or trailing whitespace", field)
+	}
+	return nil
 }

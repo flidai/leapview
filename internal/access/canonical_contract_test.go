@@ -252,6 +252,24 @@ func TestCanonicalValidationRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestCanonicalConstructorsRejectNonCanonicalLiterals(t *testing.T) {
+	for _, role := range []string{" admin", "admin ", "ADMIN"} {
+		if _, err := ParseProjectRole(role); !errors.Is(err, ErrInvalidProjectRole) {
+			t.Fatalf("ParseProjectRole(%q) error = %v, want invalid role", role, err)
+		}
+	}
+	for _, role := range []string{" platform_admin", "PLATFORM_ADMIN"} {
+		if _, err := ParsePlatformRole(role); !errors.Is(err, ErrInvalidPlatformRole) {
+			t.Fatalf("ParsePlatformRole(%q) error = %v, want invalid role", role, err)
+		}
+	}
+	for _, id := range []string{" alice", "alice ", "alice\t"} {
+		if _, err := NewSubjectRef(SubjectKindPrincipal, id); !errors.Is(err, ErrInvalidSubjectRef) {
+			t.Fatalf("NewSubjectRef(%q) error = %v, want invalid subject", id, err)
+		}
+	}
+}
+
 func TestCanonicalReferencesMustMatchAuthoritativeGraph(t *testing.T) {
 	project, err := graph.NewProjectGraph([]graph.Resource{
 		{ID: "project_demo", Kind: graph.KindProject, Name: "demo"},

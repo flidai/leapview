@@ -110,3 +110,29 @@ func TestCompileAuthorizationSnapshotRejectsIdentityFallbackSubjects(t *testing.
 		}
 	}
 }
+
+func TestCompileAuthorizationSnapshotRejectsNonCanonicalIdentityLiterals(t *testing.T) {
+	project := compileTestGraph(t)
+	cases := []struct {
+		name   string
+		policy AccessPolicy
+	}{
+		{name: "role whitespace", policy: AccessPolicy{RoleBindings: map[string]RoleBinding{"role": {ID: "binding", Role: " admin", Subject: Subject{Kind: "principal", PrincipalID: "alice"}}}}},
+		{name: "role case", policy: AccessPolicy{RoleBindings: map[string]RoleBinding{"role": {ID: "binding", Role: "ADMIN", Subject: Subject{Kind: "principal", PrincipalID: "alice"}}}}},
+		{name: "grant id whitespace", policy: AccessPolicy{Grants: map[string]Grant{"grant": {ID: " grant", Object: SecurableRef{ID: "dashboard_main", Kind: "dashboard"}, Subject: Subject{Kind: "principal", PrincipalID: "alice"}, Capability: "RESOURCE_READ"}}}},
+		{name: "resource id whitespace", policy: AccessPolicy{Grants: map[string]Grant{"grant": {ID: "grant", Object: SecurableRef{ID: "dashboard_main ", Kind: "dashboard"}, Subject: Subject{Kind: "principal", PrincipalID: "alice"}, Capability: "RESOURCE_READ"}}}},
+		{name: "resource kind case", policy: AccessPolicy{Grants: map[string]Grant{"grant": {ID: "grant", Object: SecurableRef{ID: "dashboard_main", Kind: "Dashboard"}, Subject: Subject{Kind: "principal", PrincipalID: "alice"}, Capability: "RESOURCE_READ"}}}},
+		{name: "capability whitespace", policy: AccessPolicy{Grants: map[string]Grant{"grant": {ID: "grant", Object: SecurableRef{ID: "dashboard_main", Kind: "dashboard"}, Subject: Subject{Kind: "principal", PrincipalID: "alice"}, Capability: " RESOURCE_READ"}}}},
+		{name: "subject kind alias", policy: AccessPolicy{Grants: map[string]Grant{"grant": {ID: "grant", Object: SecurableRef{ID: "dashboard_main", Kind: "dashboard"}, Subject: Subject{Kind: "service_principal", PrincipalID: "alice"}, Capability: "RESOURCE_READ"}}}},
+		{name: "subject id whitespace", policy: AccessPolicy{Grants: map[string]Grant{"grant": {ID: "grant", Object: SecurableRef{ID: "dashboard_main", Kind: "dashboard"}, Subject: Subject{Kind: "principal", PrincipalID: " alice"}, Capability: "RESOURCE_READ"}}}},
+		{name: "policy id whitespace", policy: AccessPolicy{DataPolicies: map[string]DataPolicy{"policy": {ID: " policy", Object: SecurableRef{ID: "dashboard_main", Kind: "dashboard"}, PolicyType: "row_filter", ExpressionJSON: `{"field":"country","value":"DK"}`}}}},
+		{name: "policy type whitespace", policy: AccessPolicy{DataPolicies: map[string]DataPolicy{"policy": {ID: "policy", Object: SecurableRef{ID: "dashboard_main", Kind: "dashboard"}, PolicyType: " row_filter", ExpressionJSON: `{"field":"country","value":"DK"}`}}}},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := CompileAuthorizationSnapshot(compileTestIdentity(), project, test.policy); err == nil {
+				t.Fatal("accepted non-canonical identity literal")
+			}
+		})
+	}
+}
