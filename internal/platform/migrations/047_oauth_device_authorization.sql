@@ -7,7 +7,7 @@ CREATE TABLE oauth_device_authorizations (
   user_code_hash TEXT NOT NULL UNIQUE,
   target_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
-  privileges_json TEXT NOT NULL,
+  capabilities_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'approved', 'denied', 'consumed')),
   principal_id TEXT REFERENCES principals(id) ON DELETE CASCADE,
@@ -30,7 +30,7 @@ CREATE TABLE oauth_authoring_sessions (
   principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
   target_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
-  privileges_json TEXT NOT NULL,
+  capabilities_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   last_used_at TEXT,
   expires_at TEXT NOT NULL,

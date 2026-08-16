@@ -12,14 +12,5 @@ CREATE TABLE IF NOT EXISTS group_members (
 ALTER TABLE sessions ADD COLUMN revoked_at TEXT;
 ALTER TABLE api_tokens ADD COLUMN revoked_at TEXT;
 
-INSERT OR IGNORE INTO roles (id, name, capabilities_json)
-VALUES
-  ('role_owner', 'owner', '["PROJECT_ADMIN","RESOURCE_USE","RESOURCE_READ","RESOURCE_EDIT","RESOURCE_MANAGE","RESOURCE_SHARE","RESOURCE_PUBLISH"]'),
-  ('role_admin', 'admin', '["PROJECT_ADMIN","RESOURCE_USE","RESOURCE_READ","RESOURCE_EDIT","RESOURCE_MANAGE","RESOURCE_SHARE","RESOURCE_PUBLISH"]'),
-  ('role_deployer', 'deployer', '["RESOURCE_USE","RESOURCE_READ","RESOURCE_PUBLISH"]'),
-  ('role_editor', 'editor', '["RESOURCE_USE","RESOURCE_READ","RESOURCE_EDIT"]'),
-  ('role_viewer', 'viewer', '["RESOURCE_USE","RESOURCE_READ"]');
-
 CREATE INDEX IF NOT EXISTS group_members_principal_idx ON group_members(principal_id);
 CREATE INDEX IF NOT EXISTS api_tokens_principal_idx ON api_tokens(principal_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS audit_events_project_created_idx ON audit_events(project_id, created_at DESC);

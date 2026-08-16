@@ -24,7 +24,7 @@ func (r *Repository) RecordAuditEvent(ctx context.Context, input access.AuditEve
 	}
 	return r.q.InsertAuditEvent(ctx, platformdb.InsertAuditEventParams{
 		ID: id, PrincipalID: nullableString(input.PrincipalID),
-		Action: input.Action, ResourceKind: input.TargetType, ResourceID: input.TargetID,
+		Action: input.Action, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, Capability: string(input.Capability),
 		Status: input.Status, RequestID: input.RequestID, CorrelationID: input.CorrelationID, MetadataJson: input.MetadataJSON,
 	})
 }
@@ -43,9 +43,9 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 	from, to, cursorTime := sqliteAuditTime(filter.From), sqliteAuditTime(filter.To), sqliteAuditTime(filter.CursorTime)
 	rows, err := r.q.ListAuditEvents(ctx, platformdb.ListAuditEventsParams{
 		Column1: filter.PrincipalID, PrincipalID: nullableString(filter.PrincipalID),
-		Column3: filter.Action, Action: filter.Action, Column5: filter.TargetType, ResourceKind: filter.TargetType,
-		Column7: filter.TargetID, ResourceID: filter.TargetID, Column9: from, CreatedAt: from, Column11: to, CreatedAt_2: to,
-		Column13: cursorTime, CreatedAt_3: cursorTime, CreatedAt_4: cursorTime, ID: filter.CursorID, Limit: int64(limit),
+		Column3: filter.Action, Action: filter.Action, Column5: filter.ResourceKind, ResourceKind: filter.ResourceKind,
+		Column7: filter.ResourceID, ResourceID: filter.ResourceID, Column9: string(filter.Capability), Capability: string(filter.Capability), Column11: from, CreatedAt: from, Column13: to, CreatedAt_2: to,
+		Column15: cursorTime, CreatedAt_3: cursorTime, CreatedAt_4: cursorTime, ID: filter.CursorID, Limit: int64(limit),
 	})
 	if err != nil {
 		return nil, err
@@ -54,7 +54,7 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 	for _, row := range rows {
 		events = append(events, access.AuditEvent{
 			ID: row.ID, PrincipalID: row.PrincipalID.String, Action: row.Action,
-			TargetType: row.TargetType, TargetID: row.TargetID, Status: row.Status,
+			ResourceKind: row.ResourceKind, ResourceID: row.ResourceID, Capability: access.Capability(row.Capability), Status: row.Status,
 			RequestID: row.RequestID, CorrelationID: row.CorrelationID, MetadataJSON: row.MetadataJson, CreatedAt: row.CreatedAt,
 		})
 	}

@@ -121,21 +121,6 @@ CREATE TABLE IF NOT EXISTS groups (
   UNIQUE(provider, external_id)
 );
 
-CREATE TABLE IF NOT EXISTS roles (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  capabilities_json TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS role_bindings (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-  principal_id TEXT REFERENCES principals(id) ON DELETE CASCADE,
-  group_id TEXT REFERENCES groups(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
@@ -160,7 +145,6 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   name TEXT NOT NULL,
   token_fingerprint TEXT NOT NULL UNIQUE,
   token_verifier TEXT NOT NULL,
-  capabilities_json TEXT NOT NULL DEFAULT '[]',
   expires_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_used_at TEXT
@@ -208,10 +192,10 @@ CREATE INDEX IF NOT EXISTS assets_serving_state_type_idx ON assets(serving_state
 CREATE INDEX IF NOT EXISTS assets_serving_state_logical_idx ON assets(serving_state_id, logical_asset_id);
 CREATE UNIQUE INDEX IF NOT EXISTS asset_edges_unique_idx
   ON asset_edges(serving_state_id, from_logical_asset_id, to_logical_asset_id, edge_type);
-CREATE INDEX IF NOT EXISTS role_bindings_project_idx ON role_bindings(project_id);
-CREATE UNIQUE INDEX IF NOT EXISTS role_bindings_principal_unique_idx
-  ON role_bindings(project_id, role_id, principal_id)
-  WHERE principal_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS role_bindings_group_unique_idx
-  ON role_bindings(project_id, role_id, group_id)
-  WHERE group_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS platform_role_bindings (
+  id TEXT PRIMARY KEY,
+  role TEXT NOT NULL CHECK(role = 'platform_admin'),
+  principal_id TEXT NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(principal_id)
+);

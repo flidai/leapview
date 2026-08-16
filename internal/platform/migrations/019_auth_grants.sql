@@ -5,13 +5,6 @@
 
 ALTER TABLE principals ADD COLUMN kind TEXT NOT NULL DEFAULT 'user';
 
-CREATE TABLE IF NOT EXISTS role_grant_templates (
-  role_name TEXT NOT NULL,
-  capability TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY(role_name, capability)
-);
-
 CREATE TABLE IF NOT EXISTS authorization_snapshots (
   project_id TEXT NOT NULL,
   environment TEXT NOT NULL,
@@ -76,4 +69,3 @@ DROP INDEX IF EXISTS authorization_grants_resource_idx;
 DROP INDEX IF EXISTS authorization_grants_subject_idx;
 DROP TABLE IF EXISTS authorization_grants;
 DROP TABLE IF EXISTS authorization_snapshots;
-DROP TABLE IF EXISTS role_grant_templates;

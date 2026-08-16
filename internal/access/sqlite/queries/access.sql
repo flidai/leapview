@@ -114,8 +114,9 @@ DELETE FROM group_members WHERE group_id = ?;
 -- name: DeleteSCIMGroupMembersByPrincipal :exec
 DELETE FROM group_members WHERE principal_id = ?;
 -- name: InsertPlatformRoleBinding :exec
-INSERT OR REPLACE INTO platform_role_bindings (id, role, principal_id)
-VALUES (?, ?, ?);
+INSERT INTO platform_role_bindings (id, role, principal_id)
+VALUES (?, ?, ?)
+ON CONFLICT(principal_id) DO UPDATE SET role = excluded.role;
 
 -- name: CreateSession :exec
 INSERT INTO sessions (id, principal_id, token_fingerprint, token_verifier, expires_at)
@@ -309,9 +310,9 @@ WHERE service_principal_id = sqlc.arg(service_principal_id)
   AND id = sqlc.arg(id);
 
 -- name: InsertAuditEvent :exec
-INSERT INTO audit_events (id, principal_id, action, resource_kind, resource_id, capability, status, request_id, correlation_id, metadata_json) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?);
+INSERT INTO audit_events (id, principal_id, action, resource_kind, resource_id, capability, status, request_id, correlation_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 -- name: ListAuditEvents :many
-SELECT id, principal_id, action, resource_kind AS target_type, resource_id AS target_id, capability, status, request_id, correlation_id, metadata_json, created_at FROM audit_events WHERE (? = '' OR principal_id = ?) AND (? = '' OR action = ?) AND (? = '' OR resource_kind = ?) AND (? = '' OR resource_id = ?) AND (? = '' OR created_at >= ?) AND (? = '' OR created_at <= ?) AND (? = '' OR created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT ?;
+SELECT id, principal_id, action, resource_kind, resource_id, capability, status, request_id, correlation_id, metadata_json, created_at FROM audit_events WHERE (? = '' OR principal_id = ?) AND (? = '' OR action = ?) AND (? = '' OR resource_kind = ?) AND (? = '' OR resource_id = ?) AND (? = '' OR capability = ?) AND (? = '' OR created_at >= ?) AND (? = '' OR created_at <= ?) AND (? = '' OR created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT ?;
 -- name: ListPrincipals :many
 WITH params AS (
   SELECT CAST(sqlc.arg(email) AS TEXT) AS email, CAST(sqlc.arg(search) AS TEXT) AS search

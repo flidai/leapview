@@ -72,11 +72,11 @@ func (r *Repository) InitializeInstance(
 			}
 		}
 		return []access.AuditEventInput{{
-			PrincipalID: principal.ID,
-			Action:      "instance.initialized",
-			TargetType:  "instance",
-			TargetID:    input.Environment,
-			Status:      "success",
+			PrincipalID:  principal.ID,
+			Action:       "instance.initialized",
+			ResourceKind: "instance",
+			ResourceID:   input.Environment,
+			Status:       "success",
 		}}, nil
 	})
 	return result, err

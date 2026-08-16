@@ -317,8 +317,9 @@ type DesktopSessionRepository interface {
 type AuditEventInput struct {
 	PrincipalID   string
 	Action        string
-	TargetType    string
-	TargetID      string
+	ResourceKind  string
+	ResourceID    string
+	Capability    Capability
 	Status        string
 	RequestID     string
 	CorrelationID string
@@ -326,24 +327,26 @@ type AuditEventInput struct {
 }
 
 type AuditEventFilter struct {
-	PrincipalID string
-	Action      string
-	TargetType  string
-	TargetID    string
-	From        string
-	To          string
-	PageToken   string
-	CursorTime  string
-	CursorID    string
-	Limit       int
+	PrincipalID  string
+	Action       string
+	ResourceKind string
+	ResourceID   string
+	Capability   Capability
+	From         string
+	To           string
+	PageToken    string
+	CursorTime   string
+	CursorID     string
+	Limit        int
 }
 
 type AuditEvent struct {
 	ID            string
 	PrincipalID   string
 	Action        string
-	TargetType    string
-	TargetID      string
+	ResourceKind  string
+	ResourceID    string
+	Capability    Capability
 	Status        string
 	RequestID     string
 	CorrelationID string

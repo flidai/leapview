@@ -410,8 +410,8 @@ func authoringDeviceAudit(action string, record access.DeviceAuthorization, prin
 		}
 	}
 	return access.AuditEventInput{
-		PrincipalID: principalID, Action: action, TargetType: "device_authorization",
-		TargetID: record.ID, Status: status, MetadataJSON: string(metadata),
+		PrincipalID: principalID, Action: action, ResourceKind: "device_authorization",
+		ResourceID: record.ID, Status: status, MetadataJSON: string(metadata),
 	}
 }
 
@@ -434,8 +434,8 @@ func authoringSessionAudit(action string, session access.AuthoringSession, statu
 		}
 	}
 	return access.AuditEventInput{
-		PrincipalID: session.PrincipalID, Action: action, TargetType: "authoring_session",
-		TargetID: session.ID, Status: status, MetadataJSON: string(metadata),
+		PrincipalID: session.PrincipalID, Action: action, ResourceKind: "authoring_session",
+		ResourceID: session.ID, Status: status, MetadataJSON: string(metadata),
 	}
 }
 
