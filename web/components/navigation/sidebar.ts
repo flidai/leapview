@@ -340,6 +340,10 @@ class LeapViewSidebar extends LitElement {
 			font-weight: var(--base-text-weight-medium);
     }
 
+    .collapsed-area-switch {
+      display: none;
+    }
+
     .area-icon {
       display: grid;
       width: var(--control-xsmall-size);
@@ -820,6 +824,26 @@ class LeapViewSidebar extends LitElement {
       display: none;
     }
 
+    :host([data-collapsed]) .collapsed-area-switch {
+      display: grid;
+      width: var(--base-size-36);
+      min-height: var(--base-size-36);
+      place-items: center;
+      justify-self: center;
+      border: var(--lv-border-transparent);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-muted);
+      text-decoration: none;
+    }
+
+    :host([data-collapsed]) .collapsed-area-switch:hover,
+    :host([data-collapsed]) .collapsed-area-switch:focus-visible {
+      background: var(--control-bgColor-hover);
+      color: var(--lv-fg-default);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
     :host([data-collapsed]) .area-item {
       width: var(--base-size-36);
       min-height: var(--base-size-36);
@@ -1247,6 +1271,7 @@ class LeapViewSidebar extends LitElement {
             `}
           </div>
           ${this.config.admin ? null : this.renderAreaSwitcher()}
+          ${this.config.admin ? null : this.renderCollapsedAreaSwitch()}
           ${this.config.admin ? this.renderSearch() : null}
         </header>
 
@@ -1458,6 +1483,26 @@ class LeapViewSidebar extends LitElement {
           `
         })}
       </div>
+    `
+  }
+
+  private renderCollapsedAreaSwitch() {
+    const areas = Array.isArray(this.config.areas) ? this.config.areas : []
+    if (areas.length < 2) return null
+    const destination = areas.find((area) => area.id !== this.config.area)
+    if (!destination) return null
+    const href = this.areaHref(destination, false)
+    const label = `Switch to ${destination.label}`
+    return html`
+      <a
+        class="collapsed-area-switch"
+        href=${href}
+        aria-label=${label}
+        title=${label}
+        @click=${(event: MouseEvent) => this.followInternalLink(event, href)}
+      >
+        <span class="area-icon" aria-hidden="true">${icon(destination.icon)}</span>
+      </a>
     `
   }
 

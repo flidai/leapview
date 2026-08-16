@@ -281,6 +281,19 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
           const style = getComputedStyle(item)
           return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden'
         }).length,
+        collapsedAreaSwitch: (() => {
+          const link = root.querySelector('.collapsed-area-switch') as HTMLAnchorElement | null
+          if (!link) return null
+          const rect = link.getBoundingClientRect()
+          const style = getComputedStyle(link)
+          return {
+            visible: rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden',
+            label: link.getAttribute('aria-label'),
+            title: link.getAttribute('title'),
+            href: link.getAttribute('href'),
+            iconDisplay: getComputedStyle(link.querySelector('.area-icon') as HTMLElement).display,
+          }
+        })(),
       }
     })
 
@@ -296,6 +309,13 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
       collapseControl: { label: 'Expand navigation', disabled: false },
       collapsedAttribute: true,
       visibleAreaSwitcherCount: 0,
+      collapsedAreaSwitch: {
+        visible: true,
+        label: 'Switch to Insights',
+        title: 'Switch to Insights',
+        href: '/',
+        iconDisplay: 'grid',
+      },
     })
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
