@@ -276,14 +276,10 @@ func WithClock(clock Clock) Option          { return func(c *Controller) { c.clo
 func normalizeGroups(groups []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(groups))
 	for _, raw := range groups {
-		group := strings.TrimSpace(raw)
-		if group == "" {
-			continue
-		}
-		if strings.IndexFunc(group, unicode.IsControl) >= 0 {
+		if raw == "" || raw != strings.TrimSpace(raw) || strings.IndexFunc(raw, unicode.IsControl) >= 0 {
 			return nil, fmt.Errorf("group id contains control characters")
 		}
-		seen[group] = struct{}{}
+		seen[raw] = struct{}{}
 	}
 	result := make([]string, 0, len(seen))
 	for group := range seen {

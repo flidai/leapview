@@ -101,7 +101,7 @@ func (s Service) acquireAnalytics(ctx context.Context, operation string) (contex
 	if s.Admitter == nil || s.Analytics == nil {
 		return ctx, nil, func() {}, fmt.Errorf("DuckLake analytical session is not configured")
 	}
-	workloadLease, err := s.Admitter.Acquire(ctx, workload.Request{Class: workload.Control, Operation: operation})
+	workloadLease, err := s.Admitter.Acquire(ctx, workload.Request{Class: workload.Control, PrincipalID: "system:admin-storage", Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		return ctx, nil, func() {}, err
 	}

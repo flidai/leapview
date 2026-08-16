@@ -18,7 +18,7 @@ func TestBackgroundLifecycleReclaimsPersistedAPIJobs(t *testing.T) {
 	}
 	// Seed through persistence to simulate an unknown kind left by a former
 	// process version; the module intentionally rejects new unknown enqueues.
-	if _, err := jobsqlite.NewRepository(store.SQLDB()).Enqueue(t.Context(), jobs.EnqueueInput{ID: "job-restart", Kind: "test.unsupported", WorkloadClass: "control", WorkspaceID: "_node", ResourceKind: "test", ResourceID: "resource-1", Payload: []byte(`{}`)}); err != nil {
+	if _, err := jobsqlite.NewRepository(store.SQLDB()).Enqueue(t.Context(), jobs.EnqueueInput{ID: "job-restart", Kind: "test.unsupported", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "test", ResourceID: "resource-1", Payload: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 

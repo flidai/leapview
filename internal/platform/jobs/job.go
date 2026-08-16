@@ -4,7 +4,11 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/flidai/leapview/internal/platform/transaction"
 )
@@ -26,17 +30,21 @@ const (
 )
 
 type EnqueueInput struct {
-	ID            string
-	Kind          string
-	WorkloadClass string
-	WorkspaceID   string
-	ResourceKind  string
-	ResourceID    string
-	Payload       []byte
+	ID                   string
+	Kind                 string
+	WorkloadClass        string
+	PrincipalID          string
+	GroupIDs             []string
+	ResourceKind         string
+	ResourceID           string
+	EstimatedMemoryBytes int64
+	Payload              []byte
 }
 
 type Job struct {
-	ID, Kind, WorkloadClass, WorkspaceID, ResourceKind, ResourceID string
+	ID, Kind, WorkloadClass, PrincipalID, ResourceKind, ResourceID string
+	GroupIDs                                                       []string
+	EstimatedMemoryBytes                                           int64
 	Payload                                                        []byte
 	Status                                                         Status
 	Attempts                                                       int
@@ -44,6 +52,39 @@ type Job struct {
 	LeaseOwner, LeaseExpiresAt                                     string
 	CreatedAt, StartedAt, FinishedAt                               string
 	ErrorJSON                                                      string
+}
+
+// SystemPrincipalID is used for internal work that has no end-user actor.
+// It is deliberately a stable canonical identity rather than a workspace
+// sentinel or an inferred/fallback value.
+const SystemPrincipalID = "system:durable-jobs"
+
+// CanonicalActor validates the durable actor identity and returns a stable
+// sorted, deduplicated group projection. Identity strings are never trimmed or
+// case-folded: callers must provide the canonical literal.
+func CanonicalActor(principal string, groups []string) ([]string, error) {
+	if principal == "" || principal != strings.TrimSpace(principal) || len(principal) > 256 || strings.IndexFunc(principal, unicode.IsControl) >= 0 {
+		return nil, fmt.Errorf("principal id is not canonical")
+	}
+	return CanonicalGroups(groups)
+}
+
+// CanonicalGroups returns the stable actor-group projection while rejecting
+// noncanonical literals. Empty groups are not meaningful actor membership.
+func CanonicalGroups(groups []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		if group == "" || group != strings.TrimSpace(group) || len(group) > 256 || strings.IndexFunc(group, unicode.IsControl) >= 0 {
+			return nil, fmt.Errorf("group id is not canonical")
+		}
+		seen[group] = struct{}{}
+	}
+	canonical := make([]string, 0, len(seen))
+	for group := range seen {
+		canonical = append(canonical, group)
+	}
+	sort.Strings(canonical)
+	return canonical, nil
 }
 
 // Fence identifies one exact durable claim. Owner identity is insufficient:

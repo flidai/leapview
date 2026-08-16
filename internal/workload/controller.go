@@ -499,14 +499,16 @@ func (c *Controller) normalize(request Request) (Request, error) {
 			break
 		}
 	}
-	request.PrincipalID = strings.TrimSpace(request.PrincipalID)
-	request.Operation = strings.TrimSpace(request.Operation)
+	if request.PrincipalID == "" || request.PrincipalID != strings.TrimSpace(request.PrincipalID) || strings.IndexFunc(request.PrincipalID, unicode.IsControl) >= 0 ||
+		request.Operation == "" || request.Operation != strings.TrimSpace(request.Operation) || strings.IndexFunc(request.Operation, unicode.IsControl) >= 0 {
+		return request, c.rejection(request, InvalidRequest, nil)
+	}
 	groups, groupErr := normalizeGroups(request.GroupIDs)
 	if groupErr != nil {
 		return request, c.rejection(request, InvalidRequest, groupErr)
 	}
 	request.GroupIDs = groups
-	if !known || request.PrincipalID == "" || strings.IndexFunc(request.PrincipalID, unicode.IsControl) >= 0 || request.Operation == "" || len(request.Operation) > 96 || request.EstimatedMemoryBytes <= 0 {
+	if !known || len(request.Operation) > 96 || request.EstimatedMemoryBytes <= 0 {
 		return request, c.rejection(request, InvalidRequest, nil)
 	}
 	if reason := c.impossibleMemoryReason(request); reason != "" {

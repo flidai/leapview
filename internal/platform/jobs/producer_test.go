@@ -28,7 +28,7 @@ func TestEnqueueJSONPreservesDeclaredWorkloadAndEncodesPayload(t *testing.T) {
 	store := &producerTestStore{}
 	err := EnqueueJSON(t.Context(), store, JSONEnqueueInput{
 		ID: "agent:run-1", Kind: "agent.run", WorkloadClass: "background",
-		WorkspaceID: "sales", ResourceKind: "agent_run", ResourceID: "run-1",
+		PrincipalID: "principal-1", GroupIDs: []string{"team-a"}, ResourceKind: "agent_run", ResourceID: "run-1", EstimatedMemoryBytes: 1,
 		Payload: struct {
 			Run string `json:"run"`
 		}{Run: "run-1"},
@@ -39,8 +39,8 @@ func TestEnqueueJSONPreservesDeclaredWorkloadAndEncodesPayload(t *testing.T) {
 	if got := string(store.enqueued.Payload); got != `{"run":"run-1"}` {
 		t.Fatalf("payload = %s", got)
 	}
-	if store.enqueued.WorkloadClass != "background" || store.enqueued.WorkspaceID != "sales" {
-		t.Fatalf("workload = %q/%q", store.enqueued.WorkloadClass, store.enqueued.WorkspaceID)
+	if store.enqueued.WorkloadClass != "background" || store.enqueued.PrincipalID != "principal-1" || store.enqueued.EstimatedMemoryBytes != 1 {
+		t.Fatalf("workload = %#v", store.enqueued)
 	}
 }
 

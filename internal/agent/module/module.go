@@ -133,6 +133,7 @@ type ModelConfig struct {
 type Scope struct {
 	WorkspaceID    string
 	PrincipalID    string
+	GroupIDs       []string
 	ConversationID string
 	Credential     CredentialScope
 	DevAuthBypass  bool
@@ -276,7 +277,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 
 func scopeFromAgent(scope agent.Scope) Scope {
 	return Scope{
-		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
 			WorkspaceID: scope.Credential.WorkspaceID,
@@ -288,7 +289,7 @@ func scopeFromAgent(scope agent.Scope) Scope {
 
 func scopeToAgent(scope Scope) agent.Scope {
 	return agent.Scope{
-		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: agent.CredentialScope{
 			WorkspaceID: scope.Credential.WorkspaceID,

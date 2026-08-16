@@ -78,7 +78,7 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 	controller, err := workload.New(workload.DefaultConfig())
 	require.NoError(t, err)
 	defer controller.Close()
-	refreshLease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: "commerce", Operation: "minio.refresh"})
+	refreshLease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "commerce", Operation: "minio.refresh", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
 	runtime, err := analyticsduckdb.OpenWorkspaceMaterializeRuntime(refreshLease.Context(), analyticsduckdb.WorkspaceRuntimeConfig{
 		Models:             map[string]*semanticmodel.Model{"commerce": model},
@@ -98,7 +98,7 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 	if got := materializedRevenue(t, ctx, controller, db); got != 30 {
 		t.Fatalf("external replacement changed served data before refresh: %v", got)
 	}
-	refreshLease, err = controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: "commerce", Operation: "minio.refresh"})
+	refreshLease, err = controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "commerce", Operation: "minio.refresh", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
 	err = runtime.Refresh(refreshLease.Context())
 	refreshLease.Release()
@@ -110,7 +110,7 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 	}
 
 	putMinIOObject(t, ctx, client, bucket, "commerce/"+key, []byte("not parquet"))
-	refreshLease, err = controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: "commerce", Operation: "minio.refresh"})
+	refreshLease, err = controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "commerce", Operation: "minio.refresh", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
 	err = runtime.Refresh(refreshLease.Context())
 	refreshLease.Release()
@@ -207,7 +207,7 @@ func minIOModel(bucket, key string) *semanticmodel.Model {
 
 func materializedRevenue(t *testing.T, ctx context.Context, controller *workload.Controller, db *analyticsducklake.Environment) float64 {
 	t.Helper()
-	workloadLease, err := controller.Acquire(ctx, workload.Request{Class: workload.Interactive, WorkspaceID: "commerce", Operation: "minio.query"})
+	workloadLease, err := controller.Acquire(ctx, workload.Request{Class: workload.Interactive, PrincipalID: "commerce", Operation: "minio.query", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
 	defer workloadLease.Release()
 	lease, err := db.Acquire(workloadLease.Context())

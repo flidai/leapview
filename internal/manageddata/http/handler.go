@@ -299,7 +299,7 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	request := control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession}
+	request := control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession, Actor: actor}
 	var result control.UploadResult
 	var err error
 	if h.options.BeginFinalize != nil {

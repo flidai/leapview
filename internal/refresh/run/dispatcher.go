@@ -69,7 +69,7 @@ func (d Dispatcher) Run(ctx context.Context) {
 }
 
 func (d Dispatcher) dispatchCandidate(ctx context.Context, owner string, candidate JobRecord, queueStats JobQueueStats) bool {
-	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: candidate.WorkspaceID, Operation: "materialization.refresh"})
+	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "system:refresh", Operation: "materialization.refresh", EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		if d.Logger != nil {
 			d.Logger.InfoContext(ctx, "refresh admission deferred", "workspace", candidate.WorkspaceID, "run", candidate.RunID, "error", err)

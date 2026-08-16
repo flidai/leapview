@@ -141,6 +141,11 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 }
 
 func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, _ string) {
+	principal, ok := m.currentPrincipal(r)
+	if !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
 	payload, err := json.Marshal(FinalizeJob{Project: project, Release: releaseID})
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), err)
@@ -175,7 +180,7 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 					},
 					Job: jobs.EnqueueInput{
 						ID: "release:" + releaseID + ":finalize", Kind: execution.JobKind,
-						WorkloadClass: "control", WorkspaceID: "_node",
+						WorkloadClass: "control", PrincipalID: principal.ID, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
 						ResourceKind: execution.ResourceKind, ResourceID: releaseID, Payload: payload,
 					},
 				})

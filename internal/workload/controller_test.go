@@ -169,7 +169,7 @@ func TestPrincipalAndGroupQueueCaps(t *testing.T) {
 
 func TestGroupNormalizationAndNestedReuse(t *testing.T) {
 	c := testController(t, Config{MaxRunning: 1, Classes: map[Class]Policy{Interactive: {MaximumRunning: 1}}})
-	outer := acquireMemory(t, c, Interactive, "actor", 7, " z ", "a", "a")
+	outer := acquireMemory(t, c, Interactive, "actor", 7, "z", "a", "a")
 	if got := outer.Context(); got == nil {
 		t.Fatal("nil execution context")
 	}
@@ -197,7 +197,7 @@ func TestCallerGroupSliceCannotMutateAccountingOrEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(c.Close)
-	groups := []string{" z ", "a", "a"}
+	groups := []string{"z", "a", "a"}
 	lease, err := c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "actor", GroupIDs: groups, Operation: "test", EstimatedMemoryBytes: 1})
 	if err != nil {
 		t.Fatal(err)

@@ -16,9 +16,11 @@ const (
 )
 
 type AdmissionRequest struct {
-	Class       string
-	WorkspaceID string
-	Operation   string
+	Class                string
+	PrincipalID          string
+	GroupIDs             []string
+	EstimatedMemoryBytes int64
+	Operation            string
 }
 
 type AdmissionLease interface {
@@ -154,7 +156,10 @@ func (r *Runner) runPump(ctx context.Context, owner, class string) {
 }
 
 func (r *Runner) dispatchCandidate(ctx context.Context, owner, class string, candidate Job) {
-	lease, err := r.admission.Acquire(ctx, AdmissionRequest{Class: class, WorkspaceID: candidate.WorkspaceID, Operation: candidate.Kind})
+	lease, err := r.admission.Acquire(ctx, AdmissionRequest{
+		Class: candidate.WorkloadClass, PrincipalID: candidate.PrincipalID, GroupIDs: append([]string(nil), candidate.GroupIDs...),
+		EstimatedMemoryBytes: candidate.EstimatedMemoryBytes, Operation: candidate.Kind,
+	})
 	if err != nil {
 		return
 	}

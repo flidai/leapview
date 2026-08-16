@@ -49,7 +49,7 @@ func TestMaintenanceWorkerSkipsSaturatedPassWithoutQueueing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	held, err := controller.Acquire(t.Context(), workload.Request{Class: workload.Interactive, WorkspaceID: "sales", Operation: "hold"})
+	held, err := controller.Acquire(t.Context(), workload.Request{Class: workload.Interactive, PrincipalID: "sales", Operation: "hold", EstimatedMemoryBytes: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

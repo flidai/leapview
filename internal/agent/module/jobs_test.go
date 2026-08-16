@@ -82,7 +82,7 @@ func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversati
 func (f moduleJobFixture) claim(t *testing.T, conv agent.Conversation, run agent.Run) jobs.Job {
 	t.Helper()
 	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: conv.ID, Run: run.ID})
-	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: run.ID, Payload: payload})
+	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: run.ID, Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestJobHandlerInvalidPersistedStatusFailsSafely(t *testing.T) {
 func TestJobHandlerMissingRunFailsWithoutDomainEvent(t *testing.T) {
 	f := newModuleJobFixture(t)
 	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: "missing-conversation", Run: "missing-run"})
-	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:missing-run:run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: "missing-run", Payload: payload})
+	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:missing-run:run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: "missing-run", Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}

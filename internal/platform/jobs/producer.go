@@ -17,13 +17,15 @@ type Canceller interface {
 }
 
 type JSONEnqueueInput struct {
-	ID            string
-	Kind          string
-	WorkloadClass string
-	WorkspaceID   string
-	ResourceKind  string
-	ResourceID    string
-	Payload       any
+	ID                   string
+	Kind                 string
+	WorkloadClass        string
+	PrincipalID          string
+	GroupIDs             []string
+	ResourceKind         string
+	ResourceID           string
+	EstimatedMemoryBytes int64
+	Payload              any
 }
 
 func EnqueueJSON(ctx context.Context, queue Enqueuer, input JSONEnqueueInput) error {
@@ -36,8 +38,9 @@ func EnqueueJSON(ctx context.Context, queue Enqueuer, input JSONEnqueueInput) er
 	}
 	_, err = queue.Enqueue(ctx, EnqueueInput{
 		ID: input.ID, Kind: input.Kind, WorkloadClass: input.WorkloadClass,
-		WorkspaceID: input.WorkspaceID, ResourceKind: input.ResourceKind,
-		ResourceID: input.ResourceID, Payload: payload,
+		PrincipalID: input.PrincipalID, GroupIDs: input.GroupIDs,
+		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
+		EstimatedMemoryBytes: input.EstimatedMemoryBytes, Payload: payload,
 	})
 	return err
 }

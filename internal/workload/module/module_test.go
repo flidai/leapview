@@ -29,24 +29,24 @@ func TestBuildOwnsAdmissionLifecycle(t *testing.T) {
 func TestSystemRequestsCarryIdentityAndMemoryEstimate(t *testing.T) {
 	control := ControlRequest("control")
 	maintenance := MaintenanceRequest("maintenance")
-	background := Request{Class: BackgroundClass, PrincipalID: backgroundPrincipal, Operation: "background", EstimatedMemoryBytes: jobMemoryEstimate}
+	background := Request{Class: BackgroundClass, PrincipalID: jobs.SystemPrincipalID, Operation: "background", EstimatedMemoryBytes: 64 << 20}
 	for _, request := range []Request{control, maintenance, background} {
 		if request.PrincipalID == "" || request.EstimatedMemoryBytes <= 0 {
 			t.Fatalf("system request missing admission identity/estimate: %#v", request)
 		}
 	}
-	if control.PrincipalID == maintenance.PrincipalID || control.PrincipalID == background.PrincipalID || maintenance.PrincipalID == background.PrincipalID {
-		t.Fatalf("system class actors must remain distinct: control=%q maintenance=%q background=%q", control.PrincipalID, maintenance.PrincipalID, background.PrincipalID)
+	if control.PrincipalID != jobs.SystemPrincipalID || maintenance.PrincipalID != jobs.SystemPrincipalID || background.PrincipalID != jobs.SystemPrincipalID {
+		t.Fatalf("system jobs must use the reserved actor: control=%q maintenance=%q background=%q", control.PrincipalID, maintenance.PrincipalID, background.PrincipalID)
 	}
 }
 
 func TestJobAdmitterMapsToSystemRequest(t *testing.T) {
 	capture := &captureAdmitter{}
 	adapter := JobAdmitter(capture)
-	if _, err := adapter.Acquire(context.Background(), jobs.AdmissionRequest{Class: jobs.WorkloadClassBackground, WorkspaceID: "ignored", Operation: "job.run"}); err != nil {
+	if _, err := adapter.Acquire(context.Background(), jobs.AdmissionRequest{Class: jobs.WorkloadClassBackground, PrincipalID: "principal-1", EstimatedMemoryBytes: 1, Operation: "job.run"}); err != nil {
 		t.Fatal(err)
 	}
-	if capture.request.PrincipalID != backgroundPrincipal || capture.request.EstimatedMemoryBytes <= 0 || capture.request.Operation != "job.run" {
+	if capture.request.PrincipalID != "principal-1" || capture.request.EstimatedMemoryBytes != 1 || capture.request.Operation != "job.run" {
 		t.Fatalf("job request was not mapped to explicit system admission: %#v", capture.request)
 	}
 }

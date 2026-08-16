@@ -29,7 +29,7 @@ func (testDataRuntimeFactory) OpenDashboardWorkspaceDataRuntimes(ctx context.Con
 		_ = database.Close()
 		return nil, err
 	}
-	refreshLease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: "test", Operation: "dashboard-test-refresh"})
+	refreshLease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "dashboard-test-refresh", EstimatedMemoryBytes: 1})
 	if err != nil {
 		controller.Close()
 		_ = database.Close()
@@ -116,7 +116,7 @@ func (r testWorkspaceDataRuntime) ExecuteDataQueryBundle(ctx context.Context, re
 }
 
 func (r testWorkspaceDataRuntime) Refresh(ctx context.Context) error {
-	lease, err := r.close.controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: "test", Operation: "dashboard-test-refresh"})
+	lease, err := r.close.controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "dashboard-test-refresh", EstimatedMemoryBytes: 1})
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func (r testWorkspaceDataRuntime) Refresh(ctx context.Context) error {
 }
 
 func (r testWorkspaceDataRuntime) RefreshTables(ctx context.Context, tableNames []string) error {
-	lease, err := r.close.controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: "test", Operation: "dashboard-test-refresh"})
+	lease, err := r.close.controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "dashboard-test-refresh", EstimatedMemoryBytes: 1})
 	if err != nil {
 		return err
 	}

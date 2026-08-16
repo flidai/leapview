@@ -19,6 +19,10 @@ type IdempotencyHeaders = apigenapi.IdempotencyHeaders
 type EventHeaders = apigenapi.GenListManagedDataUploadSessionEventsHeaders
 
 func (m *Module) beginFinalize(ctx context.Context, request control.UploadRequest) (control.UploadResult, error) {
+	principal := request.Actor
+	if principal == "" {
+		principal = jobs.SystemPrincipalID
+	}
 	payload, err := json.Marshal(FinalizeUploadJob{Project: request.Project, Connection: request.Connection, UploadSession: request.UploadID})
 	if err != nil {
 		return control.UploadResult{}, err
@@ -34,7 +38,7 @@ func (m *Module) beginFinalize(ctx context.Context, request control.UploadReques
 		},
 		Job: jobs.EnqueueInput{
 			ID: m.finalizeExecution.ResourceKind + ":" + request.UploadID + ":finalize", Kind: m.finalizeExecution.JobKind,
-			WorkloadClass: "control", WorkspaceID: "_node",
+			WorkloadClass: "control", PrincipalID: principal, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
 			ResourceKind: m.finalizeExecution.ResourceKind, ResourceID: request.UploadID, Payload: payload,
 		},
 	}

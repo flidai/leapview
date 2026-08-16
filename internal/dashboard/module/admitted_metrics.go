@@ -111,7 +111,6 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 	if m.admitter == nil {
 		return m.Metrics.ExecuteDataQuery(ctx, request)
 	}
-	workspaceID := request.WorkspaceID
 	class := workload.Interactive
 	if request.Surface == dataquery.SurfaceAgent {
 		class = workload.Background
@@ -120,7 +119,7 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 	if operation == "" {
 		operation = string(request.Kind)
 	}
-	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, WorkspaceID: workspaceID, Operation: operation})
+	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: "system:dashboard-query", Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		result := dataquery.Result{ExecutionState: executionStateForWorkloadError(ctx, err)}
 		var rejection *workload.Rejection
@@ -161,7 +160,6 @@ func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request data
 	if m.admitter == nil {
 		return executor.ExecuteDataQueryArrow(ctx, request, sink)
 	}
-	workspaceID := request.WorkspaceID
 	class := workload.Interactive
 	if request.Surface == dataquery.SurfaceAgent {
 		class = workload.Background
@@ -170,7 +168,7 @@ func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request data
 	if operation == "" {
 		operation = string(request.Kind)
 	}
-	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, WorkspaceID: workspaceID, Operation: operation})
+	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: "system:dashboard-query", Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		result := dataquery.Result{ExecutionState: executionStateForWorkloadError(ctx, err)}
 		var rejection *workload.Rejection

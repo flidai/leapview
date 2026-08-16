@@ -174,7 +174,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		return visualExamplesArtifact{}, err
 	}
 	defer controller.Close()
-	refreshLease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Refresh, WorkspaceID: "visual_examples", Operation: "visual-docs.refresh"})
+	refreshLease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Refresh, PrincipalID: "system:visual-docs", Operation: "visual-docs.refresh", EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		return visualExamplesArtifact{}, err
 	}
@@ -210,7 +210,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 
 	artifact := visualExamplesArtifact{Version: visualdocs.ArtifactVersion, Documents: map[string][]visualdocs.Payload{}, References: map[string]visualDocumentReference{}, Showcase: make([]visualdocs.Payload, 0, len(catalog.Documents))}
 	for _, document := range catalog.Documents {
-		queryLease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Interactive, WorkspaceID: "visual_examples", Operation: "visual-docs.query"})
+		queryLease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Interactive, PrincipalID: "system:visual-docs", Operation: "visual-docs.query", EstimatedMemoryBytes: 64 << 20})
 		if err != nil {
 			return visualExamplesArtifact{}, err
 		}

@@ -21,11 +21,6 @@ type Observer = workload.Observer
 type Request = workload.Request
 
 const (
-	backgroundPrincipal       = "system:background"
-	refreshPrincipal          = "system:refresh"
-	controlPrincipal          = "system:control"
-	maintenancePrincipal      = "system:maintenance"
-	jobMemoryEstimate         = int64(64 << 20)
 	controlMemoryEstimate     = int64(16 << 20)
 	maintenanceMemoryEstimate = int64(128 << 20)
 )
@@ -35,9 +30,10 @@ func JobAdmitter(admitter Admitter) jobs.Admitter {
 		return nil
 	}
 	return jobs.AdmitterFunc(func(ctx context.Context, request jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
-		class := workload.Class(request.Class)
 		return admitter.Acquire(ctx, workload.Request{
-			Class: class, PrincipalID: principalForClass(class), Operation: request.Operation, EstimatedMemoryBytes: estimateForClass(class),
+			Class: workload.Class(request.Class), PrincipalID: request.PrincipalID,
+			GroupIDs: append([]string(nil), request.GroupIDs...), Operation: request.Operation,
+			EstimatedMemoryBytes: request.EstimatedMemoryBytes,
 		})
 	})
 }
@@ -54,37 +50,11 @@ func DefaultConfig() workload.Config {
 }
 
 func MaintenanceRequest(operation string) Request {
-	return Request{Class: MaintenanceClass, PrincipalID: maintenancePrincipal, Operation: operation, EstimatedMemoryBytes: maintenanceMemoryEstimate}
+	return Request{Class: MaintenanceClass, PrincipalID: jobs.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: maintenanceMemoryEstimate}
 }
 
 func ControlRequest(operation string) Request {
-	return Request{Class: ControlClass, PrincipalID: controlPrincipal, Operation: operation, EstimatedMemoryBytes: controlMemoryEstimate}
-}
-
-func principalForClass(class workload.Class) string {
-	switch class {
-	case workload.Background:
-		return backgroundPrincipal
-	case workload.Refresh:
-		return refreshPrincipal
-	case workload.Control:
-		return controlPrincipal
-	case workload.Maintenance:
-		return maintenancePrincipal
-	default:
-		return "system:job"
-	}
-}
-
-func estimateForClass(class workload.Class) int64 {
-	switch class {
-	case workload.Control:
-		return controlMemoryEstimate
-	case workload.Maintenance:
-		return maintenanceMemoryEstimate
-	default:
-		return jobMemoryEstimate
-	}
+	return Request{Class: ControlClass, PrincipalID: jobs.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: controlMemoryEstimate}
 }
 
 type Module struct {

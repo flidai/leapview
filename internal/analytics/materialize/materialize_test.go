@@ -680,7 +680,7 @@ func admittedRefreshTestContext(t *testing.T) (context.Context, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Refresh, WorkspaceID: "test", Operation: "materialize-test"})
+	lease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "materialize-test", EstimatedMemoryBytes: 1})
 	if err != nil {
 		controller.Close()
 		t.Fatal(err)

@@ -212,7 +212,7 @@ func activationWorkflowForOperation(
 		workflow.Job = jobs.EnqueueInput{
 			ID:            execution.ResourceKind + ":" + deploymentID + ":activate",
 			Kind:          execution.JobKind,
-			WorkloadClass: "control", WorkspaceID: "_node",
+			WorkloadClass: "control", PrincipalID: actor.PrincipalID, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
 			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
 			Payload: payload,
 		}

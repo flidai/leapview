@@ -33,6 +33,7 @@ func IsBusy(err error) bool {
 type Scope struct {
 	WorkspaceID    string
 	PrincipalID    string
+	GroupIDs       []string
 	ConversationID string
 	Credential     CredentialScope
 	DevAuthBypass  bool

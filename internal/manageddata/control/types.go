@@ -68,6 +68,7 @@ type UploadRequest struct {
 	Project    string
 	Connection string
 	UploadID   string
+	Actor      string
 	Workflow   jobs.WorkflowIntent
 }
 

@@ -182,7 +182,7 @@ func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model 
 	require.NoError(t, err)
 	controller, err := workload.New(workload.DefaultConfig())
 	require.NoError(t, err)
-	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: "test", Operation: "schema-test"})
+	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "schema-test", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
 	runtime, err := OpenWorkspaceMaterializeRuntime(lease.Context(), WorkspaceRuntimeConfig{Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
 	if err != nil {
@@ -215,7 +215,7 @@ func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir str
 		return nil, err
 	}
 	defer controller.Close()
-	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: "test", Operation: "schema-test"})
+	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "schema-test", EstimatedMemoryBytes: 1})
 	if err != nil {
 		return nil, err
 	}

@@ -922,7 +922,7 @@ func (f integrationDataRuntimeFactory) OpenDashboardWorkspaceDataRuntimes(ctx co
 	if err != nil {
 		return nil, err
 	}
-	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: config.Definition.Catalog.Workspace.ID, Operation: "integration-refresh"})
+	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: config.Definition.Catalog.Workspace.ID, Operation: "integration-refresh", EstimatedMemoryBytes: 1})
 	if err != nil {
 		controller.Close()
 		return nil, err

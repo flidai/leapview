@@ -85,15 +85,3 @@ func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
 		t.Fatal("expected agent module to construct its HTTP handler")
 	}
 }
-
-func TestRunWorkspaceUsesExplicitScopeThenCredentialThenGlobal(t *testing.T) {
-	if got := runWorkspaceID(agent.Scope{WorkspaceID: "scope", Credential: agent.CredentialScope{WorkspaceID: "credential"}}, "_global"); got != "scope" {
-		t.Fatalf("scope workspace = %q", got)
-	}
-	if got := runWorkspaceID(agent.Scope{Credential: agent.CredentialScope{WorkspaceID: "credential"}}, "_global"); got != "credential" {
-		t.Fatalf("credential workspace = %q", got)
-	}
-	if got := runWorkspaceID(agent.Scope{}, "_global"); got != "_global" {
-		t.Fatalf("global workspace = %q", got)
-	}
-}

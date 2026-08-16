@@ -80,7 +80,7 @@ func TestDurablePromptIdempotencyRepairsCrashPhases(t *testing.T) {
 			})))
 			service.SetPromptWorkflow(func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
 				payload := []byte(fmt.Sprintf(`{"run":"%s"}`, runID))
-				return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued", ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: runID, Payload: payload}}
+				return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued", ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: payload}}
 			})
 			input := agent.PromptInput{Scope: agent.Scope{WorkspaceID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "same prompt", RequestID: "retry-key"}
 			func() {
@@ -120,7 +120,7 @@ func TestDurablePromptRetryAfterActivationResponseLossConverges(t *testing.T) {
 		return agentcore.ModelResponse{}, errors.New("unused")
 	})))
 	service.SetPromptWorkflow(func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
-		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
+		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
 	})
 	input := agent.PromptInput{Scope: agent.Scope{WorkspaceID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "same request", RequestID: "request-1"}
 	func() {
@@ -166,7 +166,7 @@ func TestDurablePromptRetryMismatchedDigestConflicts(t *testing.T) {
 		return agentcore.ModelResponse{}, errors.New("unused")
 	})))
 	service.SetPromptWorkflow(func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
-		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
+		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
 	})
 	input := agent.PromptInput{Scope: agent.Scope{WorkspaceID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "one", RequestID: "request-2"}
 	if _, err := service.StartDurablePrompt(ctx, input, agent.PromptDispatch{}); err != nil {
@@ -176,7 +176,7 @@ func TestDurablePromptRetryMismatchedDigestConflicts(t *testing.T) {
 		return agentcore.ModelResponse{}, errors.New("unused")
 	})))
 	service.SetPromptWorkflow(func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
-		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
+		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
 	})
 	input.Input = "different"
 	if _, err := service.StartDurablePrompt(ctx, input, agent.PromptDispatch{}); !errors.Is(err, agent.ErrRequestConflict) {
@@ -431,7 +431,7 @@ func TestDurableStartArchivedConversationHasNoSideEffects(t *testing.T) {
 		return agentcore.ModelResponse{}, errors.New("unused")
 	})))
 	service.SetPromptWorkflow(func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
-		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
+		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)}, Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)}}
 	})
 	_, err = service.StartDurablePrompt(ctx, agent.PromptInput{Scope: agent.Scope{WorkspaceID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "must not start"}, agent.PromptDispatch{})
 	if !errors.Is(err, agent.ErrConversationArchived) {
@@ -485,7 +485,7 @@ func TestReconcilePreparingRunsOnlyRepairsOrphans(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(ctx, `UPDATE agent_runs SET started_at = datetime('now', '-2 minutes') WHERE id = ?`, claimed.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := jobsRepo.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:" + claimed.ID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: claimed.ID, Payload: []byte(`{}`)}); err != nil {
+	if _, err := jobsRepo.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:" + claimed.ID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: claimed.ID, Payload: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.ReconcilePreparingRuns(ctx); err != nil {
@@ -599,7 +599,7 @@ func TestFinishRunWorkflowRejectsReclaimedLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	jobsRepo := jobsqlite.NewRepository(store.SQLDB())
-	job, err := jobsRepo.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:lease-fence", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: "run_lease_fence", Payload: []byte(`{}`)})
+	job, err := jobsRepo.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:lease-fence", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: "run_lease_fence", Payload: []byte(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +637,7 @@ func TestFinishRunWorkflowRejectsStaleClaimAfterReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	queue := jobsqlite.NewRepository(store.SQLDB())
-	job, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:lease-reclaim", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: "run_lease_reclaim", Payload: []byte(`{}`)})
+	job, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:lease-reclaim", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: "run_lease_reclaim", Payload: []byte(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +683,7 @@ func TestCancelRunWorkflowIsAtomicAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	jobID := "agent:" + run.ID + ":run"
-	if _, err := jobsRepo.Enqueue(ctx, jobs.EnqueueInput{ID: jobID, Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)}); err != nil {
+	if _, err := jobsRepo.Enqueue(ctx, jobs.EnqueueInput{ID: jobID, Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.canceled:" + run.ID, ResourceKind: "agent_run", ResourceID: run.ID, EventType: "agent_run.canceled", Data: []byte(`{"runId":"run_cancel_workflow"}`)}}
@@ -723,7 +723,7 @@ func TestCancelRunWorkflowConcurrentReplayPublishesOneEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	jobID := "agent:" + run.ID + ":run"
-	if _, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: jobID, Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)}); err != nil {
+	if _, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: jobID, Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.canceled:" + run.ID, ResourceKind: "agent_run", ResourceID: run.ID, EventType: "agent_run.canceled", Data: []byte(`{"runId":"run_cancel_concurrent"}`)}}
@@ -772,7 +772,7 @@ func TestCancelRunWorkflowEventFailureRollsBackRunAndJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	jobID := "agent:" + run.ID + ":run"
-	if _, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: jobID, Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)}); err != nil {
+	if _, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: jobID, Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.canceled:" + run.ID, ResourceKind: "agent_run", ResourceID: run.ID, EventType: "agent_run.canceled", Data: []byte(`{}`)}}
@@ -804,7 +804,7 @@ func TestCompleteRunWorkflowAtomicSuccessPersistsAllState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)})
+	job, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -856,7 +856,7 @@ func TestCompleteRunWorkflowFailureRollsBackAndRejectsStaleBinding(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)})
+	job, err := queue.Enqueue(ctx, jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: "agent.run", WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: run.ID, Payload: []byte(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

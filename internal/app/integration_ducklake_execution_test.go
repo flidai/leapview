@@ -147,7 +147,7 @@ func newDuckLakeHarness(t *testing.T, opts ...func(*assemblyConfig)) *duckLakeHa
 	if err != nil {
 		t.Fatalf("create reload workload controller: %v", err)
 	}
-	reloadLease, err := reloadController.Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: workspaceID, Operation: "integration-reload"})
+	reloadLease, err := reloadController.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: workspaceID, Operation: "integration-reload", EstimatedMemoryBytes: 1})
 	if err != nil {
 		reloadController.Close()
 		t.Fatalf("admit registry reload: %v", err)
@@ -591,7 +591,7 @@ func TestInteractiveOverloadDoesNotBlockReservedRefresh(t *testing.T) {
 	h := newDuckLakeHarness(t, func(options *assemblyConfig) {
 		options.Workload = controller
 	})
-	held, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Interactive, WorkspaceID: "sales", Operation: "integration.hold"})
+	held, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Interactive, PrincipalID: "sales", Operation: "integration.hold", EstimatedMemoryBytes: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
