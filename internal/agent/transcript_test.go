@@ -7,13 +7,13 @@ func TestTranscriptFormatsToolInputAndToonResult(t *testing.T) {
 		{
 			ID:          "assistant_1",
 			Role:        MessageRoleAssistant,
-			ContentJSON: `{"tool_calls":[{"id":"call_1","name":"list_workspaces","arguments":{"limit":2}}]}`,
+			ContentJSON: `{"tool_calls":[{"id":"call_1","name":"catalog_list","arguments":{"limit":2}}]}`,
 		},
 		{
 			ID:          "tool_1",
 			Role:        MessageRoleTool,
 			ToolCallID:  "call_1",
-			ToolName:    "list_workspaces",
+			ToolName:    "catalog_list",
 			ContentText: "items[2]{id,title}:\n  sales,Sales\n  ops,Operations\ncount: 2",
 		},
 	})

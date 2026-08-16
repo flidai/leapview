@@ -225,9 +225,7 @@ func validateCatalogLimit(limit, maximum int) error {
 
 func validateCatalogKinds(kinds []CatalogType) error {
 	for _, kind := range kinds {
-		switch kind {
-		case agentcontracts.CatalogTypeProject, agentcontracts.CatalogTypeConnection, agentcontracts.CatalogTypeSource, agentcontracts.CatalogTypeModel, agentcontracts.CatalogTypeSemanticModel, agentcontracts.CatalogTypePipeline, agentcontracts.CatalogTypeDashboard:
-		default:
+		if _, err := projectgraph.ParseKind(string(kind)); err != nil {
 			return fmt.Errorf("unsupported catalog kind %q", kind)
 		}
 	}

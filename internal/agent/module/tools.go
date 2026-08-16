@@ -230,7 +230,8 @@ func (m *Module) apigenOperationCapability(operationID string) (access.Capabilit
 	if !ok {
 		return "", false
 	}
-	return access.ParseCapability(value)
+	capability, err := access.ParseCapability(value)
+	return capability, err == nil
 }
 
 func apiGenToolContracts(operations []agenttools.APIGenOperation) map[string]agenttool.Contract {

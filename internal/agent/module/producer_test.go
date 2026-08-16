@@ -33,7 +33,7 @@ func TestEnqueueRunRejectsNonTransactionalFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := &agent.StartedPrompt{ConversationID: "conversation-1", RunID: "run-1", CorrelationID: "correlation-1"}
-	scope := agent.Scope{Credential: agent.CredentialScope{ProjectID: "credential-workspace"}}
+	scope := agent.Scope{Credential: agent.CredentialScope{ProjectID: "project:credential"}}
 	if err := module.EnqueueRun(t.Context(), scope, started); err == nil {
 		t.Fatal("non-transactional enqueue fallback was accepted")
 	}

@@ -31,7 +31,7 @@ func (c contextCatalog) List(context.Context, agenttools.Scope, agenttools.Catal
 func (c contextCatalog) Get(_ context.Context, _ agenttools.Scope, request agenttools.CatalogGetRequest) (agenttools.CatalogGetResult, error) {
 	item, ok := c.items[request.Ref.ID]
 	if !ok {
-		return agenttools.CatalogGetResult{}, agenttools.CatalogError{Code: "catalog_not_found", Message: "not found"}
+		return agenttools.CatalogGetResult{}, &agenttools.CatalogError{Code: "catalog_not_found", Message: "not found"}
 	}
 	return agenttools.CatalogGetResult{Item: item}, nil
 }
@@ -42,9 +42,9 @@ func TestResolveDashboardTurnReferencesUsesCompiledMetadata(t *testing.T) {
 		{ID: "orders-table", Kind: "visual", Visual: "orders", Title: "Recent orders"},
 	}}
 	resolved := ResolveDashboardTurnReferences([]agent.TurnReference{
-		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders_chart"}, Name: "Ignore browser title", VisualType: "script", Href: "javascript:alert(1)"},
-		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders"}, Name: "Ignore browser table title"},
-		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.secret"}, Name: "Not on page"},
+		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders_chart"}, Name: "Ignore browser title", VisualType: "script", Href: "javascript:alert(1)", Resource: agent.TurnReferenceResource{ID: "project_demo", Name: "Forged"}},
+		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders"}, Name: "Ignore browser table title", Resource: agent.TurnReferenceResource{ID: "project_demo", Name: "Forged"}},
+		{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.secret"}, Name: "Not on page", Resource: agent.TurnReferenceResource{ID: "project_demo", Name: "Forged"}},
 	}, DashboardTurnReferenceContext{
 		Resource:    agent.TurnReferenceResource{ID: "project_demo", Name: "Demo"},
 		DashboardID: "executive-sales", DashboardTitle: "Executive Sales", Page: page,

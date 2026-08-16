@@ -15,8 +15,6 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
-	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
-	"github.com/flidai/leapview/internal/workspace"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -36,10 +34,7 @@ func newModuleJobFixture(t *testing.T) moduleJobFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := projectsqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatal(err)
-	}
-	owner, err := accesssqlite.NewRepository(store.SQLDB()).SetPrincipalRole(ctx, access.PrincipalRoleInput{WorkspaceID: "test", Email: "jobs@example.com", DisplayName: "Jobs", Role: "viewer"})
+	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(ctx, access.PrincipalInput{ID: "agent-jobs", Kind: access.PrincipalKindUser, Email: "jobs@example.com", DisplayName: "Jobs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +51,7 @@ func newModuleJobFixture(t *testing.T) moduleJobFixture {
 }
 
 func (f moduleJobFixture) scope() agent.Scope {
-	return agent.Scope{ProjectID: "test", PrincipalID: f.owner.ID}
+	return agent.Scope{ProjectID: "project:test", PrincipalID: f.owner.ID}
 }
 
 func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversation, agent.Run) {

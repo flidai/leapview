@@ -187,13 +187,16 @@ func (m *Module) resolveDashboardTurnContext(ctx context.Context, scope agent.Sc
 	if !ok || metrics == nil {
 		return agent.TurnContext{}, fmt.Errorf("unknown project %q", projectID)
 	}
-	resolved, ok := resolveDashboard(metrics, resolvedDashboard.String())
-	if !ok {
+	if metrics.Resolver() == nil {
+		return agent.TurnContext{}, fmt.Errorf("unknown dashboard %q", dashboardID)
+	}
+	resolved, err := metrics.Resolver().Resolve(resolvedDashboard)
+	if err != nil {
 		return agent.TurnContext{}, fmt.Errorf("unknown dashboard %q", dashboardID)
 	}
 	report := resolved.Definition
 	var page dashboard.Page
-	for _, current := range metrics.Pages(dashboardID) {
+	for _, current := range metrics.Pages(resolvedDashboard.String()) {
 		if current.ID == pageID {
 			page = current
 			break

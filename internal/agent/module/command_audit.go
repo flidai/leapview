@@ -21,7 +21,10 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 		return fmt.Errorf("generated agent command contract %q does not define a best-effort success audit", input.OperationID)
 	}
 	capability, ok := agentCommandCapability(command.Privilege)
-	if !ok || command.AuthzMode != "privilege" || contract.AuthzMode != command.AuthzMode {
+	if command.AuthzMode == "authenticated" && strings.TrimSpace(command.Privilege) == "" {
+		capability, ok = access.CapabilityResourceUse, true
+	}
+	if !ok || (command.AuthzMode != "privilege" && command.AuthzMode != "authenticated") || contract.AuthzMode != command.AuthzMode {
 		return fmt.Errorf("generated agent command contract %q has invalid authorization", input.OperationID)
 	}
 	if m == nil || m.recordAudit == nil {
@@ -35,7 +38,6 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	if surface == "" {
 		surface = "api"
 	}
-	projectID := strings.TrimSpace(input.Scope.ProjectID)
 	metadata, err := encodeAgentCommandAuditPayload(operationID, agentgen.GenSchemaAgentCommandAuditPayload{
 		OperationId:  operationID,
 		ResourceKind: targetType,

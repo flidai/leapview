@@ -119,6 +119,15 @@ func toolErrorCode(result agentcore.ToolResult) string {
 	return code
 }
 
+func definitionByName(definitions []agentcore.ToolDefinition, name string) agentcore.ToolDefinition {
+	for _, definition := range definitions {
+		if definition.Name == name {
+			return definition
+		}
+	}
+	panic("tool definition not found: " + name)
+}
+
 type projectResolverFake struct {
 	deny     map[projectgraph.ResourceID]bool
 	requests map[projectgraph.ResourceID]access.Capability
@@ -163,7 +172,7 @@ func (f *projectAuthoringFake) Create(_ context.Context, request authoringservic
 	f.create = request
 	return authoringservice.Result{}, nil
 }
-func (f *projectAuthoringFake) Execute(_ context.Context, _ string, command dashboardauthoring.Command) (authoringservice.Result, error) {
+func (f *projectAuthoringFake) Execute(_ context.Context, _ projectgraph.ResourceID, command dashboardauthoring.Command) (authoringservice.Result, error) {
 	f.command = command
 	return authoringservice.Result{}, nil
 }

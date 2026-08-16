@@ -134,6 +134,9 @@ func TestVisualProviderDecoratesQueryContextWithScope(t *testing.T) {
 	type contextKey struct{}
 	var authorizedValue string
 	provider := VisualProvider{
+		Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+			return id, nil
+		},
 		QueryContext: func(ctx context.Context, scope Scope) context.Context {
 			return context.WithValue(ctx, contextKey{}, scope.PrincipalID)
 		},
@@ -160,7 +163,7 @@ func TestAgentVisualFieldUsagePreservesSemanticUnitsAndFormats(t *testing.T) {
 		},
 	}
 	got := agentVisualFieldUsage("sales", "commerce", model, agentVisualFieldRef{Field: "return_rate", Alias: "rate"}, "measure")
-	if got.Ref.Type != "measure" || got.Ref.ID != "commerce.return_rate" || got.Label != "Return rate" ||
+	if got.Role != "measure" || got.FieldID != "commerce.return_rate" || got.Label != "Return rate" ||
 		got.Alias == nil || *got.Alias != "rate" || got.Unit == nil || *got.Unit != "percent" ||
 		got.Format == nil || *got.Format != "percent_1" {
 		t.Fatalf("field usage = %#v", got)

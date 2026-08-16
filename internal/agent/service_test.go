@@ -38,8 +38,8 @@ func TestServiceUsesHostProvidedTools(t *testing.T) {
 			t.Fatalf("scope = %#v", scope)
 		}
 		return []agentcore.ToolDefinition{{
-			Name:        "list_workspace_assets",
-			Description: "List workspace assets via APIGen.",
+			Name:        "catalog_list",
+			Description: "List project resources via APIGen.",
 			InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false}`),
 			Handler: agentcore.ToolHandlerFunc(func(context.Context, agentcore.ToolCall) (agentcore.ToolResult, error) {
 				return agentcore.ToolResult{Content: map[string]any{"ok": true}}, nil
@@ -48,7 +48,7 @@ func TestServiceUsesHostProvidedTools(t *testing.T) {
 	})
 
 	tools := service.toolDefinitions(Scope{ProjectID: "test", PrincipalID: "principal"})
-	if runTool(t, tools, "list_workspace_assets", `{}`) != `{"ok":true}` {
+	if runTool(t, tools, "catalog_list", `{}`) != `{"ok":true}` {
 		t.Fatalf("host-provided tool did not run")
 	}
 }
@@ -1181,7 +1181,6 @@ type fakeAgentMetrics struct{}
 
 func (fakeAgentMetrics) Catalog() catalog.Catalog {
 	return catalog.Catalog{
-		Workspace: catalog.Workspace{ID: "test", Title: "Test Workspace"},
 		Models: []catalog.Model{
 			{ID: "test", Title: "Test Model", Description: "Fixture model"},
 		},

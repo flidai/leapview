@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -81,12 +82,12 @@ func assertToolLimitMaximum(t *testing.T, raw json.RawMessage, want int) {
 func TestCatalogProviderAppliesDefaultsAndDelegates(t *testing.T) {
 	service := &fakeCatalogService{
 		searchResult: CatalogPage{
-			Items:      []CatalogItem{{Ref: CatalogRef{Kind: CatalogTypeDashboard, ID: "sales"}, Name: "Sales"}},
+			Items:      []CatalogItem{{Ref: CatalogRef{Kind: CatalogType(agentcontracts.CatalogTypeDashboard), ID: "sales"}, Name: "Sales"}},
 			NextCursor: "opaque",
 		},
 		listResult: CatalogPage{Items: []CatalogItem{}},
 		getResult: CatalogGetResult{
-			Item:    CatalogItem{Ref: CatalogRef{Kind: CatalogTypeDashboard, ID: "sales"}, Name: "Sales"},
+			Item:    CatalogItem{Ref: CatalogRef{Kind: CatalogType(agentcontracts.CatalogTypeDashboard), ID: "sales"}, Name: "Sales"},
 			Details: map[string]any{"pageCount": 2},
 		},
 	}
@@ -108,7 +109,7 @@ func TestCatalogProviderAppliesDefaultsAndDelegates(t *testing.T) {
 	}
 
 	runCatalogTool(t, definitions, CatalogGetToolName, `{"ref":{"id":"sales","kind":"dashboard"}}`)
-	if service.getRequest.Ref.Kind != CatalogTypeDashboard {
+	if service.getRequest.Ref.Kind != CatalogType(agentcontracts.CatalogTypeDashboard) {
 		t.Fatalf("get ref = %#v", service.getRequest.Ref)
 	}
 }
@@ -123,7 +124,7 @@ func TestCatalogProviderRejectsInvalidArgumentsBeforeCallingService(t *testing.T
 		{CatalogSearchToolName, `{}`},
 		{CatalogSearchToolName, `{"query":"sales","limit":26}`},
 		{CatalogListToolName, `{"limit":51}`},
-		{CatalogGetToolName, `{"ref":{"id":"warehouse","kind":"connection"}}`},
+		{CatalogGetToolName, `{"ref":{"id":"warehouse","kind":"invalid"}}`},
 		{CatalogGetToolName, `{"ref":{"id":"","kind":"dashboard"}}`},
 	} {
 		result := runCatalogTool(t, definitions, test.name, test.args)

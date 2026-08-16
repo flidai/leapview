@@ -476,7 +476,7 @@ func agentVisualFieldUsages(projectID, modelID string, model *semanticmodel.Mode
 
 func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model, ref agentVisualFieldRef, role string) agentcontracts.QueryVisualFieldUsage {
 	usage := agentcontracts.QueryVisualFieldUsage{
-		FieldID: ref.Field,
+		FieldID: qualifiedVisualFieldID(modelID, ref.Field),
 		Role:    role,
 		Alias:   optionalString(ref.Alias),
 		Label:   agentFieldAliasForRef(ref),
@@ -523,7 +523,7 @@ func agentVisualFilterUsages(
 	for _, filter := range filters {
 		if filter.Field != "" {
 			usage := agentcontracts.QueryVisualFilterUsage{
-				FieldID:  filter.Field,
+				FieldID:  qualifiedVisualFieldID(modelID, filter.Field),
 				Operator: filter.Operator,
 			}
 			if len(filter.Values) > 0 {
@@ -546,6 +546,14 @@ func agentVisualFilterUsages(
 		}
 	}
 	return out
+}
+
+func qualifiedVisualFieldID(modelID, field string) string {
+	field = strings.TrimSpace(field)
+	if field == "" || strings.Contains(field, ".") || strings.TrimSpace(modelID) == "" {
+		return field
+	}
+	return strings.TrimSpace(modelID) + "." + field
 }
 
 func (p VisualProvider) queryAgentChart(ctx context.Context, projectID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
