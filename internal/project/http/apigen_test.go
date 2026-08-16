@@ -27,13 +27,29 @@ func TestAPIGenDispatcherForwardsProjectIdentityToCapabilityHandler(t *testing.T
 	}
 }
 
+func TestAPIGenDispatcherConvertsGeneratedSearchParamsToProjectContract(t *testing.T) {
+	handler := &recordingProjectHandler{}
+	dispatcher := NewAPIGenDispatcher(handler)
+	kinds := []projectgen.SearchKind{projectgen.SearchKindDashboard}
+	dispatcher.Search(
+		httptest.NewRecorder(),
+		httptest.NewRequest(stdhttp.MethodGet, "/api/v1/search?q=sales", nil),
+		projectgen.GenSearchParams{Q: "sales", Kind: &kinds},
+	)
+	if handler.search.Q != "sales" || handler.search.Kind == nil || len(*handler.search.Kind) != 1 || (*handler.search.Kind)[0] != projectapi.SearchKindDashboard {
+		t.Fatalf("search params = %#v, want canonical project contract", handler.search)
+	}
+}
+
 type recordingProjectHandler struct {
 	project string
+	search  projectapi.SearchParams
 }
 
 func (h *recordingProjectHandler) GetProject(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project string) {
 	h.project = project
 }
 
-func (*recordingProjectHandler) Search(stdhttp.ResponseWriter, *stdhttp.Request, projectapi.SearchParams) {
+func (h *recordingProjectHandler) Search(_ stdhttp.ResponseWriter, _ *stdhttp.Request, params projectapi.SearchParams) {
+	h.search = params
 }
