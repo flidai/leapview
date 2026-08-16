@@ -28,9 +28,7 @@ const (
 
 type Deployment struct {
 	ID                  string
-	ProjectID           string
-	Environment         string
-	GenerationID        string
+	ServingIdentity     graph.ServingIdentity
 	ArtifactDigest      string
 	PriorGenerationID   string
 	RequestDigest       string
@@ -46,9 +44,7 @@ type Deployment struct {
 
 type CreateInput struct {
 	ID                string
-	ProjectID         string
-	Environment       string
-	GenerationID      string
+	ServingIdentity   graph.ServingIdentity
 	ArtifactDigest    string
 	PriorGenerationID string
 	RequestDigest     string
@@ -59,7 +55,7 @@ type CreateInput struct {
 }
 
 type Scope struct {
-	ProjectID    string
+	ProjectID    graph.ResourceID
 	DeploymentID string
 }
 type ActivationRequest struct {
@@ -68,9 +64,7 @@ type ActivationRequest struct {
 }
 type ActivationInput struct {
 	DeploymentID        string
-	ProjectID           string
-	Environment         string
-	GenerationID        string
+	ServingIdentity     graph.ServingIdentity
 	ArtifactDigest      string
 	PriorGenerationID   string
 	ActivationPrincipal string
@@ -79,13 +73,9 @@ type ActivationInput struct {
 type Verification struct{ Digest string }
 
 func ValidateCreate(input CreateInput) error {
-	rawProject, rawEnvironment, rawGeneration, rawPrior, rawArtifact := input.ProjectID, input.Environment, input.GenerationID, input.PriorGenerationID, input.ArtifactDigest
-	input.ID, input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
+	input.ID, input.ArtifactDigest, input.RequestDigest, input.CreatedBy = strings.TrimSpace(input.ID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.RequestDigest), strings.TrimSpace(input.CreatedBy)
 	input.PriorGenerationID = strings.TrimSpace(input.PriorGenerationID)
-	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawPrior != input.PriorGenerationID || rawArtifact != input.ArtifactDigest {
-		return fmt.Errorf("serving identity fields must be canonical")
-	}
-	if input.ID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || input.RequestDigest == "" || input.CreatedBy == "" {
+	if input.ID == "" || input.RequestDigest == "" || input.CreatedBy == "" {
 		return fmt.Errorf("deployment id, project, environment, generation, request digest, and actor are required")
 	}
 	if digest.ValidateSHA256Identity(input.RequestDigest) != nil {
@@ -102,7 +92,7 @@ func ValidateCreate(input CreateInput) error {
 		return fmt.Errorf("artifact digest must be canonical sha256")
 	}
 	if input.PriorGenerationID != "" {
-		prior := graph.ServingIdentity{ProjectID: graph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.PriorGenerationID}
+		prior := graph.ServingIdentity{ProjectID: input.ServingIdentity.ProjectID, Environment: input.ServingIdentity.Environment, GenerationID: input.PriorGenerationID}
 		if err := prior.Validate(); err != nil {
 			return err
 		}
@@ -111,12 +101,12 @@ func ValidateCreate(input CreateInput) error {
 }
 
 func ValidateActivation(input ActivationInput) error {
-	rawProject, rawEnvironment, rawGeneration, rawPrior, rawArtifact, rawDeployment, rawPrincipal, rawVerification := input.ProjectID, input.Environment, input.GenerationID, input.PriorGenerationID, input.ArtifactDigest, input.DeploymentID, input.ActivationPrincipal, input.VerificationDigest
-	input.DeploymentID, input.ProjectID, input.Environment, input.GenerationID, input.ArtifactDigest, input.PriorGenerationID, input.ActivationPrincipal, input.VerificationDigest = strings.TrimSpace(input.DeploymentID), strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.PriorGenerationID), strings.TrimSpace(input.ActivationPrincipal), strings.TrimSpace(input.VerificationDigest)
-	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawPrior != input.PriorGenerationID || rawArtifact != input.ArtifactDigest || rawDeployment != input.DeploymentID || rawPrincipal != input.ActivationPrincipal || rawVerification != input.VerificationDigest {
-		return fmt.Errorf("serving identity fields must be canonical")
+	rawDeployment, rawArtifact, rawPrior, rawPrincipal, rawVerification := input.DeploymentID, input.ArtifactDigest, input.PriorGenerationID, input.ActivationPrincipal, input.VerificationDigest
+	input.DeploymentID, input.ArtifactDigest, input.PriorGenerationID, input.ActivationPrincipal, input.VerificationDigest = strings.TrimSpace(input.DeploymentID), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.PriorGenerationID), strings.TrimSpace(input.ActivationPrincipal), strings.TrimSpace(input.VerificationDigest)
+	if rawDeployment != input.DeploymentID || rawArtifact != input.ArtifactDigest || rawPrior != input.PriorGenerationID || rawPrincipal != input.ActivationPrincipal || rawVerification != input.VerificationDigest {
+		return fmt.Errorf("deployment fields must be canonical")
 	}
-	if input.DeploymentID == "" || input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" || input.ArtifactDigest == "" || input.ActivationPrincipal == "" || digest.ValidateSHA256Identity(input.VerificationDigest) != nil {
+	if input.DeploymentID == "" || input.ArtifactDigest == "" || input.ActivationPrincipal == "" || digest.ValidateSHA256Identity(input.VerificationDigest) != nil {
 		return fmt.Errorf("deployment, activation principal, and verification digest are required")
 	}
 	identity, err := input.Identity()
@@ -130,7 +120,7 @@ func ValidateActivation(input ActivationInput) error {
 		return fmt.Errorf("artifact digest must be canonical sha256")
 	}
 	if input.PriorGenerationID != "" {
-		prior := graph.ServingIdentity{ProjectID: graph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.PriorGenerationID}
+		prior := graph.ServingIdentity{ProjectID: input.ServingIdentity.ProjectID, Environment: input.ServingIdentity.Environment, GenerationID: input.PriorGenerationID}
 		if err := prior.Validate(); err != nil {
 			return err
 		}
@@ -139,23 +129,20 @@ func ValidateActivation(input ActivationInput) error {
 }
 
 func (d Deployment) Identity() (graph.ServingIdentity, error) {
-	identity := graph.ServingIdentity{ProjectID: graph.ResourceID(d.ProjectID), Environment: d.Environment, GenerationID: d.GenerationID}
-	if err := identity.Validate(); err != nil {
+	if err := d.ServingIdentity.Validate(); err != nil {
 		return graph.ServingIdentity{}, err
 	}
-	return identity, nil
+	return d.ServingIdentity, nil
 }
 func (input CreateInput) Identity() (graph.ServingIdentity, error) {
-	identity := graph.ServingIdentity{ProjectID: graph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.GenerationID}
-	if err := identity.Validate(); err != nil {
+	if err := input.ServingIdentity.Validate(); err != nil {
 		return graph.ServingIdentity{}, err
 	}
-	return identity, nil
+	return input.ServingIdentity, nil
 }
 func (input ActivationInput) Identity() (graph.ServingIdentity, error) {
-	identity := graph.ServingIdentity{ProjectID: graph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.GenerationID}
-	if err := identity.Validate(); err != nil {
+	if err := input.ServingIdentity.Validate(); err != nil {
 		return graph.ServingIdentity{}, err
 	}
-	return identity, nil
+	return input.ServingIdentity, nil
 }

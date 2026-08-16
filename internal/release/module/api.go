@@ -13,6 +13,7 @@ import (
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
@@ -49,7 +50,12 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
 		return
 	}
-	input := release.CreateInput{ProjectID: project, Environment: body.Environment, GenerationID: body.GenerationID, ProjectDigest: body.ProjectDigest, ArtifactDigest: body.ArtifactDigest, RequestDigest: body.RequestDigest, IdempotencyKey: idempotencyKey, CreatedBy: principal.ID}
+	identity, identityErr := projectgraph.NewServingIdentity(projectgraph.ResourceID(project), body.Environment, body.GenerationID)
+	if identityErr != nil {
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), identityErr)
+		return
+	}
+	input := release.CreateInput{ServingIdentity: identity, ProjectDigest: body.ProjectDigest, ArtifactDigest: body.ArtifactDigest, RequestDigest: body.RequestDigest, IdempotencyKey: idempotencyKey, CreatedBy: principal.ID}
 	provenance, err := releaseProvenanceFromAPI(body.Provenance)
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), fmt.Errorf("%w: invalid provenance", release.ErrInvalid))
@@ -68,7 +74,7 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 		r.Context(), string(releasegen.GenOperationCreateRelease), created.ID,
 		releaseCreatedAuditAction, releasegen.GenSchemaReleaseCreatedAuditPayload{
 			OperationId: string(releasegen.GenOperationCreateRelease), ReleaseId: created.ID,
-			ProjectId: created.ProjectID, ProjectDigest: created.ProjectDigest,
+			ProjectId: created.ServingIdentity.ProjectID.String(), ProjectDigest: created.ProjectDigest,
 			Status: string(created.Status), CreatedBy: created.CreatedBy,
 		},
 	)
@@ -289,7 +295,7 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 
 func response(row release.Release) releaseapi.Response {
 	result := releaseapi.Response{
-		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID,
+		ID: row.ID, ProjectID: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment, GenerationID: row.ServingIdentity.GenerationID,
 		ArtifactDigest: row.ArtifactDigest, ActualDigest: row.ActualDigest, ArtifactSize: row.ArtifactSizeBytes,
 		ProjectDigest: row.ProjectDigest, Status: releaseapi.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt,
 		Connections: make([]releaseapi.ConnectionPin, 0, len(row.Manifest.Connections)),

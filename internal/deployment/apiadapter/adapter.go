@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	graph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var ErrInvalid = apigenfailure.New("invalid", "invalid deployment request")
@@ -109,7 +110,7 @@ func (a *Adapter) Cancel(ctx context.Context, scope Scope) (Deployment, error) {
 	if err := validateScope(scope); err != nil {
 		return Deployment{}, err
 	}
-	row, err := a.service.Cancel(ctx, deployment.Scope{ProjectID: scope.Project, DeploymentID: scope.DeploymentID})
+	row, err := a.service.Cancel(ctx, deployment.Scope{ProjectID: graph.ResourceID(scope.Project), DeploymentID: scope.DeploymentID})
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -126,6 +127,10 @@ func (a *Adapter) Create(ctx context.Context, request CreateRequest) (Deployment
 	if platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil {
 		return Deployment{}, fmt.Errorf("%w: artifact digest is invalid", ErrInvalid)
 	}
+	identity, err := graph.NewServingIdentity(graph.ResourceID(request.Project), request.Environment, request.GenerationID)
+	if err != nil {
+		return Deployment{}, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
 	if request.ReleaseID != "" {
 		if err := normalizePublishEvidence(&request.Evidence); err != nil {
 			return Deployment{}, err
@@ -135,7 +140,7 @@ func (a *Adapter) Create(ctx context.Context, request CreateRequest) (Deployment
 	if err != nil {
 		return Deployment{}, err
 	}
-	input := deployment.CreateInput{ID: stableID(request.Project, request.Actor, request.IdempotencyKey), ProjectID: request.Project, Environment: request.Environment, GenerationID: request.GenerationID, ArtifactDigest: request.ArtifactDigest, PriorGenerationID: request.PriorGenerationID, RequestDigest: digest, CreatedBy: request.Actor, ReleaseID: request.ReleaseID, RollbackOf: request.RollbackOf}
+	input := deployment.CreateInput{ID: stableID(request.Project, request.Actor, request.IdempotencyKey), ServingIdentity: identity, ArtifactDigest: request.ArtifactDigest, PriorGenerationID: request.PriorGenerationID, RequestDigest: digest, CreatedBy: request.Actor, ReleaseID: request.ReleaseID, RollbackOf: request.RollbackOf}
 	if request.Workflow != nil {
 		input.Workflow, err = request.Workflow(input.ID)
 		if err != nil {
@@ -153,7 +158,7 @@ func (a *Adapter) Get(ctx context.Context, scope Scope) (Deployment, error) {
 	if err := validateScope(scope); err != nil {
 		return Deployment{}, err
 	}
-	row, err := a.service.Get(ctx, deployment.Scope{ProjectID: scope.Project, DeploymentID: scope.DeploymentID})
+	row, err := a.service.Get(ctx, deployment.Scope{ProjectID: graph.ResourceID(scope.Project), DeploymentID: scope.DeploymentID})
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -167,7 +172,7 @@ func (a *Adapter) Activate(ctx context.Context, request ActivateRequest) (Deploy
 	if err := validateScope(Scope{Project: request.Project, DeploymentID: request.DeploymentID}); err != nil {
 		return Deployment{}, err
 	}
-	row, err := a.service.Activate(ctx, deployment.ActivationRequest{Scope: deployment.Scope{ProjectID: request.Project, DeploymentID: request.DeploymentID}, ActorID: request.Actor})
+	row, err := a.service.Activate(ctx, deployment.ActivationRequest{Scope: deployment.Scope{ProjectID: graph.ResourceID(request.Project), DeploymentID: request.DeploymentID}, ActorID: request.Actor})
 	if err != nil {
 		return Deployment{}, err
 	}
@@ -175,14 +180,14 @@ func (a *Adapter) Activate(ctx context.Context, request ActivateRequest) (Deploy
 }
 
 func validateScope(scope Scope) error {
-	if scope.Project == "" || scope.DeploymentID == "" || scope.Project != strings.TrimSpace(scope.Project) || scope.DeploymentID != strings.TrimSpace(scope.DeploymentID) {
+	if scope.Project == "" || scope.DeploymentID == "" || scope.Project != strings.TrimSpace(scope.Project) || scope.DeploymentID != strings.TrimSpace(scope.DeploymentID) || graph.ResourceID(scope.Project).Validate() != nil {
 		return fmt.Errorf("%w: scope identity must be canonical", ErrInvalid)
 	}
 	return nil
 }
 
 func mapDeployment(row deployment.Deployment) Deployment {
-	return Deployment{ID: row.ID, Project: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest, Status: Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt, Error: row.Error, ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt}
+	return Deployment{ID: row.ID, Project: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment, GenerationID: row.ServingIdentity.GenerationID, ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest, Status: Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt, Error: row.Error, ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt}
 }
 
 func stableID(project, actor, key string) string {

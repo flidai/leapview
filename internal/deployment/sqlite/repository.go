@@ -12,6 +12,7 @@ import (
 	deploydb "github.com/flidai/leapview/internal/deployment/internal/db"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	graph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Repository struct {
@@ -40,14 +41,14 @@ func (r *Repository) CreateDeployment(ctx context.Context, input deployment.Crea
 	} else if !errors.Is(err, deployment.ErrNotFound) {
 		return deployment.Deployment{}, err
 	}
-	state, err := r.queries.GetServingStateForDeployment(ctx, input.GenerationID)
+	state, err := r.queries.GetServingStateForDeployment(ctx, input.ServingIdentity.GenerationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return deployment.Deployment{}, deployment.ErrNotFound
 	}
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
-	if state.ProjectID != input.ProjectID || state.Environment != input.Environment || state.Digest != input.ArtifactDigest || state.Status != "validated" && state.Status != "inactive" {
+	if state.ProjectID != input.ServingIdentity.ProjectID.String() || state.Environment != input.ServingIdentity.Environment || state.Digest != input.ArtifactDigest || state.Status != "validated" && state.Status != "inactive" {
 		return deployment.Deployment{}, fmt.Errorf("%w: generation is not activatable", deployment.ErrConflict)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -56,7 +57,7 @@ func (r *Repository) CreateDeployment(ctx context.Context, input deployment.Crea
 	}
 	defer tx.Rollback()
 	qtx := deploydb.New(tx)
-	err = qtx.CreateProjectDeployment(ctx, deploydb.CreateProjectDeploymentParams{ID: input.ID, ProjectID: input.ProjectID, Environment: input.Environment, GenerationID: input.GenerationID, ArtifactDigest: input.ArtifactDigest, PriorGenerationID: nullableSQLString(input.PriorGenerationID), RequestDigest: input.RequestDigest, CreatedBy: input.CreatedBy})
+	err = qtx.CreateProjectDeployment(ctx, deploydb.CreateProjectDeploymentParams{ID: input.ID, ProjectID: input.ServingIdentity.ProjectID.String(), Environment: input.ServingIdentity.Environment, GenerationID: input.ServingIdentity.GenerationID, ArtifactDigest: input.ArtifactDigest, PriorGenerationID: nullableSQLString(input.PriorGenerationID), RequestDigest: input.RequestDigest, CreatedBy: input.CreatedBy})
 	if err != nil {
 		return deployment.Deployment{}, mapError(err)
 	}
@@ -112,18 +113,18 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 	if row.Status != deployment.StatusPending {
 		return deployment.Deployment{}, deployment.ErrConflict
 	}
-	if row.ProjectID != input.ProjectID || row.Environment != input.Environment || row.GenerationID != input.GenerationID || row.ArtifactDigest != input.ArtifactDigest || row.PriorGenerationID != input.PriorGenerationID {
+	if row.ServingIdentity != input.ServingIdentity || row.ArtifactDigest != input.ArtifactDigest || row.PriorGenerationID != input.PriorGenerationID {
 		return deployment.Deployment{}, deployment.ErrConflict
 	}
 	state, err := deploydb.New(tx).GetServingStateForDeployment(ctx, row.GenerationID)
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
-	if state.ProjectID != row.ProjectID || state.Environment != row.Environment || state.Digest != row.ArtifactDigest || state.Status != "validated" && state.Status != "inactive" && state.Status != "active" {
+	if state.ProjectID != row.ServingIdentity.ProjectID.String() || state.Environment != row.ServingIdentity.Environment || state.Digest != row.ArtifactDigest || state.Status != "validated" && state.Status != "inactive" && state.Status != "active" {
 		return deployment.Deployment{}, deployment.ErrConflict
 	}
 	var current string
-	current, err = deploydb.New(tx).GetActiveServingState(ctx, deploydb.GetActiveServingStateParams{ProjectID: row.ProjectID, Environment: row.Environment})
+	current, err = deploydb.New(tx).GetActiveServingState(ctx, deploydb.GetActiveServingStateParams{ProjectID: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment})
 	if errors.Is(err, sql.ErrNoRows) {
 		current = ""
 	} else if err != nil {
@@ -139,7 +140,7 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 	var result sql.Result
 	if row.PriorGenerationID != "" {
 		var drainResult sql.Result
-		drainResult, err = tx.ExecContext(ctx, `UPDATE serving_states SET status='draining',superseded_at=CURRENT_TIMESTAMP WHERE id=? AND project_id=? AND environment=? AND status='active'`, row.PriorGenerationID, row.ProjectID, row.Environment)
+		drainResult, err = tx.ExecContext(ctx, `UPDATE serving_states SET status='draining',superseded_at=CURRENT_TIMESTAMP WHERE id=? AND project_id=? AND environment=? AND status='active'`, row.PriorGenerationID, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment)
 		if err != nil {
 			return deployment.Deployment{}, err
 		}
@@ -148,7 +149,7 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 			return deployment.Deployment{}, fmt.Errorf("%w: prior generation changed while draining", deployment.ErrConflict)
 		}
 	}
-	result, err = tx.ExecContext(ctx, `UPDATE serving_states SET status='active',activated_at=CURRENT_TIMESTAMP,error='' WHERE id=? AND project_id=? AND environment=? AND status IN ('validated','inactive')`, row.GenerationID, row.ProjectID, row.Environment)
+	result, err = tx.ExecContext(ctx, `UPDATE serving_states SET status='active',activated_at=CURRENT_TIMESTAMP,error='' WHERE id=? AND project_id=? AND environment=? AND status IN ('validated','inactive')`, row.ServingIdentity.GenerationID, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment)
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
@@ -157,9 +158,9 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 		return deployment.Deployment{}, fmt.Errorf("%w: candidate generation changed while activating", deployment.ErrConflict)
 	}
 	if row.PriorGenerationID == "" {
-		result, err = tx.ExecContext(ctx, `INSERT INTO project_active_serving_states(project_id,environment,serving_state_id,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)`, row.ProjectID, row.Environment, row.GenerationID)
+		result, err = tx.ExecContext(ctx, `INSERT INTO project_active_serving_states(project_id,environment,serving_state_id,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)`, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment, row.ServingIdentity.GenerationID)
 	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE project_active_serving_states SET serving_state_id=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND environment=? AND serving_state_id=?`, row.GenerationID, row.ProjectID, row.Environment, row.PriorGenerationID)
+		result, err = tx.ExecContext(ctx, `UPDATE project_active_serving_states SET serving_state_id=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND environment=? AND serving_state_id=?`, row.ServingIdentity.GenerationID, row.ServingIdentity.ProjectID.String(), row.ServingIdentity.Environment, row.PriorGenerationID)
 	}
 	if err != nil {
 		return deployment.Deployment{}, err
@@ -168,7 +169,7 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 	if n != 1 {
 		return deployment.Deployment{}, fmt.Errorf("%w: active generation CAS failed", deployment.ErrConflict)
 	}
-	if err := deploydb.New(tx).SupersedeOtherProjectDeployments(ctx, deploydb.SupersedeOtherProjectDeploymentsParams{ProjectID: row.ProjectID, Environment: row.Environment, ID: row.ID}); err != nil {
+	if err := deploydb.New(tx).SupersedeOtherProjectDeployments(ctx, deploydb.SupersedeOtherProjectDeploymentsParams{ProjectID: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment, ID: row.ID}); err != nil {
 		return deployment.Deployment{}, err
 	}
 	result, err = deploydb.New(tx).ActivateProjectDeployment(ctx, deploydb.ActivateProjectDeploymentParams{ActivationPrincipal: sql.NullString{String: input.ActivationPrincipal, Valid: true}, VerificationDigest: sql.NullString{String: input.VerificationDigest, Valid: true}, ID: row.ID})
@@ -197,7 +198,7 @@ func deploymentByTx(ctx context.Context, tx *sql.Tx, id string) (deployment.Depl
 }
 
 func mapDeployment(row deploydb.ProjectDeployment) deployment.Deployment {
-	d := deployment.Deployment{ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, ArtifactDigest: row.ArtifactDigest, RequestDigest: row.RequestDigest, Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Error: row.Error}
+	d := deployment.Deployment{ID: row.ID, ServingIdentity: graph.ServingIdentity{ProjectID: graph.ResourceID(row.ProjectID), Environment: row.Environment, GenerationID: row.GenerationID}, ArtifactDigest: row.ArtifactDigest, RequestDigest: row.RequestDigest, Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Error: row.Error}
 	if row.PriorGenerationID.Valid {
 		d.PriorGenerationID = row.PriorGenerationID.String
 	}
@@ -216,7 +217,7 @@ func mapDeployment(row deploydb.ProjectDeployment) deployment.Deployment {
 	return d
 }
 func sameCreateRequest(row deployment.Deployment, input deployment.CreateInput) bool {
-	return row.ID == input.ID && row.ProjectID == input.ProjectID && row.Environment == input.Environment && row.GenerationID == input.GenerationID && row.ArtifactDigest == input.ArtifactDigest && row.PriorGenerationID == input.PriorGenerationID && row.RequestDigest == input.RequestDigest && row.CreatedBy == input.CreatedBy
+	return row.ID == input.ID && row.ServingIdentity == input.ServingIdentity && row.ArtifactDigest == input.ArtifactDigest && row.PriorGenerationID == input.PriorGenerationID && row.RequestDigest == input.RequestDigest && row.CreatedBy == input.CreatedBy
 }
 func (r *Repository) FailDeployment(ctx context.Context, id string, cause error) error {
 	if cause == nil {

@@ -75,15 +75,10 @@ func NewService(options ServiceOptions) (*Service, error) {
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error) {
-	rawProject, rawEnvironment, rawGeneration, rawProjectDigest, rawArtifactDigest, rawIdempotency, rawCreatedBy := input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest, input.IdempotencyKey, input.CreatedBy
-	input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest, input.IdempotencyKey, input.CreatedBy = strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.Environment), strings.TrimSpace(input.GenerationID), strings.TrimSpace(input.ProjectDigest), strings.TrimSpace(input.ArtifactDigest), strings.TrimSpace(input.IdempotencyKey), strings.TrimSpace(input.CreatedBy)
-	if input.ProjectID == "" || input.GenerationID == "" || input.Environment == "" || input.ProjectDigest == "" || input.ArtifactDigest == "" || input.IdempotencyKey == "" || input.CreatedBy == "" {
+	identity, err := input.Identity()
+	if input.ProjectDigest != strings.TrimSpace(input.ProjectDigest) || input.ArtifactDigest != strings.TrimSpace(input.ArtifactDigest) || input.IdempotencyKey != strings.TrimSpace(input.IdempotencyKey) || input.CreatedBy != strings.TrimSpace(input.CreatedBy) || input.ProjectDigest == "" || input.ArtifactDigest == "" || input.IdempotencyKey == "" || input.CreatedBy == "" {
 		return Release{}, ErrInvalid
 	}
-	if rawProject != input.ProjectID || rawEnvironment != input.Environment || rawGeneration != input.GenerationID || rawProjectDigest != input.ProjectDigest || rawArtifactDigest != input.ArtifactDigest || rawIdempotency != input.IdempotencyKey || rawCreatedBy != input.CreatedBy {
-		return Release{}, fmt.Errorf("%w: canonical identity and digest fields are required", ErrInvalid)
-	}
-	identity, err := input.Identity()
 	if err != nil {
 		return Release{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
@@ -121,11 +116,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Release, error
 	if input.Provenance.Artifact.ProjectDigest != input.ProjectDigest || input.Provenance.Artifact.ContentDigest != input.ArtifactDigest || input.Provenance.Plan.Identity != identity {
 		return Release{}, fmt.Errorf("%w: provenance does not match project generation", ErrInvalid)
 	}
-	input.ID = stableID("rel", input.ProjectID, input.IdempotencyKey)
+	input.ID = stableID("rel", identity.ProjectID.String(), input.IdempotencyKey)
 	encoded, err := json.Marshal(struct {
 		ProjectID, Environment, GenerationID, ProjectDigest, ArtifactDigest string
 		Connections                                                         []ConnectionPin
-	}{input.ProjectID, input.Environment, input.GenerationID, input.ProjectDigest, input.ArtifactDigest, input.Connections})
+	}{identity.ProjectID.String(), identity.Environment, identity.GenerationID, input.ProjectDigest, input.ArtifactDigest, input.Connections})
 	if err != nil {
 		return Release{}, err
 	}
@@ -163,17 +158,17 @@ func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, cont
 		return Artifact{}, ErrDigest
 	}
 	if current.ArtifactUploadedAt != "" {
-		return Artifact{ReleaseID: current.ID, ProjectID: current.ProjectID, Environment: current.Environment, GenerationID: current.GenerationID, ExpectedDigest: current.ArtifactDigest, ActualDigest: current.ActualDigest, SizeBytes: current.ArtifactSizeBytes, UploadedAt: current.ArtifactUploadedAt}, nil
+		return Artifact{ReleaseID: current.ID, ServingIdentity: current.ServingIdentity, ExpectedDigest: current.ArtifactDigest, ActualDigest: current.ActualDigest, SizeBytes: current.ArtifactSizeBytes, UploadedAt: current.ArtifactUploadedAt}, nil
 	}
 	verifier := expected.Verifier()
-	size, err := s.artifacts.SaveUpload(ctx, servingstate.ID(current.GenerationID), io.TeeReader(source, verifier))
+	size, err := s.artifacts.SaveUpload(ctx, servingstate.ID(current.ServingIdentity.GenerationID), io.TeeReader(source, verifier))
 	if err != nil {
 		return Artifact{}, err
 	}
 	if !verifier.Verified() {
 		return Artifact{}, ErrDigest
 	}
-	item := Artifact{ReleaseID: current.ID, ProjectID: current.ProjectID, Environment: current.Environment, GenerationID: current.GenerationID, ExpectedDigest: current.ArtifactDigest, ActualDigest: current.ArtifactDigest, SizeBytes: size}
+	item := Artifact{ReleaseID: current.ID, ServingIdentity: current.ServingIdentity, ExpectedDigest: current.ArtifactDigest, ActualDigest: current.ArtifactDigest, SizeBytes: size}
 	if err := s.releases.RecordArtifact(ctx, item); err != nil {
 		return Artifact{}, err
 	}
@@ -207,14 +202,11 @@ func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID
 	if current.ArtifactUploadedAt == "" || current.ActualDigest == "" || current.ActualDigest != current.ArtifactDigest {
 		return s.failFinalization(ctx, current, ErrIncomplete)
 	}
-	state, err := s.validator.Validate(ctx, servingstate.ID(current.GenerationID))
+	state, err := s.validator.Validate(ctx, servingstate.ID(current.ServingIdentity.GenerationID))
 	if err != nil {
 		return s.failFinalization(ctx, current, err)
 	}
-	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(current.ProjectID), current.Environment, current.GenerationID)
-	if err != nil {
-		return s.failFinalization(ctx, current, err)
-	}
+	identity := current.ServingIdentity
 	if state.ProjectID != identity.ProjectID || servingstate.NormalizeEnvironment(state.Environment) != servingstate.Environment(identity.Environment) || state.Digest != current.ArtifactDigest {
 		return s.failFinalization(ctx, current, fmt.Errorf("%w: generation identity or artifact digest mismatch", ErrConflict))
 	}
@@ -226,7 +218,7 @@ func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID
 		for _, pin := range current.Manifest.Connections {
 			pins[pin.ConnectionID] = pin.RevisionID
 		}
-		if err := s.pins.ValidateServingStatePins(ctx, servingstate.ID(current.GenerationID), current.ProjectID, pins); err != nil {
+		if err := s.pins.ValidateServingStatePins(ctx, servingstate.ID(current.ServingIdentity.GenerationID), identity.ProjectID.String(), pins); err != nil {
 			return s.failFinalization(ctx, current, err)
 		}
 	}
@@ -234,7 +226,7 @@ func (s *Service) ValidateFinalization(ctx context.Context, projectID, releaseID
 }
 
 func (s *Service) failFinalization(ctx context.Context, current Release, cause error) (Release, error) {
-	failed, err := s.finalization.FailFinalization(ctx, current.ProjectID, current.ID, cause)
+	failed, err := s.finalization.FailFinalization(ctx, current.ServingIdentity.ProjectID.String(), current.ID, cause)
 	if err != nil {
 		return Release{}, errorsJoin(cause, err)
 	}

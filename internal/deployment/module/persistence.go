@@ -27,7 +27,7 @@ func newPersistence(
 	sqliteHooks := deploymentsqlite.ActivationHooks{}
 	if releases != nil {
 		sqliteHooks.LinkRelease = func(ctx context.Context, tx transaction.Transaction, input deployment.CreateInput) error {
-			return releases.LinkDeploymentTx(ctx, tx, input.ProjectID, input.ID, input.ReleaseID, input.RollbackOf)
+			return releases.LinkDeploymentTx(ctx, tx, input.ServingIdentity.ProjectID.String(), input.ID, input.ReleaseID, input.RollbackOf)
 		}
 	}
 	sqliteHooks.RecordWorkflow = workflow

@@ -69,9 +69,9 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 	}
 	defer tx.Rollback()
 	qtx := releasedb.New(tx)
-	err = qtx.CreateAPIRelease(ctx, releasedb.CreateAPIReleaseParams{ID: input.ID, ProjectID: input.ProjectID, Environment: input.Environment, GenerationID: input.GenerationID, ProjectDigest: input.ProjectDigest, ArtifactDigest: input.ArtifactDigest, RequestDigest: input.RequestDigest, IdempotencyKey: input.IdempotencyKey, ProvenanceJson: string(provenanceBytes), CreatedBy: input.CreatedBy})
+	err = qtx.CreateAPIRelease(ctx, releasedb.CreateAPIReleaseParams{ID: input.ID, ProjectID: input.ServingIdentity.ProjectID.String(), Environment: input.ServingIdentity.Environment, GenerationID: input.ServingIdentity.GenerationID, ProjectDigest: input.ProjectDigest, ArtifactDigest: input.ArtifactDigest, RequestDigest: input.RequestDigest, IdempotencyKey: input.IdempotencyKey, ProvenanceJson: string(provenanceBytes), CreatedBy: input.CreatedBy})
 	if err != nil {
-		existing, getErr := r.Get(ctx, input.ProjectID, input.ID)
+		existing, getErr := r.Get(ctx, input.ServingIdentity.ProjectID.String(), input.ID)
 		if getErr == nil {
 			if existing.RequestDigest != input.RequestDigest {
 				return release.Release{}, release.ErrConflict
@@ -88,7 +88,7 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 	if err := tx.Commit(); err != nil {
 		return release.Release{}, err
 	}
-	return r.Get(ctx, input.ProjectID, input.ID)
+	return r.Get(ctx, input.ServingIdentity.ProjectID.String(), input.ID)
 }
 
 func (r *Repository) Get(ctx context.Context, projectID, releaseID string) (release.Release, error) {
@@ -371,7 +371,7 @@ func getRelease(ctx context.Context, q *releasedb.Queries, projectID, releaseID 
 	if err != nil {
 		return release.Release{}, err
 	}
-	row := release.Release{ID: dbrow.ID, ProjectID: dbrow.ProjectID, Environment: dbrow.Environment, GenerationID: dbrow.GenerationID, ProjectDigest: dbrow.ProjectDigest, ArtifactDigest: dbrow.ArtifactDigest, ActualDigest: dbrow.ArtifactActualDigest, ArtifactSizeBytes: dbrow.ArtifactSizeBytes, ArtifactUploadedAt: dbrow.ArtifactUploadedAt, RequestDigest: dbrow.RequestDigest, IdempotencyKey: dbrow.IdempotencyKey, Status: release.Status(dbrow.Status), CreatedBy: dbrow.CreatedBy, CreatedAt: dbrow.CreatedAt, FinalizedAt: dbrow.FinalizedAt, Error: dbrow.Error}
+	row := release.Release{ID: dbrow.ID, ServingIdentity: projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(dbrow.ProjectID), Environment: dbrow.Environment, GenerationID: dbrow.GenerationID}, ProjectDigest: dbrow.ProjectDigest, ArtifactDigest: dbrow.ArtifactDigest, ActualDigest: dbrow.ArtifactActualDigest, ArtifactSizeBytes: dbrow.ArtifactSizeBytes, ArtifactUploadedAt: dbrow.ArtifactUploadedAt, RequestDigest: dbrow.RequestDigest, IdempotencyKey: dbrow.IdempotencyKey, Status: release.Status(dbrow.Status), CreatedBy: dbrow.CreatedBy, CreatedAt: dbrow.CreatedAt, FinalizedAt: dbrow.FinalizedAt, Error: dbrow.Error}
 	if dbrow.ProvenanceJson != "" && dbrow.ProvenanceJson != "{}" {
 		var p release.Provenance
 		if err := json.Unmarshal([]byte(dbrow.ProvenanceJson), &p); err != nil {

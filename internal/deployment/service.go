@@ -104,14 +104,14 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Deployment, er
 	return s.repository.CreateDeployment(ctx, input)
 }
 func (s *Service) Get(ctx context.Context, scope Scope) (Deployment, error) {
-	if scope.ProjectID == "" || scope.DeploymentID == "" || scope.ProjectID != strings.TrimSpace(scope.ProjectID) || scope.DeploymentID != strings.TrimSpace(scope.DeploymentID) {
+	if scope.ProjectID == "" || scope.DeploymentID == "" || scope.DeploymentID != strings.TrimSpace(scope.DeploymentID) {
 		return Deployment{}, fmt.Errorf("project and deployment id are required")
 	}
 	d, err := s.repository.DeploymentByID(ctx, scope.DeploymentID)
 	if err != nil {
 		return Deployment{}, err
 	}
-	if d.ProjectID != scope.ProjectID {
+	if d.ServingIdentity.ProjectID != scope.ProjectID {
 		return Deployment{}, ErrNotFound
 	}
 	return d, nil
@@ -144,22 +144,22 @@ func (s *Service) Activate(ctx context.Context, request ActivationRequest) (Depl
 	if row.Status != StatusPending {
 		return Deployment{}, fmt.Errorf("%w: deployment is %s", ErrConflict, row.Status)
 	}
-	if row.GenerationID == "" || digest.ValidateSHA256Identity(row.ArtifactDigest) != nil {
+	if row.ServingIdentity.GenerationID == "" || digest.ValidateSHA256Identity(row.ArtifactDigest) != nil {
 		return Deployment{}, fmt.Errorf("%w: deployment identity is incomplete", ErrConflict)
 	}
-	resolution, err := s.resolver.ResolveManagedData(ctx, servingstate.ID(row.GenerationID))
+	resolution, err := s.resolver.ResolveManagedData(ctx, servingstate.ID(row.ServingIdentity.GenerationID))
 	if err != nil {
 		_ = s.repository.FailDeployment(ctx, row.ID, err)
 		return Deployment{}, err
 	}
-	prepared, err := s.runtime.Prepare(ctx, runtimehost.ServingStateCandidate{ServingStateID: row.GenerationID, ManagedData: resolution})
+	prepared, err := s.runtime.Prepare(ctx, runtimehost.ServingStateCandidate{ServingStateID: row.ServingIdentity.GenerationID, ManagedData: resolution})
 	if err != nil {
 		_ = s.repository.FailDeployment(ctx, row.ID, err)
 		return Deployment{}, err
 	}
 	defer prepared.Close()
 	if id := prepared.DuckLakeSnapshotID(); id > 0 {
-		if err := s.states.RecordDuckLakeSnapshot(ctx, servingstate.ID(row.GenerationID), id); err != nil {
+		if err := s.states.RecordDuckLakeSnapshot(ctx, servingstate.ID(row.ServingIdentity.GenerationID), id); err != nil {
 			_ = s.repository.FailDeployment(ctx, row.ID, err)
 			return Deployment{}, err
 		}
@@ -174,7 +174,7 @@ func (s *Service) Activate(ctx context.Context, request ActivationRequest) (Depl
 		_ = s.repository.FailDeployment(ctx, row.ID, invalid)
 		return Deployment{}, invalid
 	}
-	activationInput := ActivationInput{DeploymentID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, ActivationPrincipal: request.ActorID, VerificationDigest: verification.Digest}
+	activationInput := ActivationInput{DeploymentID: row.ID, ServingIdentity: row.ServingIdentity, ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, ActivationPrincipal: request.ActorID, VerificationDigest: verification.Digest}
 	if err := ValidateActivation(activationInput); err != nil {
 		_ = s.repository.FailDeployment(ctx, row.ID, err)
 		return Deployment{}, err

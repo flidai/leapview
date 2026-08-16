@@ -8,8 +8,8 @@ func FinalizationEventData(row Release) map[string]any {
 		connections = append(connections, map[string]any{"connection": item.ConnectionID, "revisionId": item.RevisionID})
 	}
 	result := map[string]any{
-		"id": row.ID, "projectId": row.ProjectID, "environment": row.Environment,
-		"generationId": row.GenerationID, "projectDigest": row.ProjectDigest,
+		"id": row.ID, "projectId": row.ServingIdentity.ProjectID.String(), "environment": row.ServingIdentity.Environment,
+		"generationId": row.ServingIdentity.GenerationID, "projectDigest": row.ProjectDigest,
 		"artifactDigest": row.ArtifactDigest, "status": string(row.Status),
 		"createdBy": row.CreatedBy, "createdAt": row.CreatedAt, "connections": connections,
 	}

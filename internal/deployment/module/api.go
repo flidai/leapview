@@ -109,7 +109,7 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		return
 	}
 	if !m.protected && m.jobs.Authorize != nil {
-		if err := m.jobs.Authorize(r.Context(), principal.ID, m.handlerEnvironment(), targetRelease.GenerationID); err != nil {
+		if err := m.jobs.Authorize(r.Context(), principal.ID, m.handlerEnvironment(), targetRelease.ServingIdentity.GenerationID); err != nil {
 			if errors.Is(err, ErrPublicationForbidden) {
 				m.writeCommandFailure(w, r, operationID, err)
 				return
@@ -119,7 +119,7 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		}
 	}
 	createRequest := apiadapter.CreateRequest{
-		Project: project, Environment: m.handlerEnvironment(), GenerationID: targetRelease.GenerationID, ArtifactDigest: targetRelease.ArtifactDigest, PriorGenerationID: evidence.BaseGenerationID, Actor: principal.ID, IdempotencyKey: idempotencyKey,
+		Project: project, Environment: m.handlerEnvironment(), GenerationID: targetRelease.ServingIdentity.GenerationID, ArtifactDigest: targetRelease.ArtifactDigest, PriorGenerationID: evidence.BaseGenerationID, Actor: principal.ID, IdempotencyKey: idempotencyKey,
 		ReleaseID: releaseID, Evidence: evidence, RollbackOf: rollbackOf,
 	}
 	createRequest.Workflow = func(deploymentID string) (jobs.WorkflowIntent, error) {
@@ -163,7 +163,7 @@ func publishEvidence(
 	instanceID,
 	environment string,
 ) (apiadapter.PublishEvidence, error) {
-	if instanceID != strings.TrimSpace(instanceID) || environment != strings.TrimSpace(environment) || targetRelease.Provenance == nil || targetRelease.ProjectID == "" || targetRelease.ProjectDigest == "" || targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.ProjectDigest || targetRelease.Provenance.Plan.TargetID != instanceID || targetRelease.Provenance.Plan.Identity.ProjectID.String() != targetRelease.ProjectID || targetRelease.Provenance.Plan.Identity.Environment != environment {
+	if instanceID != strings.TrimSpace(instanceID) || environment != strings.TrimSpace(environment) || targetRelease.Provenance == nil || targetRelease.ServingIdentity.ProjectID == "" || targetRelease.ProjectDigest == "" || targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.ProjectDigest || targetRelease.Provenance.Plan.TargetID != instanceID || targetRelease.Provenance.Plan.Identity != targetRelease.ServingIdentity || targetRelease.Provenance.Plan.Identity.Environment != environment {
 		return apiadapter.PublishEvidence{}, fmt.Errorf(
 			"%w: release provenance does not belong to this target",
 			deployment.ErrConflict,
@@ -176,7 +176,7 @@ func publishEvidence(
 			err,
 		)
 	}
-	if targetRelease.ActualDigest != targetRelease.ArtifactDigest || targetRelease.GenerationID != targetRelease.Provenance.Plan.Identity.GenerationID {
+	if targetRelease.ActualDigest != targetRelease.ArtifactDigest || targetRelease.ServingIdentity.GenerationID != targetRelease.Provenance.Plan.Identity.GenerationID {
 		return apiadapter.PublishEvidence{}, fmt.Errorf("%w: release generation artifact drifted", deployment.ErrConflict)
 	}
 	return apiadapter.PublishEvidence{

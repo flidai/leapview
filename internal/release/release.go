@@ -2,10 +2,7 @@
 package release
 
 import apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
-import (
-	"fmt"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
-)
+import projectgraph "github.com/flidai/leapview/internal/project/graph"
 
 var (
 	ErrInvalid    = apigenfailure.New("invalid", "invalid release")
@@ -37,9 +34,7 @@ type Manifest struct {
 // identity. A release never contains workspace sets or target selectors.
 type Release struct {
 	ID                 string
-	ProjectID          string
-	Environment        string
-	GenerationID       string
+	ServingIdentity    projectgraph.ServingIdentity
 	ProjectDigest      string
 	ArtifactDigest     string
 	ActualDigest       string
@@ -57,53 +52,43 @@ type Release struct {
 }
 
 func (r Release) Identity() (projectgraph.ServingIdentity, error) {
-	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(r.ProjectID), Environment: r.Environment, GenerationID: r.GenerationID}
-	if err := identity.Validate(); err != nil {
+	if err := r.ServingIdentity.Validate(); err != nil {
 		return projectgraph.ServingIdentity{}, err
 	}
-	return identity, nil
+	return r.ServingIdentity, nil
 }
 
 type Artifact struct {
-	ReleaseID      string
-	ProjectID      string
-	Environment    string
-	GenerationID   string
-	ExpectedDigest string
-	ActualDigest   string
-	SizeBytes      int64
-	UploadedAt     string
+	ReleaseID       string
+	ServingIdentity projectgraph.ServingIdentity
+	ExpectedDigest  string
+	ActualDigest    string
+	SizeBytes       int64
+	UploadedAt      string
 }
 
 func (a Artifact) Identity() (projectgraph.ServingIdentity, error) {
-	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(a.ProjectID), Environment: a.Environment, GenerationID: a.GenerationID}
-	if err := identity.Validate(); err != nil {
+	if err := a.ServingIdentity.Validate(); err != nil {
 		return projectgraph.ServingIdentity{}, err
 	}
-	return identity, nil
+	return a.ServingIdentity, nil
 }
 
 type CreateInput struct {
-	ID             string
-	ProjectID      string
-	Environment    string
-	GenerationID   string
-	ProjectDigest  string
-	ArtifactDigest string
-	RequestDigest  string
-	IdempotencyKey string
-	CreatedBy      string
-	Connections    []ConnectionPin
-	Provenance     *Provenance
+	ID              string
+	ServingIdentity projectgraph.ServingIdentity
+	ProjectDigest   string
+	ArtifactDigest  string
+	RequestDigest   string
+	IdempotencyKey  string
+	CreatedBy       string
+	Connections     []ConnectionPin
+	Provenance      *Provenance
 }
 
 func (input CreateInput) Identity() (projectgraph.ServingIdentity, error) {
-	if input.ProjectID == "" || input.Environment == "" || input.GenerationID == "" {
-		return projectgraph.ServingIdentity{}, fmt.Errorf("project, environment, and generation are required")
-	}
-	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(input.ProjectID), Environment: input.Environment, GenerationID: input.GenerationID}
-	if err := identity.Validate(); err != nil {
+	if err := input.ServingIdentity.Validate(); err != nil {
 		return projectgraph.ServingIdentity{}, err
 	}
-	return identity, nil
+	return input.ServingIdentity, nil
 }
