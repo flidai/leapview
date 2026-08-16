@@ -477,7 +477,7 @@ test('sidebar renders global chat action and recent history', async () => {
         })),
         spacing: (() => {
           const group = root.querySelector('.nav-group:not(.primary-action)') as HTMLElement
-          const navItem = root.querySelector('a[href="/chats"]') as HTMLElement
+          const navItem = root.querySelector('a[href="/"]') as HTMLElement
           const historyList = root.querySelector('.history-list') as HTMLElement
           return {
             navGroupGap: getComputedStyle(group).gap,
@@ -515,8 +515,8 @@ test('sidebar renders global chat action and recent history', async () => {
         historyItemMetrics: (() => {
           const item = root.querySelector('.history-item') as HTMLElement
           const title = item?.querySelector('.history-title') as HTMLElement
-          const navIcon = root.querySelector('a[href="/chats"] .nav-icon') as HTMLElement
-          const navText = root.querySelector('a[href="/chats"] .nav-text') as HTMLElement
+          const navIcon = root.querySelector('a[href="/"] .nav-icon') as HTMLElement
+          const navText = root.querySelector('a[href="/"] .nav-text') as HTMLElement
           const label = root.querySelector('.history-label') as HTMLElement
           const mutedProbe = document.createElement('span')
           mutedProbe.style.color = 'var(--lv-fg-muted)'
@@ -541,7 +541,6 @@ test('sidebar renders global chat action and recent history', async () => {
     expect(state.historyLabel).toBe('Chats')
     expect(state.historySpinner).toEqual({ present: true, label: 'Title loading' })
     expect(state.links).toContainEqual({ href: '/chats/new', text: 'New chat', current: 'false', ariaLabel: 'New chat', title: 'New chat' })
-    expect(state.links).toContainEqual({ href: '/chats', text: 'Chats', current: 'page', ariaLabel: 'Chats', title: 'Chats' })
     expect(state.links).toContainEqual({ href: '/chats/c1', text: 'Revenue check', current: 'page', ariaLabel: 'Revenue check', title: 'Revenue check' })
     expect(state.spacing).toEqual({ navGroupGap: '2px', historyListGap: '2px', navItemHeight: 32 })
     expect(state.hasHistorySearch).toBe(false)
@@ -790,7 +789,7 @@ test('insights and develop navigation expose the stable route contract without s
   try {
     await page.goto(`${baseURL}/sidebar-active-nav`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
-    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
+    const navigationState = () => page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
       const root = sidebar.shadowRoot!
       const links = (group: string) => Array.from(root.querySelectorAll(`#mobile-navigation .nav-group[aria-label="${group}"] a`)).map((link: Element) => ({
@@ -805,18 +804,26 @@ test('insights and develop navigation expose the stable route contract without s
         }).map((label: Element) => label.textContent?.trim()),
       }
     })
-    expect(state.insights).toEqual([
-      { label: 'Dashboards', href: '/' },
-      { label: 'Data Explorer', href: '/explore' },
-    ])
-    expect(state.develop).toEqual([
+    const developState = await navigationState()
+    expect(developState.insights).toEqual([])
+    expect(developState.develop).toEqual([
       { label: 'Data', href: '/data' },
       { label: 'Models', href: '/models' },
       { label: 'Semantic models', href: '/semantic-models' },
       { label: 'Pipelines', href: '/pipelines' },
       { label: 'Connections', href: '/connections' },
     ])
-    expect(state.subtitles).toEqual([])
+    expect(developState.subtitles).toEqual([])
+
+    await page.goto(`${baseURL}/`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const insightsState = await navigationState()
+    expect(insightsState.insights).toEqual([
+      { label: 'Dashboards', href: '/' },
+      { label: 'Data Explorer', href: '/explore' },
+    ])
+    expect(insightsState.develop).toEqual([])
+    expect(insightsState.subtitles).toEqual([])
   } finally {
     await page.close()
   }
@@ -914,19 +921,19 @@ test('mobile admin sidebar places the menu button beside the back to app title',
   }
 })
 
-test('active chat nav item navigates to the chat list href', async () => {
+test('active chat history item navigates to its conversation', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
-    const link = page.locator('lv-app-shell lv-sidebar a[href="/chats"]')
+    const link = page.locator('lv-app-shell lv-sidebar a[href="/chats/c1"]')
     expect(await link.count()).toBe(1)
     await link.click()
-    await page.waitForURL(`${baseURL}/chats`)
+    await page.waitForURL(`${baseURL}/chats/c1`)
 
-    expect(new URL(page.url()).pathname).toBe('/chats')
+    expect(new URL(page.url()).pathname).toBe('/chats/c1')
   } finally {
     await page.close()
   }
@@ -966,7 +973,7 @@ test('app shell routes retargeted sidebar clicks to the visual link', async () =
 
     await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const link = sidebar.shadowRoot.querySelector('a[href="/chats"]') as HTMLElement
+      const link = sidebar.shadowRoot.querySelector('a[href="/chats/c1"]') as HTMLElement
       const rect = link.getBoundingClientRect()
       element.dispatchEvent(new MouseEvent('click', {
         bubbles: true,
@@ -976,9 +983,9 @@ test('app shell routes retargeted sidebar clicks to the visual link', async () =
         clientY: rect.top + rect.height / 2,
       }))
     })
-    await page.waitForURL(`${baseURL}/chats`)
+    await page.waitForURL(`${baseURL}/chats/c1`)
 
-    expect(new URL(page.url()).pathname).toBe('/chats')
+    expect(new URL(page.url()).pathname).toBe('/chats/c1')
   } finally {
     await page.close()
   }
