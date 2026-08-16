@@ -17,7 +17,7 @@ func TestApprovalRepositoryPersistsImmutableScopeAndOptimisticTransitions(t *tes
 	insertApprovalPrincipalsAndDeployment(t, ctx, db)
 	approval := deployment.Approval{
 		ID: "approval_1", ProjectID: "finance", DeploymentID: "deployment_1",
-		Environment: "prod", RequestDigest: "sha256:plan", ReleaseID: "release_1",
+		Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1",
 		Status:      deployment.ApprovalPending,
 		RequestedBy: "publisher", RequestCredentialClass: deployment.CredentialClassWorkload,
 		RequestCredentialID: "workload_1", RequestedAt: now,
@@ -59,7 +59,7 @@ func TestApprovalRepositoryFailsClosedOnTamperedEvidence(t *testing.T) {
 	insertApprovalPrincipalsAndDeployment(t, ctx, db)
 	approval := deployment.Approval{
 		ID: "approval_1", ProjectID: "finance", DeploymentID: "deployment_1",
-		Environment: "prod", RequestDigest: "sha256:plan", ReleaseID: "release_1",
+		Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1",
 		Status:      deployment.ApprovalPending,
 		RequestedBy: "publisher", RequestCredentialClass: deployment.CredentialClassWorkload,
 		RequestCredentialID: "workload_1", RequestedAt: now,
@@ -89,7 +89,7 @@ func TestApprovalRepositoryRetainsExpiredHistoryAndAcceptsReplacement(t *testing
 	insertApprovalPrincipalsAndDeployment(t, ctx, db)
 	first := deployment.Approval{
 		ID: "approval_1", ProjectID: "finance", DeploymentID: "deployment_1",
-		Environment: "prod", RequestDigest: "sha256:plan", ReleaseID: "release_1",
+		Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1",
 		Status:      deployment.ApprovalPending,
 		RequestedBy: "publisher", RequestCredentialClass: deployment.CredentialClassWorkload,
 		RequestCredentialID: "workload_1", RequestedAt: now,
@@ -136,7 +136,7 @@ func TestApprovalRepositoryPersistsDeniedDecision(t *testing.T) {
 	insertApprovalPrincipalsAndDeployment(t, ctx, db)
 	pending := deployment.Approval{
 		ID: "approval_denied", ProjectID: "finance", DeploymentID: "deployment_1",
-		Environment: "prod", RequestDigest: "sha256:plan", ReleaseID: "release_1",
+		Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1",
 		Status: deployment.ApprovalPending, RequestedBy: "publisher",
 		RequestCredentialClass: deployment.CredentialClassWorkload,
 		RequestCredentialID:    "workload_1", RequestedAt: now,
@@ -181,11 +181,22 @@ func insertApprovalPrincipalsAndDeployment(
 			t.Fatal(err)
 		}
 	}
+	digest := deploymentDigest("a")
+	if _, err := db.ExecContext(
+		ctx,
+		`INSERT INTO serving_states (id, project_id, environment, status, source, digest)
+		 VALUES ('generation_approval', 'finance', 'prod', 'validated', 'publish', ?)`,
+		digest,
+	); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(
 		ctx,
 		`INSERT INTO project_deployments (
-		   id, project_id, environment, request_digest, status, created_by
-		 ) VALUES ('deployment_1', 'finance', 'prod', 'sha256:plan', 'pending', 'publisher')`,
+		   id, project_id, environment, generation_id, artifact_digest, request_digest, status, created_by
+		 ) VALUES ('deployment_1', 'finance', 'prod', 'generation_approval', ?, ?, 'pending', 'publisher')`,
+		digest,
+		deploymentDigest("b"),
 	); err != nil {
 		t.Fatal(err)
 	}

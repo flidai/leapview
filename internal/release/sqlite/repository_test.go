@@ -63,11 +63,15 @@ func TestReleaseRepositoryRejectsMalformedPersistedServingIdentity(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer connection.Close()
 	if _, err := connection.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`); err != nil {
+		connection.Close()
 		t.Fatal(err)
 	}
 	if _, err := connection.ExecContext(t.Context(), `UPDATE api_releases SET environment = 'prod/env' WHERE id = ?`, created.ID); err != nil {
+		connection.Close()
+		t.Fatal(err)
+	}
+	if err := connection.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.Get(t.Context(), identity.ProjectID, created.ID); err == nil {

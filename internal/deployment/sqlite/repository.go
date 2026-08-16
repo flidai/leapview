@@ -92,7 +92,7 @@ func (r *Repository) DeploymentByID(ctx context.Context, id string) (deployment.
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
-	return mapDeployment(row), nil
+	return mapDeployment(row)
 }
 
 func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.ActivationInput) (deployment.Deployment, error) {
@@ -195,11 +195,15 @@ func deploymentByTx(ctx context.Context, tx *sql.Tx, id string) (deployment.Depl
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
-	return mapDeployment(row), nil
+	return mapDeployment(row)
 }
 
-func mapDeployment(row deploydb.ProjectDeployment) deployment.Deployment {
-	d := deployment.Deployment{ID: row.ID, ServingIdentity: graph.ServingIdentity{ProjectID: graph.ResourceID(row.ProjectID), Environment: row.Environment, GenerationID: row.GenerationID}, ArtifactDigest: row.ArtifactDigest, RequestDigest: row.RequestDigest, Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Error: row.Error}
+func mapDeployment(row deploydb.ProjectDeployment) (deployment.Deployment, error) {
+	identity, err := graph.NewServingIdentity(graph.ResourceID(row.ProjectID), row.Environment, row.GenerationID)
+	if err != nil {
+		return deployment.Deployment{}, fmt.Errorf("deployment %q has invalid serving identity: %w", row.ID, err)
+	}
+	d := deployment.Deployment{ID: row.ID, ServingIdentity: identity, ArtifactDigest: row.ArtifactDigest, RequestDigest: row.RequestDigest, Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Error: row.Error}
 	if row.PriorGenerationID.Valid {
 		d.PriorGenerationID = row.PriorGenerationID.String
 	}
@@ -215,7 +219,7 @@ func mapDeployment(row deploydb.ProjectDeployment) deployment.Deployment {
 	if row.VerifiedAt.Valid {
 		d.VerifiedAt = row.VerifiedAt.String
 	}
-	return d
+	return d, nil
 }
 func sameCreateRequest(row deployment.Deployment, input deployment.CreateInput) bool {
 	return row.ID == input.ID && row.ServingIdentity == input.ServingIdentity && row.ArtifactDigest == input.ArtifactDigest && row.PriorGenerationID == input.PriorGenerationID && row.RequestDigest == input.RequestDigest && row.CreatedBy == input.CreatedBy
