@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWorkspaceMaterializerResolvesConnectionsAgainstActiveReleaseState(t *testing.T) {
+func TestProjectMaterializerResolvesConnectionsAgainstActiveReleaseState(t *testing.T) {
 	module := &Module{activeRuntimeBindingEvidence: activeEvidenceSource{}}
-	materializer := duckDBWorkspaceMaterializer{module: module}
+	materializer := duckDBProjectMaterializer{module: module}
 
 	resolver := materializer.connectionResolver(analyticsmaterialization.Request{
 		ConnectionEvidenceServingStateID: "state_active",
@@ -27,8 +27,8 @@ func TestWorkspaceMaterializerResolvesConnectionsAgainstActiveReleaseState(t *te
 	require.Equal(t, "prod", active.environment)
 }
 
-func TestWorkspaceMaterializerLeavesAuthoredConnectionsUnboundWithoutReleaseEvidence(t *testing.T) {
-	materializer := duckDBWorkspaceMaterializer{module: &Module{}}
+func TestProjectMaterializerLeavesAuthoredConnectionsUnboundWithoutReleaseEvidence(t *testing.T) {
+	materializer := duckDBProjectMaterializer{module: &Module{}}
 	require.Nil(t, materializer.connectionResolver(analyticsmaterialization.Request{
 		ConnectionEvidenceServingStateID: "state_active",
 	}))

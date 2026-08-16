@@ -8,7 +8,6 @@ import (
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type projectRuntimeFactory struct {

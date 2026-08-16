@@ -6,11 +6,11 @@ import (
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 )
 
-func TestWorkspaceRuntimeCacheIdentitySeparatesCandidateFromActiveState(t *testing.T) {
-	active := workspaceRuntimeCacheIdentity(analyticsruntime.WorkspaceRequest{
+func TestProjectRuntimeCacheIdentitySeparatesCandidateFromActiveState(t *testing.T) {
+	active := projectRuntimeCacheIdentity(analyticsruntime.ProjectRequest{
 		ServingStateID: "state_sales",
 	})
-	candidate := workspaceRuntimeCacheIdentity(analyticsruntime.WorkspaceRequest{
+	candidate := projectRuntimeCacheIdentity(analyticsruntime.ProjectRequest{
 		ServingStateID: "state_sales",
 		CandidateID:    "cand_1",
 	})
