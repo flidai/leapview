@@ -165,6 +165,40 @@ func (m *Module) IsPlatformAdmin(ctx context.Context, principalID string) (bool,
 	return reader.IsPlatformAdmin(ctx, principalID)
 }
 
+// AuthorizeBootstrapCredential revalidates the exact durable API token used
+// to arm or execute a protected first activation. Request credentials are
+// never trusted as role evidence: the repository query binds token ID to the
+// actor, checks enabled platform administration, requires an explicit
+// RESOURCE_PUBLISH capability at the supplied instant, and verifies that the
+// durable expiry still exactly matches the expiry captured when armed.
+func (m *Module) AuthorizeBootstrapCredential(ctx context.Context, principalID, credentialID string, expectedExpiresAt, now time.Time) error {
+	principalID = strings.TrimSpace(principalID)
+	credentialID = strings.TrimSpace(credentialID)
+	if principalID == "" || credentialID == "" || expectedExpiresAt.IsZero() {
+		return access.ErrForbidden
+	}
+	repository := m.repositoryValue()
+	if repository == nil {
+		return fmt.Errorf("access repository is unavailable")
+	}
+	reader, ok := repository.(access.BootstrapAPITokenEvidenceReader)
+	if !ok {
+		return fmt.Errorf("access repository does not support bootstrap token evidence")
+	}
+	token, err := reader.BootstrapAPITokenEvidence(ctx, principalID, credentialID, now)
+	if err != nil {
+		return err
+	}
+	if token.ID != credentialID || token.PrincipalID != principalID || token.ExpiresAt == "" {
+		return access.ErrForbidden
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, token.ExpiresAt)
+	if err != nil || !expiresAt.Equal(expectedExpiresAt.UTC()) {
+		return access.ErrForbidden
+	}
+	return nil
+}
+
 // RequestPlatformAdmin evaluates durable platform administration and then
 // applies request-credential attenuation. Credentials can reduce authority,
 // never grant the durable role: authoring credentials always deny, API tokens

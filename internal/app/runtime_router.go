@@ -27,6 +27,7 @@ import (
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
@@ -1214,6 +1215,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if err != nil {
 		return fmt.Errorf("build APIGen authorizer: %w", err)
 	}
+	if bootstrapPolicies := moduleWorkflow.deploymentConfig.BootstrapPolicies; bootstrapPolicies != nil {
+		claimReader, ok := bootstrapPolicies.(deployment.ProjectClaimRepository)
+		if !ok {
+			return fmt.Errorf("bootstrap policy store does not expose the durable project claim")
+		}
+		apiGenAuthorizer.SetBootstrapAuthorizer(func(ctx context.Context, _ *http.Request, operationID string, projectID projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+			return bootstrapAPIGenDecision(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, claimReader, policy.defaultEnvironment, operationID, projectID)
+		})
+	}
 	if err := apigencommand.ValidateDependencies(apiaggregate.GetAPIGenCommandRuntimeContracts(), map[apigencommand.Dependency]bool{
 		apigencommand.DependencyAuthorization: apiGenAuthorizer != nil,
 		apigencommand.DependencyIdempotency:   platform.apiProtocol != nil,
@@ -1407,4 +1417,91 @@ func writeProductCommandFailure(ctx context.Context, w http.ResponseWriter, r *h
 		OperationID: operationID, Kind: "handler", StatusCode: http.StatusInternalServerError,
 		Code: "INTERNAL_ERROR", PublicDetail: "The request could not be completed.", Cause: cause,
 	})
+}
+
+func hasActiveBootstrapServingState(
+	ctx context.Context,
+	_ *runtimehostmodule.Module,
+	states servingStateRepository,
+	environment string,
+) (bool, error) {
+	if states == nil {
+		return false, errors.New("serving-state repository is unavailable")
+	}
+	scopes, err := states.ListActiveScopes(ctx)
+	if err != nil {
+		return false, fmt.Errorf("read active serving scopes: %w", err)
+	}
+	env := servingstatemodule.Environment(strings.TrimSpace(environment))
+	activeCount := 0
+	for _, scope := range scopes {
+		if scope.Environment != env {
+			continue
+		}
+		if err := scope.ProjectID.Validate(); err != nil {
+			return false, fmt.Errorf("active serving project identity is invalid: %w", err)
+		}
+		activeCount++
+		if activeCount > 1 {
+			return false, fmt.Errorf("active serving scopes contain multiple projects for environment %q", env)
+		}
+	}
+	if activeCount > 0 {
+		return true, nil
+	}
+	// ListActiveScopes is the authoritative durable check. A runtime host may
+	// still be warming up (or be nil in a fresh process) while the store has no
+	// active generation; consulting its cached artifact here would make an
+	// otherwise valid first activation fail spuriously.
+	return false, nil
+}
+
+// bootstrapAPIGenDecision is deliberately a read-only seam. It distinguishes
+// a typed empty active-generation pointer from a serving-state store failure,
+// then evaluates only the durable singleton claim and the explicit candidate
+// operation allowlist. Credential role/capability evidence is enforced by the
+// APIGen wrapper and by deployment's arm/worker revalidator, never here.
+func bootstrapAPIGenDecision(
+	ctx context.Context,
+	runtimeHost *runtimehostmodule.Module,
+	states servingStateRepository,
+	claims deployment.ProjectClaimRepository,
+	environment, operationID string,
+	projectID projectgraph.ResourceID,
+) (accessmodule.APIGenBootstrapDecision, error) {
+	active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment)
+	if err != nil {
+		return accessmodule.APIGenBootstrapDecision{}, err
+	}
+	if active {
+		return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+	}
+	if err := projectID.Validate(); err != nil || projectID.String() != strings.TrimSpace(projectID.String()) {
+		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+	}
+	if claims == nil {
+		return accessmodule.APIGenBootstrapDecision{}, errors.New("project claim repository is unavailable")
+	}
+	claim, err := claims.GetProjectClaim(ctx)
+	if errors.Is(err, deployment.ErrProjectClaimNotFound) {
+		return accessmodule.APIGenBootstrapDecision{
+			Handled: true, Allowed: operationID == "startProjectCandidate" || operationID == "planProjectCandidateSynchronization",
+		}, nil
+	}
+	if err != nil {
+		return accessmodule.APIGenBootstrapDecision{}, fmt.Errorf("read bootstrap project claim: %w", err)
+	}
+	if claim.ProjectID != projectID || claim.Environment != servingstatemodule.Environment(strings.TrimSpace(environment)) {
+		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+	}
+	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapCandidateOperation(operationID)}, nil
+}
+
+func bootstrapCandidateOperation(operationID string) bool {
+	switch operationID {
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization":
+		return true
+	default:
+		return false
+	}
 }

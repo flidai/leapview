@@ -258,6 +258,14 @@ type APIToken struct {
 	RevokedAt    string
 }
 
+// BootstrapAPITokenEvidenceReader is the narrow durable revalidation port
+// used by the protected first-activation path. Implementations must resolve
+// the token by its durable ID (never by request-held capabilities), bind it
+// to the actor, and require a currently enabled platform administrator.
+type BootstrapAPITokenEvidenceReader interface {
+	BootstrapAPITokenEvidence(context.Context, string, string, time.Time) (APIToken, error)
+}
+
 type APICredential struct {
 	Principal Principal
 	Token     APIToken

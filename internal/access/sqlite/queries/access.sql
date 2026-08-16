@@ -261,6 +261,27 @@ WHERE token_fingerprint = ?
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: GetBootstrapAPITokenEvidence :one
+SELECT t.*
+FROM api_tokens t
+JOIN principals p ON p.id = t.principal_id
+WHERE t.id = sqlc.arg(token_id)
+  AND t.principal_id = sqlc.arg(principal_id)
+  AND t.revoked_at IS NULL
+  AND t.expires_at IS NOT NULL
+  -- julianday preserves the sub-second ordering needed when a policy was
+  -- armed with an expiry captured at nanosecond precision; datetime() would
+  -- truncate both values to whole seconds.
+  AND julianday(t.expires_at) > julianday(sqlc.arg(now))
+  AND p.disabled_at IS NULL
+  AND p.blocked_at IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM platform_role_bindings rb
+    WHERE rb.principal_id = p.id
+      AND rb.role = 'platform_admin'
+  );
+
 -- name: TouchAPIToken :exec
 UPDATE api_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?;
 

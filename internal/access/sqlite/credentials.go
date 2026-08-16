@@ -254,6 +254,44 @@ func (r *Repository) CredentialForAPIToken(ctx context.Context, token string) (a
 	}, nil
 }
 
+// BootstrapAPITokenEvidence resolves the durable evidence required by the
+// protected first-activation path. It intentionally addresses a token by ID,
+// not by a bearer secret or request-carried capability list. The SQL query
+// binds the token to the actor, requires an enabled platform administrator,
+// and applies revocation and expiry at the supplied instant.
+func (r *Repository) BootstrapAPITokenEvidence(ctx context.Context, principalID, tokenID string, now time.Time) (access.APIToken, error) {
+	principalID = strings.TrimSpace(principalID)
+	tokenID = strings.TrimSpace(tokenID)
+	if principalID == "" || tokenID == "" {
+		return access.APIToken{}, access.ErrForbidden
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	row, err := r.q.GetBootstrapAPITokenEvidence(ctx, platformdb.GetBootstrapAPITokenEvidenceParams{
+		TokenID: tokenID, PrincipalID: principalID, Now: now.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return access.APIToken{}, err
+	}
+	token := mapAPIToken(row)
+	// A bootstrap token must opt into an explicit, non-empty capability list;
+	// dynamic (NULL), empty, malformed, or otherwise attenuated lists deny.
+	if token.Capabilities == nil || len(token.Capabilities) == 0 || !containsTokenCapability(token.Capabilities, access.CapabilityResourcePublish) {
+		return access.APIToken{}, access.ErrForbidden
+	}
+	return token, nil
+}
+
+func containsTokenCapability(capabilities []access.Capability, expected access.Capability) bool {
+	for _, capability := range capabilities {
+		if capability == expected {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Repository) DisabledPrincipalForAPIToken(ctx context.Context, token string) (string, string, error) {
 	apiToken, err := r.apiTokenForAuditSecret(ctx, token)
 	if err != nil {

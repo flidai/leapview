@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
@@ -142,7 +141,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	projectClaimRepository := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
-	readClaim := memoizedClaimedProjectReader(projectClaimRepository, environment)
+	// Every authorization callback reads the claim afresh. The runtime host
+	// uses this same reader during startup, while bootstrap decisions must not
+	// rely on a stale memoized claim after a concurrent first operation.
+	readClaim := readClaimedProject(projectClaimRepository, environment)
 	claimedProjectID, claimFound, err := readClaim(ctx)
 	if err != nil {
 		return fail(err)
@@ -451,6 +453,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	deploymentConfig := deploymentmodule.Config{
 		Database: store.SQLDB(), States: servingStateRepo, Runtime: deploymentRuntime,
 		ManagedData:        managedDataResolver,
+		BootstrapPolicies:  projectClaimRepository,
 		BindClaimedProject: bindClaimedProject(runtimeHostModule, environment),
 		Protected: protectedPublishingTarget(
 			production,
@@ -517,6 +520,36 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			}
 			if !allowed {
 				return deploymentmodule.ErrActivationForbidden
+			}
+			return nil
+		},
+		AuthorizeBootstrap: func(ctx context.Context, policy deployment.BootstrapActivationPolicy) error {
+			if err := policy.Validate(); err != nil {
+				return err
+			}
+			claimedProject, found, err := readClaim(ctx)
+			if err != nil {
+				return fmt.Errorf("bootstrap claim authorization: %w", err)
+			}
+			if !found || claimedProject != policy.ProjectID || policy.Environment != environment {
+				return deployment.ErrBootstrapPolicyConflict
+			}
+			admin, err := accessModule.IsPlatformAdmin(ctx, policy.ActorID)
+			if err != nil {
+				return fmt.Errorf("bootstrap platform role authorization: %w", err)
+			}
+			if !admin {
+				return deployment.ErrBootstrapPolicyConflict
+			}
+			if err := accessModule.AuthorizeBootstrapCredential(ctx, policy.ActorID, policy.CredentialID, policy.CredentialExpiresAt, time.Now().UTC()); err != nil {
+				return fmt.Errorf("bootstrap credential authorization: %w", err)
+			}
+			active, activeErr := hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment))
+			if activeErr != nil {
+				return fmt.Errorf("%w: %v", deployment.ErrBootstrapPolicyConflict, activeErr)
+			}
+			if active {
+				return deployment.ErrBootstrapPolicyConflict
 			}
 			return nil
 		},
@@ -640,18 +673,6 @@ func readClaimedProject(repository deployment.ProjectClaimRepository, environmen
 			return "", false, fmt.Errorf("claimed project environment %q does not match configured environment %q", claim.Environment, environment)
 		}
 		return claim.ProjectID, true, nil
-	}
-}
-
-func memoizedClaimedProjectReader(repository deployment.ProjectClaimRepository, environment servingstatemodule.Environment) func(context.Context) (projectgraph.ResourceID, bool, error) {
-	reader := readClaimedProject(repository, environment)
-	var once sync.Once
-	var projectID projectgraph.ResourceID
-	var found bool
-	var readErr error
-	return func(ctx context.Context) (projectgraph.ResourceID, bool, error) {
-		once.Do(func() { projectID, found, readErr = reader(ctx) })
-		return projectID, found, readErr
 	}
 }
 
