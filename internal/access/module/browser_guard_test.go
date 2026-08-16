@@ -20,6 +20,10 @@ func (r browserGuardRepository) IsPlatformAdmin(context.Context, string) (bool, 
 	return r.admin, r.err
 }
 
+func (browserGuardRepository) ListGroupIDsForPrincipal(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
 func browserGuardModule(repo access.Repository, principal Principal, ok bool) *Module {
 	module, err := newSurface(surfaceConfig{
 		Repository: func() (access.Repository, error) { return repo, nil },

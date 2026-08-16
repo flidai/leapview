@@ -14,17 +14,28 @@ import (
 	manageddata "github.com/flidai/leapview/internal/manageddata"
 	manageddatacontrol "github.com/flidai/leapview/internal/manageddata/control"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
+	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/go-chi/chi/v5"
 )
+
+type canonicalRuntimeHost interface {
+	ProjectID() projectgraph.ResourceID
+	Acquire(context.Context) (runtimehost.Lease, error)
+}
+
+type canonicalAccessModule interface {
+	Authenticate(http.Handler) http.Handler
+	CurrentPrincipal(*http.Request) (accessmodule.Principal, bool)
+	AuthorizationSubjects(context.Context, string) ([]access.SubjectRef, error)
+}
 
 // authorizeProjectResources evaluates canonical resource grants against the
 // exact leased generation. Group subjects are resolved once per request and
 // any matching subject is sufficient for each resource.
 func authorizeProjectResources(
 	ctx context.Context,
-	accessModule *accessmodule.Module,
-	runtimeHost *runtimehostmodule.Module,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
 	principalID string,
 	projectID projectgraph.ResourceID,
 	resources []access.ResourceRef,
@@ -84,8 +95,8 @@ func authorizeProjectResources(
 // and capabilities are resolved before the handler runs; no alternate
 // selector is accepted at this boundary.
 func protectProjectResources(
-	accessModule *accessmodule.Module,
-	runtimeHost *runtimehostmodule.Module,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
 	capability access.Capability,
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.HandlerFunc,
@@ -149,8 +160,8 @@ func activeProjectResource(_ *http.Request, projectID projectgraph.ResourceID) [
 // transport token itself is not a project selector; it is resolved by the
 // managed-data module before the generation-bound capability decision.
 func protectManagedDataTransport(
-	accessModule *accessmodule.Module,
-	runtimeHost *runtimehostmodule.Module,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
 	managedData interface {
 		ResolveTusTarget(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
 	},
