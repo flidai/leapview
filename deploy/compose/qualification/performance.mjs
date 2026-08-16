@@ -137,7 +137,7 @@ async function runWorkload(path) {
       limit: 10,
     }
     const queryURL = new URL(
-      `/api/v1/projects/${encodeURIComponent(projectID)}/semantic-models/${encodeURIComponent(semanticModelID)}/query`,
+      `/api/v1/semantic-models/${encodeURIComponent(semanticModelID)}/query`,
       baseURL,
     ).href
     for (let index = 0; index < policy.assumptions.samples.governedQueries; index += 1) {
