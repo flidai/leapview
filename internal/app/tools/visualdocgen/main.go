@@ -40,7 +40,6 @@ var visualShortcodePattern = regexp.MustCompile(`^\s*\{\{<\s*visual\s+id="([a-z0
 var visualFencePattern = regexp.MustCompile("^```ya?ml[ \\t]+visual-example=([a-z0-9_]+)[ \\t]*$")
 
 const (
-	visualDocsProjectID   projectgraph.ResourceID = "project:visual-documentation"
 	visualDocsDashboardID projectgraph.ResourceID = "dashboard:visual-docs"
 )
 
@@ -508,7 +507,7 @@ func normalizeEnvelopeRevision(envelope *visualizationir.VisualizationEnvelope, 
 		state.DataRevision, state.Generation = dataRevision, generation
 	case *visualizationir.SpatialTiledVisualizationDataState:
 		state.DataRevision, state.Generation = dataRevision, generation
-		state.TileURL = "/projects/" + url.PathEscape(visualDocsProjectID.String()) + "/dashboards/" + url.PathEscape(visualDocsDashboardID.String()) + "/visuals/" + url.PathEscape(envelope.VisualID) + "/tiles/documentation/{z}/{x}/{y}.mvt"
+		state.TileURL = "/dashboards/" + url.PathEscape(visualDocsDashboardID.String()) + "/visuals/" + url.PathEscape(envelope.VisualID) + "/tiles/documentation/{z}/{x}/{y}.mvt"
 	}
 }
 

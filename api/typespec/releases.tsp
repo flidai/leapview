@@ -186,15 +186,16 @@ model ReleaseArtifactDigestMismatchFailure {}
 
 @route("/projects/{project}/releases")
 @tag("Releases")
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
 interface Releases {
   @summary("List project releases")
   @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "project")
   listReleases(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ReleaseListResponse> | CommonErrors;
 
   @summary("Create a draft project release")
   @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
   @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(ReleaseConflictFailure)
   @apigen.command(#{
@@ -208,12 +209,14 @@ interface Releases {
   @summary("Get a project release")
   @route("/{release}")
   @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "project")
   getRelease(@path project: ResourceId, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
 
   @summary("Upload an immutable project-generation artifact")
   @route("/{release}/artifact")
   @put
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
   @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(ReleaseConflictFailure)
   @apigen.failsWith(ReleaseImmutableFailure)
@@ -233,6 +236,7 @@ interface Releases {
   @summary("Finalize and validate a release")
   @route("/{release}/finalize")
   @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
   @extension("x-leapview-object-scope", "project")
   @apigen.asyncExecution(Releases.getRelease, Releases.listReleaseEvents, #{
     guarantee: "transactional",
@@ -259,6 +263,7 @@ interface Releases {
   @summary("List or stream release events")
   @route("/{release}/events")
   @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "project")
   listReleaseEvents(@path project: ResourceId, @path release: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 }

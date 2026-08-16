@@ -24138,7 +24138,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidate-sessions/{candidateKey}/cancel:
     post:
@@ -24481,10 +24481,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidate-sync/blobs/{digest}:
     put:
@@ -24824,10 +24824,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
       x-apigen-manual: true
   /api/v1/projects/{project}/candidate-sync/commit:
@@ -25185,10 +25185,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidate-sync/plan:
     post:
@@ -25482,7 +25482,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates:
     post:
@@ -25837,10 +25837,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}:
     get:
@@ -26125,7 +26125,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}/artifact:
     put:
@@ -26477,10 +26477,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}/cancel:
     post:
@@ -26823,10 +26823,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}/publish:
     post:
@@ -27257,10 +27257,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
   /api/v1/projects/{project}/candidates/{candidate}/retry:
     post:
@@ -27603,10 +27603,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: project
   /api/v1/projects/{project}/connections:
     get:
@@ -36076,6 +36076,10 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_READ
+      x-leapview-object-scope: project
     post:
       operationId: createDeployment
       summary: Deploy a ready project release
@@ -36496,10 +36500,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}:
     get:
@@ -36819,6 +36823,10 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_READ
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/activate:
     post:
       operationId: activateDeployment
@@ -37587,10 +37595,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/approval-requests/{approval}/approve:
     post:
@@ -39057,10 +39065,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/events:
     get:
@@ -39379,6 +39387,10 @@ paths:
       tags:
         - Deployments
       x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_READ
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/retry:
     post:
       operationId: retryDeployment
@@ -39782,10 +39794,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
   /api/v1/projects/{project}/deployments/{deployment}/rollback:
     post:
@@ -44389,7 +44401,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_READ
       x-leapview-object-scope: project
     post:
       operationId: createRelease
@@ -44826,10 +44838,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
   /api/v1/projects/{project}/releases/{release}:
     get:
@@ -45161,7 +45173,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_READ
       x-leapview-object-scope: project
   /api/v1/projects/{project}/releases/{release}/artifact:
     put:
@@ -45506,10 +45518,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
       x-apigen-manual: true
   /api/v1/projects/{project}/releases/{release}/events:
@@ -45831,7 +45843,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_READ
       x-leapview-object-scope: project
   /api/v1/projects/{project}/releases/{release}/finalize:
     post:
@@ -46230,10 +46242,10 @@ paths:
         target:
           parameter: project
           type: project
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
   /api/v1/projects/{project}/roles:
     get:

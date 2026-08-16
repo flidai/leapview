@@ -18,23 +18,23 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 		idempotency string
 		guarantee   string
 	}{
-		"createDeployment":                      {deploymentQueuedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
-		"cancelDeployment":                      {deploymentCancelledAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
-		"retryDeployment":                       {deploymentQueuedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
+		"createDeployment":                      {deploymentQueuedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"cancelDeployment":                      {deploymentCancelledAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"retryDeployment":                       {deploymentQueuedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
 		"rollbackDeployment":                    {deploymentQueuedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
-		"requestDeploymentApproval":             {deploymentApprovalRequestedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
+		"requestDeploymentApproval":             {deploymentApprovalRequestedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
 		"approveDeployment":                     {deploymentApprovedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
 		"denyDeploymentApproval":                {deploymentDeniedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
 		"revokeDeploymentApproval":              {deploymentApprovalRevokedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
 		"activateDeployment":                    {deploymentActivationRequestedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
-		"startProjectCandidate":                 {"candidate.started", "PROJECT_ADMIN", "required", "best-effort"},
-		"replaceProjectCandidateArtifact":       {"candidate.artifact_replaced", "PROJECT_ADMIN", "required", "best-effort"},
-		"retryProjectCandidate":                 {"candidate.retried", "PROJECT_ADMIN", "required", "best-effort"},
-		"cancelProjectCandidate":                {"candidate.cancelled", "PROJECT_ADMIN", "required", "best-effort"},
-		"cancelProjectCandidateByKey":           {"candidate.cancelled", "PROJECT_ADMIN", "required", "best-effort"},
-		"publishProjectCandidate":               {deploymentQueuedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
-		"uploadProjectCandidateSourceBlob":      {"candidate.source_blob_uploaded", "PROJECT_ADMIN", "", "best-effort"},
-		"commitProjectCandidateSynchronization": {"candidate.ready", "PROJECT_ADMIN", "required", "best-effort"},
+		"startProjectCandidate":                 {"candidate.started", "RESOURCE_EDIT", "required", "best-effort"},
+		"replaceProjectCandidateArtifact":       {"candidate.artifact_replaced", "RESOURCE_EDIT", "required", "best-effort"},
+		"retryProjectCandidate":                 {"candidate.retried", "RESOURCE_EDIT", "required", "best-effort"},
+		"cancelProjectCandidate":                {"candidate.cancelled", "RESOURCE_EDIT", "required", "best-effort"},
+		"cancelProjectCandidateByKey":           {"candidate.cancelled", "RESOURCE_EDIT", "required", "best-effort"},
+		"publishProjectCandidate":               {deploymentQueuedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"uploadProjectCandidateSourceBlob":      {"candidate.source_blob_uploaded", "RESOURCE_EDIT", "", "best-effort"},
+		"commitProjectCandidateSynchronization": {"candidate.ready", "RESOURCE_EDIT", "required", "best-effort"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
@@ -68,17 +68,24 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 			t.Errorf("async command contract %q = %#v", operationID, contract.Command.Execution)
 		}
 	}
-	for _, operationID := range []string{
-		"listDeployments",
-		"getDeployment",
-		"listDeploymentEvents",
-		"getProjectCandidate",
-		"reviewProjectCandidate",
-		"planProjectCandidateSynchronization",
-	} {
+	queryPrivileges := map[string]string{
+		"listDeployments":                     "RESOURCE_READ",
+		"getDeployment":                       "RESOURCE_READ",
+		"listDeploymentEvents":                "RESOURCE_READ",
+		"getProjectCandidate":                 "RESOURCE_EDIT",
+		"reviewProjectCandidate":              "RESOURCE_EDIT",
+		"planProjectCandidateSynchronization": "RESOURCE_EDIT",
+	}
+	for operationID, wantPrivilege := range queryPrivileges {
 		contract, ok := contracts[operationID]
 		if !ok || contract.Command != nil || generatedOperationKind(contract) != "query" {
 			t.Errorf("query contract %q = %#v", operationID, contract)
+			continue
+		}
+		authz, _ := contract.Extensions["x-authz"].(map[string]any)
+		privilege, _ := authz["privilege"].(string)
+		if contract.AuthzMode != "privilege" || privilege != wantPrivilege {
+			t.Errorf("query contract %q authorization = %s/%s, want privilege/%s", operationID, contract.AuthzMode, privilege, wantPrivilege)
 		}
 	}
 }

@@ -51,6 +51,28 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 	}
 }
 
+func TestNormalizeEnvelopeRevisionUsesCanonicalSpatialTileURL(t *testing.T) {
+	envelope := visualizationir.VisualizationEnvelope{
+		VisualID: "visual:map",
+		DataState: visualizationir.VisualizationDataState{
+			Value: &visualizationir.SpatialTiledVisualizationDataState{},
+		},
+	}
+
+	normalizeEnvelopeRevision(&envelope, 7, 11)
+	state, ok := envelope.DataState.Value.(*visualizationir.SpatialTiledVisualizationDataState)
+	if !ok {
+		t.Fatalf("data state type = %T, want spatial tiled", envelope.DataState.Value)
+	}
+	want := "/dashboards/dashboard:visual-docs/visuals/visual:map/tiles/documentation/{z}/{x}/{y}.mvt"
+	if state.TileURL != want {
+		t.Fatalf("tile URL = %q, want %q", state.TileURL, want)
+	}
+	if strings.Contains(state.TileURL, "/projects/") {
+		t.Fatalf("tile URL retains project-prefixed route: %q", state.TileURL)
+	}
+}
+
 func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	docsDir := filepath.Join("..", "..", "..", "..", "docs", "visuals")
 	artifact, err := generateVisualExamples(docsDir, filepath.Join("testdata", "project", "leapview.yaml"), filepath.Join("testdata", "data"))

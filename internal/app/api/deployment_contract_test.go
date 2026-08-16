@@ -21,7 +21,7 @@ func TestProjectDeploymentAPIContract(t *testing.T) {
 	if _, ok := openAPIMap(t, create, "responses")["202"]; !ok {
 		t.Fatal("create deployment must return 202")
 	}
-	if privilege := openAPIMap(t, create, "x-authz")["privilege"]; privilege != "PROJECT_ADMIN" {
+	if privilege := openAPIMap(t, create, "x-authz")["privilege"]; privilege != "RESOURCE_PUBLISH" {
 		t.Fatalf("deployment privilege = %#v", privilege)
 	}
 	for suffix, operationID := range map[string]string{
@@ -37,6 +37,15 @@ func TestProjectDeploymentAPIContract(t *testing.T) {
 		if operation["operationId"] != operationID {
 			t.Fatalf("%s operation = %#v", operationID, operation)
 		}
+		if suffix == "" || suffix == "/events" {
+			if privilege := openAPIMap(t, operation, "x-authz")["privilege"]; privilege != "RESOURCE_READ" {
+				t.Fatalf("%s privilege = %#v, want RESOURCE_READ", operationID, privilege)
+			}
+		} else if suffix == "/cancel" || suffix == "/retry" {
+			if privilege := openAPIMap(t, operation, "x-authz")["privilege"]; privilege != "RESOURCE_PUBLISH" {
+				t.Fatalf("%s privilege = %#v, want RESOURCE_PUBLISH", operationID, privilege)
+			}
+		}
 	}
 	activate := openAPIOperation(t, paths, base+"/{deployment}/activate", "post")
 	if activate["operationId"] != "activateDeployment" ||
@@ -45,7 +54,7 @@ func TestProjectDeploymentAPIContract(t *testing.T) {
 	}
 	requestApproval := openAPIOperation(t, paths, base+"/{deployment}/approval-requests", "post")
 	if requestApproval["operationId"] != "requestDeploymentApproval" ||
-		openAPIMap(t, requestApproval, "x-authz")["privilege"] != "PROJECT_ADMIN" {
+		openAPIMap(t, requestApproval, "x-authz")["privilege"] != "RESOURCE_PUBLISH" {
 		t.Fatalf("request approval operation = %#v", requestApproval)
 	}
 	approvalItem := base + "/{deployment}/approval-requests/{approval}"
@@ -101,7 +110,7 @@ func TestPrivateProjectCandidateAPIContract(t *testing.T) {
 	if _, ok := openAPIMap(t, start, "responses")["201"]; !ok {
 		t.Fatal("start candidate must return 201")
 	}
-	if privilege := openAPIMap(t, start, "x-authz")["privilege"]; privilege != "PROJECT_ADMIN" {
+	if privilege := openAPIMap(t, start, "x-authz")["privilege"]; privilege != "RESOURCE_EDIT" {
 		t.Fatalf("candidate privilege = %#v", privilege)
 	}
 
@@ -124,6 +133,9 @@ func TestPrivateProjectCandidateAPIContract(t *testing.T) {
 		}
 		if suffix != "" && !operationHasParameter(operation, "header", "Idempotency-Key") {
 			t.Fatalf("%s is missing Idempotency-Key", operationID)
+		}
+		if privilege := openAPIMap(t, operation, "x-authz")["privilege"]; privilege != "RESOURCE_EDIT" {
+			t.Fatalf("%s privilege = %#v, want RESOURCE_EDIT", operationID, privilege)
 		}
 	}
 
