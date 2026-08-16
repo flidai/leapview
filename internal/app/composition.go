@@ -136,6 +136,18 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	servingStateRepo, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Database: store.SQLDB()})
+	if err != nil {
+		return fail(err)
+	}
+	activeScopes, err := servingStateRepo.ListActiveScopes(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	projectID, err := singletonProjectID(activeScopes, environment)
+	if err != nil {
+		return fail(err)
+	}
 	publicURL := firstConfigured(cfg.PublicURL, configuredListenURL(cfg.ListenAddr()))
 	workloadConfig := cfg.WorkloadConfig()
 	credentialMode := analyticsmodule.CredentialModeNonSecret
@@ -144,7 +156,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	}
 	analyticsModule, err := analyticsmodule.Build(ctx, analyticsmodule.Config{
 		Database: store.SQLDB(), CredentialMode: credentialMode,
-		CredentialTargetID: instanceID, CredentialEnvironment: string(environment),
+		CredentialTargetID: instanceID, CredentialProjectID: projectID, CredentialEnvironment: string(environment),
 		TargetCredentials: analyticsmodule.TargetCredentialConfig{
 			InfisicalBaseURL:               cfg.InfisicalBaseURL,
 			InfisicalUniversalClientID:     cfg.InfisicalUniversalClientID,
@@ -206,10 +218,6 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		if err := accessModule.SeedLocalDeveloperPlatformAdmin(ctx); err != nil {
 			return fail(err)
 		}
-	}
-	servingStateRepo, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Database: store.SQLDB()})
-	if err != nil {
-		return fail(err)
 	}
 	workloadController, err := workloadmodule.Build(ctx, workloadmodule.Config{Policy: workloadConfig})
 	if err != nil {
@@ -314,14 +322,6 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		CatalogPath: duckLakeCatalogPath, DataPath: cfg.DuckLakeDataDir(),
 	})
 	if err := retention.Run(ctx, false); err != nil {
-		return fail(err)
-	}
-	activeScopes, err := servingStateRepo.ListActiveScopes(ctx)
-	if err != nil {
-		return fail(err)
-	}
-	projectID, err := singletonProjectID(activeScopes, environment)
-	if err != nil {
 		return fail(err)
 	}
 	runtimeHostModule, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{
