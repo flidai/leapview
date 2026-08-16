@@ -4,8 +4,10 @@ package run
 import (
 	"context"
 	"errors"
+	"strings"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -35,59 +37,56 @@ const (
 )
 
 type RunRecord struct {
-	ID                   string `json:"id"`
-	WorkspaceID          string `json:"workspaceId"`
-	Environment          string `json:"-"`
-	ModelID              string `json:"modelId"`
-	ServingStateID       string `json:"servingStateId,omitempty"`
-	PrincipalID          string `json:"principalId,omitempty"`
-	PrincipalDisplayName string `json:"principalDisplayName,omitempty"`
-	TargetType           string `json:"targetType"`
-	TargetID             string `json:"targetId"`
-	TargetGeneration     int64  `json:"targetGeneration"`
-	TriggerType          string `json:"triggerType"`
-	ParentRunID          string `json:"parentRunId,omitempty"`
-	RetryOf              string `json:"retryOf,omitempty"`
-	Status               string `json:"status"`
-	CreatedAt            string `json:"createdAt"`
-	UpdatedAt            string `json:"updatedAt"`
-	StartedAt            string `json:"startedAt,omitempty"`
-	FinishedAt           string `json:"finishedAt,omitempty"`
-	Error                string `json:"error,omitempty"`
+	ID                   string                       `json:"id"`
+	Identity             projectgraph.ServingIdentity `json:"identity"`
+	SemanticModelID      projectgraph.ResourceID      `json:"semanticModelId"`
+	PipelineID           projectgraph.ResourceID      `json:"pipelineId,omitempty"`
+	PrincipalID          string                       `json:"principalId,omitempty"`
+	PrincipalDisplayName string                       `json:"principalDisplayName,omitempty"`
+	TargetType           string                       `json:"targetType"`
+	TargetID             string                       `json:"targetId"`
+	TargetRevision       int64                        `json:"targetRevision"`
+	TriggerType          string                       `json:"triggerType"`
+	ParentRunID          string                       `json:"parentRunId,omitempty"`
+	RetryOf              string                       `json:"retryOf,omitempty"`
+	Status               string                       `json:"status"`
+	CreatedAt            string                       `json:"createdAt"`
+	UpdatedAt            string                       `json:"updatedAt"`
+	StartedAt            string                       `json:"startedAt,omitempty"`
+	FinishedAt           string                       `json:"finishedAt,omitempty"`
+	Error                string                       `json:"error,omitempty"`
 }
 
 type RunInput struct {
-	WorkspaceID      string
-	Environment      string
-	ModelID          string
-	ServingStateID   string
-	PrincipalID      string
-	TargetType       string
-	TargetID         string
-	TargetGeneration int64
-	TriggerType      string
-	ParentRunID      string
-	RetryOf          string
-	JobKind          string
-	PayloadJSON      string
+	Identity        projectgraph.ServingIdentity
+	SemanticModelID projectgraph.ResourceID
+	PipelineID      projectgraph.ResourceID
+	PrincipalID     string
+	TargetType      string
+	TargetID        string
+	TargetRevision  int64
+	TriggerType     string
+	ParentRunID     string
+	RetryOf         string
+	JobKind         string
+	PayloadJSON     string
 }
 
 type JobRecord struct {
-	ID               string
-	WorkspaceID      string
-	Environment      string
-	ServingStateID   string
-	ModelID          string
-	Kind             string
-	PayloadJSON      string
-	RunID            string
-	TargetType       string
-	TargetID         string
-	TargetGeneration int64
-	TriggerType      string
-	AttemptCount     int
-	LeaseOwner       string
-	LeaseGeneration  int64
+	ID              string
+	Identity        projectgraph.ServingIdentity
+	SemanticModelID projectgraph.ResourceID
+	PipelineID      projectgraph.ResourceID
+	Kind            string
+	PayloadJSON     string
+	RunID           string
+	TargetType      string
+	TargetID        string
+	TargetRevision  int64
+	TriggerType     string
+	AttemptCount    int
+	LeaseOwner      string
+	LeaseRevision   int64
 }
 
 type JobQueueStats struct {
@@ -98,15 +97,15 @@ type JobQueueStats struct {
 
 type RunRepository interface {
 	CreateRun(ctx context.Context, input RunInput) (RunRecord, error)
-	GetRun(ctx context.Context, workspaceID, runID string) (RunRecord, error)
-	ListRuns(ctx context.Context, workspaceID string, page RunPage) ([]RunRecord, error)
-	ListTargetRuns(ctx context.Context, workspaceID, targetType, targetID string, page RunPage) ([]RunRecord, error)
-	ListChildRuns(ctx context.Context, workspaceID, parentRunID string) ([]RunRecord, error)
-	LatestTargetRun(ctx context.Context, workspaceID, environment, targetType, targetID string) (RunRecord, bool, error)
-	LatestSuccessfulTargetRun(ctx context.Context, workspaceID, environment, targetType, targetID string) (RunRecord, bool, error)
-	MarkRunRunning(ctx context.Context, workspaceID, runID string) (RunRecord, error)
-	MarkRunSucceeded(ctx context.Context, workspaceID, runID string) (RunRecord, error)
-	MarkRunFailed(ctx context.Context, workspaceID, runID, message string) (RunRecord, error)
+	GetRun(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
+	ListRuns(ctx context.Context, identity projectgraph.ServingIdentity, page RunPage) ([]RunRecord, error)
+	ListTargetRuns(ctx context.Context, identity projectgraph.ServingIdentity, targetType, targetID string, page RunPage) ([]RunRecord, error)
+	ListChildRuns(ctx context.Context, identity projectgraph.ServingIdentity, parentRunID string) ([]RunRecord, error)
+	LatestTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType, targetID string) (RunRecord, bool, error)
+	LatestSuccessfulTargetRun(ctx context.Context, identity projectgraph.ServingIdentity, targetType, targetID string) (RunRecord, bool, error)
+	MarkRunRunning(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
+	MarkRunSucceeded(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
+	MarkRunFailed(ctx context.Context, identity projectgraph.ServingIdentity, runID, message string) (RunRecord, error)
 }
 
 // LeaseFencedRunRepository contains worker-owned terminal transitions. The
@@ -123,7 +122,47 @@ type LeaseFencedRunRepository interface {
 }
 
 type RunPage struct {
-	Limit       int
-	After       string
-	Environment string
+	Limit int
+	After string
+}
+
+// Validate enforces the immutable serving scope carried by a queued run. The
+// generation is part of the identity and is never inferred from a workspace
+// or a mutable serving-state alias.
+func (input RunInput) Validate() error {
+	if err := input.Identity.Validate(); err != nil {
+		return err
+	}
+	if err := input.SemanticModelID.Validate(); err != nil {
+		return err
+	}
+	if input.PipelineID != "" {
+		if err := input.PipelineID.Validate(); err != nil {
+			return err
+		}
+	}
+	for name, value := range map[string]string{"target id": input.TargetID, "target type": input.TargetType, "trigger type": input.TriggerType} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return errors.New("refresh " + name + " must be canonical")
+		}
+	}
+	return nil
+}
+
+func (job JobRecord) Validate() error {
+	if err := job.Identity.Validate(); err != nil {
+		return err
+	}
+	if err := job.SemanticModelID.Validate(); err != nil {
+		return err
+	}
+	if job.PipelineID != "" {
+		if err := job.PipelineID.Validate(); err != nil {
+			return err
+		}
+	}
+	if job.ID == "" || job.ID != strings.TrimSpace(job.ID) || job.RunID == "" || job.RunID != strings.TrimSpace(job.RunID) {
+		return errors.New("refresh job and run identifiers must be canonical")
+	}
+	return nil
 }
