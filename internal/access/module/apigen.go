@@ -450,7 +450,7 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 			if !ok || definition.resolver == nil || target.Parameter != definition.pathParameter || !strings.Contains(contract.Path, "{"+target.Parameter+"}") {
 				return nil, false
 			}
-			return a.boundResourceResolver(definition), true
+			return a.boundResourceResolver(definition, strings.Contains(contract.Path, "{project}")), true
 		case "principal", "session", "token", "servicePrincipal", "conversation":
 			if scope != "" && scope != "principal" && scope != "platform" {
 				return nil, false
@@ -474,14 +474,16 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 	if !ok || definition.resolver == nil || !strings.Contains(contract.Path, "{"+definition.pathParameter+"}") {
 		return nil, false
 	}
-	return a.boundResourceResolver(definition), true
+	return a.boundResourceResolver(definition, strings.Contains(contract.Path, "{project}")), true
 }
 
-func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope) APIGenResourceResolver {
+func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope, assertProject bool) APIGenResourceResolver {
 	return func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
-		requestedProject, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
-		if err != nil || requestedProject != active {
-			return nil
+		if assertProject {
+			requestedProject, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+			if err != nil || requestedProject != active {
+				return nil
+			}
 		}
 		resources := definition.resolver(r, active)
 		if len(resources) == 0 {
