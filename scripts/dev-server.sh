@@ -265,7 +265,7 @@ mcp_smoke() {
   local query_arguments
   query_arguments="$(jq -ce '
     .result.structuredContent.items[0] as $item |
-    {model: $item.ref.id, measures: [{field: "sales_orders.revenue"}], limit: 1}
+    {model: $item.ref.id, measures: [{field: "revenue"}], limit: 1}
   ' <<<"$measure")" || {
     echo "Development MCP smoke check could not resolve a semantic measure" >&2
     return 1

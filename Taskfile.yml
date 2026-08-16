@@ -233,6 +233,7 @@ tasks:
     desc: Run administration and data browser tests
     cmds:
       - bun run test:data-explorer
+      - bun run test:project-page
       - bun run test:admin-page
       - bun run test:code-editor
       - bun run test:login-page

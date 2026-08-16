@@ -8,7 +8,7 @@ type RouteExpectation = {
 }
 
 const baseURL = Bun.env.LEAPVIEW_BASE_URL ?? 'http://localhost:8195'
-const dashboardPath = '/dashboards/visual-showcase/pages/overview'
+const dashboardPath = '/dashboards/dashboard:visual-showcase/pages/overview'
 const routes: RouteExpectation[] = [
   { path: '/', root: 'lv-catalog-page', shell: true },
   { path: dashboardPath, root: 'lv-dashboard-page', shell: true },
@@ -78,7 +78,7 @@ async function verifyRoute(route: RouteExpectation): Promise<void> {
 
 async function verifyEChartsFirstNavigation(): Promise<void> {
   const catalogPath = '/'
-  const dashboardHref = '/dashboards/visual-showcase'
+  const dashboardHref = '/dashboards/dashboard:visual-showcase'
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   const messages = collectBlockingConsoleMessages(page)
 
@@ -91,7 +91,7 @@ async function verifyEChartsFirstNavigation(): Promise<void> {
       await page.waitForFunction(() => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
         const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as Array<HTMLElement & { envelope?: any; shadowRoot: ShadowRoot }>
-        const chart = hosts.find((host) => host.envelope?.visualID === 'revenue_by_month')
+        const chart = hosts.find((host) => host.envelope?.visualID === 'revenue')
         const renderer = chart?.shadowRoot?.querySelector('.renderer')
         const canvas = renderer?.querySelector('canvas') as HTMLCanvasElement | null
         const context = canvas?.getContext('2d', { willReadFrequently: true })
@@ -206,7 +206,7 @@ async function verifyDashboardCommandDoesNotReopenUpdates(): Promise<void> {
 
     if (beforeUpdates !== 1) throw new Error(`dashboard command: initial /updates count=${beforeUpdates}, want 1`)
     if (updates.length !== 1) throw new Error(`dashboard command reopened /updates: count=${updates.length}`)
-    if (!commands.includes('POST /dashboards/visual-showcase/commands/filter')) {
+    if (!commands.includes('POST /dashboards/dashboard:visual-showcase/commands/filter')) {
       throw new Error(`dashboard command requests=${JSON.stringify(commands)}, want filter POST`)
     }
     if (failedResponses.length > 0) {
@@ -219,7 +219,7 @@ async function verifyDashboardCommandDoesNotReopenUpdates(): Promise<void> {
 }
 
 async function verifyFilterShowcase(): Promise<void> {
-  const path = '/dashboards/visual-showcase/pages/filters'
+  const path = '/dashboards/dashboard:visual-showcase/pages/filters'
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
   const messages = collectBlockingConsoleMessages(page)
 
@@ -449,7 +449,7 @@ type SpatialTileSnapshot = {
 }
 
 async function verifySpatialShowcaseMaps(): Promise<void> {
-  const path = '/dashboards/visual-showcase/pages/chart-map'
+  const path = '/dashboards/dashboard:visual-showcase/pages/chart-map'
   const visualIDs = ['customer_point_map', 'customer_revenue_heat_map', 'customer_density_map']
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
   const messages = collectBlockingConsoleMessages(page)
@@ -514,7 +514,7 @@ async function verifySpatialShowcaseMaps(): Promise<void> {
 }
 
 async function verifySpatialMapWindowing(): Promise<void> {
-  const path = '/dashboards/visual-showcase/pages/chart-map-scale'
+  const path = '/dashboards/dashboard:visual-showcase/pages/chart-map-scale'
   const origin = new URL(baseURL).origin
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   const messages = collectBlockingConsoleMessages(page)

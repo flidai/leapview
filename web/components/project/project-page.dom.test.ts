@@ -1,0 +1,119 @@
+import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { createServer, type Server } from 'node:http'
+import { readFile } from 'node:fs/promises'
+import { join, normalize } from 'node:path'
+import { chromium, type Browser } from '@playwright/test'
+
+let server: Server
+let baseURL = ''
+let browser: Browser
+const projectRoot = process.cwd()
+const root = join(projectRoot, '.tmp/project-page-test')
+
+beforeAll(async () => {
+  server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(url.searchParams.get('root') ?? 'project'))
+      return
+    }
+    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
+    const file = normalize(join(fileRoot, url.pathname))
+    if (!file.startsWith(fileRoot)) {
+      response.writeHead(404)
+      response.end('not found')
+      return
+    }
+    try {
+      response.setHeader('content-type', 'text/javascript')
+      response.end(await readFile(file))
+    } catch {
+      response.writeHead(404)
+      response.end('not found')
+    }
+  })
+  await new Promise<void>((resolve) => server.listen(0, resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('test server did not bind to a port')
+  baseURL = `http://127.0.0.1:${address.port}`
+  browser = await chromium.launch()
+})
+
+afterAll(async () => {
+  await browser?.close()
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+}, 15_000)
+
+test('project asset list renders current resource signals and filter event', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=project`)
+    await page.waitForFunction(() => customElements.get('lv-project-page'))
+    const state = await page.locator('lv-project-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      let detail: unknown = null
+      element.addEventListener('lv-project-asset-filter', (event: CustomEvent) => { detail = event.detail }, { once: true })
+      const root = element.shadowRoot!
+      const input = root.querySelector('input[type="search"]') as HTMLInputElement
+      input.value = 'orders'
+      input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await element.updateComplete
+      return { title: root.querySelector('h1')?.textContent?.trim(), rows: root.querySelectorAll('lv-record-table').length, detail }
+    })
+    expect(state.title).toBe('Develop')
+    expect(state.rows).toBe(1)
+    expect(state.detail).toEqual({ type: '', query: 'orders' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('connections list and asset detail render without workspace terminology', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=connections`)
+    await page.waitForFunction(() => customElements.get('lv-connections-page'))
+    const connections = await page.locator('lv-connections-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return { title: root.querySelector('h1')?.textContent?.trim(), rows: root.querySelectorAll('tbody tr').length, text: root.textContent }
+    })
+    expect(connections.title).toBe('Connections')
+    expect(connections.rows).toBe(1)
+    expect(connections.text.toLowerCase()).not.toContain('workspace')
+
+    await page.goto(`${baseURL}/?root=detail`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const detail = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return { title: root.querySelector('h1')?.textContent?.trim(), tabs: Array.from(root.querySelectorAll('.tabs a')).map((tab: Element) => tab.textContent?.trim()), text: root.textContent }
+    })
+    expect(detail.title).toBe('orders')
+    expect(detail.tabs).toContain('Details')
+    expect(detail.text.toLowerCase()).not.toContain('workspace')
+  } finally {
+    await page.close()
+  }
+})
+
+function testDocument(rootName: string): string {
+  const page = rootName === 'connections' ? {
+    kind: 'connections', title: 'Connections', description: 'Data connections.', connections: [{ id: 'conn', title: 'Warehouse', description: 'Primary warehouse.', detailHref: '/connections/conn', kind: 'DuckDB', scope: 'Project', sourceCount: 2, credentialStatus: 'Configured', lifecycle: lifecycle() }],
+  } : rootName === 'detail' ? {
+    kind: 'data', title: 'orders', assetId: 'orders', activeSection: 'details', asset: { id: 'orders', key: 'model_table:orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/data/orders', openHref: '/data/orders' }, breadcrumbs: [{ label: 'Develop', href: '/data' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/data/orders', active: true }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
+  } : {
+    kind: 'data', title: 'Develop', assetList: { assets: [{ id: 'orders', key: 'model_table:orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/data/orders', openHref: '/data/orders' }], empty: 'No assets.', searchHref: '/data', tabs: [{ id: '', label: 'All', href: '/data', active: true }] },
+  }
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'detail' ? 'lv-project-asset-page' : 'lv-project-page'
+  return `<!doctype html><html><body><main data-signals="${escapeHTML(JSON.stringify({ page, connectionAdmin: { command: {}, status: { loading: false, error: '', message: '' } } }))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+}
+
+function lifecycle() {
+  return { actions: [], assetId: 'conn', authenticationMode: 'none', bindingId: '', canManage: false, canTest: false, connectorKind: 'DuckDB', credentialEnvironment: '', credentialProjectId: '', database: '', diagnosticCode: '', enabled: true, exists: true, health: 'healthy', host: '', lastValidatedAt: '', logicalConnection: 'warehouse', objectScope: '', options: '', port: '', revision: 1, secretKey: '', secretPath: '', sourceIdentity: '', state: 'ready', statusLabel: 'Configured', tlsMode: '', tone: 'success', validatedVersion: '' }
+}
+
+function escapeHTML(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
