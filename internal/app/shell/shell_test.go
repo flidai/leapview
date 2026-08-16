@@ -141,7 +141,7 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 		{label: "Product", items: []struct {
 			label string
 			icon  string
-		}{{label: "General", icon: "settings"}, {label: "Workspaces", icon: "catalog"}}},
+		}{{label: "General", icon: "settings"}}},
 		{label: "Access", items: []struct {
 			label string
 			icon  string
@@ -175,10 +175,10 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 	}
 }
 
-func TestProviderFiltersAdminNavigationByPrivileges(t *testing.T) {
+func TestProviderFiltersAdminNavigationByAccess(t *testing.T) {
 	provider := Provider(Config{
 		Presentation: webpage.Presentation{ProductName: "LeapView"},
-		AdminAccess:  &AdminNavigationAccess{ManageGrants: true},
+		AdminAccess:  &AdminNavigationAccess{ManageIdentity: true},
 	})
 	layout := provider(webpage.Context{Active: "admin", PageID: "principals"})
 	chrome := layout.Signal.(Chrome)

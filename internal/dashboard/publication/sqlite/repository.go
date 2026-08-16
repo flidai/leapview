@@ -198,7 +198,7 @@ func ReconcileTx(
 	ctx context.Context,
 	tx transaction.Transaction,
 	input publication.ReconcileInput,
-	activatePrincipal func(context.Context, transaction.Transaction, string, string) error,
+	activatePrincipal func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error,
 ) error {
 	if err := input.ProjectID.Validate(); err != nil {
 		return fmt.Errorf("publication reconciliation requires project: %w", err)
@@ -245,7 +245,7 @@ func ReconcileTx(
 	sort.Strings(names)
 	for _, name := range names {
 		compiled := input.Publications[name]
-		if err := activatePrincipal(ctx, tx, input.ProjectID.String(), name); err != nil {
+		if err := activatePrincipal(ctx, tx, input.ProjectID, name); err != nil {
 			return fmt.Errorf("reconcile publication principal %q: %w", name, err)
 		}
 		origins, err := json.Marshal(compiled.AllowedOrigins)

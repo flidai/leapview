@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type runJobStore struct {
@@ -28,7 +29,7 @@ func (s *runJobStore) Cancel(context.Context, string) error { return nil }
 
 func TestEnqueueRunRejectsNonTransactionalFallback(t *testing.T) {
 	store := &runJobStore{}
-	module, err := Build(t.Context(), Config{Jobs: store})
+	module, err := Build(t.Context(), Config{Jobs: store, ProjectID: projectgraph.ResourceID("project:agent-test")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +45,7 @@ func TestEnqueueRunRejectsNonTransactionalFallback(t *testing.T) {
 
 func TestEnqueueChatRunRejectsNonTransactionalFallback(t *testing.T) {
 	store := &runJobStore{}
-	module, err := Build(t.Context(), Config{Jobs: store})
+	module, err := Build(t.Context(), Config{Jobs: store, ProjectID: projectgraph.ResourceID("project:agent-test")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestEnqueueChatRunRejectsNonTransactionalFallback(t *testing.T) {
 }
 
 func TestRunWorkflowPersistsBrowserDeliveryAtomically(t *testing.T) {
-	module, err := Build(t.Context(), Config{})
+	module, err := Build(t.Context(), Config{ProjectID: projectgraph.ResourceID("project:agent-test")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +78,7 @@ func TestRunWorkflowPersistsBrowserDeliveryAtomically(t *testing.T) {
 }
 
 func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
-	module, err := Build(t.Context(), Config{})
+	module, err := Build(t.Context(), Config{ProjectID: projectgraph.ResourceID("project:agent-test")})
 	if err != nil {
 		t.Fatal(err)
 	}

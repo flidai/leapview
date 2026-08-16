@@ -10,7 +10,6 @@ type MCPIdentity struct {
 	PrincipalID string
 	DevBypass   bool
 	Credential  access.APICredential
-	Restricted  bool
 }
 
 func (m *Module) MCPIdentity(r *http.Request) (MCPIdentity, bool) {

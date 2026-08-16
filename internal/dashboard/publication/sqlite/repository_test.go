@@ -69,7 +69,7 @@ func TestReconcileRejectsMissingProjectIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ReconcileTx(ctx, tx, publication.ReconcileInput{ServingStateID: "generation"}, func(context.Context, transaction.Transaction, string, string) error { return nil })
+	err = ReconcileTx(ctx, tx, publication.ReconcileInput{ServingStateID: "generation"}, func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error { return nil })
 	_ = tx.Rollback()
 	if err == nil {
 		t.Fatal("ReconcileTx accepted missing project identity")
@@ -97,7 +97,7 @@ func reconcile(t *testing.T, ctx context.Context, db *sql.DB, input publication.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileTx(ctx, tx, input, func(context.Context, transaction.Transaction, string, string) error { return nil }); err != nil {
+	if err := ReconcileTx(ctx, tx, input, func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error { return nil }); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}

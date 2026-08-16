@@ -90,12 +90,23 @@ func TestResolveChatTurnContextRejectsUnknownReference(t *testing.T) {
 }
 
 func TestContextCredentialUsesCanonicalCapability(t *testing.T) {
-	scope := agent.Scope{Credential: agent.CredentialScope{Restricted: true, Privileges: []string{string(access.CapabilityResourceUse)}}}
+	scope := agent.Scope{Credential: agent.CredentialScope{Restricted: true, Capabilities: []string{string(access.CapabilityResourceUse)}}}
 	if !contextCredentialAllowsCapability(scope, access.CapabilityResourceUse) {
 		t.Fatal("canonical capability was rejected")
 	}
 	if contextCredentialAllowsCapability(scope, access.CapabilityResourceEdit) {
 		t.Fatal("ungranted capability was accepted")
+	}
+}
+
+func TestContextCredentialPreservesDynamicAndDenyAllTokenSemantics(t *testing.T) {
+	dynamic := agent.Scope{Credential: agent.CredentialScope{Restricted: true}}
+	if !contextCredentialAllowsCapability(dynamic, access.CapabilityResourceRead) {
+		t.Fatal("dynamic token scope should defer to the active authorization snapshot")
+	}
+	denyAll := agent.Scope{Credential: agent.CredentialScope{Restricted: true, Capabilities: []string{}}}
+	if contextCredentialAllowsCapability(denyAll, access.CapabilityResourceRead) {
+		t.Fatal("explicit empty token scope should deny every capability")
 	}
 }
 

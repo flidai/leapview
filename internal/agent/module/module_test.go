@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestBuildConstructsAgentServiceAndPersistence(t *testing.T) {
@@ -17,7 +18,7 @@ func TestBuildConstructsAgentServiceAndPersistence(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(),
+		Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:agent-test"),
 		RecordAudit: func(context.Context, access.AuditEventInput) error {
 			return nil
 		},
@@ -37,7 +38,7 @@ func TestBuildRejectsEnabledAgentCommandsWithoutAuditRecorder(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	if _, err := Build(t.Context(), Config{Database: store.SQLDB()}); err == nil {
+	if _, err := Build(t.Context(), Config{Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:agent-test")}); err == nil {
 		t.Fatal("agent module accepted an enabled command service without an audit recorder")
 	}
 }

@@ -26,9 +26,9 @@ type Scope struct {
 }
 
 type CredentialScope struct {
-	ProjectID  string
-	Restricted bool
-	Privileges []string
+	ProjectID    string
+	Restricted   bool
+	Capabilities []string
 }
 
 type APIGenAuthorizeFunc func(ctx context.Context, scope Scope, operationID string) (agentcore.ToolResult, bool)

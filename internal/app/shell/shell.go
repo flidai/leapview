@@ -32,11 +32,9 @@ type Config struct {
 // principal may open. A nil value preserves the complete navigation for
 // callers that do not provide authorization context, such as static previews.
 type AdminNavigationAccess struct {
-	ManagePlatform     bool
-	ManageGrants       bool
-	ManageWorkspace    bool
-	ManagePublications bool
-	ViewAudit          bool
+	ManagePlatform bool
+	ManageIdentity bool
+	ViewAudit      bool
 }
 
 type Chrome struct {
@@ -200,8 +198,7 @@ func developNavigation() []Item {
 
 func adminNavigation(access *AdminNavigationAccess) []Group {
 	allowed := AdminNavigationAccess{
-		ManagePlatform: true, ManageGrants: true, ManageWorkspace: true,
-		ManagePublications: true, ViewAudit: true,
+		ManagePlatform: true, ManageIdentity: true, ViewAudit: true,
 	}
 	if access != nil {
 		allowed = *access
@@ -224,8 +221,8 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 		{
 			Label: "Access",
 			Items: filterItems([]conditionalItem{
-				{allowed: allowed.ManageGrants, item: Item{ID: "principals", Label: "Principals", Href: "/admin/principals", Icon: "users"}},
-				{allowed: allowed.ManageGrants, item: Item{ID: "groups", Label: "Groups", Href: "/admin/groups", Icon: "users-round"}},
+				{allowed: allowed.ManageIdentity, item: Item{ID: "principals", Label: "Principals", Href: "/admin/principals", Icon: "users"}},
+				{allowed: allowed.ManageIdentity, item: Item{ID: "groups", Label: "Groups", Href: "/admin/groups", Icon: "users-round"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "service-accounts", Label: "Service accounts", Href: "/admin/service-accounts", Icon: "bot"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "authentication", Label: "Authentication", Href: "/admin/authentication", Icon: "system"}},
 			}),
@@ -234,7 +231,7 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 			Label: "Data & sharing",
 			Items: filterItems([]conditionalItem{
 				{allowed: allowed.ManagePlatform, item: Item{ID: "storage", Label: "Storage", Href: "/admin/storage", Icon: "database"}},
-				{allowed: allowed.ManagePublications, item: Item{ID: "publications", Label: "Publications", Href: "/admin/publications", Icon: "globe"}},
+				{allowed: allowed.ManagePlatform, item: Item{ID: "publications", Label: "Publications", Href: "/admin/publications", Icon: "globe"}},
 			}),
 		},
 		{

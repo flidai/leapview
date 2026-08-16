@@ -40,9 +40,9 @@ type Scope struct {
 }
 
 type CredentialScope struct {
-	ProjectID  string
-	Privileges []string
-	Restricted bool
+	ProjectID    string
+	Capabilities []string
+	Restricted   bool
 }
 
 type ToolProvider func(scope Scope) []agentcore.ToolDefinition

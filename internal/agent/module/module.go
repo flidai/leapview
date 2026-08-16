@@ -35,7 +35,6 @@ type Module struct {
 	service            *agent.Service
 	jobs               JobStore
 	runWorkloadClass   string
-	globalProjectID    string
 	projectID          projectgraph.ResourceID
 	currentPrincipal   func(*http.Request) (Principal, bool)
 	dashboardMetrics   func(string) (queryruntime.Metrics, bool)
@@ -88,7 +87,6 @@ type Config struct {
 	Service            *agent.Service
 	Jobs               JobStore
 	RunWorkloadClass   string
-	GlobalProjectID    string
 	ProjectID          projectgraph.ResourceID
 	DashboardMetrics   func(string) (queryruntime.Metrics, bool)
 	RecordAudit        func(context.Context, access.AuditEventInput) error
@@ -130,9 +128,9 @@ type Scope struct {
 }
 
 type CredentialScope struct {
-	ProjectID  string
-	Privileges []string
-	Restricted bool
+	ProjectID    string
+	Capabilities []string
+	Restricted   bool
 }
 
 type Settings interface {
@@ -161,8 +159,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.RunWorkloadClass == "" {
 		config.RunWorkloadClass = "background"
 	}
-	if config.GlobalProjectID == "" {
-		config.GlobalProjectID = "_global"
+	if err := config.ProjectID.Validate(); err != nil {
+		return nil, fmt.Errorf("agent active project: %w", err)
 	}
 	service := config.Service
 	workflow, durableWorkflow := config.Jobs.(jobs.WorkflowRecorder)
@@ -207,7 +205,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		service: service, jobs: config.Jobs,
 		runWorkloadClass: config.RunWorkloadClass,
-		globalProjectID:  config.GlobalProjectID,
 		projectID:        config.ProjectID,
 		currentPrincipal: config.HTTP.CurrentPrincipal,
 		dashboardMetrics: config.DashboardMetrics,
@@ -266,9 +263,9 @@ func scopeFromAgent(scope agent.Scope) Scope {
 		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
-			ProjectID:  scope.Credential.ProjectID,
-			Privileges: append([]string(nil), scope.Credential.Privileges...),
-			Restricted: scope.Credential.Restricted,
+			ProjectID:    scope.Credential.ProjectID,
+			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
+			Restricted:   scope.Credential.Restricted,
 		},
 	}
 }
@@ -278,9 +275,9 @@ func scopeToAgent(scope Scope) agent.Scope {
 		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: agent.CredentialScope{
-			ProjectID:  scope.Credential.ProjectID,
-			Privileges: append([]string(nil), scope.Credential.Privileges...),
-			Restricted: scope.Credential.Restricted,
+			ProjectID:    scope.Credential.ProjectID,
+			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
+			Restricted:   scope.Credential.Restricted,
 		},
 	}
 }

@@ -781,8 +781,26 @@ type adminAgentCommandSignals struct {
 }
 
 func agentCredentialScope(credential access.APICredential) agent.CredentialScope {
-	_ = credential
-	return agent.CredentialScope{}
+	if credential.Authoring != nil {
+		capabilities := make([]string, len(credential.Authoring.Scope.Capabilities))
+		for index, capability := range credential.Authoring.Scope.Capabilities {
+			capabilities[index] = string(capability)
+		}
+		return agent.CredentialScope{
+			ProjectID: credential.Authoring.Scope.ProjectID.String(), Capabilities: capabilities, Restricted: true,
+		}
+	}
+	if credential.Token.ID == "" {
+		return agent.CredentialScope{}
+	}
+	var capabilities []string
+	if credential.Token.Capabilities != nil {
+		capabilities = make([]string, len(credential.Token.Capabilities))
+		for index, capability := range credential.Token.Capabilities {
+			capabilities[index] = string(capability)
+		}
+	}
+	return agent.CredentialScope{Capabilities: capabilities, Restricted: true}
 }
 
 func agentConversationDTO(row agent.Conversation) api.AgentConversationResponse {

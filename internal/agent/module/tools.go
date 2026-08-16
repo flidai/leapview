@@ -137,9 +137,9 @@ func ToolsScope(scope agentcap.Scope) agenttools.Scope {
 		ConversationID: scope.ConversationID,
 		DevAuthBypass:  scope.DevAuthBypass,
 		Credential: agenttools.CredentialScope{
-			ProjectID:  scope.Credential.ProjectID,
-			Restricted: scope.Credential.Restricted,
-			Privileges: append([]string{}, scope.Credential.Privileges...),
+			ProjectID:    scope.Credential.ProjectID,
+			Restricted:   scope.Credential.Restricted,
+			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
 		},
 	}
 }
@@ -151,9 +151,9 @@ func scopeFromTools(scope agenttools.Scope) agentcap.Scope {
 		ConversationID: scope.ConversationID,
 		DevAuthBypass:  scope.DevAuthBypass,
 		Credential: agentcap.CredentialScope{
-			ProjectID:  scope.Credential.ProjectID,
-			Restricted: scope.Credential.Restricted,
-			Privileges: append([]string{}, scope.Credential.Privileges...),
+			ProjectID:    scope.Credential.ProjectID,
+			Restricted:   scope.Credential.Restricted,
+			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
 		},
 	}
 }
@@ -199,10 +199,10 @@ func (m *Module) recordToolAudit(ctx context.Context, scope agentcap.Scope, capa
 
 func agentCredentialAllowsCapability(scope agentcap.Scope, capability access.Capability) bool {
 	credential := scope.Credential
-	if !credential.Restricted {
+	if !credential.Restricted || credential.Capabilities == nil {
 		return true
 	}
-	for _, allowed := range credential.Privileges {
+	for _, allowed := range credential.Capabilities {
 		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {
 			return true
 		}

@@ -15,7 +15,7 @@ type PublicationActivationInput struct {
 	Publications                       map[string]json.RawMessage
 }
 
-type PublicationPrincipalActivator func(context.Context, transaction.Transaction, string, string) error
+type PublicationPrincipalActivator func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error
 
 func ReconcilePublications(
 	ctx context.Context,

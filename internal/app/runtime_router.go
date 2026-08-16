@@ -855,7 +855,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			BuildVersion:       platform.buildIdentity.Version,
 			APIGenOperations:   agentAPIGenOperations(),
 			DashboardAuthoring: routes.dashboardAuthoring,
-			RunWorkloadClass:   string(workloadmodule.BackgroundClass), GlobalWorkspaceID: workloadmodule.GlobalWorkspace,
+			RunWorkloadClass:   string(workloadmodule.BackgroundClass), ProjectID: runtime.projectID,
 			Environment: func(r *http.Request) string {
 				return string(requestServingEnvironment(policy.defaultEnvironment, r))
 			},
@@ -902,14 +902,22 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return agentmodule.Scope{}, false
 				}
 				scope := agentmodule.Scope{
-					PrincipalID: identity.PrincipalID, DevAuthBypass: identity.DevBypass,
-					Credential: agentmodule.CredentialScope{
-						WorkspaceID: identity.Credential.Token.WorkspaceID,
-						Restricted:  identity.Restricted,
-					},
+					ProjectID: runtime.projectID.String(), PrincipalID: identity.PrincipalID, DevAuthBypass: identity.DevBypass,
 				}
-				for _, privilege := range identity.Credential.Token.Privileges {
-					scope.Credential.Privileges = append(scope.Credential.Privileges, string(privilege))
+				if identity.Credential.Authoring != nil {
+					scope.Credential.ProjectID = identity.Credential.Authoring.Scope.ProjectID.String()
+					scope.Credential.Restricted = true
+					for _, capability := range identity.Credential.Authoring.Scope.Capabilities {
+						scope.Credential.Capabilities = append(scope.Credential.Capabilities, string(capability))
+					}
+				} else if identity.Credential.Token.ID != "" {
+					scope.Credential.Restricted = true
+					if identity.Credential.Token.Capabilities != nil {
+						scope.Credential.Capabilities = make([]string, 0, len(identity.Credential.Token.Capabilities))
+						for _, capability := range identity.Credential.Token.Capabilities {
+							scope.Credential.Capabilities = append(scope.Credential.Capabilities, string(capability))
+						}
+					}
 				}
 				return scope, true
 			},
@@ -919,11 +927,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
 				ctx := accessmodule.WithPrincipal(request.Context(), principal)
-				if scope.Credential.Restricted || scope.Credential.WorkspaceID != "" || len(scope.Credential.Privileges) > 0 {
-					ctx = accessmodule.WithAPICredential(ctx, accessmodule.AgentAPICredential(
-						scope.PrincipalID, scope.Credential.WorkspaceID, scope.Credential.Privileges,
-					))
-				}
 				request = request.WithContext(ctx)
 				if apiDispatcher == nil {
 					return false
@@ -963,11 +966,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
 				ctx = accessmodule.WithPrincipal(ctx, principal)
-				if scope.Credential.Restricted || scope.Credential.WorkspaceID != "" || len(scope.Credential.Privileges) > 0 {
-					ctx = accessmodule.WithAPICredential(ctx, accessmodule.AgentAPICredential(
-						scope.PrincipalID, scope.Credential.WorkspaceID, scope.Credential.Privileges,
-					))
-				}
 				return ctx
 			},
 			HTTP: agentmodule.HTTPConfig{

@@ -252,7 +252,7 @@ func (m *Module) resolveContextResource(ctx context.Context, scope agent.Scope, 
 	return m.resolveResource(ctx, agenttools.Scope{
 		ProjectID: projectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
-		Credential:    agenttools.CredentialScope{ProjectID: scope.Credential.ProjectID, Privileges: append([]string(nil), scope.Credential.Privileges...), Restricted: scope.Credential.Restricted},
+		Credential:    agenttools.CredentialScope{ProjectID: scope.Credential.ProjectID, Capabilities: append([]string(nil), scope.Credential.Capabilities...), Restricted: scope.Credential.Restricted},
 	}, id, kind, capability)
 }
 
@@ -396,10 +396,10 @@ func resolvedVisualMetadata(component dashboard.PageVisual, visualID string, vis
 }
 
 func contextCredentialAllowsCapability(scope agent.Scope, capability access.Capability) bool {
-	if !scope.Credential.Restricted {
+	if !scope.Credential.Restricted || scope.Credential.Capabilities == nil {
 		return true
 	}
-	for _, allowed := range scope.Credential.Privileges {
+	for _, allowed := range scope.Credential.Capabilities {
 		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {
 			return true
 		}

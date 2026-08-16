@@ -540,19 +540,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				slog.Default().Warn("dashboard generation revalidation failed", "project", generation.Identity.ProjectID, "generation", generation.Identity.GenerationID, "error", revalidationErr)
 			}
 		},
-		ActivationHooks: deploymentmodule.ActivationHooks{
-			ApplyAccessSnapshot: accessmodule.ApplySnapshot,
-			ReconcilePublications: func(ctx context.Context, tx transaction.Transaction, input deploymentmodule.PublicationActivationInput) error {
-				return dashboardmodule.ReconcilePublications(ctx, tx, dashboardmodule.PublicationActivationInput{
-					ProjectID: input.ProjectID, WorkspaceID: input.WorkspaceID,
-					ServingStateID: input.ServingStateID, ActorID: input.ActorID,
-					Publications: input.Publications,
-				}, accessmodule.ActivateDashboardPublicationPrincipal)
-			},
-			ApplyDashboardAppearances: func(ctx context.Context, tx transaction.Transaction, input deploymentmodule.DashboardAppearanceActivationInput) error {
-				return dashboardmodule.ApplyAppearancePatches(ctx, tx, input.ProjectID, input.WorkspaceID, input.ActorID, input.Appearances)
-			},
-		},
+		ActivationHooks: deploymentmodule.ActivationHooks{},
 	}
 	runtimeMetrics := dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{
 		Provider: runtimeHostModule.Provider(), ProjectID: projectID.String(),
