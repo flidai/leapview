@@ -34,13 +34,21 @@ var (
 type PageParams = deploymentapi.PageParams
 
 type ReleasePort interface {
-	Get(context.Context, string, string) (release.Release, error)
+	Get(context.Context, projectgraph.ResourceID, string) (release.Release, error)
 	PublishCandidate(context.Context, release.PublishCandidateInput) (release.Release, error)
 	LinkDeployment(context.Context, string, string, string, string) error
 	LinkDeploymentTx(context.Context, transaction.Transaction, string, string, string, string) error
 	DeploymentRelease(context.Context, string, string) (string, string, error)
 	ListDeploymentIDs(context.Context, string) ([]string, error)
 	PriorDeploymentRelease(context.Context, string, string) (string, error)
+}
+
+func (m *Module) getRelease(ctx context.Context, project, releaseID string) (release.Release, error) {
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		return release.Release{}, err
+	}
+	return m.api.Releases.Get(ctx, projectID, releaseID)
 }
 
 type JobStore interface {
@@ -90,7 +98,7 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))
 		return
 	}
-	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
 		return
@@ -212,7 +220,7 @@ func (m *Module) GetDeployment(w http.ResponseWriter, r *http.Request, project, 
 		writeAPIError(w, r, err)
 		return
 	}
-	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 	if err != nil {
 		writeAPIError(w, r, err)
 		return
@@ -243,7 +251,7 @@ func (m *Module) ListDeployments(w http.ResponseWriter, r *http.Request, project
 		if err != nil {
 			continue
 		}
-		targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+		targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 		if err != nil {
 			continue
 		}
@@ -274,7 +282,7 @@ func (m *Module) CancelDeployment(w http.ResponseWriter, r *http.Request, projec
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
 		return
@@ -486,7 +494,7 @@ func (m *Module) ActivateDeployment(
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.Wrap("queue_unavailable", err))
 		return
 	}
-	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 	if err != nil {
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), err)
 		return

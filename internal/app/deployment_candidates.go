@@ -6,12 +6,13 @@ import (
 	"net/http"
 
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	"github.com/flidai/leapview/internal/runtimehost"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
 
 type runtimeReloader interface {
-	PrepareServingState(ctx context.Context, servingStateID string) (servingstatemodule.PreparedRuntime, error)
-	ActivatePrepared(prepared servingstatemodule.PreparedRuntime, activate func() error) error
+	PrepareServingState(ctx context.Context, servingStateID string) (*runtimehost.Prepared, error)
+	ActivatePrepared(prepared *runtimehost.Prepared, activate func() error) error
 }
 
 type servingStateRepository interface {

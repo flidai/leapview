@@ -32,7 +32,7 @@ func projectRefreshService(persistence persistenceInputs, workflow workflowInput
 		Publisher: refreshmodule.Publisher{
 			SemanticModelVersion: func(ctx context.Context, identity projectgraph.ServingIdentity, modelID projectgraph.ResourceID) {
 				if module := dashboards(); module != nil {
-					module.PublishSemanticModelRefresh(identity.ProjectID.String(), identity.Environment, modelID.String(), time.Now().UTC().Format(time.RFC3339))
+					module.PublishSemanticModelRefresh(identity.ProjectID, identity.Environment, modelID.String(), time.Now().UTC().Format(time.RFC3339))
 				}
 			},
 		},

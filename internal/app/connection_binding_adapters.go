@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
-	accessmodule "github.com/flidai/leapview/internal/access/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 )
 
@@ -23,7 +22,7 @@ func (connectionBindingDependenciesWithoutConsumers) Dependents(
 }
 
 type connectionRotationAuditRecorder struct {
-	record func(context.Context, accessmodule.AuditEventInput) error
+	record func(context.Context, access.AuditEventInput) error
 }
 
 func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
@@ -44,7 +43,7 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 	if recorder.record == nil {
 		return nil
 	}
-	return recorder.record(ctx, accessmodule.AuditEventInput{
+	return recorder.record(ctx, access.AuditEventInput{
 		PrincipalID:  principalID,
 		Action:       string(event.Operation),
 		ResourceKind: "connection",
@@ -56,7 +55,7 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 }
 
 type connectionAdministrationAuditRecorder struct {
-	record func(context.Context, accessmodule.AuditEventInput) error
+	record func(context.Context, access.AuditEventInput) error
 }
 
 func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministration(
@@ -73,7 +72,7 @@ func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministra
 	if recorder.record == nil {
 		return nil
 	}
-	return recorder.record(ctx, accessmodule.AuditEventInput{
+	return recorder.record(ctx, access.AuditEventInput{
 		PrincipalID:  event.Actor,
 		Action:       string(event.Action),
 		ResourceKind: "connection",

@@ -73,7 +73,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	return m, nil
 }
 func (m *Module) Reload(ctx context.Context) error { return m.registry.Reload(ctx) }
-func (m *Module) PrepareServingState(ctx context.Context, id string) (servingstate.PreparedRuntime, error) {
+func (m *Module) PrepareServingState(ctx context.Context, id string) (*runtimehost.Prepared, error) {
 	return m.registry.PrepareServingState(ctx, id)
 }
 func (m *Module) PrepareServingStateCandidate(ctx context.Context, input runtimehost.ServingStateCandidate) (*runtimehost.Prepared, error) {
@@ -84,6 +84,9 @@ func (m *Module) PrepareCandidate(ctx context.Context, input runtimehost.Candida
 }
 func (m *Module) PrepareAndRegisterCandidate(ctx context.Context, input runtimehost.CandidatePreparation) error {
 	return m.registry.PrepareAndRegisterCandidate(ctx, input)
+}
+func (m *Module) PrepareAndRegisterCandidateSet(ctx context.Context, inputs []runtimehost.CandidatePreparation) error {
+	return m.registry.PrepareAndRegisterCandidateSet(ctx, inputs)
 }
 func (m *Module) RegisterPreparedCandidate(reg runtimehost.CandidateRegistration, candidate servingstate.PreparedRuntime) error {
 	return m.registry.RegisterPreparedCandidate(reg, candidate)

@@ -291,6 +291,20 @@ func (r *Registry) PrepareAndRegisterCandidate(ctx context.Context, input Candid
 	}
 	return r.RegisterPreparedCandidate(input.Registration, candidate)
 }
+
+// PrepareAndRegisterCandidateSet prepares each candidate generation through
+// the same registry boundary used by single candidates. Candidate preparation
+// currently supplies one project generation at a time; keeping the set-shaped
+// port here preserves the deployment contract without introducing a second
+// lifecycle implementation.
+func (r *Registry) PrepareAndRegisterCandidateSet(ctx context.Context, inputs []CandidatePreparation) error {
+	for _, input := range inputs {
+		if err := r.PrepareAndRegisterCandidate(ctx, input); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func (r *Registry) AcquireCandidate(ctx context.Context, request CandidateLeaseRequest) (Lease, error) {
 	if r == nil || r.candidates == nil {
 		return nil, ErrCandidateRuntimeClosed

@@ -42,7 +42,6 @@ import (
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
-	projectmodule "github.com/flidai/leapview/internal/project/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -56,7 +55,6 @@ type QueryMetrics = dashboardmodule.Metrics
 
 type capabilityRoutes struct {
 	accessModule       *accessmodule.Module
-	developModule      *projectmodule.DevelopModule
 	managedDataModule  *manageddatamodule.Module
 	deploymentModule   *deploymentmodule.Module
 	dashboardModule    *dashboardmodule.Module
@@ -68,6 +66,7 @@ type capabilityRoutes struct {
 	adminModule        *adminmodule.Module
 	product            *adminmodule.ProductService
 	dashboardTelemetry dashboardmodule.Telemetry
+	projectCatalog     *projectcatalog.Service
 }
 
 type runtimeServices struct {
@@ -118,7 +117,7 @@ type persistenceInputs struct {
 	agentSettings    agentmodule.Settings
 	adminDatabase    *sql.DB
 	servingStateRepo servingStateRepository
-	accessRepo       accessmodule.Repository
+	accessRepo       access.Repository
 	product          *adminmodule.ProductService
 	productStatus    adminmodule.ProductStatus
 }
@@ -181,7 +180,7 @@ type dataAssemblyInputs struct {
 	AdminDatabase    *sql.DB
 	ServingStateRepo servingStateRepository
 	StorageRetention *servingstatemodule.Retention
-	AccessRepo       accessmodule.Repository
+	AccessRepo       access.Repository
 }
 
 type capabilityAssemblyInputs struct {
@@ -472,6 +471,7 @@ func buildApplicationSurfaces(
 	}
 	policy.requestLogging = httpConfig.RequestLogging
 	routes.managedDataModule = capabilities.ManagedDataModule
+	routes.projectCatalog = capabilities.ProjectCatalog
 	if runtime.runtimeHostModule != nil && routes.accessModule != nil {
 		authorizationSnapshot := func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
 			lease, err := runtime.runtimeHostModule.Acquire(ctx)
@@ -559,9 +559,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	canonicalAuthorizeObject := func(ctx context.Context, principalID string, capability access.Capability, resource access.ResourceRef) (bool, error) {
-		return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, runtime.projectID, []access.ResourceRef{resource}, capability)
-	}
 	var connectionAdministration analyticsmodule.ConnectionBindingAdministration
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
@@ -605,10 +602,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Dependencies: connectionBindingDependenciesWithoutConsumers{},
 				Now:          time.Now,
 				Audit: connectionRotationAuditRecorder{
-					record: routes.accessModule.RecordAudit,
+					record: accessAuditRecorder(routes.accessModule),
 				},
 				AdministrationAudit: connectionAdministrationAuditRecorder{
-					record: routes.accessModule.RecordAudit,
+					record: accessAuditRecorder(routes.accessModule),
 				},
 			},
 		)
@@ -620,8 +617,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
-			ProjectID: func(value string) string {
-				return value
+			ProjectID: func(value string) projectgraph.ResourceID {
+				return projectgraph.ResourceID(value)
 			},
 		},
 		Connections: analyticsmodule.ConnectionBindingAPIGenConfig{
@@ -648,30 +645,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return fmt.Errorf("build access module: %w", err)
 		}
 	}
-	if routes.developModule == nil {
-		identity := func(ctx context.Context) (projectgraph.ServingIdentity, error) {
-			if runtime.runtimeHostModule == nil {
-				return projectgraph.ServingIdentity{}, errors.New("active project runtime is unavailable")
-			}
-			lease, err := runtime.runtimeHostModule.Acquire(ctx)
-			if err != nil {
-				return projectgraph.ServingIdentity{}, err
-			}
-			defer lease.Release()
-			return lease.Identity(), nil
-		}
-		var err error
-		routes.developModule, err = projectmodule.BuildDevelop(projectmodule.DevelopConfig{
-			Catalog: capabilities.ProjectCatalog, ProjectID: func(*http.Request) (projectgraph.ResourceID, error) { return runtime.projectID, nil },
-			Identity: identity, CurrentPrincipal: func(r *http.Request) (string, bool) {
-				principal, ok := routes.accessModule.CurrentPrincipal(r)
-				return principal.ID, ok
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("build project develop module: %w", err)
-		}
-	}
 	if routes.deploymentModule == nil {
 		config := moduleWorkflow.deploymentConfig
 		config.Logger = platform.logger
@@ -683,10 +656,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return deploymentmodule.Principal{ID: principal.ID}, ok
 		}
 		config.CandidateAudit = func(ctx context.Context, event deploymentmodule.CandidateEvent) error {
-			return routes.accessModule.RecordAudit(ctx, accessmodule.AuditEventInput{
+			return recordAccessAudit(ctx, routes.accessModule, access.AuditEventInput{
 				PrincipalID: event.PrincipalID,
-				Action:      event.Action, TargetType: "project_candidate", TargetID: event.CandidateID,
-				Privilege: accessmodule.PrivilegeDeploy, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
+				Action:      event.Action, ResourceKind: "project", ResourceID: event.ProjectID.String(),
+				Capability: access.CapabilityProjectAdmin, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
 			})
 		}
 		config.CandidateSourceBlobAudit = candidateSourceBlobAuditRecorder(routes.accessModule)
@@ -702,7 +675,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		config.API = deploymentmodule.APIConfig{Releases: routes.releaseModule.DeploymentLinkage(), Jobs: platform.asyncJobs, Workflow: platform.jobModule, Committer: platform.jobModule}
 		config.PublicationAuthorization = deploymentmodule.PublicationAuthorizationConfig{
-			States: persistence.servingStateRepo, AuthorizeObject: canonicalAuthorizeObject,
+			States: persistence.servingStateRepo, AuthorizeResource: func(ctx context.Context, actor string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, actor, projectID, []access.ResourceRef{resource}, capability)
+			},
 			Bypass: func(actor string) bool {
 				return (platform.auth == nil || platform.auth.DevBypass()) && actor == accessmodule.LocalDeveloperPrincipal().ID
 			},
@@ -719,7 +694,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
 			Database:    database,
 			Authoring:   routes.dashboardAuthoring,
-			RecordAudit: routes.accessModule.RecordAudit,
+			RecordAudit: accessAuditRecorder(routes.accessModule),
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics:          runtime.metrics,
 				ProjectID:        runtime.projectID,
@@ -856,9 +831,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			APIGenOperations:   agentAPIGenOperations(),
 			DashboardAuthoring: routes.dashboardAuthoring,
 			RunWorkloadClass:   string(workloadmodule.BackgroundClass), ProjectID: runtime.projectID,
-			Environment: func(r *http.Request) string {
-				return string(requestServingEnvironment(policy.defaultEnvironment, r))
-			},
 			DashboardMetrics: func(projectID string) (QueryMetrics, bool) {
 				requested, err := projectgraph.NewResourceID(projectID)
 				if err != nil || requested != runtime.projectID || runtime.metrics == nil {
@@ -866,11 +838,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return runtime.metrics, true
 			},
-			AuthorizeAnyObject:       routes.accessModule.AuthorizeAnyObject,
-			SkipContextAuthorization: platform.auth == nil,
-			RecordAudit:              routes.accessModule.RecordAudit,
-			Documentation:            documentation,
-			Catalog:                  agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: capabilities.ProjectCatalog}),
+			RecordAudit:   accessAuditRecorder(routes.accessModule),
+			Documentation: documentation,
+			Catalog:       agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: routes.projectCatalog}),
 			QueryMetadata: func(ctx context.Context, projectID, modelID string) agentmodule.VisualQueryMetadata {
 				metadata := agentmodule.VisualQueryMetadata{ServingSnapshot: "unversioned"}
 				if routes.refreshModule == nil {
@@ -970,7 +940,18 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			HTTP: agentmodule.HTTPConfig{
 				Settings: persistence.agentSettings, Broker: runtime.broker,
-				PlatformAdmin:    routes.accessModule.IsPlatformAdmin,
+				PlatformAdmin: func(ctx context.Context, principalID string) (bool, error) {
+					capabilities, err := routes.accessModule.CurrentEffectiveCapabilities(ctx, principalID)
+					if err != nil {
+						return false, err
+					}
+					for _, capability := range capabilities {
+						if capability == access.CapabilityProjectAdmin {
+							return true, nil
+						}
+					}
+					return false, nil
+				},
 				CSRFToken:        routes.accessModule.CSRFToken,
 				CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
 				Layout: func(r *http.Request) webpage.Provider {
@@ -983,9 +964,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal, ok := platform.auth.Principal(r)
 					return agentmodule.Principal{ID: principal.ID, DevAuthBypass: principal.DevBypass}, ok
 				},
-				CurrentCredential: func(r *http.Request) (accessmodule.APICredential, bool) {
+				CurrentCredential: func(r *http.Request) (access.APICredential, bool) {
 					if platform.auth == nil {
-						return accessmodule.APICredential{}, false
+						return access.APICredential{}, false
 					}
 					return platform.auth.APICredential(r)
 				},
@@ -1026,9 +1007,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			QueryAuditReader: runtime.queryAuditProvider,
 			CSRFToken:        routes.accessModule.CSRFToken,
 			CurrentPrincipal: currentAdminPrincipal,
-			CurrentCredential: func(r *http.Request) (accessmodule.APICredential, bool) {
+			CurrentCredential: func(r *http.Request) (access.APICredential, bool) {
 				if platform.auth == nil {
-					return accessmodule.APICredential{}, false
+					return access.APICredential{}, false
 				}
 				return platform.auth.APICredential(r)
 			},

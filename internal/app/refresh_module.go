@@ -52,14 +52,15 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				return refreshmodule.AuthorizationPrincipal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 			},
-			CurrentCredential: func(r *http.Request) (accessmodule.APICredential, bool) {
+			CurrentCredential: func(r *http.Request) (access.APICredential, bool) {
 				return accessmodule.APICredentialFromContext(r.Context())
 			},
-			AuthorizeObject: func(context.Context, string, access.Capability, access.ResourceRef) (bool, error) { return true, nil },
+			AuthorizeObject: func(ctx context.Context, principalID string, capability access.Capability, resource access.ResourceRef) (bool, error) {
+				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, runtime.projectID, []access.ResourceRef{resource}, capability)
+			},
 		},
-		ApplyAccessSnapshot: accessmodule.ApplySnapshot,
-		Admission:           workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
-		Environment: string(defaultServingEnvironment(policy.defaultEnvironment)), Clock: workflow.refreshPipelineClock,
+		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
+		Clock:            workflow.refreshPipelineClock,
 		EnableDispatcher: false,
 		EnableScheduler:  false,
 		Logger:           platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,

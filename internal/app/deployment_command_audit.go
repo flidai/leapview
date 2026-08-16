@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 )
@@ -15,7 +16,7 @@ func candidateSourceBlobAuditRecorder(
 		if accessModule == nil {
 			return fmt.Errorf("candidate source blob access audit module is unavailable")
 		}
-		return accessModule.RecordAudit(ctx, accessmodule.AuditEventInput{
+		return recordAccessAudit(ctx, accessModule, access.AuditEventInput{
 			PrincipalID: event.PrincipalID,
 			Action:      event.Action, ResourceKind: "project", ResourceID: event.ProjectID.String(),
 			Capability: event.Capability, Status: event.Status,

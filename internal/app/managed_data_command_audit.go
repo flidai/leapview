@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 )
@@ -15,14 +16,14 @@ func managedDataCommandAuditRecorder(
 		if accessModule == nil {
 			return fmt.Errorf("managed-data access audit module is unavailable")
 		}
-		privilege, ok := accessmodule.ParsePrivilege(event.Privilege)
-		if !ok {
+		capability, err := access.ParseCapability(event.Privilege)
+		if err != nil {
 			return fmt.Errorf("managed-data audit privilege %q is invalid", event.Privilege)
 		}
-		return accessModule.RecordAudit(ctx, accessmodule.AuditEventInput{
+		return recordAccessAudit(ctx, accessModule, access.AuditEventInput{
 			PrincipalID: event.PrincipalID,
-			Action:      event.Action, TargetType: event.TargetType, TargetID: event.TargetID,
-			Privilege: privilege, Status: event.Status,
+			Action:      event.Action, ResourceKind: event.TargetType, ResourceID: event.TargetID,
+			Capability: capability, Status: event.Status,
 			RequestID: event.RequestID, CorrelationID: event.CorrelationID,
 			MetadataJSON: event.MetadataJSON,
 		})

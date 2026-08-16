@@ -238,6 +238,35 @@ func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.Queu
 	return m.service.QueuePipelineRefresh(ctx, input)
 }
 
+// DataVersion returns the latest persisted semantic-model version for the
+// active serving generation in the requested project/environment scope.
+func (m *Module) DataVersion(ctx context.Context, projectID, environment, modelID string) (AssetDataVersion, bool, error) {
+	if m == nil || m.schedules == nil || m.service.ServingStates == nil {
+		return AssetDataVersion{}, false, nil
+	}
+	project, err := projectgraph.NewResourceID(projectID)
+	if err != nil {
+		return AssetDataVersion{}, false, err
+	}
+	state, _, err := m.service.ServingStates.ActiveArtifact(ctx, project, servingstate.Environment(environment))
+	if err != nil {
+		return AssetDataVersion{}, false, err
+	}
+	identity, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
+	if err != nil {
+		return AssetDataVersion{}, false, err
+	}
+	model, err := projectgraph.NewResourceID(modelID)
+	if err != nil {
+		return AssetDataVersion{}, false, err
+	}
+	version, found, err := m.schedules.DataVersion(ctx, identity, model)
+	if err != nil || !found {
+		return AssetDataVersion{}, found, err
+	}
+	return AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}, true, nil
+}
+
 type activeServingStates interface {
 	ListActiveScopes(context.Context) ([]servingstate.ActiveScope, error)
 	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)

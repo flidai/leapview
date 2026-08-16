@@ -28,7 +28,6 @@ import (
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -214,6 +213,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	accessRepo, err := accessRepository(accessModule)
+	if err != nil {
+		return fail(err)
+	}
 	if !production {
 		if err := accessModule.SeedLocalDeveloperPlatformAdmin(ctx); err != nil {
 			return fail(err)
@@ -312,7 +315,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if managedDataResolution == nil {
 		return fail(errors.New("managed-data runtime resolver is required"))
 	}
-	managedDataResolver := appruntimefactory.NewManagedDataResolver(managedDataResolution)
+	managedDataResolver := appruntimefactory.NewManagedDataResolver(managedDataResolution, projectID, environment)
 	if err := refreshmodule.Recover(ctx, store.SQLDB(), string(environment)); err != nil {
 		return fail(err)
 	}
@@ -329,9 +332,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		ProjectID:   projectID,
 		Environment: environment,
 		ManagedData: managedDataResolver,
-		OnDrained: func(_ servingstatemodule.ID, _ int64, protected []int64) {
+		OnDrained: func(_ servingstatemodule.ID, _ int64) {
 			go func() {
-				if err := retention.RunWithProtected(context.Background(), false, protected); err != nil {
+				if err := retention.Run(context.Background(), false); err != nil {
 					slog.Default().Warn("storage retention cleanup failed after runtime drain", "error", err)
 				}
 			}()
@@ -428,7 +431,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			},
 			Now: time.Now,
 			Audit: connectionRotationAuditRecorder{
-				record: accessModule.RecordAudit,
+				record: accessAuditRecorder(accessModule),
 			},
 		},
 	)
@@ -438,7 +441,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	identity := buildinfo.Current()
 	deploymentConfig := deploymentmodule.Config{
 		Database: store.SQLDB(), States: servingStateRepo, Runtime: deploymentRuntime,
-		ManagedData: managedDataResolver, DeploymentMetadata: managedDataModule.DeploymentMetadata(),
+		ManagedData: managedDataResolver,
 		Protected: protectedPublishingTarget(
 			production,
 			cfg.EvaluationMode,
@@ -461,17 +464,18 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			projectID string,
 			environment string,
 		) error {
-			allowed, err := accessModule.AuthorizeCredentialEvidence(
-				ctx,
-				accessmodule.CredentialEvidence{
-					Class: string(actor.CredentialClass), ID: actor.CredentialID,
-					PrincipalID: actor.PrincipalID,
-					ExpiresAt:   actor.CredentialExpiresAt,
-				},
-				projectID,
-				environment,
-				accessmodule.PrivilegeApproveDeployment,
-			)
+			requestedProject, err := projectgraph.NewResourceID(projectID)
+			if err != nil {
+				return err
+			}
+			if requestedProject.String() != projectID {
+				return deploymentmodule.ErrApprovalForbidden
+			}
+			project, err := access.NewResourceRef(requestedProject, projectgraph.KindProject)
+			if err != nil {
+				return err
+			}
+			allowed, err := authorizeProjectResources(ctx, accessModule, runtimeHostModule, actor.PrincipalID, requestedProject, []access.ResourceRef{project}, access.CapabilityProjectAdmin)
 			if err != nil {
 				return err
 			}
@@ -486,17 +490,18 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			projectID string,
 			environment string,
 		) error {
-			allowed, err := accessModule.AuthorizeCredentialEvidence(
-				ctx,
-				accessmodule.CredentialEvidence{
-					Class: string(actor.CredentialClass), ID: actor.CredentialID,
-					PrincipalID: actor.PrincipalID,
-					ExpiresAt:   actor.CredentialExpiresAt,
-				},
-				projectID,
-				environment,
-				accessmodule.PrivilegeActivateDeployment,
-			)
+			requestedProject, err := projectgraph.NewResourceID(projectID)
+			if err != nil {
+				return err
+			}
+			if requestedProject.String() != projectID {
+				return deploymentmodule.ErrActivationForbidden
+			}
+			project, err := access.NewResourceRef(requestedProject, projectgraph.KindProject)
+			if err != nil {
+				return err
+			}
+			allowed, err := authorizeProjectResources(ctx, accessModule, runtimeHostModule, actor.PrincipalID, requestedProject, []access.ResourceRef{project}, access.CapabilityProjectAdmin)
 			if err != nil {
 				return err
 			}
@@ -543,7 +548,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		ActivationHooks: deploymentmodule.ActivationHooks{},
 	}
 	runtimeMetrics := dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{
-		Provider: runtimeHostModule.Provider(), ProjectID: projectID.String(),
+		Provider: runtimeHostModule.Provider(), ProjectID: projectID,
 		PublishedCompilationReader: authoringApplication.PublishedCompilationReader(),
 	})
 	auth := accessModule.Auth()
@@ -554,6 +559,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		dataAssemblyInputs{
 			Database: store.SQLDB(), PlatformHealth: store, AdminDatabase: store.SQLDB(),
 			ServingStateRepo: servingStateRepo, StorageRetention: retention,
+			AccessRepo:       accessRepo,
 		},
 		capabilityAssemblyInputs{
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,

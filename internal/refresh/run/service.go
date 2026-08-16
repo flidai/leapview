@@ -13,6 +13,7 @@ import (
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
 	refreshplan "github.com/flidai/leapview/internal/refresh/plan"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -61,8 +62,8 @@ type MaterializeInput struct {
 }
 
 type RuntimeHost interface {
-	PrepareServingState(context.Context, string) (servingstate.PreparedRuntime, error)
-	ActivatePrepared(servingstate.PreparedRuntime, func() error) error
+	PrepareServingState(context.Context, string) (*runtimehost.Prepared, error)
+	ActivatePrepared(*runtimehost.Prepared, func() error) error
 }
 
 type RetentionRunner interface {
