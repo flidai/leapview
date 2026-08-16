@@ -166,7 +166,14 @@ func (r *Repository) RetainCandidateProvenance(ctx context.Context, projectID pr
 	if err != nil {
 		return release.Provenance{}, err
 	}
-	return r.CandidateProvenance(ctx, projectID, p.Candidate.ID, p.Candidate.Revision)
+	retained, err := r.CandidateProvenance(ctx, projectID, p.Candidate.ID, p.Candidate.Revision)
+	if err != nil {
+		return release.Provenance{}, err
+	}
+	if retained.Digest != p.Digest {
+		return release.Provenance{}, release.ErrConflict
+	}
+	return retained, nil
 }
 func (r *Repository) CandidateProvenance(ctx context.Context, projectID projectgraph.ResourceID, candidateID string, revision int64) (release.Provenance, error) {
 	if projectID.Validate() != nil || candidateID == "" || candidateID != strings.TrimSpace(candidateID) {
