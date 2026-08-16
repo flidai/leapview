@@ -503,7 +503,9 @@ func buildApplicationSurfaces(
 			}
 			return snapshot.EffectiveCapabilities(subjects)
 		})
-		routes.accessModule.SetCurrentProjectID(runtimeConfig.ProjectIDResolver)
+		if runtimeConfig.ProjectIDResolver != nil {
+			routes.accessModule.SetCurrentProjectID(runtimeConfig.ProjectIDResolver)
+		}
 		if routes.managedDataModule != nil {
 			routes.managedDataModule.SetAuthorizeConnection(authorizeConnection)
 		}
