@@ -418,9 +418,8 @@ func (c *Controller) QualifyInstalledCandidate(
 		"env",
 		"LEAPVIEW_API_TOKEN="+workloadToken,
 		"LEAPVIEW_TARGET=http://localhost:8080",
-		"leapview", "semantic-models",
-		"--workspace", "evaluation",
-		"query", "sales",
+		"leapview", "api", "call", "querySemanticModel",
+		"--path", "model=semantic-model:sales",
 		"--body-json", queryBody,
 	)
 	if err != nil {
@@ -454,7 +453,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		MetricsToken:         metricsToken,
 		ContainerID:          containerID,
 		ComposeProject:       primaryProject,
-		ProjectID:            "leapview-evaluation",
+		ProjectID:            "project:leapview-evaluation",
 		Image:                imageReference,
 	})
 	if err != nil {
@@ -934,7 +933,7 @@ func verifyQualificationDenialsAndMetrics(
 	request, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		"https://localhost/api/v1/workspaces/evaluation/semantic-models/sales/query",
+		"https://localhost/api/v1/semantic-models/semantic-model:sales/query",
 		strings.NewReader(queryBody),
 	)
 	if err != nil {

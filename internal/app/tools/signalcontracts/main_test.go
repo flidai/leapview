@@ -16,7 +16,7 @@ func TestGenerationTargetsPartitionCapabilityRoots(t *testing.T) {
 	}
 
 	wantRoots := map[string][]string{
-		"access":    {"LoginPageEnvelope", "WorkspaceAccessSignal"},
+		"access":    {"LoginPageEnvelope"},
 		"admin":     {"AdminPageEnvelope", "AdminQueryHistoryCommand"},
 		"agent":     {"AgentContextSignal", "ChatEnvelope"},
 		"dashboard": {"DashboardEnvelope", "DashboardVisualizationSignal"},
@@ -64,7 +64,6 @@ func TestGeneratedOutputsContainOnlyNeededCapabilityModels(t *testing.T) {
 	assertContains("internal/access/ui/signals/models.gen.go", "LoginPageSignal")
 	assertOmits("internal/access/ui/signals/models.gen.go", "AdminPageSignal")
 	assertContains("internal/admin/ui/signals/models.gen.go", "AdminPageSignal")
-	assertOmits("internal/admin/ui/signals/models.gen.go", "WorkspacePageSignal")
 	assertContains("internal/agent/ui/signals/models.gen.go", "ChatSignal")
 	assertOmits("internal/agent/ui/signals/models.gen.go", "AdminPageSignal")
 	assertContains("internal/dashboard/ui/signals/models.gen.go", "DashboardPageSignal")
