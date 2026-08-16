@@ -62,7 +62,8 @@ func authoredDashboardSources(manifest projectmanifest.Project, projectID projec
 			Metadata: dashboardauthoring.AuthoredDashboardMetadata{
 				Project: projectID, Name: source.Metadata.Name, Title: source.Metadata.Title,
 				Description: source.Metadata.Description, Owner: source.Metadata.Owner,
-				Tags: append([]string(nil), source.Metadata.Tags...),
+				Domain: source.Metadata.Domain,
+				Tags:   append([]string(nil), source.Metadata.Tags...),
 			},
 			Path: source.Path,
 		}

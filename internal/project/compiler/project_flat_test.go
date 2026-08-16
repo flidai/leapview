@@ -36,6 +36,69 @@ func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
 	}
 }
 
+func TestDashboardDomainRoundTripsCompiledManifestAndExport(t *testing.T) {
+	files := map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {kind: managed}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec: {connection: warehouse, format: csv, path: orders.csv}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders_model}
+spec: {source: orders, primaryKey: order_id}
+`,
+		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic:sales, name: sales}
+spec:
+  tables: [orders_model]
+  measures: {order_count: {fact: orders_model, aggregation: count, empty: zero}}
+`,
+		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard, domain: revenue}
+spec:
+  title: Sales Dashboard
+  semanticModel: sales
+  visuals:
+    order_count:
+      type: kpi
+      query: {measures: {order_count: null}}
+  pages: [{id: overview, title: Overview, components: []}]
+`,
+	}
+	project := flatProjectFixtureYAMLForFiles(files)
+	project = strings.Replace(project, "dashboards: {include: []}", "dashboards: {include: [dashboards/*.yaml]}", 1)
+	projectPath := writeFlatProjectFixtureWithProject(t, project, files)
+	compiled, err := LoadProject(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProject() error = %v", err)
+	}
+	source, ok := compiled.Manifest.DashboardSources["dashboard:sales"]
+	if !ok {
+		t.Fatal("compiled manifest omitted dashboard source")
+	}
+	if source.Metadata.Domain != "revenue" {
+		t.Fatalf("compiled dashboard source domain = %q, want revenue", source.Metadata.Domain)
+	}
+	encoded, err := ExportDashboard(source.Document, dashboardauthoring.DashboardExportMetadata{
+		Name: source.Metadata.Name, Title: source.Metadata.Title, Description: source.Metadata.Description,
+		Owner: source.Metadata.Owner, Domain: source.Metadata.Domain, Tags: source.Metadata.Tags,
+	})
+	if err != nil {
+		t.Fatalf("ExportDashboard() error = %v", err)
+	}
+	if !strings.Contains(string(encoded), "domain: revenue") {
+		t.Fatalf("canonical dashboard export omitted authored domain: %s", encoded)
+	}
+}
+
 func TestResourceResolverRejectsAmbiguousNames(t *testing.T) {
 	_, err := newResourceResolver([]projectgraph.Resource{
 		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},

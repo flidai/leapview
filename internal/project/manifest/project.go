@@ -11,11 +11,14 @@ import (
 // DashboardSourceMetadata retains descriptive authored identity alongside a
 // normalized dashboard document. It carries no serving namespace.
 type DashboardSourceMetadata struct {
-	Name        string   `json:"name"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Owner       string   `json:"owner"`
-	Tags        []string `json:"tags,omitempty"`
+	Name        string `json:"name"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Owner       string `json:"owner"`
+	// Domain is descriptive authored metadata. It is never consulted for
+	// serving, authorization, or any other access decision.
+	Domain string   `json:"domain,omitempty"`
+	Tags   []string `json:"tags,omitempty"`
 }
 
 type DashboardSource struct {

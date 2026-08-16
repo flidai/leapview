@@ -11,7 +11,10 @@ type AuthoredDashboardMetadata struct {
 	Title       string
 	Description string
 	Owner       string
-	Tags        []string
+	// Domain is descriptive authored metadata and never an authorization
+	// namespace or serving scope.
+	Domain string
+	Tags   []string
 }
 
 // AuthoredDashboardSource is an immutable, capability-scoped authored
@@ -32,7 +35,9 @@ type DashboardExportMetadata struct {
 	Title       string
 	Description string
 	Owner       string
-	Tags        []string
+	// Domain is descriptive authored metadata and is not used for auth.
+	Domain string
+	Tags   []string
 }
 
 // DashboardExporter emits a deterministic canonical dashboard resource.

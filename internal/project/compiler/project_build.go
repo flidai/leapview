@@ -235,7 +235,7 @@ func projectManifest(project Project) (manifest.Project, error) {
 		}
 		result.DashboardDefinitions[id] = compiled.Definition
 		meta := project.DashboardMetadata[name]
-		result.DashboardSources[id] = manifest.DashboardSource{Document: compiled.Normalized, Metadata: manifest.DashboardSourceMetadata{Name: name, Title: dashboard.Title, Description: dashboard.Description, Owner: meta.Owner, Tags: append([]string(nil), meta.Tags...)}, Path: projectRelativePath(&project, project.DashboardPaths[name])}
+		result.DashboardSources[id] = manifest.DashboardSource{Document: compiled.Normalized, Metadata: manifest.DashboardSourceMetadata{Name: name, Title: dashboard.Title, Description: dashboard.Description, Owner: meta.Owner, Domain: meta.Domain, Tags: append([]string(nil), meta.Tags...)}, Path: projectRelativePath(&project, project.DashboardPaths[name])}
 		result.NameIndex.Dashboards[name] = id
 	}
 	for name, value := range project.Publications {

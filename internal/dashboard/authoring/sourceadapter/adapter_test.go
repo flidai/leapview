@@ -300,7 +300,7 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 	document := authoredDocument("project-sales", "Project title")
 	runtime := &fakeRuntime{source: authoring.AuthoredDashboardSource{
 		Document: document,
-		Metadata: authoring.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner"},
+		Metadata: authoring.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: document.Title, Owner: "project-owner", Domain: "revenue"},
 		Path:     "dashboards/project-sales.yaml",
 	}}
 	repository := &fakeRepository{}
@@ -316,7 +316,7 @@ func TestExportAndProjectForkPreserveAuthoredDocumentWithoutPublishOrDeploy(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(exported), "semanticModel: sales") || !strings.Contains(string(exported), "title: Project title") {
+	if !strings.Contains(string(exported), "semanticModel: sales") || !strings.Contains(string(exported), "title: Project title") || !strings.Contains(string(exported), "domain: revenue") {
 		t.Fatalf("exported YAML = %s", exported)
 	}
 	result, err := adapter.Fork(t.Context(), sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, ActorID: "actor", Title: "Forked project", IdempotencyKey: "project-fork"})

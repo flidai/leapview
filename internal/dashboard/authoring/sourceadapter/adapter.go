@@ -387,7 +387,8 @@ func (a *Adapter) exportSource(source Source) ([]byte, error) {
 	return a.exportDashboard(source.Document, authoring.DashboardExportMetadata{
 		Name: source.Metadata.Name, Project: source.Metadata.Project,
 		Title: source.Metadata.Title, Description: source.Metadata.Description,
-		Owner: source.Metadata.Owner, Tags: append([]string(nil), source.Metadata.Tags...),
+		Owner: source.Metadata.Owner, Domain: source.Metadata.Domain,
+		Tags: append([]string(nil), source.Metadata.Tags...),
 	})
 }
 

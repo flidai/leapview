@@ -38,6 +38,7 @@ type canonicalDashboardMetadata struct {
 	DisplayName string   `yaml:"displayName,omitempty"`
 	Description string   `yaml:"description,omitempty"`
 	Owner       string   `yaml:"owner,omitempty"`
+	Domain      string   `yaml:"domain,omitempty"`
 	Tags        []string `yaml:"tags,omitempty"`
 }
 
@@ -372,7 +373,8 @@ func ExportDashboard(document dashboardauthoring.Dashboard, metadata dashboardau
 		Metadata: canonicalDashboardMetadata{
 			ID: document.ID.String(), Name: name, DisplayName: title,
 			Description: description, Owner: metadata.Owner,
-			Tags: append([]string(nil), metadata.Tags...),
+			Domain: metadata.Domain,
+			Tags:   append([]string(nil), metadata.Tags...),
 		},
 		Spec: canonicalDashboardSpec{
 			Title: title, SemanticModel: document.SemanticModel.String(),
