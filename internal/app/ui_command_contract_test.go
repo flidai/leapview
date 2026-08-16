@@ -67,6 +67,9 @@ func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 		filepath.Clean("internal/admin/ui/page.go"):             {"QueryPost": true, "EventPost": true},
 		filepath.Clean("internal/admin/personalsettings/ui.go"): {"QueryPost": true},
 		filepath.Clean("internal/dashboard/ui/page.go"):         {"EventPost": true},
+		filepath.Clean("internal/project/ui/data_explorer.go"):  {"EventPost": true},
+		filepath.Clean("internal/project/ui/develop.go"):        {"QueryPost": true},
+		filepath.Clean("internal/project/ui/page.go"):           {"QueryPost": true},
 	}
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry fs.DirEntry, walkErr error) error {

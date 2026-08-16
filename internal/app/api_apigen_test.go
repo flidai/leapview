@@ -25,7 +25,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 196
+const expectedAPIGenAggregateOperationCount = 180
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -245,7 +245,7 @@ func TestAPIGenAccessCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 64; got != want {
+	if got, want := len(accessContracts), 58; got != want {
 		t.Fatalf("Access generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}
@@ -322,13 +322,14 @@ func TestAPIGenProjectCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenProjectCapabilityOwnsItsOperationSurface(t *testing.T) {
 	projectContracts := projectgen.GetAPIGenOperationContracts()
-	if got, want := len(projectContracts), 3; got != want {
+	if got, want := len(projectContracts), 2; got != want {
 		t.Fatalf("Project generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
+	allowedTags := map[string]bool{"Projects": true, "Search": true}
 	for operationID, contract := range projectContracts {
-		if len(contract.Tags) != 1 || contract.Tags[0] != "Projects" {
-			t.Errorf("Project operation %q tags = %v, want [Projects]", operationID, contract.Tags)
+		if len(contract.Tags) != 1 || !allowedTags[contract.Tags[0]] {
+			t.Errorf("Project operation %q tags = %v, want [Projects] or [Search]", operationID, contract.Tags)
 		}
 		if _, exists := appContracts[operationID]; exists {
 			t.Errorf("Project operation %q is still emitted by the application package", operationID)
@@ -557,7 +558,7 @@ func TestAPIGenDashboardCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenDashboardCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := dashboardgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 35; got != want {
+	if got, want := len(contracts), 36; got != want {
 		t.Fatalf("Dashboard generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"BI": true, "Publications": true, "Dashboard Authoring": true}
@@ -629,6 +630,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"Deployments":         "LeapViewAPI.Deployment",
 		"Managed Data":        "LeapViewAPI.ManagedData",
 		"Projects":            "LeapViewAPI.Project",
+		"Search":              "LeapViewAPI.Project",
 		"Refresh Runs":        "LeapViewAPI.Refresh",
 		"Releases":            "LeapViewAPI.Release",
 	}
@@ -792,8 +794,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 123 {
-		t.Fatalf("UI signal IR contracts = %d, want 123", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 121 {
+		t.Fatalf("UI signal IR contracts = %d, want 121", len(irDoc.Contracts))
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false

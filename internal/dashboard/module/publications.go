@@ -213,8 +213,8 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, errPublicationCommandAuditUnavailable)
 		return
 	}
-	row, lookupErr := m.dashboardPublication(w, r, projectID, name)
-	if lookupErr {
+	row, ok := m.dashboardPublication(w, r, projectID, name)
+	if !ok {
 		return
 	}
 	allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID.String(), row.Dashboard, access.CapabilityResourcePublish)
