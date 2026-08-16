@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Connection
 metadata:
+  id: connection:docs
   name: docs
-  title: Documentation fixtures
+  displayName: Documentation fixtures
 spec:
   kind: managed
   credentials:

@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:docs.market_ohlc
   name: docs.market_ohlc
-  title: Documentation market OHLC
+  displayName: Documentation market OHLC
 spec:
   connection: docs
   path: market_ohlc.csv

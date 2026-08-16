@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
-kind: ModelTable
+kind: Model
 metadata:
-  workspace: visual_examples
+  id: model:market_ohlc
   name: market_ohlc
-  title: Monthly market prices
+  displayName: Monthly market prices
 spec:
   primaryKey: month
   sources: [docs.market_ohlc]

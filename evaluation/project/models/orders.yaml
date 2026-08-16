@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
-kind: ModelTable
+kind: Model
 metadata:
-  workspace: evaluation
+  id: model:orders
   name: orders
-  title: Governed Orders
+  displayName: Governed Orders
   description: Order-grain synthetic sales data with typed dimensions and revenue.
 spec:
   primaryKey: order_id

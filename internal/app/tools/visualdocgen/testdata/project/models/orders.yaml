@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
-kind: ModelTable
+kind: Model
 metadata:
-  workspace: visual_examples
+  id: model:orders
   name: orders
-  title: Documentation orders
+  displayName: Documentation orders
 spec:
   primaryKey: order_id
   sources:

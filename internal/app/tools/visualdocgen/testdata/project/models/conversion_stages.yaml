@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
-kind: ModelTable
+kind: Model
 metadata:
-  workspace: visual_examples
+  id: model:conversion_stages
   name: conversion_stages
-  title: Conversion stages
+  displayName: Conversion stages
 spec:
   primaryKey: stage
   sources: [docs.conversion_stages]

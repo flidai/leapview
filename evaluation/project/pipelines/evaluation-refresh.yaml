@@ -1,7 +1,7 @@
 apiVersion: leapview.dev/v1
-kind: RefreshPipeline
+kind: Pipeline
 metadata:
-  workspace: evaluation
+  id: pipeline:evaluation-refresh
   name: evaluation-refresh
 spec:
   semanticModel: sales

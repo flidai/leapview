@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
-  workspace: visual_examples
+  id: dashboard:visual-docs
   name: visual-docs
-  title: Visual documentation
+  displayName: Visual documentation
 spec:
   semanticModel: visual_examples
   visuals:

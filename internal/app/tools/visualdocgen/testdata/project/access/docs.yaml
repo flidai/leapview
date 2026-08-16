@@ -1,7 +1,7 @@
 apiVersion: leapview.dev/v1
-kind: WorkspaceGroup
+kind: Group
 metadata:
-  workspace: visual_examples
+  id: group:documentation-readers
   name: documentation-readers
 spec:
   members:

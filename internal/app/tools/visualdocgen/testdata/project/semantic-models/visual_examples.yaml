@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata:
-  workspace: visual_examples
+  id: semantic-model:visual_examples
   name: visual_examples
-  title: Visual documentation examples
+  displayName: Visual documentation examples
 spec:
   tables:
   - orders

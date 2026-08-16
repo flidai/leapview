@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:docs.service_teams
   name: docs.service_teams
-  title: Documentation service teams
+  displayName: Documentation service teams
 spec:
   connection: docs
   path: service_teams.csv

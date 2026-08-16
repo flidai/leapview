@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
-kind: ModelTable
+kind: Model
 metadata:
-  workspace: visual_examples
+  id: model:service_teams
   name: service_teams
-  title: Service teams
+  displayName: Service teams
 spec:
   primaryKey: team
   sources: [docs.service_teams]

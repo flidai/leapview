@@ -1,7 +1,7 @@
 apiVersion: leapview.dev/v1
-kind: WorkspaceRoleBinding
+kind: RoleBinding
 metadata:
-  workspace: evaluation
+  id: role-binding:evaluators-viewer
   name: evaluators-viewer
 spec:
   role: viewer

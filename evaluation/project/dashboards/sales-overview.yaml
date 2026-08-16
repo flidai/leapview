@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
-  workspace: evaluation
+  id: dashboard:sales-overview
   name: sales-overview
-  title: Five-minute Sales Evaluation
+  displayName: Five-minute Sales Evaluation
   description: Filter a governed dataset and inspect its KPI, chart, and order table.
   tags: [evaluation, sales]
 spec:

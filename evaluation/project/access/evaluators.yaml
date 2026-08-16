@@ -1,9 +1,9 @@
 apiVersion: leapview.dev/v1
-kind: WorkspaceGroup
+kind: Group
 metadata:
-  workspace: evaluation
+  id: group:evaluators
   name: evaluators
-  title: Local Evaluators
+  displayName: Local Evaluators
 spec:
   members:
     - email: admin@localhost

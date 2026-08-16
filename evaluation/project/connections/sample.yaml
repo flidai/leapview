@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Connection
 metadata:
+  id: connection:sample
   name: sample
-  title: Synthetic evaluation data
+  displayName: Synthetic evaluation data
 spec:
   kind: managed
   description: Disposable data shipped only for the local five-minute evaluation.

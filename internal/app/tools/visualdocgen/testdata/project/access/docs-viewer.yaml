@@ -1,7 +1,7 @@
 apiVersion: leapview.dev/v1
-kind: WorkspaceRoleBinding
+kind: RoleBinding
 metadata:
-  workspace: visual_examples
+  id: role-binding:documentation-readers-viewer
   name: documentation-readers-viewer
 spec:
   role: viewer
