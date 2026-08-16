@@ -58,6 +58,19 @@ func (browserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, a
 	return projectcatalog.Result{}, projectcatalog.ErrNotFound
 }
 
+type pagedBrowserCatalogStub struct{}
+
+func (pagedBrowserCatalogStub) List(_ context.Context, request projectcatalog.ListRequest) (projectcatalog.Page, error) {
+	if request.Cursor == "" {
+		return projectcatalog.Page{Items: []projectcatalog.Result{{Ref: projectcatalog.Ref{ID: "model:allowed", Kind: projectgraph.KindModel}}}, NextCursor: "page-2"}, nil
+	}
+	return projectcatalog.Page{Items: []projectcatalog.Result{{Ref: projectcatalog.Ref{ID: "model:second", Kind: projectgraph.KindModel}}}}, nil
+}
+
+func (pagedBrowserCatalogStub) Resolve(context.Context, string, projectcatalog.Ref, access.Capability) (projectcatalog.Result, error) {
+	return projectcatalog.Result{}, projectcatalog.ErrNotFound
+}
+
 func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 	allowed := projectgraph.ResourceID("model:allowed")
 	denied := projectgraph.ResourceID("model:denied")
@@ -77,5 +90,18 @@ func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 	}
 	if len(edges) != 0 {
 		t.Fatalf("edges = %#v, want denied endpoint edge removed", edges)
+	}
+}
+
+func TestAssetsConsumeCatalogPages(t *testing.T) {
+	h := &BrowserHandler{
+		ProjectID: "project:test", Environment: "dev", Graph: browserGraphStub{graph: servingstate.AssetGraph{
+			Assets: []servingstate.Asset{{ID: "model:allowed", ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "allowed", PayloadJSON: "{}"}, {ID: "model:second", ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "second", PayloadJSON: "{}"}},
+		}},
+		Catalog: pagedBrowserCatalogStub{}, CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
+	}
+	_, assets, _, ok := h.assets(httptest.NewRecorder(), httptest.NewRequest(stdhttp.MethodGet, "/models", nil))
+	if !ok || len(assets) != 2 {
+		t.Fatalf("assets = %#v, ok=%v; want both catalog pages", assets, ok)
 	}
 }

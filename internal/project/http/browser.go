@@ -110,7 +110,7 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h *BrowserHandler) Data(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.projectAssets(w, r, "data", "")
+	h.projectAssets(w, r, "data", string(projectview.AssetTypeSource))
 }
 
 func (h *BrowserHandler) Models(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -122,7 +122,7 @@ func (h *BrowserHandler) SemanticModels(w stdhttp.ResponseWriter, r *stdhttp.Req
 }
 
 func (h *BrowserHandler) DataAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.assetDocument(w, r, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindDashboard, projectgraph.KindPipeline, projectgraph.KindSemanticModel)
+	h.assetDocument(w, r, projectgraph.KindSource)
 }
 
 func (h *BrowserHandler) ModelAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -205,7 +205,16 @@ func (h *BrowserHandler) Connections(w stdhttp.ResponseWriter, r *stdhttp.Reques
 }
 
 func (h *BrowserHandler) DataSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline}) {
+	typ := strings.TrimSpace(r.URL.Query().Get("projectAssetType"))
+	if typ == "" {
+		typ = string(projectview.AssetTypeSource)
+	}
+	kind, ok := catalogKindForAssetType(typ)
+	if !ok {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+		return
+	}
+	if !h.authorizeAny(w, r, []projectgraph.Kind{kind}) {
 		return
 	}
 	projectID, assets, edges, ok := h.assets(w, r)
@@ -213,7 +222,7 @@ func (h *BrowserHandler) DataSearch(w stdhttp.ResponseWriter, r *stdhttp.Request
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("projectAssetQuery"))
-	patch := projectui.ProjectAssetListResultsPatch(projectID.String(), projectview.FilterProjectLandingAssets(assets, strings.TrimSpace(r.URL.Query().Get("projectAssetType")), query), edges)
+	patch := projectui.ProjectAssetListResultsPatch(projectID.String(), projectview.FilterProjectLandingAssets(assets, typ, query), edges)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
 
@@ -370,7 +379,7 @@ func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (p
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 			return "", nil, nil, false
 		}
-		allowedPage, err := h.Catalog.List(r.Context(), projectcatalog.ListRequest{PrincipalID: principal.ID, Kinds: []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline}, Limit: projectcatalog.MaxLimit})
+		allowedPage, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline})
 		if err != nil {
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 			return "", nil, nil, false
@@ -463,7 +472,7 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
 		return false
 	}
-	page, err := h.Catalog.List(r.Context(), projectcatalog.ListRequest{PrincipalID: principal.ID, Kinds: kinds, Limit: projectcatalog.MaxLimit})
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, kinds)
 	if err != nil {
 		if errors.Is(err, projectcatalog.ErrNotFound) {
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
@@ -490,7 +499,7 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	if !ok {
 		return projectnavigation.Catalog{}
 	}
-	page, err := h.Catalog.List(r.Context(), projectcatalog.ListRequest{PrincipalID: principal.ID, Kinds: []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard}, Limit: projectcatalog.MaxLimit})
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
@@ -508,6 +517,33 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 		}
 	}
 	return out
+}
+
+func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID string, kinds []projectgraph.Kind) (projectcatalog.Page, error) {
+	if catalog == nil {
+		return projectcatalog.Page{}, projectcatalog.ErrUnavailable
+	}
+	items := make([]projectcatalog.Result, 0)
+	cursor := ""
+	seenCursors := map[string]struct{}{}
+	for pages := 0; ; pages++ {
+		if pages >= 10000 {
+			return projectcatalog.Page{}, fmt.Errorf("catalog pagination exceeded safety bound")
+		}
+		page, err := catalog.List(ctx, projectcatalog.ListRequest{PrincipalID: principalID, Kinds: kinds, Limit: projectcatalog.MaxLimit, Cursor: cursor})
+		if err != nil {
+			return projectcatalog.Page{}, err
+		}
+		items = append(items, page.Items...)
+		if page.NextCursor == "" {
+			return projectcatalog.Page{Items: items}, nil
+		}
+		if _, seen := seenCursors[page.NextCursor]; seen {
+			return projectcatalog.Page{}, fmt.Errorf("catalog pagination cursor repeated")
+		}
+		seenCursors[page.NextCursor] = struct{}{}
+		cursor = page.NextCursor
+	}
 }
 
 func browserFirstNonEmpty(values ...string) string {
