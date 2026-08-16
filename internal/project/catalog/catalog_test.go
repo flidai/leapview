@@ -127,6 +127,36 @@ func TestResolveRejectsUnknownAndWrongKindIDs(t *testing.T) {
 	}
 }
 
+func TestResolveProjectRequiresProjectAdminCapability(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, _ := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_1")
+	ref, err := access.NewResourceRef(project.ProjectID(), projectgraph.KindProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := access.NewCanonicalGrant(project, principal, ref, access.CapabilityProjectAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := projectgraph.NewServingIdentity(project.ProjectID(), "development", "generation_1")
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{{ID: "grant_admin", Canonical: canonical}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, _ := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityProjectAdmin); err != nil {
+		t.Fatalf("project admin resolve = %v", err)
+	}
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityResourceRead); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("project read resolve = %v, want not found", err)
+	}
+}
+
 func TestDomainFilterDoesNotChangeResourceID(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
