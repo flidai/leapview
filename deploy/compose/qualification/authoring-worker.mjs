@@ -5,7 +5,7 @@ import { chromium } from 'playwright'
 
 const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
 const evidenceRoot = process.env.QUALIFICATION_EVIDENCE_ROOT || '/evidence'
-const projectID = process.env.QUALIFICATION_PROJECT_ID || 'leapview-evaluation'
+const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
 const screenshotPath = `${evidenceRoot}/authoring-browser-failure.png`
 
 async function requireJSON(response, description) {
@@ -27,7 +27,7 @@ async function signIn(page, email, temporaryPassword, password) {
   await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
 }
 
-async function issueToken(context, page, privileges) {
+async function issueToken(context, page, capabilities) {
   const challenge = await requireJSON(
     await context.request.post(
       new URL('/oauth/device/code', baseURL).href,
@@ -35,11 +35,11 @@ async function issueToken(context, page, privileges) {
         form: {
           client_id: 'leapview-cli',
           project_id: projectID,
-          scope: privileges.join(' '),
+          scope: capabilities.join(' '),
         },
       },
     ),
-    `device authorization for ${privileges.join(', ')}`,
+    `device authorization for ${capabilities.join(', ')}`,
   )
   const deviceURL = new URL(challenge.verification_uri_complete, baseURL)
   await page.goto(deviceURL.href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
@@ -58,7 +58,7 @@ async function issueToken(context, page, privileges) {
         },
       },
     ),
-    `device token exchange for ${privileges.join(', ')}`,
+    `device token exchange for ${capabilities.join(', ')}`,
   )
   return { accessToken: tokens.access_token }
 }
@@ -84,7 +84,7 @@ const methods = {
     return issueToken(
       administratorContext,
       administratorPage,
-      params.privileges,
+      params.capabilities,
     )
   },
 
@@ -104,7 +104,7 @@ const methods = {
     if (!reviewerContext || !reviewerPage) {
       throw new Error('reviewer must sign in before requesting a token')
     }
-    return issueToken(reviewerContext, reviewerPage, params.privileges)
+    return issueToken(reviewerContext, reviewerPage, params.capabilities)
   },
 
   async authorizeCLI(params) {
@@ -131,11 +131,11 @@ const methods = {
       { waitUntil: 'domcontentloaded', timeout: 60_000 },
     )
     await administratorPage.waitForURL(
-      (url) => url.pathname.startsWith(`${previewURL.pathname}/workspaces/`),
+      (url) => url.pathname.startsWith(`${previewURL.pathname}/dashboards/`),
       { timeout: 60_000 },
     )
     const dashboardURL = new URL(
-      `${previewURL.pathname}/workspaces/evaluation/dashboards/sales-overview`,
+      `${previewURL.pathname}/dashboards/sales-overview`,
       baseURL,
     )
     await administratorPage.goto(

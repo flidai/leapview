@@ -10,24 +10,24 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 )
 
-func TestAPITokenWorkspaceAndPrivilegeAllowlistAreEnforced(t *testing.T) {
+func TestAPITokenCapabilityAllowlistIsEnforced(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPrincipal(t, ctx, store, "token-owner@example.com", "Token Owner", access.RoleOwner)
+	owner := testPrincipal(t, ctx, store, "token-owner@example.com", "Token Owner")
 	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: owner.ID,
-		WorkspaceID: "test",
-		Name:        "workspace-read-only",
-		Privileges:  []access.Privilege{access.PrivilegeUseWorkspace},
+		PrincipalID:  owner.ID,
+		Name:         "resource-use-only",
+		Capabilities: []access.Capability{access.CapabilityResourceUse},
 	})
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	publishesReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/releases", strings.NewReader(`{"projectDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workspaces":[],"connections":[]}`))
+	publishesReq := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:other/releases", strings.NewReader(`{"environment":"prod","generationId":"generation:test","projectDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifactDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","connections":[]}`))
 	publishesReq.Header.Set("Authorization", "Bearer "+token)
 	publishesReq.Header.Set("Accept", "application/json")
 	publishesReq.Header.Set("Content-Type", "application/json")
@@ -38,46 +38,45 @@ func TestAPITokenWorkspaceAndPrivilegeAllowlistAreEnforced(t *testing.T) {
 		t.Fatalf("project release status = %d, want concealed %d body=%s", publishesRec.Code, http.StatusNotFound, publishesRec.Body.String())
 	}
 
-	foreignWorkspaceReq := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/other/assets", nil)
-	foreignWorkspaceReq.Header.Set("Authorization", "Bearer "+token)
-	foreignWorkspaceReq.Header.Set("Accept", "application/json")
-	foreignWorkspaceRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(foreignWorkspaceRec, foreignWorkspaceReq)
-	if foreignWorkspaceRec.Code != http.StatusForbidden {
-		t.Fatalf("foreign workspace status = %d, want %d body=%s", foreignWorkspaceRec.Code, http.StatusForbidden, foreignWorkspaceRec.Body.String())
+	foreignProjectReq := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:other", nil)
+	foreignProjectReq.Header.Set("Authorization", "Bearer "+token)
+	foreignProjectReq.Header.Set("Accept", "application/json")
+	foreignProjectRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(foreignProjectRec, foreignProjectReq)
+	if foreignProjectRec.Code != http.StatusNotFound {
+		t.Fatalf("foreign project status = %d, want concealed %d body=%s", foreignProjectRec.Code, http.StatusNotFound, foreignProjectRec.Body.String())
 	}
 
-	privilegesReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-privileges?workspace=test", nil)
-	privilegesReq.Header.Set("Authorization", "Bearer "+token)
-	privilegesReq.Header.Set("Accept", "application/json")
-	privilegesRec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(privilegesRec, privilegesReq)
-	if privilegesRec.Code != http.StatusOK {
-		t.Fatalf("privileges status = %d, want %d body=%s", privilegesRec.Code, http.StatusOK, privilegesRec.Body.String())
+	effectiveReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-capabilities", nil)
+	effectiveReq.Header.Set("Authorization", "Bearer "+token)
+	effectiveReq.Header.Set("Accept", "application/json")
+	effectiveRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(effectiveRec, effectiveReq)
+	if effectiveRec.Code != http.StatusOK {
+		t.Fatalf("effective capabilities status = %d, want %d body=%s", effectiveRec.Code, http.StatusOK, effectiveRec.Body.String())
 	}
-	var privilegesBody struct {
-		Privileges []string `json:"privileges"`
+	var effectiveBody struct {
+		Capabilities []string `json:"capabilities"`
 	}
-	if err := json.Unmarshal(privilegesRec.Body.Bytes(), &privilegesBody); err != nil {
-		t.Fatalf("decode privileges: %v", err)
+	if err := json.Unmarshal(effectiveRec.Body.Bytes(), &effectiveBody); err != nil {
+		t.Fatalf("decode capabilities: %v", err)
 	}
-	if !hasString(privilegesBody.Privileges, string(access.PrivilegeUseWorkspace)) {
-		t.Fatalf("privileges = %#v, want workspace read", privilegesBody.Privileges)
+	if !hasString(effectiveBody.Capabilities, string(access.CapabilityResourceUse)) {
+		t.Fatalf("capabilities = %#v, want resource use", effectiveBody.Capabilities)
 	}
-	if hasString(privilegesBody.Privileges, string(access.PrivilegeViewItem)) {
-		t.Fatalf("privileges = %#v, token allowlist leaked publish read", privilegesBody.Privileges)
+	if hasString(effectiveBody.Capabilities, string(access.CapabilityResourceRead)) {
+		t.Fatalf("capabilities = %#v, token allowlist leaked resource read", effectiveBody.Capabilities)
 	}
-	if strings.Contains(privilegesRec.Body.String(), "permissions") {
-		t.Fatalf("effective privileges response still uses permissions vocabulary: %s", privilegesRec.Body.String())
+	if strings.Contains(effectiveRec.Body.String(), "privileges") {
+		t.Fatalf("effective capabilities response still uses privileges vocabulary: %s", effectiveRec.Body.String())
 	}
 
 	emptyAllowlistToken, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: owner.ID,
-		WorkspaceID: "test",
-		Name:        "empty-allowlist",
-		Privileges:  []access.Privilege{},
+		PrincipalID:  owner.ID,
+		Name:         "empty-allowlist",
+		Capabilities: []access.Capability{},
 	})
-	emptyAllowlistReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-privileges?workspace=test", nil)
+	emptyAllowlistReq := httptest.NewRequest(http.MethodGet, "/api/v1/me/effective-capabilities", nil)
 	emptyAllowlistReq.Header.Set("Authorization", "Bearer "+emptyAllowlistToken)
 	emptyAllowlistReq.Header.Set("Accept", "application/json")
 	emptyAllowlistRec := httptest.NewRecorder()
@@ -90,13 +89,13 @@ func TestAPITokenWorkspaceAndPrivilegeAllowlistAreEnforced(t *testing.T) {
 func TestCreateAndResetLocalPrincipalAPI(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	admin := testPlatformPrincipal(t, ctx, store, "access-admin@example.com", "Access Admin", access.RoleAdmin)
+	admin := testPlatformPrincipal(t, ctx, store, "access-admin@example.com", "Access Admin")
 	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
 		PrincipalID: admin.ID,
 		Name:        "access-admin",
 	})
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/principals", strings.NewReader(`{"email":"local-user@example.com","displayName":"Local User"}`))
 	createReq.Header.Set("Authorization", "Bearer "+token)
@@ -154,18 +153,17 @@ func TestCreateAndResetLocalPrincipalAPI(t *testing.T) {
 func TestCurrentAPITokenRevocationIsScopedToAuthenticatedPrincipal(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "token-revoke-owner@example.com", "Token Owner", access.RoleAdmin)
-	foreign := testPlatformPrincipal(t, ctx, store, "token-revoke-foreign@example.com", "Token Foreign", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "token-revoke-owner@example.com", "Token Owner")
+	foreign := testPlatformPrincipal(t, ctx, store, "token-revoke-foreign@example.com", "Token Foreign")
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: owner.ID,
-		WorkspaceID: "test",
-		Name:        "auth",
-		Privileges:  []access.Privilege{access.PrivilegeManageGrants},
+		PrincipalID:  owner.ID,
+		Name:         "auth",
+		Capabilities: []access.Capability{access.CapabilityResourceManage},
 	})
 	ownerSecret, ownerToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{PrincipalID: owner.ID, Name: "owned"})
 	foreignSecret, foreignToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{PrincipalID: foreign.ID, Name: "foreign"})
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	for _, id := range []string{foreignToken.ID, "token_missing"} {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/api-tokens/"+id, nil)
@@ -203,17 +201,16 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	repo := testAccessRepository(store)
-	owner := testPlatformPrincipal(t, ctx, store, "token-audit-owner@example.com", "Token Audit Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "token-audit-owner@example.com", "Token Audit Owner")
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: owner.ID,
-		WorkspaceID: "test",
-		Name:        "auth",
-		Privileges:  []access.Privilege{access.PrivilegeManageGrants, access.PrivilegeUseWorkspace},
+		PrincipalID:  owner.ID,
+		Name:         "auth",
+		Capabilities: []access.Capability{access.CapabilityResourceManage, access.CapabilityResourceUse},
 	})
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"audited-api-token","workspaceId":"test","privileges":["USE_WORKSPACE"]}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"audited-api-token","capabilities":["RESOURCE_USE"]}`))
 	createReq.Header.Set("Authorization", "Bearer "+authSecret)
 	createReq.Header.Set("Accept", "application/json")
 	createReq.Header.Set("Content-Type", "application/json")
@@ -234,11 +231,11 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 	if created.APIToken.ID == "" {
 		t.Fatalf("created api token missing id: %s", createRec.Body.String())
 	}
-	createdEvents, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{WorkspaceID: "test", Action: "api_token.created"})
+	createdEvents, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{PrincipalID: owner.ID, Action: "api_token.created"})
 	if err != nil {
 		t.Fatalf("list create audit events: %v", err)
 	}
-	if len(createdEvents) != 1 || createdEvents[0].TargetID != created.APIToken.ID || createdEvents[0].PrincipalID != owner.ID {
+	if len(createdEvents) != 1 || createdEvents[0].ResourceID != created.APIToken.ID || createdEvents[0].PrincipalID != owner.ID {
 		t.Fatalf("api_token.created audit = %#v, want target %q actor %q", createdEvents, created.APIToken.ID, owner.ID)
 	}
 
@@ -250,11 +247,11 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 	if revokeRec.Code != http.StatusNoContent {
 		t.Fatalf("revoke api token status = %d, want %d body=%s", revokeRec.Code, http.StatusNoContent, revokeRec.Body.String())
 	}
-	revokedEvents, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{WorkspaceID: "test", Action: "api_token.revoked"})
+	revokedEvents, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{PrincipalID: owner.ID, Action: "api_token.revoked"})
 	if err != nil {
 		t.Fatalf("list revoke audit events: %v", err)
 	}
-	if len(revokedEvents) != 1 || revokedEvents[0].TargetID != created.APIToken.ID || revokedEvents[0].PrincipalID != owner.ID {
+	if len(revokedEvents) != 1 || revokedEvents[0].ResourceID != created.APIToken.ID || revokedEvents[0].PrincipalID != owner.ID {
 		t.Fatalf("api_token.revoked audit = %#v, want target %q actor %q", revokedEvents, created.APIToken.ID, owner.ID)
 	}
 }
@@ -262,18 +259,17 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 func TestCurrentAPITokenCreateRejectsExpiredExpiry(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "expired-token-owner@example.com", "Expired Token Owner", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "expired-token-owner@example.com", "Expired Token Owner")
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: owner.ID,
-		WorkspaceID: "test",
-		Name:        "auth",
-		Privileges:  []access.Privilege{access.PrivilegeManageGrants},
+		PrincipalID:  owner.ID,
+		Name:         "auth",
+		Capabilities: []access.Capability{access.CapabilityResourceManage},
 	})
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	expiresAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"expired-api-token","workspaceId":"test","privileges":[],"expiresAt":"`+expiresAt+`"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"expired-api-token","capabilities":[],"expiresAt":"`+expiresAt+`"}`))
 	req.Header.Set("Authorization", "Bearer "+authSecret)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
@@ -289,18 +285,18 @@ func TestServicePrincipalSecretCreateReturnsExpiry(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	repo := testAccessRepository(store)
-	owner := testPlatformPrincipal(t, ctx, store, "sp-secret-owner@example.com", "SP Secret Owner", access.RolePlatformAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "sp-secret-owner@example.com", "SP Secret Owner")
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: owner.ID,
-		Name:        "platform-admin",
-		Privileges:  []access.Privilege{access.PrivilegeManagePlatform},
+		PrincipalID:  owner.ID,
+		Name:         "platform-admin",
+		Capabilities: []access.Capability{access.CapabilityProjectAdmin},
 	})
 	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{ID: "sp_secret_api", DisplayName: "Secret API"})
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)
 	}
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	expiresAt := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/service-principals/"+servicePrincipal.ID+"/secrets", strings.NewReader(`{"name":"deploy","expiresAt":"`+expiresAt+`"}`))
@@ -340,11 +336,11 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	repo := testAccessRepository(store)
-	owner := testPlatformPrincipal(t, ctx, store, "secret-cache-owner@example.com", "Secret Cache Owner", access.RolePlatformAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "secret-cache-owner@example.com", "Secret Cache Owner")
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: owner.ID,
-		Name:        "platform-admin",
-		Privileges:  []access.Privilege{access.PrivilegeManagePlatform, access.PrivilegeManageGrants, access.PrivilegeUseWorkspace},
+		PrincipalID:  owner.ID,
+		Name:         "platform-admin",
+		Capabilities: []access.Capability{access.CapabilityProjectAdmin, access.CapabilityResourceManage, access.CapabilityResourceUse},
 	})
 	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{ID: "sp_secret_cache", DisplayName: "Secret Cache"})
 	if err != nil {
@@ -354,8 +350,8 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create service principal secret: %v", err)
 	}
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	for _, tc := range []struct {
 		name          string
@@ -365,7 +361,7 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 	}{
 		{
 			name:       "api token",
-			req:        secretCacheJSONRequest(http.MethodPost, "/api/v1/me/api-tokens", authSecret, `{"name":"deploy","workspaceId":"test","privileges":["USE_WORKSPACE"]}`),
+			req:        secretCacheJSONRequest(http.MethodPost, "/api/v1/me/api-tokens", authSecret, `{"name":"deploy","capabilities":["RESOURCE_USE"]}`),
 			wantStatus: http.StatusCreated,
 			secretMarkers: []string{
 				`"token":`,
@@ -413,13 +409,12 @@ func TestCurrentSessionRevocationIsScopedToAuthenticatedPrincipal(t *testing.T) 
 	store := testStore(t)
 	ctx := context.Background()
 	repo := testAccessRepository(store)
-	owner := testPlatformPrincipal(t, ctx, store, "session-revoke-owner@example.com", "Session Owner", access.RoleAdmin)
-	foreign := testPlatformPrincipal(t, ctx, store, "session-revoke-foreign@example.com", "Session Foreign", access.RoleAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "session-revoke-owner@example.com", "Session Owner")
+	foreign := testPlatformPrincipal(t, ctx, store, "session-revoke-foreign@example.com", "Session Foreign")
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: owner.ID,
-		WorkspaceID: "test",
-		Name:        "auth",
-		Privileges:  []access.Privilege{access.PrivilegeUseWorkspace},
+		PrincipalID:  owner.ID,
+		Name:         "auth",
+		Capabilities: []access.Capability{access.CapabilityResourceUse},
 	})
 	ownerSessionSecret, err := repo.CreateSession(ctx, owner.ID, time.Hour)
 	if err != nil {
@@ -437,8 +432,8 @@ func TestCurrentSessionRevocationIsScopedToAuthenticatedPrincipal(t *testing.T) 
 	if err != nil {
 		t.Fatalf("list foreign sessions: %v", err)
 	}
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	for _, id := range []string{foreignSessions[0].ID, "session_missing"} {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/sessions/"+id, nil)

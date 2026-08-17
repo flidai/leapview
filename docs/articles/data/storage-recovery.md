@@ -4,7 +4,7 @@ LeapView separates application state, analytical metadata, analytical files, man
 
 ## Storage ownership
 
-The control-plane database owns application state such as users, grants, projects, workspaces, environments, deployments, jobs, audit records, and active serving pointers.
+The control-plane database owns application state such as users, grants, projects, environments, deployments, jobs, audit records, and active serving pointers.
 
 DuckLake owns analytical table schemas, snapshots, changesets, statistics, and physical file manifests. Parquet files hold the analytical table data described by that catalog. DuckDB is the execution engine; it is not the authority for a second copy of serving state.
 

@@ -27,21 +27,21 @@ A connection or TLS error points to DNS, certificates, proxies, or network polic
 
 ## Check target identity and authentication
 
-Confirm the scheme, hostname, expected environment, and workspace. Saved credentials are keyed by the exact target URL. Run a read-only plan with explicit boundaries:
+Confirm the scheme, hostname, expected environment, and project. Saved credentials are keyed by the exact target URL. Run a read-only plan with explicit boundaries:
 
 ```sh
 leapview plan \
   --project dashboards/leapview.yaml \
   --target https://dash.example.com \
   --environment production \
-  --workspace retail
+  --project project:retail
 ```
 
 For `401` responses, verify that a token was supplied for that target and is still valid. For `403`, inspect the authenticated identity's effective grants for the failed operation. Do not broaden the credential until the missing privilege is understood.
 
 ## Interpret planning and deployment failures
 
-If a plan shows unexpected removals, stop and inspect workspace discovery patterns and stable resource IDs. If a managed revision is rejected, confirm that its immutable digest was staged on the same target and connection named by the project. If an environment assertion fails, correct the target rather than changing the assertion to match an unintended instance.
+If a plan shows unexpected removals, stop and inspect project discovery patterns and stable resource IDs. If a managed revision is rejected, confirm that its immutable digest was staged on the same target and connection named by the project. If an environment assertion fails, correct the target rather than changing the assertion to match an unintended instance.
 
 Deployment failures should leave the last valid serving state active. Verify that state, preserve the rejected candidate and server diagnostics, then correct and re-run validation and planning. Do not repeatedly submit a changing candidate while diagnosing one failure.
 

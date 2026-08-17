@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/project"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	"github.com/stretchr/testify/require"
 )
@@ -71,6 +72,21 @@ func TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart(t *testing.T)
 		t.Context(), scope, missing[0], bytes.NewReader(artifact.Content),
 	); err != nil {
 		t.Fatalf("Upload() after restart error = %v", err)
+	}
+}
+
+func TestCandidateSourceSynchronizerRejectsWhitespaceProjectIdentity(t *testing.T) {
+	snapshot, err := (projectdevloop.FilesystemBuilder{
+		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+	}).Build(t.Context())
+	require.NoError(t, err)
+	synchronizer, err := projectmodule.NewCandidateSourceSynchronizer(t.TempDir())
+	require.NoError(t, err)
+	_, err = synchronizer.Plan(t.Context(), project.CandidateSourceScope{
+		ProjectID: projectgraph.ResourceID(" " + snapshot.ProjectID.String()), OwnerID: "principal_1",
+	}, synchronizationRequest(snapshot))
+	if err == nil {
+		t.Fatal("Plan() accepted whitespace-prefixed project identity")
 	}
 }
 

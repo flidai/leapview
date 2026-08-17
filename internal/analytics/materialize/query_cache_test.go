@@ -978,7 +978,7 @@ func TestRuntimeDashboardCacheHitDoesNotConsumeReadPermit(t *testing.T) {
 	occupying.Add(1)
 	go func() {
 		defer occupying.Done()
-		lease, acquireErr := admission.Acquire(context.Background(), workload.Request{Class: workload.Interactive, WorkspaceID: "sales", Operation: "occupy"})
+		lease, acquireErr := admission.Acquire(context.Background(), workload.Request{Class: workload.Interactive, PrincipalID: "sales", Operation: "occupy", EstimatedMemoryBytes: 1})
 		if acquireErr != nil {
 			return
 		}

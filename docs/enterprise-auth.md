@@ -8,7 +8,7 @@ LeapView separates authentication, provisioning, authorization, workload identit
 - Use [OIDC](/docs/security/oidc) for interactive enterprise browser login.
 - Use browser/device authorization for `leapview login <target>`; CLI credentials remain separate from browser and Desktop sessions.
 
-Both sign-in modes resolve an ordinary LeapView principal. Authentication proves identity; it does not grant workspace or resource access.
+Both sign-in modes resolve an ordinary LeapView principal. Authentication proves identity; it does not grant project-resource access.
 
 ## Provision identities and workloads
 
@@ -19,7 +19,7 @@ OIDC subject identity, SCIM directory state, and service-principal lifecycle rem
 
 ## Govern access
 
-Read [Roles, grants, and policies](/docs/security/authorization) to understand securable hierarchy, workspace roles, explicit grants, ownership, and row or column data policy. LeapView authorization remains authoritative regardless of how the principal was authenticated or provisioned.
+Read [Roles, grants, and policies](/docs/security/authorization) to understand securable hierarchy, project-resource roles, explicit grants, ownership, and row or column data policy. LeapView authorization remains authoritative regardless of how the principal was authenticated or provisioned.
 
 Use [Audit events](/docs/security/audit) to investigate security-sensitive changes and correlate them with governed query activity.
 

@@ -9,15 +9,15 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 )
 
-func testAuth(store *platform.Store, workspaceID string, cfg AuthConfig) *accessmodule.Auth {
+func testAuth(store *platform.Store, cfg accessmodule.AuthConfig) *accessmodule.Auth {
 	repo := accesssqlite.NewRepository(store.SQLDB())
 	if cfg.DevBypass {
 		_, _ = repo.SetPlatformRole(context.Background(), access.PlatformRoleInput{
 			PrincipalID: "dev",
 			Email:       "dev@localhost",
 			DisplayName: "Local Developer",
-			Role:        access.RolePlatformAdmin,
+			Role:        access.PlatformRoleAdmin,
 		})
 	}
-	return NewAuth(repo, cfg)
+	return accessmodule.NewAuth(repo, cfg)
 }

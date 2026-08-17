@@ -1,40 +1,10 @@
 package compiler
 
-import (
-	"fmt"
-	"strings"
+import projectartifact "github.com/flidai/leapview/internal/project/artifact"
 
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
-	"github.com/flidai/leapview/internal/workspace"
-)
-
-type Options struct {
-	WorkspaceID    workspace.WorkspaceID
-	ServingStateID workspace.ServingStateID
-}
-
-func Compile(projectPath string, opts Options) (projectartifact.Workspace, error) {
-	compiled, err := CompileProject(projectPath, opts)
-	if err != nil {
-		return projectartifact.Workspace{}, err
-	}
-	workspaceID := opts.WorkspaceID
-	if workspaceID == "" {
-		return projectartifact.Workspace{}, fmt.Errorf("workspace id is required")
-	}
-	selected, ok := compiled.Workspace(string(workspaceID))
-	if !ok {
-		return projectartifact.Workspace{}, fmt.Errorf("project %q has no workspace %q", projectPath, workspaceID)
-	}
-	return selected, nil
-}
-
-func workspaceTitle(value, workspaceID string) string {
-	if strings.TrimSpace(value) != "" {
-		return value
-	}
-	if strings.TrimSpace(workspaceID) != "" {
-		return workspaceID
-	}
-	return "Workspace"
+// Compile loads and validates a project-wide authored graph and emits the
+// immutable project artifact. Serving identity and target selection belong
+// to deployment/runtime layers, not authoring compilation.
+func Compile(projectPath string) (projectartifact.Project, error) {
+	return CompileProject(projectPath)
 }

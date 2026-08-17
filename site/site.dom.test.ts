@@ -860,7 +860,7 @@ test('getting started route directs users through the first learning path', asyn
     const apiGroup = sidebar.locator('details[data-site-docs-group="reference-api"]')
     expect(await apiGroup.count()).toBe(1)
     expect(await apiGroup.locator('a[href="/docs/api"]').getAttribute('href')).toBe('/docs/api')
-    expect(await apiGroup.locator('a[href="/docs/api/workspaces"]').count()).toBe(1)
+    expect(await apiGroup.locator('a[href="/docs/api/projects"]').count()).toBe(1)
     const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' })
     expect(await breadcrumb.getByRole('link', { name: 'Start here' }).getAttribute('href')).toBe('/docs/introduction')
     expect(await breadcrumb.getByRole('link', { name: 'Documentation' }).count()).toBe(0)
@@ -1724,9 +1724,9 @@ test('documentation navigation uses compact rows and Overview labels', async () 
     }
     expect(await navigation.locator('details[data-site-docs-group="architecture-architecture"]').count()).toBe(1)
     expect(await navigation.locator('details[data-site-docs-group="architecture-contributing"]').count()).toBe(1)
-    const projectsLink = navigation.locator('a[href="/docs/concepts/projects-workspaces-environments"]')
+    const projectsLink = navigation.locator('a[href="/docs/concepts/projects-environments"]')
     expect(await projectsLink.count()).toBe(1)
-    expect(await projectsLink.textContent()).toBe('Projects, workspaces, and environments')
+    expect(await projectsLink.textContent()).toBe('Projects and environments')
     expect(await navigation.getByRole('link', { name: 'Build dashboards', exact: true }).count()).toBe(0)
     expect(await page.getByRole('heading', { name: 'Build dashboards', exact: true }).isVisible()).toBe(true)
 
@@ -2289,7 +2289,7 @@ test('generated CLI outlines keep subcommands and omit repeated details and foot
         .map((link) => link.textContent?.trim() ?? ''),
     )
     expect(visibleOutlineLabels.filter((label) => label === 'Usage')).toHaveLength(1)
-    expect(visibleOutlineLabels.filter((label) => label === 'Options')).toHaveLength(1)
+    expect(visibleOutlineLabels.filter((label) => label === 'Options')).toHaveLength(0)
     expect(visibleOutlineLabels).toContain('Subcommands')
     expect(visibleOutlineLabels).toContain('dataset')
     expect(visibleOutlineLabels).toContain('datasets')
@@ -2330,16 +2330,16 @@ test('generated API outlines keep operations and omit repeated operation details
     expect(visibleOutlineLabels).not.toContain('Request body')
     expect(visibleOutlineLabels).not.toContain('Responses')
 
-    const listWorkspaceRoles = article.locator('h3#list-workspace-roles')
-    const listWorkspaceRolesDetail = listWorkspaceRoles.locator('xpath=following-sibling::h4[1]')
-    await listWorkspaceRolesDetail.evaluate((heading) => {
+    const listProjectRoles = article.locator('h3#list-project-roles')
+    const listProjectRolesDetail = listProjectRoles.locator('xpath=following-sibling::h4[1]')
+    await listProjectRolesDetail.evaluate((heading) => {
       document.documentElement.style.scrollBehavior = 'auto'
       window.scrollTo({ top: heading.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.2 })
     })
     await page.waitForFunction(() => {
       const toc = document.querySelector<HTMLElement>('lv-site-article-toc')
       const active = toc?.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
-      return active?.textContent?.trim() === 'List workspace roles' && active.getClientRects().length > 0 && toc.scrollTop > 0
+      return active?.textContent?.trim() === 'List project roles' && active.getClientRects().length > 0 && toc.scrollTop > 0
     })
     const activeOutline = await toc.evaluate((element) => {
       const active = element.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
@@ -2352,7 +2352,7 @@ test('generated API outlines keep operations and omit repeated operation details
         visible: activeRect.top >= hostRect.top && activeRect.bottom <= hostRect.bottom,
       }
     })
-    expect(activeOutline.label).toBe('List workspace roles')
+    expect(activeOutline.label).toBe('List project roles')
     expect(activeOutline.scrollTop).toBeGreaterThan(0)
     expect(activeOutline.visible).toBe(true)
   } finally {

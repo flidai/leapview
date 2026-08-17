@@ -17,6 +17,7 @@ import (
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
@@ -41,12 +42,12 @@ type Config struct {
 	HTTP                HTTPConfig
 	Authorization       AuthorizationConfig
 	Service             refreshrun.Service
-	Analytics           analyticsmaterialization.WorkspaceExecutor
+	Analytics           analyticsmaterialization.Executor
 	Artifacts           refreshrun.ArtifactLoader
 	ManagedData         runtimehost.ManagedDataResolver
 	Admission           workload.Admitter
 	LeaseTimeout        time.Duration
-	Environment         string
+	ResolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
 	WorkloadStats       func() workload.Stats
 	RunFinished         func(context.Context, refreshrun.RunRecord)
 	Events              EventStore
@@ -64,8 +65,7 @@ type Config struct {
 type HTTPConfig struct {
 	RunnerConfigured func() bool
 	CurrentPrincipal func(*http.Request) (HTTPPrincipal, bool)
-	WorkspaceID      func(string) string
-	Environment      func(*http.Request) string
+	ServingIdentity  func(*http.Request) (projectgraph.ServingIdentity, error)
 }
 
 type HTTPPrincipal struct {
@@ -78,10 +78,9 @@ type AuthorizationPrincipal struct {
 }
 
 type AuthorizationConfig struct {
-	CurrentPrincipal     func(*http.Request) (AuthorizationPrincipal, bool)
-	CurrentCredential    func(*http.Request) (access.APICredential, bool)
-	ResolvePipelineModel func(context.Context, string, string) (string, bool, error)
-	AuthorizeObject      func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
+	CurrentPrincipal  func(*http.Request) (AuthorizationPrincipal, bool)
+	CurrentCredential func(*http.Request) (access.APICredential, bool)
+	AuthorizeObject   func(context.Context, string, access.Capability, access.ResourceRef) (bool, error)
 }
 
 type Module struct {
@@ -89,7 +88,6 @@ type Module struct {
 	runs               *refreshsqlite.SQLRunRepository
 	schedules          *refreshsqlite.Repository
 	service            refreshrun.Service
-	environment        string
 	refreshClock       refreshschedule.Clock
 	dispatcher         Dispatcher
 	scheduler          Scheduler
@@ -111,6 +109,9 @@ type Module struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.Authorization.AuthorizeObject == nil {
+		return nil, errors.New("refresh object authorizer is required")
+	}
 	refreshExecution, err := loadRefreshExecutionContract()
 	if err != nil {
 		return nil, err
@@ -130,10 +131,10 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	m := &Module{
 		handler: materializehttp.Handler{
 			RunnerConfigured: config.HTTP.RunnerConfigured,
-			WorkspaceID:      config.HTTP.WorkspaceID, Environment: config.HTTP.Environment,
+			ServingIdentity:  config.HTTP.ServingIdentity,
 		},
 		dispatcher: config.Dispatcher, scheduler: config.Scheduler,
-		environment: config.Environment, refreshClock: config.Clock,
+		refreshClock:       config.Clock,
 		reconcileSchedules: config.ReconcileSchedules, scheduleInterval: interval,
 		leaseTimeout: leaseTimeout, logger: logger,
 		events:           config.Events,
@@ -146,11 +147,11 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		principal, ok := config.HTTP.CurrentPrincipal(r)
 		return materializehttp.Principal{ID: principal.ID}, ok
 	}
-	m.handler.AuthorizePipelineView = func(r *http.Request, workspaceID, pipelineID string) (bool, error) {
-		return authorizePipeline(r, workspaceID, pipelineID, access.PrivilegeViewItem, config.Authorization)
+	m.handler.AuthorizePipelineView = func(r *http.Request, identity projectgraph.ServingIdentity, pipelineID string) (bool, error) {
+		return authorizePipeline(r, identity, pipelineID, access.CapabilityResourceRead, config.Authorization)
 	}
-	m.handler.AuthorizePipelineRun = func(r *http.Request, workspaceID, pipelineID string) (bool, error) {
-		return authorizePipeline(r, workspaceID, pipelineID, access.PrivilegeRefreshData, config.Authorization)
+	m.handler.AuthorizePipelineRun = func(r *http.Request, identity projectgraph.ServingIdentity, pipelineID string) (bool, error) {
+		return authorizePipeline(r, identity, pipelineID, access.CapabilityResourceUse, config.Authorization)
 	}
 	m.handler.RunCreated = m.verifyRunCreated
 	if config.Database == nil {
@@ -170,7 +171,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		m.service.Artifacts = config.Artifacts
 	}
 	if m.service.Materializer == nil {
-		m.service.Materializer = refreshanalytics.WorkspaceRefreshMaterializer{
+		m.service.Materializer = refreshanalytics.RefreshMaterializer{
 			Executor: config.Analytics, ManagedData: config.ManagedData,
 		}
 	}
@@ -178,18 +179,24 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	m.service.DataVersions = m.schedules
 	m.service.Publication = refreshsqlite.NewPublicationUnitOfWork(config.Database, config.ApplyAccessSnapshot)
 	if m.dispatcher == nil && config.EnableDispatcher {
+		if config.ResolveIdentity == nil {
+			return nil, errors.New("refresh dispatcher identity resolver is required")
+		}
 		m.dispatcher = refreshrun.Dispatcher{
 			Runs: m.runs, Service: m.service, Admitter: config.Admission,
-			LeaseTimeout: config.LeaseTimeout, Logger: logger, Environment: config.Environment,
+			LeaseTimeout: config.LeaseTimeout, Logger: logger, ResolveIdentity: config.ResolveIdentity,
 			WorkloadStats: config.WorkloadStats, RunFinished: m.runFinished(config.RunFinished),
 		}
 	}
 	if m.scheduler == nil && config.EnableScheduler {
+		if config.ResolveIdentity == nil {
+			return nil, errors.New("refresh scheduler identity resolver is required")
+		}
 		m.scheduler = refreshschedule.Scheduler{
-			Repository: m.schedules, Clock: config.Clock, Environment: config.Environment,
+			Repository: m.schedules, Clock: config.Clock, ResolveIdentity: config.ResolveIdentity,
 			Trigger: func(ctx context.Context, occurrence refreshschedule.Occurrence) (string, error) {
 				result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
-					WorkspaceID: occurrence.WorkspaceID, Environment: servingstate.Environment(occurrence.Environment),
+					Identity: occurrence.Identity, PrincipalID: "scheduler", EstimatedMemoryBytes: 1,
 					PipelineID: occurrence.PipelineID, TriggerType: refreshrun.TriggerSchedule,
 					ArtifactDigest: occurrence.ArtifactDigest, Occurrence: &occurrence,
 				})
@@ -205,14 +212,18 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	m.handler.Repository = func() (refreshrun.RunRepository, error) { return m.runs, nil }
 	m.handler.DispatchQueued = func() { m.Dispatch(context.Background()) }
-	m.handler.QueuePipeline = func(ctx context.Context, workspaceID, environment, pipelineID, principalID, retryOf string) (refreshrun.RunRecord, error) {
+	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, retryOf string) (refreshrun.RunRecord, error) {
 		trigger := refreshrun.TriggerManual
 		if retryOf != "" {
 			trigger = refreshrun.TriggerRetry
 		}
+		pipelineIDValue, parseErr := projectgraph.NewResourceID(pipelineID)
+		if parseErr != nil {
+			return refreshrun.RunRecord{}, parseErr
+		}
 		result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
-			WorkspaceID: workspaceID, Environment: servingstate.Environment(environment), PrincipalID: principalID,
-			PipelineID: pipelineID, TriggerType: trigger, RetryOf: retryOf,
+			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
+			PipelineID: pipelineIDValue, TriggerType: trigger, RetryOf: retryOf,
 		})
 		return result.Run, err
 	}
@@ -233,62 +244,42 @@ func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.Queu
 	return m.service.QueuePipelineRefresh(ctx, input)
 }
 
-func (m *Module) GetRun(ctx context.Context, workspaceID, runID string) (refreshrun.RunRecord, error) {
-	if m == nil || m.runs == nil {
-		return refreshrun.RunRecord{}, errors.New("refresh persistence is not configured")
+// DataVersion returns the latest persisted semantic-model version for the
+// active serving generation in the requested project/environment scope.
+func (m *Module) DataVersion(ctx context.Context, projectID, environment, modelID string) (AssetDataVersion, bool, error) {
+	if m == nil || m.schedules == nil || m.service.ServingStates == nil {
+		return AssetDataVersion{}, false, nil
 	}
-	return m.runs.GetRun(ctx, workspaceID, runID)
-}
-
-func (m *Module) ListRuns(ctx context.Context, workspaceID string, page refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
-	if m == nil || m.runs == nil {
-		return nil, errors.New("refresh persistence is not configured")
+	project, err := projectgraph.NewResourceID(projectID)
+	if err != nil {
+		return AssetDataVersion{}, false, err
 	}
-	return m.runs.ListRuns(ctx, workspaceID, page)
-}
-
-func (m *Module) ListTargetRuns(ctx context.Context, workspaceID, targetType, targetID string, page refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
-	if m == nil || m.runs == nil {
-		return nil, errors.New("refresh persistence is not configured")
+	state, _, err := m.service.ServingStates.ActiveArtifact(ctx, project, servingstate.Environment(environment))
+	if err != nil {
+		return AssetDataVersion{}, false, err
 	}
-	return m.runs.ListTargetRuns(ctx, workspaceID, targetType, targetID, page)
-}
-
-func (m *Module) LatestSuccessfulTargetRun(ctx context.Context, workspaceID, environment, targetType, targetID string) (refreshrun.RunRecord, bool, error) {
-	if m == nil || m.runs == nil {
-		return refreshrun.RunRecord{}, false, errors.New("refresh persistence is not configured")
+	identity, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
+	if err != nil {
+		return AssetDataVersion{}, false, err
 	}
-	return m.runs.LatestSuccessfulTargetRun(ctx, workspaceID, environment, targetType, targetID)
-}
-
-func (m *Module) CancelRun(ctx context.Context, workspaceID, runID string) (refreshrun.RunRecord, error) {
-	if m == nil || m.runs == nil {
-		return refreshrun.RunRecord{}, errors.New("refresh persistence is not configured")
+	model, err := projectgraph.NewResourceID(modelID)
+	if err != nil {
+		return AssetDataVersion{}, false, err
 	}
-	return m.runs.CancelRun(ctx, workspaceID, runID)
-}
-
-func (m *Module) NextRun(ctx context.Context, workspaceID, environment, pipelineID string) (time.Time, bool, error) {
-	if m == nil || m.schedules == nil {
-		return time.Time{}, false, errors.New("refresh persistence is not configured")
+	version, found, err := m.schedules.DataVersion(ctx, identity, model)
+	if err != nil || !found {
+		return AssetDataVersion{}, found, err
 	}
-	return m.schedules.NextRun(ctx, workspaceID, environment, pipelineID)
-}
-
-func (m *Module) DataVersion(ctx context.Context, workspaceID, environment, modelID string) (refreshschedule.DataVersion, bool, error) {
-	if m == nil || m.schedules == nil {
-		return refreshschedule.DataVersion{}, false, errors.New("refresh persistence is not configured")
-	}
-	return m.schedules.DataVersion(ctx, workspaceID, environment, modelID)
+	return AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}, true, nil
 }
 
 type activeServingStates interface {
 	ListActiveScopes(context.Context) ([]servingstate.ActiveScope, error)
-	ActiveArtifact(context.Context, servingstate.WorkspaceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
+	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
 }
 
 type semanticModelVersionPublisher interface {
-	PublishSemanticModelVersion(context.Context, string, string, string)
+	PublishSemanticModelVersion(context.Context, projectgraph.ServingIdentity, projectgraph.ResourceID)
 }
 
 func (m *Module) Reconcile(ctx context.Context) error {
@@ -303,11 +294,17 @@ func (m *Module) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(scopes) == 0 {
+		return nil
+	}
+	if len(scopes) > 1 {
+		return fmt.Errorf("refresh schedule reconciliation requires exactly one active serving scope, found %d", len(scopes))
+	}
 	clock := m.clock()
 	var reconcileErrors []error
-	for _, scope := range activeScopes(scopes, servingstate.Environment(m.environment)) {
-		workspaceID := string(scope.WorkspaceID)
-		state, artifact, err := states.ActiveArtifact(ctx, scope.WorkspaceID, scope.Environment)
+	for _, scope := range scopes {
+		projectID := scope.ProjectID
+		state, artifact, err := states.ActiveArtifact(ctx, scope.ProjectID, scope.Environment)
 		if err != nil {
 			reconcileErrors = append(reconcileErrors, err)
 			continue
@@ -318,7 +315,7 @@ func (m *Module) Reconcile(ctx context.Context) error {
 			continue
 		}
 		if loaded.Definition == nil {
-			reconcileErrors = append(reconcileErrors, fmt.Errorf("workspace %q has no compiled definition", workspaceID))
+			reconcileErrors = append(reconcileErrors, fmt.Errorf("project %q has no compiled definition", projectID))
 			continue
 		}
 		pipelines := make([]refreshschedule.Definition, 0, len(loaded.Definition.Pipelines))
@@ -326,8 +323,13 @@ func (m *Module) Reconcile(ctx context.Context) error {
 			pipelines = append(pipelines, pipeline)
 		}
 		sort.Slice(pipelines, func(i, j int) bool { return pipelines[i].ID < pipelines[j].ID })
+		identity, identityErr := projectgraph.NewServingIdentity(state.ProjectID, string(scope.Environment), string(state.ID))
+		if identityErr != nil {
+			reconcileErrors = append(reconcileErrors, identityErr)
+			continue
+		}
 		if err := m.schedules.Reconcile(ctx, refreshschedule.ReconcileInput{
-			WorkspaceID: workspaceID, Environment: string(scope.Environment), ArtifactDigest: artifact.Digest,
+			Identity: identity, ArtifactDigest: artifact.Digest,
 			Pipelines: pipelines, Now: clock.Now(),
 		}); err != nil {
 			reconcileErrors = append(reconcileErrors, err)
@@ -342,24 +344,29 @@ func (m *Module) Reconcile(ctx context.Context) error {
 			continue
 		}
 		for modelID := range loaded.Definition.Models {
-			current, found, err := m.schedules.DataVersion(ctx, workspaceID, string(scope.Environment), modelID)
+			modelResource, modelErr := projectgraph.NewResourceID(modelID)
+			if modelErr != nil {
+				reconcileErrors = append(reconcileErrors, modelErr)
+				continue
+			}
+			current, found, err := m.schedules.DataVersion(ctx, identity, modelResource)
 			if err != nil {
 				reconcileErrors = append(reconcileErrors, err)
 				continue
 			}
-			if found && current.ServingStateID == string(state.ID) {
+			if found && current.Identity == identity {
 				continue
 			}
 			if err := m.schedules.SaveDataVersion(ctx, refreshschedule.DataVersion{
-				WorkspaceID: workspaceID, Environment: string(scope.Environment), SemanticModel: modelID,
-				SnapshotID: state.DuckLakeSnapshotID, ServingStateID: string(state.ID), RefreshedAt: refreshedAt,
+				Identity: identity, SemanticModelID: modelResource,
+				SnapshotID: state.DuckLakeSnapshotID, RefreshedAt: refreshedAt,
 				Source: refreshschedule.DataVersionSourcePublish,
 			}); err != nil {
 				reconcileErrors = append(reconcileErrors, err)
 				continue
 			}
 			if publisher, ok := m.service.Publisher.(semanticModelVersionPublisher); ok {
-				publisher.PublishSemanticModelVersion(ctx, workspaceID, string(scope.Environment), modelID)
+				publisher.PublishSemanticModelVersion(ctx, identity, modelResource)
 			}
 		}
 	}
@@ -371,17 +378,6 @@ func (m *Module) clock() refreshschedule.Clock {
 		return m.refreshClock
 	}
 	return refreshschedule.RealClock{}
-}
-
-func activeScopes(scopes []servingstate.ActiveScope, environment servingstate.Environment) []servingstate.ActiveScope {
-	environment = servingstate.NormalizeEnvironment(environment)
-	out := make([]servingstate.ActiveScope, 0, len(scopes))
-	for _, scope := range scopes {
-		if servingstate.NormalizeEnvironment(scope.Environment) == environment {
-			out = append(out, scope)
-		}
-	}
-	return out
 }
 
 func parseServingStateTime(value string) (time.Time, error) {

@@ -87,7 +87,7 @@ func TestPoolManagerPreservesSuccessfulRotationAndObservesBestEffortAuditFailure
 		t.Fatalf("rotation evidence = %#v", evidence)
 	}
 	if output := logs.String(); !strings.Contains(output, "best-effort credential rotation audit failed") ||
-		!strings.Contains(output, string(RefreshRequested)) || !strings.Contains(output, manager.Evidence().BindingID) {
+		!strings.Contains(output, string(RefreshRequested)) || !strings.Contains(output, manager.Evidence().BindingID.String()) {
 		t.Fatalf("audit failure log = %s", output)
 	}
 }

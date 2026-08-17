@@ -17,7 +17,7 @@ func TestAPIGenDispatcherMapsRefreshEventPagination(t *testing.T) {
 	handler := &recordingRefreshHandler{}
 	NewAPIGenDispatcher(handler).ListRefreshRunEvents(
 		httptest.NewRecorder(),
-		httptest.NewRequest(stdhttp.MethodGet, "/api/v1/workspaces/sales/refresh-runs/run-1/events", nil),
+		httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/sales/refresh-runs/run-1/events", nil),
 		"sales",
 		"run-1",
 		refreshgen.GenListRefreshRunEventsParams{Limit: &limit, PageToken: &token},

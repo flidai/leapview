@@ -1,0 +1,127 @@
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata:
+  id: semantic-model:movie_ratings
+  name: movie_ratings
+  displayName: Movie Ratings Semantic Model
+  description: Rating-grain semantic model for movie, user, and rating trend analysis.
+spec:
+  tables:
+    - ratings
+    - movies
+    - users
+    - tags
+  relationships:
+    - id: ratings_movies
+      description: Links each rating to the rated movie.
+      from: ratings.movie_id
+      to: movies.movie_id
+      cardinality: many_to_one
+    - id: ratings_users
+      description: Links each rating to the anonymized user who made it.
+      from: ratings.user_id
+      to: users.user_id
+      cardinality: many_to_one
+    - id: tags_movies
+      description: Links each tag event to its movie.
+      from: tags.movie_id
+      to: movies.movie_id
+      cardinality: many_to_one
+    - id: tags_users
+      description: Links each tag event to its anonymized user.
+      from: tags.user_id
+      to: users.user_id
+      cardinality: many_to_one
+  dimensions:
+    activity_date:
+      label: Activity date
+      type: timestamp
+      grains: [day, week, month, quarter, year]
+      bindings:
+        ratings: {field: ratings.rated_at}
+        tags: {field: tags.tagged_at}
+    release_decade:
+      label: Release decade
+      type: string
+      bindings:
+        ratings:
+          field: movies.release_decade
+          path: [ratings_movies]
+        tags:
+          field: movies.release_decade
+          path: [tags_movies]
+    movie_title:
+      label: Movie title
+      type: string
+      bindings:
+        ratings:
+          field: movies.title
+          path: [ratings_movies]
+        tags:
+          field: movies.title
+          path: [tags_movies]
+    rating_bucket:
+      label: Rating bucket
+      type: string
+      bindings:
+        ratings: {field: ratings.rating_bucket}
+  measures:
+    rating_count:
+      label: Ratings
+      description: Count of rating events.
+      fact: ratings
+      aggregation: count
+      empty: zero
+      format: integer
+    average_rating:
+      label: Average rating
+      description: Average MovieLens rating.
+      fact: ratings
+      aggregation: avg
+      input: {field: ratings.rating}
+      empty: "null"
+      format: decimal
+    active_users:
+      label: Active users
+      description: Distinct users who submitted ratings.
+      fact: ratings
+      aggregation: count_distinct
+      input: {field: ratings.user_id}
+      empty: zero
+      format: integer
+    rated_movies:
+      label: Rated movies
+      description: Distinct movies with ratings.
+      fact: ratings
+      aggregation: count_distinct
+      input: {field: ratings.movie_id}
+      empty: zero
+      format: integer
+    five_star_ratings:
+      label: Five-star ratings
+      fact: ratings
+      aggregation: count
+      filters:
+        - field: ratings.rating
+          operator: equals
+          values: [5]
+      empty: zero
+      hidden: true
+    tag_count:
+      label: Tags
+      description: Count of tag events.
+      fact: tags
+      aggregation: count
+      empty: zero
+      format: integer
+  metrics:
+    five_star_share:
+      label: Five-star share
+      description: Share of ratings that are exactly five stars.
+      expression: safe_divide(${five_star_ratings}, ${rating_count})
+      format: percent
+    tags_per_rating:
+      label: Tags per rating
+      description: Ratio of independently aggregated tag events to rating events.
+      expression: safe_divide(${tag_count}, ${rating_count})
+      format: decimal

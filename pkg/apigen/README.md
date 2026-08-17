@@ -111,19 +111,19 @@ Use `@apigen.command` on a mutating operation when its stable operation ID is
 also the transport-neutral application command identity:
 
 ```typespec
-@route("/workspaces/{workspace}/role-bindings")
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+@route("/projects/{project}/role-bindings")
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 @apigen.auditPayload(RoleBindingAuditPayload)
 interface RoleBindings {
   @post
-  @apigen.ui("workspace.access.role-binding.create")
+  @apigen.ui("project.access.role-binding.create")
   @apigen.failsWith(RoleBindingConflict)
   @apigen.command(#{
     auditAction: "role_binding.created",
   })
   createRoleBinding(
-    @path @apigen.target workspace: string,
+    @path @apigen.target project: string,
     @header("Idempotency-Key") idempotencyKey: string,
     @body body: RoleBindingRequest,
   ): RoleBindingResponse;
@@ -428,11 +428,11 @@ Agent tools are endpoint capabilities, not standalone data contracts. Mark a Typ
 
 ```typespec
 @apigen.tool(#{
-  name: "list_workspace_assets",
+  name: "list_project_assets",
   effect: "read",
-  tags: #["workspace", "lineage"],
+  tags: #["project", "lineage"],
   input: #{ fields: #[
-    #{ source: "path", name: "workspace", mode: "context", contextKey: "workspace" },
+    #{ source: "path", name: "project", mode: "context", contextKey: "project" },
     #{ source: "query", name: "limit", default: 25 },
   ] },
   output: #{
@@ -441,10 +441,10 @@ Agent tools are endpoint capabilities, not standalone data contracts. Mark a Typ
     cursor: #{ source: "/page/nextCursor" },
   },
 })
-@route("/workspaces/{workspace}/assets")
+@route("/projects/{project}/assets")
 @get
-op listWorkspaceAssets(
-  @path workspace: string,
+op listProjectAssets(
+  @path project: string,
   @query limit?: int32,
 ): AssetListResponse;
 ```
@@ -458,12 +458,12 @@ Generated model-visible schemas use a provider-portable validation subset. Defau
 Generated server packages expose defensive copies of SDK-neutral descriptors:
 
 ```go
-contract, ok := gen.GetAPIGenToolContract("list_workspace_assets")
+contract, ok := gen.GetAPIGenToolContract("list_project_assets")
 if ok {
 	request, err := agenttool.BuildRequest(
 		contract,
 		json.RawMessage(`{"limit":10}`),
-		agenttool.Context{"workspace": "sales"},
+		agenttool.Context{"project": "sales"},
 	)
 	_ = request
 	_ = err
@@ -602,10 +602,10 @@ alias CommonErrors = BadRequest | Unauthorized | Forbidden;
 
 @route("/api/v1")
 namespace Deployments {
-  @route("/workspaces/{workspace}/deployments/{deployment}/artifact")
+  @route("/projects/{project}/deployments/{deployment}/artifact")
   @put
   op uploadDeploymentArtifact(
-    @path workspace: string,
+    @path project: string,
     @path deployment: string,
     @header contentType: "application/octet-stream",
     @body body: bytes,

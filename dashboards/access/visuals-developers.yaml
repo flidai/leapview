@@ -1,0 +1,10 @@
+apiVersion: leapview.dev/v1
+kind: Group
+metadata:
+  id: group:visuals-developers
+  name: visuals-developers
+  displayName: Visuals Developers
+spec:
+  members:
+    - email: developer@example.com
+      displayName: Visuals Developer

@@ -18,7 +18,7 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
-      response.end('<!doctype html><main><lv-workspace-registry></lv-workspace-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration><script type="module" src="/settings-surfaces.js"></script></main>')
+      response.end('<!doctype html><main><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration><script type="module" src="/settings-surfaces.js"></script></main>')
       return
     }
     const file = normalize(join(root, url.pathname))
@@ -58,36 +58,36 @@ test('settings surfaces render typed signals and emit commands', async () => {
   } finally { await page.close() }
 })
 
-test('workspace registry uses the shared searchable entity list', async () => {
+test('project registry uses the shared searchable entity list', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-workspace-registry') && customElements.get('lv-entity-list'))
+    await page.waitForFunction(() => customElements.get('lv-project-registry') && customElements.get('lv-entity-list'))
     const result = await page.evaluate(async () => {
       const runtime = await import('/settings-surfaces.js') as any
       const registry = {
         items: [
           {
-            id: 'sales', title: 'Sales', description: 'Revenue reporting', href: '/workspaces/sales',
+            id: 'sales', title: 'Sales', description: 'Revenue reporting', href: '/projects/sales',
             owner: { subjectType: 'principal', subjectId: 'owner-1', displayName: 'Ada Lovelace', email: 'ada@example.com' },
             administrators: [{ subjectType: 'principal', subjectId: 'admin-1', displayName: 'Grace Hopper', role: 'admin' }],
-            environment: 'production', deploymentStatus: 'Active', updatedAt: '2026-08-11T08:00:00Z', links: { self: '/api/v1/workspaces/sales', workspace: '/workspaces/sales' },
+            environment: 'production', deploymentStatus: 'Active', updatedAt: '2026-08-11T08:00:00Z', links: { self: '/api/v1/projects/sales', project: '/projects/sales' },
           },
           {
-            id: 'retail', title: 'Retail', description: 'Store operations', href: '/workspaces/retail',
+            id: 'retail', title: 'Retail', description: 'Store operations', href: '/projects/retail',
             administrators: [], environment: 'development', servingStateStatus: 'Not deployed', updatedAt: '2026-08-10T08:00:00Z',
-            links: { self: '/api/v1/workspaces/retail', workspace: '/workspaces/retail' },
+            links: { self: '/api/v1/projects/retail', project: '/projects/retail' },
           },
         ],
         loading: false,
         hasMore: false,
       }
       runtime.setDatastarLitRuntimeForTests?.({
-        root: { adminWorkspaces: registry },
-        getPath: (path: string) => path === 'adminWorkspaces' ? registry : undefined,
+        root: { adminProjects: registry },
+        getPath: (path: string) => path === 'adminProjects' ? registry : undefined,
         effect: (fn: () => void) => { fn(); return () => {} },
       })
-      const element = document.querySelector('lv-workspace-registry') as any
+      const element = document.querySelector('lv-project-registry') as any
       element.requestUpdate()
       await element.updateComplete
       const list = element.shadowRoot.querySelector('lv-entity-list') as any
@@ -106,9 +106,9 @@ test('workspace registry uses the shared searchable entity list', async () => {
         initialRows,
         filteredRows: rows(),
         firstHref: element.shadowRoot.querySelector('.entity-list-identity')?.getAttribute('href'),
-        workspaceIconsArePlain: Array.from(element.shadowRoot.querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
-        workspaceIconBorderWidth: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
-        workspaceIconBackground: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
+        projectIconsArePlain: Array.from(element.shadowRoot.querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
+        projectIconBorderWidth: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
+        projectIconBackground: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
       }
     })
 
@@ -124,10 +124,10 @@ test('workspace registry uses the shared searchable entity list', async () => {
     expect(result.initialRows[0]).toContain('Active')
     expect(result.filteredRows).toHaveLength(1)
     expect(result.filteredRows[0]).toContain('Retail Store operations')
-    expect(result.firstHref).toBe('/workspaces/retail')
-    expect(result.workspaceIconsArePlain).toBe(true)
-    expect(result.workspaceIconBorderWidth).toBe('0px')
-    expect(result.workspaceIconBackground).toBe('rgba(0, 0, 0, 0)')
+    expect(result.firstHref).toBe('/projects/retail')
+    expect(result.projectIconsArePlain).toBe(true)
+    expect(result.projectIconBorderWidth).toBe('0px')
+    expect(result.projectIconBackground).toBe('rgba(0, 0, 0, 0)')
   } finally { await page.close() }
 })
 
@@ -143,11 +143,11 @@ test('principal administration exposes local controls and keeps external profile
           { id: 'local-1', kind: 'user', email: 'local@example.com', displayName: 'Local User', identitySource: 'local', hasLocalPassword: true, revision: 'rev-1', createdAt: '2026-08-01T10:00:00Z', updatedAt: '2026-08-02T11:00:00Z', lastSeenAt: '2026-08-03T12:00:00Z', groups: [{ id: 'group-1', name: 'Analysts', provider: 'local' }], capabilities: { canUpdateProfile: true, canResetPassword: true, canBlock: true, canUnblock: false, canDelete: true, canManageSessions: true } },
           { id: 'sso-1', kind: 'user', email: 'sso@example.com', displayName: 'SSO User', identitySource: 'external', identityProvider: 'okta', hasLocalPassword: false, groups: [], capabilities: { canUpdateProfile: false, canResetPassword: false, canBlock: true, canUnblock: false, canDelete: false, canManageSessions: true } },
         ],
-        groups: [], workspaces: [{ id: 'sales', name: 'Sales' }],
+        groups: [], projects: [{ id: 'sales', name: 'Sales' }],
         sessions: [{ id: 'session-1', kind: 'browser', createdAt: '2026-08-03T10:00:00Z', lastSeenAt: '2026-08-03T12:00:00Z', expiresAt: '2026-08-10T10:00:00Z' }],
         roleAssignments: [
-          { workspaceId: 'sales', role: 'viewer', sourceType: 'direct', sourceId: 'local-1', sourceName: 'Local User' },
-          { workspaceId: 'sales', role: 'editor', sourceType: 'group', sourceId: 'group-1', sourceName: 'Analysts' },
+          { projectId: 'sales', resourceKind: 'project', role: 'viewer', capabilities: [], sourceType: 'direct', sourceId: 'local-1', sourceName: 'Local User' },
+          { projectId: 'sales', resourceKind: 'project', role: 'editor', capabilities: [], sourceType: 'group', sourceId: 'group-1', sourceName: 'Analysts' },
         ],
         activity: [{ id: 'event-1', action: 'principal.updated', actorId: 'admin-1', actorName: 'Admin User', status: 'success', createdAt: '2026-08-02T11:00:00Z' }],
         selectedPrincipalId: 'local-1', loading: false,
@@ -275,9 +275,9 @@ test('local group detail moves rename and add member into focused modals', async
           { id: 'candidate-2', kind: 'user', email: 'second@example.com', displayName: 'Second Candidate', groups: [], capabilities: {} },
         ],
         sessions: [], selectedGroupId: 'group-1', loading: false,
-        workspaces: [{ id: 'sales', name: 'Sales' }],
+        projects: [{ id: 'sales', name: 'Sales' }],
         groups: [{
-          id: 'group-1', name: 'Analysts', provider: 'local', externalId: 'analysts', workspaceId: 'sales', revision: 'rev-1',
+          id: 'group-1', name: 'Analysts', provider: 'local', externalId: 'analysts', revision: 'rev-1',
           members: [{ id: 'member-1', email: 'member@example.com', displayName: 'Existing Member' }],
           capabilities: { canUpdate: true, canDelete: true, canManageMembers: true },
         }],
@@ -339,13 +339,13 @@ test('local group detail moves rename and add member into focused modals', async
     expect(result.renameOpen).toBe(false)
     expect(result.memberOpen).toBe(false)
     expect(result.commands).toEqual([
-      { action: 'update_group', groupId: 'group-1', workspaceId: 'sales', displayName: 'Revenue Analysts', revision: 'rev-1' },
-      { action: 'add_group_member', groupId: 'group-1', workspaceId: 'sales', principalIds: ['candidate-1', 'candidate-2'] },
+      { action: 'update_group', groupId: 'group-1', displayName: 'Revenue Analysts', revision: 'rev-1' },
+      { action: 'add_group_member', groupId: 'group-1', principalIds: ['candidate-1', 'candidate-2'] },
     ])
   } finally { await page.close() }
 })
 
-test('group administration creates a local group in the selected workspace', async () => {
+test('group administration creates a local group in the selected project', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
@@ -354,7 +354,7 @@ test('group administration creates a local group in the selected workspace', asy
       const runtime = await import('/settings-surfaces.js') as any
       const state = {
         principals: [], groups: [], sessions: [], loading: false,
-        workspaces: [{ id: 'operations', name: 'Operations' }, { id: 'sales', name: 'Sales' }],
+        projects: [{ id: 'operations', name: 'Operations' }, { id: 'sales', name: 'Sales' }],
       }
       runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccess: state }, getPath: (path: string) => path === 'adminAccess' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
       const element = document.querySelector('lv-group-administration') as any
@@ -363,20 +363,17 @@ test('group administration creates a local group in the selected workspace', asy
       let detail: unknown = null
       element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { detail = event.detail })
       const form = element.shadowRoot.querySelector('form') as HTMLFormElement
-      ;(form.elements.namedItem('workspaceId') as HTMLSelectElement).value = 'sales'
       ;(form.elements.namedItem('displayName') as HTMLInputElement).value = 'Revenue analysts'
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       return {
         detail,
         open: (element.shadowRoot.querySelector('dialog') as HTMLDialogElement).open,
-        workspaceLabel: (form.elements.namedItem('workspaceId') as HTMLSelectElement).getAttribute('aria-label'),
         disabled: (form.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
     expect(result).toEqual({
-      detail: { action: 'create_group', workspaceId: 'sales', displayName: 'Revenue analysts' },
+      detail: { action: 'create_group', displayName: 'Revenue analysts' },
       open: true,
-      workspaceLabel: 'Workspace',
       disabled: false,
     })
   } finally { await page.close() }

@@ -19,9 +19,9 @@ func TestChatTranscriptItemsPreserveAgentOwnedWireState(t *testing.T) {
 			Summary: "A chart",
 		},
 		References: []agent.TurnReference{{
-			Reference: agent.TurnReferenceKey{WorkspaceID: "sales", Type: "measure", ID: "revenue"},
+			Reference: agent.TurnReferenceKey{Kind: "measure", ID: "revenue"},
 			Name:      "Revenue",
-			Workspace: agent.TurnReferenceWorkspace{ID: "sales", Name: "Sales"},
+			Resource:  agent.TurnReferenceResource{ID: "project_demo", Name: "Demo"},
 		}},
 	}})
 

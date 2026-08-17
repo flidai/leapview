@@ -18,23 +18,23 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 		idempotency string
 		guarantee   string
 	}{
-		"createDeployment":                      {deploymentQueuedAuditAction, "REQUEST_DEPLOYMENT", "required", "best-effort"},
-		"cancelDeployment":                      {deploymentCancelledAuditAction, "REQUEST_DEPLOYMENT", "required", "best-effort"},
-		"retryDeployment":                       {deploymentQueuedAuditAction, "REQUEST_DEPLOYMENT", "required", "best-effort"},
-		"rollbackDeployment":                    {deploymentQueuedAuditAction, "ROLLBACK_DEPLOYMENT", "required", "best-effort"},
-		"requestDeploymentApproval":             {deploymentApprovalRequestedAuditAction, "REQUEST_DEPLOYMENT", "required", "best-effort"},
-		"approveDeployment":                     {deploymentApprovedAuditAction, "APPROVE_DEPLOYMENT", "required", "best-effort"},
-		"denyDeploymentApproval":                {deploymentDeniedAuditAction, "APPROVE_DEPLOYMENT", "required", "best-effort"},
-		"revokeDeploymentApproval":              {deploymentApprovalRevokedAuditAction, "APPROVE_DEPLOYMENT", "required", "best-effort"},
-		"activateDeployment":                    {deploymentActivationRequestedAuditAction, "ACTIVATE_DEPLOYMENT", "required", "best-effort"},
-		"startProjectCandidate":                 {"candidate.started", "AUTHOR_PROJECT", "required", "best-effort"},
-		"replaceProjectCandidateArtifact":       {"candidate.artifact_replaced", "AUTHOR_PROJECT", "required", "best-effort"},
-		"retryProjectCandidate":                 {"candidate.retried", "AUTHOR_PROJECT", "required", "best-effort"},
-		"cancelProjectCandidate":                {"candidate.cancelled", "AUTHOR_PROJECT", "required", "best-effort"},
-		"cancelProjectCandidateByKey":           {"candidate.cancelled", "AUTHOR_PROJECT", "required", "best-effort"},
-		"publishProjectCandidate":               {deploymentQueuedAuditAction, "PUBLISH_RELEASE", "required", "best-effort"},
-		"uploadProjectCandidateSourceBlob":      {"candidate.source_blob_uploaded", "AUTHOR_PROJECT", "", "best-effort"},
-		"commitProjectCandidateSynchronization": {"candidate.ready", "AUTHOR_PROJECT", "required", "best-effort"},
+		"createDeployment":                      {deploymentQueuedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"cancelDeployment":                      {deploymentCancelledAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"retryDeployment":                       {deploymentQueuedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"rollbackDeployment":                    {deploymentQueuedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
+		"requestDeploymentApproval":             {deploymentApprovalRequestedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"approveDeployment":                     {deploymentApprovedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
+		"denyDeploymentApproval":                {deploymentDeniedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
+		"revokeDeploymentApproval":              {deploymentApprovalRevokedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
+		"activateDeployment":                    {deploymentActivationRequestedAuditAction, "PROJECT_ADMIN", "required", "best-effort"},
+		"startProjectCandidate":                 {"candidate.started", "RESOURCE_EDIT", "required", "best-effort"},
+		"replaceProjectCandidateArtifact":       {"candidate.artifact_replaced", "RESOURCE_EDIT", "required", "best-effort"},
+		"retryProjectCandidate":                 {"candidate.retried", "RESOURCE_EDIT", "required", "best-effort"},
+		"cancelProjectCandidate":                {"candidate.cancelled", "RESOURCE_EDIT", "required", "best-effort"},
+		"cancelProjectCandidateByKey":           {"candidate.cancelled", "RESOURCE_EDIT", "required", "best-effort"},
+		"publishProjectCandidate":               {deploymentQueuedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"uploadProjectCandidateSourceBlob":      {"candidate.source_blob_uploaded", "RESOURCE_EDIT", "", "best-effort"},
+		"commitProjectCandidateSynchronization": {"candidate.ready", "RESOURCE_EDIT", "required", "best-effort"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
@@ -68,17 +68,24 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 			t.Errorf("async command contract %q = %#v", operationID, contract.Command.Execution)
 		}
 	}
-	for _, operationID := range []string{
-		"listDeployments",
-		"getDeployment",
-		"listDeploymentEvents",
-		"getProjectCandidate",
-		"reviewProjectCandidate",
-		"planProjectCandidateSynchronization",
-	} {
+	queryPrivileges := map[string]string{
+		"listDeployments":                     "RESOURCE_READ",
+		"getDeployment":                       "RESOURCE_READ",
+		"listDeploymentEvents":                "RESOURCE_READ",
+		"getProjectCandidate":                 "RESOURCE_EDIT",
+		"reviewProjectCandidate":              "RESOURCE_EDIT",
+		"planProjectCandidateSynchronization": "RESOURCE_EDIT",
+	}
+	for operationID, wantPrivilege := range queryPrivileges {
 		contract, ok := contracts[operationID]
 		if !ok || contract.Command != nil || generatedOperationKind(contract) != "query" {
 			t.Errorf("query contract %q = %#v", operationID, contract)
+			continue
+		}
+		authz, _ := contract.Extensions["x-authz"].(map[string]any)
+		privilege, _ := authz["privilege"].(string)
+		if contract.AuthzMode != "privilege" || privilege != wantPrivilege {
+			t.Errorf("query contract %q authorization = %s/%s, want privilege/%s", operationID, contract.AuthzMode, privilege, wantPrivilege)
 		}
 	}
 }

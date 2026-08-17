@@ -11,8 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
-	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestCreateAgentRunGeneratedExecutionContractMatchesJobRegistration(t *testing.T) {
@@ -32,20 +31,17 @@ func TestCreateAgentRunGeneratedExecutionContractIsPersistedAtomically(t *testin
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(t.Context(), workspace.EnsureInput{ID: "workspace-1", Title: "Contract proof"}); err != nil {
-		t.Fatal(err)
-	}
-	principal, err := accesssqlite.NewRepository(store.SQLDB()).SetPrincipalRole(t.Context(), access.PrincipalRoleInput{
-		WorkspaceID: "workspace-1", Email: "contract@example.com", DisplayName: "Contract proof", Role: "viewer",
+	principal, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{
+		ID: "agent-contract", Kind: access.PrincipalKindUser, Email: "contract@example.com", DisplayName: "Contract proof",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	jobStore := jobsqlite.NewRepository(store.SQLDB())
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(),
-		Jobs:     jobStore,
-		Model:    ModelConfig{APIKey: "test", Model: "test"},
+		Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:contract"),
+		Jobs:  jobStore,
+		Model: ModelConfig{APIKey: "test", Model: "test"},
 		RecordAudit: func(context.Context, access.AuditEventInput) error {
 			return nil
 		},
@@ -53,7 +49,7 @@ func TestCreateAgentRunGeneratedExecutionContractIsPersistedAtomically(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := agent.Scope{WorkspaceID: "workspace-1", PrincipalID: principal.ID}
+	scope := agent.Scope{ProjectID: "project:contract", PrincipalID: principal.ID}
 	conversation, err := module.service.CreateConversation(t.Context(), scope, "Contract proof")
 	if err != nil {
 		t.Fatal(err)

@@ -13,6 +13,7 @@ import (
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, dashboardID, pageID, visualID string, filters dashboard.Filters) (visualizationir.VisualizationEnvelope, error) {
@@ -111,6 +112,16 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 		aggregateDomains = append(aggregateDomains, aggregate)
 	}
 	publicID := spatialTilePublicationFromContext(ctx)
+	projectID := projectgraph.ResourceID("")
+	if publicID == "" {
+		if s.reports == nil {
+			return visualizationir.VisualizationEnvelope{}, fmt.Errorf("project spatial tile route requires dashboard report identity")
+		}
+		projectID = s.reports.projectID
+		if err := projectID.Validate(); err != nil {
+			return visualizationir.VisualizationEnvelope{}, fmt.Errorf("project spatial tile route identity: %w", err)
+		}
+	}
 	token, err := s.tiles.register(spatialTileRevision{
 		DashboardID: dashboardID, PageID: pageID, VisualID: visualID, PublicID: publicID,
 		PrincipalID: dataquery.MetadataFromContext(ctx).PrincipalID, StreamID: dataquery.MetadataFromContext(ctx).StreamID, Filters: filters, RawMinimumZoom: int(effectiveRawMinimumZoom), AuthoredRawMinimumZoom: int(spatial.Tiles.RawMinimumZoom),
@@ -118,9 +129,9 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	if err != nil {
 		return visualizationir.VisualizationEnvelope{}, err
 	}
-	tileURL := spatialTileURL(s.workspaceID, dashboardID, visualID, token)
-	if publicID != "" {
-		tileURL = publicSpatialTileURL(publicID, visualID, token)
+	tileURL := publicSpatialTileURL(publicID, visualID, token)
+	if publicID == "" {
+		tileURL = spatialTileURL(dashboardID, visualID, token)
 	}
 	envelope, err := visualizationruntime.SpatialTiledEnvelopeFromMetadata(definition, visualizationruntime.SpatialTiledMetadata{
 		Cardinality: cardinality, Extent: extent, RawDomains: rawDomains, AggregateDomains: aggregateDomains,

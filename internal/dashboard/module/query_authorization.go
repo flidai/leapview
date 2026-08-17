@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 )
@@ -14,18 +15,20 @@ type QueryPrincipal struct {
 }
 
 type QueryAuthorizationConfig struct {
-	Repository            access.DataAuthorizationService
+	SnapshotFromContext   func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	SubjectsFromContext   func(context.Context, string) ([]access.SubjectRef, error)
 	PrincipalFromContext  func(context.Context) (QueryPrincipal, bool)
 	CredentialFromContext func(context.Context) (access.APICredential, bool)
-	TokenAllows           func(access.APIToken, string, access.Privilege) bool
+	AuditRecorder         access.CanonicalAuditRecorder
 }
 
 func WithQueryAuthorization(metrics queryruntime.Metrics, config QueryAuthorizationConfig) queryruntime.Metrics {
-	if metrics == nil || config.Repository == nil {
+	if metrics == nil || config.SnapshotFromContext == nil {
 		return metrics
 	}
 	return queryauthz.New(metrics, queryauthz.Options{
-		Repo: config.Repository,
+		SnapshotFromContext: config.SnapshotFromContext,
+		SubjectsFromContext: config.SubjectsFromContext,
 		PrincipalFromContext: func(ctx context.Context) (queryauthz.Principal, bool) {
 			if config.PrincipalFromContext == nil {
 				return queryauthz.Principal{}, false
@@ -34,6 +37,6 @@ func WithQueryAuthorization(metrics queryruntime.Metrics, config QueryAuthorizat
 			return queryauthz.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 		},
 		CredentialFromContext: config.CredentialFromContext,
-		TokenAllows:           config.TokenAllows,
+		AuditRecorder:         config.AuditRecorder,
 	})
 }

@@ -6,7 +6,7 @@ LeapView exposes one governed tool catalog through built-in chat and the deploym
 
 | Need | Tool |
 | --- | --- |
-| Find a resource without knowing its workspace or parent | `catalog_search` |
+| Find a resource without knowing its project or parent | `catalog_search` |
 | Browse the known catalog hierarchy one level at a time | `catalog_list` |
 | Inspect one exact resource definition | `catalog_get` |
 | Query a semantic model | `query_semantic_model` |
@@ -36,9 +36,9 @@ add_dashboard_visual
 assign_dashboard_field
 ```
 
-`list_dashboards`, `get_dashboard`, and `get_dashboard_draft` read governed dashboard state. `create_dashboard_draft` creates a new private draft. `set_dashboard_visibility`, `add_dashboard_page`, `add_dashboard_visual`, and `assign_dashboard_field` are the four bounded builder intents; each requires an exact draft revision token. `execute_dashboard_command` accepts exact-revision `publish` and `archive`, `fork_dashboard` copies a retained workspace or project source into a new private draft, `preview_dashboard_draft` previews one exact page and revision, and `export_dashboard_yaml` returns canonical authored YAML.
+`list_dashboards`, `get_dashboard`, and `get_dashboard_draft` read governed dashboard state. `create_dashboard_draft` creates a new private draft. `set_dashboard_visibility`, `add_dashboard_page`, `add_dashboard_visual`, and `assign_dashboard_field` are the four bounded builder intents; each requires an exact draft revision token. `execute_dashboard_command` accepts exact-revision `publish` and `archive`, `fork_dashboard` copies a retained project source into a new private draft, `preview_dashboard_draft` previews one exact page and revision, and `export_dashboard_yaml` returns canonical authored YAML.
 
-The model cannot supply identity or provenance fields. The server binds `origin: agent`, the authenticated principal as `actorId`, the active conversation as `conversationId`, and the tool invocation as `toolCallId`. Workspace scope, object privileges, semantic-model governance, and optimistic revision checks run before every mutation. Agent calls set the operation idempotency key and actual `toolCallId` from the invocation ID. Create and fork calls with the same invocation ID and normalized payload replay their durable draft/result; a changed payload conflicts, while a different invocation ID creates a new draft. Intent and lifecycle-command retries use the same command identity and request fingerprint replay rules. MCP writes are deliberately advertised as non-idempotent because the server assigns a fresh tool-call ID to each request; durable replay applies only when an agent caller reuses the original invocation identity. See [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring) for browser, API, and promotion details.
+The model cannot supply identity or provenance fields. The server binds `origin: agent`, the authenticated principal as `actorId`, the active conversation as `conversationId`, and the tool invocation as `toolCallId`. Project scope, object privileges, semantic-model governance, and optimistic revision checks run before every mutation. Agent calls set the operation idempotency key and actual `toolCallId` from the invocation ID. Create and fork calls with the same invocation ID and normalized payload replay their durable draft/result; a changed payload conflicts, while a different invocation ID creates a new draft. Intent and lifecycle-command retries use the same command identity and request fingerprint replay rules. MCP writes are deliberately advertised as non-idempotent because the server assigns a fresh tool-call ID to each request; durable replay applies only when an agent caller reuses the original invocation identity. See [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring) for browser, API, and promotion details.
 
 ## Identify resources with refs
 
@@ -46,60 +46,50 @@ Every catalog resource is identified by a closed `CatalogRef`:
 
 ```json
 {
-  "workspaceId": "sales",
-  "type": "dashboard",
-  "id": "executive-sales"
+  "kind": "dashboard",
+  "id": "dashboard:executive-sales"
 }
 ```
 
-Supported `type` values are `workspace`, `dashboard`, `page`, `visual`, `filter`, `semantic_model`, `semantic_table`, `field`, and `measure`.
+Supported `kind` values are `project`, `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`.
 
-Treat the complete ref as the resource identity. IDs are meaningful only with their workspace and type, and some returned IDs encode their parent identity. Pass returned refs unchanged instead of constructing IDs from names.
+Treat the complete ref as the resource identity. IDs are meaningful only with their kind; pass returned refs unchanged instead of constructing IDs from names.
 
-Search and list results use the same compact item envelope. It contains the ref, display name, optional description, workspace, ancestors, known dashboard/page locations, browser URL, and the next tools that can act on the item.
+Search and list results use the same compact item envelope. It contains the ref, display name, optional description, project ancestry, known dashboard/page locations, browser URL, and the next tools that can act on the item.
 
 ## Find an unknown resource
 
-`catalog_search` searches all workspaces the principal may access. It does not require a preceding workspace-list call.
+`catalog_search` searches all authorized project resources. It does not require a preceding project-list call.
 
 ```json
 {
   "query": "monthly revenue",
-  "types": ["dashboard", "visual", "measure"],
-  "workspaceIds": ["sales"],
-  "context": {
-    "dashboardId": "executive-sales",
-    "pageId": "overview"
-  },
+  "kinds": ["dashboard", "semantic_model"],
+  "domain": "sales",
   "limit": 10
 }
 ```
 
-Only `query` is required. Type and workspace filters constrain the search; optional dashboard/page context influences ranking without changing authorization. The default limit is 10 and the maximum is 25.
+Only `query` is required. Kind and domain filters constrain the search without changing authorization. The default limit is 10 and the maximum is 25.
 
 Every search page includes `count` and `hasMore`. Use `nextCursor` unchanged when `hasMore` is true. Cursors are opaque and bound to the search, caller, and catalog snapshot. Restart from the first page if the catalog changed.
 
 ## Browse a known hierarchy
 
-Call `catalog_list` without a parent to list accessible workspaces. Pass a returned ref as `parent` to browse exactly one level:
+Call `catalog_list` without a parent to list authorized projects. Pass a returned project ref as `parent` to browse its project graph:
 
 | Parent | Children |
 | --- | --- |
-| none | workspaces |
-| workspace | dashboards and semantic models |
-| dashboard | pages |
-| page | visuals and filters |
-| semantic model | semantic tables, conformed-dimension fields, and measures |
-| semantic table | fields |
+| none | projects |
+| project | connections, sources, models, semantic models, pipelines, and dashboards |
 
 ```json
 {
   "parent": {
-    "workspaceId": "sales",
-    "type": "dashboard",
-    "id": "executive-sales"
+    "kind": "project",
+    "id": "project:sales"
   },
-  "childTypes": ["page"],
+  "kinds": ["dashboard", "semantic_model"],
   "limit": 25
 }
 ```
@@ -115,16 +105,15 @@ Pass a returned ref to `catalog_get`:
 ```json
 {
   "ref": {
-    "workspaceId": "sales",
-    "type": "semantic_model",
-    "id": "commerce"
+    "kind": "semantic_model",
+    "id": "semantic-model:commerce"
   }
 }
 ```
 
 The result combines the normalized item envelope with type-specific `details`:
 
-- workspaces include metadata and the active serving identity;
+- projects include metadata and the active serving identity;
 - dashboards include their semantic-model ref and page, visual, and filter counts;
 - pages include their components;
 - visuals include the compiled definition, query fields, columns, and placement;
@@ -143,9 +132,8 @@ A visual or filter can appear on more than one page. If `catalog_get` returns `c
 ```json
 {
   "ref": {
-    "workspaceId": "sales",
-    "type": "visual",
-    "id": "executive-sales.revenue-by-month"
+    "kind": "dashboard",
+    "id": "dashboard:executive-sales"
   },
   "location": {
     "dashboardId": "executive-sales",
@@ -161,8 +149,8 @@ Returned locations include dashboard and page names plus a browser `href`; the r
 Use the capabilities returned with a catalog item to choose the next tool.
 
 - Use `query_semantic_model` with a semantic-model ref and the field and measure IDs discovered through catalog browsing. It returns governed row data and supports bounded pagination. Agent calls default to 25 rows and accept at most 50 rows per page even though the corresponding REST operation supports larger application-oriented pages.
-- Use `query_dashboard_visual` with the workspace, dashboard, page, and visual location of an existing visual. It preserves the dashboard definition, filters, authorization, and data-policy boundary. The agent receives a compact analytical rowset—not the renderer envelope—with the visual title/type, semantic columns, normalized applied filters, status and diagnostics, cardinality/completeness, query provenance, and freshness. Calls return at most 50 rows per agent page; follow `nextCursor` when `hasMore` is true.
-- Use `query_visual` when no saved visual fits. Provide a workspace, semantic model, dataset, visual type, semantic fields, and optional governed semantic filters. Inline data and arbitrary expressions are rejected. Built-in chat and MCP receive the same compact generated result: field and filter refs, units and formats when defined, row completeness, status and diagnostics, query provenance, freshness, and the display signal. LeapView retains the renderer-independent visualization artifact only as display content; the call does not save or mutate the dashboard.
+- Use `query_dashboard_visual` with exact project and dashboard refs plus the visual location of an existing visual. It preserves the dashboard definition, filters, authorization, and data-policy boundary. The agent receives a compact analytical rowset—not the renderer envelope—with the visual title/type, semantic columns, normalized applied filters, status and diagnostics, cardinality/completeness, query provenance, and freshness. Calls return at most 50 rows per agent page; follow `nextCursor` when `hasMore` is true.
+- Use `query_visual` when no saved visual fits. Provide exact project and semantic-model refs, a dataset, visual type, semantic fields, and optional governed semantic filters. Inline data and arbitrary expressions are rejected. Built-in chat and MCP receive the same compact generated result: field and filter refs, units and formats when defined, row completeness, status and diagnostics, query provenance, freshness, and the display signal. LeapView retains the renderer-independent visualization artifact only as display content; the call does not save or mutate the dashboard.
 
 Semantic query rows are positional. Read each cell using the column at the same index. Precision-sensitive numbers remain strings, while SQL `NULL` is JSON `null` and is distinct from a genuine empty string. Column descriptors identify the governed field or measure ref, label, semantic kind, data type, nullability, unit, and format when defined; these descriptors come from the semantic model and table schema rather than values sampled from the current page.
 
@@ -204,7 +192,7 @@ Reads are line- and byte-bounded. Continue from `nextOffset` only when the curre
 
 ## Handle authorization and errors
 
-Catalog, query, and documentation tools are read-only, idempotent, and non-destructive. Dashboard-authoring read tools are also non-mutating; its create, intent, publish, archive, and fork tools are governed writes. MCP access requires `USE_AGENT`. Catalog operations require `VIEW_ITEM`; data-query tools require `QUERY_DATA`; dashboard authoring checks `EDIT_ITEM` for draft edits and `MANAGE_ITEM` for publish/archive while continuing to enforce workspace grants and data policies.
+Catalog, query, and documentation tools are read-only, idempotent, and non-destructive. Dashboard-authoring read tools are also non-mutating; its create, intent, publish, archive, and fork tools are governed writes. MCP access requires the OAuth `mcp:use` scope. Catalog operations require `RESOURCE_READ`; data-query tools require `RESOURCE_USE`; dashboard authoring checks `RESOURCE_EDIT` for draft edits and `RESOURCE_PUBLISH` or `RESOURCE_MANAGE` for publish/archive while continuing to enforce project-resource grants and data policies.
 
 Catalog lookup deliberately does not reveal inaccessible resources:
 

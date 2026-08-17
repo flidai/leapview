@@ -3,6 +3,7 @@ package publication
 
 import (
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -21,8 +22,7 @@ const (
 
 type Publication struct {
 	ID                  string
-	ProjectID           string
-	WorkspaceID         string
+	ProjectID           projectgraph.ResourceID
 	Name                string
 	PublicID            string
 	Dashboard           string
@@ -64,8 +64,7 @@ func (p Publication) Status() Status {
 }
 
 type ReconcileInput struct {
-	ProjectID      string
-	WorkspaceID    string
+	ProjectID      projectgraph.ResourceID
 	ServingStateID string
 	ActorID        string
 	Publications   map[string]Definition

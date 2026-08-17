@@ -7,22 +7,30 @@ import (
 
 func TestBindRootsUsesTrustedRuntimeResolution(t *testing.T) {
 	target := &recordingTarget{
-		connections: []Connection{{ModelID: "sales", Name: "olist"}},
+		connections: []Connection{{ModelID: "sales", Name: "olist", ID: "connection:olist"}},
 		bound:       map[Connection]string{},
 	}
-	if err := BindRoots(target, map[string]string{"olist": "/managed/olist/revision"}); err != nil {
+	if err := BindRoots(target, map[string]string{"connection:olist": "/managed/olist/revision"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := target.bound[Connection{ModelID: "sales", Name: "olist"}]; got != "/managed/olist/revision" {
+	if got := target.bound[Connection{ModelID: "sales", Name: "olist", ID: "connection:olist"}]; got != "/managed/olist/revision" {
 		t.Fatalf("bound root = %q", got)
 	}
 }
 
 func TestBindRootsRequiresEveryManagedConnection(t *testing.T) {
-	target := &recordingTarget{connections: []Connection{{ModelID: "sales", Name: "olist"}}}
+	target := &recordingTarget{connections: []Connection{{ModelID: "sales", Name: "olist", ID: "connection:olist"}}}
 	err := BindRoots(target, nil)
 	if err == nil || !strings.Contains(err.Error(), "olist") {
 		t.Fatalf("bind error = %v, want missing olist revision", err)
+	}
+}
+
+func TestBindRootsRejectsManagedConnectionWithoutStableID(t *testing.T) {
+	target := &recordingTarget{connections: []Connection{{ModelID: "sales", Name: "olist"}}}
+	err := BindRoots(target, map[string]string{"olist": "/managed/olist/revision"})
+	if err == nil || !strings.Contains(err.Error(), "stable ID") {
+		t.Fatalf("bind error = %v, want missing stable ID", err)
 	}
 }
 

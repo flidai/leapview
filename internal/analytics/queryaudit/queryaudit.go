@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type EventInput struct {
-	WorkspaceID      string
+	// ProjectID is the immutable project identity carried by every query event.
+	ProjectID        projectgraph.ResourceID
 	PrincipalID      string
 	Surface          string
 	Operation        string
@@ -41,8 +44,8 @@ type Event struct {
 }
 
 type Filter struct {
-	WorkspaceID  string
-	WorkspaceIDs []string
+	ProjectID    projectgraph.ResourceID
+	ProjectIDs   []projectgraph.ResourceID
 	PrincipalID  string
 	PrincipalIDs []string
 	Surface      string
@@ -84,8 +87,31 @@ type Repository interface {
 }
 
 func (input EventInput) Validate() error {
+	if input.ProjectID == "" {
+		return fmt.Errorf("query event project id is required")
+	}
+	if err := input.ProjectID.Validate(); err != nil {
+		return fmt.Errorf("query event project id: %w", err)
+	}
 	if strings.TrimSpace(input.PrincipalID) == "" {
 		return fmt.Errorf("query event principal id is required")
+	}
+	return nil
+}
+
+func (filter Filter) Validate() error {
+	if filter.ProjectID != "" {
+		if err := filter.ProjectID.Validate(); err != nil {
+			return fmt.Errorf("query event filter project id: %w", err)
+		}
+	}
+	for _, projectID := range filter.ProjectIDs {
+		if projectID == "" {
+			return fmt.Errorf("query event filter project ids cannot contain an empty id")
+		}
+		if err := projectID.Validate(); err != nil {
+			return fmt.Errorf("query event filter project id: %w", err)
+		}
 	}
 	return nil
 }

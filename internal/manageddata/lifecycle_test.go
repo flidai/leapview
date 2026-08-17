@@ -34,7 +34,7 @@ func TestNormalizeEnvironmentRequiresRouteSafeGlobalName(t *testing.T) {
 			t.Fatalf("NormalizeEnvironment(%q) = %q", value, got)
 		}
 	}
-	for _, value := range []string{"", "Production", "../prod", "prod space"} {
+	for _, value := range []string{"", "Production", "../prod", "prod space", " prod", "prod "} {
 		if _, err := NormalizeEnvironment(value); err == nil {
 			t.Fatalf("NormalizeEnvironment(%q) unexpectedly succeeded", value)
 		}

@@ -1,0 +1,14 @@
+apiVersion: leapview.dev/v1
+kind: Grant
+metadata:
+  id: grant:operations-demo-query-data
+  name: operations-demo-query-data
+spec:
+  object:
+    kind: semantic_model
+    id: semantic-model:operations
+  subject:
+    kind: principal
+    principalId: email_2a7d2952c0d423cf3ea7b39428fb9420
+    displayName: LeapView Demo
+  capability: RESOURCE_READ

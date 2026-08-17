@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/consumer"
-	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 )
 
 func TestCommandsPublishReloadPatchesToOpenStream(t *testing.T) {
@@ -26,27 +25,25 @@ func TestCommandsPublishReloadPatchesToOpenStream(t *testing.T) {
 			name: "/commands/select",
 			path: "/commands/select",
 			signals: mergeSignals(runtimeSignals("cmd-select", "overview"), map[string]any{
-				"visualWindowCommand": visualWindowCommand("orders_table", "all", 0, 50, 3, 0),
+				"visualWindowCommand": visualWindowCommand("order_rows", "all", 0, 50, 3, 0),
 			}),
 			assert: func(t *testing.T, patches []map[string]any) {
 				t.Helper()
 				requireStatusLoading(t, patches, true)
-				requireSelection(t, patches, "orders_table", "orders.status", "delivered")
-				requireVisual(t, patches, "category_revenue")
+				requireSelection(t, patches, "orders", "orders.status", "delivered")
 			},
 		},
 		{
 			name: "/commands/clear-selection",
 			path: "/commands/clear-selection",
 			signals: mergeSignals(runtimeSignals("cmd-clear", "overview"), map[string]any{
-				"interactionSelections": []map[string]any{selectionSignal("orders_table", "orders.status", "delivered")},
-				"visualWindowCommand":   visualWindowCommand("orders_table", "all", 0, 50, 4, 0),
+				"interactionSelections": []map[string]any{selectionSignal("orders", "orders.status", "delivered")},
+				"visualWindowCommand":   visualWindowCommand("order_rows", "all", 0, 50, 4, 0),
 			}),
 			assert: func(t *testing.T, patches []map[string]any) {
 				t.Helper()
 				requireStatusLoading(t, patches, true)
 				requireNoSelection(t, patches)
-				requireVisual(t, patches, "category_revenue")
 			},
 		},
 	}
@@ -83,17 +80,17 @@ func TestVisualWindowCommandPublishesOnlyRequestedVisualPatch(t *testing.T) {
 	drainInitialSnapshot(t, stream)
 
 	status := h.postCommand(t, "/commands/visual-window", mergeSignals(runtimeSignals("cmd-table", "overview"), map[string]any{
-		"visualWindowCommand": visualWindowCommand("orders_table", "a", 0, 1, 7, 0),
+		"visualWindowCommand": visualWindowCommand("order_rows", "a", 0, 1, 7, 0),
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d", status, http.StatusOK)
 	}
 
 	patches := nextRefreshPatches(t, stream)
-	requireTableBlock(t, patches, "orders_table", "a", 0, 7)
+	requireTableBlock(t, patches, "order_rows", "a", 0, 7)
 	for _, patch := range patches {
 		for visualID := range mapAt(patch, "visuals") {
-			if visualID != "orders_table" {
+			if visualID != "order_rows" {
 				t.Fatalf("visual-window command streamed non-target visual %q: %#v", visualID, patch)
 			}
 		}
@@ -102,14 +99,14 @@ func TestVisualWindowCommandPublishesOnlyRequestedVisualPatch(t *testing.T) {
 }
 
 func TestVisualWindowCommandDoesNotPublishCanceledVisualPatch(t *testing.T) {
-	h := newHarness(t, withMetricsWrapper(func(metrics *dashboardruntime.Service) integrationMetrics {
+	h := newHarness(t, withMetricsWrapper(func(metrics integrationMetrics) integrationMetrics {
 		return canceledVisualWindowMetrics{integrationMetrics: metrics}
 	}))
 	stream := h.openUpdatesStream(t, "executive-sales", "overview", runtimeSignals("cmd-table-canceled", "overview"))
 	drainInitialSnapshot(t, stream)
 
 	status := h.postCommand(t, "/commands/visual-window", mergeSignals(runtimeSignals("cmd-table-canceled", "overview"), map[string]any{
-		"visualWindowCommand": visualWindowCommand("orders_table", "a", 0, 1, 8, 0),
+		"visualWindowCommand": visualWindowCommand("order_rows", "a", 0, 1, 8, 0),
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d", status, http.StatusOK)
@@ -117,7 +114,7 @@ func TestVisualWindowCommandDoesNotPublishCanceledVisualPatch(t *testing.T) {
 
 	patches := nextRefreshPatches(t, stream)
 	for _, patch := range patches {
-		if hasKey(mapAt(patch, "visuals", "orders_table"), "dataState") {
+		if hasKey(mapAt(patch, "visuals", "order_rows"), "dataState") {
 			t.Fatalf("canceled visual-window command streamed visual data: %#v", patch)
 		}
 	}
@@ -133,7 +130,7 @@ func TestRefreshMaterializationsCommandIsRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal Datastar signals: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, h.serverURL(t)+h.workspaceCommandPath("/commands/refresh-materializations"), bytes.NewReader(encodedSignals))
+	req, err := http.NewRequest(http.MethodPost, h.serverURL(t)+h.commandPath("/commands/refresh-materializations"), bytes.NewReader(encodedSignals))
 	if err != nil {
 		t.Fatalf("create removed command request: %v", err)
 	}
@@ -150,7 +147,7 @@ func TestRefreshMaterializationsCommandIsRemoved(t *testing.T) {
 
 func TestCommandRejectsMalformedDatastarBody(t *testing.T) {
 	h := newHarness(t)
-	req, err := http.NewRequest(http.MethodPost, h.serverURL(t)+h.workspaceCommandPath("/commands/select"), strings.NewReader("{not-json"))
+	req, err := http.NewRequest(http.MethodPost, h.serverURL(t)+h.commandPath("/commands/select"), strings.NewReader("{not-json"))
 	if err != nil {
 		t.Fatalf("create command request: %v", err)
 	}
@@ -196,7 +193,7 @@ func drainInitialSnapshot(t *testing.T, stream *streamClient) []map[string]any {
 				return patches
 			}
 			patches = append(patches, patch)
-			if tableHasSnapshot(patch, "orders_table") {
+			if tableHasSnapshot(patch, "order_rows") {
 				seenSnapshotTable = true
 			}
 			status := mapAt(patch, "status")
@@ -271,11 +268,11 @@ func streamInstanceIDFromSignals(signals map[string]any) string {
 
 func ordersRowSelectionCommand(t *testing.T, status string, patches []map[string]any) map[string]any {
 	t.Helper()
-	visual := mergedVisualFromPatches(t, patches, "orders_table")
+	visual := mergedVisualFromPatches(t, patches, "orders")
 	return map[string]any{
 		"sourceKind":          "visual",
-		"sourceId":            "orders_table",
-		"interactionKind":     "row_selection",
+		"sourceId":            "orders",
+		"interactionKind":     "point_selection",
 		"action":              "set",
 		"toggle":              true,
 		"specRevision":        visual["specRevision"],
@@ -285,22 +282,10 @@ func ordersRowSelectionCommand(t *testing.T, status string, patches []map[string
 		"interactionRevision": visual["interactionRevision"],
 		"mappings": []map[string]any{
 			{
-				"field": "orders.order_id",
-				"fact":  "orders",
-				"value": "fixture-order-id",
-				"label": "fixture-order-id",
-			},
-			{
 				"field": "orders.status",
 				"fact":  "orders",
 				"value": status,
 				"label": status,
-			},
-			{
-				"field": "orders.category",
-				"fact":  "orders",
-				"value": "fixture-category",
-				"label": "fixture-category",
 			},
 		},
 	}
@@ -322,10 +307,10 @@ func mergedVisualFromPatches(t *testing.T, patches []map[string]any, visualID st
 
 func selectionSignal(sourceID, field, value string) map[string]any {
 	return map[string]any{
-		"id":              "visual:" + sourceID + ":row_selection",
+		"id":              "visual:" + sourceID + ":point_selection",
 		"sourceKind":      "visual",
 		"sourceId":        sourceID,
-		"interactionKind": "row_selection",
+		"interactionKind": "point_selection",
 		"entries": []map[string]any{{
 			"mappings": []map[string]any{{
 				"field": field,

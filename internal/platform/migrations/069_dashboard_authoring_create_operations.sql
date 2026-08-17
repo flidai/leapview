@@ -5,7 +5,7 @@
 -- succeeds. The operation row and lifecycle rows are inserted in one
 -- transaction by the authoring SQLite repository.
 CREATE TABLE dashboard_authoring_create_operations (
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL,
   actor_id TEXT NOT NULL,
   operation_kind TEXT NOT NULL CHECK (operation_kind IN ('create', 'fork')),
   idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 200),
@@ -17,11 +17,11 @@ CREATE TABLE dashboard_authoring_create_operations (
   result_revision_number INTEGER NOT NULL CHECK (result_revision_number > 0),
   result_content_hash TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (workspace_id, actor_id, operation_kind, idempotency_key)
+  PRIMARY KEY (project_id, actor_id, operation_kind, idempotency_key)
 );
 
 CREATE INDEX dashboard_authoring_create_operations_dashboard_idx
-  ON dashboard_authoring_create_operations(workspace_id, dashboard_id);
+  ON dashboard_authoring_create_operations(project_id, dashboard_id);
 
 -- +goose Down
 

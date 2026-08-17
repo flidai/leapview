@@ -26,7 +26,7 @@ func Compile(document dashboardauthoring.Dashboard, models map[string]*semanticm
 	if err != nil {
 		return Result{}, err
 	}
-	model := models[normalized.SemanticModel]
+	model := models[normalized.SemanticModel.String()]
 	visualizations, err := CompileVisualizationDefinitions(normalized, model)
 	if err != nil {
 		return Result{}, fmt.Errorf("compile dashboard %q visualizations: %w", normalized.ID, err)

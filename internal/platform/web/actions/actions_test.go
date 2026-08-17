@@ -8,8 +8,8 @@ import (
 )
 
 func TestRequestEscapesPathAndSignalPatterns(t *testing.T) {
-	got := QueryPost(`/workspaces/it's\here`, "runtime", "filters.controls", "table[0]")
-	want := `@post('/workspaces/it\'s\\here', {filterSignals: {include: /^(?:runtime|filters[.]controls|table\[0\])(?:[.]|$)/}, headers: window.LeapViewCommand.headers()})`
+	got := QueryPost(`/projects/it's\here`, "runtime", "filters.controls", "table[0]")
+	want := `@post('/projects/it\'s\\here', {filterSignals: {include: /^(?:runtime|filters[.]controls|table\[0\])(?:[.]|$)/}, headers: window.LeapViewCommand.headers()})`
 	if got != want {
 		t.Fatalf("QueryPost() = %q, want %q", got, want)
 	}
@@ -49,15 +49,6 @@ func TestCommandRequestsCarryTypedGeneratedOperationIdentity(t *testing.T) {
 	wantConditional := `@post('/widgets', {headers: window.LeapViewCommand.headers(($widget.id ? ['runWidget'] : ['createWidget', 'runWidget']))})`
 	if conditional != wantConditional {
 		t.Fatalf("CommandPostConditional() = %q, want %q", conditional, wantConditional)
-	}
-}
-
-func TestCommandPostWorkspaceUsesEncodedWorkspaceExpression(t *testing.T) {
-	binding := apigenui.MustAction("widget.create", "updateWidget")
-	got := CommandPostWorkspace(binding, "/catalog/appearance", "$dashboardAppearanceCommand.workspaceId", "dashboardAppearanceCommand")
-	want := `@post('/workspaces/' + encodeURIComponent($dashboardAppearanceCommand.workspaceId) + '/catalog/appearance', {filterSignals: {include: /^(?:dashboardAppearanceCommand)(?:[.]|$)/}, headers: window.LeapViewCommand.headers('updateWidget')})`
-	if got != want {
-		t.Fatalf("CommandPostWorkspace() = %q, want %q", got, want)
 	}
 }
 

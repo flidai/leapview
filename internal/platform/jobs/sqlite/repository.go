@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/flidai/leapview/internal/platform/jobs"
 	platformdb "github.com/flidai/leapview/internal/platform/jobs/sqlite/jobdb"
@@ -21,15 +23,18 @@ type Repository struct{ q *platformdb.Queries }
 func NewRepository(db platformdb.DBTX) *Repository { return &Repository{q: platformdb.New(db)} }
 
 func (r *Repository) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs.Job, error) {
-	input.ID, input.Kind = strings.TrimSpace(input.ID), strings.TrimSpace(input.Kind)
-	input.WorkloadClass, input.WorkspaceID = strings.TrimSpace(input.WorkloadClass), strings.TrimSpace(input.WorkspaceID)
-	input.ResourceKind, input.ResourceID = strings.TrimSpace(input.ResourceKind), strings.TrimSpace(input.ResourceID)
-	if input.ID == "" || input.Kind == "" || input.WorkloadClass == "" || input.WorkspaceID == "" || input.ResourceKind == "" || input.ResourceID == "" || !json.Valid(input.Payload) {
+	groups, actorErr := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
+	if !canonicalLiteral(input.ID, 256) || !canonicalLiteral(input.Kind, 128) ||
+		(input.WorkloadClass != jobs.WorkloadClassBackground && input.WorkloadClass != jobs.WorkloadClassControl) ||
+		!canonicalLiteral(input.ResourceKind, 128) || !canonicalLiteral(input.ResourceID, 256) || input.EstimatedMemoryBytes <= 0 || actorErr != nil || !json.Valid(input.Payload) {
 		return jobs.Job{}, fmt.Errorf("invalid async job")
 	}
+	input.GroupIDs = groups
 	digest := jobDigest(input)
-	err := r.q.EnqueueAPIAsyncJob(ctx, platformdb.EnqueueAPIAsyncJobParams{ID: input.ID, JobKind: input.Kind, WorkloadClass: input.WorkloadClass, WorkspaceID: input.WorkspaceID,
-		ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, PayloadJson: string(input.Payload), RequestDigest: digest})
+	groupJSON, _ := json.Marshal(input.GroupIDs)
+	err := r.q.EnqueueAPIAsyncJob(ctx, platformdb.EnqueueAPIAsyncJobParams{ID: input.ID, JobKind: input.Kind, WorkloadClass: input.WorkloadClass,
+		PrincipalID: input.PrincipalID, GroupIdsJson: string(groupJSON), ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
+		EstimatedMemoryBytes: input.EstimatedMemoryBytes, PayloadJson: string(input.Payload), RequestDigest: digest})
 	if err != nil {
 		existing, getErr := r.Get(ctx, input.ID)
 		if getErr == nil {
@@ -44,21 +49,28 @@ func (r *Repository) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs
 }
 
 func jobDigest(input jobs.EnqueueInput) string {
-	sum := sha256.Sum256([]byte(input.Kind + "\x00" + input.WorkloadClass + "\x00" + input.WorkspaceID + "\x00" + input.ResourceKind + "\x00" + input.ResourceID + "\x00" + string(input.Payload)))
+	groups, _ := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
+	groupJSON, _ := json.Marshal(groups)
+	sum := sha256.Sum256([]byte(input.Kind + "\x00" + input.WorkloadClass + "\x00" + input.PrincipalID + "\x00" + string(groupJSON) + "\x00" + input.ResourceKind + "\x00" + input.ResourceID + "\x00" + fmt.Sprint(input.EstimatedMemoryBytes) + "\x00" + string(input.Payload)))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func (r *Repository) Get(ctx context.Context, id string) (jobs.Job, error) {
-	row, err := r.q.GetAPIAsyncJob(ctx, strings.TrimSpace(id))
+	if !canonicalLiteral(id, 256) {
+		return jobs.Job{}, fmt.Errorf("invalid async job id")
+	}
+	row, err := r.q.GetAPIAsyncJob(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return jobs.Job{}, jobs.ErrNotFound
 	}
-	return jobFromGetRow(row), err
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	return jobFromGetRow(row)
 }
 
 func (r *Repository) Candidates(ctx context.Context, workloadClass string, limit int) ([]jobs.Job, error) {
-	workloadClass = strings.TrimSpace(workloadClass)
-	if workloadClass == "" || limit < 1 || limit > 200 {
+	if (workloadClass != jobs.WorkloadClassBackground && workloadClass != jobs.WorkloadClassControl) || limit < 1 || limit > 200 {
 		return nil, fmt.Errorf("workload class and candidate limit are required")
 	}
 	rows, err := r.q.ListAPIAsyncJobCandidates(ctx, platformdb.ListAPIAsyncJobCandidatesParams{WorkloadClass: workloadClass, ResultLimit: int64(limit)})
@@ -67,14 +79,17 @@ func (r *Repository) Candidates(ctx context.Context, workloadClass string, limit
 	}
 	jobs := make([]jobs.Job, 0, len(rows))
 	for _, row := range rows {
-		jobs = append(jobs, jobFromCandidateRow(row))
+		job, mapErr := jobFromCandidateRow(row)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		jobs = append(jobs, job)
 	}
 	return jobs, nil
 }
 
 func (r *Repository) ClaimByID(ctx context.Context, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
-	id, workloadClass, owner = strings.TrimSpace(id), strings.TrimSpace(workloadClass), strings.TrimSpace(owner)
-	if id == "" || workloadClass == "" || owner == "" || lease <= 0 {
+	if !canonicalLiteral(id, 256) || (workloadClass != jobs.WorkloadClassBackground && workloadClass != jobs.WorkloadClassControl) || !canonicalLiteral(owner, 256) || lease <= 0 {
 		return jobs.Job{}, false, fmt.Errorf("job id, workload class, worker owner, and positive lease are required")
 	}
 	modifier := fmt.Sprintf("+%d seconds", max(1, int(lease.Seconds())))
@@ -82,50 +97,67 @@ func (r *Repository) ClaimByID(ctx context.Context, id, workloadClass, owner str
 	if errors.Is(err, sql.ErrNoRows) {
 		return jobs.Job{}, false, nil
 	}
-	job := jobFromClaimRow(row)
-	return job, err == nil, err
+	if err != nil {
+		return jobs.Job{}, false, err
+	}
+	job, mapErr := jobFromClaimRow(row)
+	return job, mapErr == nil, mapErr
 }
 
 func (r *Repository) Renew(ctx context.Context, id string, fence jobs.Fence, lease time.Duration) error {
+	if !canonicalLiteral(id, 256) || !canonicalLiteral(fence.Owner, 256) || fence.Generation < 0 {
+		return fmt.Errorf("invalid async job fence")
+	}
 	modifier := fmt.Sprintf("+%d seconds", max(1, int(lease.Seconds())))
 	changed, err := r.q.RenewAPIAsyncJob(ctx, platformdb.RenewAPIAsyncJobParams{
-		LeaseModifier: modifier, ID: strings.TrimSpace(id), LeaseOwner: strings.TrimSpace(fence.Owner), LeaseGeneration: fence.Generation,
+		LeaseModifier: modifier, ID: id, LeaseOwner: fence.Owner, LeaseGeneration: fence.Generation,
 	})
 	return requireChanged(changed, err)
 }
 
 func (r *Repository) Complete(ctx context.Context, id string, fence jobs.Fence) error {
+	if !canonicalLiteral(id, 256) || !canonicalLiteral(fence.Owner, 256) || fence.Generation < 0 {
+		return fmt.Errorf("invalid async job fence")
+	}
 	changed, err := r.q.CompleteAPIAsyncJob(ctx, platformdb.CompleteAPIAsyncJobParams{
-		ID: strings.TrimSpace(id), LeaseOwner: strings.TrimSpace(fence.Owner), LeaseGeneration: fence.Generation,
+		ID: id, LeaseOwner: fence.Owner, LeaseGeneration: fence.Generation,
 	})
 	return requireChanged(changed, err)
 }
 
 func (r *Repository) Fail(ctx context.Context, id string, fence jobs.Fence, problem []byte) error {
+	if !canonicalLiteral(id, 256) || !canonicalLiteral(fence.Owner, 256) || fence.Generation < 0 {
+		return fmt.Errorf("invalid async job fence")
+	}
 	if !json.Valid(problem) {
-		problem = []byte(`{"code":"ASYNC_JOB_FAILED"}`)
+		return fmt.Errorf("invalid async job failure JSON")
 	}
 	changed, err := r.q.FailAPIAsyncJob(ctx, platformdb.FailAPIAsyncJobParams{
-		ErrorJson: string(problem), ID: strings.TrimSpace(id), LeaseOwner: strings.TrimSpace(fence.Owner), LeaseGeneration: fence.Generation,
+		ErrorJson: string(problem), ID: id, LeaseOwner: fence.Owner, LeaseGeneration: fence.Generation,
 	})
 	return requireChanged(changed, err)
 }
 
 func (r *Repository) Cancel(ctx context.Context, id string) error {
-	changed, err := r.q.CancelQueuedAPIAsyncJob(ctx, strings.TrimSpace(id))
+	if !canonicalLiteral(id, 256) {
+		return fmt.Errorf("invalid async job id")
+	}
+	changed, err := r.q.CancelQueuedAPIAsyncJob(ctx, id)
 	return requireChanged(changed, err)
 }
 
 func (r *Repository) CancelClaimed(ctx context.Context, id string, fence jobs.Fence) error {
+	if !canonicalLiteral(id, 256) || !canonicalLiteral(fence.Owner, 256) || fence.Generation < 0 {
+		return fmt.Errorf("invalid async job fence")
+	}
 	changed, err := r.q.CancelClaimedAPIAsyncJob(ctx, platformdb.CancelClaimedAPIAsyncJobParams{
-		ID: strings.TrimSpace(id), LeaseOwner: strings.TrimSpace(fence.Owner), LeaseGeneration: fence.Generation,
+		ID: id, LeaseOwner: fence.Owner, LeaseGeneration: fence.Generation,
 	})
 	return requireChanged(changed, err)
 }
 
 func (r *Repository) AppendEvent(ctx context.Context, resourceKind, resourceID, eventType string, data []byte) (jobs.Event, error) {
-	resourceKind, resourceID, eventType = strings.TrimSpace(resourceKind), strings.TrimSpace(resourceID), strings.TrimSpace(eventType)
-	if resourceKind == "" || resourceID == "" || eventType == "" || !json.Valid(data) {
+	if !canonicalLiteral(resourceKind, 128) || !canonicalLiteral(resourceID, 256) || !canonicalLiteral(eventType, 128) || !json.Valid(data) {
 		return jobs.Event{}, fmt.Errorf("invalid async event")
 	}
 	row, err := r.q.AppendAPIAsyncEvent(ctx, platformdb.AppendAPIAsyncEventParams{ResourceKind: resourceKind, ResourceID: resourceID, EventType: eventType, DataJson: string(data)})
@@ -140,9 +172,7 @@ func (r *Repository) RecordWorkflow(ctx context.Context, tx transaction.Transact
 		return fmt.Errorf("workflow transaction is required")
 	}
 	event := intent.Event
-	event.Key, event.ResourceKind = strings.TrimSpace(event.Key), strings.TrimSpace(event.ResourceKind)
-	event.ResourceID, event.EventType = strings.TrimSpace(event.ResourceID), strings.TrimSpace(event.EventType)
-	if event.Key == "" || event.ResourceKind == "" || event.ResourceID == "" || event.EventType == "" || !json.Valid(event.Data) {
+	if !canonicalLiteral(event.Key, 256) || !canonicalLiteral(event.ResourceKind, 128) || !canonicalLiteral(event.ResourceID, 256) || !canonicalLiteral(event.EventType, 128) || !json.Valid(event.Data) {
 		return fmt.Errorf("invalid workflow event")
 	}
 	transactional := NewRepository(tx)
@@ -152,7 +182,7 @@ func (r *Repository) RecordWorkflow(ctx context.Context, tx transaction.Transact
 	}); err != nil {
 		return err
 	}
-	if strings.TrimSpace(intent.Job.ID) == "" {
+	if intent.Job.ID == "" {
 		return nil
 	}
 	_, err := transactional.Enqueue(ctx, intent.Job)
@@ -160,7 +190,7 @@ func (r *Repository) RecordWorkflow(ctx context.Context, tx transaction.Transact
 }
 
 func (r *Repository) ListEvents(ctx context.Context, resourceKind, resourceID string, after int64, limit int) ([]jobs.Event, error) {
-	if limit < 1 || limit > 200 {
+	if !canonicalLiteral(resourceKind, 128) || !canonicalLiteral(resourceID, 256) || limit < 1 || limit > 200 || after < 0 {
 		return nil, fmt.Errorf("event limit must be between 1 and 200")
 	}
 	rows, err := r.q.ListAPIAsyncEvents(ctx, platformdb.ListAPIAsyncEventsParams{ResourceKind: resourceKind, ResourceID: resourceID, EventID: after, Limit: int64(limit)})
@@ -180,22 +210,99 @@ func (r *Repository) event(ctx context.Context, kind, id string, eventID int64) 
 	return eventFromValues(row.EventID, row.ResourceKind, row.ResourceID, row.EventType, row.DataJson, row.CreatedAt), err
 }
 
-func jobFromGetRow(row platformdb.GetAPIAsyncJobRow) jobs.Job {
-	return jobs.Job{ID: row.ID, Kind: row.JobKind, WorkloadClass: row.WorkloadClass, WorkspaceID: row.WorkspaceID, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
+func jobFromGetRow(row platformdb.GetAPIAsyncJobRow) (jobs.Job, error) {
+	groups, err := decodeGroups(row.GroupIdsJson)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	job := jobs.Job{ID: row.ID, Kind: row.JobKind, WorkloadClass: row.WorkloadClass, PrincipalID: row.PrincipalID, GroupIDs: groups, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID, EstimatedMemoryBytes: row.EstimatedMemoryBytes,
 		Payload: []byte(row.PayloadJson), Status: jobs.Status(row.Status), Attempts: int(row.AttemptCount), LeaseOwner: row.LeaseOwner, LeaseGeneration: row.LeaseGeneration,
 		LeaseExpiresAt: row.LeaseExpiresAt, CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, ErrorJSON: row.ErrorJson}
+	return job, validateJob(job)
 }
 
-func jobFromClaimRow(row platformdb.ClaimAPIAsyncJobByIDRow) jobs.Job {
-	return jobs.Job{ID: row.ID, Kind: row.JobKind, WorkloadClass: row.WorkloadClass, WorkspaceID: row.WorkspaceID, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
+func jobFromClaimRow(row platformdb.ClaimAPIAsyncJobByIDRow) (jobs.Job, error) {
+	groups, err := decodeGroups(row.GroupIdsJson)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	job := jobs.Job{ID: row.ID, Kind: row.JobKind, WorkloadClass: row.WorkloadClass, PrincipalID: row.PrincipalID, GroupIDs: groups, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID, EstimatedMemoryBytes: row.EstimatedMemoryBytes,
 		Payload: []byte(row.PayloadJson), Status: jobs.Status(row.Status), Attempts: int(row.AttemptCount), LeaseOwner: row.LeaseOwner, LeaseGeneration: row.LeaseGeneration,
 		LeaseExpiresAt: row.LeaseExpiresAt, CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, ErrorJSON: row.ErrorJson}
+	return job, validateJob(job)
 }
 
-func jobFromCandidateRow(row platformdb.ListAPIAsyncJobCandidatesRow) jobs.Job {
-	return jobs.Job{ID: row.ID, Kind: row.JobKind, WorkloadClass: row.WorkloadClass, WorkspaceID: row.WorkspaceID, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
+func jobFromCandidateRow(row platformdb.ListAPIAsyncJobCandidatesRow) (jobs.Job, error) {
+	groups, err := decodeGroups(row.GroupIdsJson)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	job := jobs.Job{ID: row.ID, Kind: row.JobKind, WorkloadClass: row.WorkloadClass, PrincipalID: row.PrincipalID, GroupIDs: groups, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID, EstimatedMemoryBytes: row.EstimatedMemoryBytes,
 		Payload: []byte(row.PayloadJson), Status: jobs.Status(row.Status), Attempts: int(row.AttemptCount), LeaseOwner: row.LeaseOwner, LeaseGeneration: row.LeaseGeneration,
 		LeaseExpiresAt: row.LeaseExpiresAt, CreatedAt: row.CreatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, ErrorJSON: row.ErrorJson}
+	return job, validateJob(job)
+}
+
+func decodeGroups(encoded string) ([]string, error) {
+	var groups []string
+	if err := json.Unmarshal([]byte(encoded), &groups); err != nil {
+		return nil, fmt.Errorf("invalid persisted async job groups: %w", err)
+	}
+	canonical, err := jobs.CanonicalGroups(groups)
+	if err != nil {
+		return nil, fmt.Errorf("invalid persisted async job groups: %w", err)
+	}
+	// Persisted groups must already be canonical; do not repair corrupt rows.
+	if !reflect.DeepEqual(groups, canonical) {
+		return nil, fmt.Errorf("noncanonical persisted async job groups")
+	}
+	return canonical, nil
+}
+
+func validateJob(job jobs.Job) error {
+	if !canonicalLiteral(job.ID, 256) || !canonicalLiteral(job.Kind, 128) ||
+		job.WorkloadClass != jobs.WorkloadClassBackground && job.WorkloadClass != jobs.WorkloadClassControl ||
+		!canonicalLiteral(job.ResourceKind, 128) || !canonicalLiteral(job.ResourceID, 256) ||
+		job.EstimatedMemoryBytes <= 0 || job.Attempts < 0 || job.LeaseGeneration < 0 {
+		return fmt.Errorf("invalid persisted async job")
+	}
+	if _, err := jobs.CanonicalActor(job.PrincipalID, job.GroupIDs); err != nil {
+		return fmt.Errorf("invalid persisted async job actor: %w", err)
+	}
+	switch job.Status {
+	case jobs.StatusQueued, jobs.StatusRunning, jobs.StatusSucceeded, jobs.StatusFailed, jobs.StatusCancelled:
+	default:
+		return fmt.Errorf("invalid persisted async job status")
+	}
+	if job.LeaseOwner != "" && !canonicalLiteral(job.LeaseOwner, 256) {
+		return fmt.Errorf("invalid persisted async job lease owner")
+	}
+	if job.Status == jobs.StatusRunning {
+		if job.LeaseOwner == "" || job.LeaseExpiresAt == "" {
+			return fmt.Errorf("running async job has no active lease")
+		}
+	} else if job.LeaseOwner != "" || job.LeaseExpiresAt != "" {
+		return fmt.Errorf("terminal or queued async job has an active lease")
+	}
+	for _, timestamp := range []string{job.CreatedAt, job.StartedAt, job.FinishedAt, job.LeaseExpiresAt} {
+		if timestamp == "" {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02 15:04:05", timestamp); err != nil {
+			return fmt.Errorf("invalid persisted async job timestamp")
+		}
+	}
+	if !json.Valid(job.Payload) || !json.Valid([]byte(job.ErrorJSON)) {
+		return fmt.Errorf("invalid persisted async job json")
+	}
+	if job.CreatedAt == "" {
+		return fmt.Errorf("persisted async job is missing creation timestamp")
+	}
+	return nil
+}
+
+func canonicalLiteral(value string, max int) bool {
+	return value != "" && value == strings.TrimSpace(value) && len(value) <= max && strings.IndexFunc(value, unicode.IsControl) < 0
 }
 
 func eventFromValues(eventID int64, kind, id, eventType, data, createdAt string) jobs.Event {

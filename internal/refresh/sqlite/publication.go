@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	materializedb "github.com/flidai/leapview/internal/refresh/internal/db"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -25,11 +26,19 @@ func NewPublicationUnitOfWork(database *sql.DB, applyAccessSnapshot func(context
 	return &PublicationUnitOfWork{db: database, applyAccessSnapshot: applyAccessSnapshot}
 }
 
-func (u *PublicationUnitOfWork) Publish(ctx context.Context, workspaceID servingstate.WorkspaceID, environment servingstate.Environment, servingStateID servingstate.ID, version refreshschedule.DataVersion) error {
+func (u *PublicationUnitOfWork) Publish(ctx context.Context, identity projectgraph.ServingIdentity, servingStateID servingstate.ID, version refreshschedule.DataVersion) error {
 	if u == nil || u.db == nil {
 		return fmt.Errorf("refresh publication database is required")
 	}
-	environment = servingstate.NormalizeEnvironment(environment)
+	if err := identity.Validate(); err != nil {
+		return err
+	}
+	if version.Identity != identity {
+		return fmt.Errorf("refresh publication identity does not match data version")
+	}
+	if servingStateID != "" && string(servingStateID) != identity.GenerationID {
+		return fmt.Errorf("refresh publication serving state does not match identity")
+	}
 	tx, err := u.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -37,8 +46,8 @@ func (u *PublicationUnitOfWork) Publish(ctx context.Context, workspaceID serving
 	defer tx.Rollback()
 	q := materializedb.New(tx)
 	active, err := q.RefreshPublicationFenceActive(ctx, materializedb.RefreshPublicationFenceActiveParams{
-		RunID: version.RunID, TargetGeneration: version.TargetGeneration,
-		LeaseOwner: version.LeaseOwner, LeaseGeneration: version.LeaseGeneration,
+		RunID: version.RunID, ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment,
+		TargetRevision: version.TargetRevision, LeaseOwner: version.LeaseOwner, LeaseRevision: version.LeaseRevision,
 	})
 	if err != nil {
 		return err
@@ -46,68 +55,76 @@ func (u *PublicationUnitOfWork) Publish(ctx context.Context, workspaceID serving
 	if active != 1 {
 		return refreshrun.ErrLeaseLost
 	}
-	expectedRuns, err := q.CountRefreshPublicationTreeRuns(ctx, version.RunID)
+	expectedRuns, err := q.CountRefreshPublicationTreeRuns(ctx, materializedb.CountRefreshPublicationTreeRunsParams{
+		RunID: version.RunID, ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment,
+	})
 	if err != nil {
 		return err
 	}
-	expectedJobs, err := q.CountRefreshPublicationTreeJobs(ctx, version.RunID)
+	expectedJobs, err := q.CountRefreshPublicationTreeJobs(ctx, materializedb.CountRefreshPublicationTreeJobsParams{
+		RunID: version.RunID, ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment,
+	})
 	if err != nil {
 		return err
 	}
 	if expectedRuns < 1 || expectedJobs < 1 {
 		return refreshrun.ErrLeaseLost
 	}
-	candidate, err := q.RefreshPublicationCandidate(ctx, string(servingStateID))
+	candidate, err := q.RefreshPublicationCandidate(ctx, materializedb.RefreshPublicationCandidateParams{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+	})
 	if err != nil {
 		return err
 	}
-	if candidate.WorkspaceID != string(workspaceID) {
-		return fmt.Errorf("serving state %s is not in workspace %s", servingStateID, workspaceID)
+	if candidate.ProjectID != identity.ProjectID.String() {
+		return fmt.Errorf("serving generation %s is not in project %s", identity.GenerationID, identity.ProjectID)
 	}
-	if candidate.Environment != string(environment) {
-		return fmt.Errorf("serving state %s environment = %q, want %q", servingStateID, candidate.Environment, environment)
+	if candidate.Environment != identity.Environment {
+		return fmt.Errorf("serving generation %s environment = %q, want %q", identity.GenerationID, candidate.Environment, identity.Environment)
 	}
 	status := servingstate.Status(candidate.Status)
 	if status != servingstate.StatusValidated && status != servingstate.StatusInactive && status != servingstate.StatusActive {
-		return fmt.Errorf("serving state %s has status %q, want validated", servingStateID, status)
+		return fmt.Errorf("serving generation %s has status %q, want validated", identity.GenerationID, status)
 	}
-	if err := validatePublicationVersion(candidate, version); err != nil {
+	if err := validatePublicationVersion(candidate, identity, version); err != nil {
 		return err
 	}
 	if u.applyAccessSnapshot != nil {
-		if err := u.applyAccessSnapshot(ctx, tx, string(servingStateID)); err != nil {
+		if err := u.applyAccessSnapshot(ctx, tx, identity.GenerationID); err != nil {
 			return err
 		}
 	}
 	if err := q.DrainOtherRefreshServingStates(ctx, materializedb.DrainOtherRefreshServingStatesParams{
-		WorkspaceID: string(workspaceID), Environment: string(environment), ServingStateID: string(servingStateID),
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
 	}); err != nil {
 		return err
 	}
-	if err := q.ActivateRefreshServingState(ctx, string(servingStateID)); err != nil {
+	if err := q.ActivateRefreshServingState(ctx, materializedb.ActivateRefreshServingStateParams{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+	}); err != nil {
 		return err
 	}
 	if err := q.SetRefreshActiveServingState(ctx, materializedb.SetRefreshActiveServingStateParams{
-		WorkspaceID: string(workspaceID), Environment: string(environment), ServingStateID: string(servingStateID),
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
 	}); err != nil {
 		return err
 	}
 	if err := q.AdvanceRefreshSemanticModelDataVersions(ctx, materializedb.AdvanceRefreshSemanticModelDataVersionsParams{
-		SnapshotID: version.SnapshotID, ServingStateID: version.ServingStateID, WorkspaceID: version.WorkspaceID,
-		Environment: version.Environment, SemanticModelID: version.SemanticModel,
+		SnapshotID: version.SnapshotID, GenerationID: identity.GenerationID, ProjectID: identity.ProjectID.String(),
+		Environment: identity.Environment, SemanticModelID: version.SemanticModelID.String(),
 	}); err != nil {
 		return err
 	}
 	if err := q.UpsertRefreshPublicationDataVersion(ctx, materializedb.UpsertRefreshPublicationDataVersionParams{
-		WorkspaceID: version.WorkspaceID, Environment: version.Environment, SemanticModelID: version.SemanticModel,
-		SnapshotID: version.SnapshotID, ServingStateID: version.ServingStateID,
-		RefreshedAt: version.RefreshedAt.UTC().Format(time.RFC3339Nano), PipelineID: version.PipelineID, RunID: version.RunID,
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, SemanticModelID: version.SemanticModelID.String(),
+		SnapshotID: version.SnapshotID, GenerationID: identity.GenerationID,
+		RefreshedAt: version.RefreshedAt.UTC().Format(time.RFC3339Nano), PipelineID: version.PipelineID.String(), RunID: version.RunID,
 	}); err != nil {
 		return err
 	}
 	completed, err := q.CompleteRefreshPublicationRun(ctx, materializedb.CompleteRefreshPublicationRunParams{
-		RunID: version.RunID, TargetGeneration: version.TargetGeneration,
-		LeaseOwner: version.LeaseOwner, LeaseGeneration: version.LeaseGeneration,
+		RunID: version.RunID, ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment,
+		TargetRevision: version.TargetRevision, LeaseOwner: version.LeaseOwner, LeaseRevision: version.LeaseRevision,
 	})
 	if err != nil {
 		return err
@@ -116,7 +133,8 @@ func (u *PublicationUnitOfWork) Publish(ctx context.Context, workspaceID serving
 		return refreshrun.ErrLeaseLost
 	}
 	completed, err = q.CompleteRefreshPublicationJob(ctx, materializedb.CompleteRefreshPublicationJobParams{
-		RunID: version.RunID, LeaseOwner: version.LeaseOwner, LeaseGeneration: version.LeaseGeneration,
+		RunID: version.RunID, ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, Environment: identity.Environment,
+		LeaseOwner: version.LeaseOwner, LeaseRevision: version.LeaseRevision,
 	})
 	if err != nil {
 		return err
@@ -127,12 +145,11 @@ func (u *PublicationUnitOfWork) Publish(ctx context.Context, workspaceID serving
 	return tx.Commit()
 }
 
-func validatePublicationVersion(candidate materializedb.RefreshPublicationCandidateRow, version refreshschedule.DataVersion) error {
-	if candidate.DucklakeSnapshotID <= 0 || version.SemanticModel == "" || version.RefreshedAt.IsZero() ||
-		version.WorkspaceID != candidate.WorkspaceID || version.Environment != candidate.Environment ||
-		version.SnapshotID != candidate.DucklakeSnapshotID || version.ServingStateID != candidate.ID ||
-		version.Source != refreshschedule.DataVersionSourceRefresh || version.TargetGeneration <= 0 ||
-		strings.TrimSpace(version.LeaseOwner) == "" || version.LeaseGeneration <= 0 {
+func validatePublicationVersion(candidate materializedb.RefreshPublicationCandidateRow, identity projectgraph.ServingIdentity, version refreshschedule.DataVersion) error {
+	if candidate.DucklakeSnapshotID <= 0 || version.SemanticModelID == "" || version.RefreshedAt.IsZero() ||
+		candidate.ProjectID != identity.ProjectID.String() || version.Identity != identity ||
+		version.SnapshotID != candidate.DucklakeSnapshotID || version.Source != refreshschedule.DataVersionSourceRefresh ||
+		version.TargetRevision <= 0 || strings.TrimSpace(version.LeaseOwner) == "" || version.LeaseRevision <= 0 {
 		return fmt.Errorf("refresh publication requires a matching semantic-model data version")
 	}
 	return nil

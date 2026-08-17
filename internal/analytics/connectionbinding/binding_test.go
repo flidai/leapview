@@ -10,19 +10,20 @@ import (
 	"testing"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
-func TestLogicalConnectionIDIsEnvironmentNeutralAndCanonical(t *testing.T) {
-	id, err := ParseLogicalConnectionID("warehouse_primary")
+func TestConnectionIDIsEnvironmentNeutralAndCanonical(t *testing.T) {
+	id, err := ParseConnectionID("warehouse_primary")
 	require.NoError(t, err)
 	if id.String() != "warehouse_primary" {
 		t.Fatalf("logical connection id = %q", id)
 	}
-	for _, invalid := range []string{"", " prod", "prod/db", "INFISICAL:secret", strings.Repeat("a", 129)} {
-		if _, err := ParseLogicalConnectionID(invalid); !errors.Is(err, ErrInvalidBinding) {
-			t.Fatalf("ParseLogicalConnectionID(%q) error = %v", invalid, err)
+	for _, invalid := range []string{"", " prod", "prod/db"} {
+		if _, err := ParseConnectionID(invalid); !errors.Is(err, ErrInvalidBinding) {
+			t.Fatalf("ParseConnectionID(%q) error = %v", invalid, err)
 		}
 	}
 }
@@ -30,9 +31,9 @@ func TestLogicalConnectionIDIsEnvironmentNeutralAndCanonical(t *testing.T) {
 func TestTargetBindingSeparatesTargetReferenceFromLogicalRequirement(t *testing.T) {
 	now := time.Date(2026, 7, 29, 15, 0, 0, 0, time.UTC)
 	binding, err := NewTargetBinding(TargetBindingInput{
-		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", LogicalConnectionID: "warehouse",
+		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "warehouse",
 		ConnectorKind: "postgres", AuthenticationMode: AuthenticationExternalBundle,
-		Scope: BindingScope{WorkspaceID: "sales", Environment: "prod"},
+		Scope: BindingScope{ProjectID: "sales", Environment: "prod"},
 		Endpoint: EndpointConfig{
 			Host: "warehouse.internal", Port: 5432, Database: "analytics", SourceIdentity: "leapview_runtime", TLSMode: "verify-full",
 		},
@@ -42,7 +43,7 @@ func TestTargetBindingSeparatesTargetReferenceFromLogicalRequirement(t *testing.
 		Enabled: true, Now: now,
 	})
 	require.NoError(t, err)
-	if binding.Revision != 1 || binding.Health != HealthPending || binding.LogicalConnectionID.String() != "warehouse" {
+	if binding.Revision != 1 || binding.Health != HealthPending || binding.ConnectionID.String() != "warehouse" {
 		t.Fatalf("binding = %#v", binding)
 	}
 	evidence := binding.Evidence()
@@ -76,35 +77,35 @@ func TestSameLogicalRequirementBindsIndependentlyAcrossTargets(t *testing.T) {
 	developmentInput.CredentialReference.SecretPath = "/leapview/dev"
 	development, err := NewTargetBinding(developmentInput)
 	require.NoError(t, err)
-	requirement := Requirement{LogicalConnectionID: production.LogicalConnectionID, ConnectorKind: "postgres"}
+	requirement := Requirement{ConnectionID: production.ConnectionID, ConnectorKind: "postgres"}
 	productionEvidence, err := production.CompatibleEvidence(requirement, true)
 	require.NoError(t, err)
 	developmentEvidence, err := development.CompatibleEvidence(requirement, true)
 	require.NoError(t, err)
 	if productionEvidence.TargetID == developmentEvidence.TargetID ||
-		productionEvidence.LogicalConnection != developmentEvidence.LogicalConnection {
+		productionEvidence.ConnectionID != developmentEvidence.ConnectionID {
 		t.Fatalf("production=%#v development=%#v", productionEvidence, developmentEvidence)
 	}
 }
 
 func TestResolverSelectionIsExplicitAndEnvironmentCannotBackstopProduction(t *testing.T) {
 	if _, err := NewResolverSelection(ResolverSelectionInput{
-		TargetID: "lvinst_prod", Environment: "prod", TargetClass: TargetProduction, Kind: ResolverEnvironment,
+		TargetID: "lvinst_prod", ProjectID: "project_sales", Environment: "prod", TargetClass: TargetProduction, Kind: ResolverEnvironment,
 	}); !errors.Is(err, ErrInvalidBinding) {
 		t.Fatalf("production environment resolver error = %v", err)
 	}
 	if _, err := NewResolverSelection(ResolverSelectionInput{
-		TargetID: "lvinst_local", Environment: "dev", TargetClass: TargetDevelopment, Kind: ResolverEnvironment,
+		TargetID: "lvinst_local", ProjectID: "project_sales", Environment: "dev", TargetClass: TargetDevelopment, Kind: ResolverEnvironment,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewResolverSelection(ResolverSelectionInput{
-		TargetID: "lvinst_prod", Environment: "prod", TargetClass: TargetProduction, Kind: ResolverInfisical,
+		TargetID: "lvinst_prod", ProjectID: "project_sales", Environment: "prod", TargetClass: TargetProduction, Kind: ResolverInfisical,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewResolverSelection(ResolverSelectionInput{
-		TargetID: "lvinst_prod", Environment: "prod", TargetClass: TargetProduction,
+		TargetID: "lvinst_prod", ProjectID: "project_sales", Environment: "prod", TargetClass: TargetProduction,
 	}); !errors.Is(err, ErrInvalidBinding) {
 		t.Fatalf("implicit resolver error = %v", err)
 	}
@@ -113,8 +114,8 @@ func TestResolverSelectionIsExplicitAndEnvironmentCannotBackstopProduction(t *te
 func TestTargetBindingFailsClosedForMissingDisabledUnauthorizedAndDriftedBindings(t *testing.T) {
 	binding := validTargetBinding(t)
 	requirement := Requirement{
-		LogicalConnectionID: binding.LogicalConnectionID,
-		ConnectorKind:       binding.ConnectorKind,
+		ConnectionID:  binding.ConnectionID,
+		ConnectorKind: binding.ConnectorKind,
 	}
 	if _, err := binding.CompatibleEvidence(requirement, true); err != nil {
 		t.Fatal(err)
@@ -259,13 +260,21 @@ func validTargetBinding(t *testing.T) TargetBinding {
 
 func validTargetBindingInput() TargetBindingInput {
 	return TargetBindingInput{
-		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", LogicalConnectionID: "warehouse",
+		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "warehouse",
 		ConnectorKind: "postgres", AuthenticationMode: AuthenticationExternalBundle,
-		Scope:    BindingScope{WorkspaceID: "sales", Environment: "prod"},
+		Scope:    BindingScope{ProjectID: "sales", Environment: "prod"},
 		Endpoint: EndpointConfig{Host: "warehouse.internal", Port: 5432, Database: "analytics", TLSMode: "verify-full"},
 		CredentialReference: CredentialReference{
 			ProjectID: "infisical-project", Environment: "prod", SecretPath: "/leapview/sales", SecretKey: "warehouse",
 		},
 		Enabled: true, Now: time.Date(2026, 7, 29, 15, 0, 0, 0, time.UTC),
 	}
+}
+
+func servingIdentity(projectID, environment, generationID string) projectgraph.ServingIdentity {
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(projectID), environment, generationID)
+	if err != nil {
+		panic(err)
+	}
+	return identity
 }

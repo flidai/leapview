@@ -1,4 +1,4 @@
-// Package module owns process composition for node-local workload admission.
+// Package module owns process composition for instance-local workload admission.
 package module
 
 import (
@@ -20,13 +20,20 @@ type Stats = workload.Stats
 type Observer = workload.Observer
 type Request = workload.Request
 
+const (
+	controlMemoryEstimate     = int64(16 << 20)
+	maintenanceMemoryEstimate = int64(128 << 20)
+)
+
 func JobAdmitter(admitter Admitter) jobs.Admitter {
 	if admitter == nil {
 		return nil
 	}
 	return jobs.AdmitterFunc(func(ctx context.Context, request jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
 		return admitter.Acquire(ctx, workload.Request{
-			Class: workload.Class(request.Class), WorkspaceID: request.WorkspaceID, Operation: request.Operation,
+			Class: workload.Class(request.Class), PrincipalID: request.PrincipalID,
+			GroupIDs: append([]string(nil), request.GroupIDs...), Operation: request.Operation,
+			EstimatedMemoryBytes: request.EstimatedMemoryBytes,
 		})
 	})
 }
@@ -36,7 +43,6 @@ const (
 	RefreshClass     = workload.Refresh
 	ControlClass     = workload.Control
 	MaintenanceClass = workload.Maintenance
-	GlobalWorkspace  = workload.GlobalWorkspace
 )
 
 func DefaultConfig() workload.Config {
@@ -44,11 +50,11 @@ func DefaultConfig() workload.Config {
 }
 
 func MaintenanceRequest(operation string) Request {
-	return Request{Class: MaintenanceClass, Operation: operation}
+	return Request{Class: MaintenanceClass, PrincipalID: jobs.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: maintenanceMemoryEstimate}
 }
 
 func ControlRequest(operation string) Request {
-	return Request{Class: ControlClass, Operation: operation}
+	return Request{Class: ControlClass, PrincipalID: jobs.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: controlMemoryEstimate}
 }
 
 type Module struct {

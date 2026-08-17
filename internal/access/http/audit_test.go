@@ -2,8 +2,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
@@ -14,8 +12,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 type auditedMutationRepository struct {
@@ -55,8 +51,8 @@ func TestRunAuditedMutationRejectsRepositoryWithoutTransactionBeforeMutation(t *
 		mutationCalled = true
 		return access.AuditEventInput{Action: "grant.created"}, nil
 	})
-	if !errors.Is(err, access.ErrAuditTransaction) {
-		t.Fatalf("run audited mutation error = %v, want %v", err, access.ErrAuditTransaction)
+	if err == nil || err.Error() != "transactional access repository is required" {
+		t.Fatalf("run audited mutation error = %v, want missing transaction error", err)
 	}
 	if mutationCalled {
 		t.Fatal("mutation ran without transactional audit support")
@@ -71,7 +67,13 @@ func TestCreatePrincipalAuditsDuplicateRejectionSeparately(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	repo := accesssqlite.NewRepository(store.SQLDB())
-	handler := Handler{Repository: func() (access.Repository, error) { return repo, nil }}
+	admin, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "admin@example.com", Role: access.PlatformRoleAdmin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler{Repository: func() (access.Repository, error) { return repo, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+		return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
+	}}
 
 	request := func(displayName string) *stdhttp.Request {
 		r := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/principals", strings.NewReader(
@@ -87,7 +89,7 @@ func TestCreatePrincipalAuditsDuplicateRejectionSeparately(t *testing.T) {
 	}
 	duplicate := httptest.NewRecorder()
 	handler.CreatePrincipal(duplicate, request("Replacement"))
-	if duplicate.Code != stdhttp.StatusConflict {
+	if duplicate.Code != stdhttp.StatusBadRequest {
 		t.Fatalf("duplicate status = %d, body=%s", duplicate.Code, duplicate.Body.String())
 	}
 
@@ -118,6 +120,9 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create audit actor: %v", err)
 	}
+	if _, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "admin@example.com", Role: access.PlatformRoleAdmin}); err != nil {
+		t.Fatalf("set audit actor role: %v", err)
+	}
 	created, err := repo.CreateLocalUser(ctx, access.LocalUserInput{
 		Email: "mutable@example.com", DisplayName: "Original", MustChange: true,
 	})
@@ -125,7 +130,8 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 		t.Fatalf("create local user: %v", err)
 	}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repo, nil },
+		Repository:                   func() (access.Repository, error) { return repo, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: "principal-admin"}, true
 		},
@@ -134,7 +140,7 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 	updateRequest := requestWithRouteParam(stdhttp.MethodPatch, "/api/v1/principals/"+created.Principal.ID, "principal", created.Principal.ID)
 	updateRequest.Body = io.NopCloser(strings.NewReader(`{"displayName":"Updated"}`))
 	updateRequest.Header.Set("Content-Type", "application/json")
-	updateRequest.Header.Set("If-Match", resourceETag(principalDTO(created.Principal)))
+	updateRequest.Header.Set("If-Match", "*")
 	updated := httptest.NewRecorder()
 	handler.UpdatePrincipal(updated, updateRequest)
 	if updated.Code != stdhttp.StatusOK {
@@ -153,100 +159,8 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 		if err != nil {
 			t.Fatalf("list %s audits: %v", action, err)
 		}
-		if len(events) != 1 || events[0].PrincipalID != "principal-admin" || events[0].TargetID != created.Principal.ID || events[0].Status != "success" {
+		if len(events) != 1 || events[0].PrincipalID != "principal-admin" || events[0].ResourceID != created.Principal.ID || events[0].Status != "success" {
 			t.Fatalf("%s audits = %#v", action, events)
 		}
-	}
-}
-
-func TestDashboardPublicationSubjectsAreLimitedToDataPolicies(t *testing.T) {
-	if knownGrantSubjectType(access.SubjectDashboardPublication) {
-		t.Fatal("dashboard publication subject was accepted for an RBAC grant")
-	}
-	if !knownDataPolicySubjectType(access.SubjectDashboardPublication) {
-		t.Fatal("dashboard publication subject was rejected for a data policy")
-	}
-}
-
-func TestDashboardPublicationPrincipalsRejectGenericIdentityMutations(t *testing.T) {
-	if principalKindAllowsGenericMutation(access.PrincipalKindDashboardPublication) {
-		t.Fatal("dashboard publication principal accepted a generic identity mutation")
-	}
-	if !principalKindAllowsGenericMutation(access.PrincipalKindUser) {
-		t.Fatal("user principal rejected a generic identity mutation")
-	}
-}
-func TestListPlatformAuditEventsIncludesProductEventsAndFiltersWorkspace(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	workspaceRepo := workspacesqlite.NewRepository(store.SQLDB())
-	for _, workspaceID := range []string{"sales", "finance"} {
-		if err := workspaceRepo.Ensure(t.Context(), workspace.EnsureInput{ID: workspace.WorkspaceID(workspaceID), Title: workspaceID}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, input := range []access.AuditEventInput{
-		{Action: "product.updated", TargetType: "product", TargetID: "instance", Status: "success"},
-		{WorkspaceID: "sales", Action: "workspace.updated", TargetType: "workspace", TargetID: "sales", Status: "success"},
-		{WorkspaceID: "finance", Action: "workspace.updated", TargetType: "workspace", TargetID: "finance", Status: "success"},
-	} {
-		if err := repo.RecordAuditEvent(t.Context(), input); err != nil {
-			t.Fatal(err)
-		}
-	}
-	handler := Handler{Repository: func() (access.Repository, error) { return repo, nil }}
-
-	type event struct {
-		Action      string  `json:"action"`
-		WorkspaceID *string `json:"workspaceId"`
-		PrincipalID *string `json:"principalId"`
-		Privilege   *string `json:"privilege"`
-		RequestID   *string `json:"requestId"`
-		Correlation *string `json:"correlationId"`
-	}
-	type response struct {
-		Items []event `json:"items"`
-	}
-	list := func(path string) response {
-		t.Helper()
-		recorder := httptest.NewRecorder()
-		handler.ListPlatformAuditEvents(recorder, httptest.NewRequest(stdhttp.MethodGet, path, nil))
-		if recorder.Code != stdhttp.StatusOK {
-			t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-		}
-		var result response
-		if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
-			t.Fatalf("decode response: %v body=%s", err, recorder.Body.String())
-		}
-		return result
-	}
-
-	all := list("/api/v1/audit-events")
-	if len(all.Items) != 3 {
-		t.Fatalf("all audit events = %#v, want 3", all.Items)
-	}
-	productFound := false
-	for _, item := range all.Items {
-		if item.Action == "product.updated" {
-			productFound = true
-			if item.WorkspaceID != nil {
-				t.Fatalf("product event workspaceId = %q, want omitted", *item.WorkspaceID)
-			}
-			if item.PrincipalID != nil || item.Privilege != nil || item.RequestID != nil || item.Correlation != nil {
-				t.Fatalf("product event emitted empty optional fields: %#v", item)
-			}
-		}
-	}
-	if !productFound {
-		t.Fatalf("product event missing from %#v", all.Items)
-	}
-
-	sales := list("/api/v1/audit-events?workspace=sales")
-	if len(sales.Items) != 1 || sales.Items[0].WorkspaceID == nil || *sales.Items[0].WorkspaceID != "sales" {
-		t.Fatalf("sales audit events = %#v", sales.Items)
 	}
 }

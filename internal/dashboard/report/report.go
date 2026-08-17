@@ -4,6 +4,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Metrics interface {
@@ -95,5 +96,9 @@ func resolve(metrics Metrics, dashboardID string) (dashboardresolver.Resolved, e
 	if metrics == nil || metrics.Resolver() == nil {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
 	}
-	return metrics.Resolver().Resolve(dashboardID)
+	id, err := projectgraph.NewResourceID(dashboardID)
+	if err != nil {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	return metrics.Resolver().Resolve(id)
 }

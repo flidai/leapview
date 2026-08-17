@@ -2,6 +2,7 @@ package connectionbinding
 
 import (
 	"context"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"strings"
 	"time"
 )
@@ -40,15 +41,20 @@ func (request RefreshRequest) valid() bool {
 }
 
 type RotationAuditEvent struct {
-	BindingID       string           `json:"bindingId"`
-	TargetID        string           `json:"targetId"`
-	WorkspaceID     string           `json:"workspaceId"`
-	ProviderVersion string           `json:"providerVersion,omitempty"`
-	Actor           string           `json:"actor"`
-	Operation       RefreshOperation `json:"operation"`
-	Timestamp       time.Time        `json:"timestamp"`
-	Outcome         RotationOutcome  `json:"outcome"`
-	Reason          string           `json:"reason,omitempty"`
+	BindingID BindingID `json:"bindingId"`
+	// ConnectionID is the graph resource whose credential capability was used.
+	// BindingID remains metadata identifying the concrete target binding, but
+	// audit ownership is always attached to the canonical connection resource.
+	ConnectionID    projectgraph.ResourceID      `json:"connectionId"`
+	TargetID        TargetID                     `json:"targetId"`
+	Identity        projectgraph.ServingIdentity `json:"identity"`
+	ProjectID       projectgraph.ResourceID      `json:"projectId"`
+	ProviderVersion string                       `json:"providerVersion,omitempty"`
+	Actor           string                       `json:"actor"`
+	Operation       RefreshOperation             `json:"operation"`
+	Timestamp       time.Time                    `json:"timestamp"`
+	Outcome         RotationOutcome              `json:"outcome"`
+	Reason          string                       `json:"reason,omitempty"`
 }
 
 type RotationAuditRecorder interface {

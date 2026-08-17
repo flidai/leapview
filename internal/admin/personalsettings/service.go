@@ -11,7 +11,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 var (
@@ -35,7 +34,6 @@ type Repository interface {
 	ListAPITokens(context.Context, string) ([]access.APIToken, error)
 	CreateAPITokenWithMetadata(context.Context, access.APITokenInput) (string, access.APIToken, error)
 	RevokeAPITokenForPrincipal(context.Context, string, string) error
-	EffectivePrivileges(context.Context, string, access.ObjectRef) ([]access.Privilege, error)
 	RecordAuditEvent(context.Context, access.AuditEventInput) error
 }
 
@@ -56,22 +54,18 @@ type AuthoringReader interface {
 	RevokeSession(context.Context, string, string) error
 }
 
-type WorkspaceReader interface {
-	List(context.Context) ([]workspace.Summary, error)
-}
-
 type Service struct {
-	Repository           Repository
-	Preferences          PreferencesRepository
-	IdentityManagement   IdentityManagementReader
-	Avatar               AvatarReader
-	Authoring            AuthoringReader
-	Workspaces           WorkspaceReader
-	LocalPasswordEnabled bool
-	Now                  func() time.Time
+	Repository                   Repository
+	Preferences                  PreferencesRepository
+	IdentityManagement           IdentityManagementReader
+	Avatar                       AvatarReader
+	Authoring                    AuthoringReader
+	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	LocalPasswordEnabled         bool
+	Now                          func() time.Time
 }
 
-func (s *Service) Load(ctx context.Context, principalID, currentSessionID string, includeTokenScopes bool) (Signal, error) {
+func (s *Service) Load(ctx context.Context, principalID, currentSessionID string, includeCapabilityOptions bool) (Signal, error) {
 	principalID = strings.TrimSpace(principalID)
 	if principalID == "" {
 		return Signal{}, ErrPrincipalRequired
@@ -115,17 +109,21 @@ func (s *Service) Load(ctx context.Context, principalID, currentSessionID string
 	if err != nil {
 		return Signal{}, err
 	}
-	tokenScopes := []TokenScopeSignal{}
-	if includeTokenScopes {
-		tokenScopes, err = s.tokenScopes(ctx, principalID)
-		if err != nil {
-			return Signal{}, err
+	capabilityOptions := []CapabilityOptionSignal{}
+	if includeCapabilityOptions {
+		if s.CurrentEffectiveCapabilities == nil {
+			return Signal{}, fmt.Errorf("effective project capabilities are unavailable")
 		}
+		effective, effectiveErr := s.CurrentEffectiveCapabilities(ctx, principalID)
+		if effectiveErr != nil {
+			return Signal{}, effectiveErr
+		}
+		capabilityOptions = capabilityOptionsSignal(effective)
 	}
 	result := Signal{
 		Profile:  signalFromPrincipal(principal, identity, avatarURL, theme),
 		Security: SecuritySignal{LocalPasswordEnabled: s.LocalPasswordEnabled, Sessions: make([]SessionSignal, 0, len(sessions))},
-		Tokens:   TokensSignal{Items: make([]TokenSignal, 0, len(tokens)), Scopes: tokenScopes},
+		Tokens:   TokensSignal{Items: make([]TokenSignal, 0, len(tokens)), Capabilities: capabilityOptions},
 	}
 	for _, session := range sessions {
 		result.Security.Sessions = append(result.Security.Sessions, sessionSignal(session, currentSessionID))
@@ -185,7 +183,7 @@ func (s *Service) ApplyProfile(ctx context.Context, principalID string, command 
 			ID: principal.ID, Kind: principal.Kind, Email: principal.Email, DisplayName: displayName,
 		})
 		return access.AuditEventInput{
-			PrincipalID: principal.ID, Action: "principal.profile.updated", TargetType: "principal", TargetID: updated.ID,
+			PrincipalID: principal.ID, Action: "principal.profile.updated", ResourceKind: "principal", ResourceID: updated.ID,
 			Status: "success", MetadataJSON: `{"field":"displayName"}`,
 		}, err
 	})
@@ -205,7 +203,7 @@ func (s *Service) ApplyPassword(ctx context.Context, principalID string, command
 	return s.runAudited(ctx, func(repository Repository) (access.AuditEventInput, error) {
 		_, err := repository.ChangeLocalPassword(ctx, principalID, command.CurrentPassword, command.NewPassword)
 		return access.AuditEventInput{
-			PrincipalID: principalID, Action: "password.changed", TargetType: "principal", TargetID: principalID,
+			PrincipalID: principalID, Action: "password.changed", ResourceKind: "principal", ResourceID: principalID,
 			Status: "success", MetadataJSON: `{"provider":"local"}`,
 		}, err
 	})
@@ -218,7 +216,7 @@ func (s *Service) RevokeSession(ctx context.Context, principalID string, command
 	return s.runAudited(ctx, func(repository Repository) (access.AuditEventInput, error) {
 		err := repository.RevokeSessionForPrincipal(ctx, principalID, strings.TrimSpace(command.SessionID))
 		return access.AuditEventInput{
-			PrincipalID: principalID, Action: "session.revoked", TargetType: "session", TargetID: command.SessionID,
+			PrincipalID: principalID, Action: "session.revoked", ResourceKind: "session", ResourceID: command.SessionID,
 			Status: "success", MetadataJSON: `{}`,
 		}, err
 	})
@@ -250,45 +248,32 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		}
 		return nil, s.runAudited(ctx, func(repository Repository) (access.AuditEventInput, error) {
 			err := repository.RevokeAPITokenForPrincipal(ctx, principalID, command.TokenID)
-			return access.AuditEventInput{PrincipalID: principalID, Action: "api_token.revoked", TargetType: "api_token", TargetID: command.TokenID, Status: "success", MetadataJSON: `{}`}, err
+			return access.AuditEventInput{PrincipalID: principalID, Action: "api_token.revoked", ResourceKind: "api_token", ResourceID: command.TokenID, Status: "success", MetadataJSON: `{}`}, err
 		})
 	case "create":
 		name := strings.TrimSpace(command.Name)
 		if name == "" || len(name) > 200 {
 			return nil, fmt.Errorf("token name must contain between 1 and 200 bytes")
 		}
-		if len(command.Privileges) == 0 {
-			return nil, fmt.Errorf("select at least one privilege for the API token")
-		}
-		var privileges []access.Privilege
-		if len(command.Privileges) > 0 {
-			privileges = make([]access.Privilege, 0, len(command.Privileges))
-		}
-		for _, raw := range command.Privileges {
-			privilege, ok := access.ParsePrivilege(raw)
-			if !ok {
-				return nil, fmt.Errorf("unsupported API token privilege %q", raw)
+		var capabilities []access.Capability
+		if command.Capabilities != nil {
+			capabilities = make([]access.Capability, 0, len(command.Capabilities))
+			for _, raw := range command.Capabilities {
+				capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
+				if parseErr != nil {
+					return nil, fmt.Errorf("unsupported API token capability %q: %w", raw, parseErr)
+				}
+				capabilities = append(capabilities, capability)
 			}
-			privileges = append(privileges, privilege)
-		}
-		workspaceID := strings.TrimSpace(command.WorkspaceID)
-		if len(privileges) > 0 {
-			target := access.PlatformObject()
-			if workspaceID != "" {
-				target = access.WorkspaceObject(workspaceID)
+			if s.CurrentEffectiveCapabilities == nil {
+				return nil, fmt.Errorf("effective project capabilities are unavailable")
 			}
-			effective, effectiveErr := s.Repository.EffectivePrivileges(ctx, principalID, target)
+			effective, effectiveErr := s.CurrentEffectiveCapabilities(ctx, principalID)
 			if effectiveErr != nil {
 				return nil, effectiveErr
 			}
-			allowed := make(map[access.Privilege]struct{}, len(effective))
-			for _, privilege := range effective {
-				allowed[privilege] = struct{}{}
-			}
-			for _, privilege := range privileges {
-				if _, ok := allowed[privilege]; !ok {
-					return nil, fmt.Errorf("requested API token privileges exceed effective access")
-				}
+			if validateErr := access.ValidateTokenCapabilities(capabilities, effective); validateErr != nil {
+				return nil, validateErr
 			}
 		}
 		var expiresAt time.Time
@@ -304,10 +289,10 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		var secret string
 		err = s.runAudited(ctx, func(repository Repository) (access.AuditEventInput, error) {
 			createdSecret, token, createErr := repository.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-				PrincipalID: principalID, WorkspaceID: workspaceID, Name: name, Privileges: privileges, ExpiresAt: expiresAt,
+				PrincipalID: principalID, Name: name, Capabilities: capabilities, ExpiresAt: expiresAt,
 			})
 			secret = createdSecret
-			return access.AuditEventInput{PrincipalID: principalID, WorkspaceID: workspaceID, Action: "api_token.created", TargetType: "api_token", TargetID: token.ID, Status: "success", MetadataJSON: metadataJSON(map[string]string{"name": name})}, createErr
+			return access.AuditEventInput{PrincipalID: principalID, Action: "api_token.created", ResourceKind: "api_token", ResourceID: token.ID, Status: "success", MetadataJSON: metadataJSON(map[string]string{"name": name})}, createErr
 		})
 		if err != nil {
 			return nil, err

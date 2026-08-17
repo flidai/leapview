@@ -9,6 +9,14 @@ import (
 	"github.com/flidai/leapview/internal/access"
 )
 
+type ServiceAccountMutator interface {
+	CreateServicePrincipal(context.Context, access.ServicePrincipalInput) (access.Principal, error)
+	UpdateServicePrincipal(context.Context, string, access.ServicePrincipalInput) (access.Principal, error)
+	DeleteServicePrincipal(context.Context, string) error
+	CreateServicePrincipalSecret(context.Context, string, access.ServicePrincipalSecretInput) (string, access.ServicePrincipalSecret, error)
+	RevokeServicePrincipalSecret(context.Context, string, string) error
+}
+
 // ApplyServiceAccountCommand executes a validated settings command. It
 // returns the one-time raw secret only for create_secret; callers should put
 // that value in a short-lived signal patch and never persist it.
@@ -72,7 +80,7 @@ func ApplyServiceAccountCommandAudited(ctx context.Context, repository access.Re
 		secret = createdSecret
 		return access.AuditEventInput{
 			PrincipalID: actorID, Action: "service_account." + command.Action,
-			TargetType: "service_principal", TargetID: targetID, Status: "success", MetadataJSON: `{}`,
+			ResourceKind: "service_principal", ResourceID: targetID, Status: "success", MetadataJSON: `{}`,
 		}, err
 	}
 	if transactional, ok := repository.(access.AuditedMutationRepository); ok {

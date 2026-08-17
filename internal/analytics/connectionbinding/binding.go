@@ -13,6 +13,7 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/analytics/connectors"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -30,21 +31,20 @@ var (
 	ErrRotationAuditUnavailable       = apigenfailure.New("audit_unavailable", "credential rotation audit unavailable")
 	ErrAdministrationAuditUnavailable = apigenfailure.New("audit_unavailable", "connection administration audit unavailable")
 
-	logicalConnectionPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
-	identifierPattern        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$`)
-	optionKeyPattern         = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
+	identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$`)
+	optionKeyPattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
 )
 
-type LogicalConnectionID string
-
-func ParseLogicalConnectionID(value string) (LogicalConnectionID, error) {
-	if !logicalConnectionPattern.MatchString(value) {
-		return "", fmt.Errorf("%w: logical connection id must match %s", ErrInvalidBinding, logicalConnectionPattern)
+// ConnectionID is the explicit project-graph identity of a connection. The
+// symbolic connection name is resolved by the active project graph before a
+// binding is created and is never persisted as an execution key.
+func ParseConnectionID(value string) (projectgraph.ResourceID, error) {
+	id, err := projectgraph.NewResourceID(value)
+	if err != nil {
+		return "", fmt.Errorf("%w: connection id is invalid", ErrInvalidBinding)
 	}
-	return LogicalConnectionID(value), nil
+	return id, nil
 }
-
-func (id LogicalConnectionID) String() string { return string(id) }
 
 type AuthenticationMode string
 
@@ -64,8 +64,8 @@ const (
 )
 
 type BindingScope struct {
-	WorkspaceID string `json:"workspaceId"`
-	Environment string `json:"environment"`
+	ProjectID   projectgraph.ResourceID `json:"projectId"`
+	Environment string                  `json:"environment"`
 }
 
 type EndpointConfig struct {
@@ -79,10 +79,10 @@ type EndpointConfig struct {
 }
 
 type CredentialReference struct {
-	ProjectID   string `json:"projectId"`
-	Environment string `json:"environment"`
-	SecretPath  string `json:"secretPath"`
-	SecretKey   string `json:"secretKey"`
+	ProjectID   projectgraph.ResourceID `json:"projectId"`
+	Environment string                  `json:"environment"`
+	SecretPath  string                  `json:"secretPath"`
+	SecretKey   string                  `json:"secretKey"`
 }
 
 func (reference CredentialReference) empty() bool {
@@ -90,16 +90,20 @@ func (reference CredentialReference) empty() bool {
 }
 
 func (reference CredentialReference) valid() bool {
-	return strings.TrimSpace(reference.ProjectID) != "" &&
+	return reference.ProjectID.String() == strings.TrimSpace(reference.ProjectID.String()) &&
+		reference.Environment == strings.TrimSpace(reference.Environment) &&
+		reference.ProjectID.Valid() &&
 		strings.TrimSpace(reference.Environment) != "" &&
-		strings.HasPrefix(strings.TrimSpace(reference.SecretPath), "/") &&
-		strings.TrimSpace(reference.SecretKey) != ""
+		reference.SecretPath == strings.TrimSpace(reference.SecretPath) &&
+		reference.SecretKey == strings.TrimSpace(reference.SecretKey) &&
+		strings.HasPrefix(reference.SecretPath, "/") &&
+		reference.SecretKey != ""
 }
 
 type TargetBinding struct {
-	ID                  string
-	TargetID            string
-	LogicalConnectionID LogicalConnectionID
+	ID                  BindingID
+	TargetID            TargetID
+	ConnectionID        projectgraph.ResourceID
 	ConnectorKind       string
 	AuthenticationMode  AuthenticationMode
 	Scope               BindingScope
@@ -116,9 +120,9 @@ type TargetBinding struct {
 }
 
 type TargetBindingInput struct {
-	ID                  string
-	TargetID            string
-	LogicalConnectionID string
+	ID                  BindingID
+	TargetID            TargetID
+	ConnectionID        projectgraph.ResourceID
 	ConnectorKind       string
 	AuthenticationMode  AuthenticationMode
 	Scope               BindingScope
@@ -136,18 +140,34 @@ type TargetBindingConfiguration struct {
 }
 
 func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
-	id, err := ParseLogicalConnectionID(strings.TrimSpace(input.LogicalConnectionID))
+	if input.ID.String() != strings.TrimSpace(input.ID.String()) ||
+		input.ConnectionID.String() != strings.TrimSpace(input.ConnectionID.String()) ||
+		input.Scope.ProjectID.String() != strings.TrimSpace(input.Scope.ProjectID.String()) ||
+		input.Scope.Environment != strings.TrimSpace(input.Scope.Environment) ||
+		input.CredentialReference.ProjectID.String() != strings.TrimSpace(input.CredentialReference.ProjectID.String()) ||
+		input.CredentialReference.Environment != strings.TrimSpace(input.CredentialReference.Environment) {
+		return TargetBinding{}, fmt.Errorf("%w: binding graph identities must be canonical", ErrInvalidBinding)
+	}
+	connectionID, err := ParseConnectionID(input.ConnectionID.String())
 	if err != nil {
 		return TargetBinding{}, err
 	}
-	input.ID = strings.TrimSpace(input.ID)
-	input.TargetID = strings.TrimSpace(input.TargetID)
-	input.ConnectorKind = strings.TrimSpace(input.ConnectorKind)
-	input.Scope.WorkspaceID = strings.TrimSpace(input.Scope.WorkspaceID)
-	input.Scope.Environment = strings.TrimSpace(input.Scope.Environment)
+	input.ID = BindingID(input.ID.String())
+	if _, err := ParseTargetID(input.TargetID.String()); err != nil {
+		return TargetBinding{}, err
+	}
+	if input.ConnectorKind != strings.TrimSpace(input.ConnectorKind) ||
+		input.CredentialReference.SecretPath != strings.TrimSpace(input.CredentialReference.SecretPath) ||
+		input.CredentialReference.SecretKey != strings.TrimSpace(input.CredentialReference.SecretKey) {
+		return TargetBinding{}, fmt.Errorf("%w: binding connector and credential fields must be canonical", ErrInvalidBinding)
+	}
+	// Connector and credential fields are execution identities; preserve their
+	// canonical spelling instead of silently rewriting aliases.
+	input.Scope.ProjectID = projectgraph.ResourceID(input.Scope.ProjectID.String())
+	// Environment is a serving-scope identity; preserve its canonical spelling.
 	input.Now = input.Now.UTC()
-	if !identifierPattern.MatchString(input.ID) || !identifierPattern.MatchString(input.TargetID) ||
-		!identifierPattern.MatchString(input.ConnectorKind) || input.Scope.WorkspaceID == "" ||
+	if _, err := ParseBindingID(input.ID.String()); err != nil ||
+		!identifierPattern.MatchString(input.ConnectorKind) || !input.Scope.ProjectID.Valid() ||
 		!identifierPattern.MatchString(input.Scope.Environment) || input.Now.IsZero() {
 		return TargetBinding{}, fmt.Errorf("%w: binding identity, target, connector, scope, environment, and creation time are required", ErrInvalidBinding)
 	}
@@ -174,7 +194,7 @@ func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
 		health = HealthDisabled
 	}
 	return TargetBinding{
-		ID: input.ID, TargetID: input.TargetID, LogicalConnectionID: id,
+		ID: input.ID, TargetID: input.TargetID, ConnectionID: connectionID,
 		ConnectorKind: input.ConnectorKind, AuthenticationMode: input.AuthenticationMode,
 		Scope: input.Scope, Endpoint: cloneEndpoint(input.Endpoint),
 		CredentialReference: canonicalReference(input.CredentialReference),
@@ -183,12 +203,12 @@ func NewTargetBinding(input TargetBindingInput) (TargetBinding, error) {
 }
 
 func (binding TargetBinding) Validate() error {
-	logicalID, err := ParseLogicalConnectionID(binding.LogicalConnectionID.String())
-	if err != nil || logicalID != binding.LogicalConnectionID {
-		return fmt.Errorf("%w: logical connection identity is invalid", ErrInvalidBinding)
+	connectionID, err := ParseConnectionID(binding.ConnectionID.String())
+	if err != nil || connectionID != binding.ConnectionID {
+		return fmt.Errorf("%w: connection identity is invalid", ErrInvalidBinding)
 	}
-	if !identifierPattern.MatchString(binding.ID) || !identifierPattern.MatchString(binding.TargetID) ||
-		!identifierPattern.MatchString(binding.ConnectorKind) || strings.TrimSpace(binding.Scope.WorkspaceID) == "" ||
+	if _, err := ParseBindingID(binding.ID.String()); err != nil ||
+		!identifierPattern.MatchString(binding.ConnectorKind) || !binding.Scope.ProjectID.Valid() ||
 		!identifierPattern.MatchString(binding.Scope.Environment) {
 		return fmt.Errorf("%w: binding identity, target, connector, scope, and environment are required", ErrInvalidBinding)
 	}
@@ -237,27 +257,36 @@ func (binding TargetBinding) Validate() error {
 }
 
 type Requirement struct {
-	LogicalConnectionID LogicalConnectionID
-	ConnectorKind       string
-	BindingRevision     int64
-	ValidatedVersion    string
+	ConnectionID     projectgraph.ResourceID
+	ConnectorKind    string
+	BindingRevision  int64
+	ValidatedVersion string
 }
 
 type BindingEvidence struct {
-	BindingID          string              `json:"bindingId"`
-	TargetID           string              `json:"targetId"`
-	LogicalConnection  LogicalConnectionID `json:"logicalConnection"`
-	ConnectorKind      string              `json:"connectorKind"`
-	Scope              BindingScope        `json:"scope"`
-	BindingRevision    int64               `json:"bindingRevision"`
-	ValidatedVersion   string              `json:"validatedVersion,omitempty"`
-	EndpointConfigHash string              `json:"endpointConfigHash"`
-	Health             BindingHealth       `json:"health"`
+	BindingID          BindingID               `json:"bindingId"`
+	TargetID           TargetID                `json:"targetId"`
+	ConnectionID       projectgraph.ResourceID `json:"connectionId"`
+	ConnectorKind      string                  `json:"connectorKind"`
+	Scope              BindingScope            `json:"scope"`
+	BindingRevision    int64                   `json:"bindingRevision"`
+	ValidatedVersion   string                  `json:"validatedVersion,omitempty"`
+	EndpointConfigHash string                  `json:"endpointConfigHash"`
+	Health             BindingHealth           `json:"health"`
+}
+
+// RuntimeBindingEvidence adds the exact immutable serving generation to
+// persistent binding evidence. It can only be produced after runtime
+// acquisition validates the identity against the binding's project and
+// environment scope.
+type RuntimeBindingEvidence struct {
+	BindingEvidence
+	Identity projectgraph.ServingIdentity `json:"identity"`
 }
 
 func (binding TargetBinding) Evidence() BindingEvidence {
 	return BindingEvidence{
-		BindingID: binding.ID, TargetID: binding.TargetID, LogicalConnection: binding.LogicalConnectionID,
+		BindingID: binding.ID, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 		ConnectorKind: binding.ConnectorKind, Scope: binding.Scope, BindingRevision: binding.Revision,
 		ValidatedVersion: binding.ValidatedVersion, EndpointConfigHash: endpointDigest(binding.Endpoint), Health: binding.Health,
 	}
@@ -270,7 +299,7 @@ func (binding TargetBinding) CompatibleEvidence(requirement Requirement, authori
 	if !binding.Enabled {
 		return BindingEvidence{}, ErrDisabledBinding
 	}
-	if requirement.LogicalConnectionID != binding.LogicalConnectionID ||
+	if requirement.ConnectionID != binding.ConnectionID ||
 		strings.TrimSpace(requirement.ConnectorKind) != binding.ConnectorKind ||
 		requirement.BindingRevision > 0 && requirement.BindingRevision != binding.Revision ||
 		requirement.ValidatedVersion != "" && requirement.ValidatedVersion != binding.ValidatedVersion {
@@ -313,7 +342,11 @@ func (binding TargetBinding) UpdateConfiguration(configuration TargetBindingConf
 	if now.IsZero() || now.Before(binding.UpdatedAt) {
 		return TargetBinding{}, fmt.Errorf("%w: monotonic update time is required", ErrInvalidBinding)
 	}
-	configuration.ConnectorKind = strings.TrimSpace(configuration.ConnectorKind)
+	if configuration.ConnectorKind != strings.TrimSpace(configuration.ConnectorKind) ||
+		configuration.CredentialReference.SecretPath != strings.TrimSpace(configuration.CredentialReference.SecretPath) ||
+		configuration.CredentialReference.SecretKey != strings.TrimSpace(configuration.CredentialReference.SecretKey) {
+		return TargetBinding{}, fmt.Errorf("%w: binding connector and credential fields must be canonical", ErrInvalidBinding)
+	}
 	configuration.CredentialReference = canonicalReference(configuration.CredentialReference)
 	candidate := binding
 	candidate.ConnectorKind = configuration.ConnectorKind
@@ -436,8 +469,8 @@ func cloneEndpoint(endpoint EndpointConfig) EndpointConfig {
 
 func canonicalReference(reference CredentialReference) CredentialReference {
 	return CredentialReference{
-		ProjectID: strings.TrimSpace(reference.ProjectID), Environment: strings.TrimSpace(reference.Environment),
-		SecretPath: strings.TrimSpace(reference.SecretPath), SecretKey: strings.TrimSpace(reference.SecretKey),
+		ProjectID: reference.ProjectID, Environment: reference.Environment,
+		SecretPath: reference.SecretPath, SecretKey: reference.SecretKey,
 	}
 }
 

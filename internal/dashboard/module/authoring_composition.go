@@ -15,6 +15,7 @@ import (
 	authoringcompileradapter "github.com/flidai/leapview/internal/dashboard/authoring/compileradapter"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -28,18 +29,18 @@ type DashboardID = authoring.DashboardID
 type DraftID = authoring.DraftID
 type RevisionID = authoring.RevisionID
 
-// AuthorizeObject is the narrow access decision port needed to authorize
+// AuthorizeResource is the canonical access decision port needed to authorize
 // dashboard authoring operations.
-type AuthorizeObject func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error)
+type AuthorizeResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
 
 // AuthoringConfig contains only capability composition ports. Project export
 // behavior is injected as a function so dashboard authoring does not import
 // the project compiler, and runtime acquisition remains topology-neutral.
 type AuthoringConfig struct {
-	Database        *sql.DB
-	AuthorizeObject AuthorizeObject
-	AcquireRuntime  func(context.Context, string) (runtimehost.Lease, error)
-	ExportDashboard authoring.DashboardExporter
+	Database          *sql.DB
+	AuthorizeResource AuthorizeResource
+	AcquireRuntime    func(context.Context) (runtimehost.Lease, error)
+	ExportDashboard   authoring.DashboardExporter
 }
 
 // BuildAuthoring constructs the complete dashboard authoring application and
@@ -48,7 +49,7 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	if config.Database == nil {
 		return nil, fmt.Errorf("dashboard authoring database is required")
 	}
-	if config.AuthorizeObject == nil {
+	if config.AuthorizeResource == nil {
 		return nil, fmt.Errorf("dashboard authoring access authorizer is required")
 	}
 	if config.AcquireRuntime == nil {
@@ -59,7 +60,7 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	}
 
 	repository := authoringsqlite.NewRepository(config.Database)
-	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.AuthorizeObject(config.AuthorizeObject))
+	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.AuthorizeResource(config.AuthorizeResource))
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring access adapter: %w", err)
 	}
@@ -90,6 +91,7 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 		Authoring:       service,
 		Repository:      repository,
 		Authorizer:      authorizer,
+		Compiler:        compiler,
 		AcquireRuntime:  config.AcquireRuntime,
 		ExportDashboard: config.ExportDashboard,
 	})

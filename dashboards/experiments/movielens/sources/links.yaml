@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:links
   name: movielens.links
-  title: External Links
+  displayName: External Links
 spec:
   connection: movielens
   path: links.csv

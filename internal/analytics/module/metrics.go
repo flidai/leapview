@@ -85,7 +85,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		stats := c.cache.Stats()
 		ch <- prometheus.MustNewConstMetric(c.cacheEntries, prometheus.GaugeValue, float64(stats.Entries))
 		ch <- prometheus.MustNewConstMetric(c.cacheBytes, prometheus.GaugeValue, float64(stats.Bytes))
-		for _, constraint := range []resultcache.Constraint{resultcache.ConstraintRuntime, resultcache.ConstraintWorkspace, resultcache.ConstraintNode} {
+		for _, constraint := range []resultcache.Constraint{resultcache.ConstraintRuntime, resultcache.ConstraintNode} {
 			ch <- prometheus.MustNewConstMetric(c.cacheEvictions, prometheus.CounterValue, float64(stats.Evictions[constraint]), string(constraint))
 		}
 		for _, outcome := range []resultcache.StoreOutcome{resultcache.StoreStored, resultcache.StoreOversized, resultcache.StoreStale, resultcache.StoreClosed} {

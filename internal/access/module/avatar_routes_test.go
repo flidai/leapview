@@ -22,7 +22,12 @@ func TestAuthenticatedBrowserAvatarRoutesUseProtectedPrincipal(t *testing.T) {
 		PrincipalID: "dev", SHA256: digest, MediaType: "image/png", SizeBytes: 3,
 		Width: 256, Height: 256, UpdatedAt: "2026-08-08 12:00:00",
 	}}
-	module, err := newSurface(surfaceConfig{Avatar: nil})
+	module, err := newSurface(surfaceConfig{
+		Avatar: nil,
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "dev", DevBypass: true}, true
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,12 +14,10 @@ import (
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
-	workspaceview "github.com/flidai/leapview/internal/workspace"
 	g "maragu.dev/gomponents"
 )
 
 type AdminData struct {
-	Workspace             workspaceview.WorkspaceView
 	CSRFToken             string
 	AuthConfigured        bool
 	AccessConfigured      bool
@@ -55,11 +53,11 @@ type AdminProfile struct {
 }
 
 type AdminPublication struct {
-	WorkspaceID, Name, Dashboard, DefaultPage, Status string
-	Origins                                           []string
-	History                                           []string
-	Generation, PublicURL, EmbedURL, IFrameSnippet    string
-	ConfiguredAt, SuspendedAt, DisabledAt, RotatedAt  string
+	ProjectID, Name, Dashboard, DefaultPage, Status  string
+	Origins                                          []string
+	History                                          []string
+	Generation, PublicURL, EmbedURL, IFrameSnippet   string
+	ConfiguredAt, SuspendedAt, DisabledAt, RotatedAt string
 }
 
 type AdminAgentData struct {
@@ -114,7 +112,7 @@ type AdminGroup struct {
 
 type AdminQueryEvent struct {
 	ID               string
-	WorkspaceID      string
+	ProjectID        string
 	PrincipalID      string
 	Surface          string
 	Operation        string
@@ -324,7 +322,7 @@ func adminLayoutContext(active string) webpage.Context {
 		pageID = "storage"
 	}
 	return webpage.Context{
-		Active: "admin", SectionTitle: "Workspace", PageTitle: "Published assets",
+		Active: "admin", SectionTitle: "Project", PageTitle: "Published assets",
 		PageID: pageID, Compact: true,
 	}
 }
@@ -373,9 +371,6 @@ func adminPageSignal(active string, data AdminData) uisignals.AdminPageSignal {
 	case "general":
 		page.HeaderTitle = "General"
 		page.HeaderDetail = "Configure product identity and view instance details."
-	case "workspaces-admin":
-		page.HeaderTitle = "Workspaces"
-		page.HeaderDetail = "Review workspaces, ownership, and deployment state."
 	case "principal-detail":
 		page.HeaderTitle = "Principals"
 		page.HeaderDetail = "Manage principal identity, access status, and sessions."
@@ -497,7 +492,7 @@ func AdminQueryDetailSignalFromEvent(event AdminQueryEvent) uisignals.AdminQuery
 		Error:            uisignals.Optional(event.Error),
 		Status:           uisignals.Optional(event.Status),
 		StatusLabel:      uisignals.Optional(queryEventStatusLabel(event.Status)),
-		WorkspaceID:      uisignals.Optional(event.WorkspaceID),
+		ProjectID:        uisignals.Optional(event.ProjectID),
 		PrincipalID:      uisignals.Optional(event.PrincipalID),
 		Surface:          uisignals.Optional(event.Surface),
 		Operation:        uisignals.Optional(event.Operation),
@@ -550,7 +545,7 @@ func adminQueryEventSignals(events []AdminQueryEvent) []uisignals.AdminQueryEven
 	for _, event := range events {
 		out = append(out, uisignals.AdminQueryEventSignal{
 			ID:               event.ID,
-			WorkspaceID:      event.WorkspaceID,
+			ProjectID:        event.ProjectID,
 			PrincipalID:      event.PrincipalID,
 			Surface:          event.Surface,
 			Operation:        event.Operation,
@@ -581,7 +576,7 @@ func adminPublicationSignals(rows []AdminPublication) []uisignals.AdminPublicati
 	out := make([]uisignals.AdminPublicationSignal, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, uisignals.AdminPublicationSignal{
-			WorkspaceID: row.WorkspaceID, Name: row.Name, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
+			ProjectID: row.ProjectID, Name: row.Name, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
 			Status: row.Status, Origins: row.Origins, Generation: uisignals.Optional(row.Generation), PublicURL: row.PublicURL,
 			EmbedURL: row.EmbedURL, IframeSnippet: row.IFrameSnippet, ConfiguredAt: uisignals.Optional(row.ConfiguredAt),
 			SuspendedAt: uisignals.Optional(row.SuspendedAt), DisabledAt: uisignals.Optional(row.DisabledAt), RotatedAt: uisignals.Optional(row.RotatedAt),
@@ -936,10 +931,10 @@ func queryEventObjectLabel(event AdminQueryEvent) string {
 }
 
 func queryEventRuntimeLabel(event AdminQueryEvent) string {
-	if event.WorkspaceID == "" {
+	if event.ProjectID == "" {
 		return "-"
 	}
-	return event.WorkspaceID
+	return event.ProjectID
 }
 
 func collapseWhitespace(value string) string {
@@ -1016,8 +1011,6 @@ func adminPageTitle(active string) string {
 		return "Security & sessions"
 	case "general":
 		return "General"
-	case "workspaces-admin":
-		return "Workspaces"
 	case "principals":
 		return "Principals"
 	case "profile":
@@ -1053,7 +1046,7 @@ func adminPageTitle(active string) string {
 
 func normalizeAdminSection(active string) string {
 	switch strings.TrimSpace(active) {
-	case "profile", "security", "api-tokens", "general", "workspaces-admin", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications":
+	case "profile", "security", "api-tokens", "general", "principals", "principal-detail", "groups", "group-detail", "service-accounts", "authentication", "agent", "storage", "storage-detail", "queries", "audit", "system", "publications":
 		return strings.TrimSpace(active)
 	default:
 		return "profile"

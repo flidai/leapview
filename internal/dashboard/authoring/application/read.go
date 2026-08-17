@@ -8,13 +8,14 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // DraftRequest identifies the current immutable draft revision for one
-// workspace dashboard. Draft reads are edit-authorized because they expose
+// project dashboard. Draft reads are edit-authorized because they expose
 // private authored content.
 type DraftRequest struct {
-	WorkspaceID string
+	ProjectID   projectgraph.ResourceID
 	ActorID     string
 	DashboardID authoring.DashboardID
 }
@@ -30,7 +31,7 @@ type DraftRead struct {
 // explicit so transports cannot accidentally expose a draft through a VIEW
 // only path.
 type RevisionRequest struct {
-	WorkspaceID string
+	ProjectID   projectgraph.ResourceID
 	ActorID     string
 	DashboardID authoring.DashboardID
 	DraftID     authoring.DraftID
@@ -45,11 +46,11 @@ func (a *Application) CreateFromDocument(ctx context.Context, request authorings
 	if err := a.validate(); err != nil {
 		return authoringservice.Result{}, err
 	}
-	workspaceID, err := workspaceID(request.WorkspaceID)
+	projectID, err := projectID(request.ProjectID)
 	if err != nil {
 		return authoringservice.Result{}, err
 	}
-	request.WorkspaceID = workspaceID
+	request.ProjectID = projectID
 	return a.authoring.CreateFromDocument(ctx, request)
 }
 
@@ -60,28 +61,28 @@ func (a *Application) Draft(ctx context.Context, request DraftRequest) (DraftRea
 	if err := a.validate(); err != nil {
 		return DraftRead{}, err
 	}
-	workspaceID, err := workspaceID(request.WorkspaceID)
+	projectID, err := projectID(request.ProjectID)
 	if err != nil {
 		return DraftRead{}, err
 	}
 	if strings.TrimSpace(request.ActorID) == "" {
 		return DraftRead{}, fmt.Errorf("actor id is required")
 	}
-	if err := request.DashboardID.Validate(); err != nil {
+	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
 		return DraftRead{}, err
 	}
-	lifecycle, err := a.repository.Get(ctx, workspaceID, request.DashboardID)
+	lifecycle, err := a.repository.Get(ctx, projectID, request.DashboardID)
 	if err != nil {
 		return DraftRead{}, err
 	}
 	if err := a.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
-		ActorID: request.ActorID, WorkspaceID: workspaceID, DashboardID: request.DashboardID,
+		ActorID: request.ActorID, ProjectID: projectID, DashboardID: request.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
 		Action: authoring.AuthorizationActionEdit,
 	}); err != nil {
 		return DraftRead{}, err
 	}
-	if lifecycle.WorkspaceID != workspaceID || lifecycle.ID != request.DashboardID {
+	if lifecycle.ProjectID != projectID || lifecycle.ID != request.DashboardID {
 		return DraftRead{}, fmt.Errorf("dashboard draft lifecycle identity does not match request")
 	}
 	if err := lifecycle.Validate(); err != nil {
@@ -96,7 +97,7 @@ func (a *Application) Draft(ctx context.Context, request DraftRequest) (DraftRea
 	if err := lifecycle.Draft.Revision.ValidateComplete(); err != nil {
 		return DraftRead{}, fmt.Errorf("validate current draft pointer: %w", err)
 	}
-	revision, err := a.repository.GetRevision(ctx, workspaceID, request.DashboardID, lifecycle.Draft.Revision.RevisionID)
+	revision, err := a.repository.GetRevision(ctx, projectID, request.DashboardID, lifecycle.Draft.Revision.RevisionID)
 	if err != nil {
 		return DraftRead{}, err
 	}
@@ -116,14 +117,14 @@ func (a *Application) Revision(ctx context.Context, request RevisionRequest) (au
 	if err := a.validate(); err != nil {
 		return authoring.Revision{}, err
 	}
-	workspaceID, err := workspaceID(request.WorkspaceID)
+	projectID, err := projectID(request.ProjectID)
 	if err != nil {
 		return authoring.Revision{}, err
 	}
 	if strings.TrimSpace(request.ActorID) == "" {
 		return authoring.Revision{}, fmt.Errorf("actor id is required")
 	}
-	if err := request.DashboardID.Validate(); err != nil {
+	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
 		return authoring.Revision{}, err
 	}
 	if err := request.RevisionID.Validate(); err != nil {
@@ -140,18 +141,18 @@ func (a *Application) Revision(ctx context.Context, request RevisionRequest) (au
 			return authoring.Revision{}, err
 		}
 	}
-	lifecycle, err := a.repository.Get(ctx, workspaceID, request.DashboardID)
+	lifecycle, err := a.repository.Get(ctx, projectID, request.DashboardID)
 	if err != nil {
 		return authoring.Revision{}, err
 	}
 	if err := a.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
-		ActorID: request.ActorID, WorkspaceID: workspaceID, DashboardID: request.DashboardID,
+		ActorID: request.ActorID, ProjectID: projectID, DashboardID: request.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
 		Action: request.Action,
 	}); err != nil {
 		return authoring.Revision{}, err
 	}
-	if lifecycle.WorkspaceID != workspaceID || lifecycle.ID != request.DashboardID {
+	if lifecycle.ProjectID != projectID || lifecycle.ID != request.DashboardID {
 		return authoring.Revision{}, fmt.Errorf("dashboard revision lifecycle identity does not match request")
 	}
 	if err := lifecycle.Validate(); err != nil {
@@ -167,7 +168,7 @@ func (a *Application) Revision(ctx context.Context, request RevisionRequest) (au
 	} else if strings.TrimSpace(string(request.DraftID)) != "" || lifecycle.Published == nil || lifecycle.Published.Revision.RevisionID != request.RevisionID {
 		return authoring.Revision{}, fmt.Errorf("%w: revision is not the exact published dashboard revision", authoring.ErrNotFound)
 	}
-	revision, err := a.repository.GetRevision(ctx, workspaceID, request.DashboardID, request.RevisionID)
+	revision, err := a.repository.GetRevision(ctx, projectID, request.DashboardID, request.RevisionID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) {
 			return authoring.Revision{}, fmt.Errorf("%w: revision is unavailable", authoring.ErrNotFound)

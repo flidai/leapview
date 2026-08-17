@@ -13,10 +13,10 @@ model ManagedDataS3MultipartAuditPayload {
   owner: string;
 
   @apigen.auditInternal
-  projectId: string;
+  projectId: ResourceId;
 
   @apigen.auditInternal
-  connectionId: string;
+  connectionId: ResourceId;
 
   @apigen.auditPublic
   surface: string;
@@ -90,13 +90,13 @@ model ManagedDataS3MultipartCompleteRequest {
 @tag("Managed Data")
 @doc("S3 multipart transport lifecycle. Part signing is a query because it issues transient upload authorization without mutating durable multipart state.")
 @route("/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads")
-@apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+@apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
 interface ManagedDataS3MultipartUploads {
   @summary("Create an S3 multipart upload for a session file")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
   @apigen.failsWith(ManagedDataUploadConflictFailure)
@@ -108,8 +108,8 @@ interface ManagedDataS3MultipartUploads {
   @apigen.failsWith(ManagedDataUploadInternalFailure)
   @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.created" })
   createManagedDataS3MultipartUpload(
-    @path @apigen.target project: ManagedDataProjectId,
-    @path connection: ManagedDataConnectionId,
+    @path project: ResourceId,
+    @path @apigen.target connection: ResourceId,
     @path uploadSession: ManagedDataUploadSessionId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
     @body body: ManagedDataS3MultipartCreateRequest,
@@ -119,12 +119,12 @@ interface ManagedDataS3MultipartUploads {
   @doc("Query: issues a short-lived signed part-upload request and does not change durable multipart state.")
   @route("/{multipartUpload}/parts/{partNumber}/sign")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "INGEST_DATA" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
   @apigen.query
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "connection")
   signManagedDataS3MultipartPart(
-    @path project: ManagedDataProjectId,
-    @path connection: ManagedDataConnectionId,
+    @path project: ResourceId,
+    @path @apigen.target connection: ResourceId,
     @path uploadSession: ManagedDataUploadSessionId,
     @path multipartUpload: ManagedDataMultipartUploadId,
     @path partNumber: ManagedDataS3PartNumber,
@@ -135,7 +135,7 @@ interface ManagedDataS3MultipartUploads {
   @summary("Complete an S3 multipart upload")
   @route("/{multipartUpload}/complete")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
   @apigen.failsWith(ManagedDataUploadConflictFailure)
@@ -148,8 +148,8 @@ interface ManagedDataS3MultipartUploads {
   @apigen.failsWith(ManagedDataUploadInternalFailure)
   @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.completed" })
   completeManagedDataS3MultipartUpload(
-    @path @apigen.target project: ManagedDataProjectId,
-    @path connection: ManagedDataConnectionId,
+    @path project: ResourceId,
+    @path @apigen.target connection: ResourceId,
     @path uploadSession: ManagedDataUploadSessionId,
     @path multipartUpload: ManagedDataMultipartUploadId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,
@@ -159,7 +159,7 @@ interface ManagedDataS3MultipartUploads {
   @summary("Abort an S3 multipart upload")
   @route("/{multipartUpload}/abort")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
   @apigen.failsWith(ManagedDataUploadConflictFailure)
@@ -171,8 +171,8 @@ interface ManagedDataS3MultipartUploads {
   @apigen.failsWith(ManagedDataUploadInternalFailure)
   @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.aborted" })
   abortManagedDataS3MultipartUpload(
-    @path @apigen.target project: ManagedDataProjectId,
-    @path connection: ManagedDataConnectionId,
+    @path project: ResourceId,
+    @path @apigen.target connection: ResourceId,
     @path uploadSession: ManagedDataUploadSessionId,
     @path multipartUpload: ManagedDataMultipartUploadId,
     @header("Idempotency-Key") idempotencyKey: ManagedDataIdempotencyKey,

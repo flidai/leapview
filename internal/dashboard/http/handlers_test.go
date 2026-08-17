@@ -21,6 +21,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -31,7 +32,7 @@ func (fakeMetrics) ExecuteConsumersPage(_ context.Context, _ consumer.Request, _
 }
 
 func (fakeMetrics) Catalog() catalog.Catalog {
-	return catalog.Catalog{Workspace: catalog.Workspace{ID: "workspace", Title: "Workspace"}}
+	return catalog.Catalog{Project: catalog.Project{ID: "project", Title: "Workspace"}}
 }
 func (fakeMetrics) DefaultDashboardID() string {
 	return "dash"
@@ -42,16 +43,16 @@ func (m fakeMetrics) Resolver() dashboardresolver.Resolver {
 
 type fakeDashboardResolver struct{}
 
-func (fakeDashboardResolver) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
+func (fakeDashboardResolver) Resolve(dashboardID projectgraph.ResourceID) (dashboardresolver.Resolved, error) {
 	if dashboardID != "dash" {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
 	}
 	model := &semanticmodel.Model{Name: "model", Title: "Model"}
-	definition, err := dashboarddefinition.New("dash", "Dashboard", "", "model", fakeMetrics{}.Pages(dashboardID), nil)
+	definition, err := dashboarddefinition.New("dash", "Dashboard", "", "model", fakeMetrics{}.Pages(dashboardID.String()), nil)
 	if err != nil {
 		return dashboardresolver.Resolved{}, err
 	}
-	return dashboardresolver.Resolved{Definition: definition, Model: model, Source: dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, WorkspaceID: "workspace"}}, nil
+	return dashboardresolver.Resolved{Definition: definition, Model: model, Source: dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, Identity: projectgraph.ServingIdentity{ProjectID: "project", Environment: "dev", GenerationID: "generation"}}}, nil
 }
 func (fakeMetrics) DefaultFilters(string) dashboard.Filters {
 	return dashboard.Filters{}.WithDefaults()
@@ -76,20 +77,20 @@ func (fakeMetrics) QueryVisualizationWindow(_ context.Context, _, _ string, _ da
 }
 func TestDashboardRedirectsToFirstPage(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(nethttp.MethodGet, "/workspaces/workspace/dashboards/dash", nil)
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/dash", nil)
 
 	testRouter(Handler{Metrics: fakeMetrics{}}).ServeHTTP(rec, req)
 
 	if rec.Code != nethttp.StatusFound {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if got := rec.Header().Get("Location"); got != "/workspaces/workspace/dashboards/dash/pages/overview" {
+	if got := rec.Header().Get("Location"); got != "/dashboards/dash/pages/overview" {
 		t.Fatalf("Location = %q", got)
 	}
 }
 
 func TestPageNotFound(t *testing.T) {
-	for _, path := range []string{"/workspaces/workspace/dashboards/missing/pages/overview", "/workspaces/workspace/dashboards/dash/pages/missing"} {
+	for _, path := range []string{"/dashboards/missing/pages/overview", "/dashboards/dash/pages/missing"} {
 		t.Run(path, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(nethttp.MethodGet, path, nil)
@@ -105,7 +106,7 @@ func TestPageNotFound(t *testing.T) {
 
 func TestPageSetsClientCookieAndRendersReport(t *testing.T) {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(nethttp.MethodGet, "/workspaces/workspace/dashboards/dash/pages/overview", nil)
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/dash/pages/overview", nil)
 
 	testRouter(Handler{Metrics: fakeMetrics{}}).ServeHTTP(rec, req)
 
@@ -129,11 +130,11 @@ func TestUpdatesPreservesDrawerAgentStateOnReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	currentSignals := `{"agent":{"activeConversationId":"conversation-1"},"agentVisuals":{"chart":{"title":"Current result"}}}`
-	req := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, "/updates?workspace=workspace&dashboard=dash&page=overview&datastar="+url.QueryEscape(currentSignals), nil)
+	req := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, "/updates?project=workspace&dashboard=dash&page=overview&datastar="+url.QueryEscape(currentSignals), nil)
 	rec := httptest.NewRecorder()
 	bootstrapCalls := 0
 	handler := Handler{
-		Metrics: fakeMetrics{},
+		Metrics: fakeMetrics{}, ProjectID: "workspace",
 		AgentBootstrap: func(*nethttp.Request, string) reportui.AgentBootstrap {
 			bootstrapCalls++
 			return reportui.AgentBootstrap{}
@@ -162,14 +163,14 @@ func TestUpdatesRecordsOneHumanViewForNewSession(t *testing.T) {
 	defer cancel()
 	views := []usage.View{}
 	handler := Handler{
-		Metrics: fakeMetrics{}, SessionStore: dashboardsession.NewMemoryStore(),
+		Metrics: fakeMetrics{}, ProjectID: "workspace", SessionStore: dashboardsession.NewMemoryStore(),
 		CurrentUsagePrincipal: func(*nethttp.Request) (string, bool) { return "alice", true },
 		RecordDashboardView: func(_ context.Context, view usage.View) error {
 			views = append(views, view)
 			return nil
 		},
 	}
-	path := "/updates?workspace=workspace&dashboard=dash&page=overview&clientId=client&streamInstance=stream"
+	path := "/updates?project=workspace&dashboard=dash&page=overview&clientId=client&streamInstance=stream"
 	for range 2 {
 		req := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, path, nil)
 		handler.Updates(httptest.NewRecorder(), req)
@@ -177,14 +178,14 @@ func TestUpdatesRecordsOneHumanViewForNewSession(t *testing.T) {
 	if len(views) != 1 {
 		t.Fatalf("recorded views = %#v, want one new-session view", views)
 	}
-	if got := views[0]; got.WorkspaceID != "workspace" || got.DashboardID != "dash" || got.PageID != "overview" || got.PrincipalID != "alice" {
+	if got := views[0]; got.ProjectID != "workspace" || got.DashboardID != "dash" || got.PageID != "overview" || got.PrincipalID != "alice" {
 		t.Fatalf("recorded view = %#v", got)
 	}
 }
 
 func testRouter(handler Handler) nethttp.Handler {
 	r := chi.NewRouter()
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}", handler.Dashboard)
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}", handler.Page)
+	r.Get("/dashboards/{dashboard}", handler.Dashboard)
+	r.Get("/dashboards/{dashboard}/pages/{page}", handler.Page)
 	return r
 }

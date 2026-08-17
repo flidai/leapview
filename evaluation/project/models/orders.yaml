@@ -1,0 +1,32 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:orders
+  name: orders
+  displayName: Governed Orders
+  description: Order-grain synthetic sales data with typed dimensions and revenue.
+spec:
+  primaryKey: order_id
+  sources:
+    - sample.orders
+  fields:
+    order_id: {label: Order}
+    purchase_timestamp: {label: Purchased at}
+    purchase_date: {label: Purchase date}
+    purchase_month: {label: Purchase month}
+    state: {label: State}
+    category: {label: Category}
+    status: {label: Status}
+    revenue: {label: Revenue}
+  transform:
+    sql: |
+      SELECT
+        order_id,
+        CAST(purchased_at AS TIMESTAMP) AS purchase_timestamp,
+        CAST(purchased_at AS DATE) AS purchase_date,
+        strftime(CAST(purchased_at AS TIMESTAMP), '%Y-%m') AS purchase_month,
+        state,
+        category,
+        status,
+        round(try_cast(revenue AS DOUBLE), 2) AS revenue
+      FROM source."sample.orders"

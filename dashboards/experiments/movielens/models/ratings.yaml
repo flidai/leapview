@@ -1,0 +1,45 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:ratings
+  name: ratings
+  displayName: Ratings Fact
+  description: Rating-grain fact table from MovieLens 32M ratings.
+spec:
+  primaryKey: rating_id
+  grain: rating_id
+  sources:
+    - movielens.ratings
+  fields:
+    rating_id: {label: Rating ID, description: Stable rating-grain identifier.}
+    user_id: {label: User ID, description: Anonymized MovieLens user identifier.}
+    movie_id: {label: Movie ID, description: MovieLens movie identifier.}
+    rating: {label: Rating, description: Rating value on the MovieLens 0.5 to 5.0 scale.}
+    rating_bucket: {label: Rating bucket, description: Rounded rating bucket for distribution charts.}
+    rated_at: {label: Rated at, description: Timestamp when the rating was applied.}
+    rating_date: {label: Rating date, description: Date when the rating was applied.}
+    rating_month: {label: Rating month, description: Calendar month when the rating was applied.}
+    rating_year: {label: Rating year, description: Calendar year when the rating was applied.}
+  transform:
+    sql: |
+      SELECT
+        concat(
+          CAST(userId AS VARCHAR),
+          '-',
+          CAST(movieId AS VARCHAR),
+          '-',
+          CAST(timestamp AS VARCHAR)
+        ) AS rating_id,
+        try_cast(userId AS BIGINT) AS user_id,
+        try_cast(movieId AS BIGINT) AS movie_id,
+        try_cast(rating AS DOUBLE) AS rating,
+        concat(CAST(try_cast(rating AS DOUBLE) AS VARCHAR), ' stars') AS rating_bucket,
+        CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS TIMESTAMP) AS rated_at,
+        CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS DATE) AS rating_date,
+        strftime(CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS TIMESTAMP), '%Y-%m') AS rating_month,
+        try_cast(strftime(CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS TIMESTAMP), '%Y') AS INTEGER) AS rating_year
+      FROM source."movielens.ratings"
+      WHERE userId IS NOT NULL
+        AND movieId IS NOT NULL
+        AND rating IS NOT NULL
+        AND timestamp IS NOT NULL

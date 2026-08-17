@@ -17,41 +17,26 @@ import (
 type CreateHeaders struct{ IdempotencyKey string }
 type ActivateHeaders struct{ IdempotencyKey string }
 type createRequest struct {
-	Environment string `json:"environment"`
-	Targets     []struct {
-		Workspace   string `json:"workspace"`
-		CandidateID string `json:"candidateId"`
-	} `json:"targets"`
+	Environment       string `json:"environment"`
+	GenerationID      string `json:"generationId"`
+	ArtifactDigest    string `json:"artifactDigest"`
+	PriorGenerationID string `json:"priorGenerationId,omitempty"`
 }
 type deploymentResponse struct {
-	ID                  string                         `json:"id"`
-	Project             string                         `json:"project"`
-	Environment         string                         `json:"environment"`
-	RequestDigest       string                         `json:"requestDigest"`
-	Status              string                         `json:"status"`
-	CreatedAt           string                         `json:"createdAt"`
-	ActivatedAt         *string                        `json:"activatedAt,omitempty"`
-	ActivationPrincipal *string                        `json:"activationPrincipal,omitempty"`
-	VerificationDigest  *string                        `json:"verificationDigest,omitempty"`
-	VerifiedAt          *string                        `json:"verifiedAt,omitempty"`
-	Error               *string                        `json:"error,omitempty"`
-	Targets             []deploymentTargetResponse     `json:"targets"`
-	Connections         []deploymentConnectionResponse `json:"connections"`
-}
-type deploymentTargetResponse struct {
-	Workspace        string  `json:"workspace"`
-	CandidateID      string  `json:"candidateId"`
-	PriorCandidateID *string `json:"priorCandidateId,omitempty"`
-	Status           string  `json:"status"`
-	ActivatedAt      *string `json:"activatedAt,omitempty"`
-	Error            *string `json:"error,omitempty"`
-}
-type deploymentConnectionResponse struct {
-	Connection          string  `json:"connection"`
-	RevisionID          string  `json:"revisionId"`
-	PriorRevisionID     *string `json:"priorRevisionId,omitempty"`
-	PriorGeneration     int64   `json:"priorGeneration"`
-	ActivatedGeneration *int64  `json:"activatedGeneration,omitempty"`
+	ID                  string  `json:"id"`
+	Project             string  `json:"project"`
+	Environment         string  `json:"environment"`
+	GenerationID        string  `json:"generationId"`
+	ArtifactDigest      string  `json:"artifactDigest"`
+	PriorGenerationID   *string `json:"priorGenerationId,omitempty"`
+	RequestDigest       string  `json:"requestDigest"`
+	Status              string  `json:"status"`
+	CreatedAt           string  `json:"createdAt"`
+	ActivatedAt         *string `json:"activatedAt,omitempty"`
+	ActivationPrincipal *string `json:"activationPrincipal,omitempty"`
+	VerificationDigest  *string `json:"verificationDigest,omitempty"`
+	VerifiedAt          *string `json:"verifiedAt,omitempty"`
+	Error               *string `json:"error,omitempty"`
 }
 
 func (h *Handler) Create(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers CreateHeaders) {
@@ -73,12 +58,8 @@ func (h *Handler) Create(w stdhttp.ResponseWriter, r *stdhttp.Request, project s
 		writeEnvironmentConflict(w, body.Environment, h.options.InstanceEnvironment)
 		return
 	}
-	targets := make([]apiadapter.TargetRequest, 0, len(body.Targets))
-	for _, target := range body.Targets {
-		targets = append(targets, apiadapter.TargetRequest{Workspace: target.Workspace, CandidateID: target.CandidateID})
-	}
 	result, err := h.options.Coordinator.Create(r.Context(), apiadapter.CreateRequest{
-		Project: project, Environment: body.Environment, Targets: targets, Actor: principal.ID, IdempotencyKey: headers.IdempotencyKey,
+		Project: project, Environment: body.Environment, GenerationID: body.GenerationID, ArtifactDigest: body.ArtifactDigest, PriorGenerationID: body.PriorGenerationID, Actor: principal.ID, IdempotencyKey: headers.IdempotencyKey,
 	})
 	if err != nil {
 		h.writePublicError(w, r, err)
@@ -147,10 +128,11 @@ func (h *Handler) principal(r *stdhttp.Request) (Principal, bool) {
 
 func response(value apiadapter.Deployment) deploymentResponse {
 	result := deploymentResponse{
-		ID: value.ID, Project: value.Project, Environment: value.Environment, RequestDigest: value.RequestDigest,
+		ID: value.ID, Project: value.Project, Environment: value.Environment, GenerationID: value.GenerationID, ArtifactDigest: value.ArtifactDigest, RequestDigest: value.RequestDigest,
 		Status: string(value.Status), CreatedAt: value.CreatedAt,
-		Targets:     make([]deploymentTargetResponse, 0, len(value.Targets)),
-		Connections: make([]deploymentConnectionResponse, 0, len(value.Connections)),
+	}
+	if value.PriorGenerationID != "" {
+		result.PriorGenerationID = &value.PriorGenerationID
 	}
 	if value.ActivatedAt != "" {
 		result.ActivatedAt = &value.ActivatedAt
@@ -166,32 +148,6 @@ func response(value apiadapter.Deployment) deploymentResponse {
 	}
 	if value.Error != "" {
 		result.Error = &value.Error
-	}
-	for _, target := range value.Targets {
-		mapped := deploymentTargetResponse{Workspace: target.Workspace, CandidateID: target.CandidateID, Status: string(target.Status)}
-		if target.PriorCandidateID != "" {
-			mapped.PriorCandidateID = &target.PriorCandidateID
-		}
-		if target.ActivatedAt != "" {
-			mapped.ActivatedAt = &target.ActivatedAt
-		}
-		if target.Error != "" {
-			mapped.Error = &target.Error
-		}
-		result.Targets = append(result.Targets, mapped)
-	}
-	for _, connection := range value.Connections {
-		mapped := deploymentConnectionResponse{
-			Connection: connection.Connection, RevisionID: connection.RevisionID, PriorGeneration: connection.PriorGeneration,
-		}
-		if connection.PriorRevisionID != "" {
-			mapped.PriorRevisionID = &connection.PriorRevisionID
-		}
-		if connection.ActivatedGeneration != 0 {
-			generation := connection.ActivatedGeneration
-			mapped.ActivatedGeneration = &generation
-		}
-		result.Connections = append(result.Connections, mapped)
 	}
 	return result
 }

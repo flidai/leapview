@@ -8,10 +8,9 @@ LeapView supports these versioned YAML resource families:
 
 - project discovery: Project;
 - project data access: Connection and Source;
-- workspace ownership: Workspace;
-- analytical data: ModelTable and SemanticModel;
+- analytical data: Model and SemanticModel;
 - presentation: Dashboard;
-- access: WorkspaceGroup, WorkspaceRoleBinding, Grant, and DataPolicy;
+- access: Group, RoleBinding, Grant, and DataPolicy;
 
 All resources use the `apiVersion`, `kind`, `metadata`, and `spec` envelope. JSON Schemas and generated reference pages define required fields and accepted values.
 
@@ -39,7 +38,7 @@ The [visual catalog](/docs/visuals/overview) lists every documented registered c
 
 Interactive identity supports local authentication, generic OIDC, and Azure/Entra configuration. SCIM provisions users, groups, membership, and active state. Service principals and API tokens support non-human workloads.
 
-Authorization includes workspace roles, explicit grants on securable objects, effective-privilege evaluation, ownership, row-filter/column-mask data policies, and workspace audit/query event discovery.
+Authorization includes project-resource roles, explicit grants on securable objects, effective-privilege evaluation, ownership, row-filter/column-mask data policies, and project audit/query event discovery.
 
 ## Operations
 
@@ -51,7 +50,7 @@ The supported Hetzner module provides a single-node production topology with Cad
 
 - Cobra-derived CLI command surface.
 - TypeSpec/OpenAPI-derived HTTP API.
-- Workspace search and catalog/lineage discovery.
+- Project-resource search and catalog/lineage discovery.
 - Dashboard and semantic headless BI queries.
 - Principal-owned global agent conversations, messages, runs, events, and turns.
 - An OAuth-protected, tools-only MCP endpoint at `/mcp` using the same twenty-tool governed catalog as the built-in agent—including bounded dashboard authoring tools for private drafts and exact revisions—with embedded PKCE consent or an external JWT issuer. See [Use the agent tool catalog](/docs/guides/integrate/agent-tools).

@@ -14,14 +14,14 @@ import (
 
 func TestCreateResponseUsesProjectDeploymentWireContract(t *testing.T) {
 	coordinator := &fakeCoordinator{response: apiadapter.Deployment{
-		ID: "deployment_1", Project: "project", Environment: "prod", RequestDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Status: apiadapter.StatusPending, CreatedAt: "2026-07-14T10:00:00Z",
-		Targets:     []apiadapter.Target{{Workspace: "sales", CandidateID: "state_2", Status: apiadapter.TargetStatusPending}},
-		Connections: []apiadapter.Connection{},
+		ID: "deployment_1", Project: "project", Environment: "prod", GenerationID: "generation_2",
+		ArtifactDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		RequestDigest:  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Status:         apiadapter.StatusPending, CreatedAt: "2026-07-14T10:00:00Z",
 	}}
 	handler := NewHandler(Options{Coordinator: coordinator, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal"}, true }})
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/projects/project/deployments", strings.NewReader(`{"environment":"prod","targets":[{"workspace":"sales","candidateId":"state_2"}]}`))
+	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/projects/project/deployments", strings.NewReader(`{"environment":"prod","generationId":"generation_2","artifactDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`))
 	request.Header.Set("Content-Type", "application/json")
 
 	handler.Create(recorder, request, "project", CreateHeaders{IdempotencyKey: "deploy-1"})
@@ -32,9 +32,7 @@ func TestCreateResponseUsesProjectDeploymentWireContract(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	targets := body["targets"].([]any)
-	target := targets[0].(map[string]any)
-	if body["project"] != "project" || body["status"] != "pending" || target["workspace"] != "sales" || target["candidateId"] != "state_2" {
+	if body["project"] != "project" || body["status"] != "pending" || body["generationId"] != "generation_2" || body["artifactDigest"] != "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
 		t.Fatalf("response = %#v", body)
 	}
 }
@@ -43,7 +41,7 @@ func TestCreateRejectsEnvironmentOutsideInstanceBeforeMutation(t *testing.T) {
 	coordinator := &fakeCoordinator{}
 	handler := NewHandler(Options{Coordinator: coordinator, InstanceEnvironment: "prod", CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal"}, true }})
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/projects/project/deployments", strings.NewReader(`{"environment":"staging","targets":[{"workspace":"sales","candidateId":"state_2"}]}`))
+	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/projects/project/deployments", strings.NewReader(`{"environment":"staging","generationId":"generation_2","artifactDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`))
 	request.Header.Set("Content-Type", "application/json")
 	handler.Create(recorder, request, "project", CreateHeaders{IdempotencyKey: "deploy-1"})
 	if recorder.Code != stdhttp.StatusConflict || coordinator.creates != 0 {

@@ -21,7 +21,7 @@ LEAPVIEW_ALLOWED_HOSTS=bi.example.com
 
 The origin must have no path, query, fragment, or credentials. Reverse proxies must preserve the public scheme and host. The resulting OAuth resource and audience are exactly `https://bi.example.com/mcp`; changing the public URL creates a different resource identity.
 
-An interactive user needs browser authentication and permission to use the agent. Grant `USE_AGENT` through at least one workspace the principal may access. Each tool call then checks the referenced workspace and the tool's resource privileges and data policies. A workspace is not encoded in the MCP connection URL: query tools accept an explicit `workspace`, while catalog tools carry workspace identity in returned refs.
+An interactive user needs browser authentication and the OAuth `mcp:use` scope. Grant access to the project resources its tools may use with the canonical `RESOURCE_*` capabilities. Each tool call checks the referenced project resource and the tool's capabilities and data policies. A project is not encoded in the MCP connection URL: query tools accept exact catalog refs, while catalog tools return project identity in `{kind,id}` refs.
 
 The MCP endpoint is independent of `LEAPVIEW_AGENT_MODEL` and `LEAPVIEW_AGENT_API_KEY`. External MCP hosts can use LeapView when the built-in model is disabled.
 
@@ -70,7 +70,7 @@ set_dashboard_visibility
 
 The same names, input schemas, output schemas, safety annotations, and handlers are used by built-in chat. Dashboard authoring tools are governed writes for private drafts and exact revisions; catalog, query, documentation, preview, and export tools remain read-only. There are no model-visible compatibility aliases for the superseded tool catalog. Rediscover tools after upgrading LeapView.
 
-Use `catalog_search` when the workspace or parent is unknown, `catalog_list` to browse a known parent, and `catalog_get` before querying when an exact definition is needed. Follow [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, hierarchy, locations, pagination, errors, and query-tool selection. The generated [Agent tool reference](/docs/agent-tools) publishes the same schemas and annotations as `tools/list`.
+Use `catalog_search` when the project or parent is unknown, `catalog_list` to browse a known parent, and `catalog_get` before querying when an exact definition is needed. Follow [Use the agent tool catalog](/docs/guides/integrate/agent-tools) for refs, hierarchy, locations, pagination, errors, and query-tool selection. The generated [Agent tool reference](/docs/agent-tools) publishes the same schemas and annotations as `tools/list`.
 
 ## Understand the sign-in flow
 
@@ -94,7 +94,7 @@ General LeapView API tokens are intentionally rejected at `/mcp`. They have diff
 
 ## Connect an automated workload
 
-Use a dedicated LeapView service principal for a non-interactive MCP client. Grant it `USE_AGENT` and only the workspace and resource privileges its tools require. Exchange the service-principal ID and secret at the deployment's OAuth token endpoint:
+Use a dedicated LeapView service principal for a non-interactive MCP client. Grant it the `mcp:use` OAuth scope and only the project-resource capabilities its tools require. Exchange the service-principal ID and secret at the deployment's OAuth token endpoint:
 
 ```sh
 curl -fsS https://bi.example.com/oauth/token \
@@ -124,8 +124,8 @@ LeapView still performs live RBAC and data-policy checks for every tool call. In
 | The client cannot discover OAuth | Confirm public DNS and TLS, then fetch both well-known URLs. Verify `LEAPVIEW_PUBLIC_URL` exactly matches the connection origin. |
 | Sign-in loops or returns to the wrong host | Check reverse-proxy scheme and host handling, allowed hosts, secure cookies, and registered browser-auth callback URLs. |
 | MCP returns `401` | Acquire a fresh OAuth token with `mcp:use` and the exact MCP resource. Do not substitute a LeapView API token. |
-| MCP returns `403` before a tool runs | Grant the principal `USE_AGENT` through an allowed workspace. |
-| A tool returns an authorization error | Check the query's `workspace` or catalog ref, the principal's resource privilege, data policy, and any service-principal restrictions. |
+| MCP returns `403` before a tool runs | Grant the client the `mcp:use` scope and the required project-resource capability. |
+| A tool returns an authorization error | Check the query's catalog ref, the principal's resource privilege, data policy, and any service-principal restrictions. |
 | Claude cannot reach an internally healthy deployment | Remote connectors run outside your private network. Expose a trusted HTTPS endpoint or use a client that can reach the deployment. |
 | A browser-origin request is rejected | Connect through an MCP host. LeapView rejects cross-origin MCP transport requests deliberately. |
 

@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:docs.orders
   name: docs.orders
-  title: Documentation orders
+  displayName: Documentation orders
 spec:
   connection: docs
   path: orders.csv

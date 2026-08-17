@@ -9,295 +9,15 @@ import (
 	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
-	accesspolicy "github.com/flidai/leapview/internal/access/policy"
 )
 
 var ErrAuditTransaction = apigenfailure.New("audit_transaction", "audit transaction failed")
 var ErrPrincipalAlreadyExists = apigenfailure.New("conflict", "principal already exists")
-var ErrPrincipalOwnsSecurableObject = apigenfailure.New("conflict", "principal owns a securable object; transfer ownership before deletion")
 
 // ErrForbidden is the canonical error for an authorization decision that
 // evaluated successfully but did not grant the requested privilege. Access
 // consumers may preserve this distinction from repository failures.
 var ErrForbidden = errors.New("forbidden")
-
-type Privilege string
-
-const (
-	PrivilegeUseWorkspace             Privilege = "USE_WORKSPACE"
-	PrivilegeViewItem                 Privilege = "VIEW_ITEM"
-	PrivilegeEditItem                 Privilege = "EDIT_ITEM"
-	PrivilegeManageItem               Privilege = "MANAGE_ITEM"
-	PrivilegeQueryData                Privilege = "QUERY_DATA"
-	PrivilegePreviewData              Privilege = "PREVIEW_DATA"
-	PrivilegeTestDataPolicy           Privilege = "TEST_DATA_POLICY"
-	PrivilegeRefreshData              Privilege = "REFRESH_DATA"
-	PrivilegeAuthorProject            Privilege = "AUTHOR_PROJECT"
-	PrivilegePublishRelease           Privilege = "PUBLISH_RELEASE"
-	PrivilegeReviewCandidate          Privilege = "REVIEW_CANDIDATE"
-	PrivilegeRequestDeployment        Privilege = "REQUEST_DEPLOYMENT"
-	PrivilegeApproveDeployment        Privilege = "APPROVE_DEPLOYMENT"
-	PrivilegeDeploy                   Privilege = "DEPLOY"
-	PrivilegeActivateDeployment       Privilege = "ACTIVATE_DEPLOYMENT"
-	PrivilegeVerifyDeployment         Privilege = "VERIFY_DEPLOYMENT"
-	PrivilegeRollbackDeployment       Privilege = "ROLLBACK_DEPLOYMENT"
-	PrivilegeManagePublications       Privilege = "MANAGE_PUBLICATIONS"
-	PrivilegeUseAgent                 Privilege = "USE_AGENT"
-	PrivilegeViewAgent                Privilege = "VIEW_AGENT"
-	PrivilegeManageGrants             Privilege = "MANAGE_GRANTS"
-	PrivilegeViewAudit                Privilege = "VIEW_AUDIT"
-	PrivilegeManageWorkspace          Privilege = "MANAGE_WORKSPACE"
-	PrivilegeManagePlatform           Privilege = "MANAGE_PLATFORM"
-	PrivilegeViewData                 Privilege = "VIEW_DATA"
-	PrivilegeIngestData               Privilege = "INGEST_DATA"
-	PrivilegeManageConnectionMetadata Privilege = "MANAGE_CONNECTION_METADATA"
-	PrivilegeTestConnection           Privilege = "TEST_CONNECTION"
-	PrivilegeViewConnectionHealth     Privilege = "VIEW_CONNECTION_HEALTH"
-)
-
-func ParsePrivilege(value string) (Privilege, bool) {
-	privilege := Privilege(strings.TrimSpace(value))
-	switch privilege {
-	case PrivilegeUseWorkspace, PrivilegeViewItem, PrivilegeEditItem, PrivilegeManageItem,
-		PrivilegeQueryData, PrivilegePreviewData, PrivilegeTestDataPolicy, PrivilegeRefreshData,
-		PrivilegeAuthorProject, PrivilegePublishRelease, PrivilegeReviewCandidate,
-		PrivilegeRequestDeployment, PrivilegeApproveDeployment, PrivilegeDeploy,
-		PrivilegeActivateDeployment, PrivilegeVerifyDeployment, PrivilegeRollbackDeployment,
-		PrivilegeManagePublications, PrivilegeUseAgent, PrivilegeViewAgent,
-		PrivilegeManageGrants, PrivilegeViewAudit, PrivilegeManageWorkspace,
-		PrivilegeManagePlatform, PrivilegeViewData, PrivilegeIngestData,
-		PrivilegeManageConnectionMetadata, PrivilegeTestConnection, PrivilegeViewConnectionHealth:
-		return privilege, true
-	default:
-		return "", false
-	}
-}
-
-const (
-	RoleOwner               = "owner"
-	RoleAdmin               = "admin"
-	RoleDeployer            = "deployer"
-	RoleContributor         = "contributor"
-	RoleEditor              = "editor"
-	RoleMember              = "member"
-	RoleViewer              = "viewer"
-	RoleDataDeployer        = "data_deployer"
-	RoleConnectionOperator  = "connection_operator"
-	RolePlatformAdmin       = "platform_admin"
-	RoleProjectAuthor       = "project_author"
-	RoleReleasePublisher    = "release_publisher"
-	RoleDeploymentReviewer  = "deployment_reviewer"
-	RoleDeploymentActivator = "deployment_activator"
-	RoleDeploymentVerifier  = "deployment_verifier"
-	RoleRollbackOperator    = "rollback_operator"
-)
-
-var defaultRoles = []Role{
-	{
-		Name: RoleOwner,
-		Privileges: []Privilege{
-			PrivilegeUseWorkspace,
-			PrivilegeViewItem,
-			PrivilegeEditItem,
-			PrivilegeManageItem,
-			PrivilegeQueryData,
-			PrivilegePreviewData,
-			PrivilegeTestDataPolicy,
-			PrivilegeRefreshData,
-			PrivilegeAuthorProject,
-			PrivilegePublishRelease,
-			PrivilegeReviewCandidate,
-			PrivilegeRequestDeployment,
-			PrivilegeApproveDeployment,
-			PrivilegeDeploy,
-			PrivilegeActivateDeployment,
-			PrivilegeVerifyDeployment,
-			PrivilegeRollbackDeployment,
-			PrivilegeManagePublications,
-			PrivilegeUseAgent,
-			PrivilegeViewAgent,
-			PrivilegeManageGrants,
-			PrivilegeViewAudit,
-			PrivilegeManageWorkspace,
-		},
-	},
-	{
-		Name: RoleAdmin,
-		Privileges: []Privilege{
-			PrivilegeUseWorkspace,
-			PrivilegeViewItem,
-			PrivilegeEditItem,
-			PrivilegeManageItem,
-			PrivilegeQueryData,
-			PrivilegePreviewData,
-			PrivilegeTestDataPolicy,
-			PrivilegeRefreshData,
-			PrivilegeAuthorProject,
-			PrivilegePublishRelease,
-			PrivilegeReviewCandidate,
-			PrivilegeRequestDeployment,
-			PrivilegeApproveDeployment,
-			PrivilegeDeploy,
-			PrivilegeActivateDeployment,
-			PrivilegeVerifyDeployment,
-			PrivilegeRollbackDeployment,
-			PrivilegeManagePublications,
-			PrivilegeUseAgent,
-			PrivilegeViewAgent,
-			PrivilegeManageGrants,
-			PrivilegeViewAudit,
-			PrivilegeManageWorkspace,
-		},
-	},
-	{
-		Name: RoleDeployer,
-		Privileges: []Privilege{
-			PrivilegeUseWorkspace,
-			PrivilegeViewItem,
-			PrivilegeQueryData,
-			PrivilegeRefreshData,
-			PrivilegePublishRelease,
-			PrivilegeReviewCandidate,
-			PrivilegeRequestDeployment,
-			PrivilegeDeploy,
-			PrivilegeActivateDeployment,
-			PrivilegeVerifyDeployment,
-			PrivilegeRollbackDeployment,
-		},
-	},
-	{
-		Name: RoleContributor,
-		Privileges: []Privilege{
-			PrivilegeUseWorkspace,
-			PrivilegeViewItem,
-			PrivilegeEditItem,
-			PrivilegeQueryData,
-			PrivilegeRefreshData,
-			PrivilegeAuthorProject,
-			PrivilegePublishRelease,
-			PrivilegeRequestDeployment,
-			PrivilegeDeploy,
-			PrivilegeUseAgent,
-			PrivilegeViewAgent,
-		},
-	},
-	{
-		Name: RoleEditor,
-		Privileges: []Privilege{
-			PrivilegeUseWorkspace,
-			PrivilegeViewItem,
-			PrivilegeEditItem,
-			PrivilegeQueryData,
-			PrivilegeRefreshData,
-			PrivilegeUseAgent,
-			PrivilegeViewAgent,
-		},
-	},
-	{
-		Name: RoleMember,
-		Privileges: []Privilege{
-			PrivilegeUseWorkspace,
-			PrivilegeViewItem,
-			PrivilegeEditItem,
-			PrivilegeManageItem,
-			PrivilegeQueryData,
-			PrivilegeRefreshData,
-			PrivilegeAuthorProject,
-			PrivilegeDeploy,
-			PrivilegeUseAgent,
-			PrivilegeViewAgent,
-		},
-	},
-	{
-		Name: RoleViewer,
-		Privileges: []Privilege{
-			PrivilegeUseWorkspace,
-			PrivilegeViewItem,
-			PrivilegeQueryData,
-			PrivilegeUseAgent,
-			PrivilegeViewAgent,
-		},
-	},
-	{
-		Name: RoleDataDeployer,
-		Privileges: []Privilege{
-			PrivilegeViewData,
-			PrivilegeIngestData,
-		},
-	},
-	{
-		Name: RoleConnectionOperator,
-		Privileges: []Privilege{
-			PrivilegeManageConnectionMetadata,
-			PrivilegeTestConnection,
-			PrivilegeViewConnectionHealth,
-		},
-	},
-	{
-		Name:       RoleProjectAuthor,
-		Privileges: []Privilege{PrivilegeAuthorProject},
-	},
-	{
-		Name: RoleReleasePublisher,
-		Privileges: []Privilege{
-			PrivilegePublishRelease,
-			PrivilegeRequestDeployment,
-		},
-	},
-	{
-		Name: RoleDeploymentReviewer,
-		Privileges: []Privilege{
-			PrivilegeReviewCandidate,
-			PrivilegeApproveDeployment,
-		},
-	},
-	{
-		Name:       RoleDeploymentActivator,
-		Privileges: []Privilege{PrivilegeActivateDeployment},
-	},
-	{
-		Name:       RoleDeploymentVerifier,
-		Privileges: []Privilege{PrivilegeVerifyDeployment},
-	},
-	{
-		Name:       RoleRollbackOperator,
-		Privileges: []Privilege{PrivilegeRollbackDeployment},
-	},
-	{
-		Name: RolePlatformAdmin,
-		Privileges: []Privilege{
-			PrivilegeManagePlatform,
-			PrivilegeViewData,
-			PrivilegeIngestData,
-			PrivilegeUseWorkspace,
-			PrivilegeViewItem,
-			PrivilegeEditItem,
-			PrivilegeManageItem,
-			PrivilegeQueryData,
-			PrivilegePreviewData,
-			PrivilegeTestDataPolicy,
-			PrivilegeRefreshData,
-			PrivilegeAuthorProject,
-			PrivilegePublishRelease,
-			PrivilegeReviewCandidate,
-			PrivilegeRequestDeployment,
-			PrivilegeApproveDeployment,
-			PrivilegeDeploy,
-			PrivilegeActivateDeployment,
-			PrivilegeVerifyDeployment,
-			PrivilegeRollbackDeployment,
-			PrivilegeManagePublications,
-			PrivilegeUseAgent,
-			PrivilegeViewAgent,
-			PrivilegeManageGrants,
-			PrivilegeViewAudit,
-			PrivilegeManageWorkspace,
-			PrivilegeManageConnectionMetadata,
-			PrivilegeTestConnection,
-			PrivilegeViewConnectionHealth,
-		},
-	},
-}
 
 type Principal struct {
 	ID          string
@@ -362,11 +82,6 @@ type AuditedPrincipalPreferences interface {
 	SetPrincipalThemeAudited(context.Context, string, ThemeMode) error
 }
 
-type Role struct {
-	Name       string
-	Privileges []Privilege
-}
-
 type PrincipalKind string
 
 const (
@@ -376,198 +91,11 @@ const (
 	PrincipalKindDashboardPublication PrincipalKind = "dashboard_publication"
 )
 
-type SecurableType string
-
-const (
-	SecurablePlatform           SecurableType = "platform"
-	SecurableWorkspace          SecurableType = "workspace"
-	SecurableProjectEnvironment SecurableType = "project_environment"
-	SecurableDashboard          SecurableType = "dashboard"
-	SecurableSemanticModel      SecurableType = "semantic_model"
-	SecurableSemanticField      SecurableType = "semantic_field"
-	SecurableSource             SecurableType = "source"
-	SecurableModelTable         SecurableType = "model_table"
-	SecurableDataset            SecurableType = "dataset"
-	SecurableTable              SecurableType = "table"
-	SecurableColumn             SecurableType = "column"
-)
-
-type ObjectRef struct {
-	Type        SecurableType
-	WorkspaceID string
-	ObjectID    string
-	ParentID    string
-	DisplayName string
-}
-
-func PlatformObject() ObjectRef {
-	return ObjectRef{Type: SecurablePlatform}
-}
-
-func WorkspaceObject(workspaceID string) ObjectRef {
-	return ObjectRef{Type: SecurableWorkspace, WorkspaceID: strings.TrimSpace(workspaceID)}
-}
-
-// ProjectEnvironmentObject is the Access-owned authorization boundary for
-// project publication and deployment operations on one target environment.
-// Project environments are global children of the platform rather than
-// workspace assets because one atomic deployment may target many workspaces.
-func ProjectEnvironmentObject(projectID, environment string) ObjectRef {
-	return ObjectRef{
-		Type:        SecurableProjectEnvironment,
-		WorkspaceID: strings.TrimSpace(projectID),
-		ObjectID:    strings.TrimSpace(environment),
-		ParentID:    PlatformObject().CanonicalID(),
-	}
-}
-
-func ItemObject(typ SecurableType, workspaceID, objectID string) ObjectRef {
-	return ObjectRef{Type: typ, WorkspaceID: strings.TrimSpace(workspaceID), ObjectID: strings.TrimSpace(objectID)}
-}
-
-func ItemObjectWithParent(typ SecurableType, workspaceID, objectID string, parent ObjectRef) ObjectRef {
-	object := ItemObject(typ, workspaceID, objectID)
-	object.ParentID = parent.CanonicalID()
-	return object
-}
-
-func (r ObjectRef) CanonicalID() string {
-	switch r.Type {
-	case SecurablePlatform:
-		return "platform"
-	case SecurableWorkspace:
-		return "workspace:" + r.WorkspaceID
-	default:
-		return string(r.Type) + ":" + r.WorkspaceID + ":" + r.ObjectID
-	}
-}
-
-func (r ObjectRef) Parent() (ObjectRef, bool) {
-	switch r.Type {
-	case SecurablePlatform:
-		return ObjectRef{}, false
-	case SecurableWorkspace:
-		return PlatformObject(), true
-	case SecurableProjectEnvironment:
-		return PlatformObject(), true
-	default:
-		return WorkspaceObject(r.WorkspaceID), true
-	}
-}
-
-type SecurableObject struct {
-	ID               string
-	Type             SecurableType
-	WorkspaceID      string
-	ParentID         string
-	OwnerPrincipalID string
-	DisplayName      string
-	CreatedAt        string
-	UpdatedAt        string
-}
-
-type Grant struct {
-	ID          string
-	ObjectID    string
-	ObjectType  SecurableType
-	WorkspaceID string
-	SubjectType SubjectType
-	SubjectID   string
-	Privilege   Privilege
-	CreatedAt   string
-}
-
-type GrantView struct {
-	Grant
-	Inherited    bool
-	ParentID     string
-	ParentType   SecurableType
-	ParentObject string
-}
-
-type GrantInput struct {
-	Object      ObjectRef
-	SubjectType SubjectType
-	SubjectID   string
-	Privilege   Privilege
-}
-
-type AuthorizationDecision struct {
-	Allowed       bool
-	Privilege     Privilege
-	Object        ObjectRef
-	Reason        AuthorizationReason
-	GrantID       string
-	GrantObjectID string
-	SubjectType   SubjectType
-	SubjectID     string
-	Inherited     bool
-	Owner         bool
-	Platform      bool
-}
-
-type AuthorizationReason string
-
-const (
-	ReasonMissingPrincipal  AuthorizationReason = "missing_principal"
-	ReasonMissingPrivilege  AuthorizationReason = "missing_privilege"
-	ReasonPrincipalDisabled AuthorizationReason = "principal_disabled"
-	ReasonUnknownObject     AuthorizationReason = "unknown_object"
-	ReasonOwner             AuthorizationReason = "owner"
-	ReasonPlatformAdmin     AuthorizationReason = "platform_admin"
-	ReasonGrant             AuthorizationReason = "grant"
-	ReasonNoGrant           AuthorizationReason = "no_grant"
-	ReasonMissingObject     AuthorizationReason = "missing_object"
-)
-
-type AuthorizationCheck struct {
-	Privilege Privilege
-	Object    ObjectRef
-}
-
-type SubjectType string
-
-const (
-	SubjectPrincipal            SubjectType = "principal"
-	SubjectGroup                SubjectType = "group"
-	SubjectServicePrincipal     SubjectType = "service_principal"
-	SubjectDashboardPublication SubjectType = "dashboard_publication"
-)
-
-type RoleBinding struct {
-	ID          string
-	WorkspaceID string
-	SubjectType SubjectType
-	SubjectID   string
-	PrincipalID string
-	GroupID     string
-	Email       string
-	DisplayName string
-	GroupName   string
-	Role        string
-	CreatedAt   string
-}
-
-type RoleBindingInput struct {
-	ID          string
-	WorkspaceID string
-	SubjectType SubjectType
-	SubjectID   string
-	Role        string
-}
-
-type PrincipalRoleInput struct {
-	WorkspaceID string
-	Email       string
-	DisplayName string
-	Role        string
-}
-
 type PlatformRoleInput struct {
 	PrincipalID string
 	Email       string
 	DisplayName string
-	Role        string
+	Role        PlatformRole
 }
 
 type PrincipalInput struct {
@@ -645,28 +173,6 @@ type ServicePrincipalSecret struct {
 	RevokedAt          string
 }
 
-type DataPolicy struct {
-	ID             string
-	WorkspaceID    string
-	ObjectID       string
-	SubjectType    SubjectType
-	SubjectID      string
-	PolicyType     string
-	ExpressionJSON string
-	Compiled       accesspolicy.Compiled `json:"-"`
-	CreatedAt      string
-	UpdatedAt      string
-}
-
-type DataPolicyInput struct {
-	ID             string
-	Object         ObjectRef
-	SubjectType    SubjectType
-	SubjectID      string
-	PolicyType     string
-	ExpressionJSON string
-}
-
 type ExternalIdentityInput struct {
 	Provider    string
 	TenantID    string
@@ -676,25 +182,22 @@ type ExternalIdentityInput struct {
 }
 
 type Group struct {
-	ID          string
-	WorkspaceID string
-	Provider    string
-	ExternalID  string
-	Name        string
-	CreatedAt   string
+	ID         string
+	Provider   string
+	ExternalID string
+	Name       string
+	CreatedAt  string
 }
 
 type GroupInput struct {
-	ID          string
-	WorkspaceID string
-	Provider    string
-	ExternalID  string
-	Name        string
+	ID         string
+	Provider   string
+	ExternalID string
+	Name       string
 }
 
 type GroupMember struct {
 	GroupID     string
-	WorkspaceID string
 	PrincipalID string
 	Kind        PrincipalKind
 	Email       string
@@ -736,25 +239,31 @@ type SCIMGroupFilter struct {
 }
 
 type APITokenInput struct {
-	PrincipalID string
-	WorkspaceID string
-	Name        string
-	Privileges  []Privilege
-	ExpiresAt   time.Time
+	PrincipalID  string
+	Name         string
+	Capabilities []Capability
+	ExpiresAt    time.Time
 }
 
 const APITokenNameInitialPublisher = "initial-publisher"
 
 type APIToken struct {
-	ID          string
-	PrincipalID string
-	WorkspaceID string
-	Name        string
-	Privileges  []Privilege
-	ExpiresAt   string
-	CreatedAt   string
-	LastUsedAt  string
-	RevokedAt   string
+	ID           string
+	PrincipalID  string
+	Name         string
+	Capabilities []Capability
+	ExpiresAt    string
+	CreatedAt    string
+	LastUsedAt   string
+	RevokedAt    string
+}
+
+// BootstrapAPITokenEvidenceReader is the narrow durable revalidation port
+// used by the protected first-activation path. Implementations must resolve
+// the token by its durable ID (never by request-held capabilities), bind it
+// to the actor, and require a currently enabled platform administrator.
+type BootstrapAPITokenEvidenceReader interface {
+	BootstrapAPITokenEvidence(context.Context, string, string, time.Time) (APIToken, error)
 }
 
 type APICredential struct {
@@ -816,12 +325,11 @@ type DesktopSessionRepository interface {
 }
 
 type AuditEventInput struct {
-	WorkspaceID   string
 	PrincipalID   string
 	Action        string
-	TargetType    string
-	TargetID      string
-	Privilege     Privilege
+	ResourceKind  string
+	ResourceID    string
+	Capability    Capability
 	Status        string
 	RequestID     string
 	CorrelationID string
@@ -829,27 +337,26 @@ type AuditEventInput struct {
 }
 
 type AuditEventFilter struct {
-	WorkspaceID string
-	PrincipalID string
-	Action      string
-	TargetType  string
-	TargetID    string
-	From        string
-	To          string
-	PageToken   string
-	CursorTime  string
-	CursorID    string
-	Limit       int
+	PrincipalID  string
+	Action       string
+	ResourceKind string
+	ResourceID   string
+	Capability   Capability
+	From         string
+	To           string
+	PageToken    string
+	CursorTime   string
+	CursorID     string
+	Limit        int
 }
 
 type AuditEvent struct {
 	ID            string
-	WorkspaceID   string
 	PrincipalID   string
 	Action        string
-	TargetType    string
-	TargetID      string
-	Privilege     Privilege
+	ResourceKind  string
+	ResourceID    string
+	Capability    Capability
 	Status        string
 	RequestID     string
 	CorrelationID string
@@ -867,34 +374,6 @@ type Repository interface {
 	ResetLocalPassword(ctx context.Context, principalID string) (LocalPasswordReset, error)
 	ChangeLocalPassword(ctx context.Context, principalID, currentPassword, newPassword string) (LocalCredential, error)
 	LocalCredential(ctx context.Context, principalID string) (LocalCredential, error)
-	SetPrincipalRole(ctx context.Context, input PrincipalRoleInput) (Principal, error)
-	SetPlatformRole(ctx context.Context, input PlatformRoleInput) (Principal, error)
-	RemovePrincipalRoles(ctx context.Context, workspaceID, principalID string) error
-	CreateRoleBinding(ctx context.Context, input RoleBindingInput) (RoleBinding, error)
-	GetRoleBinding(ctx context.Context, workspaceID, id string) (RoleBinding, error)
-	UpdateRoleBinding(ctx context.Context, workspaceID, id string, input RoleBindingInput) (RoleBinding, error)
-	DeleteRoleBinding(ctx context.Context, workspaceID, id string) error
-	ListRoleBindings(ctx context.Context, workspaceID string) ([]RoleBinding, error)
-	ListRoles(ctx context.Context) ([]Role, error)
-	Authorize(ctx context.Context, principalID string, privilege Privilege, object ObjectRef) (AuthorizationDecision, error)
-	AuthorizeAny(ctx context.Context, principalID string, privilege Privilege, objects []ObjectRef) (AuthorizationDecision, error)
-	AuthorizeBatch(ctx context.Context, principalID string, checks []AuthorizationCheck) ([]AuthorizationDecision, error)
-	EffectivePrivileges(ctx context.Context, principalID string, object ObjectRef) ([]Privilege, error)
-	EffectiveAccess(ctx context.Context, principalID string, object ObjectRef) ([]AuthorizationDecision, error)
-	UpsertSecurableObject(ctx context.Context, object ObjectRef, ownerPrincipalID string) (SecurableObject, error)
-	GetSecurableObject(ctx context.Context, object ObjectRef) (SecurableObject, error)
-	CreateGrant(ctx context.Context, input GrantInput) (Grant, error)
-	GetGrant(ctx context.Context, workspaceID, id string) (Grant, error)
-	DeleteGrant(ctx context.Context, workspaceID, id string) error
-	ListGrants(ctx context.Context, object ObjectRef) ([]Grant, error)
-	ListGrantsWithOptions(ctx context.Context, object ObjectRef, includeInherited bool) ([]GrantView, error)
-	SetObjectOwner(ctx context.Context, object ObjectRef, ownerPrincipalID string) (SecurableObject, error)
-	UpsertDataPolicy(ctx context.Context, input DataPolicyInput) (DataPolicy, error)
-	GetDataPolicy(ctx context.Context, workspaceID, id string) (DataPolicy, error)
-	ListDataPolicies(ctx context.Context, object ObjectRef) ([]DataPolicy, error)
-	ListDataPoliciesWithOptions(ctx context.Context, object ObjectRef, includeInherited bool) ([]DataPolicy, error)
-	ListEffectiveDataPolicies(ctx context.Context, principalID string, object ObjectRef, includeInherited bool) ([]DataPolicy, error)
-	DeleteDataPolicy(ctx context.Context, workspaceID, id string) error
 	CreateServicePrincipal(ctx context.Context, input ServicePrincipalInput) (Principal, error)
 	ListServicePrincipals(ctx context.Context) ([]Principal, error)
 	UpdateServicePrincipal(ctx context.Context, id string, input ServicePrincipalInput) (Principal, error)
@@ -902,27 +381,27 @@ type Repository interface {
 	CreateServicePrincipalSecret(ctx context.Context, servicePrincipalID string, input ServicePrincipalSecretInput) (string, ServicePrincipalSecret, error)
 	RevokeServicePrincipalSecret(ctx context.Context, servicePrincipalID, secretID string) error
 	PrincipalForServicePrincipalSecret(ctx context.Context, servicePrincipalID, secret string) (Principal, error)
-	BootstrapAdmin(ctx context.Context, workspaceID, email string) error
+	BootstrapAdmin(ctx context.Context, email string) error
+	SetPlatformRole(ctx context.Context, input PlatformRoleInput) (Principal, error)
 	ResolveExternalPrincipal(ctx context.Context, input ExternalIdentityInput) (Principal, error)
 	UpsertSCIMUser(ctx context.Context, input SCIMUserInput) (SCIMUser, error)
 	ListSCIMUsers(ctx context.Context, filter SCIMUserFilter) ([]SCIMUser, error)
 	DisableSCIMUser(ctx context.Context, principalID string) (SCIMUser, error)
 	UpsertGroup(ctx context.Context, input GroupInput) (Group, error)
-	ListGroups(ctx context.Context, workspaceID string) ([]Group, error)
-	SearchGroups(ctx context.Context, workspaceID, query string, limit int) ([]Group, error)
+	ListGroups(ctx context.Context) ([]Group, error)
+	SearchGroups(ctx context.Context, query string, limit int) ([]Group, error)
 	ListAllGroups(ctx context.Context) ([]Group, error)
-	DeleteGroup(ctx context.Context, workspaceID, groupID string) error
-	AddGroupMember(ctx context.Context, workspaceID, groupID, principalID string) error
-	RemoveGroupMember(ctx context.Context, workspaceID, groupID, principalID string) error
+	DeleteGroup(ctx context.Context, groupID string) error
+	AddGroupMember(ctx context.Context, groupID, principalID string) error
+	RemoveGroupMember(ctx context.Context, groupID, principalID string) error
 	ListGroupMembersByGroup(ctx context.Context, groupID string) ([]GroupMember, error)
-	ListGroupMembers(ctx context.Context, workspaceID, groupID string) ([]GroupMember, error)
+	ListGroupMembers(ctx context.Context, groupID string) ([]GroupMember, error)
 	UpsertSCIMGroup(ctx context.Context, input SCIMGroupInput) (Group, error)
 	ListSCIMGroups(ctx context.Context, filter SCIMGroupFilter) ([]Group, error)
 	DeleteSCIMGroup(ctx context.Context, groupID string) error
 	AddSCIMGroupMember(ctx context.Context, groupID, principalID string) error
 	RemoveSCIMGroupMember(ctx context.Context, groupID, principalID string) error
 	ListSCIMGroupMembers(ctx context.Context, groupID string) ([]GroupMember, error)
-	ListAllRoleBindings(ctx context.Context) ([]RoleBinding, error)
 	CreateSession(ctx context.Context, principalID string, ttl time.Duration) (string, error)
 	PrincipalForToken(ctx context.Context, token string) (Principal, error)
 	DeleteSession(ctx context.Context, token string) error
@@ -940,6 +419,15 @@ type Repository interface {
 	ListAuditEvents(ctx context.Context, filter AuditEventFilter) ([]AuditEvent, error)
 }
 
+// PlatformAdminReader is the narrow durable identity query used by
+// instance-wide administration. It deliberately does not expose project
+// roles or serving-generation state: platform administration is granted only
+// by the durable platform_role_bindings table and the principal's current
+// enabled state.
+type PlatformAdminReader interface {
+	IsPlatformAdmin(context.Context, string) (bool, error)
+}
+
 // AuditedMutationRepository commits a privileged mutation and its audit event
 // as one unit. Production repositories should implement this so a successful
 // mutation can never exist without its corresponding audit record.
@@ -949,55 +437,6 @@ type AuditedMutationRepository interface {
 
 type AuditedMutationBatchRepository interface {
 	RunAuditedMutationBatch(context.Context, func(Repository) ([]AuditEventInput, error)) error
-}
-
-func DefaultRoles() []Role {
-	roles := make([]Role, len(defaultRoles))
-	for i, role := range defaultRoles {
-		roles[i] = Role{
-			Name:       role.Name,
-			Privileges: append([]Privilege(nil), role.Privileges...),
-		}
-	}
-	return roles
-}
-
-func KnownPrivileges() []Privilege {
-	return []Privilege{
-		PrivilegeUseWorkspace,
-		PrivilegeViewItem,
-		PrivilegeEditItem,
-		PrivilegeManageItem,
-		PrivilegeQueryData,
-		PrivilegePreviewData,
-		PrivilegeTestDataPolicy,
-		PrivilegeRefreshData,
-		PrivilegeAuthorProject,
-		PrivilegePublishRelease,
-		PrivilegeReviewCandidate,
-		PrivilegeRequestDeployment,
-		PrivilegeApproveDeployment,
-		PrivilegeDeploy,
-		PrivilegeActivateDeployment,
-		PrivilegeVerifyDeployment,
-		PrivilegeRollbackDeployment,
-		PrivilegeManagePublications,
-		PrivilegeUseAgent,
-		PrivilegeViewAgent,
-		PrivilegeManageGrants,
-		PrivilegeViewAudit,
-		PrivilegeManageWorkspace,
-		PrivilegeManagePlatform,
-		PrivilegeViewData,
-		PrivilegeIngestData,
-		PrivilegeManageConnectionMetadata,
-		PrivilegeTestConnection,
-		PrivilegeViewConnectionHealth,
-	}
-}
-
-func DashboardPublicationSubjectID(workspaceID, publication string) string {
-	return "dashboard_publication:" + strings.TrimSpace(workspaceID) + "." + strings.TrimSpace(publication)
 }
 
 func PrincipalIDForEmail(email string) string {

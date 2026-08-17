@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -77,7 +78,11 @@ func (s *Service) EnsureCollection(ctx context.Context, request EnsureCollection
 	if err != nil {
 		return CollectionResult{}, err
 	}
-	collection, err := s.repo.CollectionByProjectConnection(ctx, project, connection)
+	projectID, connectionID, err := parseScope(project, connection)
+	if err != nil {
+		return CollectionResult{}, err
+	}
+	collection, err := s.repo.CollectionByProjectConnection(ctx, projectID, connectionID)
 	if err == nil {
 		if collection.Status != manageddata.CollectionStatusActive {
 			return CollectionResult{}, fmt.Errorf("%w: managed data collection is archived", ErrConflict)
@@ -92,11 +97,11 @@ func (s *Service) EnsureCollection(ctx context.Context, request EnsureCollection
 		name = connection
 	}
 	collection, err = s.repo.CreateCollection(ctx, manageddata.CreateCollectionInput{
-		ProjectID: project, ConnectionName: connection, Name: name,
+		ProjectID: projectID, ConnectionID: connectionID, Name: name,
 		Description: strings.TrimSpace(request.Description), CreatedBy: strings.TrimSpace(request.Actor),
 	})
 	if errors.Is(err, manageddata.ErrConflict) {
-		collection, err = s.repo.CollectionByProjectConnection(ctx, project, connection)
+		collection, err = s.repo.CollectionByProjectConnection(ctx, projectID, connectionID)
 	}
 	if err != nil {
 		return CollectionResult{}, repositoryError(err)
@@ -123,15 +128,24 @@ func (s *Service) BeginUpload(ctx context.Context, request BeginUploadRequest) (
 		return UploadResult{}, err
 	}
 	baseRevisionID := strings.TrimSpace(request.BaseRevisionID)
+	if request.BaseRevisionID != baseRevisionID {
+		return UploadResult{}, fmt.Errorf("%w: base revision id must be canonical", ErrInvalid)
+	}
+	var baseRevision manageddata.RevisionID
 	if baseRevisionID != "" {
-		base, lookupErr := s.repo.RevisionByID(ctx, baseRevisionID)
+		var parseErr error
+		baseRevision, parseErr = manageddata.ParseRevisionID(baseRevisionID)
+		if parseErr != nil {
+			return UploadResult{}, fmt.Errorf("%w: invalid base revision id", ErrInvalid)
+		}
+		base, lookupErr := s.repo.RevisionByID(ctx, baseRevision)
 		if lookupErr != nil {
 			if errors.Is(lookupErr, manageddata.ErrNotFound) {
 				return UploadResult{}, fmt.Errorf("%w: base revision does not exist", ErrConflict)
 			}
 			return UploadResult{}, repositoryError(lookupErr)
 		}
-		if base.CollectionID != collection.ID || base.Status != manageddata.RevisionStatusReady {
+		if base.CollectionID.String() != collection.ID || base.Status != manageddata.RevisionStatusReady {
 			return UploadResult{}, fmt.Errorf("%w: base revision is not available for this collection", ErrConflict)
 		}
 	}
@@ -141,13 +155,13 @@ func (s *Service) BeginUpload(ctx context.Context, request BeginUploadRequest) (
 	}
 	expiresAt := s.now().UTC().Add(s.uploadTTL)
 	session, err := s.repo.CreateUploadSession(ctx, manageddata.CreateUploadSessionInput{
-		ID: uploadID, CollectionID: collection.ID, BaseRevisionID: baseRevisionID,
+		ID: manageddata.UploadID(uploadID), CollectionID: projectgraph.ResourceID(collection.ID), BaseRevisionID: baseRevision,
 		Manifest: manifest, StorageBackend: s.transport.Backend(), StagingPrefix: "uploads/" + uploadID,
 		CreatedBy: strings.TrimSpace(request.Actor), ExpiresAt: expiresAt,
 	})
 	if errors.Is(err, manageddata.ErrConflict) {
-		session, err = s.repo.UploadSessionByID(ctx, uploadID)
-		if err == nil && !sameUpload(session, collection.ID, baseRevisionID, manifest, s.transport.Backend()) {
+		session, err = s.repo.UploadSessionByID(ctx, manageddata.UploadID(uploadID))
+		if err == nil && !sameUpload(session, projectgraph.ResourceID(collection.ID), baseRevision, manifest, s.transport.Backend()) {
 			return UploadResult{}, fmt.Errorf("%w: idempotency key was already used for another upload", ErrConflict)
 		}
 	}
@@ -354,7 +368,7 @@ func (s *Service) CompleteFinalizeUpload(ctx context.Context, request UploadRequ
 		})
 	}
 	revision, err := s.repo.CompleteUpload(ctx, manageddata.CompleteUploadInput{
-		SessionID: session.ID, RevisionID: revisionID(session.ID), Files: stored,
+		SessionID: session.ID, RevisionID: revisionID(session.ID.String()), Files: stored,
 	})
 	if err != nil {
 		if errors.Is(err, manageddata.ErrConflict) {
@@ -383,7 +397,7 @@ func (s *Service) CompleteFinalizeUpload(ctx context.Context, request UploadRequ
 	return result, nil
 }
 
-func (s *Service) waitForConcurrentFinalization(ctx context.Context, collection CollectionResult, sessionID string, upload UploadResult) (FinalizeResult, error) {
+func (s *Service) waitForConcurrentFinalization(ctx context.Context, collection CollectionResult, sessionID manageddata.UploadID, upload UploadResult) (FinalizeResult, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -407,7 +421,7 @@ func (s *Service) waitForConcurrentFinalization(ctx context.Context, collection 
 	}
 }
 
-func (s *Service) failFinalizeUpload(ctx context.Context, sessionID string, upload UploadResult, finalizationErr error) (FinalizeResult, error) {
+func (s *Service) failFinalizeUpload(ctx context.Context, sessionID manageddata.UploadID, upload UploadResult, finalizationErr error) (FinalizeResult, error) {
 	failed, persistErr := s.repo.FailUploadFinalization(ctx, sessionID, finalizationErr.Error())
 	if persistErr == nil {
 		upload.Status = failed.Status
@@ -433,7 +447,7 @@ func (s *Service) AbortUpload(ctx context.Context, request UploadRequest) (Uploa
 		var abortErr error
 		if request.Workflow.Event.EventType != "" {
 			if workflowRepo, ok := s.repo.(interface {
-				AbortUploadSessionWithWorkflow(context.Context, string, jobs.WorkflowIntent) error
+				AbortUploadSessionWithWorkflow(context.Context, manageddata.UploadID, jobs.WorkflowIntent) error
 			}); ok {
 				abortErr = workflowRepo.AbortUploadSessionWithWorkflow(ctx, session.ID, request.Workflow)
 			} else {
@@ -489,10 +503,10 @@ type terminalUploadLister interface {
 }
 
 type terminalUploadAcker interface {
-	MarkUploadCleanupComplete(context.Context, string) error
+	MarkUploadCleanupComplete(context.Context, manageddata.UploadID) error
 }
 
-func (s *Service) acknowledgeCleanup(ctx context.Context, uploadID string) error {
+func (s *Service) acknowledgeCleanup(ctx context.Context, uploadID manageddata.UploadID) error {
 	if acker, ok := s.repo.(terminalUploadAcker); ok {
 		return repositoryError(acker.MarkUploadCleanupComplete(ctx, uploadID))
 	}
@@ -610,7 +624,7 @@ func (s *Service) inspect(ctx context.Context, collection CollectionResult, sess
 		item := MissingBlob{SHA256: expected.SHA256, Size: expected.Size, Paths: append([]string(nil), expected.Paths...)}
 		if describe {
 			description, describeErr := s.transport.Describe(ctx, TransportRequest{
-				UploadID: session.ID, SHA256: expected.SHA256, Size: expected.Size,
+				UploadID: session.ID.String(), SHA256: expected.SHA256, Size: expected.Size,
 				Paths: append([]string(nil), expected.Paths...), ExpiresAt: timestampValue(session.ExpiresAt),
 			})
 			if describeErr != nil {
@@ -652,14 +666,25 @@ func (s *Service) scopedSession(ctx context.Context, request UploadRequest) (Col
 	if err != nil {
 		return CollectionResult{}, manageddata.UploadSession{}, err
 	}
+	if request.UploadID != strings.TrimSpace(request.UploadID) {
+		return CollectionResult{}, manageddata.UploadSession{}, fmt.Errorf("%w: upload id must be canonical", ErrInvalid)
+	}
 	if strings.TrimSpace(request.UploadID) == "" {
 		return CollectionResult{}, manageddata.UploadSession{}, fmt.Errorf("%w: upload id is required", ErrInvalid)
 	}
-	collection, err := s.repo.CollectionByProjectConnection(ctx, project, connection)
+	projectID, connectionID, err := parseScope(project, connection)
+	if err != nil {
+		return CollectionResult{}, manageddata.UploadSession{}, err
+	}
+	collection, err := s.repo.CollectionByProjectConnection(ctx, projectID, connectionID)
 	if err != nil {
 		return CollectionResult{}, manageddata.UploadSession{}, repositoryError(err)
 	}
-	session, err := s.repo.UploadSessionByID(ctx, strings.TrimSpace(request.UploadID))
+	uploadID, parseErr := manageddata.ParseUploadID(strings.TrimSpace(request.UploadID))
+	if parseErr != nil {
+		return CollectionResult{}, manageddata.UploadSession{}, fmt.Errorf("%w: invalid upload id", ErrInvalid)
+	}
+	session, err := s.repo.UploadSessionByID(ctx, uploadID)
 	if err != nil {
 		return CollectionResult{}, manageddata.UploadSession{}, repositoryError(err)
 	}
@@ -710,10 +735,10 @@ func (s *Service) finalizedResultWithRevision(ctx context.Context, collection Co
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	upload.Status = manageddata.UploadStatusComplete
-	upload.RevisionID = revision.ID
+	upload.RevisionID = revision.ID.String()
 	upload.CompletedAt = normalizeTimestamp(session.CompletedAt)
 	result := RevisionResult{
-		ID: revision.ID, Collection: collection, Digest: revision.Digest, Sequence: revision.Sequence,
+		ID: revision.ID.String(), Collection: collection, Digest: revision.Digest, Sequence: revision.Sequence,
 		Status: revision.Status, Manifest: manifest, FileCount: revision.FileCount, SizeBytes: revision.SizeBytes,
 		CreatedBy: revision.CreatedBy, CreatedAt: normalizeTimestamp(revision.CreatedAt), ReadyAt: normalizeTimestamp(revision.ReadyAt),
 		Files: make([]RevisionFileResult, len(files)),
@@ -731,7 +756,7 @@ func (s *Service) cleanupTransport(ctx context.Context, session manageddata.Uplo
 	var failed bool
 	for _, expected := range uniqueBlobs(manifest) {
 		if err := s.transport.Abort(ctx, TransportRequest{
-			UploadID: session.ID, SHA256: expected.SHA256, Size: expected.Size,
+			UploadID: session.ID.String(), SHA256: expected.SHA256, Size: expected.Size,
 			Paths: append([]string(nil), expected.Paths...), ExpiresAt: timestampValue(session.ExpiresAt),
 		}); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			failed = true
@@ -805,7 +830,7 @@ func decodeManifest(value string) (manageddata.Manifest, error) {
 	return manifest, nil
 }
 
-func sameUpload(session manageddata.UploadSession, collectionID, baseRevisionID string, manifest manageddata.Manifest, backend string) bool {
+func sameUpload(session manageddata.UploadSession, collectionID projectgraph.ResourceID, baseRevisionID manageddata.RevisionID, manifest manageddata.Manifest, backend string) bool {
 	canonical, err := manifest.CanonicalJSON()
 	return err == nil && session.CollectionID == collectionID && session.BaseRevisionID == baseRevisionID &&
 		session.ManifestJSON == string(canonical) && session.StorageBackend == backend
@@ -825,15 +850,15 @@ func verifiedBlob(expected blobExpectation, actual storage.Blob) (storage.Blob, 
 
 func baseUpload(collection CollectionResult, session manageddata.UploadSession, manifest manageddata.Manifest) UploadResult {
 	result := UploadResult{
-		ID: session.ID, RevisionID: revisionID(session.ID), Collection: collection,
-		BaseRevisionID: session.BaseRevisionID, Status: session.Status, Manifest: manifest,
+		ID: session.ID.String(), RevisionID: revisionID(session.ID.String()).String(), Collection: collection,
+		BaseRevisionID: session.BaseRevisionID.String(), Status: session.Status, Manifest: manifest,
 		Progress:  Progress{ExpectedFiles: session.ExpectedFileCount, ExpectedBytes: session.ExpectedSizeBytes},
 		CreatedAt: normalizeTimestamp(session.CreatedAt), ExpiresAt: normalizeTimestamp(session.ExpiresAt),
 		CompletedAt: normalizeTimestamp(session.CompletedAt), Error: safePersistedError(session.Error),
 		Files: make([]UploadFile, len(manifest.Files)),
 	}
 	if session.RevisionID != "" {
-		result.RevisionID = session.RevisionID
+		result.RevisionID = session.RevisionID.String()
 	}
 	for index, file := range manifest.Files {
 		result.Files[index] = UploadFile{File: file, Status: FileStatusPending}
@@ -847,7 +872,7 @@ func terminalUpload(collection CollectionResult, session manageddata.UploadSessi
 
 func collectionResult(collection manageddata.Collection) CollectionResult {
 	return CollectionResult{
-		ID: collection.ID, Project: collection.ProjectID, Connection: collection.ConnectionName,
+		ID: collection.ID.String(), Project: collection.ProjectID.String(), Connection: collection.ConnectionID.String(),
 		Name: collection.Name, Description: collection.Description, Status: collection.Status,
 		CreatedAt: normalizeTimestamp(collection.CreatedAt), UpdatedAt: normalizeTimestamp(collection.UpdatedAt),
 	}
@@ -865,24 +890,34 @@ func newUploadID(project, connection, idempotencyKey string) (string, error) {
 	return "upload_" + hex.EncodeToString(value[:]), nil
 }
 
-func revisionID(uploadID string) string {
+func revisionID(uploadID string) manageddata.RevisionID {
 	sum := sha256.Sum256([]byte(uploadID))
-	return "revision_" + hex.EncodeToString(sum[:])
+	return manageddata.RevisionID("revision_" + hex.EncodeToString(sum[:]))
 }
 
 func validateScope(ctx context.Context, project, connection string) (string, string, error) {
 	if ctx == nil {
 		return "", "", fmt.Errorf("%w: context is required", ErrInvalid)
 	}
-	project = strings.TrimSpace(project)
-	connection = strings.TrimSpace(connection)
-	if project == "" || connection == "" {
+	if project == "" || connection == "" || project != strings.TrimSpace(project) || connection != strings.TrimSpace(connection) {
 		return "", "", fmt.Errorf("%w: project and connection are required", ErrInvalid)
 	}
 	if err := ctx.Err(); err != nil {
 		return "", "", err
 	}
 	return project, connection, nil
+}
+
+func parseScope(project, connection string) (projectgraph.ResourceID, projectgraph.ResourceID, error) {
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: invalid project id", ErrInvalid)
+	}
+	connectionID, err := projectgraph.NewResourceID(connection)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: invalid connection id", ErrInvalid)
+	}
+	return projectID, connectionID, nil
 }
 
 func repositoryError(err error) error {
@@ -942,7 +977,7 @@ func validateRevision(collection CollectionResult, session manageddata.UploadSes
 		expected[file.Path] = file
 		sizeBytes += file.Size
 	}
-	if revision.ID == "" || revision.ID != session.RevisionID || revision.CollectionID != collection.ID ||
+	if revision.ID == "" || revision.ID != session.RevisionID || revision.CollectionID.String() != collection.ID ||
 		revision.Status != manageddata.RevisionStatusReady || revision.Digest != manifest.RevisionID() ||
 		revision.FileCount != int64(len(manifest.Files)) || revision.SizeBytes != sizeBytes || len(files) != len(manifest.Files) {
 		return ErrIntegrity

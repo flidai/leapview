@@ -36,7 +36,7 @@ type RuntimeConfig struct {
 	Sources  SourcePreparer
 	Resolver SourcePathResolver
 	// OwnDatabase and OwnQueryCache transfer close ownership to the runtime.
-	// Supplied resources are borrowed by default because workspace runtimes
+	// Supplied resources are borrowed by default because project runtimes
 	// commonly share a process database and cache scope.
 	OwnDatabase   bool
 	OwnQueryCache bool
@@ -468,18 +468,18 @@ func admitPhysicalQuery(ctx context.Context, request dataquery.Query, execute fu
 		return execute(ctx)
 	}
 	class := workload.Interactive
-	workspaceID := request.WorkspaceID
+	principalID := "system:query"
 	if request.Surface == dataquery.SurfaceAgent {
 		class = workload.Background
-		if activeClass, activeWorkspace, admitted := workload.Current(ctx); admitted && activeClass == workload.Background {
-			workspaceID = activeWorkspace
+		if activeClass, activePrincipal, admitted := workload.Current(ctx); admitted && activeClass == workload.Background {
+			principalID = activePrincipal
 		}
 	}
 	operation := request.Operation
 	if operation == "" {
 		operation = string(request.Kind)
 	}
-	lease, err := admitter.Acquire(ctx, workload.Request{Class: class, WorkspaceID: workspaceID, Operation: operation})
+	lease, err := admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		state := dataquery.ExecutionRejected
 		if reason, found := workload.ReasonOf(err); found && reason == workload.QueueTimeout {

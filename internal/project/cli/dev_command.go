@@ -96,7 +96,7 @@ func DevCommand(
 		&values.Credentials.Token,
 		"token",
 		"",
-		"ephemeral API token compatibility path",
+		"ephemeral API token for one-shot automation",
 	)
 	command.Flags().IntVar(
 		&values.UploadConcurrency,
@@ -240,7 +240,7 @@ func RunDev(
 		if err := checkpoints.Save(CandidateCheckpoint{
 			ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target,
 			TargetID: candidate.TargetID, Environment: candidate.Environment,
-			ProjectID: candidate.ProjectID, CandidateID: candidate.ID,
+			ProjectID: candidate.ProjectID.String(), CandidateID: candidate.ID,
 			CandidateKey:      options.CandidateKey,
 			CandidateRevision: candidate.Revision,
 			ArtifactDigest:    candidate.ArtifactDigest,

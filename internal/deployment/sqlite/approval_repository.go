@@ -16,7 +16,7 @@ func (r *Repository) CreateApproval(
 	ctx context.Context,
 	approval deployment.Approval,
 ) (deployment.Approval, error) {
-	if r == nil || r.q == nil {
+	if r == nil || r.queries == nil {
 		return deployment.Approval{}, fmt.Errorf("deployment approval repository is unavailable")
 	}
 	if err := approval.Validate(); err != nil {
@@ -26,12 +26,12 @@ func (r *Repository) CreateApproval(
 	if err != nil {
 		return deployment.Approval{}, err
 	}
-	if parent.ProjectID != approval.ProjectID ||
-		parent.Environment != approval.Environment ||
+	if parent.ServingIdentity.ProjectID.String() != approval.ProjectID ||
+		parent.ServingIdentity.Environment != approval.Environment ||
 		parent.RequestDigest != approval.RequestDigest {
 		return deployment.Approval{}, deployment.ErrApprovalScope
 	}
-	err = r.q.CreateDeploymentApproval(
+	err = r.queries.CreateDeploymentApproval(
 		ctx,
 		platformdb.CreateDeploymentApprovalParams{
 			ID: approval.ID, ProjectID: approval.ProjectID,
@@ -44,16 +44,16 @@ func (r *Repository) CreateApproval(
 			RequestCredentialClass: string(approval.RequestCredentialClass),
 			RequestCredentialID:    approval.RequestCredentialID,
 			RequestedAt:            formatApprovalTime(approval.RequestedAt),
-			ApprovedBy:             nullable(approval.ApprovedBy),
-			ApprovalCredentialClass: nullable(
+			ApprovedBy:             nullableSQLString(approval.ApprovedBy),
+			ApprovalCredentialClass: nullableSQLString(
 				string(approval.ApprovalCredentialClass),
 			),
-			ApprovalCredentialID: nullable(approval.ApprovalCredentialID),
+			ApprovalCredentialID: nullableSQLString(approval.ApprovalCredentialID),
 			ApprovalCredentialExpiresAt: nullableApprovalTime(
 				approval.ApprovalCredentialExpiresAt,
 			),
 			ApprovedAt: nullableApprovalTime(approval.ApprovedAt),
-			RevokedBy:  nullable(approval.RevokedBy),
+			RevokedBy:  nullableSQLString(approval.RevokedBy),
 			RevokedAt:  nullableApprovalTime(approval.RevokedAt),
 			ExpiresAt:  formatApprovalTime(approval.ExpiresAt),
 			Revision:   approval.Revision,
@@ -72,12 +72,12 @@ func (r *Repository) ApprovalByDeployment(
 	ctx context.Context,
 	deploymentID string,
 ) (deployment.Approval, error) {
-	if r == nil || r.q == nil || strings.TrimSpace(deploymentID) == "" {
+	if r == nil || r.queries == nil || deploymentID == "" || deploymentID != strings.TrimSpace(deploymentID) {
 		return deployment.Approval{}, deployment.ErrApprovalNotFound
 	}
-	row, err := r.q.GetCurrentDeploymentApproval(
+	row, err := r.queries.GetCurrentDeploymentApproval(
 		ctx,
-		strings.TrimSpace(deploymentID),
+		deploymentID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return deployment.Approval{}, deployment.ErrApprovalNotFound
@@ -93,27 +93,27 @@ func (r *Repository) SaveApproval(
 	approval deployment.Approval,
 	expectedRevision int64,
 ) (deployment.Approval, error) {
-	if r == nil || r.q == nil || expectedRevision <= 0 ||
+	if r == nil || r.queries == nil || expectedRevision <= 0 ||
 		approval.Revision != expectedRevision+1 {
 		return deployment.Approval{}, deployment.ErrApprovalConflict
 	}
 	if err := approval.Validate(); err != nil {
 		return deployment.Approval{}, err
 	}
-	count, err := r.q.UpdateDeploymentApproval(
+	count, err := r.queries.UpdateDeploymentApproval(
 		ctx,
 		platformdb.UpdateDeploymentApprovalParams{
 			Status:     string(approval.Status),
-			ApprovedBy: nullable(approval.ApprovedBy),
-			ApprovalCredentialClass: nullable(
+			ApprovedBy: nullableSQLString(approval.ApprovedBy),
+			ApprovalCredentialClass: nullableSQLString(
 				string(approval.ApprovalCredentialClass),
 			),
-			ApprovalCredentialID: nullable(approval.ApprovalCredentialID),
+			ApprovalCredentialID: nullableSQLString(approval.ApprovalCredentialID),
 			ApprovalCredentialExpiresAt: nullableApprovalTime(
 				approval.ApprovalCredentialExpiresAt,
 			),
 			ApprovedAt: nullableApprovalTime(approval.ApprovedAt),
-			RevokedBy:  nullable(approval.RevokedBy),
+			RevokedBy:  nullableSQLString(approval.RevokedBy),
 			RevokedAt:  nullableApprovalTime(approval.RevokedAt),
 			ExpiresAt:  formatApprovalTime(approval.ExpiresAt),
 			Revision:   approval.Revision,

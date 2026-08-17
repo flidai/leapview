@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
-import { Boxes, ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
+import { ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
@@ -40,18 +40,17 @@ const emptyExplorer: DataExplorerSignal = {
   objects: [],
   selectedKey: '',
   selectedObject: undefined,
-  selectedWorkspaceId: '',
   preview: emptyPreview,
   explore: {
-    command: { workspaceId: '', modelId: '', datasetId: '', dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} },
+    command: { modelId: '', datasetId: '', dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} },
     models: [], datasets: [], fields: [],
     result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
   },
-  command: { mode: 'browse', workspaceId: '', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+  command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
   warnings: [],
 }
 
-type WorkspaceGroup = {
+type ResourceGroup = {
   id: string
   title: string
   objects: DataExplorerObjectSignal[]
@@ -84,7 +83,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private exploreVisibleColumns: string[] = []
   private lastSelectedKey = ''
   private lastSearch = ''
-  private expandedWorkspaceIDs = new Set<string>()
+  private expandedGroupIDs = new Set<string>()
   private exploreTimer = 0
   private agentStateInitialized = false
   private agentRestoreDispatched = false
@@ -966,15 +965,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   updated(): void {
-    const selectedKey = `${this.dataExplorer.selectedWorkspaceId}:${this.dataExplorer.selectedKey}`
+    const selectedKey = this.dataExplorer.selectedKey ?? ''
     if (selectedKey !== this.lastSelectedKey) {
       this.lastSelectedKey = selectedKey
       this.showSQL = false
-      const selectedWorkspaceID = this.dataExplorer.selectedWorkspaceId ?? ''
-      if (selectedWorkspaceID) this.expandedWorkspaceIDs.add(selectedWorkspaceID)
       requestAnimationFrame(() => {
-        const selectedWorkspace = this.renderRoot.querySelector<HTMLDetailsElement>(`.workspace-group[data-workspace-id="${CSS.escape(selectedWorkspaceID)}"]`)
-        if (selectedWorkspace) selectedWorkspace.open = true
         this.renderRoot.querySelector<HTMLElement>('.object-button.is-selected')?.scrollIntoView({ block: 'nearest' })
       })
     }
@@ -1019,7 +1014,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selected = explorer.selectedObject
     const semanticActive = explorer.command?.mode === 'explore' || this.optimisticExplore !== null
     const filtered = filterObjects(explorer.objects ?? [], this.search)
-    const grouped = groupObjectsByWorkspace(filtered, page)
+    const grouped = groupObjectsByModel(filtered)
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
     const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
@@ -1062,9 +1057,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               <button
                 type="button"
                 class="sidebar-toggle"
-                aria-label=${this.browserCollapsed ? 'Open data catalog' : 'Close data catalog'}
+                aria-label=${this.browserCollapsed ? 'Open data browser' : 'Close data browser'}
                 aria-expanded=${String(!this.browserCollapsed)}
-                title=${this.browserCollapsed ? 'Open data catalog' : 'Close data catalog'}
+                title=${this.browserCollapsed ? 'Open data browser' : 'Close data browser'}
                 @click=${() => this.browserCollapsed = !this.browserCollapsed}
               >${lucideIcon(Database, { size: 16 })}</button>
               ${this.browserCollapsed ? nothing : html`
@@ -1084,7 +1079,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               <div class="tree">
                 ${filtered.length
                   ? html`
-                    ${this.renderWorkspaceGroups(grouped, explorer.selectedWorkspaceId ?? '', explorer.selectedKey ?? '', explorer.explore ?? emptyExplorer.explore, semanticActive)}
+                    ${this.renderResourceGroups(grouped, explorer.selectedKey ?? '', explorer.explore ?? emptyExplorer.explore, semanticActive)}
                   `
                   : html`<p class="empty">No data objects match this search.</p>`}
               </div>
@@ -1139,11 +1134,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       <div class="explorer">
         <aside class="browser explore-browser" aria-label="Semantic fields">
           <div class="selectors">
-            <label>Workspace
-              <select .value=${command.workspaceId ?? ''} @change=${(event: Event) => this.changeExploreWorkspace((event.target as HTMLSelectElement).value)}>
-                ${(this.page?.workspaces ?? []).map((workspace) => html`<option value=${workspace.id}>${workspace.title}</option>`)}
-              </select>
-            </label>
             <label>Semantic model
               <select .value=${command.modelId ?? ''} @change=${(event: Event) => this.changeExploreModel((event.target as HTMLSelectElement).value, explore)}>
                 ${(explore.models ?? []).map((model) => html`<option value=${model.id}>${model.title}</option>`)}
@@ -1288,13 +1278,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.emitCommand({ mode, explore: this.optimisticExplore ?? current.explore ?? this.dataExplorer.explore.command })
   }
 
-  private changeExploreWorkspace(workspaceId: string) {
-    this.emitExplore({
-      workspaceId, modelId: '', datasetId: '', dimensions: [], measures: [], filters: [], sort: [],
-      limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {},
-    }, true)
-  }
-
   private changeExploreModel(modelId: string, explore: DataExploreSignal) {
     const model = explore.models.find((candidate) => candidate.id === modelId)
     const current = this.optimisticExplore ?? explore.command
@@ -1319,7 +1302,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   ) {
     if (field.compatible === false && !field.rebaseDatasetId) return
     const selected = this.dataExplorer.selectedObject
-    const baseObject = selected && selected.workspaceId === object.workspaceId && selected.modelId === object.modelId
+    const baseObject = selected && selected.modelId === object.modelId
       ? selected
       : object
     const current = this.optimisticExplore ?? explore.command ?? emptyExplorer.explore.command
@@ -1331,7 +1314,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const fallbackDimensions = (baseObject.columns ?? []).map((column) => `${objectTableID(baseObject)}.${column.key}`)
     const command: DataExploreCommand = activeCommand ? current : {
       ...current,
-      workspaceId: baseObject.workspaceId,
       modelId: baseObject.modelId ?? '',
       datasetId: objectTableID(baseObject),
       dimensions: baseDimensions.length ? baseDimensions : fallbackDimensions,
@@ -1392,7 +1374,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const command: DataExploreCommand = {
       ...current,
       ...next,
-      workspaceId: next.workspaceId ?? current.workspaceId ?? '',
       modelId: next.modelId ?? current.modelId ?? '',
       datasetId: next.datasetId ?? current.datasetId ?? '',
       dimensions: [...(next.dimensions ?? current.dimensions ?? [])],
@@ -1406,25 +1387,26 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     this.optimisticExplore = command
     replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
-    const dispatch = () => this.emitCommand({ mode: 'explore', workspaceId: command.workspaceId, explore: command })
+    const dispatch = () => this.emitCommand({ mode: 'explore', explore: command })
     if (immediate) dispatch()
     else this.exploreTimer = window.setTimeout(dispatch, 320)
   }
 
   private agentSuggestions(explorer: DataExplorerSignal): AgentReferenceSignal[] {
     const command = this.optimisticExplore ?? explorer.explore.command
-    const workspaceId = command.workspaceId ?? ''
+    const context = this.page?.context
+    const projectId = context?.projectId ?? ''
+    const generationId = context?.generationId ?? ''
     const modelId = command.modelId ?? ''
     const datasetId = command.datasetId ?? ''
-    if (!workspaceId || !modelId || !datasetId) return []
+    if (!projectId || !generationId || !modelId || !datasetId) return []
     const dataset = explorer.explore.datasets.find((candidate) => candidate.id === datasetId)
-    const href = `/data?mode=explore&workspace=${encodeURIComponent(workspaceId)}&model=${encodeURIComponent(modelId)}&dataset=${encodeURIComponent(datasetId)}`
+    const href = `/explore?mode=explore&model=${encodeURIComponent(modelId)}&dataset=${encodeURIComponent(datasetId)}`
     return [{
-      reference: { workspaceId, type: 'dataset', id: `${modelId}/${datasetId}` },
+      reference: { kind: 'dataset', id: `${modelId}/${datasetId}` },
       name: dataset?.title ?? datasetId,
       description: dataset?.description,
-      workspace: { id: workspaceId, name: workspaceId },
-      hierarchy: [workspaceId, modelId], href, locations: [], context: ['current_workspace'],
+      hierarchy: [projectId, modelId], href, locations: [], context: ['active_project_generation'],
     }]
   }
 
@@ -1504,42 +1486,40 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
   }
 
-  private renderWorkspaceGroups(
-    groups: WorkspaceGroup[],
-    selectedWorkspaceId: string,
+  private renderResourceGroups(
+    groups: ResourceGroup[],
     selectedKey: string,
     explore: DataExploreSignal,
     semanticActive: boolean,
   ) {
     const revealMatches = Boolean(this.search.trim())
-    return groups.map((workspace) => html`
+    return groups.map((group) => html`
       <details
-        ?open=${revealMatches || this.expandedWorkspaceIDs.has(workspace.id)}
-        class="workspace-group"
-        data-workspace-id=${workspace.id}
-        @toggle=${(event: Event) => this.handleWorkspaceToggle(event, workspace.id)}
+        ?open=${revealMatches || this.expandedGroupIDs.has(group.id)}
+        class="resource-group"
+        data-group-id=${group.id}
+        @toggle=${(event: Event) => this.handleGroupToggle(event, group.id)}
       >
         <summary>
           <span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
-          <span class="workspace-icon" aria-hidden="true" title="Workspace">${lucideIcon(Boxes, { size: 14 })}</span>
-          <span title=${`${workspace.objects.length} model tables`}>${label(workspace.title)} (${workspace.objects.length})</span>
+          <span class="resource-icon" aria-hidden="true" title="Project resource">${lucideIcon(Database, { size: 14 })}</span>
+          <span title=${`${group.objects.length} model tables`}>${label(group.title)} (${group.objects.length})</span>
         </summary>
         <div class="object-list">
-          ${this.renderObjectNodes(workspace.objects, selectedWorkspaceId, selectedKey, explore, semanticActive)}
+          ${this.renderObjectNodes(group.objects, selectedKey, explore, semanticActive)}
         </div>
       </details>
     `)
   }
 
-  private handleWorkspaceToggle(event: Event, workspaceID: string): void {
+  private handleGroupToggle(event: Event, groupID: string): void {
     const details = event.currentTarget as HTMLDetailsElement
-    if (details.open) this.expandedWorkspaceIDs.add(workspaceID)
-    else this.expandedWorkspaceIDs.delete(workspaceID)
+    if (details.open) this.expandedGroupIDs.add(groupID)
+    else this.expandedGroupIDs.delete(groupID)
   }
 
   private renderObjectNodes(
     objects: DataExplorerObjectSignal[],
-    selectedWorkspaceId: string,
     selectedKey: string,
     explore: DataExploreSignal,
     semanticActive: boolean,
@@ -1550,7 +1530,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1)
     }
     return objects.map((object) => {
-      const selected = object.workspaceId === selectedWorkspaceId && object.key === selectedKey
+      const selected = object.key === selectedKey
       const duplicateTitle = (titleCounts.get(object.title.trim().toLowerCase()) ?? 0) > 1
       const displayTitle = duplicateTitle && object.modelId ? `${object.modelId}.${object.title}` : object.title
       const columnMatch = objectColumnMatchesSearch(object, this.search)
@@ -1726,7 +1706,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const currentExplore = this.dataExplorer?.explore?.command ?? emptyExplorer.explore.command
     const explore: DataExploreCommand = {
       ...currentExplore,
-      workspaceId: object.workspaceId,
       modelId: object.modelId ?? '',
       datasetId: objectTableID(object),
       dimensions: [],
@@ -1740,7 +1719,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.emitCommand({
       mode: 'browse',
       explore,
-      workspaceId: object.workspaceId,
       objectKey: object.key,
       offset: 0,
       limit: 100,
@@ -1767,7 +1745,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       <section class="schema-view" aria-label="Schema">
         <dl class="metadata-grid">
           <div class="metadata-card"><dt>Data layer</dt><dd>${layerLabel(object.layer)}</dd></div>
-          <div class="metadata-card"><dt>Workspace</dt><dd>${label(object.workspaceTitle || object.workspaceId)}</dd></div>
+          <div class="metadata-card"><dt>Project generation</dt><dd>${label(this.page?.context?.projectId)} · ${label(this.page?.context?.generationId)}</dd></div>
           <div class="metadata-card"><dt>Model</dt><dd>${label(object.modelId)}</dd></div>
           <div class="metadata-card"><dt>Grain</dt><dd>${object.grain ? label(object.grain) : 'Not declared'}</dd></div>
           ${object.description ? html`<div class="metadata-card"><dt>Description</dt><dd>${object.description}</dd></div>` : nothing}
@@ -1811,7 +1789,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const next: DataExplorerCommand = {
       mode: partial.mode ?? current.mode ?? 'browse',
       explore: partial.explore ?? current.explore ?? this.dataExplorer?.explore?.command,
-      workspaceId: partial.workspaceId ?? current.workspaceId ?? this.dataExplorer?.selectedWorkspaceId ?? this.dataExplorer?.selectedObject?.workspaceId ?? '',
       objectKey: partial.objectKey ?? current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
       offset: partial.offset ?? current.offset ?? 0,
       limit: partial.limit ?? current.limit ?? 100,
@@ -1824,7 +1801,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       visibleColumns: partial.visibleColumns ?? current.visibleColumns ?? [],
       columnWidths: partial.columnWidths ?? current.columnWidths ?? {},
     }
-    if (partial.workspaceId !== undefined || partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined) {
+    if (partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined) {
       replaceDataExplorerURL(next)
     }
     this.dispatchEvent(new CustomEvent('lv-data-explorer-command', { bubbles: true, composed: true, detail: next }))
@@ -1841,7 +1818,7 @@ function fieldColumnID(field: DataExploreFieldSignal): string {
 }
 
 function exploreContextMatchesObject(command: DataExploreCommand, object: DataExplorerObjectSignal): boolean {
-  return command.workspaceId === object.workspaceId && command.modelId === (object.modelId ?? '')
+  return command.modelId === (object.modelId ?? '')
 }
 
 function filterObjects(objects: DataExplorerObjectSignal[], query: string): DataExplorerObjectSignal[] {
@@ -1856,8 +1833,7 @@ function objectSearchValues(object: DataExplorerObjectSignal): string[] {
     object.title,
     object.description,
     object.layer,
-    object.workspaceId,
-    object.workspaceTitle,
+    object.resourceId,
     object.modelId,
     object.table,
     ...(object.columns ?? []).flatMap((column) => [column.key, column.label, column.type, column.description]),
@@ -1871,20 +1847,17 @@ function objectColumnMatchesSearch(object: DataExplorerObjectSignal, query: stri
     .some((value) => String(value ?? '').toLowerCase().includes(normalized)))
 }
 
-function groupObjectsByWorkspace(objects: DataExplorerObjectSignal[], page: DataExplorerPageSignal | null): WorkspaceGroup[] {
-  const workspaces = new Map<string, WorkspaceGroup>()
-  for (const workspace of page?.workspaces ?? []) {
-    workspaces.set(workspace.id, { id: workspace.id, title: workspace.title, objects: [] })
-  }
+function groupObjectsByModel(objects: DataExplorerObjectSignal[]): ResourceGroup[] {
+  const groups = new Map<string, ResourceGroup>()
   for (const object of objects) {
     if (object.layer === 'source') continue
-    const id = object.workspaceId || ''
-    if (!workspaces.has(id)) {
-      workspaces.set(id, { id, title: object.workspaceTitle || id || 'Workspace', objects: [] })
+    const id = object.modelId || object.layer
+    if (!groups.has(id)) {
+      groups.set(id, { id, title: object.modelId || 'Data objects', objects: [] })
     }
-    workspaces.get(id)!.objects.push(object)
+    groups.get(id)!.objects.push(object)
   }
-  return Array.from(workspaces.values()).filter((workspace) => workspace.objects.length > 0)
+  return Array.from(groups.values()).filter((group) => group.objects.length > 0)
 }
 
 type ExploreFieldGroup = {
@@ -1918,10 +1891,8 @@ function fieldLabel(id: string, fields: DataExploreFieldSignal[]): string {
 function replaceDataExplorerURL(command: DataExplorerCommand) {
   if (typeof window === 'undefined') return
   const mode = command.mode === 'explore' ? 'explore' : 'browse'
-  const workspaceId = mode === 'explore' ? command.explore?.workspaceId || command.workspaceId || '' : command.workspaceId || ''
   const objectKey = command.objectKey || ''
   const params = new URLSearchParams()
-  if (workspaceId) params.set('workspace', workspaceId)
   if (mode === 'explore') {
     params.set('mode', 'explore')
     if (command.explore?.modelId) params.set('model', command.explore.modelId)
@@ -1935,7 +1906,7 @@ function replaceDataExplorerURL(command: DataExplorerCommand) {
   } else if (objectKey) {
     params.set('object', objectKey)
   }
-  const next = params.toString() ? `/data?${params.toString()}` : '/data'
+  const next = params.toString() ? `/explore?${params.toString()}` : '/explore'
   if (window.location.pathname + window.location.search !== next) {
     window.history.replaceState({}, '', next)
   }

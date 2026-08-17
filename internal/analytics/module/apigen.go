@@ -9,11 +9,12 @@ import (
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	queryaudithttp "github.com/flidai/leapview/internal/analytics/queryaudit/http"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type QueryAuditAPIGenConfig struct {
-	Reader      func() (queryaudit.Reader, error)
-	WorkspaceID func(string) string
+	Reader    func() (queryaudit.Reader, error)
+	ProjectID func(string) projectgraph.ResourceID
 }
 
 type AnalyticsAPIGenConfig struct {
@@ -28,8 +29,8 @@ type analyticsAPIGenDispatcher struct {
 
 func newAnalyticsAPIGenDispatcher(config AnalyticsAPIGenConfig) *analyticsAPIGenDispatcher {
 	return &analyticsAPIGenDispatcher{queryEvents: queryaudithttp.Handler{
-		Reader:      queryaudithttp.ReaderProvider(config.QueryAudit.Reader),
-		WorkspaceID: queryaudithttp.WorkspaceIDNormalizer(config.QueryAudit.WorkspaceID),
+		Reader:    queryaudithttp.ReaderProvider(config.QueryAudit.Reader),
+		ProjectID: queryaudithttp.ProjectIDNormalizer(config.QueryAudit.ProjectID),
 	}, connections: connectionBindingAPIHandler{config: config.Connections}}
 }
 
@@ -37,7 +38,7 @@ func (d *analyticsAPIGenDispatcher) ListQueryEvents(
 	w http.ResponseWriter,
 	r *http.Request,
 	_ string,
-	_ analyticsgen.GenListQueryEventsParams,
+	params analyticsgen.GenListQueryEventsParams,
 ) {
 	d.queryEvents.ListQueryEvents(w, r)
 }
@@ -45,86 +46,86 @@ func (d *analyticsAPIGenDispatcher) ListQueryEvents(
 func (d *analyticsAPIGenDispatcher) ListTargetConnectionBindings(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment string,
+	project, target string,
 ) {
-	d.connections.List(w, r, workspace, target, environment)
+	d.connections.List(w, r, project, target)
 }
 
 func (d *analyticsAPIGenDispatcher) CreateTargetConnectionBinding(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment string,
+	project, target string,
 	_ analyticsgen.GenCreateTargetConnectionBindingHeaders,
 ) {
-	d.connections.Create(w, r, workspace, target, environment)
+	d.connections.Create(w, r, project, target)
 }
 
 func (d *analyticsAPIGenDispatcher) GetTargetConnectionBinding(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 ) {
-	d.connections.Get(w, r, workspace, target, environment, connection)
+	d.connections.Get(w, r, project, target, connection)
 }
 
 func (d *analyticsAPIGenDispatcher) UpdateTargetConnectionBinding(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 ) {
-	d.connections.Update(w, r, workspace, target, environment, connection)
+	d.connections.Update(w, r, project, target, connection)
 }
 
 func (d *analyticsAPIGenDispatcher) DisableTargetConnectionBinding(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 	_ analyticsgen.GenDisableTargetConnectionBindingHeaders,
 ) {
-	d.connections.Disable(w, r, workspace, target, environment, connection)
+	d.connections.Disable(w, r, project, target, connection)
 }
 
 func (d *analyticsAPIGenDispatcher) EnableTargetConnectionBinding(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 	_ analyticsgen.GenEnableTargetConnectionBindingHeaders,
 ) {
-	d.connections.Enable(w, r, workspace, target, environment, connection)
+	d.connections.Enable(w, r, project, target, connection)
 }
 
 func (d *analyticsAPIGenDispatcher) GetTargetConnectionBindingHealth(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 ) {
-	d.connections.Health(w, r, workspace, target, environment, connection)
+	d.connections.Health(w, r, project, target, connection)
 }
 
 func (d *analyticsAPIGenDispatcher) PlanTargetConnectionBindingChange(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 ) {
-	d.connections.Plan(w, r, workspace, target, environment, connection)
+	d.connections.Plan(w, r, project, target, connection)
 }
 
 func (d *analyticsAPIGenDispatcher) RefreshTargetConnectionBinding(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 	_ analyticsgen.GenRefreshTargetConnectionBindingHeaders,
 ) {
-	d.connections.Refresh(w, r, workspace, target, environment, connection)
+	d.connections.Refresh(w, r, project, target, connection)
 }
 
 func (d *analyticsAPIGenDispatcher) TestTargetConnectionBinding(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspace, target, environment, connection string,
+	project, target, connection string,
 	_ analyticsgen.GenTestTargetConnectionBindingHeaders,
 ) {
-	d.connections.Test(w, r, workspace, target, environment, connection)
+	d.connections.Test(w, r, project, target, connection)
 }
 
 type analyticsAPIGenTransportErrorResponder struct{ logger *slog.Logger }

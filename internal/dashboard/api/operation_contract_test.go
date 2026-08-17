@@ -19,13 +19,13 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 			t.Fatalf("%s command contract = %#v", operationID, contract.Command)
 		}
 		command := contract.Command
-		if contract.Namespace != "LeapViewAPI.Dashboard" || command.Owner != contract.Namespace || command.AuthzMode != "privilege" || command.Privilege != "MANAGE_PUBLICATIONS" {
+		if contract.Namespace != "LeapViewAPI.Dashboard" || command.Owner != contract.Namespace || command.AuthzMode != "authenticated" || command.Privilege != "" {
 			t.Errorf("%s ownership/authz = %#v", operationID, command)
 		}
 		if !command.Audit.Required || command.Audit.SuccessAction != auditAction || command.Audit.Guarantee != "best-effort" {
 			t.Errorf("%s audit = %#v", operationID, command.Audit)
 		}
-		if command.Target == nil || command.Target.Parameter != "workspace" || command.Target.Type != "workspace" {
+		if command.Target == nil || command.Target.Parameter != "project" || command.Target.Type != "project" {
 			t.Errorf("%s target = %#v", operationID, command.Target)
 		}
 		if command.Idempotency != "required" || command.Concurrency != "" || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" {

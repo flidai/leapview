@@ -7,28 +7,30 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestAuthoringScopeAllowsOnlyExactTargetProjectAndAction(t *testing.T) {
-	scope, err := NewAuthoringScope("instance-prod", "finance", []Privilege{
-		PrivilegeDeploy,
-		PrivilegeActivateDeployment,
+	scope, err := NewAuthoringScope("instance-prod", graph.ResourceID("finance"), []Capability{
+		CapabilityResourcePublish,
+		CapabilityResourceManage,
 	})
 	if err != nil {
 		t.Fatalf("NewAuthoringScope() error = %v", err)
 	}
 
-	if err := scope.Authorize("instance-prod", "finance", PrivilegeDeploy); err != nil {
+	if err := scope.Authorize("instance-prod", "finance", CapabilityResourcePublish); err != nil {
 		t.Fatalf("Authorize() exact scope error = %v", err)
 	}
 	for name, request := range map[string]struct {
 		target    string
 		project   string
-		privilege Privilege
+		privilege Capability
 	}{
-		"other target":  {target: "instance-staging", project: "finance", privilege: PrivilegeDeploy},
-		"other project": {target: "instance-prod", project: "marketing", privilege: PrivilegeDeploy},
-		"other action":  {target: "instance-prod", project: "finance", privilege: PrivilegeManageGrants},
+		"other target":  {target: "instance-staging", project: "finance", privilege: CapabilityResourcePublish},
+		"other project": {target: "instance-prod", project: "marketing", privilege: CapabilityResourcePublish},
+		"other action":  {target: "instance-prod", project: "finance", privilege: CapabilityResourceShare},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := scope.Authorize(request.target, request.project, request.privilege)
@@ -43,16 +45,16 @@ func TestAuthoringScopeRejectsMissingOrUnknownBindings(t *testing.T) {
 	for name, input := range map[string]struct {
 		target     string
 		project    string
-		privileges []Privilege
+		privileges []Capability
 	}{
-		"target":     {project: "finance", privileges: []Privilege{PrivilegeDeploy}},
-		"project":    {target: "instance-prod", privileges: []Privilege{PrivilegeDeploy}},
+		"target":     {project: "finance", privileges: []Capability{CapabilityResourcePublish}},
+		"project":    {target: "instance-prod", privileges: []Capability{CapabilityResourcePublish}},
 		"actions":    {target: "instance-prod", project: "finance"},
-		"unknown":    {target: "instance-prod", project: "finance", privileges: []Privilege{"DELETE_EVERYTHING"}},
-		"duplicates": {target: "instance-prod", project: "finance", privileges: []Privilege{PrivilegeDeploy, PrivilegeDeploy}},
+		"unknown":    {target: "instance-prod", project: "finance", privileges: []Capability{"DELETE_EVERYTHING"}},
+		"duplicates": {target: "instance-prod", project: "finance", privileges: []Capability{CapabilityResourcePublish, CapabilityResourcePublish}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewAuthoringScope(input.target, input.project, input.privileges); err == nil {
+			if _, err := NewAuthoringScope(input.target, graph.ResourceID(input.project), input.privileges); err == nil {
 				t.Fatal("NewAuthoringScope() succeeded")
 			}
 		})
@@ -63,7 +65,7 @@ func TestAuthoringAuthDeviceFlowIssuesShortLivedExactScopeCredential(t *testing.
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	repository := newAuthoringAuthMemoryRepository()
 	service := newAuthoringAuthTestService(t, repository, &now)
-	scope := mustAuthoringScope(t, "instance-prod", "finance", PrivilegeDeploy)
+	scope := mustAuthoringScope(t, "instance-prod", "finance", CapabilityResourcePublish)
 
 	started, err := service.BeginDeviceAuthorization(context.Background(), scope)
 	if err != nil {
@@ -99,7 +101,7 @@ func TestAuthoringAuthDeviceFlowIssuesShortLivedExactScopeCredential(t *testing.
 	}
 
 	credential, err := service.Authenticate(
-		context.Background(), tokens.AccessToken, "instance-prod", "finance", PrivilegeDeploy,
+		context.Background(), tokens.AccessToken, "instance-prod", "finance", CapabilityResourcePublish,
 	)
 	if err != nil {
 		t.Fatalf("Authenticate() exact scope error = %v", err)
@@ -110,11 +112,11 @@ func TestAuthoringAuthDeviceFlowIssuesShortLivedExactScopeCredential(t *testing.
 	for name, request := range map[string]struct {
 		target    string
 		project   string
-		privilege Privilege
+		privilege Capability
 	}{
-		"target":  {target: "instance-staging", project: "finance", privilege: PrivilegeDeploy},
-		"project": {target: "instance-prod", project: "marketing", privilege: PrivilegeDeploy},
-		"action":  {target: "instance-prod", project: "finance", privilege: PrivilegeManageGrants},
+		"target":  {target: "instance-staging", project: "finance", privilege: CapabilityResourcePublish},
+		"project": {target: "instance-prod", project: "marketing", privilege: CapabilityResourcePublish},
+		"action":  {target: "instance-prod", project: "finance", privilege: CapabilityResourceShare},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := service.Authenticate(context.Background(), tokens.AccessToken, request.target, request.project, request.privilege); !errors.Is(err, ErrAuthoringScopeDenied) {
@@ -138,14 +140,14 @@ func TestAuthoringAuthRefreshRotationDetectsReplayAndRevokesFamily(t *testing.T)
 	if rotated.RefreshToken == tokens.RefreshToken {
 		t.Fatal("Refresh() did not rotate the refresh token")
 	}
-	if _, err := service.Authenticate(context.Background(), tokens.AccessToken, "instance-prod", "finance", PrivilegeDeploy); !errors.Is(err, ErrInvalidAuthoringCredential) {
+	if _, err := service.Authenticate(context.Background(), tokens.AccessToken, "instance-prod", "finance", CapabilityResourcePublish); !errors.Is(err, ErrInvalidAuthoringCredential) {
 		t.Fatalf("old access token error = %v, want invalid credential", err)
 	}
 
 	if _, err := service.Refresh(context.Background(), tokens.RefreshToken); !errors.Is(err, ErrAuthoringRefreshReplay) {
 		t.Fatalf("replayed Refresh() error = %v, want replay", err)
 	}
-	if _, err := service.Authenticate(context.Background(), rotated.AccessToken, "instance-prod", "finance", PrivilegeDeploy); !errors.Is(err, ErrInvalidAuthoringCredential) {
+	if _, err := service.Authenticate(context.Background(), rotated.AccessToken, "instance-prod", "finance", CapabilityResourcePublish); !errors.Is(err, ErrInvalidAuthoringCredential) {
 		t.Fatalf("replacement access token after replay error = %v, want invalid credential", err)
 	}
 }
@@ -155,14 +157,14 @@ func TestAuthoringAuthRevocationExpiryAndWorkloadIdentity(t *testing.T) {
 	repository := newAuthoringAuthMemoryRepository()
 	service := newAuthoringAuthTestService(t, repository, &now)
 	humanTokens := authorizeAuthoringDevice(t, service, repository, &now)
-	humanCredential, err := service.Authenticate(context.Background(), humanTokens.AccessToken, "instance-prod", "finance", PrivilegeDeploy)
+	humanCredential, err := service.Authenticate(context.Background(), humanTokens.AccessToken, "instance-prod", "finance", CapabilityResourcePublish)
 	if err != nil {
 		t.Fatalf("Authenticate() human error = %v", err)
 	}
 	if err := service.RevokeSession(context.Background(), humanCredential.Principal.ID, humanCredential.Session.ID); err != nil {
 		t.Fatalf("RevokeSession() error = %v", err)
 	}
-	if _, err := service.Authenticate(context.Background(), humanTokens.AccessToken, "instance-prod", "finance", PrivilegeDeploy); !errors.Is(err, ErrInvalidAuthoringCredential) {
+	if _, err := service.Authenticate(context.Background(), humanTokens.AccessToken, "instance-prod", "finance", CapabilityResourcePublish); !errors.Is(err, ErrInvalidAuthoringCredential) {
 		t.Fatalf("revoked Authenticate() error = %v, want invalid credential", err)
 	}
 
@@ -171,7 +173,7 @@ func TestAuthoringAuthRevocationExpiryAndWorkloadIdentity(t *testing.T) {
 	repository.serviceSecrets[workload.ID] = "secret"
 	workloadTokens, err := service.ExchangeWorkloadIdentity(context.Background(), WorkloadIdentityInput{
 		ClientID: workload.ID, ClientSecret: "secret",
-		Scope:    mustAuthoringScope(t, "instance-prod", "finance", PrivilegeDeploy),
+		Scope:    mustAuthoringScope(t, "instance-prod", "finance", CapabilityResourcePublish),
 		Lifetime: 5 * time.Minute,
 	})
 	if err != nil {
@@ -180,26 +182,26 @@ func TestAuthoringAuthRevocationExpiryAndWorkloadIdentity(t *testing.T) {
 	if workloadTokens.RefreshToken != "" || !strings.HasPrefix(workloadTokens.AccessToken, "lv_workload_access_") {
 		t.Fatalf("workload token set = %#v", workloadTokens)
 	}
-	if _, err := service.Authenticate(context.Background(), workloadTokens.AccessToken, "instance-prod", "finance", PrivilegeDeploy); err != nil {
+	if _, err := service.Authenticate(context.Background(), workloadTokens.AccessToken, "instance-prod", "finance", CapabilityResourcePublish); err != nil {
 		t.Fatalf("Authenticate() workload error = %v", err)
 	}
 	if err := service.RevokeAccessToken(context.Background(), workloadTokens.AccessToken); err != nil {
 		t.Fatalf("RevokeAccessToken() error = %v", err)
 	}
-	if _, err := service.Authenticate(context.Background(), workloadTokens.AccessToken, "instance-prod", "finance", PrivilegeDeploy); !errors.Is(err, ErrInvalidAuthoringCredential) {
+	if _, err := service.Authenticate(context.Background(), workloadTokens.AccessToken, "instance-prod", "finance", CapabilityResourcePublish); !errors.Is(err, ErrInvalidAuthoringCredential) {
 		t.Fatalf("revoke-by-token Authenticate() error = %v, want invalid credential", err)
 	}
 
 	workloadTokens, err = service.ExchangeWorkloadIdentity(context.Background(), WorkloadIdentityInput{
 		ClientID: workload.ID, ClientSecret: "secret",
-		Scope:    mustAuthoringScope(t, "instance-prod", "finance", PrivilegeDeploy),
+		Scope:    mustAuthoringScope(t, "instance-prod", "finance", CapabilityResourcePublish),
 		Lifetime: 5 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("second ExchangeWorkloadIdentity() error = %v", err)
 	}
 	now = now.Add(5*time.Minute + time.Nanosecond)
-	if _, err := service.Authenticate(context.Background(), workloadTokens.AccessToken, "instance-prod", "finance", PrivilegeDeploy); !errors.Is(err, ErrAuthoringCredentialExpired) {
+	if _, err := service.Authenticate(context.Background(), workloadTokens.AccessToken, "instance-prod", "finance", CapabilityResourcePublish); !errors.Is(err, ErrAuthoringCredentialExpired) {
 		t.Fatalf("expired workload error = %v, want expired", err)
 	}
 }
@@ -208,7 +210,7 @@ func TestAuthoringAuthRejectsDisabledHumanAndExcessiveWorkloadLifetime(t *testin
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	repository := newAuthoringAuthMemoryRepository()
 	service := newAuthoringAuthTestService(t, repository, &now)
-	scope := mustAuthoringScope(t, "instance-prod", "finance", PrivilegeDeploy)
+	scope := mustAuthoringScope(t, "instance-prod", "finance", CapabilityResourcePublish)
 	started, err := service.BeginDeviceAuthorization(context.Background(), scope)
 	if err != nil {
 		t.Fatalf("BeginDeviceAuthorization() error = %v", err)
@@ -248,9 +250,13 @@ func newAuthoringAuthTestService(t *testing.T, repository *authoringAuthMemoryRe
 	return service
 }
 
-func mustAuthoringScope(t *testing.T, target, project string, privileges ...Privilege) AuthoringScope {
+func mustAuthoringScope(t *testing.T, target, project string, privileges ...Capability) AuthoringScope {
 	t.Helper()
-	scope, err := NewAuthoringScope(target, project, privileges)
+	projectID, err := graph.NewResourceID(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := NewAuthoringScope(target, projectID, privileges)
 	if err != nil {
 		t.Fatalf("NewAuthoringScope() error = %v", err)
 	}
@@ -259,7 +265,7 @@ func mustAuthoringScope(t *testing.T, target, project string, privileges ...Priv
 
 func authorizeAuthoringDevice(t *testing.T, service *AuthoringAuthService, repository *authoringAuthMemoryRepository, now *time.Time) AuthoringTokenSet {
 	t.Helper()
-	started, err := service.BeginDeviceAuthorization(context.Background(), mustAuthoringScope(t, "instance-prod", "finance", PrivilegeDeploy))
+	started, err := service.BeginDeviceAuthorization(context.Background(), mustAuthoringScope(t, "instance-prod", "finance", CapabilityResourcePublish))
 	if err != nil {
 		t.Fatalf("BeginDeviceAuthorization() error = %v", err)
 	}

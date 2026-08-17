@@ -21,11 +21,11 @@ func TestRepositoryDeduplicatesViewerDaysAndSummarizesGlobalUsage(t *testing.T) 
 	base := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
 
 	views := []usage.View{
-		{WorkspaceID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "alice", ViewedAt: base},
-		{WorkspaceID: "sales", DashboardID: "executive", PageID: "details", PrincipalID: "alice", ViewedAt: base.Add(time.Hour)},
-		{WorkspaceID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "bob", ViewedAt: base},
-		{WorkspaceID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "alice", ViewedAt: base.Add(24 * time.Hour)},
-		{WorkspaceID: "operations", DashboardID: "health", PageID: "overview", PrincipalID: "carol", ViewedAt: base},
+		{ProjectID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "alice", ViewedAt: base},
+		{ProjectID: "sales", DashboardID: "executive", PageID: "details", PrincipalID: "alice", ViewedAt: base.Add(time.Hour)},
+		{ProjectID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "bob", ViewedAt: base},
+		{ProjectID: "sales", DashboardID: "executive", PageID: "overview", PrincipalID: "alice", ViewedAt: base.Add(24 * time.Hour)},
+		{ProjectID: "operations", DashboardID: "health", PageID: "overview", PrincipalID: "carol", ViewedAt: base},
 	}
 	for _, view := range views {
 		if err := repository.RecordView(ctx, view); err != nil {
@@ -40,7 +40,7 @@ func TestRepositoryDeduplicatesViewerDaysAndSummarizesGlobalUsage(t *testing.T) 
 	if len(summaries) != 2 {
 		t.Fatalf("summaries = %#v", summaries)
 	}
-	if got := summaries[0]; got.Key != (usage.Key{WorkspaceID: "sales", DashboardID: "executive"}) || got.ViewerCount != 2 || got.ViewerDays != 3 || !got.LastViewedAt.Equal(base.Add(24*time.Hour)) {
+	if got := summaries[0]; got.Key != (usage.Key{ProjectID: "sales", DashboardID: "executive"}) || got.ViewerCount != 2 || got.ViewerDays != 3 || !got.LastViewedAt.Equal(base.Add(24*time.Hour)) {
 		t.Fatalf("executive summary = %#v", got)
 	}
 }
@@ -49,5 +49,22 @@ func TestRepositoryRejectsIncompleteViews(t *testing.T) {
 	repository := NewRepository(nil)
 	if err := repository.RecordView(context.Background(), usage.View{}); err == nil {
 		t.Fatal("RecordView error = nil, want validation failure")
+	}
+}
+
+func TestRepositoryRejectsInvalidPersistedResourceIDs(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO dashboard_view_days (project_id, dashboard_id, principal_id, viewed_on, page_id, first_viewed_at, last_viewed_at)
+		VALUES ('invalid project', 'executive', 'alice', '2026-08-12', 'overview', '2026-08-12T09:00:00Z', '2026-08-12T09:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepository(store.SQLDB()).ListSummaries(ctx, time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("ListSummaries accepted an invalid persisted project ID")
 	}
 }

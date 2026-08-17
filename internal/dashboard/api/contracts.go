@@ -35,7 +35,6 @@ type PublicationResponse struct {
 	SuspendedAt          *string           `json:"suspendedAt,omitempty"`
 	SuspendedBy          *string           `json:"suspendedBy,omitempty"`
 	UpdatedAt            string            `json:"updatedAt"`
-	WorkspaceID          string            `json:"workspaceId"`
 }
 
 type PublicationListResponse struct {
@@ -395,9 +394,8 @@ type QueryColumn struct {
 }
 
 type QueryFieldRef struct {
-	WorkspaceID string `json:"workspaceId"`
-	Type        string `json:"type"`
-	ID          string `json:"id"`
+	Type string `json:"type"`
+	ID   string `json:"id"`
 }
 
 type QueryFreshness struct {

@@ -10,7 +10,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/admin/ui"
 	"github.com/flidai/leapview/internal/agent/api"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 func TestDirectoryListReadsSkipUnrelatedAdminProviders(t *testing.T) {
@@ -89,9 +88,9 @@ func TestBuildAdminPrincipalsKeepsEmailDuplicatesIDDistinct(t *testing.T) {
 		{ID: "principal-new", Email: "ANALYST@example.com", DisplayName: "", CreatedAt: "2026-08-08T00:00:00Z"},
 		{ID: "other", Email: "other@example.com", DisplayName: "Other"},
 	}
-	bindings := []workspace.RoleBindingView{
-		{SubjectType: string(access.SubjectPrincipal), PrincipalID: "principal-old", Role: access.RoleViewer},
-		{SubjectType: string(access.SubjectPrincipal), PrincipalID: "principal-new", Role: access.RoleEditor},
+	bindings := []adminRoleBindingView{
+		{SubjectType: "principal", PrincipalID: "principal-old", Role: "viewer"},
+		{SubjectType: "principal", PrincipalID: "principal-new", Role: "editor"},
 	}
 	groups := map[string]access.Group{
 		"sales": {ID: "sales", Name: "Sales"},
@@ -111,10 +110,10 @@ func TestBuildAdminPrincipalsKeepsEmailDuplicatesIDDistinct(t *testing.T) {
 	if oldPrincipal.ID != "principal-old" || newPrincipal.ID != "principal-new" {
 		t.Fatalf("duplicate-email principals = %#v, want distinct IDs", got[:2])
 	}
-	if len(oldPrincipal.DirectRoles) != 1 || oldPrincipal.DirectRoles[0] != access.RoleViewer {
+	if len(oldPrincipal.DirectRoles) != 1 || oldPrincipal.DirectRoles[0] != "viewer" {
 		t.Fatalf("old principal roles = %#v, want viewer", oldPrincipal.DirectRoles)
 	}
-	if len(newPrincipal.DirectRoles) != 1 || newPrincipal.DirectRoles[0] != access.RoleEditor {
+	if len(newPrincipal.DirectRoles) != 1 || newPrincipal.DirectRoles[0] != "editor" {
 		t.Fatalf("new principal roles = %#v, want editor", newPrincipal.DirectRoles)
 	}
 	if len(oldPrincipal.Groups) != 1 || len(newPrincipal.Groups) != 1 {

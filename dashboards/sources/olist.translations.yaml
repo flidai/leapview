@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:olist.translations
   name: olist.translations
-  title: Product Category Translations
+  displayName: Product Category Translations
 spec:
   connection: olist
   path: product_category_name_translation.csv

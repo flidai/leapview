@@ -23,6 +23,56 @@ type Compiled struct {
 	sourceHash [sha256.Size]byte
 }
 
+// Clone returns a detached copy of the compiled policy. Compiled policies are
+// retained by immutable authorization snapshots, but their exported filter
+// trees contain pointers and slices; returning those values directly would let
+// a caller mutate the installed snapshot through a getter. Keep the source
+// hash as well so Clone preserves the same cache/validation semantics without
+// requiring recompilation.
+func (compiled Compiled) Clone() Compiled {
+	clone := Compiled{Type: compiled.Type, sourceHash: compiled.sourceHash}
+	if compiled.RowFilter != nil {
+		row := RowFilter{AllowAll: compiled.RowFilter.AllowAll, Filters: cloneFilters(compiled.RowFilter.Filters)}
+		clone.RowFilter = &row
+	}
+	if compiled.ColumnMask != nil {
+		mask := ColumnMask{Fields: append([]string(nil), compiled.ColumnMask.Fields...), Mask: compiled.ColumnMask.Mask}
+		clone.ColumnMask = &mask
+	}
+	return clone
+}
+
+func cloneFilters(input []Filter) []Filter {
+	if input == nil {
+		return nil
+	}
+	output := make([]Filter, len(input))
+	for i, filter := range input {
+		output[i] = Filter{
+			Field: filter.Field, Fact: filter.Fact, Operator: filter.Operator,
+			Values: append([]any(nil), filter.Values...),
+			Groups: cloneFilterGroups(filter.Groups),
+		}
+		if filter.Spatial != nil {
+			spatial := *filter.Spatial
+			spatial.Points = append([]SpatialPoint(nil), filter.Spatial.Points...)
+			output[i].Spatial = &spatial
+		}
+	}
+	return output
+}
+
+func cloneFilterGroups(input []FilterGroup) []FilterGroup {
+	if input == nil {
+		return nil
+	}
+	output := make([]FilterGroup, len(input))
+	for i, group := range input {
+		output[i] = FilterGroup{Filters: cloneFilters(group.Filters)}
+	}
+	return output
+}
+
 type RowFilter struct {
 	AllowAll bool
 	Filters  []Filter
@@ -85,8 +135,12 @@ type expression struct {
 }
 
 func Compile(id, policyType, expressionJSON string) (Compiled, error) {
-	id = strings.TrimSpace(id)
-	policyType = strings.TrimSpace(policyType)
+	if err := validateCanonicalLiteral(id, "policy id"); err != nil {
+		return Compiled{}, err
+	}
+	if err := validateCanonicalLiteral(policyType, "policy type"); err != nil {
+		return Compiled{}, err
+	}
 	var value expression
 	decoder := json.NewDecoder(strings.NewReader(expressionJSON))
 	decoder.DisallowUnknownFields()
@@ -115,7 +169,7 @@ func Compile(id, policyType, expressionJSON string) (Compiled, error) {
 }
 
 func (compiled Compiled) Matches(policyType, expressionJSON string) bool {
-	return compiled.Type == strings.TrimSpace(policyType) && compiled.sourceHash == policySourceHash(strings.TrimSpace(policyType), expressionJSON)
+	return compiled.Type == policyType && compiled.sourceHash == policySourceHash(policyType, expressionJSON)
 }
 
 func policySourceHash(policyType, expressionJSON string) [sha256.Size]byte {
@@ -133,7 +187,7 @@ func requireJSONEnd(decoder *json.Decoder) error {
 }
 
 func compileRowFilter(id string, value expression) (RowFilter, error) {
-	hasField := strings.TrimSpace(value.Field) != ""
+	hasField := value.Field != ""
 	hasFilters := len(value.Filters) > 0
 	if value.AllowAll {
 		if hasField || hasFilters {
@@ -149,7 +203,7 @@ func compileRowFilter(id string, value expression) (RowFilter, error) {
 		if !hasField {
 			return RowFilter{}, compileError(id, "requires field or filters")
 		}
-		operator := strings.ToLower(strings.TrimSpace(value.Operator))
+		operator := value.Operator
 		if operator == "" {
 			operator = "equals"
 		}
@@ -157,7 +211,7 @@ func compileRowFilter(id string, value expression) (RowFilter, error) {
 		if len(values) == 0 && value.Value != nil {
 			values = append(values, value.Value)
 		}
-		filters = []Filter{{Field: strings.TrimSpace(value.Field), Operator: operator, Values: values}}
+		filters = []Filter{{Field: value.Field, Operator: operator, Values: values}}
 	}
 	for index := range filters {
 		normalized, err := normalizeFilter(id, fmt.Sprintf("filters[%d]", index), filters[index])
@@ -170,9 +224,11 @@ func compileRowFilter(id string, value expression) (RowFilter, error) {
 }
 
 func normalizeFilter(id, path string, filter Filter) (Filter, error) {
-	filter.Field = strings.TrimSpace(filter.Field)
-	filter.Fact = strings.TrimSpace(filter.Fact)
-	filter.Operator = strings.ToLower(strings.TrimSpace(filter.Operator))
+	for label, value := range map[string]string{"field": filter.Field, "fact": filter.Fact, "operator": filter.Operator} {
+		if err := validateCanonicalLiteral(value, fmt.Sprintf("%s.%s", path, label)); err != nil {
+			return Filter{}, compileError(id, "%v", err)
+		}
+	}
 	hasField := filter.Field != ""
 	hasGroups := len(filter.Groups) > 0
 	hasSpatial := filter.Spatial != nil
@@ -211,10 +267,11 @@ func normalizeFilter(id, path string, filter Filter) (Filter, error) {
 			return Filter{}, compileError(id, "%s spatial filter cannot contain scalar fields", path)
 		}
 		spatial := *filter.Spatial
-		spatial.Kind = strings.ToLower(strings.TrimSpace(spatial.Kind))
-		spatial.LatitudeField = strings.TrimSpace(spatial.LatitudeField)
-		spatial.LongitudeField = strings.TrimSpace(spatial.LongitudeField)
-		spatial.Fact = strings.TrimSpace(spatial.Fact)
+		for label, value := range map[string]string{"kind": spatial.Kind, "latitudeField": spatial.LatitudeField, "longitudeField": spatial.LongitudeField, "fact": spatial.Fact} {
+			if err := validateCanonicalLiteral(value, fmt.Sprintf("%s.spatial.%s", path, label)); err != nil {
+				return Filter{}, compileError(id, "%v", err)
+			}
+		}
 		spatial.Points = append([]SpatialPoint(nil), spatial.Points...)
 		if spatial.LatitudeField == "" || spatial.LongitudeField == "" {
 			return Filter{}, compileError(id, "%s spatial filter requires coordinate fields", path)
@@ -315,8 +372,8 @@ func compileColumnMask(id string, value expression) (ColumnMask, error) {
 		return ColumnMask{}, compileError(id, "column mask cannot use allowAll")
 	}
 	fields := append([]string(nil), value.Columns...)
-	if field := strings.TrimSpace(value.Field); field != "" {
-		fields = append(fields, field)
+	if value.Field != "" {
+		fields = append(fields, value.Field)
 	}
 	if len(fields) == 0 {
 		return ColumnMask{}, compileError(id, "column mask requires field or columns")
@@ -324,11 +381,13 @@ func compileColumnMask(id string, value expression) (ColumnMask, error) {
 	seen := map[string]struct{}{}
 	normalized := make([]string, 0, len(fields))
 	for _, field := range fields {
-		field = strings.TrimSpace(field)
+		if err := validateCanonicalLiteral(field, "column field"); err != nil {
+			return ColumnMask{}, compileError(id, "%v", err)
+		}
 		if field == "" {
 			return ColumnMask{}, compileError(id, "column mask requires non-empty fields")
 		}
-		key := strings.ToLower(field)
+		key := field
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -343,16 +402,23 @@ func compileColumnMask(id string, value expression) (ColumnMask, error) {
 }
 
 func compileMask(value string) (Mask, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	switch value {
 	case "", string(MaskNull):
 		return MaskNull, nil
-	case string(MaskRedact), "redacted":
+	case string(MaskRedact):
 		return MaskRedact, nil
 	case string(MaskZero):
 		return MaskZero, nil
 	default:
 		return "", fmt.Errorf("unsupported column mask %q", value)
 	}
+}
+
+func validateCanonicalLiteral(value, label string) error {
+	if value != strings.TrimSpace(value) || strings.ContainsAny(value, "\x00\r\n\t") {
+		return fmt.Errorf("%s must use its canonical spelling", label)
+	}
+	return nil
 }
 
 func compileError(id, format string, args ...any) error {

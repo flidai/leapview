@@ -96,7 +96,7 @@ func operationAllowed(contract OperationContract, tool agenttool.Contract) bool 
 		return false
 	}
 	switch operationPrivilege(contract) {
-	case "USE_WORKSPACE", "VIEW_ITEM", "QUERY_DATA", "PREVIEW_DATA", "REFRESH_DATA":
+	case "RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_MANAGE", "RESOURCE_PUBLISH":
 		return true
 	default:
 		return false

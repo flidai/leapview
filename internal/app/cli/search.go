@@ -3,10 +3,10 @@ package cli
 import (
 	"context"
 
-	workspacecli "github.com/flidai/leapview/internal/workspace/cli"
+	projectcli "github.com/flidai/leapview/internal/project/cli"
 	"github.com/spf13/cobra"
 )
 
 func searchCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
-	return workspacecli.SearchCommand(ctx, capabilityAPIClient{})
+	return projectcli.SearchCommand(ctx, capabilityAPIClient{})
 }

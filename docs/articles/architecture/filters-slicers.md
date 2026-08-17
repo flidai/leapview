@@ -67,7 +67,7 @@ Cross-filtering and cross-highlighting from chart, map, or table selections rema
 4. Presentation components emit typed mutations; they never replace the complete dashboard filter envelope.
 5. The route-level filter controller is the only browser owner that projects optimistic filter mutations; server state remains canonical.
 6. The server validates every binding, value, operator, target, revision, and option request.
-7. The workspace compiler resolves semantic field types and produces exact compatible target sets.
+7. The project compiler resolves semantic field types and produces exact compatible target sets.
 8. Explicitly targeted incompatible components fail compilation; implicit scope excludes incompatible components deterministically.
 9. Applied filter state, interaction selections, and spatial selections are independent roots and cannot erase one another.
 10. Clear, reset, cancel, and apply have distinct operations and testable semantics.
@@ -83,7 +83,7 @@ Cross-filtering and cross-highlighting from chart, map, or table selections rema
 flowchart LR
   accTitle: LeapView filter and slicer target architecture
   accDescr: Dashboard definitions compile into semantic filter definitions and scoped bindings. A shared browser controller sends typed commands to server-owned canonical state and renders both the Filters pane and canvas slicers. Applied state drives governed option and visual queries.
-  authored["Dashboard YAML and semantic model"] --> compiler["Workspace compiler"]
+  authored["Dashboard YAML and semantic model"] --> compiler["Project compiler"]
   compiler --> contract["Compiled definitions, bindings, and targets"]
   contract --> state["Server-owned canonical filter state"]
   pane["Filters pane"] <--> controller["Shared filter controller"]
@@ -287,7 +287,7 @@ The TypeSpec signal contract generates the filter definition, binding, presentat
 
 ## Compilation and validation
 
-The workspace compiler:
+The project compiler:
 
 1. Resolves each definition field against the semantic model.
 2. Derives value type, nullability, formatting, timezone, and calendar semantics.
@@ -379,7 +379,7 @@ Canvas source order remains keyboard order. Responsive slicers can change layout
 
 ## Security and privacy
 
-Filters narrow authorized data; they never grant access. Workspace authorization and data policies are evaluated independently of reader filter state.
+Filters narrow authorized data; they never grant access. Project-resource authorization and data policies are evaluated independently of reader filter state.
 
 - Hidden bindings are presentation policy, not row-level security.
 - Option queries cannot reveal values or counts excluded by data policy.

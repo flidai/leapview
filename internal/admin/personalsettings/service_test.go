@@ -10,7 +10,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 func TestBootstrapSignalsExplicitlyClearNullableState(t *testing.T) {
@@ -31,7 +30,7 @@ type fakeRepository struct {
 	identityErr     error
 	sessions        []access.Session
 	tokens          []access.APIToken
-	privileges      []access.Privilege
+	effective       []access.Capability
 	audits          []access.AuditEventInput
 	passwordChanged bool
 	createdToken    bool
@@ -78,7 +77,7 @@ func (f *fakeRepository) ListAPITokens(context.Context, string) ([]access.APITok
 }
 func (f *fakeRepository) CreateAPITokenWithMetadata(_ context.Context, input access.APITokenInput) (string, access.APIToken, error) {
 	f.createdToken = true
-	row := access.APIToken{ID: "token-2", PrincipalID: input.PrincipalID, Name: input.Name, WorkspaceID: input.WorkspaceID, Privileges: input.Privileges, CreatedAt: "now"}
+	row := access.APIToken{ID: "token-2", PrincipalID: input.PrincipalID, Name: input.Name, Capabilities: input.Capabilities, CreatedAt: "now"}
 	f.tokens = append(f.tokens, row)
 	return "lv_test_secret", row, nil
 }
@@ -91,8 +90,8 @@ func (f *fakeRepository) RevokeAPITokenForPrincipal(_ context.Context, _, id str
 	}
 	return errors.New("missing token")
 }
-func (f *fakeRepository) EffectivePrivileges(context.Context, string, access.ObjectRef) ([]access.Privilege, error) {
-	return f.privileges, nil
+func (f *fakeRepository) EffectiveCapabilities(context.Context, string) ([]access.Capability, error) {
+	return f.effective, nil
 }
 func (f *fakeRepository) RecordAuditEvent(_ context.Context, event access.AuditEventInput) error {
 	f.audits = append(f.audits, event)
@@ -115,12 +114,8 @@ func (f *fakeAuthoring) ListSessions(context.Context, string) ([]access.Authorin
 }
 func (f *fakeAuthoring) RevokeSession(context.Context, string, string) error { return nil }
 
-type fakeWorkspaces struct{ rows []workspace.Summary }
-
-func (f fakeWorkspaces) List(context.Context) ([]workspace.Summary, error) { return f.rows, nil }
-
 func testService(repo *fakeRepository) *Service {
-	return &Service{Repository: repo, Preferences: repo, IdentityManagement: repo, Avatar: fakeAvatar{}, Authoring: &fakeAuthoring{sessions: []access.AuthoringSession{{ID: "authoring-1", Kind: access.AuthoringSessionHumanCLI, ClientID: access.AuthoringCLIClientID, CreatedAt: time.Unix(1, 0), Scope: access.AuthoringScope{TargetID: "instance", ProjectID: "project", Privileges: []access.Privilege{access.PrivilegeAuthorProject}}}}}, LocalPasswordEnabled: true}
+	return &Service{Repository: repo, Preferences: repo, IdentityManagement: repo, Avatar: fakeAvatar{}, Authoring: &fakeAuthoring{sessions: []access.AuthoringSession{{ID: "authoring-1", Kind: access.AuthoringSessionHumanCLI, ClientID: access.AuthoringCLIClientID, CreatedAt: time.Unix(1, 0), Scope: access.AuthoringScope{TargetID: "instance", ProjectID: "project", Capabilities: []access.Capability{access.CapabilityResourcePublish}}}}}, CurrentEffectiveCapabilities: repo.EffectiveCapabilities, LocalPasswordEnabled: true}
 }
 
 func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
@@ -129,17 +124,13 @@ func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
 		identity:  access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: true},
 		sessions:  []access.Session{{ID: "browser-1", Kind: access.SessionKindBrowser, CreatedAt: "today"}, {ID: "desktop-1", Kind: access.SessionKindDesktop, ClientID: "LeapView Desktop"}},
 		tokens: []access.APIToken{
-			{ID: "token-1", Name: "CI", Privileges: []access.Privilege{access.PrivilegeQueryData}},
+			{ID: "token-1", Name: "CI", Capabilities: []access.Capability{access.CapabilityResourceRead}},
 			{ID: "token-revoked", Name: "Old CI", RevokedAt: "yesterday"},
 		},
 		theme: access.ThemeDark,
 	}
 	service := testService(repo)
-	service.Workspaces = fakeWorkspaces{rows: []workspace.Summary{
-		{ID: "sales", Title: "Sales analytics", Description: "Revenue and pipeline reporting."},
-		{ID: "operations", Title: "Operations"},
-	}}
-	repo.privileges = []access.Privilege{access.PrivilegeUseWorkspace, access.PrivilegeQueryData}
+	repo.effective = []access.Capability{access.CapabilityResourceRead, access.CapabilityResourceEdit, access.CapabilityResourcePublish}
 	state, err := service.Load(context.Background(), "principal-1", "desktop-1", true)
 	if err != nil {
 		t.Fatal(err)
@@ -156,25 +147,22 @@ func TestServiceLoadBuildsPersonalSettingsSignal(t *testing.T) {
 	if !state.Security.Sessions[1].Current || state.Security.Sessions[1].ClientLabel != "LeapView Desktop" {
 		t.Fatalf("sessions = %#v", state.Security.Sessions)
 	}
-	if len(state.Security.AuthoringSessions) != 1 || state.Security.AuthoringSessions[0].Privileges[0] != string(access.PrivilegeAuthorProject) {
+	if len(state.Security.AuthoringSessions) != 1 || state.Security.AuthoringSessions[0].Capabilities[0] != string(access.CapabilityResourcePublish) {
 		t.Fatalf("authoring sessions = %#v", state.Security.AuthoringSessions)
 	}
 	if len(state.Tokens.Items) != 1 || state.Tokens.Items[0].ID != "token-1" {
 		t.Fatalf("tokens = %#v", state.Tokens)
 	}
-	if len(state.Tokens.Scopes) != 3 {
-		t.Fatalf("token scopes = %#v", state.Tokens.Scopes)
+	if len(state.Tokens.Capabilities) != len(repo.effective) {
+		t.Fatalf("capability options = %#v", state.Tokens.Capabilities)
 	}
-	if scope := state.Tokens.Scopes[1]; scope.Kind != "workspace" || scope.WorkspaceID != "operations" || scope.Label != "Operations" || len(scope.Privileges) != 2 {
-		t.Fatalf("operations token scope = %#v", scope)
-	}
-	if privilege := state.Tokens.Scopes[2].Privileges[1]; privilege.Value != string(access.PrivilegeQueryData) || privilege.Label != "Query data" || privilege.Category != "Data" || privilege.Description == "" {
-		t.Fatalf("query privilege = %#v", privilege)
+	if option := state.Tokens.Capabilities[0]; option.Value != string(access.CapabilityResourceRead) || option.Category != "Resource" || option.Description == "" {
+		t.Fatalf("resource capability option = %#v", option)
 	}
 }
 
 func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
-	repo := &fakeRepository{principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser, Email: "user@example.com"}, identity: access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: true}, privileges: []access.Privilege{access.PrivilegeQueryData}}
+	repo := &fakeRepository{principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser, Email: "user@example.com"}, identity: access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: true}, effective: []access.Capability{access.CapabilityResourceRead}}
 	service := testService(repo)
 	if err := service.ApplyProfile(context.Background(), "principal-1", ProfileCommand{Action: "save", DisplayName: "Updated"}); err != nil {
 		t.Fatal(err)
@@ -185,15 +173,18 @@ func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
 	if err := service.ApplyTheme(context.Background(), "principal-1", ThemeCommand{Action: "save", Theme: "dark_colorblind"}); err != nil {
 		t.Fatal(err)
 	}
-	secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "CI", Privileges: []string{string(access.PrivilegeQueryData)}})
+	secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "CI", Capabilities: []string{string(access.CapabilityResourceRead)}})
 	if err != nil || secret == nil || *secret != "lv_test_secret" {
 		t.Fatalf("create token = %v, %v", secret, err)
 	}
 	if !repo.passwordChanged || !repo.createdToken || !repo.themeChanged || repo.theme != access.ThemeDarkColorblind || len(repo.audits) != 4 {
 		t.Fatalf("mutations changed=%v token=%v audits=%d", repo.passwordChanged, repo.createdToken, len(repo.audits))
 	}
-	if _, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "Unscoped"}); err == nil || !strings.Contains(err.Error(), "at least one privilege") {
-		t.Fatalf("empty token privileges error = %v", err)
+	if _, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "Escalating", Capabilities: []string{string(access.CapabilityResourcePublish)}}); err == nil || !errors.Is(err, access.ErrCapabilityNotAllowed) {
+		t.Fatalf("escalating token capability error = %v", err)
+	}
+	if secret, err := service.ApplyToken(context.Background(), "principal-1", TokenCommand{Action: "create", Name: "Deny all", Capabilities: []string{}}); err != nil || secret == nil {
+		t.Fatalf("explicit deny-all token = %v, %v", secret, err)
 	}
 	repo.identity.Source = access.IdentityManagementExternal
 	if err := service.ApplyProfile(context.Background(), "principal-1", ProfileCommand{Action: "save", DisplayName: "Nope"}); !errors.Is(err, ErrDisplayNameManaged) {

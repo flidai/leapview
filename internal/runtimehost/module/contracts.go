@@ -11,8 +11,8 @@ type CandidateBindingVersion = runtimehost.CandidateBindingVersion
 type CandidateRestriction = runtimehost.CandidateRestriction
 type CandidatePreparation = runtimehost.CandidatePreparation
 type OwnedCandidateView = runtimehost.OwnedCandidateView
-type OwnedCandidateWorkspace = runtimehost.OwnedCandidateWorkspace
 type RuntimeLifetime = runtimehost.RuntimeLifetime
+type AuthorizationSnapshotInstaller = runtimehost.AuthorizationSnapshotInstaller
 
 var (
 	ErrCandidateRuntimeInvalid      = runtimehost.ErrCandidateRuntimeInvalid

@@ -13,9 +13,10 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-type WorkspaceDatabase interface {
+type ProjectDatabase interface {
 	analyticsmaterialize.Database
 	resource.SessionProvider
 	ValidateSnapshot(context.Context, int64) error
@@ -28,13 +29,13 @@ type ConnectionResolver interface {
 	Resolve(context.Context, string, semanticmodel.Connection) (semanticmodel.Connection, error)
 }
 
-// WorkspaceRequest describes a governed analytical workspace without exposing
+// ProjectRequest describes a governed analytical project without exposing
 // DuckDB construction or cache implementation details to consumer capabilities.
-type WorkspaceRequest struct {
+type ProjectRequest struct {
 	Models                   map[string]*semanticmodel.Model
 	SnapshotID               int64
 	ServingStateID           string
-	WorkspaceID              string
+	ProjectID                projectgraph.ResourceID
 	Environment              string
 	SemanticDigest           string
 	ArtifactDigest           string
@@ -46,8 +47,8 @@ type WorkspaceRequest struct {
 	ResultLimits             dataquery.ResultLimits
 }
 
-// Workspace is the narrow analytical runtime consumed by dashboard adapters.
-type Workspace interface {
+// Project is the narrow analytical runtime consumed by dashboard adapters.
+type Project interface {
 	ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error)
 	ExecuteDataQueryArrow(context.Context, dataquery.Query, arrowquery.Sink) (dataquery.Result, error)
 	ExecuteDataQueryBundle(context.Context, []dataquery.BundleRequest) (dataquery.BundleResult, error)
@@ -59,12 +60,12 @@ type Workspace interface {
 	ReadConcurrency() int
 }
 
-type WorkspaceFactory interface {
-	OpenWorkspace(context.Context, WorkspaceRequest) (Workspace, error)
+type ProjectFactory interface {
+	OpenProject(context.Context, ProjectRequest) (Project, error)
 }
 
-type WorkspaceFactoryFunc func(context.Context, WorkspaceRequest) (Workspace, error)
+type ProjectFactoryFunc func(context.Context, ProjectRequest) (Project, error)
 
-func (f WorkspaceFactoryFunc) OpenWorkspace(ctx context.Context, request WorkspaceRequest) (Workspace, error) {
+func (f ProjectFactoryFunc) OpenProject(ctx context.Context, request ProjectRequest) (Project, error) {
 	return f(ctx, request)
 }

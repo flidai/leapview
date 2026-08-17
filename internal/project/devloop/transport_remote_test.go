@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,7 +139,7 @@ func (transport *recordingSyncTransport) Commit(
 
 func testSnapshotWithArtifacts(projectID string, artifacts []Artifact) Snapshot {
 	return Snapshot{
-		ProjectID: projectID, ProjectFile: "leapview.yaml",
-		Digest: candidateSetDigest(projectID, "leapview.yaml", artifacts), Artifacts: artifacts,
+		ProjectID: projectgraph.ResourceID(projectID), ProjectFile: "leapview.yaml",
+		Digest: candidateSetDigest(projectgraph.ResourceID(projectID), "leapview.yaml", artifacts), Artifacts: artifacts,
 	}
 }

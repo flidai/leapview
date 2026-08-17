@@ -3,214 +3,290 @@ package artifact
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
-	"github.com/flidai/leapview/internal/workspace"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
-func TestProjectDefensivelyCopiesNestedWorkspaceState(t *testing.T) {
-	definition := &manifest.Workspace{Publications: map[string]publication.Definition{
-		"public": {Name: "public", DependencyAssetIDs: []string{"dashboard:one"}},
-	}}
-	project, err := NewProject("example", map[string]WorkspaceInput{
-		"sales": {Metadata: workspace.Workspace{ID: "sales", Graph: workspace.AssetGraph{Assets: []workspace.Asset{{ID: "dashboard:sales.one"}}}}, Manifest: definition},
+func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) {
+	t.Helper()
+	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project:demo", Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
+		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
+		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
+		{ID: "semantic:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
+		{ID: "pipeline:sales", Kind: projectgraph.KindPipeline, Name: "sales_refresh"},
+		{ID: "dashboard:sales", Kind: projectgraph.KindDashboard, Name: "sales_dashboard"},
+	}, []projectgraph.Edge{
+		{From: "source:orders", To: "connection:warehouse"},
+		{From: "model:orders", To: "source:orders"},
+		{From: "semantic:sales", To: "model:orders"},
+		{From: "pipeline:sales", To: "semantic:sales"},
+		{From: "dashboard:sales", To: "semantic:sales"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition.Publications["public"] = publication.Definition{Name: "changed"}
-
-	compiled, ok := project.Workspace("sales")
-	if !ok {
-		t.Fatal("workspace is missing")
-	}
-	first := compiled.Manifest()
-	first.Publications["public"] = publication.Definition{Name: "mutated"}
-	first.Catalog.Workspace.Title = "mutated"
-	second := compiled.Manifest()
-	if got := second.Publications["public"].Name; got != "public" {
-		t.Fatalf("publication name = %q, want immutable public", got)
-	}
-	if got := second.Catalog.Workspace.Title; got == "mutated" {
-		t.Fatal("nested metadata escaped the immutable artifact")
-	}
-	metadata := compiled.Metadata()
-	metadata.Graph.Assets[0].ID = "dashboard:changed"
-	if got := compiled.Metadata().Graph.Assets[0].ID; got != "dashboard:sales.one" {
-		t.Fatalf("asset id = %q, want defensive copy", got)
-	}
-}
-
-func TestProjectCanonicalDigestIsStableAcrossMapInsertionOrder(t *testing.T) {
-	first, err := NewProject("example", map[string]WorkspaceInput{
-		"zeta":  {Metadata: workspace.Workspace{ID: "zeta"}, Manifest: &manifest.Workspace{}},
-		"alpha": {Metadata: workspace.Workspace{ID: "alpha"}, Manifest: &manifest.Workspace{}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := NewProject("example", map[string]WorkspaceInput{
-		"alpha": {Metadata: workspace.Workspace{ID: "alpha"}, Manifest: &manifest.Workspace{}},
-		"zeta":  {Metadata: workspace.Workspace{ID: "zeta"}, Manifest: &manifest.Workspace{}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Digest() != second.Digest() || string(first.Canonical()) != string(second.Canonical()) {
-		t.Fatalf("canonical artifacts differ:\n%s\n%s", first.Canonical(), second.Canonical())
-	}
-	ids := first.WorkspaceIDs()
-	if got := ids[0] + "," + ids[1]; got != "alpha,zeta" {
-		t.Fatalf("workspace ids = %q, want sorted", got)
-	}
-}
-
-func TestDashboardDefinitionIsAnImmutableCapabilityProjection(t *testing.T) {
-	project, err := NewProject("example", map[string]WorkspaceInput{
-		"sales": {
-			Metadata: workspace.Workspace{ID: "sales"},
-			Manifest: &manifest.Workspace{
-				Models: map[string]*semanticmodel.Model{
-					"orders": {Name: "orders", Title: "Orders"},
-				},
-				DashboardDefinitions: map[string]dashboarddefinition.Definition{
-					"overview": {ID: "overview", Title: "Overview"},
-				},
-				Catalog: manifest.Catalog{
-					Workspace:  manifest.CatalogWorkspace{ID: "sales", Title: "Sales"},
-					Dashboards: []manifest.CatalogDashboard{{ID: "overview", Title: "Overview", Tags: []string{"core"}}},
-				},
-			},
+	return graphValue, manifest.Project{
+		ID: "project:demo", Name: "demo", Title: "Demo",
+		Connections: map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
+		Sources: map[string]semanticmodel.Source{
+			"source:orders": {Connection: "connection:warehouse"},
 		},
-	})
+		Models: map[string]semanticmodel.Table{
+			"model:orders": {Source: "source:orders", SourceDependencies: []string{"source:orders"}},
+		},
+		SemanticModels: map[string]*semanticmodel.Model{
+			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders"}}},
+		},
+		DashboardDefinitions: map[string]dashboarddefinition.Definition{
+			"dashboard:sales": {ID: "dashboard:sales", SemanticModel: "semantic:sales"},
+		},
+		RefreshPipelines: map[string]refreshschedule.Definition{
+			"pipeline:sales": {ID: "pipeline:sales", Name: "sales_refresh", SemanticModelID: "semantic:sales"},
+		},
+		NameIndex: manifest.NameIndex{
+			Connections:    map[string]string{"warehouse": "connection:warehouse"},
+			Sources:        map[string]string{"orders": "source:orders"},
+			Models:         map[string]string{"orders_model": "model:orders"},
+			SemanticModels: map[string]string{"sales": "semantic:sales"},
+			Dashboards:     map[string]string{"sales": "dashboard:sales"},
+			Pipelines:      map[string]string{"sales_refresh": "pipeline:sales"},
+		},
+		DashboardSources: map[string]manifest.DashboardSource{
+			"dashboard:sales": {Document: dashboardauthoring.Dashboard{ID: "dashboard:sales", SemanticModel: "semantic:sales"}, Path: "dashboards/sales.yaml"},
+		},
+		ResourceFiles: map[string]string{
+			"project:demo":         "leapview.yaml",
+			"connection:warehouse": "connections/warehouse.yaml",
+			"source:orders":        "sources/orders.yaml",
+			"model:orders":         "models/orders.yaml",
+			"semantic:sales":       "semantic-models/sales.yaml",
+			"pipeline:sales":       "pipelines/sales.yaml",
+			"dashboard:sales":      "dashboards/sales.yaml",
+		},
+	}
+}
+
+func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	first, err := NewProject(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
+	}
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "sqlite"}
+	second, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Digest() == second.Digest() {
+		t.Fatal("manifest mutation did not change project artifact digest")
+	}
+	decoded, err := Decode(first.Canonical())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ProjectID() != graphValue.ProjectID() || decoded.Graph().Digest() != graphValue.Digest() {
+		t.Fatalf("project identity = (%q, %q), want (%q, %q)", decoded.ProjectID(), decoded.Graph().Digest(), graphValue.ProjectID(), graphValue.Digest())
+	}
+	models := decoded.Models()
+	model, ok := models["semantic:sales"]
+	if !ok {
+		t.Fatal("semantic model projection missing")
+	}
+	if _, ok := model.Sources["orders"]; !ok {
+		t.Fatalf("semantic runtime symbolic ref was rewritten: %#v", model.Sources)
+	}
+	if got := decoded.Manifest().NameIndex.SemanticModels["sales"]; got != "semantic:sales" {
+		t.Fatalf("name index semantic model = %q, want semantic:sales", got)
+	}
+	if got := decoded.RefreshDefinition().ConnectionIDs["warehouse"]; got != "connection:warehouse" {
+		t.Fatalf("refresh connection ID = %q, want connection:warehouse", got)
 	}
 	var wire map[string]any
-	if err := json.Unmarshal(project.Canonical(), &wire); err != nil {
+	if err := json.Unmarshal(first.Canonical(), &wire); err != nil {
 		t.Fatal(err)
 	}
-	workspaces, ok := wire["workspaces"].(map[string]any)
-	if !ok {
-		t.Fatalf("canonical workspaces = %#v", wire["workspaces"])
+	if _, ok := wire["workspaces"]; ok {
+		t.Fatalf("project artifact retained workspace key: %#v", wire)
 	}
-	sales, ok := workspaces["sales"].(map[string]any)
-	if !ok {
-		t.Fatalf("canonical sales workspace = %#v", workspaces["sales"])
-	}
-	manifest, ok := sales["manifest"].(map[string]any)
-	if !ok {
-		t.Fatalf("canonical manifest = %#v", sales["manifest"])
-	}
-	if _, ok := manifest["Dashboards"]; ok {
-		t.Fatalf("canonical manifest retained authored Dashboards collection: %#v", manifest["Dashboards"])
-	}
-	if _, ok := manifest["DashboardDefinitions"]; !ok {
-		t.Fatalf("canonical manifest omitted DashboardDefinitions: %#v", manifest)
-	}
-	compiled, ok := project.Workspace("sales")
-	if !ok {
-		t.Fatal("workspace is missing")
-	}
-	first := compiled.DashboardDefinition()
-	first.Catalog.Workspace.Title = "changed"
-	first.Catalog.Dashboards[0].Tags[0] = "changed"
-	first.Models["orders"].Title = "Changed"
-	changedDashboard := first.Dashboards["overview"]
-	changedDashboard.Title = "Changed"
-	first.Dashboards["overview"] = changedDashboard
-
-	second := compiled.DashboardDefinition()
-	if second.Catalog.Workspace.Title != "Sales" ||
-		second.Catalog.Dashboards[0].Tags[0] != "core" ||
-		second.Models["orders"].Title != "Orders" ||
-		second.Dashboards["overview"].Title != "Overview" {
-		t.Fatalf("dashboard projection retained caller mutation: %#v", second)
+	if _, ok := wire["identity"]; ok {
+		t.Fatalf("project artifact retained serving identity: %#v", wire)
 	}
 }
 
-func TestDecodeRejectsUnsupportedArtifactVersion(t *testing.T) {
-	_, err := Decode([]byte(`{"version":0,"projectId":"example","workspaces":{}}`))
-	var unsupported UnsupportedVersionError
-	if !errors.As(err, &unsupported) {
-		t.Fatalf("Decode() error = %v, want UnsupportedVersionError", err)
+func TestProjectAcceptsCompleteGraphManifest(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if project.ProjectID() != "project:demo" || len(project.Graph().Resources()) != 7 {
+		t.Fatalf("project = (%q, %d resources), want complete project graph", project.ProjectID(), len(project.Graph().Resources()))
 	}
 }
 
-func TestAuthoredDashboardSourceRoundTripAndDeepCopy(t *testing.T) {
-	document := dashboardauthoring.Dashboard{
-		ID: "overview", SemanticModel: "sales",
-		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders": {Type: "bar", Title: "Orders"},
-		}),
+func TestProjectRejectsManifestSemanticModelMissingFromGraph(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	delete(projectManifest.SemanticModels, "semantic:sales")
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `graph resource "semantic:sales" (semantic_model) is absent from manifest semanticModels`) {
+		t.Fatalf("NewProject() error = %v, want deterministic missing semantic model diagnostic", err)
 	}
-	manifestSource := manifest.DashboardSource{
-		Document: document,
-		Metadata: manifest.DashboardSourceMetadata{
-			Workspace: "sales", Name: "overview", Title: "Overview", Description: "Sales", Owner: "owner@example.com",
-			Tags: []string{"core"},
-		},
-		Path: "workspaces/sales/dashboards/overview.yaml",
+}
+
+func TestProjectRejectsManifestSemanticModelWrongGraphKind(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.SemanticModels["connection:warehouse"] = projectManifest.SemanticModels["semantic:sales"]
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest semanticModels key "connection:warehouse" resolves to graph kind "connection", want "semantic_model"`) {
+		t.Fatalf("NewProject() error = %v, want deterministic wrong-kind diagnostic", err)
 	}
-	project, err := NewProject("example", map[string]WorkspaceInput{
-		"sales": {Metadata: workspace.Workspace{ID: "sales"}, Manifest: &manifest.Workspace{
-			Catalog:          manifest.Catalog{Workspace: manifest.CatalogWorkspace{ID: "sales"}},
-			DashboardSources: map[string]manifest.DashboardSource{"overview": manifestSource},
-		}},
-	})
+}
+
+func TestProjectRejectsDanglingSourceConnectionReference(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	source := projectManifest.Sources["source:orders"]
+	source.Connection = "connection:missing"
+	projectManifest.Sources["source:orders"] = source
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest source "source:orders" connection reference "connection:missing" is missing from graph`) {
+		t.Fatalf("NewProject() error = %v, want dangling source connection diagnostic", err)
+	}
+}
+
+func TestProjectRejectsWrongKindModelDependency(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	model := projectManifest.Models["model:orders"]
+	model.ModelDependencies = []string{"semantic:sales"}
+	projectManifest.Models["model:orders"] = model
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest model "model:orders" model dependency reference "semantic:sales" resolves to graph kind "semantic_model", want "model"`) {
+		t.Fatalf("NewProject() error = %v, want wrong-kind model dependency diagnostic", err)
+	}
+}
+
+func TestProjectRejectsDashboardIdentityAndSemanticReferenceDrift(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	definition := projectManifest.DashboardDefinitions["dashboard:sales"]
+	definition.SemanticModel = "semantic:missing"
+	projectManifest.DashboardDefinitions["dashboard:sales"] = definition
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest dashboard "dashboard:sales" semantic model reference "semantic:missing" is missing from graph`) {
+		t.Fatalf("NewProject() error = %v, want dangling dashboard semantic model diagnostic", err)
+	}
+
+	_, projectManifest = projectFixture(t)
+	source := projectManifest.DashboardSources["dashboard:sales"]
+	source.Document.ID = "dashboard:other"
+	projectManifest.DashboardSources["dashboard:sales"] = source
+	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest dashboardSources key "dashboard:sales" does not match document id "dashboard:other"`) {
+		t.Fatalf("NewProject() error = %v, want dashboard identity diagnostic", err)
+	}
+}
+
+func TestProjectDefensivelyCopiesManifestProjections(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	project, err := NewProject(graphValue, projectManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Digest() == "" || len(project.Canonical()) == 0 {
-		t.Fatal("authored source was not included in canonical artifact")
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "mutated"}
+	connections := project.Connections()
+	connections["connection:warehouse"] = semanticmodel.Connection{Kind: "mutated"}
+	if got := project.Connections()["connection:warehouse"].Kind; got != "managed" {
+		t.Fatalf("connection projection leaked mutation: %q", got)
+	}
+	source, ok := project.AuthoredDashboardSource("dashboard:sales")
+	if !ok {
+		t.Fatal("authored dashboard source missing")
+	}
+	source.Path = "mutated.yaml"
+	if got, _ := project.AuthoredDashboardSource("dashboard:sales"); got.Path != "dashboards/sales.yaml" {
+		t.Fatal("authored source projection leaked mutation")
+	}
+}
+
+func TestProjectRejectsIdentityMismatch(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.ID = "project:other"
+	if _, err := NewProject(graphValue, projectManifest); !errors.Is(err, projectgraph.ErrProjectIdentityMismatch) {
+		t.Fatalf("NewProject() error = %v, want identity mismatch", err)
+	}
+}
+
+func TestDecodeRejectsVersionUnknownDuplicateAndIdentity(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		data string
+		want func(error) bool
+	}{
+		{name: "version", data: `{"version":99}`, want: func(err error) bool { var unsupported UnsupportedVersionError; return errors.As(err, &unsupported) }},
+		{name: "unknown", data: strings.Replace(string(project.Canonical()), `{"version":1,`, `{"unknown":true,"version":1,`, 1), want: func(err error) bool { return strings.Contains(err.Error(), "unknown field") }},
+		{name: "duplicate case", data: strings.Replace(string(project.Canonical()), `{"version":1,`, `{"VERSION":1,"version":1,`, 1), want: func(err error) bool { return strings.Contains(err.Error(), "duplicate JSON field") }},
+		{name: "trailing", data: string(project.Canonical()) + ` {"trailing":true}`, want: func(err error) bool { return strings.Contains(err.Error(), "trailing") }},
+		{name: "identity", data: replaceManifestID(string(project.Canonical()), "project:other"), want: func(err error) bool { return errors.Is(err, projectgraph.ErrProjectIdentityMismatch) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Decode([]byte(test.data))
+			if err == nil || !test.want(err) {
+				t.Fatalf("Decode() error = %v", err)
+			}
+		})
+	}
+}
+
+func replaceManifestID(value, replacement string) string {
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(value), &wire); err != nil {
+		return value
+	}
+	var project map[string]any
+	if err := json.Unmarshal(wire["manifest"], &project); err != nil {
+		return value
+	}
+	project["id"] = replacement
+	manifest, err := json.Marshal(project)
+	if err != nil {
+		return value
+	}
+	wire["manifest"] = manifest
+	result, err := json.Marshal(wire)
+	if err != nil {
+		return value
+	}
+	return string(result)
+}
+
+func TestProjectRoundTripRetainsAuthoredSourceProvenance(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
 	}
 	decoded, err := Decode(project.Canonical())
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, ok := decoded.Workspace("sales")
-	if !ok {
-		t.Fatal("workspace missing after round trip")
-	}
-	first, ok := compiled.AuthoredDashboardSource("overview")
-	if !ok {
-		t.Fatalf("source = %#v, present = %v", first, ok)
-	}
-	if first.Path != manifestSource.Path || first.Metadata.Owner != manifestSource.Metadata.Owner || first.Document.ID != "overview" {
-		t.Fatalf("source round trip = %#v", first)
-	}
-	first.Metadata.Tags[0] = "changed"
-	first.Document.Visuals["orders"].Chart.Title = "Changed"
-	second, ok := compiled.AuthoredDashboardSource("overview")
-	if !ok || second.Metadata.Tags[0] != "core" || second.Document.Visuals["orders"].Chart.Title != "Orders" {
-		t.Fatalf("source projection retained caller mutation = %#v", second)
-	}
-	if _, ok := compiled.AuthoredDashboardSource("missing"); ok {
-		t.Fatal("missing authored source returned present")
+	source, ok := decoded.AuthoredDashboardSource("dashboard:sales")
+	if !ok || source.Path != "dashboards/sales.yaml" || source.Document.ID != "dashboard:sales" {
+		t.Fatalf("source = %#v, present = %v", source, ok)
 	}
 }
 
-func TestJSONRoundTripRetainsDigest(t *testing.T) {
-	project, err := NewProject("example", map[string]WorkspaceInput{
-		"sales": {Metadata: workspace.Workspace{ID: "sales"}, Manifest: &manifest.Workspace{}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(project)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := Decode(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decoded.Digest() != project.Digest() {
-		t.Fatalf("digest = %q, want %q", decoded.Digest(), project.Digest())
-	}
+func TestCloneValueDoesNotSilentlyReturnZeroOnEncodingFailure(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("cloneValue() did not report an impossible encoding failure")
+		}
+	}()
+	_ = cloneValue(func() {})
 }

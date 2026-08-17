@@ -193,7 +193,7 @@ func admittedTestContext(t *testing.T, class workload.Class, workspaceID string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := controller.Acquire(context.Background(), workload.Request{Class: class, WorkspaceID: workspaceID, Operation: "duckdb-test"})
+	lease, err := controller.Acquire(context.Background(), workload.Request{Class: class, PrincipalID: workspaceID, Operation: "duckdb-test", EstimatedMemoryBytes: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

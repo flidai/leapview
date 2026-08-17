@@ -4,10 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasefilesystem "github.com/flidai/leapview/internal/release/filesystem"
 	releasesqlite "github.com/flidai/leapview/internal/release/sqlite"
@@ -19,6 +24,7 @@ type Module struct {
 	service            *release.Service
 	candidateArtifacts *candidateArtifactService
 	catalog            release.CatalogRepository
+	searchCatalog      projectcatalogSearcher
 	deployments        release.DeploymentLinkage
 	servingProvenance  release.ServingStateProvenanceRepository
 	environment        string
@@ -30,8 +36,7 @@ type Module struct {
 type Config struct {
 	Database          *sql.DB
 	States            ServingStateRepository
-	Workspaces        WorkspaceProvisioner
-	ManagedDataPins   release.ManagedDataPins
+	ManagedDataPins   ManagedDataPins
 	ManagedDataHook   validate.Hook
 	ArtifactDirectory string
 	Environment       servingstate.Environment
@@ -40,21 +45,34 @@ type Config struct {
 }
 
 type ServingStateRepository interface {
-	release.ServingStateRepository
 	validate.Repository
+	Create(context.Context, servingstate.CreateInput) (servingstate.State, error)
+	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
 	ActiveArtifact(
 		context.Context,
-		servingstate.WorkspaceID,
+		projectgraph.ResourceID,
 		servingstate.Environment,
 	) (servingstate.State, servingstate.Artifact, error)
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
 }
 
-type WorkspaceProvisioner interface {
-	release.WorkspaceRepository
+type ManagedDataPins interface {
+	release.PinValidator
+	ResolveCandidatePins(context.Context, projectgraph.ResourceID, []projectgraph.ResourceID, string) (map[projectgraph.ResourceID]string, error)
+}
+
+type projectcatalogSearcher interface {
+	Search(context.Context, projectcatalog.SearchRequest) (projectcatalog.Page, error)
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	environment := config.Environment
+	if string(environment) != strings.TrimSpace(string(environment)) {
+		return nil, fmt.Errorf("release environment must be canonical")
+	}
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return nil, err
+	}
 	finalizeExecution, err := loadFinalizeExecutionContract()
 	if err != nil {
 		return nil, err
@@ -78,8 +96,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	validator := validate.NewService(config.States, store, releasefilesystem.Validator{}, hooks...)
 	service, err := release.NewService(release.ServiceOptions{
-		Releases: releases, Finalization: finalization, States: config.States, Workspaces: config.Workspaces,
-		Artifacts: store, Validator: validator, Pins: config.ManagedDataPins, Environment: config.Environment,
+		Releases: releases, Finalization: finalization,
+		Artifacts: store, Validator: validator, Pins: config.ManagedDataPins, Environment: environment,
 		CandidateProvenance: candidateProvenance,
 	})
 	if err != nil {
@@ -92,13 +110,14 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	module := &Module{
 		service: service,
 		candidateArtifacts: &candidateArtifactService{
-			states: config.States, workspaces: config.Workspaces,
+			states:    config.States,
 			artifacts: store, validator: validator,
-			environment: servingstate.NormalizeEnvironment(config.Environment),
-			pins:        config.ManagedDataPins,
+			environment: environment,
+			pins:        config.ManagedDataPins, provenance: servingProvenance,
 		},
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
-		environment: string(config.Environment), api: config.API, logger: logger,
+		searchCatalog: config.API.ProjectSearchCatalog,
+		environment:   string(environment), api: config.API, logger: logger,
 		finalizeExecution: finalizeExecution,
 	}
 	if err := validateFinalizeJobHandlers(finalizeExecution, module.JobHandlers()); err != nil {
@@ -109,13 +128,20 @@ func Build(_ context.Context, config Config) (*Module, error) {
 
 func (m *Module) ProvenanceForServingState(
 	ctx context.Context,
-	servingStateID string,
-	workspaceID string,
+	identity projectgraph.ServingIdentity,
 ) (release.Provenance, error) {
 	if m == nil || m.servingProvenance == nil {
 		return release.Provenance{}, release.ErrNotFound
 	}
-	return m.servingProvenance.ProvenanceForServingState(ctx, servingStateID, workspaceID)
+	return m.servingProvenance.ProvenanceForServingState(ctx, identity)
+}
+
+// SetAuthorizeConnection installs the active-snapshot connection authorizer
+// once runtime composition has established the serving lease provider.
+func (m *Module) SetAuthorizeConnection(authorizer func(context.Context, string, string, string, access.Capability) (bool, error)) {
+	if m != nil {
+		m.api.AuthorizeConnection = authorizer
+	}
 }
 
 func (m *Module) PrepareCandidateArtifacts(
@@ -130,7 +156,7 @@ func (m *Module) PrepareCandidateArtifacts(
 
 func (m *Module) RetainCandidateProvenance(
 	ctx context.Context,
-	projectID string,
+	projectID projectgraph.ResourceID,
 	provenance release.Provenance,
 ) (release.Provenance, error) {
 	if m == nil || m.service == nil {
@@ -141,7 +167,7 @@ func (m *Module) RetainCandidateProvenance(
 
 func (m *Module) CandidateProvenance(
 	ctx context.Context,
-	projectID,
+	projectID projectgraph.ResourceID,
 	candidateID string,
 	candidateRevision int64,
 ) (release.Provenance, error) {

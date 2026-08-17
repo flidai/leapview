@@ -1,6 +1,6 @@
 # Connections and sources
 
-Connections and sources deliberately answer different questions: **how can LeapView reach data?** and **which logical input should a workspace consume?** Keeping those answers separate prevents credentials and physical locations from leaking into analytical models.
+Connections and sources deliberately answer different questions: **how can LeapView reach data?** and **which logical input should the project graph consume?** Keeping those answers separate prevents credentials and physical locations from leaking into analytical models.
 
 ## Connections
 
@@ -10,8 +10,9 @@ A connection describes a physical access method and its defaults. Supported conn
 apiVersion: leapview.dev/v1
 kind: Connection
 metadata:
+  id: connection:olist
   name: olist
-  title: Olist CSV files
+  displayName: Olist CSV files
 spec:
   kind: managed
   credentials:
@@ -60,8 +61,9 @@ A source gives one accessible object a stable project identity:
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:olist.orders
   name: olist.orders
-  title: Orders
+  displayName: Orders
 spec:
   connection: olist
   path: olist_orders_dataset.csv
@@ -71,23 +73,22 @@ spec:
       description: Raw order identifier.
 ```
 
-The source may identify a path, database object, format, options, and declared fields. Use a name that reflects the governed dataset rather than a temporary filename. Model tables and workspace permissions depend on that stable name.
+The source may identify a path, database object, format, options, and declared fields. Use a name that reflects the governed dataset rather than a temporary filename. Model tables and project-resource permissions depend on that stable name.
 
 Field declarations document expected input shape and improve validation and discovery. They do not replace defensive transformations: model-table SQL should still cast or reject malformed physical values where necessary.
 
-## Workspace permission
+## Project dependency and access
 
-A workspace lists the project sources it may use under `spec.uses.sources`. Listing a source establishes the configuration dependency; it does not copy the source or its credentials into the workspace.
+A model lists the project sources it may use under `spec.sources`. Listing a source establishes the configuration dependency; it does not copy the source or its credentials into the model.
 
 ```yaml
 spec:
-  uses:
-    sources:
-      - olist.orders
-      - olist.customers
+  sources:
+    - olist.orders
+    - olist.customers
 ```
 
-Validation should fail when a model table references an undiscovered source or a source the workspace has not declared. This keeps repository layout from becoming an accidental authorization mechanism.
+Validation should fail when a model table references an undiscovered source. This keeps repository layout from becoming an accidental authorization mechanism.
 
 ## Managed and external data
 
@@ -99,7 +100,7 @@ For reproducible external refreshes, publish immutable object keys or versioned 
 
 ## Change safely
 
-Changing a connection endpoint or source path can affect every dependent workspace. Before deployment:
+Changing a connection endpoint or source path can affect every dependent project resource. Before deployment:
 
 1. Search the dependency graph for consumers.
 2. Validate the whole project.

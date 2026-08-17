@@ -9,6 +9,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,7 +22,7 @@ func TestConnectionAdministrationComposesTargetOwnedValidatedPoolDirectory(t *te
 	module := &Module{
 		connectionBindings: repository,
 		targetResolvers:    connectionbinding.ResolverSet{Infisical: resolver},
-		targetID:           binding.TargetID,
+		targetID:           binding.TargetID.String(),
 		targetEnvironment:  binding.Scope.Environment,
 		targetClass:        connectionbinding.TargetProduction,
 		connectionFactory:  factory,
@@ -39,7 +40,7 @@ func TestConnectionAdministrationComposesTargetOwnedValidatedPoolDirectory(t *te
 	})
 	require.NoError(t, err)
 	health, err := administration.Test(context.Background(), "operator-1", connectionbinding.BindingKey{
-		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	})
 	require.NoError(t, err)
 	if resolver.calls != 1 || factory.calls != 1 || health.Health != connectionbinding.HealthHealthy ||
@@ -60,10 +61,10 @@ func TestConnectionAdministrationComposesTargetOwnedValidatedPoolDirectory(t *te
 	})
 	require.NoError(t, err)
 	leases, err := runtimeBindings.Acquire(t.Context(), RuntimeBindingRequest{
-		Actor: "principal:author-1", Scope: binding.Scope, TargetID: binding.TargetID,
+		Actor: "principal:author-1", Identity: projectgraph.ServingIdentity{ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment, GenerationID: "generation-1"}, TargetID: binding.TargetID,
 		Requirements: []connectionbinding.Requirement{{
-			LogicalConnectionID: binding.LogicalConnectionID,
-			ConnectorKind:       binding.ConnectorKind,
+			ConnectionID:  binding.ConnectionID,
+			ConnectorKind: binding.ConnectorKind,
 		}},
 	})
 	require.NoError(t, err)
@@ -113,7 +114,7 @@ func TestConnectionAdministrationRejectsBindingsForAnotherTarget(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = administration.Get(context.Background(), "operator-1", connectionbinding.BindingKey{
-		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	})
 	if !errors.Is(err, connectionbinding.ErrUnauthorizedBinding) {
 		t.Fatalf("cross-target Get() error = %v", err)
@@ -128,7 +129,7 @@ func TestCandidateRuntimeBindingRegistrationMakesOnlyItsValidatedGenerationAvail
 		targetResolvers: connectionbinding.ResolverSet{
 			Infisical: &moduleCredentialResolver{snapshot: modulePoolSnapshot(t, now)},
 		},
-		targetID: binding.TargetID, targetEnvironment: binding.Scope.Environment,
+		targetID: binding.TargetID.String(), targetEnvironment: binding.Scope.Environment,
 		targetClass:       connectionbinding.TargetProduction,
 		connectionFactory: &moduleRuntimePoolFactory{},
 	}
@@ -142,30 +143,30 @@ func TestCandidateRuntimeBindingRegistrationMakesOnlyItsValidatedGenerationAvail
 	})
 	require.NoError(t, err)
 	leases, err := leaser.Acquire(t.Context(), RuntimeBindingRequest{
-		Actor: "author_1", Scope: binding.Scope, TargetID: binding.TargetID,
+		Actor: "author_1", Identity: projectgraph.ServingIdentity{ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment, GenerationID: "generation-1"}, TargetID: binding.TargetID,
 		Requirements: []ConnectionRequirement{{
-			LogicalConnectionID: binding.LogicalConnectionID,
-			ConnectorKind:       binding.ConnectorKind,
+			ConnectionID:  binding.ConnectionID,
+			ConnectorKind: binding.ConnectorKind,
 		}},
 	})
 	require.NoError(t, err)
 	registration, err := module.BindCandidateRuntime(
 		"cand_1",
-		binding.Scope.WorkspaceID,
+		binding.Scope.ProjectID,
 		leases,
 		nil,
 	)
 	require.NoError(t, err)
 	resolver, ok := module.candidateRuntimeConnectionResolver(
 		"cand_1",
-		binding.Scope.WorkspaceID,
+		binding.Scope.ProjectID,
 	)
 	if !ok {
 		t.Fatal("candidate resolver was not registered")
 	}
 	resolved, err := resolver.Resolve(
 		t.Context(),
-		binding.LogicalConnectionID.String(),
+		binding.ConnectionID.String(),
 		semanticmodel.Connection{Kind: binding.ConnectorKind},
 	)
 	require.NoError(t, err)
@@ -179,7 +180,7 @@ func TestCandidateRuntimeBindingRegistrationMakesOnlyItsValidatedGenerationAvail
 	}
 	if _, ok := module.candidateRuntimeConnectionResolver(
 		"cand_1",
-		binding.Scope.WorkspaceID,
+		binding.Scope.ProjectID,
 	); ok {
 		t.Fatal("candidate resolver remained registered after lifetime close")
 	}
@@ -193,7 +194,7 @@ func TestCandidateRuntimeBindingReplacementRemovalIsGenerationSafe(t *testing.T)
 		targetResolvers: connectionbinding.ResolverSet{
 			Infisical: &moduleCredentialResolver{snapshot: modulePoolSnapshot(t, now)},
 		},
-		targetID: binding.TargetID, targetEnvironment: binding.Scope.Environment,
+		targetID: binding.TargetID.String(), targetEnvironment: binding.Scope.Environment,
 		targetClass:       connectionbinding.TargetProduction,
 		connectionFactory: &moduleRuntimePoolFactory{},
 	}
@@ -208,21 +209,21 @@ func TestCandidateRuntimeBindingReplacementRemovalIsGenerationSafe(t *testing.T)
 	require.NoError(t, err)
 	acquire := func() *RuntimeBindingLeases {
 		leases, err := leaser.Acquire(t.Context(), RuntimeBindingRequest{
-			Actor: "author_1", Scope: binding.Scope, TargetID: binding.TargetID,
+			Actor: "author_1", Identity: projectgraph.ServingIdentity{ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment, GenerationID: "generation-1"}, TargetID: binding.TargetID,
 		})
 		require.NoError(t, err)
 		return leases
 	}
 	first, err := module.BindCandidateRuntime(
 		"cand_1",
-		binding.Scope.WorkspaceID,
+		binding.Scope.ProjectID,
 		acquire(),
 		nil,
 	)
 	require.NoError(t, err)
 	second, err := module.BindCandidateRuntime(
 		"cand_1",
-		binding.Scope.WorkspaceID,
+		binding.Scope.ProjectID,
 		acquire(),
 		nil,
 	)
@@ -232,7 +233,7 @@ func TestCandidateRuntimeBindingReplacementRemovalIsGenerationSafe(t *testing.T)
 	}
 	if _, ok := module.candidateRuntimeConnectionResolver(
 		"cand_1",
-		binding.Scope.WorkspaceID,
+		binding.Scope.ProjectID,
 	); !ok {
 		t.Fatal("retiring the replaced registration removed the current generation")
 	}
@@ -241,7 +242,7 @@ func TestCandidateRuntimeBindingReplacementRemovalIsGenerationSafe(t *testing.T)
 	}
 	if _, ok := module.candidateRuntimeConnectionResolver(
 		"cand_1",
-		binding.Scope.WorkspaceID,
+		binding.Scope.ProjectID,
 	); ok {
 		t.Fatal("current registration remained after close")
 	}
@@ -272,7 +273,7 @@ func TestConnectionAdministrationUsesExplicitEnvironmentResolverOnlyForDevelopme
 	binding.TargetID = "lvinst_local"
 	binding.Scope.Environment = "dev"
 	binding.CredentialReference = connectionbinding.CredentialReference{
-		ProjectID: "lvinst_local", Environment: "dev",
+		ProjectID: projectgraph.ResourceID("sales"), Environment: "dev",
 		SecretPath: "/", SecretKey: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
 	}
 	repository := &moduleBindingCatalog{binding: binding}
@@ -280,7 +281,7 @@ func TestConnectionAdministrationUsesExplicitEnvironmentResolverOnlyForDevelopme
 	module := &Module{
 		connectionBindings: repository,
 		targetResolvers:    connectionbinding.ResolverSet{Environment: resolver},
-		targetID:           binding.TargetID,
+		targetID:           binding.TargetID.String(),
 		targetEnvironment:  binding.Scope.Environment,
 		targetClass:        connectionbinding.TargetDevelopment,
 		connectionFactory:  &moduleRuntimePoolFactory{},
@@ -298,7 +299,7 @@ func TestConnectionAdministrationUsesExplicitEnvironmentResolverOnlyForDevelopme
 	})
 	require.NoError(t, err)
 	_, err = administration.Test(context.Background(), "operator-1", connectionbinding.BindingKey{
-		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	})
 	require.NoError(t, err)
 	if resolver.calls != 1 {
@@ -309,9 +310,9 @@ func TestConnectionAdministrationUsesExplicitEnvironmentResolverOnlyForDevelopme
 func modulePoolBinding(t *testing.T, now time.Time) connectionbinding.TargetBinding {
 	t.Helper()
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", LogicalConnectionID: "warehouse",
+		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "warehouse",
 		ConnectorKind: "postgres", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
-		Scope: connectionbinding.BindingScope{WorkspaceID: "sales", Environment: "prod"},
+		Scope: connectionbinding.BindingScope{ProjectID: "sales", Environment: "prod"},
 		Endpoint: connectionbinding.EndpointConfig{
 			Host: "warehouse.internal", Port: 5432, Database: "analytics",
 			SourceIdentity: "runtime", TLSMode: "verify-full",
@@ -346,8 +347,8 @@ func (catalog *moduleBindingCatalog) Create(_ context.Context, binding connectio
 func (catalog *moduleBindingCatalog) Binding(
 	context.Context,
 	connectionbinding.BindingScope,
-	string,
-	connectionbinding.LogicalConnectionID,
+	connectionbinding.TargetID,
+	projectgraph.ResourceID,
 ) (connectionbinding.TargetBinding, error) {
 	return catalog.binding, nil
 }
@@ -355,7 +356,7 @@ func (catalog *moduleBindingCatalog) Binding(
 func (catalog *moduleBindingCatalog) List(
 	context.Context,
 	connectionbinding.BindingScope,
-	string,
+	connectionbinding.TargetID,
 ) ([]connectionbinding.TargetBinding, error) {
 	return []connectionbinding.TargetBinding{catalog.binding}, nil
 }

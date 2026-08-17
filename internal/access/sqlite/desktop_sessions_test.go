@@ -22,7 +22,7 @@ func TestDesktopSessionMetadataIsTransactionalAndBoundToProfile(t *testing.T) {
 		PrincipalID: "principal_desktop",
 		Email:       "desktop@example.com",
 		DisplayName: "Desktop User",
-		Role:        access.RolePlatformAdmin,
+		Role:        access.PlatformRoleAdmin,
 	})
 	if err != nil {
 		t.Fatalf("create principal: %v", err)
@@ -41,8 +41,8 @@ func TestDesktopSessionMetadataIsTransactionalAndBoundToProfile(t *testing.T) {
 		return access.AuditEventInput{
 			PrincipalID:  principal.ID,
 			Action:       "desktop_session.created",
-			TargetType:   "desktop_profile",
-			TargetID:     profileID,
+			ResourceKind: "desktop_profile",
+			ResourceID:   profileID,
 			Status:       "success",
 			MetadataJSON: "{}",
 		}, err
@@ -106,7 +106,7 @@ func TestDesktopSessionsAreListedWithoutSecretsAndExpireOnIdleOrAbsoluteLifetime
 		PrincipalID: "principal_desktop_lifecycle",
 		Email:       "desktop-lifecycle@example.com",
 		DisplayName: "Desktop Lifecycle User",
-		Role:        access.RolePlatformAdmin,
+		Role:        access.PlatformRoleAdmin,
 	})
 	if err != nil {
 		t.Fatalf("create principal: %v", err)

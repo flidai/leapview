@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"encoding/json"
+	"errors"
 	"strings"
 
 	agentcore "github.com/flidai/leapview/pkg/agent"
@@ -18,7 +20,6 @@ const MaxTurnReferences = 12
 // value describes the dashboard state the user is asking about.
 type TurnContext struct {
 	Surface        string           `json:"surface"`
-	WorkspaceID    string           `json:"workspaceId,omitempty"`
 	DashboardID    string           `json:"dashboardId,omitempty"`
 	DashboardTitle string           `json:"dashboardTitle,omitempty"`
 	PageID         string           `json:"pageId,omitempty"`
@@ -29,6 +30,29 @@ type TurnContext struct {
 	Generation     int64            `json:"generation,omitempty"`
 	Filters        map[string]any   `json:"filters,omitempty"`
 	References     []TurnReference  `json:"references,omitempty"`
+}
+
+// UnmarshalJSON rejects the former client-selectable project field instead
+// of silently ignoring it. Context is always rebound to the active serving
+// project by the agent module; accepting projectId here would create a
+// compatibility path that lets callers select a different project.
+func (c *TurnContext) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for key := range fields {
+		if strings.EqualFold(key, "projectId") {
+			return errors.New("projectId is server-bound and must not be supplied")
+		}
+	}
+	type turnContext TurnContext
+	var decoded turnContext
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*c = TurnContext(decoded)
+	return nil
 }
 
 type DataExploration struct {
@@ -62,7 +86,7 @@ type TurnReference struct {
 	Reference   TurnReferenceKey        `json:"reference"`
 	Name        string                  `json:"name,omitempty"`
 	Description string                  `json:"description,omitempty"`
-	Workspace   TurnReferenceWorkspace  `json:"workspace"`
+	Resource    TurnReferenceResource   `json:"resource"`
 	Hierarchy   []string                `json:"hierarchy,omitempty"`
 	Href        string                  `json:"href,omitempty"`
 	Locations   []TurnReferenceLocation `json:"locations,omitempty"`
@@ -84,12 +108,11 @@ type TurnReference struct {
 }
 
 type TurnReferenceKey struct {
-	WorkspaceID string `json:"workspaceId"`
-	Type        string `json:"type"`
-	ID          string `json:"id"`
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
 }
 
-type TurnReferenceWorkspace struct {
+type TurnReferenceResource struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
@@ -104,7 +127,6 @@ type TurnReferenceLocation struct {
 
 func (c TurnContext) normalized() TurnContext {
 	c.Surface = strings.ToLower(strings.TrimSpace(c.Surface))
-	c.WorkspaceID = strings.TrimSpace(c.WorkspaceID)
 	c.DashboardID = strings.TrimSpace(c.DashboardID)
 	c.DashboardTitle = strings.TrimSpace(c.DashboardTitle)
 	c.PageID = strings.TrimSpace(c.PageID)
@@ -117,13 +139,12 @@ func (c TurnContext) normalized() TurnContext {
 	refs := make([]TurnReference, 0, len(c.References))
 	seen := map[string]struct{}{}
 	for _, ref := range c.References {
-		ref.Reference.Type = strings.ToLower(strings.TrimSpace(ref.Reference.Type))
+		ref.Reference.Kind = strings.ToLower(strings.TrimSpace(ref.Reference.Kind))
 		ref.Reference.ID = strings.TrimSpace(ref.Reference.ID)
-		ref.Reference.WorkspaceID = strings.TrimSpace(ref.Reference.WorkspaceID)
 		ref.Name = strings.TrimSpace(ref.Name)
 		ref.Description = strings.TrimSpace(ref.Description)
-		ref.Workspace.ID = strings.TrimSpace(ref.Workspace.ID)
-		ref.Workspace.Name = strings.TrimSpace(ref.Workspace.Name)
+		ref.Resource.ID = strings.TrimSpace(ref.Resource.ID)
+		ref.Resource.Name = strings.TrimSpace(ref.Resource.Name)
 		hierarchy := make([]string, 0, len(ref.Hierarchy))
 		for _, part := range ref.Hierarchy {
 			if part = strings.TrimSpace(part); part != "" {
@@ -143,10 +164,10 @@ func (c TurnContext) normalized() TurnContext {
 		ref.DatasetID = strings.TrimSpace(ref.DatasetID)
 		ref.FieldID = strings.TrimSpace(ref.FieldID)
 		ref.AssetID = strings.TrimSpace(ref.AssetID)
-		if ref.Reference.Type == "" || ref.Reference.ID == "" || ref.Reference.WorkspaceID == "" {
+		if ref.Reference.Kind == "" || ref.Reference.ID == "" {
 			continue
 		}
-		key := ref.Reference.WorkspaceID + ":" + ref.Reference.Type + ":" + ref.Reference.ID
+		key := ref.Reference.Kind + ":" + ref.Reference.ID
 		if _, ok := seen[key]; ok {
 			continue
 		}

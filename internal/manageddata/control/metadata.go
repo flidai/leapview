@@ -9,7 +9,10 @@ import (
 // RevisionMetadata carries the upload provenance associated with a public
 // revision. Implementations must scope revision lookup to its collection.
 type RevisionMetadata struct {
-	Revision        manageddata.Revision
+	Revision manageddata.Revision
+	// PublicID is the content-addressed identifier exposed by the transport
+	// contract. Revision.ID remains the operational database identity.
+	PublicID        string
 	UploadSessionID string
 }
 

@@ -1,0 +1,7 @@
+apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata:
+  id: pipeline:visuals-refresh
+  name: visuals-refresh
+spec:
+  semanticModel: semantic-model:visuals

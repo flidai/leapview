@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:olist.customers
   name: olist.customers
-  title: Customers
+  displayName: Customers
 spec:
   connection: olist
   path: olist_customers_dataset.csv

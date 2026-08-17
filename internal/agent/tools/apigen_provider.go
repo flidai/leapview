@@ -18,7 +18,7 @@ import (
 )
 
 type Scope struct {
-	WorkspaceID    string
+	ProjectID      string
 	PrincipalID    string
 	ConversationID string
 	DevAuthBypass  bool
@@ -26,9 +26,9 @@ type Scope struct {
 }
 
 type CredentialScope struct {
-	WorkspaceID string
-	Restricted  bool
-	Privileges  []string
+	ProjectID    string
+	Restricted   bool
+	Capabilities []string
 }
 
 type APIGenAuthorizeFunc func(ctx context.Context, scope Scope, operationID string) (agentcore.ToolResult, bool)
@@ -46,7 +46,6 @@ const maxAgentQueryRows = 50
 func (p APIGenProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 	definitions := make([]agentcore.ToolDefinition, 0, len(p.Operations))
 	for _, operation := range p.Operations {
-		operation := operationForScope(operation, scope)
 		outputSchema := requireToolObjectSchema(operation.Tool.OutputSchema)
 		if operation.Tool.Name == "query_dashboard_visual" {
 			outputSchema = json.RawMessage(agentcontracts.DashboardVisualQueryResultSchemaJSON)
@@ -108,18 +107,17 @@ func (p APIGenProvider) Run(ctx context.Context, scope Scope, operation APIGenOp
 		return apigenAgentToolError("authorization_failed", "agent tool authorizer is not configured")
 	}
 	arguments := normalizeCuratedQueryArguments(operation.Tool.Name, call.Arguments)
-	request, err := agenttool.BuildRequest(operation.Tool, arguments, agenttool.Context{"workspace": scope.WorkspaceID})
+	request, err := agenttool.BuildRequest(operation.Tool, arguments, agenttool.Context{"project": scope.ProjectID})
 	if err != nil {
 		return agentToolRuntimeError(err)
 	}
 	request = withAPIGenRouteContext(request, operation.Tool.Path)
 	runScope := scope
-	runScope.WorkspaceID = strings.TrimSpace(chi.URLParam(request, "workspace"))
+	runScope.ProjectID = strings.TrimSpace(chi.URLParam(request, "project"))
 	if errResult, ok := p.Authorize(ctx, runScope, operation.Contract.OperationID); !ok {
 		return errResult
 	}
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
-		WorkspaceID: runScope.WorkspaceID,
 		Surface:     dataquery.SurfaceAgent,
 		Operation:   dataquery.OperationAgentQuery,
 		PrincipalID: runScope.PrincipalID,
@@ -289,71 +287,6 @@ func (r *responseCapture) Response() *http.Response {
 		ContentLength: int64(r.body.Len()),
 		Request:       r.request,
 	}
-}
-
-func operationForScope(operation APIGenOperation, scope Scope) APIGenOperation {
-	if strings.TrimSpace(scope.WorkspaceID) != "" {
-		return operation
-	}
-	hasWorkspaceContext := false
-	for index := range operation.Tool.Bindings {
-		binding := &operation.Tool.Bindings[index]
-		if binding.Mode != "context" || binding.ContextKey != "workspace" {
-			continue
-		}
-		hasWorkspaceContext = true
-		break
-	}
-	if !hasWorkspaceContext {
-		return operation
-	}
-	tool := agenttool.CloneContract(operation.Tool)
-	for index := range tool.Bindings {
-		binding := &tool.Bindings[index]
-		if binding.Mode != "context" || binding.ContextKey != "workspace" {
-			continue
-		}
-		binding.Argument = "workspace"
-		binding.Mode = "model"
-		binding.ContextKey = ""
-		binding.Required = true
-	}
-	tool.InputSchema = requireToolStringProperty(tool.InputSchema, "workspace")
-	operation.Tool = tool
-	return operation
-}
-
-func requireToolStringProperty(input json.RawMessage, name string) json.RawMessage {
-	var schema map[string]any
-	if err := json.Unmarshal(input, &schema); err != nil {
-		return input
-	}
-	properties, _ := schema["properties"].(map[string]any)
-	if properties == nil {
-		properties = map[string]any{}
-		schema["properties"] = properties
-	}
-	properties[name] = map[string]any{
-		"type":        "string",
-		"minLength":   1,
-		"description": "Workspace ID to query.",
-	}
-	required, _ := schema["required"].([]any)
-	for _, item := range required {
-		if item == name {
-			encoded, err := json.Marshal(schema)
-			if err == nil {
-				return encoded
-			}
-			return input
-		}
-	}
-	schema["required"] = append(required, name)
-	encoded, err := json.Marshal(schema)
-	if err != nil {
-		return input
-	}
-	return encoded
 }
 
 func withAPIGenRouteContext(request *http.Request, pathTemplate string) *http.Request {

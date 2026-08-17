@@ -20,7 +20,6 @@ import (
 	parserfilter "github.com/scim2/filter-parser/v2"
 )
 
-const directoryWorkspace = ""
 
 type Repository interface {
 	UpsertSCIMUser(ctx context.Context, input access.SCIMUserInput) (access.SCIMUser, error)
@@ -774,10 +773,9 @@ func scimAuditInput(r *http.Request, action, targetType, targetID, status string
 	}
 	bytes, _ := json.Marshal(metadata)
 	return access.AuditEventInput{
-		WorkspaceID:   directoryWorkspace,
 		Action:        action,
-		TargetType:    targetType,
-		TargetID:      targetID,
+		ResourceKind:  targetType,
+		ResourceID:    targetID,
 		Status:        status,
 		RequestID:     requestIDFromRequest(r),
 		CorrelationID: correlationIDFromRequest(r),

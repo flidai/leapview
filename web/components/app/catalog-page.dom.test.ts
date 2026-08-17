@@ -75,13 +75,8 @@ for (const viewport of [
           titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
           descriptions: rows.map((row) => row.querySelector('.entity-list-description')?.textContent?.trim()),
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
-          workspaces: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
-          refreshed: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
-          refreshedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.getAttribute('title')),
-          workspaceOptions: Array.from(root.querySelectorAll('.entity-filter option')).map((option) => ({
-            id: (option as HTMLOptionElement).value,
-            label: option.textContent?.trim(),
-          })),
+          refreshed: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
+          refreshedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.getAttribute('title')),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
           popularityLabels: rows.map((row) => row.querySelector('.entity-list-badge')?.getAttribute('aria-label') ?? ''),
@@ -113,16 +108,9 @@ for (const viewport of [
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
         descriptions: ['Fixture report', 'Fulfillment and delivery performance.', 'Stock exposure and replenishment.', 'Customer profile details.'],
-        headers: ['Dashboard', 'Workspace', 'Popularity', 'Last refreshed'],
-        workspaces: ['Sales', 'Operations', 'Operations', 'Customer Success'],
+        headers: ['Dashboard', 'Popularity', 'Last refreshed'],
         refreshed: ['2 hr ago', '19 hr ago', '2 days ago', '—'],
         refreshedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
-        workspaceOptions: [
-          { id: 'all', label: 'All workspaces' },
-          { id: 'sales', label: 'Sales' },
-          { id: 'operations', label: 'Operations' },
-          { id: 'customer-success', label: 'Customer Success' },
-        ],
         listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
         popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', ''],
@@ -231,24 +219,6 @@ test('CSV export uses displayed values instead of internal sort keys', async () 
   }
 })
 
-test('workspace dropdown emits the selected workspace filter', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
-    const detail = await page.locator('lv-catalog-page').evaluate((element: any) => new Promise((resolve) => {
-      element.addEventListener('lv-entity-list-query', (event: CustomEvent) => resolve(event.detail), { once: true })
-      const select = element.shadowRoot.querySelector('.entity-filter') as HTMLSelectElement
-      select.value = 'operations'
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-    }))
-
-    expect(detail).toEqual({ query: '', filter: 'operations' })
-  } finally {
-    await page.close()
-  }
-})
-
 test('relative freshness labels update while the catalog remains open', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -256,7 +226,7 @@ test('relative freshness labels update while the catalog remains open', async ()
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const freshness = () => page.locator('lv-catalog-page').evaluate((element: any) =>
-      element.shadowRoot.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim(),
+      element.shadowRoot.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim(),
     )
 
     expect(await freshness()).toBe('59 min ago')
@@ -343,7 +313,7 @@ test('dashboard appearance picker searches aliases and emits field-level updates
       orange.click()
       return selected
     })
-    expect(detail).toEqual({ workspaceId: 'sales', dashboardId: 'executive-sales', color: 'orange' })
+    expect(detail).toEqual({ dashboardId: 'executive-sales', color: 'orange' })
     const selectedColorState = await picker.evaluate((element: HTMLElement) => {
       const picker = element.shadowRoot!.querySelector('.picker') as HTMLElement
       const icon = element.shadowRoot!.querySelector('button.icon') as HTMLElement
@@ -391,15 +361,9 @@ function testDocument(): string {
     kind: 'catalog',
     title: 'Dashboards',
     description: 'Reports backed by semantic models.',
-    workspaceFilters: [
-      { id: 'sales', title: 'Sales' },
-      { id: 'operations', title: 'Operations' },
-      { id: 'customer-success', title: 'Customer Success' },
-    ],
     dashboards: [
       {
         id: 'executive-sales',
-        workspaceId: 'sales',
         dashboardId: 'executive-sales',
         appearanceIcon: 'chart-no-axes-combined',
         appearanceColor: 'purple',
@@ -410,12 +374,10 @@ function testDocument(): string {
         tags: ['sales'],
         href: '/dashboards/executive-sales',
         popularity: 'high',
-        workspace: 'Sales',
         lastRefreshedAt: '2026-08-12T09:42:00Z',
       },
       {
         id: 'operations-health',
-        workspaceId: 'operations',
         dashboardId: 'operations-health',
         appearanceIcon: 'package-check',
         appearanceColor: 'orange',
@@ -426,7 +388,6 @@ function testDocument(): string {
         tags: ['operations'],
         href: '/dashboards/operations-health',
         popularity: 'medium',
-        workspace: 'Operations',
         lastRefreshedAt: '2026-08-11T16:20:00Z',
       },
       {
@@ -438,7 +399,6 @@ function testDocument(): string {
         tags: ['inventory'],
         href: '/dashboards/inventory-risk',
         popularity: 'low',
-        workspace: 'Operations',
         lastRefreshedAt: '2026-08-10T11:05:00Z',
       },
       {
@@ -449,7 +409,6 @@ function testDocument(): string {
         pageCount: 1,
         tags: ['customers'],
         href: '/dashboards/customer-detail',
-        workspace: 'Customer Success',
       },
     ],
   }

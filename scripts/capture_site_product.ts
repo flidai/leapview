@@ -8,7 +8,7 @@ const root = process.cwd()
 const captureRoot = join(root, '.tmp', 'site-product-capture')
 const home = join(captureRoot, 'home')
 const binary = join(captureRoot, 'leapview')
-const dashboardPath = '/workspaces/visuals/dashboards/visual-showcase/pages/overview'
+const dashboardPath = '/dashboards/dashboard:visual-showcase/pages/overview'
 const viewport = { width: 1440, height: 900 }
 
 await removeCaptureRoot()
@@ -39,7 +39,7 @@ const serverStderr = new Response(server.stderr).text()
 let captureFailure: unknown
 
 try {
-  await waitForServer(`${origin}/workspaces`, server)
+  await waitForServer(`${origin}/`, server)
   const syncOutput = await run([
     binary,
     'data',

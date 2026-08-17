@@ -135,12 +135,12 @@ func newQueryResultCacheWithLimits(capacity int, maxBytes int64, namespace strin
 	if maxBytes <= 0 {
 		maxBytes = 1
 	}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: capacity, RuntimeBytes: maxBytes, WorkspaceEntries: capacity, WorkspaceBytes: maxBytes, NodeEntries: capacity, NodeBytes: maxBytes})
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: capacity, RuntimeBytes: maxBytes, NodeEntries: capacity, NodeBytes: maxBytes})
 	if err != nil {
 		panic(err)
 	}
 	id := fmt.Sprintf("local-%d", localCacheID.Add(1))
-	scope, err := pool.OpenScope(resultcache.ScopeID{WorkspaceID: "_local", RuntimeID: id})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: id})
 	if err != nil {
 		panic(err)
 	}
@@ -219,7 +219,6 @@ func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, er
 	}
 	keyBytes, err := json.Marshal(queryResultCacheKey{
 		Namespace:                    c.namespace,
-		WorkspaceID:                  request.WorkspaceID,
 		CandidateID:                  request.CandidateID,
 		EffectivePolicyFingerprint:   request.EffectivePolicyFingerprint,
 		Operation:                    request.Operation,
@@ -260,7 +259,6 @@ func (e canceledQueryCacheFlightError) Unwrap() error { return e.err }
 
 type queryResultCacheKey struct {
 	Namespace                    string
-	WorkspaceID                  string
 	CandidateID                  string
 	EffectivePolicyFingerprint   string
 	Operation                    string

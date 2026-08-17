@@ -26,6 +26,7 @@ import (
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/go-chi/chi/v5"
 )
@@ -41,8 +42,14 @@ type Settings interface {
 }
 
 type Options struct {
-	Service                *agent.Service
+	Service *agent.Service
+	// ActiveProjectID is retained for statically bound compositions. When
+	// ResolveProjectID is configured, it is authoritative and evaluated for
+	// each request; it is never read from request paths or signal payloads.
+	ActiveProjectID        string
+	ResolveProjectID       func(context.Context) (projectgraph.ResourceID, error)
 	Settings               Settings
+	PlatformAdmin          func(context.Context, string) (bool, error)
 	CurrentPrincipal       func(*stdhttp.Request) (Principal, bool)
 	CurrentCredential      func(*stdhttp.Request) (access.APICredential, bool)
 	Broker                 *pagestream.Broker
@@ -63,9 +70,8 @@ type Options struct {
 	APIGenToolContracts    map[string]agenttool.Contract
 }
 
-func (h *Handler) DashboardBootstrap(r *stdhttp.Request, workspaceID string) ui.ChatViewState {
+func (h *Handler) DashboardBootstrap(r *stdhttp.Request) ui.ChatViewState {
 	scope := h.chatScope(r)
-	scope.WorkspaceID = strings.TrimSpace(workspaceID)
 	return h.chatSignal(r.Context(), scope, "", "", false)
 }
 
@@ -579,6 +585,9 @@ func (h *Handler) GetAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h *Handler) GetAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	details, err := h.AdminDetails(r.Context())
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -607,12 +616,41 @@ func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 }
 
 func (h *Handler) UpdateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	var input api.AdminAgentConfigPatchRequest
 	if err := decodeAgentJSON(r, &input); err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
 	}
 	h.updateAgentConfig(w, r, input.SystemPrompt)
+}
+
+func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
+	if h.options.CurrentPrincipal == nil {
+		writeJSONError(w, fmt.Errorf("agent configuration requires authentication"), stdhttp.StatusUnauthorized)
+		return false
+	}
+	principal, ok := h.options.CurrentPrincipal(r)
+	if !ok {
+		writeJSONError(w, fmt.Errorf("agent configuration requires an authenticated principal"), stdhttp.StatusUnauthorized)
+		return false
+	}
+	if h.options.PlatformAdmin == nil {
+		writeJSONError(w, fmt.Errorf("platform role checker is unavailable"), stdhttp.StatusInternalServerError)
+		return false
+	}
+	admin, err := h.options.PlatformAdmin(r.Context(), principal.ID)
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusInternalServerError)
+		return false
+	}
+	if !admin {
+		writeJSONError(w, access.ErrForbidden, stdhttp.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, systemPrompt string) {
@@ -746,23 +784,26 @@ type adminAgentCommandSignals struct {
 }
 
 func agentCredentialScope(credential access.APICredential) agent.CredentialScope {
-	token := credential.Token
-	return agent.CredentialScope{
-		WorkspaceID: token.WorkspaceID,
-		Privileges:  privilegeStrings(token.Privileges),
-		Restricted:  token.Privileges != nil,
+	if credential.Authoring != nil {
+		capabilities := make([]string, len(credential.Authoring.Scope.Capabilities))
+		for index, capability := range credential.Authoring.Scope.Capabilities {
+			capabilities[index] = string(capability)
+		}
+		return agent.CredentialScope{
+			ProjectID: credential.Authoring.Scope.ProjectID.String(), Capabilities: capabilities, Restricted: true,
+		}
 	}
-}
-
-func privilegeStrings(values []access.Privilege) []string {
-	if values == nil {
-		return nil
+	if credential.Token.ID == "" {
+		return agent.CredentialScope{}
 	}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		out = append(out, string(value))
+	var capabilities []string
+	if credential.Token.Capabilities != nil {
+		capabilities = make([]string, len(credential.Token.Capabilities))
+		for index, capability := range credential.Token.Capabilities {
+			capabilities[index] = string(capability)
+		}
 	}
-	return out
+	return agent.CredentialScope{Capabilities: capabilities, Restricted: true}
 }
 
 func agentConversationDTO(row agent.Conversation) api.AgentConversationResponse {

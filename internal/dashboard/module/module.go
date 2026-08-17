@@ -32,15 +32,15 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
-	"github.com/go-chi/chi/v5"
 )
 
 type Module struct {
 	handler                       dashboardhttp.Handler
 	authoring                     *dashboardauthoringapplication.Application
 	semantic                      semanticapi.Handler
-	snapshot                      func(context.Context, string) (string, error)
+	snapshot                      func(context.Context) (string, error)
 	publications                  *publicationsqlite.Repository
 	publicationService            *publication.Service
 	publicURL                     string
@@ -69,7 +69,7 @@ type Config struct {
 	Authoring       *dashboardauthoringapplication.Application
 	HTTP            HTTPConfig
 	Semantic        SemanticConfig
-	ServingSnapshot func(context.Context, string) (string, error)
+	ServingSnapshot func(context.Context) (string, error)
 	PublicTelemetry PublicTelemetry
 	Logger          *slog.Logger
 	Trace           *pagestream.TraceStore
@@ -84,14 +84,15 @@ type Config struct {
 
 type HTTPConfig struct {
 	Metrics               queryruntime.Metrics
-	MetricsForWorkspace   func(string) (queryruntime.Metrics, bool)
+	ProjectID             projectgraph.ResourceID
+	ResolveProjectID      func(context.Context) (projectgraph.ResourceID, error)
 	Admission             workload.Admitter
 	Broker                SignalBroker
 	Logger                *slog.Logger
 	Telemetry             DashboardTelemetry
 	CurrentPrincipalID    func(*http.Request) string
 	CurrentUsagePrincipal func(*http.Request) (string, bool)
-	AuthorizeListObject   func(context.Context, string, access.ObjectRef) (bool, error)
+	AuthorizeListResource func(context.Context, string, access.ResourceRef, access.Capability) (bool, error)
 	CSRFToken             func(*http.Request) string
 	Layout                func(*http.Request) webpage.Provider
 	Environment           func(*http.Request) string
@@ -104,11 +105,11 @@ type HTTPConfig struct {
 }
 
 type SemanticConfig struct {
-	Metrics             queryruntime.Metrics
-	MetricsForWorkspace func(string) (queryruntime.Metrics, bool)
-	CurrentPrincipalID  func(*http.Request) string
-	AuthorizeListObject func(context.Context, string, access.ObjectRef) (bool, error)
-	QueryFreshness      func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	Metrics               queryruntime.Metrics
+	ResolveProjectID      func(context.Context) (projectgraph.ResourceID, error)
+	CurrentPrincipalID    func(*http.Request) string
+	AuthorizeListResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
+	QueryFreshness        func(context.Context, string, string, string) (api.QueryFreshness, bool)
 }
 
 type SignalBroker interface {
@@ -129,7 +130,6 @@ type ChatArtifactSignal = dashboardsignals.ChatArtifactSignal
 type AgentReferenceSignal = dashboardsignals.AgentReferenceSignal
 type AgentReferenceLocationSignal = dashboardsignals.AgentReferenceLocationSignal
 type AgentReferenceKeySignal = dashboardsignals.AgentReferenceKeySignal
-type AgentReferenceWorkspaceSignal = dashboardsignals.AgentReferenceWorkspaceSignal
 type ChatStatus = dashboardsignals.ChatStatus
 type ComposerSignal = dashboardsignals.ComposerSignal
 
@@ -182,24 +182,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if usageNow == nil {
 		usageNow = time.Now
 	}
-	metricsForHTTP := func(workspaceID string) (dashboardhttp.Metrics, bool) {
-		if config.HTTP.MetricsForWorkspace == nil {
-			return nil, false
-		}
-		metrics, ok := config.HTTP.MetricsForWorkspace(workspaceID)
-		return metrics, ok
-	}
-	metricsForSemantic := func(workspaceID string) (semanticapi.Metrics, bool) {
-		if config.Semantic.MetricsForWorkspace == nil {
-			return nil, false
-		}
-		metrics, ok := config.Semantic.MetricsForWorkspace(workspaceID)
-		return metrics, ok
-	}
 	telemetry := config.HTTP.Telemetry
 	handler := dashboardhttp.Handler{
-		Metrics: config.HTTP.Metrics, MetricsForWorkspace: metricsForHTTP,
-		Authoring: config.Authoring,
+		Metrics:          config.HTTP.Metrics,
+		ProjectID:        config.HTTP.ProjectID,
+		ResolveProjectID: config.HTTP.ResolveProjectID,
+		Authoring:        config.Authoring,
 		AnalyticalContext: func(ctx context.Context) context.Context {
 			return workload.WithAdmitter(ctx, config.HTTP.Admission)
 		},
@@ -228,7 +216,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		SessionStore:       sessionStore,
 		OptionCursorSecret: optionCursorSecret,
 		OptionCache:        dashboardfilter.NewOptionCache(4096),
-		CurrentPrincipalID: config.HTTP.CurrentPrincipalID, AuthorizeListObject: config.HTTP.AuthorizeListObject,
+		CurrentPrincipalID: config.HTTP.CurrentPrincipalID, AuthorizeListResource: config.HTTP.AuthorizeListResource,
 		CurrentUsagePrincipal: config.HTTP.CurrentUsagePrincipal,
 		CSRFToken:             config.HTTP.CSRFToken, Layout: config.HTTP.Layout,
 		Presentation: config.HTTP.Presentation,
@@ -246,16 +234,31 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if usageRecorder != nil {
 		handler.RecordDashboardView = usageRecorder.RecordView
 	}
-	handler.SessionKey = func(r *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {
-		workspaceID := chi.URLParam(r, "workspace")
-		if workspaceID == "" {
-			workspaceID = r.URL.Query().Get("workspace")
+	handler.SessionKey = func(r *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
+		dashboardID, err := projectgraph.NewResourceID(definition.ID)
+		if err != nil {
+			return dashboardsession.Key{}, err
 		}
 		servingStateID := definition.DefaultFilterState().DefaultsRevision
 		if config.ServingSnapshot != nil {
-			if active, err := config.ServingSnapshot(r.Context(), workspaceID); err == nil && active != "" {
+			active, err := config.ServingSnapshot(r.Context())
+			if err != nil {
+				return dashboardsession.Key{}, err
+			}
+			if active != "" {
 				servingStateID = active
 			}
+		}
+		projectID := config.HTTP.ProjectID
+		if config.HTTP.ResolveProjectID != nil {
+			resolved, err := config.HTTP.ResolveProjectID(r.Context())
+			if err != nil {
+				return dashboardsession.Key{}, err
+			}
+			projectID = resolved
+		}
+		if err := projectID.Validate(); err != nil {
+			return dashboardsession.Key{}, err
 		}
 		principalOrClient := clientID
 		if config.HTTP.CurrentPrincipalID != nil {
@@ -264,21 +267,21 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			}
 		}
 		return dashboardsession.Key{
-			WorkspaceOrPublication: workspaceID,
-			PrincipalOrClient:      principalOrClient,
-			DashboardID:            definition.ID,
-			ServingStateID:         servingStateID,
-			StreamInstanceID:       streamInstanceID,
-		}
+			ProjectID:         projectID,
+			PrincipalOrClient: principalOrClient,
+			DashboardID:       dashboardID,
+			ServingStateID:    servingStateID,
+			StreamInstanceID:  streamInstanceID,
+		}, nil
 	}
 	module := &Module{
 		handler:   handler,
 		authoring: config.Authoring,
 		semantic: semanticapi.Handler{
-			Metrics: config.Semantic.Metrics, MetricsForWorkspace: metricsForSemantic,
-			CurrentPrincipalID:  config.Semantic.CurrentPrincipalID,
-			AuthorizeListObject: config.Semantic.AuthorizeListObject,
-			QueryFreshness:      config.Semantic.QueryFreshness,
+			Metrics: config.Semantic.Metrics, ResolveProjectID: config.Semantic.ResolveProjectID,
+			CurrentPrincipalID:    config.Semantic.CurrentPrincipalID,
+			AuthorizeListResource: config.Semantic.AuthorizeListResource,
+			QueryFreshness:        config.Semantic.QueryFreshness,
 		},
 		snapshot:  config.ServingSnapshot,
 		publicURL: config.PublicURL, currentActor: config.CurrentActor, recordAudit: config.RecordAudit,

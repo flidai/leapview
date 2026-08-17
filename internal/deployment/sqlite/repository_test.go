@@ -3,697 +3,242 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
-	"time"
 
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/dashboard/publication"
-	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
 	"github.com/flidai/leapview/internal/deployment"
+	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
-	refreshpipelinesqlite "github.com/flidai/leapview/internal/refresh/sqlite"
-	"github.com/flidai/leapview/internal/runtimehost"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
-	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
-	"github.com/flidai/leapview/internal/workspace"
-	"github.com/pressly/goose/v3"
-	"github.com/stretchr/testify/require"
-	_ "modernc.org/sqlite"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-func TestCreateDeploymentSnapshotsCompleteTargetsAndManagedPointers(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	insertWorkspaceCandidate(t, ctx, db, "support", "support_old", "support_new", "prod")
-	insertReadyRevision(t, ctx, db, "orders", "project", "orders", "orders_v2")
-	insertBinding(t, ctx, db, "sales_new", "orders", "orders_v2", "prod")
-	insertBinding(t, ctx, db, "support_new", "orders", "orders_v2", "prod")
-	setCandidateProjectMetadata(t, ctx, db, []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}, {WorkspaceID: "support", ServingStateID: "support_new"}})
+func TestCreateDeploymentRoundTripsAndRejectsConflictingReplay(t *testing.T) {
+	store, repository := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_new", "validated", deploymentDigest("a"))
+	input := deploymentCreateInput(t, "deployment_1", "project", "prod", "generation_new", "")
 
-	created, err := repository.CreateDeployment(ctx, deployment.CreateInput{
-		ID: "deployment_1", ProjectID: "project", Environment: "prod", RequestDigest: "sha256:request", CreatedBy: "principal",
-		Targets: []deployment.TargetInput{{WorkspaceID: "support", ServingStateID: "support_new"}, {WorkspaceID: "sales", ServingStateID: "sales_new"}},
-	})
-	require.NoError(t, err)
-	if created.Status != deployment.StatusPending || len(created.Targets) != 2 || len(created.Connections) != 1 {
+	created, err := repository.CreateDeployment(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ServingIdentity != input.ServingIdentity || created.ArtifactDigest != input.ArtifactDigest || created.Status != deployment.StatusPending {
 		t.Fatalf("created deployment = %#v", created)
 	}
-	if created.Targets[0].WorkspaceID != "sales" || created.Targets[0].PriorServingStateID != "sales_old" {
-		t.Fatalf("targets = %#v", created.Targets)
+	replayed, err := repository.CreateDeployment(t.Context(), input)
+	if err != nil || replayed != created {
+		t.Fatalf("idempotent replay = %#v, err=%v", replayed, err)
 	}
-	connection := created.Connections[0]
-	if connection.CollectionID != "orders" || connection.RevisionID != "orders_v2" || connection.PriorRevisionID != "" || connection.PriorGeneration != 0 {
-		t.Fatalf("connection pointer = %#v", connection)
-	}
-
-	replayed, err := repository.CreateDeployment(ctx, deployment.CreateInput{
-		ID: "deployment_1", ProjectID: "project", Environment: "prod", RequestDigest: "sha256:request", CreatedBy: "principal",
-		Targets: []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}, {WorkspaceID: "support", ServingStateID: "support_new"}},
-	})
-	if err != nil || replayed.ID != created.ID {
-		t.Fatalf("idempotent replay = %#v, err = %v", replayed, err)
-	}
-	_, err = repository.CreateDeployment(ctx, deployment.CreateInput{
-		ID: "deployment_1", ProjectID: "project", Environment: "prod", RequestDigest: "sha256:different", CreatedBy: "principal",
-		Targets: []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}, {WorkspaceID: "support", ServingStateID: "support_new"}},
-	})
-	if !errors.Is(err, deployment.ErrConflict) {
-		t.Fatalf("conflicting replay error = %v", err)
+	conflict := input
+	conflict.RequestDigest = deploymentDigest("c")
+	if _, err := repository.CreateDeployment(t.Context(), conflict); !errors.Is(err, deployment.ErrConflict) {
+		t.Fatalf("conflicting replay error = %v, want ErrConflict", err)
 	}
 }
 
-func TestCreateDeploymentRollsBackWhenWorkflowCannotBeRecorded(t *testing.T) {
-	ctx, db, _ := testRepository(t)
-	injected := errors.New("injected workflow failure")
-	repository := NewRepositoryWithHooks(db, ActivationHooks{
-		RecordWorkflow: jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
-			return injected
-		}),
-	})
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	targets := []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}}
-	setCandidateProjectMetadata(t, ctx, db, targets)
-	_, err := repository.CreateDeployment(ctx, deployment.CreateInput{
-		ID: "deployment_atomic", ProjectID: "project", Environment: "prod", RequestDigest: "sha256:request",
-		CreatedBy: "principal", Targets: targets,
-		Workflow: jobs.WorkflowIntent{Job: jobs.EnqueueInput{ID: "deployment:deployment_atomic:activate"}},
-	})
-	if !errors.Is(err, injected) {
-		t.Fatalf("CreateDeployment() error = %v, want injected failure", err)
+func TestCreateDeploymentRequiresExactActivatableGeneration(t *testing.T) {
+	store, repository := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "other", "prod", "generation_other", "validated", deploymentDigest("a"))
+	input := deploymentCreateInput(t, "deployment_wrong_project", "project", "prod", "generation_other", "")
+	if _, err := repository.CreateDeployment(t.Context(), input); !errors.Is(err, deployment.ErrConflict) {
+		t.Fatalf("cross-project generation error = %v, want ErrConflict", err)
 	}
-	if _, err := repository.DeploymentByID(ctx, "deployment_atomic"); !errors.Is(err, deployment.ErrNotFound) {
-		t.Fatalf("rolled-back deployment error = %v, want ErrNotFound", err)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_failed", "failed", deploymentDigest("a"))
+	input = deploymentCreateInput(t, "deployment_failed_generation", "project", "prod", "generation_failed", "")
+	if _, err := repository.CreateDeployment(t.Context(), input); !errors.Is(err, deployment.ErrConflict) {
+		t.Fatalf("failed generation error = %v, want ErrConflict", err)
 	}
 }
 
-func TestCreateDeploymentRejectsIncompleteOrMixedProjectTargets(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(context.Context, *sql.DB)
+func TestCreateDeploymentRollsBackWithReleaseOrWorkflowFailure(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		hooks ActivationHooks
+		input func(*testing.T) deployment.CreateInput
 	}{
-		{name: "incomplete target set"},
-		{name: "mixed project source", mutate: func(ctx context.Context, db *sql.DB) {
-			if _, err := db.ExecContext(ctx, `UPDATE serving_states SET project_digest = ? WHERE id = 'support_new'`, "sha256:"+strings.Repeat("b", 64)); err != nil {
-				t.Fatal(err)
-			}
-		}},
-	}
-	for _, test := range tests {
+		{
+			name: "release linkage",
+			hooks: ActivationHooks{LinkRelease: func(context.Context, transaction.Transaction, deployment.CreateInput) error {
+				return errors.New("link failure")
+			}},
+			input: func(t *testing.T) deployment.CreateInput {
+				input := deploymentCreateInput(t, "deployment_release", "project", "prod", "generation_new", "")
+				input.ReleaseID = "release_1"
+				return input
+			},
+		},
+		{
+			name: "workflow",
+			hooks: ActivationHooks{RecordWorkflow: jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
+				return errors.New("workflow failure")
+			})},
+			input: func(t *testing.T) deployment.CreateInput {
+				input := deploymentCreateInput(t, "deployment_workflow", "project", "prod", "generation_new", "")
+				input.Workflow = jobs.WorkflowIntent{Job: jobs.EnqueueInput{ID: "deployment:activate"}}
+				return input
+			},
+		},
+	} {
 		t.Run(test.name, func(t *testing.T) {
-			ctx, db, repository := testRepository(t)
-			insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-			insertWorkspaceCandidate(t, ctx, db, "support", "support_old", "support_new", "prod")
-			targets := []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}, {WorkspaceID: "support", ServingStateID: "support_new"}}
-			setCandidateProjectMetadata(t, ctx, db, targets)
-			if test.mutate != nil {
-				test.mutate(ctx, db)
+			store, _ := openDeploymentRepository(t)
+			insertDeploymentGeneration(t, store, "project", "prod", "generation_new", "validated", deploymentDigest("a"))
+			repository := NewRepositoryWithHooks(store.SQLDB(), test.hooks)
+			input := test.input(t)
+			if _, err := repository.CreateDeployment(t.Context(), input); err == nil {
+				t.Fatal("CreateDeployment unexpectedly succeeded")
 			}
-			requestTargets := targets
-			if test.name == "incomplete target set" {
-				requestTargets = targets[:1]
-			}
-			_, err := repository.CreateDeployment(ctx, deployment.CreateInput{
-				ID: "deployment_invalid", ProjectID: "project", Environment: "prod", RequestDigest: "sha256:request", CreatedBy: "principal", Targets: requestTargets,
-			})
-			if !errors.Is(err, deployment.ErrConflict) {
-				t.Fatalf("CreateDeployment() error = %v, want conflict", err)
+			if _, err := repository.DeploymentByID(t.Context(), input.ID); !errors.Is(err, deployment.ErrNotFound) {
+				t.Fatalf("rolled-back deployment error = %v, want ErrNotFound", err)
 			}
 		})
 	}
 }
 
-func TestActivateDeploymentAtomicallyAppliesArtifactAccessPolicy(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	targets := []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}}
-	setCandidateProjectMetadata(t, ctx, db, targets)
-	policy, err := json.Marshal(workspace.AccessPolicy{
-		Groups: map[string]workspace.WorkspaceGroup{"analysts": {Name: "Analysts", Members: []workspace.WorkspaceGroupMember{{Email: "analyst@example.com"}}}},
-	})
-	require.NoError(t, err)
-	if _, err := db.ExecContext(ctx, `UPDATE serving_states SET access_policy_json = ? WHERE id = 'sales_new'`, string(policy)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO assets (snapshot_id, logical_asset_id, workspace_id, serving_state_id, asset_type, asset_key, payload_schema, content_hash) VALUES ('asset:sales_new', 'dashboard:sales', 'sales', 'sales_new', 'dashboard', 'sales.executive', 'v1', 'hash')`); err != nil {
-		t.Fatal(err)
-	}
-	created := createDeployment(t, ctx, repository, "deployment_access", targets)
-	if _, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID)); err != nil {
-		t.Fatal(err)
-	}
-	var groupCount, objectCount int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM groups WHERE workspace_id = 'sales' AND name = 'Analysts'`).Scan(&groupCount); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM securable_objects WHERE id = 'dashboard:sales:executive' AND parent_id = 'workspace:sales'`).Scan(&objectCount); err != nil {
-		t.Fatal(err)
-	}
-	if groupCount != 1 || objectCount != 1 {
-		t.Fatalf("activated access state: groups=%d dashboard_objects=%d", groupCount, objectCount)
-	}
-}
-
-func TestActivateDeploymentAtomicallyReconcilesDashboardPublications(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	targets := []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}}
-	setCandidateProjectMetadata(t, ctx, db, targets)
-	snapshot, err := json.Marshal(map[string]publication.Definition{
-		"website": {Name: "website", Dashboard: "executive", DefaultPage: "overview", ConfigurationDigest: "sha256:publication", AllowedOrigins: []string{"https://leapview.dev"}},
-	})
-	require.NoError(t, err)
-	if _, err := db.ExecContext(ctx, `UPDATE serving_states SET dashboard_publications_json = ? WHERE id = 'sales_new'`, string(snapshot)); err != nil {
-		t.Fatal(err)
-	}
-	created := createDeployment(t, ctx, repository, "deployment_publication", targets)
-	if _, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID)); err != nil {
-		t.Fatal(err)
-	}
-	row, err := publicationsqlite.NewRepository(db).Get(ctx, "sales", "website")
-	require.NoError(t, err)
-	if row.Status() != publication.StatusActive || row.ServingStateID != "sales_new" || row.Dashboard != "executive" {
-		t.Fatalf("publication = %#v, status=%s", row, row.Status())
-	}
-}
-
-func TestActivateDeploymentRollsBackWhenPublicationSnapshotIsInvalid(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	targets := []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}}
-	setCandidateProjectMetadata(t, ctx, db, targets)
-	if _, err := db.ExecContext(ctx, `UPDATE serving_states SET dashboard_publications_json = '{' WHERE id = 'sales_new'`); err != nil {
-		t.Fatal(err)
-	}
-	created := createDeployment(t, ctx, repository, "deployment_bad_publication", targets)
-	if _, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID)); !errors.Is(err, deployment.ErrConflict) {
-		t.Fatalf("ActivateDeployment() error = %v", err)
-	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_old")
-	var count int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM dashboard_publications`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("publication rows after rollback = %d", count)
-	}
-}
-
-func TestActivateDeploymentPersistsPublishSemanticModelDataVersion(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	targets := []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}}
-	setCandidateProjectMetadata(t, ctx, db, targets)
-	if _, err := db.ExecContext(ctx, `UPDATE serving_states SET ducklake_snapshot_id = 42 WHERE id = 'sales_new'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO assets (snapshot_id, logical_asset_id, workspace_id, serving_state_id, asset_type, asset_key, payload_schema, content_hash) VALUES ('asset:model', 'semantic_model:sales.sales', 'sales', 'sales_new', 'semantic_model', 'sales.sales', 'semantic_model.v1', 'hash')`); err != nil {
-		t.Fatal(err)
-	}
-	created := createDeployment(t, ctx, repository, "deployment_data_version", targets)
-	if _, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID)); err != nil {
-		t.Fatal(err)
-	}
-	var modelID, servingStateID, source string
-	var snapshotID int64
-	if err := db.QueryRowContext(ctx, `SELECT semantic_model_id, snapshot_id, serving_state_id, source FROM semantic_model_data_versions WHERE workspace_id = 'sales' AND environment = 'prod'`).Scan(&modelID, &snapshotID, &servingStateID, &source); err != nil {
-		t.Fatal(err)
-	}
-	if modelID != "sales" || snapshotID != 42 || servingStateID != "sales_new" || source != "publish" {
-		t.Fatalf("data version = model=%q snapshot=%d state=%q source=%q", modelID, snapshotID, servingStateID, source)
-	}
-	version, ok, err := refreshpipelinesqlite.NewRepository(db).DataVersion(ctx, "sales", "prod", "sales")
+func TestActivateDeploymentAtomicallySwapsOneProjectGeneration(t *testing.T) {
+	store, repository := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_old", "active", deploymentDigest("b"))
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_new", "validated", deploymentDigest("a"))
+	setActiveDeploymentGeneration(t, store, "project", "prod", "generation_old")
+	created, err := repository.CreateDeployment(t.Context(), deploymentCreateInput(t, "deployment_1", "project", "prod", "generation_new", "generation_old"))
 	if err != nil {
-		t.Fatalf("load publish data version: %v", err)
-	}
-	if !ok || version.RefreshedAt.IsZero() || time.Since(version.RefreshedAt) > time.Minute {
-		t.Fatalf("publish data version = %#v, found=%v", version, ok)
-	}
-}
-
-func TestActivateDeploymentRemovesDataVersionsForDeletedSemanticModels(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	targets := []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}}
-	setCandidateProjectMetadata(t, ctx, db, targets)
-	if _, err := db.ExecContext(ctx, `UPDATE serving_states SET ducklake_snapshot_id = 42 WHERE id = 'sales_new'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO assets (snapshot_id, logical_asset_id, workspace_id, serving_state_id, asset_type, asset_key, payload_schema, content_hash) VALUES ('asset:model', 'semantic_model:sales.sales', 'sales', 'sales_new', 'semantic_model', 'sales.sales', 'semantic_model.v1', 'hash')`); err != nil {
+	activation := deployment.ActivationInput{
+		DeploymentID: created.ID, ServingIdentity: created.ServingIdentity, ArtifactDigest: created.ArtifactDigest,
+		PriorGenerationID: created.PriorGenerationID, ActivationPrincipal: "principal_1", VerificationDigest: deploymentDigest("d"),
+	}
+	active, err := repository.ActivateDeployment(t.Context(), activation)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO semantic_model_data_versions (workspace_id, environment, semantic_model_id, snapshot_id, serving_state_id, refreshed_at, source) VALUES ('sales', 'prod', 'removed', 7, 'sales_old', '2026-07-18T06:00:00Z', 'publish')`); err != nil {
-		t.Fatal(err)
-	}
-	created := createDeployment(t, ctx, repository, "deployment_removes_model_version", targets)
-	if _, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID)); err != nil {
-		t.Fatal(err)
-	}
-	var count int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM semantic_model_data_versions WHERE workspace_id = 'sales' AND environment = 'prod' AND semantic_model_id = 'removed'`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("removed semantic-model data versions = %d, want 0", count)
-	}
-}
-
-func TestActivateDeploymentRollsBackOnInvalidAccessPolicy(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	targets := []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}}
-	created := createDeployment(t, ctx, repository, "deployment_invalid_access", targets)
-	if _, err := db.ExecContext(ctx, `UPDATE serving_states SET access_policy_json = '{"unknown":true}' WHERE id = 'sales_new'`); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID)); !errors.Is(err, deployment.ErrConflict) {
-		t.Fatalf("ActivateDeployment() error = %v, want conflict", err)
-	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_old")
-	assertStateStatus(t, ctx, db, "sales_new", "validated")
-}
-
-func TestActivateDeploymentAtomicallyUpdatesAllWorkspaceAndManagedPointers(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	insertWorkspaceCandidate(t, ctx, db, "support", "support_old", "support_new", "prod")
-	insertReadyRevision(t, ctx, db, "orders", "project", "orders", "orders_v2")
-	insertReadyRevision(t, ctx, db, "tickets", "project", "tickets", "tickets_v3")
-	insertBinding(t, ctx, db, "sales_new", "orders", "orders_v2", "prod")
-	insertBinding(t, ctx, db, "support_new", "orders", "orders_v2", "prod")
-	insertBinding(t, ctx, db, "support_new", "tickets", "tickets_v3", "prod")
-	created := createDeployment(t, ctx, repository, "deployment_1", []deployment.TargetInput{
-		{WorkspaceID: "sales", ServingStateID: "sales_new"},
-		{WorkspaceID: "support", ServingStateID: "support_new"},
-	})
-
-	active, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID))
-	require.NoError(t, err)
-	if active.Status != deployment.StatusActive || len(active.Connections) != 2 {
+	if active.Status != deployment.StatusActive || active.ActivationPrincipal != "principal_1" || active.VerificationDigest != deploymentDigest("d") {
 		t.Fatalf("active deployment = %#v", active)
 	}
-	if active.ActivationPrincipal != "principal" ||
-		active.VerificationDigest != testActivationInput(created.ID).VerificationDigest ||
-		active.VerifiedAt == "" {
-		t.Fatalf("activation evidence = %#v", active)
-	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_new")
-	assertActiveState(t, ctx, db, "support", "prod", "support_new")
-	assertStateStatus(t, ctx, db, "sales_old", "draining")
-	assertStateStatus(t, ctx, db, "support_old", "draining")
-	assertPointer(t, ctx, db, "orders", "prod", "orders_v2", created.ID, 1)
-	assertPointer(t, ctx, db, "tickets", "prod", "tickets_v3", created.ID, 1)
-
-	replayed, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID))
-	if err != nil || replayed.Status != deployment.StatusActive {
-		t.Fatalf("activation replay = %#v, err = %v", replayed, err)
+	assertDeploymentGeneration(t, store, "project", "prod", "generation_new", "generation_old")
+	replayed, err := repository.ActivateDeployment(t.Context(), activation)
+	if err != nil || replayed.ID != active.ID || replayed.Status != deployment.StatusActive {
+		t.Fatalf("activation replay = %#v, err=%v", replayed, err)
 	}
 }
 
-func TestServiceActivationKeepsDurableAndRuntimeStateConsistentWhenRetiredRuntimeCleanupFails(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	insertWorkspaceCandidate(t, ctx, db, "support", "support_old", "support_new", "prod")
-	if _, err := db.ExecContext(ctx, `UPDATE serving_states SET ducklake_snapshot_id = 1 WHERE id IN ('sales_old', 'sales_new', 'support_old', 'support_new')`); err != nil {
-		t.Fatal(err)
-	}
-	insertRuntimeArtifacts(t, ctx, db, "prod", "sales_old", "sales_new", "support_old", "support_new")
-	created := createDeployment(t, ctx, repository, "deployment_cutover", []deployment.TargetInput{
-		{WorkspaceID: "sales", ServingStateID: "sales_new"},
-		{WorkspaceID: "support", ServingStateID: "support_new"},
-	})
-	states := servingstatesqlite.NewRepository(db)
-	factory := &cutoverRuntimeFactory{runtimes: map[servingstate.ID]*cutoverRuntime{}}
-	cleanupFailures := make(chan runtimehost.CleanupFailure, 1)
-	registry := runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{
-		Repo: states, WorkspaceIDs: []servingstate.WorkspaceID{"sales", "support"}, Environment: "prod", Factory: factory,
-		OnCleanupFailure: func(failure runtimehost.CleanupFailure) { cleanupFailures <- failure },
-	})
-	if err := registry.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	wantCleanupErr := errors.New("retired runtime close failed")
-	factory.runtimes["sales_old"].closeErr = wantCleanupErr
-	coordinator, err := deployment.NewRegistryRuntime(registry)
-	require.NoError(t, err)
-	service, err := deployment.New(repository, repository, states, coordinator, emptyManagedDataResolver{})
-	require.NoError(t, err)
-
-	activated, err := service.Activate(ctx, deployment.ActivationRequest{
-		Scope:   deployment.Scope{ProjectID: "project", DeploymentID: created.ID},
-		ActorID: "principal",
-	})
+func TestActivateDeploymentCASConflictRollsBackStateChanges(t *testing.T) {
+	store, repository := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_old", "active", deploymentDigest("b"))
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_new", "validated", deploymentDigest("a"))
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_intruder", "inactive", deploymentDigest("e"))
+	setActiveDeploymentGeneration(t, store, "project", "prod", "generation_old")
+	created, err := repository.CreateDeployment(t.Context(), deploymentCreateInput(t, "deployment_1", "project", "prod", "generation_new", "generation_old"))
 	if err != nil {
-		t.Fatalf("activate deployment: %v", err)
-	}
-	if activated.Status != deployment.StatusActive {
-		t.Fatalf("deployment status = %q", activated.Status)
-	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_new")
-	assertActiveState(t, ctx, db, "support", "prod", "support_new")
-	for _, workspaceID := range []servingstate.WorkspaceID{"sales", "support"} {
-		lease, acquireErr := registry.AcquireForWorkspace(ctx, workspaceID)
-		if acquireErr != nil {
-			t.Fatalf("acquire %s: %v", workspaceID, acquireErr)
-		}
-		wantStateID := servingstate.ID(string(workspaceID) + "_new")
-		if lease.ServingStateID() != wantStateID {
-			t.Fatalf("%s runtime state = %q, want %q", workspaceID, lease.ServingStateID(), wantStateID)
-		}
-		lease.Release()
-	}
-	select {
-	case failure := <-cleanupFailures:
-		if !errors.Is(failure.Err, wantCleanupErr) {
-			t.Fatalf("cleanup failure = %#v", failure)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for asynchronous cleanup failure")
-	}
-	if err := registry.Close(); err != nil {
 		t.Fatal(err)
 	}
-
-	restarted := runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{
-		Repo: states, WorkspaceIDs: []servingstate.WorkspaceID{"sales", "support"}, Environment: "prod", Factory: &cutoverRuntimeFactory{runtimes: map[servingstate.ID]*cutoverRuntime{}},
-	})
-	defer restarted.Close()
-	if err := restarted.Reload(ctx); err != nil {
-		t.Fatalf("reload after activation: %v", err)
-	}
-	for _, workspaceID := range []servingstate.WorkspaceID{"sales", "support"} {
-		lease, acquireErr := restarted.AcquireForWorkspace(ctx, workspaceID)
-		if acquireErr != nil {
-			t.Fatalf("acquire restarted %s: %v", workspaceID, acquireErr)
-		}
-		if lease.ServingStateID() != servingstate.ID(string(workspaceID)+"_new") {
-			t.Fatalf("restarted %s runtime state = %q", workspaceID, lease.ServingStateID())
-		}
-		lease.Release()
-	}
-}
-
-func TestActivateDeploymentRollsBackOnWorkspacePointerConflict(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	insertWorkspaceCandidate(t, ctx, db, "support", "support_old", "support_new", "prod")
-	insertReadyRevision(t, ctx, db, "orders", "project", "orders", "orders_v2")
-	insertBinding(t, ctx, db, "sales_new", "orders", "orders_v2", "prod")
-	insertBinding(t, ctx, db, "support_new", "orders", "orders_v2", "prod")
-	created := createDeployment(t, ctx, repository, "deployment_1", []deployment.TargetInput{
-		{WorkspaceID: "sales", ServingStateID: "sales_new"},
-		{WorkspaceID: "support", ServingStateID: "support_new"},
-	})
-	setActiveState(t, ctx, db, "support", "prod", "support_new")
-
-	_, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID))
-	if !errors.Is(err, deployment.ErrConflict) {
-		t.Fatalf("activation error = %v", err)
-	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_old")
-	assertNoPointer(t, ctx, db, "orders", "prod")
-}
-
-func TestActivateDeploymentRollsBackWhenCandidateBindingsChange(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	insertReadyRevision(t, ctx, db, "orders", "project", "orders", "orders_v2")
-	insertReadyRevision(t, ctx, db, "orders_v3_collection", "project", "orders_v3_connection", "orders_v3")
-	insertBinding(t, ctx, db, "sales_new", "orders", "orders_v2", "prod")
-	created := createDeployment(t, ctx, repository, "deployment_1", []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}})
-	if _, err := db.ExecContext(ctx, `UPDATE managed_data_serving_state_bindings SET revision_id = 'orders_v3' WHERE serving_state_id = 'sales_new' AND collection_id = 'orders'`); err == nil {
-		t.Fatal("cross-collection binding unexpectedly accepted")
-	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM managed_data_serving_state_bindings WHERE serving_state_id = 'sales_new'`); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID))
-	if !errors.Is(err, deployment.ErrConflict) {
-		t.Fatalf("activation error = %v", err)
-	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_old")
-	assertNoPointer(t, ctx, db, "orders", "prod")
-}
-
-func TestActivateDeploymentRollsBackOnManagedPointerConflict(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	insertReadyRevision(t, ctx, db, "orders", "project", "orders", "orders_v1")
-	insertSecondReadyRevision(t, ctx, db, "orders", "orders_v2")
-	insertBinding(t, ctx, db, "sales_new", "orders", "orders_v2", "prod")
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, request_digest, status, activated_at) VALUES ('deployment_seed', 'project', 'prod', 'sha256:seed', 'active', CURRENT_TIMESTAMP)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO managed_data_environment_pointers (collection_id, environment, revision_id, deployment_id, generation) VALUES ('orders', 'prod', 'orders_v1', 'deployment_seed', 1)`); err != nil {
-		t.Fatal(err)
-	}
-	created := createDeployment(t, ctx, repository, "deployment_1", []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}})
-	if _, err := db.ExecContext(ctx, `UPDATE managed_data_environment_pointers SET generation = 2 WHERE collection_id = 'orders' AND environment = 'prod'`); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID))
-	if !errors.Is(err, deployment.ErrConflict) {
-		t.Fatalf("activation error = %v", err)
-	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_old")
-	assertPointer(t, ctx, db, "orders", "prod", "orders_v1", "deployment_seed", 2)
-}
-
-func TestDeploymentWithoutManagedConnectionsActivates(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	created := createDeployment(t, ctx, repository, "deployment_empty", []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}})
-	if len(created.Connections) != 0 {
-		t.Fatalf("connections = %#v", created.Connections)
-	}
-	if _, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID)); err != nil {
-		t.Fatal(err)
-	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_new")
-}
-
-func TestCancelDeploymentOnlyTransitionsPendingDeployment(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	created := createDeployment(t, ctx, repository, "deployment_cancel", []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}})
-	cancelled, err := repository.CancelDeployment(ctx, created.ID)
-	if err != nil || cancelled.Status != deployment.StatusCancelled {
-		t.Fatalf("cancelled = %#v, error = %v", cancelled, err)
-	}
-	if _, err := repository.ActivateDeployment(ctx, testActivationInput(created.ID)); !errors.Is(err, deployment.ErrConflict) {
-		t.Fatalf("activation after cancellation error = %v", err)
-	}
-}
-
-func TestCreateDeploymentRejectsServingStateFromAnotherProject(t *testing.T) {
-	ctx, db, repository := testRepository(t)
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
-	if _, err := db.ExecContext(ctx, `UPDATE serving_states SET project_id = 'other-project' WHERE id = 'sales_new'`); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := repository.CreateDeployment(ctx, deployment.CreateInput{
-		ID: "deployment_wrong_project", ProjectID: "project", Environment: "prod", RequestDigest: "sha256:request", CreatedBy: "principal",
-		Targets: []deployment.TargetInput{{WorkspaceID: "sales", ServingStateID: "sales_new"}},
+	setActiveDeploymentGeneration(t, store, "project", "prod", "generation_intruder")
+	_, err = repository.ActivateDeployment(t.Context(), deployment.ActivationInput{
+		DeploymentID: created.ID, ServingIdentity: created.ServingIdentity, ArtifactDigest: created.ArtifactDigest,
+		PriorGenerationID: created.PriorGenerationID, ActivationPrincipal: "principal_1", VerificationDigest: deploymentDigest("d"),
 	})
 	if !errors.Is(err, deployment.ErrConflict) {
-		t.Fatalf("create deployment error = %v, want conflict", err)
+		t.Fatalf("ActivateDeployment error = %v, want ErrConflict", err)
 	}
+	var candidateStatus, priorStatus string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT status FROM serving_states WHERE id='generation_new'`).Scan(&candidateStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT status FROM serving_states WHERE id='generation_old'`).Scan(&priorStatus); err != nil {
+		t.Fatal(err)
+	}
+	if candidateStatus != "validated" || priorStatus != "active" {
+		t.Fatalf("CAS failure mutated states: candidate=%q prior=%q", candidateStatus, priorStatus)
+	}
+}
+
+func TestDeploymentReadsRejectMalformedPersistedServingIdentity(t *testing.T) {
+	store, repository := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_new", "validated", deploymentDigest("a"))
+	created, err := repository.CreateDeployment(t.Context(), deploymentCreateInput(t, "deployment_1", "project", "prod", "generation_new", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := store.SQLDB().Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`); err != nil {
+		connection.Close()
+		t.Fatal(err)
+	}
+	if _, err := connection.ExecContext(t.Context(), `UPDATE project_deployments SET environment='prod/env' WHERE id=?`, created.ID); err != nil {
+		connection.Close()
+		t.Fatal(err)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.DeploymentByID(t.Context(), created.ID); err == nil {
+		t.Fatal("DeploymentByID accepted malformed persisted identity")
+	}
+}
+
+func openDeploymentRepository(t *testing.T) (*platform.Store, *Repository) {
+	t.Helper()
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store, NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{})
 }
 
 func testRepository(t *testing.T) (context.Context, *sql.DB, *Repository) {
 	t.Helper()
-	ctx := context.Background()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "leapview.db")+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.UpContext(ctx, db, "../../platform/migrations"); err != nil {
-		_ = db.Close()
-		t.Fatalf("migrate platform store: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	return ctx, db, NewRepositoryWithHooks(db, ActivationHooks{
-		ApplyAccessSnapshot: func(ctx context.Context, tx transaction.Transaction, servingStateID string) error {
-			return accesssqlite.ApplySnapshotTx(ctx, tx, servingStateID)
-		},
-		ReconcilePublications: func(ctx context.Context, tx transaction.Transaction, input PublicationReconcileInput) error {
-			publications := make(map[string]publication.Definition, len(input.Publications))
-			for name, raw := range input.Publications {
-				var definition publication.Definition
-				if err := json.Unmarshal(raw, &definition); err != nil {
-					return err
-				}
-				publications[name] = definition
-			}
-			return publicationsqlite.ReconcileTx(ctx, tx, publication.ReconcileInput{
-				ProjectID: input.ProjectID, WorkspaceID: input.WorkspaceID, ServingStateID: input.ServingStateID,
-				ActorID: input.ActorID, Publications: publications,
-			}, accesssqlite.ActivateDashboardPublicationPrincipalTx)
-		},
-	})
+	store, repository := openDeploymentRepository(t)
+	return context.Background(), store.SQLDB(), repository
 }
 
-func insertWorkspaceCandidate(t *testing.T, ctx context.Context, db *sql.DB, workspaceID, oldID, candidateID, environment string) {
+func deploymentCreateInput(t *testing.T, id, projectID, environment, generationID, priorGenerationID string) deployment.CreateInput {
 	t.Helper()
-	if _, err := db.ExecContext(ctx, `INSERT INTO workspaces (id, title) VALUES (?, ?)`, workspaceID, workspaceID); err != nil {
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(projectID), environment, generationID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO serving_states (id, workspace_id, project_id, environment, status, source) VALUES (?, ?, 'project', ?, 'active', 'publish'), (?, ?, 'project', ?, 'validated', 'publish')`, oldID, workspaceID, environment, candidateID, workspaceID, environment); err != nil {
-		t.Fatal(err)
+	return deployment.CreateInput{
+		ID: id, ServingIdentity: identity, ArtifactDigest: deploymentDigest("a"), PriorGenerationID: priorGenerationID,
+		RequestDigest: deploymentDigest("f"), CreatedBy: "principal_1",
 	}
-	setActiveState(t, ctx, db, workspaceID, environment, oldID)
 }
 
-func insertRuntimeArtifacts(t *testing.T, ctx context.Context, db *sql.DB, environment string, stateIDs ...string) {
+func insertDeploymentGeneration(t *testing.T, store *platform.Store, projectID, environment, generationID, status, digest string) {
 	t.Helper()
-	for _, stateID := range stateIDs {
-		workspaceID := strings.TrimSuffix(strings.TrimSuffix(stateID, "_old"), "_new")
-		if _, err := db.ExecContext(ctx, `INSERT INTO serving_state_artifacts (id, serving_state_id, workspace_id, environment, digest, format, path, manifest_json) VALUES (?, ?, ?, ?, ?, 'test', ?, '{}')`,
-			"artifact_"+stateID, stateID, workspaceID, environment, "digest_"+stateID, "/tmp/"+stateID); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-type cutoverRuntimeFactory struct {
-	runtimes map[servingstate.ID]*cutoverRuntime
-}
-
-func (f *cutoverRuntimeFactory) Prepare(_ context.Context, input runtimehost.RuntimeInput) (runtimehost.Runtime, error) {
-	runtime := &cutoverRuntime{}
-	f.runtimes[input.State.ID] = runtime
-	return runtime, nil
-}
-
-type cutoverRuntime struct {
-	closeErr error
-}
-
-func (r *cutoverRuntime) Close() error                 { return r.closeErr }
-func (r *cutoverRuntime) Verify(context.Context) error { return nil }
-
-type emptyManagedDataResolver struct{}
-
-func (emptyManagedDataResolver) ResolveManagedData(context.Context, servingstate.ID) (runtimehost.ManagedDataResolution, error) {
-	return runtimehost.ManagedDataResolution{Roots: map[string]string{}}, nil
-}
-
-func insertReadyRevision(t *testing.T, ctx context.Context, db *sql.DB, collectionID, projectID, connectionName, revisionID string) {
-	t.Helper()
-	if _, err := db.ExecContext(ctx, `INSERT INTO managed_data_collections (id, project_id, connection_name, name) VALUES (?, ?, ?, ?)`, collectionID, projectID, connectionName, connectionName); err != nil {
-		t.Fatal(err)
-	}
-	digest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	if _, err := db.ExecContext(ctx, `INSERT INTO managed_data_revisions (id, collection_id, sequence, digest, status, manifest_json, file_count, size_bytes, ready_at) VALUES (?, ?, 1, ?, 'ready', '{"files":[]}', 0, 0, CURRENT_TIMESTAMP)`, revisionID, collectionID, digest); err != nil {
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id,project_id,environment,status,source,digest) VALUES (?,?,?,?,?,?)`, generationID, projectID, environment, status, "publish", digest); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func insertSecondReadyRevision(t *testing.T, ctx context.Context, db *sql.DB, collectionID, revisionID string) {
+func setActiveDeploymentGeneration(t *testing.T, store *platform.Store, projectID, environment, generationID string) {
 	t.Helper()
-	digest := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if _, err := db.ExecContext(ctx, `INSERT INTO managed_data_revisions (id, collection_id, sequence, digest, status, manifest_json, file_count, size_bytes, ready_at) VALUES (?, ?, 2, ?, 'ready', '{"files":[]}', 0, 0, CURRENT_TIMESTAMP)`, revisionID, collectionID, digest); err != nil {
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO project_active_serving_states(project_id,environment,generation_id) VALUES(?,?,?) ON CONFLICT(project_id,environment) DO UPDATE SET generation_id=excluded.generation_id`, projectID, environment, generationID); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func insertBinding(t *testing.T, ctx context.Context, db *sql.DB, stateID, collectionID, revisionID, environment string) {
+func assertDeploymentGeneration(t *testing.T, store *platform.Store, projectID, environment, activeID, drainingID string) {
 	t.Helper()
-	if _, err := db.ExecContext(ctx, `INSERT INTO managed_data_serving_state_bindings (serving_state_id, collection_id, revision_id, environment) VALUES (?, ?, ?, ?)`, stateID, collectionID, revisionID, environment); err != nil {
+	var gotActive, activeStatus, drainingStatus string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT generation_id FROM project_active_serving_states WHERE project_id=? AND environment=?`, projectID, environment).Scan(&gotActive); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func createDeployment(t *testing.T, ctx context.Context, repository *Repository, id string, targets []deployment.TargetInput) deployment.Deployment {
-	t.Helper()
-	setCandidateProjectMetadata(t, ctx, repository.db, targets)
-	created, err := repository.CreateDeployment(ctx, deployment.CreateInput{ID: id, ProjectID: "project", Environment: "prod", RequestDigest: "sha256:" + id, Targets: targets, CreatedBy: "principal"})
-	require.NoError(t, err)
-	return created
-}
-
-func testActivationInput(deploymentID string) deployment.ActivationInput {
-	return deployment.ActivationInput{
-		DeploymentID: deploymentID, ActivationPrincipal: "principal",
-		VerificationDigest: "sha256:" + strings.Repeat("f", 64),
-	}
-}
-
-func setCandidateProjectMetadata(t *testing.T, ctx context.Context, db *sql.DB, targets []deployment.TargetInput) {
-	t.Helper()
-	workspaces := make([]string, 0, len(targets))
-	for _, target := range targets {
-		workspaces = append(workspaces, target.WorkspaceID)
-	}
-	sort.Strings(workspaces)
-	encoded, err := json.Marshal(workspaces)
-	require.NoError(t, err)
-	for _, target := range targets {
-		if _, err := db.ExecContext(ctx, `UPDATE serving_states SET project_digest = ?, project_workspaces_json = ? WHERE id = ?`, "sha256:"+strings.Repeat("a", 64), string(encoded), target.ServingStateID); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func setActiveState(t *testing.T, ctx context.Context, db *sql.DB, workspaceID, environment, stateID string) {
-	t.Helper()
-	if _, err := db.ExecContext(ctx, `INSERT INTO workspace_active_serving_states (workspace_id, environment, serving_state_id) VALUES (?, ?, ?) ON CONFLICT(workspace_id, environment) DO UPDATE SET serving_state_id = excluded.serving_state_id`, workspaceID, environment, stateID); err != nil {
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT status FROM serving_states WHERE id=?`, activeID).Scan(&activeStatus); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func assertActiveState(t *testing.T, ctx context.Context, db *sql.DB, workspaceID, environment, want string) {
-	t.Helper()
-	var got string
-	if err := db.QueryRowContext(ctx, `SELECT serving_state_id FROM workspace_active_serving_states WHERE workspace_id = ? AND environment = ?`, workspaceID, environment).Scan(&got); err != nil {
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT status FROM serving_states WHERE id=?`, drainingID).Scan(&drainingStatus); err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
-		t.Fatalf("active state for %s = %q, want %q", workspaceID, got, want)
+	if gotActive != activeID || activeStatus != "active" || drainingStatus != "draining" {
+		t.Fatalf("generation cutover = active pointer %q, active status %q, prior status %q", gotActive, activeStatus, drainingStatus)
 	}
 }
 
-func assertStateStatus(t *testing.T, ctx context.Context, db *sql.DB, stateID, want string) {
-	t.Helper()
-	var got string
-	if err := db.QueryRowContext(ctx, `SELECT status FROM serving_states WHERE id = ?`, stateID).Scan(&got); err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("state %s status = %q, want %q", stateID, got, want)
-	}
-}
-
-func assertPointer(t *testing.T, ctx context.Context, db *sql.DB, collectionID, environment, revisionID, deploymentID string, generation int64) {
-	t.Helper()
-	var gotRevision, gotDeployment string
-	var gotGeneration int64
-	if err := db.QueryRowContext(ctx, `SELECT revision_id, deployment_id, generation FROM managed_data_environment_pointers WHERE collection_id = ? AND environment = ?`, collectionID, environment).Scan(&gotRevision, &gotDeployment, &gotGeneration); err != nil {
-		t.Fatal(err)
-	}
-	if gotRevision != revisionID || gotDeployment != deploymentID || gotGeneration != generation {
-		t.Fatalf("pointer = (%q, %q, %d)", gotRevision, gotDeployment, gotGeneration)
-	}
-}
-
-func assertNoPointer(t *testing.T, ctx context.Context, db *sql.DB, collectionID, environment string) {
-	t.Helper()
-	var count int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM managed_data_environment_pointers WHERE collection_id = ? AND environment = ?`, collectionID, environment).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("pointer count = %d, want 0", count)
-	}
+func deploymentDigest(hexDigit string) string {
+	return "sha256:" + strings.Repeat(hexDigit, 64)
 }

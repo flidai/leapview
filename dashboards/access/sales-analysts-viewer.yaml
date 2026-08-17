@@ -1,0 +1,10 @@
+apiVersion: leapview.dev/v1
+kind: RoleBinding
+metadata:
+  id: role-binding:sales-analysts-viewer
+  name: sales-analysts-viewer
+spec:
+  role: viewer
+  subject:
+    kind: group
+    group: group:sales-analysts

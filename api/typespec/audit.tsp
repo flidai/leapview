@@ -6,12 +6,12 @@ namespace LeapViewAPI.Access;
 
 model AuditEventResponse {
   id: string;
-  workspaceId?: string;
+  projectId?: ResourceId;
   principalId?: string;
   action: string;
-  targetType: string;
-  targetId: string;
-  privilege?: string;
+  resourceKind: AuditTargetKind;
+  resourceId: ResourceId;
+  capability?: Capability;
   status?: string;
   requestId?: string;
   correlationId?: string;
@@ -27,16 +27,17 @@ model AuditEventListResponse {
 alias ListAuditEventsOK = OkJson<AuditEventListResponse>;
 
 @tag("Audit")
-@summary("List workspace audit events")
-@route("/workspaces/{workspace}/audit-events")
+@summary("List project audit events")
+@route("/projects/{project}/audit-events")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_AUDIT" })
-op listAuditEvents(@path workspace: string, @query actor?: string, @query action?: string, @query targetType?: string, @query targetId?: string, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListAuditEventsOK | CommonErrors;
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
+op listAuditEvents(@path project: ResourceId, @query actor?: string, @query action?: string, @query resourceKind?: AuditTargetKind, @query resourceId?: ResourceId, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListAuditEventsOK | CommonErrors;
 
 @tag("Audit")
 @summary("List product audit events")
 @route("/audit-events")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_AUDIT" })
+@apigen.authz(#{ mode: "authenticated" })
 @extension("x-leapview-object-scope", "platform")
-op listPlatformAuditEvents(@query workspace?: string, @query actor?: string, @query action?: string, @query targetType?: string, @query targetId?: string, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListAuditEventsOK | CommonErrors;
+op listPlatformAuditEvents(@query project?: ResourceId, @query actor?: string, @query action?: string, @query resourceKind?: AuditTargetKind, @query resourceId?: ResourceId, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListAuditEventsOK | CommonErrors;

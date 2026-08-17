@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Artifact struct {
@@ -29,7 +30,7 @@ type SourceRevision struct {
 }
 
 type Snapshot struct {
-	ProjectID      string
+	ProjectID      projectgraph.ResourceID
 	ProjectFile    string
 	Digest         string
 	Artifacts      []Artifact
@@ -39,7 +40,7 @@ type Snapshot struct {
 
 type Candidate struct {
 	ID               string
-	ProjectID        string
+	ProjectID        projectgraph.ResourceID
 	OwnerID          string
 	ArtifactDigest   string
 	PreviewURL       string
@@ -152,11 +153,10 @@ func (service *Service) result(status Status) Result {
 }
 
 func normalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
-	snapshot.ProjectID = strings.TrimSpace(snapshot.ProjectID)
 	snapshot.ProjectFile = strings.TrimSpace(snapshot.ProjectFile)
 	snapshot.CandidateKey = strings.TrimSpace(snapshot.CandidateKey)
 	snapshot.Digest = strings.TrimSpace(snapshot.Digest)
-	if snapshot.ProjectID == "" || !canonicalArtifactPath(snapshot.ProjectFile) || len(snapshot.Artifacts) == 0 {
+	if err := snapshot.ProjectID.Validate(); err != nil || !canonicalArtifactPath(snapshot.ProjectFile) || len(snapshot.Artifacts) == 0 {
 		return Snapshot{}, fmt.Errorf("project snapshot requires project, canonical entrypoint, and artifacts")
 	}
 	if err := digest.ValidateSHA256Identity(snapshot.Digest); err != nil {
@@ -203,13 +203,15 @@ func normalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 
 func normalizeCandidate(candidate Candidate, snapshot Snapshot) (Candidate, error) {
 	candidate.ID = strings.TrimSpace(candidate.ID)
-	candidate.ProjectID = strings.TrimSpace(candidate.ProjectID)
 	candidate.OwnerID = strings.TrimSpace(candidate.OwnerID)
 	candidate.ArtifactDigest = strings.TrimSpace(candidate.ArtifactDigest)
 	candidate.PreviewURL = strings.TrimSpace(candidate.PreviewURL)
 	candidate.TargetID = strings.TrimSpace(candidate.TargetID)
 	candidate.Environment = strings.TrimSpace(candidate.Environment)
 	candidate.ProvenanceDigest = strings.TrimSpace(candidate.ProvenanceDigest)
+	if err := candidate.ProjectID.Validate(); err != nil {
+		return Candidate{}, fmt.Errorf("remote candidate project identity is invalid: %w", err)
+	}
 	if candidate.ID == "" || candidate.OwnerID == "" || candidate.PreviewURL == "" ||
 		candidate.TargetID == "" || candidate.Environment == "" ||
 		candidate.Revision <= 0 ||

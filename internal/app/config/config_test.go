@@ -526,8 +526,6 @@ func withAnalyticalTestDefaults(cfg Config) Config {
 	cfg.QueryResultMaxBytes = 32 << 20
 	cfg.QueryCacheRuntimeMaxEntries = 16
 	cfg.QueryCacheRuntimeMaxBytes = 4 << 20
-	cfg.QueryCacheWorkspaceMaxEntries = 32
-	cfg.QueryCacheWorkspaceMaxBytes = 8 << 20
 	cfg.QueryCacheNodeMaxEntries = 64
 	cfg.QueryCacheNodeMaxBytes = 16 << 20
 	return cfg

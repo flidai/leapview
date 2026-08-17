@@ -2,7 +2,7 @@
 
 # catalog_search
 
-Search the complete authorized LeapView BI catalog across workspaces. Use this when you know words from a resource name or description but not its exact location.
+Search authorized project resources by stable ID, name, description, or domain metadata.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_search.json) · [complete manifest](/docs/agent-tools/manifest.json)
 
@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_search.json) ·
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `VIEW_ITEM` |
+| Authorization | `RESOURCE_READ` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `catalog`, `search` |
@@ -23,20 +23,26 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_search.json) ·
 {
   "additionalProperties": false,
   "properties": {
-    "context": {
-      "additionalProperties": false,
-      "properties": {
-        "dashboardId": {
-          "type": "string"
-        },
-        "pageId": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "cursor": {
       "type": "string"
+    },
+    "domain": {
+      "type": "string"
+    },
+    "kinds": {
+      "items": {
+        "enum": [
+          "project",
+          "connection",
+          "source",
+          "model",
+          "semantic_model",
+          "pipeline",
+          "dashboard"
+        ],
+        "type": "string"
+      },
+      "type": "array"
     },
     "limit": {
       "maximum": 25,
@@ -46,29 +52,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_search.json) ·
     "query": {
       "minLength": 1,
       "type": "string"
-    },
-    "types": {
-      "items": {
-        "enum": [
-          "workspace",
-          "dashboard",
-          "page",
-          "visual",
-          "filter",
-          "semantic_model",
-          "semantic_table",
-          "field",
-          "measure"
-        ],
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "workspaceIds": {
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
     }
   },
   "required": [
@@ -95,193 +78,58 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_search.json) ·
       "items": {
         "additionalProperties": false,
         "properties": {
-          "capabilities": {
-            "items": {
-              "enum": [
-                "catalog_get",
-                "catalog_list",
-                "query_semantic_model",
-                "query_dashboard_visual",
-                "query_visual"
-              ],
-              "type": "string"
-            },
-            "type": "array"
-          },
           "description": {
             "type": "string"
           },
-          "hierarchy": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "ref": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "id": {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    "type": {
-                      "enum": [
-                        "workspace",
-                        "dashboard",
-                        "page",
-                        "visual",
-                        "filter",
-                        "semantic_model",
-                        "semantic_table",
-                        "field",
-                        "measure"
-                      ],
-                      "type": "string"
-                    },
-                    "workspaceId": {
-                      "minLength": 1,
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "type",
-                    "workspaceId"
-                  ],
-                  "type": "object"
-                }
-              },
-              "required": [
-                "name",
-                "ref"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "href": {
+          "displayName": {
             "type": "string"
           },
-          "locations": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "dashboardId": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "dashboardName": {
-                  "type": "string"
-                },
-                "href": {
-                  "type": "string"
-                },
-                "pageId": {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "pageName": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "dashboardId",
-                "pageId"
-              ],
-              "type": "object"
-            },
-            "type": "array"
+          "domain": {
+            "type": "string"
           },
           "name": {
+            "type": "string"
+          },
+          "owner": {
             "type": "string"
           },
           "ref": {
             "additionalProperties": false,
             "properties": {
               "id": {
+                "maxLength": 256,
                 "minLength": 1,
                 "type": "string"
               },
-              "type": {
+              "kind": {
                 "enum": [
-                  "workspace",
-                  "dashboard",
-                  "page",
-                  "visual",
-                  "filter",
+                  "project",
+                  "connection",
+                  "source",
+                  "model",
                   "semantic_model",
-                  "semantic_table",
-                  "field",
-                  "measure"
+                  "pipeline",
+                  "dashboard"
                 ],
-                "type": "string"
-              },
-              "workspaceId": {
-                "minLength": 1,
                 "type": "string"
               }
             },
             "required": [
               "id",
-              "type",
-              "workspaceId"
+              "kind"
             ],
             "type": "object"
           },
-          "workspace": {
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "ref": {
-                "additionalProperties": false,
-                "properties": {
-                  "id": {
-                    "minLength": 1,
-                    "type": "string"
-                  },
-                  "type": {
-                    "enum": [
-                      "workspace",
-                      "dashboard",
-                      "page",
-                      "visual",
-                      "filter",
-                      "semantic_model",
-                      "semantic_table",
-                      "field",
-                      "measure"
-                    ],
-                    "type": "string"
-                  },
-                  "workspaceId": {
-                    "minLength": 1,
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "id",
-                  "type",
-                  "workspaceId"
-                ],
-                "type": "object"
-              }
+          "tags": {
+            "items": {
+              "type": "string"
             },
-            "required": [
-              "name",
-              "ref"
-            ],
-            "type": "object"
+            "type": "array"
           }
         },
         "required": [
-          "capabilities",
-          "hierarchy",
           "name",
-          "ref",
-          "workspace"
+          "ref"
         ],
         "type": "object"
       },

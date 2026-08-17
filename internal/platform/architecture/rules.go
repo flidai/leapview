@@ -37,11 +37,10 @@ var PublicContractPrefixes = map[string][]string{
 	"analytics":    {"internal/analytics/model", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery"},
 	"dashboard":    {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/authoring", "internal/dashboard/catalog", "internal/dashboard/compiler", "internal/dashboard/definition", "internal/dashboard/filter", "internal/dashboard/layoutcontract", "internal/dashboard/publication", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/resolver", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
 	"manageddata":  {"internal/manageddata", "internal/manageddata/binding", "internal/manageddata/runtimebinding"},
-	"workspace":    {"internal/workspace", "internal/workspace/api", "internal/workspace/navigation", "internal/workspace/search"},
-	"project":      {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/artifact", "internal/project/bundle", "internal/project/compiler"},
+	"project":      {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/artifact", "internal/project/bundle", "internal/project/catalog", "internal/project/compiler", "internal/project/manifest", "internal/project/runtime"},
 	"release":      {"internal/release"},
 	"deployment":   {"internal/deployment"},
-	"servingstate": {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/validation", "internal/servingstate/retention"},
+	"servingstate": {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/retention"},
 	"refresh":      {"internal/refresh/artifact", "internal/refresh/plan", "internal/refresh/run", "internal/refresh/schedule"},
 	"runtimehost":  {"internal/runtimehost"},
 	"workload":     {"internal/workload"},
@@ -76,7 +75,45 @@ var WorkloadImportPrefixes = []string{
 // before capability dependency edges so a consumer cannot import the owning
 // capability's broader implementation packages by accident.
 var SharedContractPrefixes = map[string][]string{
-	"access": {"internal/project/graph"},
+	// Resource identity is the one project contract shared by every runtime
+	// capability. Keep the declarations exact: a consumer may import the
+	// canonical graph package, never an arbitrary project implementation
+	// subtree.
+	"access":       {"internal/project/graph", "internal/project/runtime"},
+	"admin":        {"internal/project/graph"},
+	"agent":        {"internal/project/graph"},
+	"analytics":    {"internal/project/graph"},
+	"dashboard":    {"internal/project/graph", "internal/project/runtime"},
+	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
+	"manageddata":  {"internal/access", "internal/project/graph"},
+	"refresh":      {"internal/project/graph", "internal/project/manifest"},
+	"release":      {"internal/project/graph"},
+	"runtimehost":  {"internal/access/snapshot", "internal/project/graph", "internal/project/runtime"},
+	"servingstate": {"internal/project/graph", "internal/project/manifest"},
+}
+
+// CompositionContractPrefixes is the closed set of capability contracts that
+// process composition may wire directly alongside module surfaces. These are
+// exact package paths, not capability roots or adapter subtrees.
+var CompositionContractPrefixes = map[string]struct{}{
+	"internal/access":                      {},
+	"internal/access/snapshot":             {},
+	"internal/analytics/connectionbinding": {},
+	"internal/dashboard/authoring":         {},
+	"internal/deployment":                  {},
+	"internal/manageddata":                 {},
+	"internal/manageddata/control":         {},
+	"internal/project/bundle":              {},
+	"internal/project/catalog":             {},
+	"internal/project/graph":               {},
+	"internal/refresh/run":                 {},
+	"internal/runtimehost":                 {},
+	"internal/servingstate":                {},
+}
+
+func IsCompositionContractImport(packagePath string) bool {
+	_, ok := CompositionContractPrefixes[packagePath]
+	return ok
 }
 
 // IsSharedContractImport reports whether packagePath is one of the explicitly
@@ -110,18 +147,17 @@ func IsDeferredPackageEdge(sourcePath, targetCapability string) bool {
 }
 
 var CapabilityDependencies = map[string]map[string]bool{
-	"project":      {"workspace": true, "analytics": true, "dashboard": true, "access": true, "refresh": true, "servingstate": true},
-	"workspace":    {"access": true, "analytics": true, "dashboard": true},
+	"project":      {"analytics": true, "dashboard": true, "access": true, "refresh": true, "servingstate": true},
 	"access":       {},
 	"manageddata":  {"servingstate": true},
 	"analytics":    {"access": true, "manageddata": true, "servingstate": true},
 	"dashboard":    {"access": true, "analytics": true, "runtimehost": true, "workload": true},
-	"agent":        {"access": true, "analytics": true, "dashboard": true, "workspace": true, "project": true},
-	"admin":        {"access": true, "agent": true, "analytics": true, "dashboard": true, "workspace": true},
-	"release":      {"access": true, "project": true, "workspace": true, "servingstate": true},
+	"agent":        {"access": true, "analytics": true, "dashboard": true, "project": true},
+	"admin":        {"access": true, "agent": true, "analytics": true, "dashboard": true},
+	"release":      {"access": true, "project": true, "servingstate": true},
 	"deployment":   {"access": true, "project": true, "release": true, "servingstate": true, "manageddata": true, "runtimehost": true},
 	"servingstate": {"access": true, "workload": true},
-	"refresh":      {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workspace": true, "workload": true},
+	"refresh":      {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
 	"runtimehost":  {"manageddata": true, "servingstate": true},
 	"workload":     {},
 	"platform":     {},
@@ -179,6 +215,9 @@ var PackageRules = []PackageRule{
 	{Prefix: "desktop/native/windowspolicy", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "pkg/agent", Capability: "agent", Layer: LayerContract},
 	{Prefix: "internal/project/graph", Capability: "project", Layer: LayerContract},
+	{Prefix: "internal/project/catalog", Capability: "project", Layer: LayerContract},
+	{Prefix: "internal/project/manifest", Capability: "project", Layer: LayerContract},
+	{Prefix: "internal/project/runtime", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/compiler", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/project/artifact", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},
@@ -201,12 +240,9 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/project/api/gen", Capability: "project", Layer: LayerAdapter},
 	{Prefix: "internal/refresh/api/gen", Capability: "refresh", Layer: LayerAdapter},
 	{Prefix: "internal/release/api/gen", Capability: "release", Layer: LayerAdapter},
-	{Prefix: "internal/workspace/api/gen", Capability: "workspace", Layer: LayerAdapter},
 	{Prefix: "internal/app/api/aggregate", Capability: "composition", Layer: LayerAdapter},
 	{Prefix: "internal/app/api/gen", Capability: "composition", Layer: LayerAdapter},
 	{Prefix: "internal/platform/architecture", Capability: "platform", Layer: LayerPlatform},
-	{Prefix: "internal/workspace/assetnav", Capability: "workspace", Layer: LayerUseCase},
-	{Prefix: "internal/workspace/navigation", Capability: "workspace", Layer: LayerContract},
 	{Prefix: "internal/app/brand", Capability: "composition", Layer: LayerAdapter},
 	{Prefix: "internal/dashboard/catalog", Capability: "dashboard", Layer: LayerContract},
 	{Prefix: "internal/dashboard/compiler", Capability: "dashboard", Layer: LayerUseCase},
@@ -225,7 +261,6 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/workload/observability", Capability: "workload", Layer: LayerAdapter},
 	{Prefix: "internal/dashboard/queryruntime", Capability: "dashboard", Layer: LayerContract},
 	{Prefix: "internal/dashboard/resolver", Capability: "dashboard", Layer: LayerContract},
-	{Prefix: "internal/workspace/search", Capability: "workspace", Layer: LayerUseCase},
 	{Prefix: "internal/platform/securestore", Capability: "platform", Layer: LayerPlatform},
 	{Prefix: "internal/platform/security/secret", Capability: "platform", Layer: LayerPlatform},
 	{Prefix: "internal/platform/filesystem", Capability: "platform", Layer: LayerPlatform},
@@ -248,8 +283,6 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/dashboard/ui/signals", Capability: "dashboard", Layer: LayerContract},
 	{Prefix: "internal/app", Capability: "composition", Layer: LayerComposition},
 	{Prefix: "internal/admin", Capability: "admin", Layer: LayerAdapter},
-	{Prefix: "internal/workspace/ui/signals", Capability: "workspace", Layer: LayerContract},
-	{Prefix: "internal/workspace/ui", Capability: "workspace", Layer: LayerAdapter},
 }
 
 var adapterSegments = []string{

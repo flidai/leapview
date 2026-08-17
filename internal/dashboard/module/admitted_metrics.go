@@ -3,7 +3,7 @@ package module
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
@@ -13,6 +13,7 @@ import (
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -32,10 +33,10 @@ func (m admittedMetrics) readContext(ctx context.Context) context.Context {
 	return workload.WithAdmitter(ctx, m.admitter)
 }
 
-func (m admittedMetrics) MetricsForWorkspace(workspaceID string) (Metrics, bool) {
-	provider, ok := m.Metrics.(WorkspaceMetrics)
+func (m admittedMetrics) MetricsForProject(projectID projectgraph.ResourceID) (Metrics, bool) {
+	provider, ok := m.Metrics.(ProjectMetrics)
 	if ok {
-		metrics, found := provider.MetricsForWorkspace(workspaceID)
+		metrics, found := provider.MetricsForProject(projectID)
 		if !found || metrics == nil {
 			return nil, found
 		}
@@ -44,7 +45,7 @@ func (m admittedMetrics) MetricsForWorkspace(workspaceID string) (Metrics, bool)
 	if m.Metrics == nil {
 		return nil, false
 	}
-	if m.Metrics.Catalog().Workspace.ID != workspaceID {
+	if m.Metrics.Catalog().Project.ID != projectID {
 		return nil, false
 	}
 	return m, true
@@ -80,12 +81,12 @@ func (m admittedMetrics) QueryVisualizationWindow(ctx context.Context, dashboard
 	return m.Metrics.QueryVisualizationWindow(m.readContext(ctx), dashboardID, pageID, filters, request)
 }
 
-func (m admittedMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+func (m admittedMetrics) QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
 	port, ok := m.Metrics.(visualizationTileMetrics)
 	if !ok {
 		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
 	}
-	return port.QueryVisualizationTile(m.readContext(ctx), workspaceID, dashboardID, visualID, revision, zoom, x, y)
+	return port.QueryVisualizationTile(m.readContext(ctx), dashboardID, visualID, revision, zoom, x, y)
 }
 
 func (m admittedMetrics) ExpireVisualizationTileStream(streamID string) {
@@ -105,13 +106,12 @@ func (m admittedMetrics) QueryPublicVisualizationTile(ctx context.Context, publi
 func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	ctx = m.readContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, errors.New("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	if m.admitter == nil {
 		return m.Metrics.ExecuteDataQuery(ctx, request)
 	}
-	workspaceID := request.WorkspaceID
 	class := workload.Interactive
 	if request.Surface == dataquery.SurfaceAgent {
 		class = workload.Background
@@ -120,7 +120,7 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 	if operation == "" {
 		operation = string(request.Kind)
 	}
-	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, WorkspaceID: workspaceID, Operation: operation})
+	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: "system:dashboard-query", Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		result := dataquery.Result{ExecutionState: executionStateForWorkloadError(ctx, err)}
 		var rejection *workload.Rejection
@@ -151,8 +151,8 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
 	ctx = m.readContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, errors.New("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	executor, ok := m.Metrics.(arrowquery.Executor)
 	if !ok {
@@ -161,7 +161,6 @@ func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request data
 	if m.admitter == nil {
 		return executor.ExecuteDataQueryArrow(ctx, request, sink)
 	}
-	workspaceID := request.WorkspaceID
 	class := workload.Interactive
 	if request.Surface == dataquery.SurfaceAgent {
 		class = workload.Background
@@ -170,7 +169,7 @@ func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request data
 	if operation == "" {
 		operation = string(request.Kind)
 	}
-	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, WorkspaceID: workspaceID, Operation: operation})
+	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: "system:dashboard-query", Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		result := dataquery.Result{ExecutionState: executionStateForWorkloadError(ctx, err)}
 		var rejection *workload.Rejection

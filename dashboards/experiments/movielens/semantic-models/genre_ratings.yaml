@@ -1,0 +1,69 @@
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata:
+  id: semantic-model:genre_ratings
+  name: genre_ratings
+  displayName: Genre Ratings Semantic Model
+  description: Rating-by-genre semantic model for safe genre analysis.
+spec:
+  tables:
+    - rating_genres
+    - ratings
+    - movies
+    - users
+  relationships:
+    - id: rating_genres_movies
+      description: Links each rating-genre row to the rated movie.
+      from: rating_genres.movie_id
+      to: movies.movie_id
+      cardinality: many_to_one
+    - id: rating_genres_users
+      description: Links each rating-genre row to the anonymized user who made the rating.
+      from: rating_genres.user_id
+      to: users.user_id
+      cardinality: many_to_one
+  dimensions:
+    rating_date:
+      type: date
+      bindings:
+        rating_genres: {field: rating_genres.rating_date}
+    genre:
+      type: string
+      bindings:
+        rating_genres: {field: rating_genres.genre}
+    release_decade:
+      type: string
+      bindings:
+        rating_genres: {field: rating_genres.release_decade}
+  measures:
+    genre_rating_count:
+      label: Genre ratings
+      description: Count of rating-genre rows.
+      fact: rating_genres
+      aggregation: count
+      empty: zero
+      format: integer
+    average_rating:
+      label: Average rating
+      description: Average MovieLens rating for the rating-genre rows.
+      fact: rating_genres
+      aggregation: avg
+      input: {field: rating_genres.rating}
+      empty: "null"
+      format: decimal
+    active_users:
+      label: Active users
+      description: Distinct users represented by the rating-genre rows.
+      fact: rating_genres
+      aggregation: count_distinct
+      input: {field: rating_genres.user_id}
+      empty: zero
+      format: integer
+    rated_movies:
+      label: Rated movies
+      description: Distinct movies represented by the rating-genre rows.
+      fact: rating_genres
+      aggregation: count_distinct
+      input: {field: rating_genres.movie_id}
+      empty: zero
+      format: integer

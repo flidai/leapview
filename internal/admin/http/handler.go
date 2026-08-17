@@ -32,11 +32,12 @@ type Handler struct {
 	PublicationMutation func(*nethttp.Request, uisignals.AdminPublicationCommand) error
 	PersonalSettings    *personalsettings.Handler
 	ProductSettings     *productsettings.Handler
-	SettingsRepository  adminsettings.Repository
-	WorkspaceSettings   adminsettings.WorkspaceAdministrationReader
-	WorkspaceAccess     access.WorkspaceAccessService
-	SettingsEnvironment string
-	CurrentCredential   func(*nethttp.Request) (access.APICredential, bool)
+	SettingsRepository  interface {
+		access.Repository
+		adminsettings.ServiceAccountReader
+	}
+	AuthorizationProjection adminsettings.AuthorizationProjectionReader
+	CurrentCredential       func(*nethttp.Request) (access.APICredential, bool)
 }
 
 type publicationCommandSignals struct {
@@ -81,9 +82,6 @@ func (h Handler) APITokens(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "api-tokens")
 }
 func (h Handler) General(w nethttp.ResponseWriter, r *nethttp.Request) { h.renderPage(w, r, "general") }
-func (h Handler) Workspaces(w nethttp.ResponseWriter, r *nethttp.Request) {
-	h.renderPage(w, r, "workspaces-admin")
-}
 func (h Handler) ServiceAccounts(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "service-accounts")
 }
@@ -457,15 +455,6 @@ func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals m
 		}
 		signals["productSettings"] = productsettings.Payload(state)
 		signals["productSettingsCommand"] = map[string]any{}
-	case "workspaces-admin":
-		if h.WorkspaceSettings == nil {
-			return nil
-		}
-		state, err := adminsettings.LoadWorkspaceRegistry(r.Context(), h.WorkspaceSettings, h.WorkspaceAccess, h.SettingsEnvironment)
-		if err != nil {
-			return err
-		}
-		signals["adminWorkspaces"] = state
 	case "service-accounts":
 		if h.SettingsRepository == nil {
 			return nil
@@ -547,7 +536,7 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 		return h.readModel().StorageData(r), nil
 	case "storage-detail":
 		return h.readModel().StorageTableData(r, r.URL.Query().Get("schema"), r.URL.Query().Get("table"))
-	case "profile", "security", "api-tokens", "general", "workspaces-admin", "service-accounts", "authentication", "audit", "system":
+	case "profile", "security", "api-tokens", "general", "service-accounts", "authentication", "audit", "system":
 		return h.readModel().SettingsData(r)
 	}
 	data, err := h.adminData(r)

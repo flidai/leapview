@@ -25,13 +25,13 @@ func TestGeneratedManagedDataOperationClassifications(t *testing.T) {
 			t.Fatalf("%s command contract = %#v", operationID, contract.Command)
 		}
 		command := contract.Command
-		if contract.Namespace != "LeapViewAPI.ManagedData" || command.Owner != contract.Namespace || command.AuthzMode != "privilege" || command.Privilege != "INGEST_DATA" {
+		if contract.Namespace != "LeapViewAPI.ManagedData" || command.Owner != contract.Namespace || command.AuthzMode != "privilege" || command.Privilege != "RESOURCE_EDIT" {
 			t.Errorf("%s ownership/authz = %#v", operationID, command)
 		}
 		if !command.Audit.Required || command.Audit.SuccessAction != expected.auditAction || command.Audit.Guarantee != expected.guarantee {
 			t.Errorf("%s audit = %#v", operationID, command.Audit)
 		}
-		if command.Target == nil || command.Target.Parameter != "project" || command.Target.Type != "project" {
+		if command.Target == nil || command.Target.Parameter != "connection" || command.Target.Type != "connection" {
 			t.Errorf("%s target = %#v", operationID, command.Target)
 		}
 		if command.Idempotency != "required" || command.Concurrency != "" || len(command.AdditionalExposures) != 0 {

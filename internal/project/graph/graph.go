@@ -93,6 +93,14 @@ func NewResourceID(value string) (ResourceID, error) {
 // String returns the textual form of the ID.
 func (id ResourceID) String() string { return string(id) }
 
+// Validate checks the canonical resource ID. It mirrors the validation
+// methods exposed by domain-specific identity wrappers while keeping the
+// graph ResourceID itself the single identity type.
+func (id ResourceID) Validate() error {
+	_, err := NewResourceID(id.String())
+	return err
+}
+
 // Valid reports whether id is a valid canonical resource ID.
 func (id ResourceID) Valid() bool { return resourceIDPattern.MatchString(string(id)) }
 
@@ -263,6 +271,70 @@ func (g ProjectGraph) Resource(id ResourceID) (Resource, bool) {
 	return Resource{}, false
 }
 
+// Dependencies returns the transitive dependency closure of root. The root is
+// included in the result so callers can use the returned set to compare an
+// authored resource's complete evidence boundary. Edges are directed from a
+// resource to the resource it depends on.
+func (g ProjectGraph) Dependencies(root ResourceID) []ResourceID {
+	if root == "" {
+		return nil
+	}
+	seen := map[ResourceID]struct{}{root: {}}
+	queue := []ResourceID{root}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, edge := range g.edges {
+			if edge.From != current {
+				continue
+			}
+			if _, ok := seen[edge.To]; ok {
+				continue
+			}
+			seen[edge.To] = struct{}{}
+			queue = append(queue, edge.To)
+		}
+	}
+	out := make([]ResourceID, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// AffectedDashboards returns dashboard resource IDs whose dependency closure
+// intersects changed. Selection is graph-identity based: names, paths, and
+// metadata never participate. The result is deterministic and deduplicated.
+func (g ProjectGraph) AffectedDashboards(changed []ResourceID) []ResourceID {
+	if len(changed) == 0 {
+		return nil
+	}
+	changedSet := make(map[ResourceID]struct{}, len(changed))
+	for _, id := range changed {
+		if id != "" {
+			changedSet[id] = struct{}{}
+		}
+	}
+	if len(changedSet) == 0 {
+		return nil
+	}
+	ids := make([]ResourceID, 0)
+	for _, resource := range g.resources {
+		if resource.Kind != KindDashboard {
+			continue
+		}
+		for _, dependency := range g.Dependencies(resource.ID) {
+			if _, ok := changedSet[dependency]; ok {
+				ids = append(ids, resource.ID)
+				break
+			}
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
 // CanonicalBytes returns the deterministic portable graph artifact.
 func (g ProjectGraph) CanonicalBytes() []byte { return append([]byte(nil), g.canonical...) }
 
@@ -311,6 +383,60 @@ type ServingIdentity struct {
 	ProjectID    ResourceID `json:"projectId"`
 	Environment  string     `json:"environment"`
 	GenerationID string     `json:"generationId"`
+}
+
+// CandidateScope is the canonical serving scope used while preparing a
+// private candidate. BaseGenerationID is optional for a first deployment;
+// an empty value means there is no base generation, never a fabricated ID.
+type CandidateScope struct {
+	ProjectID        ResourceID `json:"projectId"`
+	Environment      string     `json:"environment"`
+	BaseGenerationID string     `json:"baseGenerationId,omitempty"`
+}
+
+func (scope CandidateScope) Validate() error {
+	if err := ValidateServingScope(scope.ProjectID, scope.Environment); err != nil {
+		return fmt.Errorf("candidate scope: %w", err)
+	}
+	if scope.BaseGenerationID != "" && (scope.BaseGenerationID != strings.TrimSpace(scope.BaseGenerationID) || !resourceIDPattern.MatchString(scope.BaseGenerationID)) {
+		return fmt.Errorf("%w: candidate base generation is invalid", ErrInvalidServingIdentity)
+	}
+	return nil
+}
+
+// ValidateServingScope validates the stable project/environment portion of a
+// serving identity without inventing a generation. Use it for read scopes and
+// other contracts that are deliberately generation-independent.
+func ValidateServingScope(projectID ResourceID, environment string) error {
+	canonicalProjectID, err := NewResourceID(projectID.String())
+	if err != nil || canonicalProjectID != projectID {
+		return fmt.Errorf("%w: project id %q", ErrInvalidServingIdentity, projectID)
+	}
+	return ValidateServingEnvironment(environment)
+}
+
+// ValidateServingEnvironment validates an environment when its project is
+// validated separately by the owning contract.
+func ValidateServingEnvironment(environment string) error {
+	canonicalEnvironment, err := canonicalScopeValue(environment, "environment")
+	if err != nil || canonicalEnvironment != environment {
+		return fmt.Errorf("%w: environment %q", ErrInvalidServingIdentity, environment)
+	}
+	return nil
+}
+
+func (scope CandidateScope) BaseIdentity() (*ServingIdentity, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if scope.BaseGenerationID == "" {
+		return nil, nil
+	}
+	identity, err := NewServingIdentity(scope.ProjectID, scope.Environment, scope.BaseGenerationID)
+	if err != nil {
+		return nil, err
+	}
+	return &identity, nil
 }
 
 // NewServingIdentity validates the complete immutable serving scope without
@@ -438,19 +564,14 @@ type artifactWire struct {
 }
 
 func normalizeServingIdentity(identity ServingIdentity) (ServingIdentity, error) {
-	projectID, err := NewResourceID(identity.ProjectID.String())
-	if err != nil {
-		return ServingIdentity{}, fmt.Errorf("%w: project id %q (%v)", ErrInvalidServingIdentity, identity.ProjectID, err)
-	}
-	environment, err := canonicalScopeValue(identity.Environment, "environment")
-	if err != nil {
+	if err := ValidateServingScope(identity.ProjectID, identity.Environment); err != nil {
 		return ServingIdentity{}, err
 	}
 	generation, err := canonicalScopeValue(identity.GenerationID, "generation id")
 	if err != nil {
 		return ServingIdentity{}, err
 	}
-	return ServingIdentity{ProjectID: projectID, Environment: environment, GenerationID: generation}, nil
+	return ServingIdentity{ProjectID: identity.ProjectID, Environment: identity.Environment, GenerationID: generation}, nil
 }
 
 func canonicalScopeValue(value, label string) (string, error) {

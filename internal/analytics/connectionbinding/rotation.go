@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"log/slog"
 	"strings"
 	"sync"
@@ -245,7 +246,7 @@ func (manager *PoolManager) targetID() string {
 	}
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	return manager.binding.TargetID
+	return manager.binding.TargetID.String()
 }
 
 func (manager *PoolManager) withAudit(
@@ -264,7 +265,8 @@ func (manager *PoolManager) withAudit(
 	binding := manager.binding
 	manager.mu.Unlock()
 	event := RotationAuditEvent{
-		BindingID: binding.ID, TargetID: binding.TargetID, WorkspaceID: binding.Scope.WorkspaceID,
+		BindingID: binding.ID, ConnectionID: binding.ConnectionID, TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID,
+		Identity:        projectgraph.ServingIdentity{ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment},
 		ProviderVersion: version,
 		Actor:           strings.TrimSpace(request.Actor), Operation: request.Operation,
 		Timestamp: timestamp.UTC(), Outcome: outcome, Reason: reason,
@@ -272,7 +274,7 @@ func (manager *PoolManager) withAudit(
 	operationID, command := rotationOperationID(request.Operation)
 	if !command {
 		if err := manager.audit.RecordCredentialRotation(context.WithoutCancel(ctx), event); err != nil {
-			manager.logger.ErrorContext(ctx, "best-effort credential rotation audit failed", "operation", request.Operation, "outcome", outcome, "workspace_id", binding.Scope.WorkspaceID, "principal", strings.TrimSpace(request.Actor), "binding_id", binding.ID, "target_id", binding.TargetID, "reason", reason, "error", err)
+			manager.logger.ErrorContext(ctx, "best-effort credential rotation audit failed", "operation", request.Operation, "outcome", outcome, "project_id", binding.Scope.ProjectID.String(), "principal", strings.TrimSpace(request.Actor), "binding_id", binding.ID.String(), "target_id", binding.TargetID.String(), "reason", reason, "error", err)
 		}
 		return result
 	}
@@ -288,10 +290,10 @@ func (manager *PoolManager) withAudit(
 		LogAttributes: []slog.Attr{
 			slog.String("operation", string(request.Operation)),
 			slog.String("outcome", string(outcome)),
-			slog.String("workspace_id", binding.Scope.WorkspaceID),
+			slog.String("project_id", binding.Scope.ProjectID.String()),
 			slog.String("principal", strings.TrimSpace(request.Actor)),
-			slog.String("binding_id", binding.ID),
-			slog.String("target_id", binding.TargetID),
+			slog.String("binding_id", binding.ID.String()),
+			slog.String("target_id", binding.TargetID.String()),
 			slog.String("reason", reason),
 		},
 	})
@@ -445,7 +447,7 @@ func (manager *PoolManager) HealthStatus() BindingHealthStatus {
 	binding := manager.binding
 	status := BindingHealthStatus{
 		BindingID: binding.ID, TargetID: binding.TargetID,
-		LogicalConnection: binding.LogicalConnectionID, ConnectorKind: binding.ConnectorKind,
+		ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
 		Scope: binding.Scope, BindingRevision: binding.Revision,
 		ValidatedVersion: binding.ValidatedVersion, Health: binding.Health, DiagnosticCode: binding.HealthReason,
 		LastAttemptAt: manager.lastRun, LastValidatedAt: binding.LastValidatedAt,

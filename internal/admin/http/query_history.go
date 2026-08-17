@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -174,7 +175,7 @@ func normalizeQueryHistoryCommand(command uisignals.AdminQueryHistoryCommand) ui
 
 func normalizeQueryHistoryFilters(filters uisignals.AdminQueryHistoryFilters) uisignals.AdminQueryHistoryFilters {
 	return uisignals.AdminQueryHistoryFilters{
-		Workspaces: uisignals.OptionalSlice(cleanStringSlice(uisignals.ValueOrZero(filters.Workspaces))),
+		Projects:   uisignals.OptionalSlice(cleanStringSlice(uisignals.ValueOrZero(filters.Projects))),
 		Principals: uisignals.OptionalSlice(cleanStringSlice(uisignals.ValueOrZero(filters.Principals))),
 		Surfaces:   uisignals.OptionalSlice(cleanStringSlice(uisignals.ValueOrZero(filters.Surfaces))),
 		Kinds:      uisignals.OptionalSlice(cleanStringSlice(uisignals.ValueOrZero(filters.Kinds))),
@@ -205,8 +206,8 @@ func applyFilterMenuCommand(filters uisignals.AdminQueryHistoryFilters, command 
 		selected = toggleStringSelection(selected, uisignals.ValueOrZero(command.Value))
 	}
 	switch uisignals.ValueOrZero(command.MenuID) {
-	case "workspace":
-		filters.Workspaces = uisignals.OptionalSlice(selected)
+	case "project":
+		filters.Projects = uisignals.OptionalSlice(selected)
 	case "principal":
 		filters.Principals = uisignals.OptionalSlice(selected)
 	case "surface":
@@ -277,7 +278,7 @@ func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Read
 		labels      map[string]string
 		icon        string
 	}{
-		{id: "workspace", label: "Workspace", placeholder: "Search workspaces", empty: "No workspaces found.", selected: uisignals.ValueOrZero(filters.Workspaces), values: map[string]int{}, labels: map[string]string{}, icon: "workspace"},
+		{id: "project", label: "Project", placeholder: "Search projects", empty: "No projects found.", selected: uisignals.ValueOrZero(filters.Projects), values: map[string]int{}, labels: map[string]string{}, icon: "project"},
 		{id: "principal", label: "User", placeholder: "Search users", empty: "No users found.", selected: uisignals.ValueOrZero(filters.Principals), values: map[string]int{}, labels: map[string]string{}, icon: "user"},
 		{id: "surface", label: "Source type", placeholder: "Search source types", empty: "No source types found.", selected: uisignals.ValueOrZero(filters.Surfaces), values: map[string]int{}, labels: map[string]string{}, icon: "source"},
 		{id: "kind", label: "Kind", placeholder: "Search kinds", empty: "No kinds found.", selected: uisignals.ValueOrZero(filters.Kinds), values: map[string]int{}, labels: map[string]string{}, icon: "kind"},
@@ -307,7 +308,7 @@ func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Read
 
 func queryHistoryFilterMenusWithError(filters uisignals.AdminQueryHistoryFilters, message string) []uisignals.FilterMenuSignal {
 	return []uisignals.FilterMenuSignal{
-		queryHistoryFilterMenu("workspace", "Workspace", "Search workspaces", "No workspaces found.", "workspace", nil, nil, uisignals.ValueOrZero(filters.Workspaces), "", false, message),
+		queryHistoryFilterMenu("project", "Project", "Search projects", "No projects found.", "project", nil, nil, uisignals.ValueOrZero(filters.Projects), "", false, message),
 		queryHistoryFilterMenu("principal", "User", "Search users", "No users found.", "user", nil, nil, uisignals.ValueOrZero(filters.Principals), "", false, message),
 		queryHistoryFilterMenu("surface", "Source type", "Search source types", "No source types found.", "source", nil, nil, uisignals.ValueOrZero(filters.Surfaces), "", false, message),
 		queryHistoryFilterMenu("kind", "Kind", "Search kinds", "No kinds found.", "kind", nil, nil, uisignals.ValueOrZero(filters.Kinds), "", false, message),
@@ -427,7 +428,7 @@ func queryHistoryStreamID(clientID string) string {
 func queryHistoryPage(r *http.Request, repo queryaudit.Reader, filters uisignals.AdminQueryHistoryFilters, pageToken string, limit int) ([]ui.AdminQueryEvent, string, bool, error) {
 	limit = normalizeQueryHistoryLimit(limit)
 	rows, err := repo.ListQueryEvents(r.Context(), queryaudit.Filter{
-		WorkspaceIDs: cleanStringSlice(uisignals.ValueOrZero(filters.Workspaces)),
+		ProjectIDs:   projectIDs(uisignals.ValueOrZero(filters.Projects)),
 		PrincipalIDs: cleanStringSlice(uisignals.ValueOrZero(filters.Principals)),
 		Surfaces:     cleanStringSlice(uisignals.ValueOrZero(filters.Surfaces)),
 		QueryKinds:   cleanStringSlice(uisignals.ValueOrZero(filters.Kinds)),
@@ -456,10 +457,22 @@ func queryHistoryPage(r *http.Request, repo queryaudit.Reader, filters uisignals
 	return out, nextCursor, hasMore, nil
 }
 
+func projectIDs(values []string) []projectgraph.ResourceID {
+	cleaned := cleanStringSlice(values)
+	if len(cleaned) == 0 {
+		return nil
+	}
+	out := make([]projectgraph.ResourceID, 0, len(cleaned))
+	for _, value := range cleaned {
+		out = append(out, projectgraph.ResourceID(value))
+	}
+	return out
+}
+
 func queryEventFromAudit(row queryaudit.Event) ui.AdminQueryEvent {
 	return ui.AdminQueryEvent{
 		ID:               row.ID,
-		WorkspaceID:      row.WorkspaceID,
+		ProjectID:        row.ProjectID.String(),
 		PrincipalID:      row.PrincipalID,
 		Surface:          row.Surface,
 		Operation:        row.Operation,

@@ -19,17 +19,17 @@
     {
       "slug": "catalog_get",
       "title": "catalog_get",
-      "summary": "Get the compact definition and type-specific metadata for one exact catalog ref."
+      "summary": "Resolve one exact authorized project resource ID and return its compact metadata."
     },
     {
       "slug": "catalog_list",
       "title": "catalog_list",
-      "summary": "Browse one deterministic level of the authorized LeapView catalog hierarchy."
+      "summary": "Browse authorized project resources."
     },
     {
       "slug": "catalog_search",
       "title": "catalog_search",
-      "summary": "Search the complete authorized LeapView BI catalog across workspaces."
+      "summary": "Search authorized project resources by stable ID, name, description, or domain metadata."
     },
     {
       "slug": "create_dashboard_draft",
@@ -59,7 +59,7 @@
     {
       "slug": "fork_dashboard",
       "title": "fork_dashboard",
-      "summary": "Fork an authorized workspace or retained project dashboard source into a private draft."
+      "summary": "Fork an authorized project or instance dashboard source into a private draft."
     },
     {
       "slug": "get_dashboard",
@@ -74,7 +74,7 @@
     {
       "slug": "list_dashboards",
       "title": "list_dashboards",
-      "summary": "List the authorized dashboard catalog for one workspace."
+      "summary": "List the authorized project dashboard catalog."
     },
     {
       "slug": "preview_dashboard_draft",

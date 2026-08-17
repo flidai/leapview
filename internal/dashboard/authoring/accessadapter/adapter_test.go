@@ -9,36 +9,38 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 type authorizationCall struct {
-	actor     string
-	privilege access.Privilege
-	object    access.ObjectRef
+	actor      string
+	project    graph.ResourceID
+	resource   access.ResourceRef
+	capability access.Capability
 }
 
 func TestAuthorizeMapsEveryActionToScopedDashboardPrivilege(t *testing.T) {
 	tests := []struct {
-		action    authoring.AuthorizationAction
-		privilege access.Privilege
+		action     authoring.AuthorizationAction
+		capability access.Capability
 	}{
-		{authoring.AuthorizationActionView, access.PrivilegeViewItem},
-		{authoring.AuthorizationActionEdit, access.PrivilegeEditItem},
-		{authoring.AuthorizationActionPublish, access.PrivilegeManageItem},
-		{authoring.AuthorizationActionArchive, access.PrivilegeManageItem},
+		{authoring.AuthorizationActionView, access.CapabilityResourceRead},
+		{authoring.AuthorizationActionEdit, access.CapabilityResourceEdit},
+		{authoring.AuthorizationActionPublish, access.CapabilityResourcePublish},
+		{authoring.AuthorizationActionArchive, access.CapabilityResourceManage},
 	}
 	for _, test := range tests {
 		t.Run(string(test.action), func(t *testing.T) {
 			var calls []authorizationCall
-			adapter, err := New(func(_ context.Context, actor string, privilege access.Privilege, object access.ObjectRef) (bool, error) {
-				calls = append(calls, authorizationCall{actor: actor, privilege: privilege, object: object})
+			adapter, err := New(func(_ context.Context, actor string, project graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+				calls = append(calls, authorizationCall{actor: actor, project: project, resource: resource, capability: capability})
 				return true, nil
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			err = adapter.Authorize(t.Context(), service.AuthorizationRequest{
-				ActorID: " actor-1 ", WorkspaceID: " workspace-1 ", DashboardID: "dashboard-1",
+				ActorID: " actor-1 ", ProjectID: "project-1", DashboardID: "dashboard-1",
 				OwnerPrincipalID: "owner-not-an-authorization-input", SemanticModel: "semantic-not-an-authorization-input", Action: test.action,
 			})
 			if err != nil {
@@ -48,20 +50,20 @@ func TestAuthorizeMapsEveryActionToScopedDashboardPrivilege(t *testing.T) {
 				t.Fatalf("authorization calls = %d, want 1", len(calls))
 			}
 			call := calls[0]
-			if call.actor != "actor-1" || call.privilege != test.privilege {
-				t.Fatalf("authorization call = %#v, want actor and privilege %q/%q", call, "actor-1", test.privilege)
+			if call.actor != "actor-1" || call.project != "project-1" || call.capability != test.capability {
+				t.Fatalf("authorization call = %#v, want actor/project/capability", call)
 			}
-			wantObject := access.ItemObject(access.SecurableDashboard, "workspace-1", "dashboard-1")
-			if call.object != wantObject {
-				t.Fatalf("object = %#v, want %#v", call.object, wantObject)
+			wantObject, _ := access.NewResourceRef("dashboard-1", graph.KindDashboard)
+			if call.resource != wantObject {
+				t.Fatalf("resource = %#v, want %#v", call.resource, wantObject)
 			}
 		})
 	}
 }
 
 func TestAuthorizeCreationUsesSuppliedDashboardID(t *testing.T) {
-	var object access.ObjectRef
-	adapter, err := New(func(_ context.Context, _ string, _ access.Privilege, got access.ObjectRef) (bool, error) {
+	var object access.ResourceRef
+	adapter, err := New(func(_ context.Context, _ string, _ graph.ResourceID, got access.ResourceRef, _ access.Capability) (bool, error) {
 		object = got
 		return true, nil
 	})
@@ -69,17 +71,19 @@ func TestAuthorizeCreationUsesSuppliedDashboardID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := adapter.Authorize(t.Context(), service.AuthorizationRequest{
-		ActorID: "actor", WorkspaceID: "workspace", DashboardID: authoring.DashboardID("allocated-dashboard"), Action: authoring.AuthorizationActionEdit,
+		ActorID: "actor", ProjectID: "project", DashboardID: authoring.DashboardID("allocated-dashboard"), Action: authoring.AuthorizationActionEdit,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if object.CanonicalID() != "dashboard:workspace:allocated-dashboard" {
+	if object.CanonicalID() != "allocated-dashboard" {
 		t.Fatalf("creation-time object = %#v", object)
 	}
 }
 
 func TestAuthorizeDeniedDecisionIsForbidden(t *testing.T) {
-	adapter, err := New(func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error) { return false, nil })
+	adapter, err := New(func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+		return false, nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +95,7 @@ func TestAuthorizeDeniedDecisionIsForbidden(t *testing.T) {
 
 func TestAuthorizePreservesDecisionErrors(t *testing.T) {
 	backendErr := errors.New("authorization backend unavailable")
-	adapter, err := New(func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error) {
+	adapter, err := New(func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
 		return false, backendErr
 	})
 	if err != nil {
@@ -111,7 +115,7 @@ func TestNewAndAuthorizeRejectInvalidInputs(t *testing.T) {
 		t.Fatal("New(nil) succeeded")
 	}
 	calls := 0
-	adapter, err := New(func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error) {
+	adapter, err := New(func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
 		calls++
 		return true, nil
 	})
@@ -119,11 +123,11 @@ func TestNewAndAuthorizeRejectInvalidInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := map[string]service.AuthorizationRequest{
-		"missing actor":     {WorkspaceID: "workspace", DashboardID: "dashboard", Action: authoring.AuthorizationActionView},
-		"missing workspace": {ActorID: "actor", DashboardID: "dashboard", Action: authoring.AuthorizationActionView},
-		"missing dashboard": {ActorID: "actor", WorkspaceID: "workspace", Action: authoring.AuthorizationActionView},
-		"invalid dashboard": {ActorID: "actor", WorkspaceID: "workspace", DashboardID: "bad id", Action: authoring.AuthorizationActionView},
-		"invalid action":    {ActorID: "actor", WorkspaceID: "workspace", DashboardID: "dashboard", Action: "unknown"},
+		"missing actor":     {ProjectID: "project", DashboardID: "dashboard", Action: authoring.AuthorizationActionView},
+		"missing project":   {ActorID: "actor", DashboardID: "dashboard", Action: authoring.AuthorizationActionView},
+		"missing dashboard": {ActorID: "actor", ProjectID: "project", Action: authoring.AuthorizationActionView},
+		"invalid dashboard": {ActorID: "actor", ProjectID: "project", DashboardID: "bad id", Action: authoring.AuthorizationActionView},
+		"invalid action":    {ActorID: "actor", ProjectID: "project", DashboardID: "dashboard", Action: "unknown"},
 	}
 	for name, request := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -140,6 +144,6 @@ func TestNewAndAuthorizeRejectInvalidInputs(t *testing.T) {
 
 func validRequest() service.AuthorizationRequest {
 	return service.AuthorizationRequest{
-		ActorID: "actor", WorkspaceID: "workspace", DashboardID: "dashboard", Action: authoring.AuthorizationActionView,
+		ActorID: "actor", ProjectID: "project", DashboardID: "dashboard", Action: authoring.AuthorizationActionView,
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"testing"
 	"time"
 )
@@ -43,7 +44,7 @@ func TestBuildCanExposeExplicitlyDisabledSurface(t *testing.T) {
 	if handler := module.TusHandler(); handler != nil {
 		t.Fatal("disabled managed-data module exposed a TUS handler")
 	}
-	if got, err := module.RuntimeResolution().ResolveManagedData(context.Background(), "state"); err != nil || len(got.Roots) != 0 {
+	if got, err := module.RuntimeResolution().ResolveManagedData(context.Background(), projectgraph.ServingIdentity{ProjectID: "project", Environment: "dev", GenerationID: "state"}); err != nil || len(got.Roots) != 0 {
 		t.Fatalf("disabled runtime resolution = %#v, %v", got, err)
 	}
 }

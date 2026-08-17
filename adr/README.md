@@ -23,7 +23,7 @@ customer site.
 | [ADR-0002](0002-use-maplibre-for-geographic-rendering.md) | Use MapLibre for geographic rendering | Accepted | 2026-07-22 | Complete | — |
 | [ADR-0003](0003-retain-narrow-infisical-resolver.md) | Retain the narrow Infisical resolver | Accepted | 2026-07-31 | Complete | — |
 | [ADR-0004](0004-defer-incremental-project-reconciliation.md) | Defer incremental project reconciliation | Accepted | 2026-08-05 | Deferred pending corrected measurement | [ADR-0005](0005-use-project-wide-resource-graph.md), scope and identity only |
-| [ADR-0005](0005-use-project-wide-resource-graph.md) | Use a project-wide resource graph | Accepted | 2026-08-15 | Pending | — |
+| [ADR-0005](0005-use-project-wide-resource-graph.md) | Use a project-wide resource graph | Accepted | 2026-08-15 | Complete | — |
 
 ## Conventions
 

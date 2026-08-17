@@ -1,4 +1,4 @@
-// Package sqlite persists API releases in the platform SQLite database.
+// Package sqlite persists canonical project-generation releases.
 package sqlite
 
 import (
@@ -7,249 +7,196 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
-	platformdb "github.com/flidai/leapview/internal/release/internal/db"
+	releasedb "github.com/flidai/leapview/internal/release/internal/db"
 )
 
 type Repository struct {
 	db       *sql.DB
-	q        *platformdb.Queries
+	queries  *releasedb.Queries
 	workflow jobs.WorkflowRecorder
 }
 
-func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, q: platformdb.New(db)} }
+func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, queries: releasedb.New(db)} }
 func NewRepositoryWithWorkflow(db *sql.DB, workflow jobs.WorkflowRecorder) *Repository {
-	return &Repository{db: db, q: platformdb.New(db), workflow: workflow}
+	return &Repository{db: db, queries: releasedb.New(db), workflow: workflow}
 }
 
 func (r *Repository) Create(ctx context.Context, input release.CreateInput) (release.Release, error) {
-	if err := normalizeCreate(&input); err != nil {
-		return release.Release{}, err
+	if r == nil || r.db == nil {
+		return release.Release{}, release.ErrInvalid
 	}
-	manifest := release.Manifest{Workspaces: input.Workspaces, Connections: input.Connections}
-	encoded, err := json.Marshal(manifest)
+	identity, identityErr := input.Identity()
+	if identityErr != nil || input.Provenance == nil || input.ID == "" || digest.ValidateSHA256Identity(input.ProjectDigest) != nil || digest.ValidateSHA256Identity(input.ArtifactDigest) != nil || digest.ValidateSHA256Identity(input.RequestDigest) != nil {
+		return release.Release{}, release.ErrInvalid
+	}
+	if err := input.Provenance.Validate(); err != nil {
+		return release.Release{}, release.ErrInvalid
+	}
+	if input.Provenance.Plan.Identity != identity || input.Provenance.Artifact.ProjectDigest != input.ProjectDigest || input.Provenance.Artifact.ContentDigest != input.ArtifactDigest {
+		return release.Release{}, release.ErrInvalid
+	}
+	seenConnections := make(map[string]struct{}, len(input.Connections))
+	for _, pin := range input.Connections {
+		if pin.ConnectionID == "" || pin.RevisionID == "" {
+			return release.Release{}, release.ErrInvalid
+		}
+		if _, exists := seenConnections[pin.ConnectionID]; exists {
+			return release.Release{}, release.ErrInvalid
+		}
+		seenConnections[pin.ConnectionID] = struct{}{}
+	}
+	provenanceBytes, err := json.Marshal(input.Provenance)
 	if err != nil {
 		return release.Release{}, err
-	}
-	provenanceJSON := "{}"
-	if input.Provenance != nil {
-		provenanceBytes, marshalErr := json.Marshal(input.Provenance)
-		if marshalErr != nil {
-			return release.Release{}, marshalErr
-		}
-		provenanceJSON = string(provenanceBytes)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return release.Release{}, err
 	}
 	defer tx.Rollback()
-	qtx := r.q.WithTx(tx)
-	err = qtx.CreateAPIRelease(ctx, platformdb.CreateAPIReleaseParams{ID: input.ID, ProjectID: input.ProjectID, ProjectDigest: input.ProjectDigest,
-		RequestDigest: input.RequestDigest, IdempotencyKey: input.IdempotencyKey, ManifestJson: string(encoded),
-		ProvenanceJson: provenanceJSON, CreatedBy: input.CreatedBy})
+	qtx := releasedb.New(tx)
+	err = qtx.CreateAPIRelease(ctx, releasedb.CreateAPIReleaseParams{ID: input.ID, ProjectID: input.ServingIdentity.ProjectID.String(), Environment: input.ServingIdentity.Environment, GenerationID: input.ServingIdentity.GenerationID, ProjectDigest: input.ProjectDigest, ArtifactDigest: input.ArtifactDigest, RequestDigest: input.RequestDigest, IdempotencyKey: input.IdempotencyKey, ProvenanceJson: string(provenanceBytes), CreatedBy: input.CreatedBy})
 	if err != nil {
-		existing, getErr := getWith(ctx, qtx, input.ProjectID, "", input.IdempotencyKey)
+		// Resolve idempotent replays through the transaction. Querying r.db here
+		// can deadlock when SQLite is configured with one connection because the
+		// open transaction owns that connection until this function returns.
+		existing, getErr := getRelease(ctx, qtx, input.ServingIdentity.ProjectID.String(), input.ID)
 		if getErr == nil {
 			if existing.RequestDigest != input.RequestDigest {
 				return release.Release{}, release.ErrConflict
 			}
 			return existing, nil
 		}
-		return release.Release{}, err
+		return release.Release{}, mapError(err)
 	}
-	for _, workspace := range input.Workspaces {
-		if err := qtx.CreateAPIReleaseArtifact(ctx, platformdb.CreateAPIReleaseArtifactParams{ReleaseID: input.ID, WorkspaceID: workspace.WorkspaceID, ExpectedDigest: workspace.ArtifactDigest}); err != nil {
-			return release.Release{}, err
-		}
-	}
-	for _, connection := range input.Connections {
-		if err := qtx.CreateAPIReleaseConnection(ctx, platformdb.CreateAPIReleaseConnectionParams{ReleaseID: input.ID, ConnectionID: connection.ConnectionID, RevisionID: connection.RevisionID}); err != nil {
-			return release.Release{}, err
+	for _, pin := range input.Connections {
+		if err := qtx.CreateAPIReleaseConnection(ctx, releasedb.CreateAPIReleaseConnectionParams{ReleaseID: input.ID, ConnectionID: pin.ConnectionID, RevisionID: pin.RevisionID}); err != nil {
+			return release.Release{}, mapError(err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return release.Release{}, err
 	}
-	return r.Get(ctx, input.ProjectID, input.ID)
+	return r.Get(ctx, input.ServingIdentity.ProjectID, input.ID)
 }
 
-func (r *Repository) Get(ctx context.Context, projectID, releaseID string) (release.Release, error) {
-	return getWith(ctx, r.q, strings.TrimSpace(projectID), strings.TrimSpace(releaseID), "")
+func (r *Repository) Get(ctx context.Context, projectID projectgraph.ResourceID, releaseID string) (release.Release, error) {
+	if projectID.Validate() != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
+		return release.Release{}, release.ErrInvalid
+	}
+	return getRelease(ctx, r.queries, projectID.String(), releaseID)
 }
-
-func (r *Repository) List(ctx context.Context, projectID string) ([]release.Release, error) {
-	ids, err := r.q.ListAPIReleaseIDs(ctx, strings.TrimSpace(projectID))
+func (r *Repository) List(ctx context.Context, projectID projectgraph.ResourceID) ([]release.Release, error) {
+	if projectID.Validate() != nil {
+		return nil, release.ErrInvalid
+	}
+	ids, err := r.queries.ListAPIReleaseIDs(ctx, projectID.String())
 	if err != nil {
 		return nil, err
 	}
-	result := make([]release.Release, 0, len(ids))
+	out := make([]release.Release, 0, len(ids))
 	for _, id := range ids {
 		item, err := r.Get(ctx, projectID, id)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, item)
+		out = append(out, item)
 	}
-	return result, nil
+	return out, nil
 }
 
-func (r *Repository) ProvenanceForServingState(
-	ctx context.Context,
-	servingStateID string,
-	workspaceID string,
-) (release.Provenance, error) {
-	if r == nil || r.q == nil || strings.TrimSpace(servingStateID) == "" || strings.TrimSpace(workspaceID) == "" {
-		return release.Provenance{}, release.ErrNotFound
+func (r *Repository) ProvenanceForServingState(ctx context.Context, identity projectgraph.ServingIdentity) (release.Provenance, error) {
+	if err := identity.Validate(); err != nil {
+		return release.Provenance{}, release.ErrInvalid
 	}
-	encoded, err := r.q.GetReadyReleaseProvenanceByServingState(
-		ctx,
-		platformdb.GetReadyReleaseProvenanceByServingStateParams{
-			ServingStateID: sql.NullString{String: strings.TrimSpace(servingStateID), Valid: true},
-			WorkspaceID:    strings.TrimSpace(workspaceID),
-		},
-	)
+	raw, err := r.queries.GetReadyReleaseProvenanceByGeneration(ctx, releasedb.GetReadyReleaseProvenanceByGenerationParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return release.Provenance{}, release.ErrNotFound
 	}
 	if err != nil {
 		return release.Provenance{}, err
 	}
-	var provenance release.Provenance
-	if err := json.Unmarshal([]byte(encoded), &provenance); err != nil {
+	var p release.Provenance
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return release.Provenance{}, err
 	}
-	if err := provenance.Validate(); err != nil {
+	if err := p.Validate(); err != nil {
 		return release.Provenance{}, err
 	}
-	for _, workspace := range provenance.Plan.Workspaces {
-		if workspace.ServingStateID == strings.TrimSpace(servingStateID) &&
-			workspace.WorkspaceID == strings.TrimSpace(workspaceID) {
-			return provenance, nil
-		}
+	if p.Plan.Identity != identity {
+		return release.Provenance{}, release.ErrConflict
 	}
-	return release.Provenance{}, release.ErrNotFound
+	return p, nil
 }
 
 func (r *Repository) RecordArtifact(ctx context.Context, artifact release.Artifact) error {
-	if strings.TrimSpace(artifact.ReleaseID) == "" || strings.TrimSpace(artifact.WorkspaceID) == "" || strings.TrimSpace(artifact.ServingStateID) == "" || artifact.SizeBytes < 0 {
+	identity, err := artifact.Identity()
+	if err != nil || artifact.ReleaseID == "" || artifact.SizeBytes < 0 || digest.ValidateSHA256Identity(artifact.ExpectedDigest) != nil || artifact.ActualDigest != artifact.ExpectedDigest {
 		return release.ErrInvalid
 	}
-	state, err := r.q.GetAPIReleaseArtifactUploadState(ctx, platformdb.GetAPIReleaseArtifactUploadStateParams{ID: artifact.ReleaseID, WorkspaceID: artifact.WorkspaceID})
-	if errors.Is(err, sql.ErrNoRows) {
-		return release.ErrNotFound
-	}
+	n, err := r.queries.RecordAPIReleaseArtifact(ctx, releasedb.RecordAPIReleaseArtifactParams{ArtifactActualDigest: artifact.ActualDigest, ArtifactSizeBytes: artifact.SizeBytes, ID: artifact.ReleaseID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ArtifactDigest: artifact.ExpectedDigest})
 	if err != nil {
 		return err
 	}
-	if release.Status(state.Status) != release.StatusDraft {
-		return release.ErrImmutable
-	}
-	if artifact.ExpectedDigest != "" && artifact.ExpectedDigest != state.ExpectedDigest {
-		return release.ErrConflict
-	}
-	changed, err := r.q.RecordAPIReleaseArtifact(ctx, platformdb.RecordAPIReleaseArtifactParams{SizeBytes: artifact.SizeBytes, ReleaseID: artifact.ReleaseID, WorkspaceID: artifact.WorkspaceID, ServingStateID: sql.NullString{String: artifact.ServingStateID, Valid: true}})
-	if err != nil {
-		return err
-	}
-	if changed != 1 {
+	if n != 1 {
 		return release.ErrConflict
 	}
 	return nil
 }
 
-func (r *Repository) RetainCandidateProvenance(
-	ctx context.Context,
-	projectID string,
-	provenance release.Provenance,
-) (release.Provenance, error) {
-	projectID = strings.TrimSpace(projectID)
-	if projectID == "" {
+func (r *Repository) RetainCandidateProvenance(ctx context.Context, projectID projectgraph.ResourceID, p release.Provenance) (release.Provenance, error) {
+	if projectID.Validate() != nil {
 		return release.Provenance{}, release.ErrInvalid
 	}
-	if err := provenance.Validate(); err != nil {
+	if err := p.Validate(); err != nil {
 		return release.Provenance{}, err
 	}
-	encoded, err := json.Marshal(provenance)
+	if p.Plan.Identity.ProjectID != projectID {
+		return release.Provenance{}, release.ErrConflict
+	}
+	encoded, err := json.Marshal(p)
 	if err != nil {
 		return release.Provenance{}, err
 	}
-	if _, err := r.q.RetainCandidateProvenance(
-		ctx,
-		platformdb.RetainCandidateProvenanceParams{
-			ProjectID:         projectID,
-			CandidateID:       provenance.Candidate.ID,
-			CandidateRevision: provenance.Candidate.Revision,
-			ProvenanceDigest:  provenance.Digest,
-			ProvenanceJson:    string(encoded),
-		},
-	); err != nil {
-		return release.Provenance{}, err
-	}
-	retained, err := r.CandidateProvenance(
-		ctx,
-		projectID,
-		provenance.Candidate.ID,
-		provenance.Candidate.Revision,
-	)
+	_, err = r.queries.RetainCandidateProvenance(ctx, releasedb.RetainCandidateProvenanceParams{ProjectID: projectID.String(), CandidateID: p.Candidate.ID, CandidateRevision: p.Candidate.Revision, ProvenanceDigest: p.Digest, ProvenanceJson: string(encoded)})
 	if err != nil {
 		return release.Provenance{}, err
 	}
-	if retained.Digest != provenance.Digest {
+	retained, err := r.CandidateProvenance(ctx, projectID, p.Candidate.ID, p.Candidate.Revision)
+	if err != nil {
+		return release.Provenance{}, err
+	}
+	if retained.Digest != p.Digest {
 		return release.Provenance{}, release.ErrConflict
 	}
 	return retained, nil
 }
-
-func (r *Repository) CandidateProvenance(
-	ctx context.Context,
-	projectID,
-	candidateID string,
-	candidateRevision int64,
-) (release.Provenance, error) {
-	projectID = strings.TrimSpace(projectID)
-	candidateID = strings.TrimSpace(candidateID)
-	if projectID == "" || candidateID == "" || candidateRevision < 1 {
+func (r *Repository) CandidateProvenance(ctx context.Context, projectID projectgraph.ResourceID, candidateID string, revision int64) (release.Provenance, error) {
+	if projectID.Validate() != nil || candidateID == "" || candidateID != strings.TrimSpace(candidateID) {
 		return release.Provenance{}, release.ErrInvalid
 	}
-	raw, err := r.q.GetCandidateProvenance(
-		ctx,
-		platformdb.GetCandidateProvenanceParams{
-			ProjectID:         projectID,
-			CandidateID:       candidateID,
-			CandidateRevision: candidateRevision,
-		},
-	)
+	raw, err := r.queries.GetCandidateProvenance(ctx, releasedb.GetCandidateProvenanceParams{ProjectID: projectID.String(), CandidateID: candidateID, CandidateRevision: revision})
 	if errors.Is(err, sql.ErrNoRows) {
 		return release.Provenance{}, release.ErrNotFound
 	}
 	if err != nil {
 		return release.Provenance{}, err
 	}
-	var provenance release.Provenance
-	if err := json.Unmarshal([]byte(raw), &provenance); err != nil {
+	var p release.Provenance
+	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return release.Provenance{}, err
 	}
-	if err := provenance.Validate(); err != nil {
+	if err := p.Validate(); err != nil {
 		return release.Provenance{}, err
 	}
-	return provenance, nil
-}
-
-func (r *Repository) AssignArtifactTarget(ctx context.Context, projectID, releaseID, workspaceID, servingStateID string) error {
-	changed, err := r.q.AssignAPIReleaseArtifactTarget(ctx, platformdb.AssignAPIReleaseArtifactTargetParams{ServingStateID: sql.NullString{String: strings.TrimSpace(servingStateID), Valid: true}, ReleaseID: releaseID, WorkspaceID: workspaceID, ID: releaseID, ProjectID: projectID})
-	if err != nil {
-		return err
-	}
-	if changed != 1 {
-		return release.ErrConflict
-	}
-	return nil
+	return p, nil
 }
 
 func (r *Repository) BeginFinalization(ctx context.Context, projectID, releaseID string, workflow jobs.WorkflowIntent) (release.Release, error) {
@@ -258,8 +205,8 @@ func (r *Repository) BeginFinalization(ctx context.Context, projectID, releaseID
 		return release.Release{}, err
 	}
 	defer tx.Rollback()
-	qtx := r.q.WithTx(tx)
-	current, err := getWith(ctx, qtx, projectID, releaseID, "")
+	qtx := releasedb.New(tx)
+	current, err := getRelease(ctx, qtx, projectID, releaseID)
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -267,16 +214,16 @@ func (r *Repository) BeginFinalization(ctx context.Context, projectID, releaseID
 		return release.Release{}, release.ErrImmutable
 	}
 	if current.Status == release.StatusDraft {
-		for _, artifact := range current.Artifacts {
-			if artifact.ServingStateID == "" || artifact.UploadedAt == "" {
-				return release.Release{}, release.ErrIncomplete
-			}
+		if current.ArtifactUploadedAt == "" || current.ActualDigest != current.ArtifactDigest {
+			return release.Release{}, release.ErrIncomplete
 		}
-		if _, err := qtx.MarkAPIReleaseValidating(ctx, platformdb.MarkAPIReleaseValidatingParams{ID: releaseID, ProjectID: projectID}); err != nil {
+		if n, err := qtx.MarkAPIReleaseValidating(ctx, releasedb.MarkAPIReleaseValidatingParams{ID: releaseID, ProjectID: projectID}); err != nil {
 			return release.Release{}, err
+		} else if n != 1 {
+			return release.Release{}, release.ErrConflict
 		}
 	}
-	if workflow.Job.ID != "" {
+	if workflow.Job.ID != "" || workflow.Event.Key != "" {
 		if r.workflow == nil {
 			return release.Release{}, fmt.Errorf("release workflow recorder is required")
 		}
@@ -287,17 +234,23 @@ func (r *Repository) BeginFinalization(ctx context.Context, projectID, releaseID
 	if err := tx.Commit(); err != nil {
 		return release.Release{}, err
 	}
-	return r.Get(ctx, projectID, releaseID)
+	project, err := projectgraph.NewResourceID(projectID)
+	if err != nil || releaseID == "" || releaseID != strings.TrimSpace(releaseID) {
+		return release.Release{}, release.ErrInvalid
+	}
+	return r.Get(ctx, project, releaseID)
 }
-
-func (r *Repository) CompleteFinalization(ctx context.Context, projectID, releaseID string, digests map[string]string) (release.Release, error) {
+func (r *Repository) CompleteFinalization(ctx context.Context, projectID, releaseID, actualDigest string) (release.Release, error) {
+	if digest.ValidateSHA256Identity(actualDigest) != nil {
+		return release.Release{}, release.ErrInvalid
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return release.Release{}, err
 	}
 	defer tx.Rollback()
-	qtx := r.q.WithTx(tx)
-	current, err := getWith(ctx, qtx, projectID, releaseID, "")
+	qtx := releasedb.New(tx)
+	current, err := getRelease(ctx, qtx, projectID, releaseID)
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -307,23 +260,17 @@ func (r *Repository) CompleteFinalization(ctx context.Context, projectID, releas
 	if current.Status != release.StatusValidating {
 		return release.Release{}, release.ErrImmutable
 	}
-	for _, artifact := range current.Artifacts {
-		digest, ok := digests[artifact.WorkspaceID]
-		if !ok || digest != artifact.ExpectedDigest {
-			return release.Release{}, release.ErrConflict
-		}
-		if err := qtx.SetAPIReleaseArtifactDigest(ctx, platformdb.SetAPIReleaseArtifactDigestParams{ActualDigest: digest, ReleaseID: releaseID, WorkspaceID: artifact.WorkspaceID}); err != nil {
-			return release.Release{}, err
-		}
+	if actualDigest != current.ArtifactDigest || current.ArtifactUploadedAt == "" {
+		return release.Release{}, release.ErrConflict
 	}
-	changed, err := qtx.MarkAPIReleaseReady(ctx, platformdb.MarkAPIReleaseReadyParams{ID: releaseID, ProjectID: projectID})
+	n, err := qtx.MarkAPIReleaseReady(ctx, releasedb.MarkAPIReleaseReadyParams{ID: releaseID, ProjectID: projectID})
 	if err != nil {
 		return release.Release{}, err
 	}
-	if changed != 1 {
-		return release.Release{}, release.ErrImmutable
+	if n != 1 {
+		return release.Release{}, release.ErrConflict
 	}
-	ready, err := getWith(ctx, qtx, projectID, releaseID, "")
+	ready, err := getRelease(ctx, qtx, projectID, releaseID)
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -335,7 +282,6 @@ func (r *Repository) CompleteFinalization(ctx context.Context, projectID, releas
 	}
 	return ready, nil
 }
-
 func (r *Repository) FailFinalization(ctx context.Context, projectID, releaseID string, cause error) (release.Release, error) {
 	message := "release validation failed"
 	if cause != nil && strings.TrimSpace(cause.Error()) != "" {
@@ -346,8 +292,8 @@ func (r *Repository) FailFinalization(ctx context.Context, projectID, releaseID 
 		return release.Release{}, err
 	}
 	defer tx.Rollback()
-	qtx := r.q.WithTx(tx)
-	current, err := getWith(ctx, qtx, projectID, releaseID, "")
+	qtx := releasedb.New(tx)
+	current, err := getRelease(ctx, qtx, projectID, releaseID)
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -357,14 +303,14 @@ func (r *Repository) FailFinalization(ctx context.Context, projectID, releaseID 
 	if current.Status != release.StatusValidating {
 		return release.Release{}, release.ErrImmutable
 	}
-	changed, err := qtx.MarkAPIReleaseFailed(ctx, platformdb.MarkAPIReleaseFailedParams{Error: message, ID: releaseID, ProjectID: projectID})
+	n, err := qtx.MarkAPIReleaseFailed(ctx, releasedb.MarkAPIReleaseFailedParams{Error: message, ID: releaseID, ProjectID: projectID})
 	if err != nil {
 		return release.Release{}, err
 	}
-	if changed != 1 {
-		return release.Release{}, release.ErrImmutable
+	if n != 1 {
+		return release.Release{}, release.ErrConflict
 	}
-	failed, err := getWith(ctx, qtx, projectID, releaseID, "")
+	failed, err := getRelease(ctx, qtx, projectID, releaseID)
 	if err != nil {
 		return release.Release{}, err
 	}
@@ -385,149 +331,99 @@ func (r *Repository) recordFinalizationEvent(ctx context.Context, tx *sql.Tx, ro
 	if err != nil {
 		return err
 	}
-	return r.workflow.RecordWorkflow(ctx, tx, jobs.WorkflowIntent{Event: jobs.EventInput{
-		Key: eventType, ResourceKind: "release", ResourceID: row.ID,
-		EventType: eventType, Data: data,
-	}})
+	return r.workflow.RecordWorkflow(ctx, tx, jobs.WorkflowIntent{Event: jobs.EventInput{Key: eventType, ResourceKind: "release", ResourceID: row.ID, EventType: eventType, Data: data}})
 }
 
 func (r *Repository) LinkDeployment(ctx context.Context, projectID, deploymentID, releaseID, rollbackOf string) error {
-	rollbackValue := strings.TrimSpace(rollbackOf)
-	return r.q.LinkAPIReleaseDeployment(ctx, platformdb.LinkAPIReleaseDeploymentParams{DeploymentID: strings.TrimSpace(deploymentID), ProjectID: strings.TrimSpace(projectID), ReleaseID: strings.TrimSpace(releaseID), RollbackOf: sql.NullString{String: rollbackValue, Valid: rollbackValue != ""}})
+	return linkDeployment(ctx, r.db, projectID, deploymentID, releaseID, rollbackOf)
 }
-
 func (r *Repository) LinkDeploymentTx(ctx context.Context, tx transaction.Transaction, projectID, deploymentID, releaseID, rollbackOf string) error {
 	if tx == nil {
 		return fmt.Errorf("release linkage transaction is required")
 	}
-	rollbackValue := strings.TrimSpace(rollbackOf)
-	return platformdb.New(tx).LinkAPIReleaseDeployment(ctx, platformdb.LinkAPIReleaseDeploymentParams{
-		DeploymentID: strings.TrimSpace(deploymentID), ProjectID: strings.TrimSpace(projectID),
-		ReleaseID: strings.TrimSpace(releaseID), RollbackOf: sql.NullString{String: rollbackValue, Valid: rollbackValue != ""},
-	})
+	return linkDeployment(ctx, tx, projectID, deploymentID, releaseID, rollbackOf)
 }
 
+func linkDeployment(ctx context.Context, q releasedb.DBTX, projectID, deploymentID, releaseID, rollbackOf string) error {
+	if projectID == "" || deploymentID == "" || releaseID == "" ||
+		projectID != strings.TrimSpace(projectID) || deploymentID != strings.TrimSpace(deploymentID) || releaseID != strings.TrimSpace(releaseID) || rollbackOf != strings.TrimSpace(rollbackOf) {
+		return release.ErrInvalid
+	}
+	queries := releasedb.New(q)
+	if err := queries.CreateAPIReleaseDeployment(ctx, releasedb.CreateAPIReleaseDeploymentParams{DeploymentID: deploymentID, ProjectID: projectID, ReleaseID: releaseID, RollbackOf: sql.NullString{String: rollbackOf, Valid: rollbackOf != ""}}); err != nil {
+		return mapError(err)
+	}
+	existing, err := queries.GetAPIReleaseDeploymentByDeployment(ctx, deploymentID)
+	if err != nil {
+		return mapError(err)
+	}
+	if existing.ProjectID != projectID || existing.ReleaseID != releaseID || existing.RollbackOf != rollbackOf {
+		return release.ErrConflict
+	}
+	return nil
+}
 func (r *Repository) DeploymentRelease(ctx context.Context, projectID, deploymentID string) (string, string, error) {
-	row, err := r.q.GetAPIReleaseDeployment(ctx, platformdb.GetAPIReleaseDeploymentParams{ProjectID: strings.TrimSpace(projectID), DeploymentID: strings.TrimSpace(deploymentID)})
+	row, err := r.queries.GetAPIReleaseDeployment(ctx, releasedb.GetAPIReleaseDeploymentParams{ProjectID: projectID, DeploymentID: deploymentID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", release.ErrNotFound
 	}
 	return row.ReleaseID, row.RollbackOf, err
 }
-
 func (r *Repository) ListDeploymentIDs(ctx context.Context, projectID string) ([]string, error) {
-	return r.q.ListAPIReleaseDeploymentIDs(ctx, strings.TrimSpace(projectID))
+	return r.queries.ListAPIReleaseDeploymentIDs(ctx, projectID)
 }
-
 func (r *Repository) PriorDeploymentRelease(ctx context.Context, projectID, deploymentID string) (string, error) {
-	releaseID, err := r.q.GetPriorAPIReleaseDeployment(ctx, platformdb.GetPriorAPIReleaseDeploymentParams{ProjectID: strings.TrimSpace(projectID), DeploymentID: strings.TrimSpace(deploymentID)})
+	rid, err := r.queries.GetPriorAPIReleaseDeployment(ctx, releasedb.GetPriorAPIReleaseDeploymentParams{ProjectID: projectID, DeploymentID: deploymentID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", release.ErrNotFound
 	}
-	return releaseID, err
+	return rid, err
 }
 
-func getWith(ctx context.Context, q *platformdb.Queries, projectID, releaseID, idempotencyKey string) (release.Release, error) {
-	var raw releaseRow
-	var err error
-	if idempotencyKey != "" {
-		row, queryErr := q.GetAPIReleaseByIdempotencyKey(ctx, platformdb.GetAPIReleaseByIdempotencyKeyParams{ProjectID: projectID, IdempotencyKey: idempotencyKey})
-		err = queryErr
-		raw = releaseRow{row.ID, row.ProjectID, row.ProjectDigest, row.RequestDigest, row.IdempotencyKey, row.Status, row.ManifestJson, row.ProvenanceJson, row.CreatedBy, row.CreatedAt, row.FinalizedAt, row.Error}
-	} else {
-		row, queryErr := q.GetAPIReleaseByID(ctx, platformdb.GetAPIReleaseByIDParams{ProjectID: projectID, ID: releaseID})
-		err = queryErr
-		raw = releaseRow{row.ID, row.ProjectID, row.ProjectDigest, row.RequestDigest, row.IdempotencyKey, row.Status, row.ManifestJson, row.ProvenanceJson, row.CreatedBy, row.CreatedAt, row.FinalizedAt, row.Error}
-	}
+func getRelease(ctx context.Context, q *releasedb.Queries, projectID, releaseID string) (release.Release, error) {
+	dbrow, err := q.GetAPIReleaseByID(ctx, releasedb.GetAPIReleaseByIDParams{ProjectID: projectID, ID: releaseID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return release.Release{}, release.ErrNotFound
 	}
 	if err != nil {
 		return release.Release{}, err
 	}
-	item := release.Release{ID: raw.id, ProjectID: raw.projectID, ProjectDigest: raw.projectDigest, RequestDigest: raw.requestDigest,
-		IdempotencyKey: raw.idempotencyKey, Status: release.Status(raw.status), CreatedBy: raw.createdBy, CreatedAt: raw.createdAt, FinalizedAt: raw.finalizedAt, Error: raw.errorText}
-	if err := json.Unmarshal([]byte(raw.manifestJSON), &item.Manifest); err != nil {
-		return release.Release{}, err
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(dbrow.ProjectID), dbrow.Environment, dbrow.GenerationID)
+	if err != nil {
+		return release.Release{}, fmt.Errorf("release %q has invalid serving identity: %w", dbrow.ID, err)
 	}
-	if raw.provenanceJSON != "" && raw.provenanceJSON != "{}" {
-		var provenance release.Provenance
-		if err := json.Unmarshal([]byte(raw.provenanceJSON), &provenance); err != nil {
+	row := release.Release{ID: dbrow.ID, ServingIdentity: identity, ProjectDigest: dbrow.ProjectDigest, ArtifactDigest: dbrow.ArtifactDigest, ActualDigest: dbrow.ArtifactActualDigest, ArtifactSizeBytes: dbrow.ArtifactSizeBytes, ArtifactUploadedAt: dbrow.ArtifactUploadedAt, RequestDigest: dbrow.RequestDigest, IdempotencyKey: dbrow.IdempotencyKey, Status: release.Status(dbrow.Status), CreatedBy: dbrow.CreatedBy, CreatedAt: dbrow.CreatedAt, FinalizedAt: dbrow.FinalizedAt, Error: dbrow.Error}
+	if dbrow.ProvenanceJson != "" && dbrow.ProvenanceJson != "{}" {
+		var p release.Provenance
+		if err := json.Unmarshal([]byte(dbrow.ProvenanceJson), &p); err != nil {
 			return release.Release{}, err
 		}
-		if err := provenance.Validate(); err != nil {
+		if err := p.Validate(); err != nil {
 			return release.Release{}, err
 		}
-		item.Provenance = &provenance
+		row.Provenance = &p
 	}
-	rows, err := q.GetAPIReleaseArtifacts(ctx, item.ID)
+	pins, err := q.GetAPIReleaseConnections(ctx, row.ID)
 	if err != nil {
 		return release.Release{}, err
 	}
-	for _, row := range rows {
-		artifact := release.Artifact{ReleaseID: item.ID, WorkspaceID: row.WorkspaceID, ExpectedDigest: row.ExpectedDigest,
-			ServingStateID: row.ServingStateID, ActualDigest: row.ActualDigest, SizeBytes: row.SizeBytes, UploadedAt: row.UploadedAt}
-		item.Artifacts = append(item.Artifacts, artifact)
+	for _, pin := range pins {
+		row.Manifest.Connections = append(row.Manifest.Connections, release.ConnectionPin{ConnectionID: pin.ConnectionID, RevisionID: pin.RevisionID})
 	}
-	for i := range item.Manifest.Workspaces {
-		for _, artifact := range item.Artifacts {
-			if artifact.WorkspaceID == item.Manifest.Workspaces[i].WorkspaceID {
-				item.Manifest.Workspaces[i].ServingStateID = artifact.ServingStateID
-				break
-			}
-		}
-	}
-	return item, nil
+	return row, nil
 }
 
-type releaseRow struct {
-	id, projectID, projectDigest, requestDigest, idempotencyKey, status, manifestJSON string
-	provenanceJSON, createdBy, createdAt, finalizedAt, errorText                      string
+func mapError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return release.ErrNotFound
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "constraint") || strings.Contains(strings.ToLower(err.Error()), "unique") {
+		return release.ErrConflict
+	}
+	return err
 }
 
-func normalizeCreate(input *release.CreateInput) error {
-	input.ID = strings.TrimSpace(input.ID)
-	input.ProjectID = strings.TrimSpace(input.ProjectID)
-	input.ProjectDigest = strings.TrimSpace(input.ProjectDigest)
-	input.RequestDigest = strings.TrimSpace(input.RequestDigest)
-	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
-	input.CreatedBy = strings.TrimSpace(input.CreatedBy)
-	if input.ID == "" || input.ProjectID == "" || input.ProjectDigest == "" || input.RequestDigest == "" || input.IdempotencyKey == "" || input.CreatedBy == "" || len(input.Workspaces) == 0 {
-		return release.ErrInvalid
-	}
-	if input.Provenance != nil {
-		if err := input.Provenance.Validate(); err != nil {
-			return release.ErrInvalid
-		}
-	}
-	sort.Slice(input.Workspaces, func(i, j int) bool { return input.Workspaces[i].WorkspaceID < input.Workspaces[j].WorkspaceID })
-	sort.Slice(input.Connections, func(i, j int) bool { return input.Connections[i].ConnectionID < input.Connections[j].ConnectionID })
-	seen := map[string]struct{}{}
-	for i := range input.Workspaces {
-		input.Workspaces[i].WorkspaceID = strings.TrimSpace(input.Workspaces[i].WorkspaceID)
-		input.Workspaces[i].ArtifactDigest = strings.TrimSpace(input.Workspaces[i].ArtifactDigest)
-		if input.Workspaces[i].WorkspaceID == "" || input.Workspaces[i].ArtifactDigest == "" {
-			return release.ErrInvalid
-		}
-		if _, ok := seen[input.Workspaces[i].WorkspaceID]; ok {
-			return release.ErrInvalid
-		}
-		seen[input.Workspaces[i].WorkspaceID] = struct{}{}
-	}
-	seen = map[string]struct{}{}
-	for i := range input.Connections {
-		input.Connections[i].ConnectionID = strings.TrimSpace(input.Connections[i].ConnectionID)
-		input.Connections[i].RevisionID = strings.TrimSpace(input.Connections[i].RevisionID)
-		if input.Connections[i].ConnectionID == "" || input.Connections[i].RevisionID == "" {
-			return release.ErrInvalid
-		}
-		if _, ok := seen[input.Connections[i].ConnectionID]; ok {
-			return release.ErrInvalid
-		}
-		seen[input.Connections[i].ConnectionID] = struct{}{}
-	}
-	if len(input.Workspaces) > 200 || len(input.Connections) > 200 {
-		return fmt.Errorf("%w: manifest exceeds 200 resources", release.ErrInvalid)
-	}
-	return nil
-}
+var _ release.Repository = (*Repository)(nil)

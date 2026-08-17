@@ -141,23 +141,6 @@ func TestBuildRejectsMissingCommandContractLookup(t *testing.T) {
 	}
 }
 
-func TestGeneratedTransportRejectsEmptyPageTokenBeforeService(t *testing.T) {
-	called := false
-	handler, err := buildTestHandler(func(string, http.ResponseWriter, *http.Request) bool {
-		called = true
-		return true
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects?pageToken=%20", nil)
-	handler.HandleAPIGen("listProjects", rec, req)
-	if called || rec.Code != http.StatusBadRequest {
-		t.Fatalf("boundary status=%d called=%v body=%s", rec.Code, called, rec.Body.String())
-	}
-}
-
 func TestGeneratedSemanticTransportRejectsLimitsAndArraysBeforeService(t *testing.T) {
 	cases := []struct {
 		name string

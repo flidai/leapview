@@ -13,7 +13,7 @@ import (
 )
 
 type visualizationTileMetrics interface {
-	QueryVisualizationTile(context.Context, string, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
+	QueryVisualizationTile(context.Context, string, string, string, int, int, int) (dashboardruntime.SpatialTileResult, error)
 }
 
 type publicVisualizationTileMetrics interface {
@@ -21,7 +21,7 @@ type publicVisualizationTileMetrics interface {
 }
 
 func (m *Module) VisualizationTile(w http.ResponseWriter, r *http.Request) {
-	workspaceID, dashboardID := chi.URLParam(r, "workspace"), chi.URLParam(r, "dashboard")
+	dashboardID := chi.URLParam(r, "dashboard")
 	visualID, revision := chi.URLParam(r, "visual"), chi.URLParam(r, "revision")
 	zoom, zoomErr := strconv.Atoi(chi.URLParam(r, "z"))
 	x, xErr := strconv.Atoi(chi.URLParam(r, "x"))
@@ -31,7 +31,7 @@ func (m *Module) VisualizationTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	world := 1 << zoom
-	if x < 0 || y < 0 || x >= world || y >= world || workspaceID == "" || dashboardID == "" || visualID == "" || revision == "" {
+	if x < 0 || y < 0 || x >= world || y >= world || dashboardID == "" || visualID == "" || revision == "" {
 		spatialTileFailure(w, http.StatusBadRequest, "invalid tile coordinates")
 		return
 	}
@@ -44,7 +44,7 @@ func (m *Module) VisualizationTile(w http.ResponseWriter, r *http.Request) {
 	if m.handler.AnalyticalContext != nil {
 		ctx = m.handler.AnalyticalContext(ctx)
 	}
-	result, err := metrics.QueryVisualizationTile(ctx, workspaceID, dashboardID, visualID, revision, zoom, x, y)
+	result, err := metrics.QueryVisualizationTile(ctx, dashboardID, visualID, revision, zoom, x, y)
 	if err != nil {
 		m.observeSpatialTile("error", dashboardruntime.SpatialTileResult{})
 		spatialTileFailure(w, http.StatusNotFound, "tile revision unavailable")

@@ -68,10 +68,9 @@ func TestDashboardChatAdapterPreservesBrowserContract(t *testing.T) {
 			},
 			References: &[]agentui.AgentReferenceSignal{{
 				Reference: agentui.AgentReferenceKeySignal{
-					WorkspaceID: "workspace-1", Type: "visual", ID: "visual-1",
+					Kind: "visual", ID: "visual-1",
 				},
 				Name: "Revenue", Description: agentui.Optional("Revenue chart"), VisualType: agentui.Optional("bar"),
-				Workspace: agentui.AgentReferenceWorkspaceSignal{ID: "workspace-1", Name: "Sales"},
 				Hierarchy: []string{"Sales", "Executive"}, Href: "/visual-1",
 				Locations: []agentui.AgentReferenceLocationSignal{{
 					DashboardID: agentui.Optional("dashboard-1"), DashboardName: agentui.Optional("Executive"),

@@ -3,11 +3,13 @@ package authoring
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	dashboardmodel "github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func contractProvenance() Provenance {
@@ -23,13 +25,19 @@ func contractRevisionToken() RevisionToken {
 }
 
 func contractCompilationToken() CompiledRevisionToken {
-	return CompiledRevisionToken{AuthoredRevision: contractRevisionToken(), DefinitionHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", SemanticServingStateID: "state-1"}
+	identity, _ := projectgraph.NewServingIdentity("project-1", "production", "state-1")
+	return CompiledRevisionToken{AuthoredRevision: contractRevisionToken(), DefinitionHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", SemanticIdentity: identity}
+}
+
+func contractServingIdentity() projectgraph.ServingIdentity {
+	identity, _ := projectgraph.NewServingIdentity("project-1", "production", "state-1")
+	return identity
 }
 
 func TestLifecycleStatusesAndPointers(t *testing.T) {
 	provenance := contractProvenance()
 	draft := &Draft{ID: "draft-1", DashboardID: "sales", Revision: contractRevisionToken(), Provenance: provenance}
-	lifecycle, err := NewDashboardLifecycle(NewDashboardLifecycleInput{WorkspaceID: "workspace-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Draft: draft})
+	lifecycle, err := NewDashboardLifecycle(NewDashboardLifecycleInput{ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Draft: draft})
 	if err != nil {
 		t.Fatalf("NewDashboardLifecycle() error = %v", err)
 	}
@@ -59,10 +67,30 @@ func TestLifecycleStatusesAndPointers(t *testing.T) {
 	}
 }
 
+func TestLifecycleJSONRejectsLegacyWorkspaceScope(t *testing.T) {
+	draft := &Draft{ID: "draft-1", DashboardID: "sales", Revision: contractRevisionToken(), Provenance: contractProvenance()}
+	lifecycle, err := NewDashboardLifecycle(NewDashboardLifecycleInput{ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Draft: draft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(lifecycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "workspace") {
+		t.Fatalf("lifecycle serialization leaked legacy workspace scope: %s", encoded)
+	}
+	var decoded DashboardLifecycle
+	legacy := strings.Replace(string(encoded), "\"projectId\":\"project-1\"", "\"workspaceId\":\"legacy\",\"projectId\":\"project-1\"", 1)
+	if err := json.Unmarshal([]byte(legacy), &decoded); err == nil {
+		t.Fatal("lifecycle decoder accepted legacy workspaceId")
+	}
+}
+
 func TestIdentifiersAndEnumsAreClosed(t *testing.T) {
 	for _, value := range []string{"", "has space", "../source", "/absolute", "a/b"} {
-		if err := DashboardID(value).Validate(); !errors.Is(err, ErrInvalidIdentifier) {
-			t.Errorf("DashboardID(%q).Validate() = %v", value, err)
+		if err := ValidateDashboardID(DashboardID(value)); !errors.Is(err, ErrInvalidIdentifier) {
+			t.Errorf("ValidateDashboardID(%q) = %v", value, err)
 		}
 	}
 	for _, value := range []string{"draft", "published", "archived"} {
@@ -80,12 +108,12 @@ func TestIdentifiersAndEnumsAreClosed(t *testing.T) {
 
 func TestProvenanceMetadataRoundTripAndValidation(t *testing.T) {
 	value := Provenance{
-		Origin:                     OriginAgent,
-		ActorID:                    "principal-1",
-		ConversationID:             "conversation-1",
-		ToolCallID:                 "call-1",
-		BaseSemanticServingStateID: "state-1",
-		Source:                     &SourceMetadata{Repository: "org/repo", Path: "dashboards/sales.yaml", Ref: "main", Revision: "abc123"},
+		Origin:               OriginAgent,
+		ActorID:              "principal-1",
+		ConversationID:       "conversation-1",
+		ToolCallID:           "call-1",
+		BaseSemanticIdentity: contractServingIdentity(),
+		Source:               &SourceMetadata{Repository: "org/repo", Path: "dashboards/sales.yaml", Ref: "main", Revision: "abc123"},
 	}
 	if err := value.Validate(); err != nil {
 		t.Fatalf("metadata provenance validation error = %v", err)
@@ -101,13 +129,13 @@ func TestProvenanceMetadataRoundTripAndValidation(t *testing.T) {
 	if decoded.Source == nil {
 		t.Fatalf("provenance metadata did not round-trip: %#v", decoded)
 	}
-	if decoded.ConversationID != value.ConversationID || decoded.ToolCallID != value.ToolCallID || decoded.BaseSemanticServingStateID != value.BaseSemanticServingStateID || decoded.Source.Repository != value.Source.Repository {
+	if decoded.ConversationID != value.ConversationID || decoded.ToolCallID != value.ToolCallID || decoded.BaseSemanticIdentity != value.BaseSemanticIdentity || decoded.Source.Repository != value.Source.Repository {
 		t.Fatalf("provenance metadata did not round-trip: %#v", decoded)
 	}
 	for _, invalid := range []Provenance{
 		{Origin: OriginAgent, ActorID: "principal-1", ConversationID: "bad id"},
 		{Origin: OriginAgent, ActorID: "principal-1", ToolCallID: "" + " bad"},
-		{Origin: OriginAgent, ActorID: "principal-1", BaseSemanticServingStateID: "state/1"},
+		{Origin: OriginAgent, ActorID: "principal-1", BaseSemanticIdentity: projectgraph.ServingIdentity{ProjectID: "project-1", Environment: "production", GenerationID: "state/1"}},
 	} {
 		if err := invalid.Validate(); err == nil {
 			t.Fatalf("invalid provenance metadata unexpectedly validated: %#v", invalid)
@@ -123,7 +151,7 @@ func TestProvenanceIsDeepClonedIntoRevisionAndLifecycleDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	draft := &Draft{ID: "draft-1", DashboardID: "sales", Revision: revision.Token(), Provenance: provenance}
-	lifecycle, err := NewDashboardLifecycle(NewDashboardLifecycleInput{WorkspaceID: "workspace-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Draft: draft})
+	lifecycle, err := NewDashboardLifecycle(NewDashboardLifecycleInput{ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Draft: draft})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,10 +168,43 @@ func TestProvenanceIsDeepClonedIntoRevisionAndLifecycleDraft(t *testing.T) {
 	}
 }
 
+func TestProvenanceCloneDetachesForkEvidence(t *testing.T) {
+	t.Run("instance", func(t *testing.T) {
+		original := Provenance{Origin: OriginAgent, ActorID: "actor", ForkedFrom: &ForkEvidence{
+			Kind:     ForkSourceInstance,
+			Instance: &InstanceForkEvidence{SourceProjectID: "source-project", SourceDashboardID: "source-dashboard", SourceRevision: contractRevisionToken()},
+		}}
+		cloned := original.Clone()
+		if cloned.ForkedFrom == original.ForkedFrom || cloned.ForkedFrom.Instance == original.ForkedFrom.Instance {
+			t.Fatal("instance fork evidence was not detached")
+		}
+		cloned.ForkedFrom.Instance.SourceProjectID = "mutated-project"
+		cloned.ForkedFrom.Instance.SourceRevision.Number = 99
+		if original.ForkedFrom.Instance.SourceProjectID != "source-project" || original.ForkedFrom.Instance.SourceRevision.Number != 1 {
+			t.Fatalf("original instance evidence mutated through clone: %#v", original.ForkedFrom.Instance)
+		}
+	})
+	t.Run("project", func(t *testing.T) {
+		original := Provenance{Origin: OriginAgent, ActorID: "actor", ForkedFrom: &ForkEvidence{
+			Kind:    ForkSourceProject,
+			Project: &ProjectForkEvidence{SourceProjectID: "project-1", SourceDashboardID: "source-dashboard", Identity: contractServingIdentity(), Path: "dashboards/source.yaml"},
+		}}
+		cloned := original.Clone()
+		if cloned.ForkedFrom == original.ForkedFrom || cloned.ForkedFrom.Project == original.ForkedFrom.Project {
+			t.Fatal("project fork evidence was not detached")
+		}
+		cloned.ForkedFrom.Project.SourceProjectID = "mutated-project"
+		cloned.ForkedFrom.Project.Path = "mutated.yaml"
+		if original.ForkedFrom.Project.SourceProjectID != "project-1" || original.ForkedFrom.Project.Path != "dashboards/source.yaml" {
+			t.Fatalf("original project evidence mutated through clone: %#v", original.ForkedFrom.Project)
+		}
+	})
+}
+
 func TestDashboardIDIsIndependentOfSlugAndTitle(t *testing.T) {
 	provenance := contractProvenance()
 	draft := &Draft{ID: "draft-1", DashboardID: "stable-id", Revision: contractRevisionToken(), Provenance: provenance}
-	one, err := NewDashboardLifecycle(NewDashboardLifecycleInput{WorkspaceID: "workspace-1", ID: "stable-id", OwnerPrincipalID: "principal-1", Slug: "first-slug", Title: "First title", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Draft: draft})
+	one, err := NewDashboardLifecycle(NewDashboardLifecycleInput{ProjectID: "project-1", ID: "stable-id", OwnerPrincipalID: "principal-1", Slug: "first-slug", Title: "First title", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Draft: draft})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,14 +215,14 @@ func TestDashboardIDIsIndependentOfSlugAndTitle(t *testing.T) {
 	}
 }
 
-func TestLifecycleRequiresWorkspaceOwnerAndSemanticModelIdentity(t *testing.T) {
+func TestLifecycleRequiresProjectOwnerAndSemanticModelIdentity(t *testing.T) {
 	base := DashboardLifecycle{
-		WorkspaceID: "workspace-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales",
+		ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales",
 		Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Status: LifecycleStatusDraft,
 		Draft: &Draft{ID: "draft-1", DashboardID: "sales", Revision: contractRevisionToken(), Provenance: contractProvenance()},
 	}
 	for name, mutate := range map[string]func(*DashboardLifecycle){
-		"workspace":      func(value *DashboardLifecycle) { value.WorkspaceID = "" },
+		"project":        func(value *DashboardLifecycle) { value.ProjectID = "" },
 		"owner":          func(value *DashboardLifecycle) { value.OwnerPrincipalID = "owner id" },
 		"semantic model": func(value *DashboardLifecycle) { value.SemanticModel = "" },
 	} {
@@ -172,6 +233,35 @@ func TestLifecycleRequiresWorkspaceOwnerAndSemanticModelIdentity(t *testing.T) {
 				t.Fatal("lifecycle missing required identity unexpectedly validated")
 			}
 		})
+	}
+}
+
+func TestLifecycleRequiresCanonicalProjectIdentityAndKnownVisibility(t *testing.T) {
+	base := DashboardLifecycle{
+		ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales",
+		Title: "Sales", SemanticModel: "sales_model", Visibility: VisibilityPrivate, Status: LifecycleStatusDraft,
+		Draft: &Draft{ID: "draft-1", DashboardID: "sales", Revision: contractRevisionToken(), Provenance: contractProvenance()},
+	}
+	for _, value := range []string{"", " project-1", "project-1 ", "project/1"} {
+		candidate := base
+		candidate.ProjectID = projectgraph.ResourceID(value)
+		if err := candidate.Validate(); err == nil {
+			t.Fatalf("project identity %q unexpectedly validated", value)
+		}
+	}
+	for _, visibility := range []Visibility{VisibilityPrivate, VisibilityRestricted, VisibilityOrganization} {
+		candidate := base
+		candidate.Visibility = visibility
+		if err := candidate.Validate(); err != nil {
+			t.Fatalf("visibility %q rejected: %v", visibility, err)
+		}
+	}
+	for _, visibility := range []Visibility{"shared", "workspace", ""} {
+		candidate := base
+		candidate.Visibility = visibility
+		if err := candidate.Validate(); err == nil {
+			t.Fatalf("visibility %q unexpectedly validated", visibility)
+		}
 	}
 }
 

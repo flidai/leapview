@@ -49,7 +49,7 @@ func TestMaintenanceWorkerSkipsSaturatedPassWithoutQueueing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	held, err := controller.Acquire(t.Context(), workload.Request{Class: workload.Interactive, WorkspaceID: "sales", Operation: "hold"})
+	held, err := controller.Acquire(t.Context(), workload.Request{Class: workload.Interactive, PrincipalID: "principal:test", Operation: "hold", EstimatedMemoryBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestMaintenanceWorkerSkipsSaturatedPassWithoutQueueing(t *testing.T) {
 	worker := newMaintenanceWorker(testUploadExpirer{called: called}, MaintenanceWorkerConfig{
 		Interval: 10 * time.Millisecond,
 		Acquire: func(ctx context.Context) (MaintenanceLease, error) {
-			return controller.Acquire(ctx, workload.Request{Class: workload.Maintenance, Operation: "managed_data.collect"})
+			return controller.Acquire(ctx, workload.Request{Class: workload.Maintenance, PrincipalID: "system:managed-data", Operation: "managed_data.collect", EstimatedMemoryBytes: 64 << 20})
 		},
 	})
 	worker.Start(t.Context())

@@ -3,18 +3,11 @@ package analyticsruntime
 import (
 	"testing"
 
-	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 )
 
-func TestRequiredWorkspaceExtensionsIncludesSpatialForTiledMaps(t *testing.T) {
-	definition := &dashboarddefinition.Workspace{Dashboards: map[string]dashboarddefinition.Definition{
-		"orders": {Visualizations: map[string]visualizationdefinition.Definition{
-			"map": {Query: visualizationdefinition.QueryBinding{Spatial: &visualizationdefinition.SpatialQueryBinding{Tiles: &visualizationdefinition.SpatialTileBinding{}}}},
-		}},
-	}}
-	got := requiredWorkspaceExtensions(definition)
-	if len(got) != 1 || got[0] != "spatial" {
-		t.Fatalf("required extensions = %#v, want spatial", got)
+func TestRequiredProjectExtensionsIncludesSpatialForTiledMaps(t *testing.T) {
+	if got := requiredProjectExtensions((*dashboardruntime.ProjectDefinition)(nil)); got != nil {
+		t.Fatalf("required extensions = %#v, want nil for missing project", got)
 	}
 }

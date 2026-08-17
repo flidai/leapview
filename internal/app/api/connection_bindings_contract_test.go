@@ -5,7 +5,7 @@ import "testing"
 func TestTargetConnectionBindingAPIContract(t *testing.T) {
 	spec := managedDataOpenAPISpec(t)
 	paths := openAPIMap(t, spec, "paths")
-	base := "/api/v1/workspaces/{workspace}/targets/{target}/environments/{environment}/connection-bindings"
+	base := "/api/v1/projects/{project}/targets/{target}/connection-bindings"
 	item := base + "/{connection}"
 
 	operations := []struct {
@@ -14,16 +14,16 @@ func TestTargetConnectionBindingAPIContract(t *testing.T) {
 		id        string
 		privilege string
 	}{
-		{base, "get", "listTargetConnectionBindings", "MANAGE_CONNECTION_METADATA"},
-		{base, "post", "createTargetConnectionBinding", "MANAGE_CONNECTION_METADATA"},
-		{item, "get", "getTargetConnectionBinding", "MANAGE_CONNECTION_METADATA"},
-		{item + "/plan", "post", "planTargetConnectionBindingChange", "MANAGE_CONNECTION_METADATA"},
-		{item, "put", "updateTargetConnectionBinding", "MANAGE_CONNECTION_METADATA"},
-		{item + "/test", "post", "testTargetConnectionBinding", "TEST_CONNECTION"},
-		{item + "/refresh", "post", "refreshTargetConnectionBinding", "TEST_CONNECTION"},
-		{item + "/enable", "post", "enableTargetConnectionBinding", "MANAGE_CONNECTION_METADATA"},
-		{item + "/disable", "post", "disableTargetConnectionBinding", "MANAGE_CONNECTION_METADATA"},
-		{item + "/health", "get", "getTargetConnectionBindingHealth", "VIEW_CONNECTION_HEALTH"},
+		{base, "get", "listTargetConnectionBindings", "PROJECT_ADMIN"},
+		{base, "post", "createTargetConnectionBinding", "PROJECT_ADMIN"},
+		{item, "get", "getTargetConnectionBinding", "RESOURCE_MANAGE"},
+		{item + "/plan", "post", "planTargetConnectionBindingChange", "RESOURCE_MANAGE"},
+		{item, "put", "updateTargetConnectionBinding", "RESOURCE_MANAGE"},
+		{item + "/test", "post", "testTargetConnectionBinding", "RESOURCE_MANAGE"},
+		{item + "/refresh", "post", "refreshTargetConnectionBinding", "RESOURCE_MANAGE"},
+		{item + "/enable", "post", "enableTargetConnectionBinding", "RESOURCE_MANAGE"},
+		{item + "/disable", "post", "disableTargetConnectionBinding", "RESOURCE_MANAGE"},
+		{item + "/health", "get", "getTargetConnectionBindingHealth", "RESOURCE_READ"},
 	}
 	for _, want := range operations {
 		operation := openAPIOperation(t, paths, want.path, want.method)
@@ -46,7 +46,7 @@ func TestTargetConnectionBindingAPIContract(t *testing.T) {
 	binding := openAPISchema(t, schemas, "TargetConnectionBindingResponse")
 	for _, field := range []string{
 		"id", "targetId", "logicalConnection", "connectorKind", "authenticationMode",
-		"workspaceId", "environment", "endpoint", "enabled", "health", "revision",
+		"environment", "endpoint", "enabled", "health", "revision",
 	} {
 		_ = schemaProperty(t, binding, field)
 	}
@@ -58,7 +58,7 @@ func TestTargetConnectionBindingAPIContract(t *testing.T) {
 
 	health := openAPISchema(t, schemas, "TargetConnectionBindingHealthResponse")
 	for _, field := range []string{
-		"bindingId", "targetId", "logicalConnection", "connectorKind", "workspaceId",
+		"bindingId", "targetId", "logicalConnection", "connectorKind",
 		"environment", "bindingRevision", "health", "hasActivePool",
 	} {
 		_ = schemaProperty(t, health, field)

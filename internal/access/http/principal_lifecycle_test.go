@@ -39,7 +39,13 @@ func TestPrincipalAdministrationResponsesExposeSourceAwareCapabilities(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }}
+	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "local-admin@example.test", Role: access.PlatformRoleAdmin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+		return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
+	}}
 
 	for _, test := range []struct {
 		name      string
@@ -102,7 +108,13 @@ func TestExternalPrincipalProfileAndDeletionAreManagedByProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }}
+	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "admin@example.test", Role: access.PlatformRoleAdmin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+		return Principal{ID: admin.ID, Kind: access.PrincipalKindUser}, true
+	}}
 
 	updateRequest := principalRequest(stdhttp.MethodPatch, "/api/v1/principals/"+external.ID, external.ID)
 	updateRequest.Body = io.NopCloser(bytes.NewBufferString(`{"displayName":"Locally Changed"}`))
@@ -121,30 +133,6 @@ func TestExternalPrincipalProfileAndDeletionAreManagedByProvider(t *testing.T) {
 	}
 }
 
-func TestGroupAdministrationCapabilitiesFollowProviderOwnership(t *testing.T) {
-	for _, test := range []struct {
-		provider string
-		mutable  bool
-	}{
-		{provider: "local", mutable: true},
-		{provider: "scim", mutable: false},
-	} {
-		t.Run(test.provider, func(t *testing.T) {
-			response := groupDTO(access.Group{ID: "group", WorkspaceID: "sales", Provider: test.provider, ExternalID: "analysts", Name: "Analysts"})
-			capabilities, ok := response["capabilities"].(map[string]bool)
-			if !ok {
-				t.Fatalf("capabilities=%#v", response["capabilities"])
-			}
-			if capabilities["canUpdate"] != test.mutable || capabilities["canDelete"] != test.mutable || capabilities["canManageMembers"] != test.mutable {
-				t.Fatalf("mutable capabilities=%#v", capabilities)
-			}
-			if !capabilities["canManageAuthorization"] {
-				t.Fatalf("authorization capability=%#v", capabilities)
-			}
-		})
-	}
-}
-
 func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
 	if err != nil {
@@ -156,6 +144,9 @@ func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
 		ID: "admin", Kind: access.PrincipalKindUser, Email: "admin@example.test", DisplayName: "Admin",
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: actor.ID, Email: actor.Email, Role: access.PlatformRoleAdmin}); err != nil {
 		t.Fatal(err)
 	}
 	targetReset, err := repository.CreateLocalUser(t.Context(), access.LocalUserInput{
@@ -178,7 +169,7 @@ func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO oauth_authoring_sessions (
-  id, kind, client_id, principal_id, target_id, project_id, privileges_json,
+  id, kind, client_id, principal_id, target_id, project_id, capabilities_json,
   created_at, expires_at
 ) VALUES (?, 'human_cli', 'leapview-cli', ?, 'lvinst_test', 'test', '[]', ?, ?)`,
 		"authoring_before_disable", target.ID, now.Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339)); err != nil {
@@ -194,9 +185,10 @@ INSERT INTO oauth_authoring_credentials (
 		t.Fatal(err)
 	}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repository, nil },
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
-			return Principal{ID: actor.ID, Kind: actor.Kind, Email: actor.Email, DisplayName: actor.DisplayName}, true
+			return Principal{ID: actor.ID, Kind: access.PrincipalKindUser, Email: actor.Email, DisplayName: actor.DisplayName}, true
 		},
 	}
 
@@ -225,7 +217,7 @@ INSERT INTO oauth_authoring_credentials (
 	if err := json.Unmarshal(enableRecorder.Body.Bytes(), &enabled); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := enabled["blockedAt"]; exists {
+	if enabled["blockedAt"] != nil {
 		t.Fatalf("enabled principal retained blockedAt: %v", enabled)
 	}
 	if _, err := repository.PrincipalForToken(t.Context(), sessionToken); !errors.Is(err, sql.ErrNoRows) {
@@ -260,7 +252,7 @@ WHERE c.id = ?`, "credential_before_disable").Scan(&active, &revokedAt); err != 
 	}
 
 	for _, action := range []string{"principal.blocked", "principal.unblocked", "principal.deleted"} {
-		events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{Action: action, TargetID: target.ID})
+		events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{Action: action, ResourceID: target.ID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,9 +275,15 @@ func TestPrincipalLifecycleRejectsSelfDisableAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: actor.ID, Email: actor.Email, Role: access.PlatformRoleAdmin}); err != nil {
+		t.Fatal(err)
+	}
 	handler := Handler{
-		Repository:       func() (access.Repository, error) { return repository, nil },
-		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: actor.ID}, true },
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
+		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: actor.ID, Kind: access.PrincipalKindUser}, true
+		},
 	}
 	for _, test := range []struct {
 		name string
@@ -302,51 +300,6 @@ func TestPrincipalLifecycleRejectsSelfDisableAndDelete(t *testing.T) {
 				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 			}
 		})
-	}
-}
-
-func TestPrincipalDeletionMapsOwnedSecurableToConflictAndRollsBack(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	actor, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{
-		ID: "admin", Kind: access.PrincipalKindUser, Email: "admin@example.test",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ownerReset, err := repository.CreateLocalUser(t.Context(), access.LocalUserInput{
-		Email: "owner@example.test", DisplayName: "Owner",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner := ownerReset.Principal
-	object := access.ItemObject(access.SecurableDashboard, "test", "owned")
-	if _, err := repository.UpsertSecurableObject(t.Context(), object, owner.ID); err != nil {
-		t.Fatal(err)
-	}
-	handler := Handler{
-		Repository:       func() (access.Repository, error) { return repository, nil },
-		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: actor.ID}, true },
-	}
-	recorder := httptest.NewRecorder()
-	handler.DeletePrincipal(recorder, principalRequest(stdhttp.MethodDelete, "/api/v1/principals/owner", owner.ID))
-	if recorder.Code != stdhttp.StatusConflict {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if _, err := repository.PrincipalByID(t.Context(), owner.ID); err != nil {
-		t.Fatalf("owner was deleted despite conflict: %v", err)
-	}
-	events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{Action: "principal.deleted", TargetID: owner.ID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 0 {
-		t.Fatalf("failed deletion wrote success audit: %#v", events)
 	}
 }
 

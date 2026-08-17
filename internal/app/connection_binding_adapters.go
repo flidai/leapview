@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	accessmodule "github.com/flidai/leapview/internal/access/module"
+	"github.com/flidai/leapview/internal/access"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 )
 
@@ -22,13 +22,16 @@ func (connectionBindingDependenciesWithoutConsumers) Dependents(
 }
 
 type connectionRotationAuditRecorder struct {
-	record func(context.Context, accessmodule.AuditEventInput) error
+	record func(context.Context, access.AuditEventInput) error
 }
 
 func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 	ctx context.Context,
 	event analyticsmodule.ConnectionRotationAuditEvent,
 ) error {
+	if err := event.ConnectionID.Validate(); err != nil {
+		return err
+	}
 	metadata, err := connectionRotationAuditMetadata(event)
 	if err != nil {
 		return err
@@ -40,25 +43,28 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 	if recorder.record == nil {
 		return nil
 	}
-	return recorder.record(ctx, accessmodule.AuditEventInput{
-		WorkspaceID: event.WorkspaceID, PrincipalID: principalID,
+	return recorder.record(ctx, access.AuditEventInput{
+		PrincipalID:  principalID,
 		Action:       string(event.Operation),
-		TargetType:   "connection_binding",
-		TargetID:     event.BindingID,
-		Privilege:    accessmodule.PrivilegeTestConnection,
+		ResourceKind: "connection",
+		ResourceID:   event.ConnectionID.String(),
+		Capability:   access.CapabilityResourceUse,
 		Status:       string(event.Outcome),
 		MetadataJSON: metadata,
 	})
 }
 
 type connectionAdministrationAuditRecorder struct {
-	record func(context.Context, accessmodule.AuditEventInput) error
+	record func(context.Context, access.AuditEventInput) error
 }
 
 func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministration(
 	ctx context.Context,
 	event analyticsmodule.ConnectionAdministrationAuditEvent,
 ) error {
+	if err := event.ConnectionID.Validate(); err != nil {
+		return err
+	}
 	metadata, err := connectionAdministrationAuditMetadata(event)
 	if err != nil {
 		return err
@@ -66,11 +72,14 @@ func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministra
 	if recorder.record == nil {
 		return nil
 	}
-	return recorder.record(ctx, accessmodule.AuditEventInput{
-		WorkspaceID: event.WorkspaceID, PrincipalID: event.Actor,
-		Action: string(event.Action), TargetType: "connection_binding", TargetID: event.BindingID,
-		Privilege: accessmodule.PrivilegeManageConnectionMetadata,
-		Status:    string(event.Outcome), MetadataJSON: metadata,
+	return recorder.record(ctx, access.AuditEventInput{
+		PrincipalID:  event.Actor,
+		Action:       string(event.Action),
+		ResourceKind: "connection",
+		ResourceID:   event.ConnectionID.String(),
+		Capability:   access.CapabilityResourceManage,
+		Status:       string(event.Outcome),
+		MetadataJSON: metadata,
 	})
 }
 

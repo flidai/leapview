@@ -66,9 +66,9 @@ func TestApplyTargetBindingBuildsTokenOnlyQuackConnection(t *testing.T) {
 func testQuackTargetBinding(t *testing.T) connectionbinding.TargetBinding {
 	t.Helper()
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_prod_lakehouse", TargetID: "lvinst_prod", LogicalConnectionID: "lakehouse",
+		ID: "binding_prod_lakehouse", TargetID: "lvinst_prod", ConnectionID: "lakehouse",
 		ConnectorKind: "quack", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
-		Scope: connectionbinding.BindingScope{WorkspaceID: "operations", Environment: "prod"},
+		Scope:    connectionbinding.BindingScope{ProjectID: "operations", Environment: "prod"},
 		Endpoint: connectionbinding.EndpointConfig{Host: "quack.example.com", Port: 443, TLSMode: "require"},
 		CredentialReference: connectionbinding.CredentialReference{
 			ProjectID: "project-1", Environment: "prod", SecretPath: "/leapview/operations", SecretKey: "lakehouse",
@@ -82,9 +82,9 @@ func testQuackTargetBinding(t *testing.T) connectionbinding.TargetBinding {
 func testDuckDBTargetBinding(t *testing.T) connectionbinding.TargetBinding {
 	t.Helper()
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", LogicalConnectionID: "warehouse",
+		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "warehouse",
 		ConnectorKind: "postgres", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
-		Scope: connectionbinding.BindingScope{WorkspaceID: "sales", Environment: "prod"},
+		Scope: connectionbinding.BindingScope{ProjectID: "sales", Environment: "prod"},
 		Endpoint: connectionbinding.EndpointConfig{
 			Host: "warehouse.internal", Port: 5432, Database: "analytics",
 			SourceIdentity: "leapview_runtime", TLSMode: "verify-full",

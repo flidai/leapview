@@ -11,12 +11,13 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 	contracts := releasegen.GetAPIGenOperationContracts()
 	commands := map[string]struct {
 		auditAction string
+		privilege   string
 		idempotency string
 		guarantee   string
 	}{
-		"createRelease":         {auditAction: releaseCreatedAuditAction, idempotency: "required", guarantee: "best-effort"},
-		"uploadReleaseArtifact": {auditAction: releaseArtifactUploadedAuditAction, guarantee: "best-effort"},
-		"finalizeRelease":       {auditAction: releaseValidatingAuditAction, idempotency: "required", guarantee: "transactional"},
+		"createRelease":         {auditAction: releaseCreatedAuditAction, privilege: "RESOURCE_PUBLISH", idempotency: "required", guarantee: "best-effort"},
+		"uploadReleaseArtifact": {auditAction: releaseArtifactUploadedAuditAction, privilege: "RESOURCE_PUBLISH", guarantee: "best-effort"},
+		"finalizeRelease":       {auditAction: releaseValidatingAuditAction, privilege: "RESOURCE_PUBLISH", idempotency: "required", guarantee: "transactional"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
@@ -31,7 +32,7 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 			contract.Command.Target == nil ||
 			contract.Command.Target.Parameter != "project" ||
 			contract.Command.Target.Type != "project" ||
-			contract.Command.Privilege != "PUBLISH_RELEASE" ||
+			contract.Command.Privilege != expected.privilege ||
 			contract.Command.Idempotency != expected.idempotency ||
 			len(contract.Command.AdditionalExposures) != 0 {
 			t.Errorf("command contract %q = %#v", operationID, contract)
@@ -41,6 +42,12 @@ func TestReleaseLifecycleOperationContracts(t *testing.T) {
 		contract, ok := contracts[operationID]
 		if !ok || contract.Command != nil || releaseGeneratedOperationKind(contract) != "query" {
 			t.Errorf("query contract %q = %#v", operationID, contract)
+			continue
+		}
+		authz, _ := contract.Extensions["x-authz"].(map[string]any)
+		privilege, _ := authz["privilege"].(string)
+		if contract.AuthzMode != "privilege" || privilege != "RESOURCE_READ" {
+			t.Errorf("query contract %q authorization = %s/%s, want privilege/RESOURCE_READ", operationID, contract.AuthzMode, privilege)
 		}
 	}
 	finalize := contracts["finalizeRelease"].Command.Execution

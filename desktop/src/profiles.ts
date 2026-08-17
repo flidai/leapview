@@ -17,7 +17,6 @@ import { isValidInstanceID } from "./instance-identity.js";
 import { isSafeDesktopRoute } from "./safe-route.js";
 
 const PROFILE_SCHEMA_VERSION = 2;
-const LEGACY_PROFILE_SCHEMA_VERSION = 1;
 const PROFILE_PARTITION_VERSION = 1;
 const profileIDPattern = /^profile_[0-9a-f]{32}$/;
 
@@ -34,11 +33,6 @@ export interface Profile {
 interface ProfileDocument {
   schemaVersion: 2;
   profiles: Profile[];
-}
-
-interface ProfileReadResult {
-  document: ProfileDocument;
-  migrated: boolean;
 }
 
 export class DesktopProfileReplacementCancelledError extends Error {
@@ -72,11 +66,8 @@ export class ProfileStore {
 
   async list(): Promise<Profile[]> {
     return this.#serialize(async () => {
-      const result = await this.#read();
-      if (result.migrated) {
-        await this.#write(result.document);
-      }
-      return structuredClone(result.document.profiles);
+      const document = await this.#read();
+      return structuredClone(document.profiles);
     });
   }
 
@@ -84,7 +75,7 @@ export class ProfileStore {
     discovery: DiscoveryDocument,
   ): Promise<Profile> {
     return this.#serialize(async () => {
-      const { document } = await this.#read();
+      const document = await this.#read();
       const originProfile = document.profiles.find(
         (profile) => profile.canonicalOrigin === discovery.canonicalOrigin,
       );
@@ -140,7 +131,7 @@ export class ProfileStore {
       ? undefined
       : requireProfileString(label, "profile label", 120);
     return this.#serialize(async () => {
-      const { document } = await this.#read();
+      const document = await this.#read();
       const profile = document.profiles.find(
         (candidate) => candidate.id === profileID,
       );
@@ -167,7 +158,7 @@ export class ProfileStore {
     }
     const normalizedPath = validateSafePath(lastSafePath);
     return this.#serialize(async () => {
-      const { document } = await this.#read();
+      const document = await this.#read();
       const profile = document.profiles.find(
         (candidate) => candidate.id === profileID,
       );
@@ -191,7 +182,7 @@ export class ProfileStore {
       throw new Error("desktop profile id is invalid");
     }
     return this.#serialize(async () => {
-      const { document } = await this.#read();
+      const document = await this.#read();
       const index = document.profiles.findIndex(
         (candidate) => candidate.id === profileID,
       );
@@ -231,7 +222,7 @@ export class ProfileStore {
       throw new Error("desktop profile id is invalid");
     }
     await this.#serialize(async () => {
-      const { document } = await this.#read();
+      const document = await this.#read();
       const index = document.profiles.findIndex(
         (profile) => profile.id === profileID,
       );
@@ -244,7 +235,7 @@ export class ProfileStore {
     });
   }
 
-  async #read(): Promise<ProfileReadResult> {
+  async #read(): Promise<ProfileDocument> {
     try {
       const information = await stat(this.#path);
       if (
@@ -254,23 +245,7 @@ export class ProfileStore {
         throw new Error("desktop profile file permissions are not private");
       }
       const body = await readFile(this.#path, "utf8");
-      const parsed = JSON.parse(body) as unknown;
-      if (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        !Array.isArray(parsed) &&
-        (parsed as Record<string, unknown>).schemaVersion ===
-          LEGACY_PROFILE_SCHEMA_VERSION
-      ) {
-        return {
-          document: migrateLegacyProfileDocument(parsed),
-          migrated: true,
-        };
-      }
-      return {
-        document: validateProfileDocument(parsed),
-        migrated: false,
-      };
+      return validateProfileDocument(JSON.parse(body) as unknown);
     } catch (error) {
       if (
         typeof error === "object" &&
@@ -279,11 +254,8 @@ export class ProfileStore {
         error.code === "ENOENT"
       ) {
         return {
-          document: {
-            schemaVersion: PROFILE_SCHEMA_VERSION,
-            profiles: [],
-          },
-          migrated: false,
+          schemaVersion: PROFILE_SCHEMA_VERSION,
+          profiles: [],
         };
       }
       if (error instanceof SyntaxError) {
@@ -334,52 +306,6 @@ export class ProfileStore {
       release();
     }
   }
-}
-
-function migrateLegacyProfileDocument(input: unknown): ProfileDocument {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    throw new Error("desktop profile document must be an object");
-  }
-  const document = input as Record<string, unknown>;
-  requireExactKeys(
-    document,
-    ["schemaVersion", "profiles"],
-    "desktop profile document",
-  );
-  if (
-    document.schemaVersion !== LEGACY_PROFILE_SCHEMA_VERSION ||
-    !Array.isArray(document.profiles) ||
-    document.profiles.length > 100
-  ) {
-    throw new Error("desktop profile schema version is unsupported");
-  }
-  return validateProfileDocument({
-    schemaVersion: PROFILE_SCHEMA_VERSION,
-    profiles: document.profiles.map((profile) => {
-      if (
-        typeof profile !== "object" ||
-        profile === null ||
-        Array.isArray(profile)
-      ) {
-        throw new Error("desktop profile must be an object");
-      }
-      requireExactKeys(
-        profile as Record<string, unknown>,
-        [
-          "id",
-          "canonicalOrigin",
-          "instanceId",
-          "displayName",
-          "lastSafePath",
-        ],
-        "legacy desktop profile",
-      );
-      return {
-        ...profile,
-        partitionVersion: PROFILE_PARTITION_VERSION,
-      };
-    }),
-  });
 }
 
 function validateProfileDocument(input: unknown): ProfileDocument {

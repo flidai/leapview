@@ -14,7 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	"github.com/stretchr/testify/require"
 )
 
@@ -173,10 +173,10 @@ func TestBundledEvaluationProjectCompilesAndPlansOneSmallManagedFile(t *testing.
 	root, err := evaluationAssetsRoot()
 	require.NoError(t, err)
 	projectPath := filepath.Join(root, evaluationProjectRelativePath)
-	compiled, err := workspacecompiler.CompileProject(projectPath, workspacecompiler.Options{ServingStateID: "evaluation-test"})
+	compiled, err := projectcompiler.CompileProject(projectPath)
 	require.NoError(t, err)
-	if got := compiled.WorkspaceIDs(); len(got) != 1 || got[0] != evaluationWorkspaceID {
-		t.Fatalf("compiled evaluation workspaces = %#v", got)
+	if compiled.ProjectID().String() != evaluationProjectID {
+		t.Fatalf("compiled evaluation project = %q, want %q", compiled.ProjectID(), evaluationProjectID)
 	}
 	plan, err := localplan.NewService(loadManagedDataPlanProject).Plan(context.Background(), localplan.Request{
 		ProjectPath: projectPath,
@@ -184,6 +184,9 @@ func TestBundledEvaluationProjectCompilesAndPlansOneSmallManagedFile(t *testing.
 		From:        filepath.Join(root, evaluationDataRelativePath),
 	})
 	require.NoError(t, err)
+	if plan.Connection != "connection:sample" || plan.ConnectionName != evaluationConnection {
+		t.Fatalf("evaluation connection identity = %q/%q, want connection:sample/%s", plan.Connection, plan.ConnectionName, evaluationConnection)
+	}
 	if len(plan.Manifest.Files) != 1 || plan.Manifest.Files[0].Path != "orders.csv" || plan.Manifest.Files[0].Size > 16<<10 {
 		t.Fatalf("evaluation manifest = %#v", plan.Manifest)
 	}
@@ -193,7 +196,6 @@ func TestEvaluationCompletionMarkerIsStrictAndPrivate(t *testing.T) {
 	home := t.TempDir()
 	completion := evaluationCompletion{
 		ProjectID:  evaluationProjectID,
-		Workspace:  evaluationWorkspaceID,
 		Dashboard:  evaluationDashboardID,
 		RevisionID: "sha256:" + strings.Repeat("a", 64),
 	}

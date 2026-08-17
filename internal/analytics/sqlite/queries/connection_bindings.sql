@@ -1,7 +1,7 @@
 -- name: CreateTargetConnectionBinding :exec
 INSERT INTO target_connection_bindings (
-  id, target_id, logical_connection_id, connector_kind, authentication_mode,
-  workspace_id, environment, endpoint_json,
+  id, target_id, connection_id, connector_kind, authentication_mode,
+  project_id, environment, endpoint_json,
   credential_project_id, credential_environment, credential_secret_path, credential_secret_key,
   enabled, validated_version, health, health_reason, last_validated_at,
   created_at, updated_at, revision
@@ -12,17 +12,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 SELECT *
 FROM target_connection_bindings
 WHERE target_id = ?
-  AND workspace_id = ?
+  AND project_id = ?
   AND environment = ?
-  AND logical_connection_id = ?;
+  AND connection_id = ?;
 
 -- name: ListTargetConnectionBindings :many
 SELECT *
 FROM target_connection_bindings
 WHERE target_id = ?
-  AND workspace_id = ?
+  AND project_id = ?
   AND environment = ?
-ORDER BY logical_connection_id ASC;
+ORDER BY connection_id ASC;
 
 -- name: UpdateTargetConnectionBinding :execrows
 UPDATE target_connection_bindings
@@ -41,8 +41,8 @@ SET endpoint_json = ?,
 WHERE id = ?
   AND revision = ?
   AND target_id = ?
-  AND logical_connection_id = ?
+  AND connection_id = ?
   AND connector_kind = ?
   AND authentication_mode = ?
-  AND workspace_id = ?
+  AND project_id = ?
   AND environment = ?;

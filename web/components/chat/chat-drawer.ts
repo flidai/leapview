@@ -278,7 +278,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
 			searchResults.filter((reference) => isOnPageReference(reference, context)),
 			this.suggestions,
 		)
-		const workspaceSuggestions = searchResults.filter((reference) => !isOnPageReference(reference, context))
+		const catalogSuggestions = searchResults.filter((reference) => !isOnPageReference(reference, context))
     const conversationHref = agent.activeConversationId
       ? `/chats/${encodeURIComponent(agent.activeConversationId)}`
       : '/chats/new'
@@ -319,7 +319,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
           .references=${this.references}
           .referenceLimit=${context?.referenceLimit ?? defaultAgentReferenceLimit}
           .pinnedSuggestions=${pinnedSuggestions}
-          .suggestions=${workspaceSuggestions}
+          .suggestions=${catalogSuggestions}
           .suggestionQuery=${this.referenceSearch.query}
           .suggestionRequestId=${this.referenceSearch.requestId}
 			.acceptedRunId=${latestAcceptedRunId(agent.transcript ?? [])}

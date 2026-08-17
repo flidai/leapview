@@ -70,7 +70,7 @@ func (resolver *Resolver) Resolve(_ context.Context, reference connectionbinding
 	if resolver == nil {
 		return connectionbinding.CredentialSnapshot{}, connectionbinding.ErrProviderUnavailable
 	}
-	if reference.ProjectID != resolver.selection.TargetID ||
+	if reference.ProjectID != resolver.selection.ProjectID ||
 		reference.Environment != resolver.selection.Environment ||
 		reference.SecretPath != "/" {
 		return connectionbinding.CredentialSnapshot{}, connectionbinding.ErrCredentialDenied

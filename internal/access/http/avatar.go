@@ -152,8 +152,8 @@ func (h Handler) completeAvatarCommand(r *stdhttp.Request, operationID accessgen
 			return repository.RecordAuditEvent(ctx, access.AuditEventInput{
 				PrincipalID:   principalID,
 				Action:        action,
-				TargetType:    "principal",
-				TargetID:      principalID,
+				ResourceKind:  "principal",
+				ResourceID:    principalID,
 				Status:        "success",
 				RequestID:     requestIDFromRequest(r),
 				CorrelationID: correlationIDFromRequest(r),

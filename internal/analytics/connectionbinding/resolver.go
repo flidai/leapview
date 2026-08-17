@@ -3,6 +3,7 @@ package connectionbinding
 import (
 	"context"
 	"fmt"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"strings"
 )
 
@@ -21,7 +22,8 @@ const (
 )
 
 type ResolverSelection struct {
-	TargetID    string
+	TargetID    TargetID
+	ProjectID   projectgraph.ResourceID
 	Environment string
 	TargetClass TargetClass
 	Kind        ResolverKind
@@ -68,14 +70,20 @@ func SelectResolver(selection ResolverSelection, resolvers ResolverSet) (Credent
 
 type Repository interface {
 	Create(context.Context, TargetBinding) error
-	Binding(context.Context, BindingScope, string, LogicalConnectionID) (TargetBinding, error)
+	Binding(context.Context, BindingScope, TargetID, projectgraph.ResourceID) (TargetBinding, error)
 	Save(context.Context, TargetBinding, int64) (TargetBinding, error)
 }
 
 func NewResolverSelection(input ResolverSelectionInput) (ResolverSelection, error) {
-	input.TargetID = strings.TrimSpace(input.TargetID)
+	if _, err := ParseTargetID(input.TargetID.String()); err != nil {
+		return ResolverSelection{}, err
+	}
+	if input.ProjectID.String() != strings.TrimSpace(input.ProjectID.String()) {
+		return ResolverSelection{}, fmt.Errorf("%w: resolver project identity must be canonical", ErrInvalidBinding)
+	}
+	input.ProjectID = projectgraph.ResourceID(input.ProjectID.String())
 	input.Environment = strings.TrimSpace(input.Environment)
-	if !identifierPattern.MatchString(input.TargetID) || !identifierPattern.MatchString(input.Environment) {
+	if !input.ProjectID.Valid() || !identifierPattern.MatchString(input.Environment) {
 		return ResolverSelection{}, fmt.Errorf("%w: resolver target and environment are required", ErrInvalidBinding)
 	}
 	if input.TargetClass != TargetProduction && input.TargetClass != TargetDevelopment {
@@ -91,4 +99,17 @@ func NewResolverSelection(input ResolverSelectionInput) (ResolverSelection, erro
 		return ResolverSelection{}, fmt.Errorf("%w: exactly one authoritative resolver must be selected", ErrInvalidBinding)
 	}
 	return ResolverSelection(input), nil
+}
+
+// ValidateResolverTarget validates the process-bound target and environment
+// portion of a resolver selection. It is used while the runtime is still
+// unbound, when the generation project identity is not known yet.
+func ValidateResolverTarget(targetID TargetID, environment string) error {
+	if _, err := ParseTargetID(targetID.String()); err != nil {
+		return err
+	}
+	if !identifierPattern.MatchString(strings.TrimSpace(environment)) {
+		return fmt.Errorf("%w: resolver target and environment are required", ErrInvalidBinding)
+	}
+	return nil
 }

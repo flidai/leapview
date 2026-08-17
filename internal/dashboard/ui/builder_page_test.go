@@ -15,16 +15,16 @@ import (
 func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 	envelope := uisignals.DashboardBuilderEnvelope{
 		Builder: uisignals.DashboardBuilderSignal{
-			WorkspaceID: "sales", DashboardID: "revenue", DraftID: "draft-7", Title: "Revenue draft",
+			DashboardID: "revenue", DraftID: "draft-7", Title: "Revenue draft",
 			Revision: uisignals.DashboardBuilderRevisionSignal{ID: "rev-7", Number: 7, ContentHash: "sha256:abc"},
 		},
 	}
 	actions := DashboardBuilderActionBindings{
-		BackHref:       "/workspaces/sales/dashboards",
-		PreviewHref:    "/workspaces/sales/dashboards/revenue/preview",
-		ExportYAMLHref: "/workspaces/sales/dashboards/revenue/export.yaml",
-		PageBaseHref:   "/workspaces/sales/dashboards/revenue/edit",
-		CommandPath:    "/workspaces/sales/dashboards/revenue/draft/command",
+		BackHref:       "/dashboards",
+		PreviewHref:    "/dashboards/revenue/preview",
+		ExportYAMLHref: "/dashboards/revenue/export.yaml",
+		PageBaseHref:   "/dashboards/revenue/edit",
+		CommandPath:    "/dashboards/revenue/commands",
 		CommandBinding: dashboardgen.GenUIActionExecuteDashboardAuthoringCommand(),
 	}
 
@@ -33,11 +33,11 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 	require.NoError(t, err)
 	output := html.UnescapeString(rendered.String())
 	for _, want := range []string{
-		`<lv-dashboard-builder`, `slot="page"`, `workspace-id="sales"`, `dashboard-id="revenue"`, `draft-id="draft-7"`,
-		`/static/dashboard-builder.js`, `route=dashboard_builder`, `workspace=sales`, `dashboard=revenue`, `draft=draft-7`,
-		`data-on:lv-builder-command`, `@post('/workspaces/sales/dashboards/revenue/draft/command'`, `headers: window.LeapViewCommand.headers('executeDashboardAuthoringCommand')`,
-		`back-href="/workspaces/sales/dashboards"`, `preview-href="/workspaces/sales/dashboards/revenue/preview"`,
-		`page-base-href="/workspaces/sales/dashboards/revenue/edit"`,
+		`<lv-dashboard-builder`, `slot="page"`, `dashboard-id="revenue"`, `draft-id="draft-7"`,
+		`/static/dashboard-builder.js`, `route=dashboard_builder`, `dashboard=revenue`, `draft=draft-7`,
+		`data-on:lv-builder-command`, `@post('/dashboards/revenue/commands'`, `headers: window.LeapViewCommand.headers('executeDashboardAuthoringCommand')`,
+		`back-href="/dashboards"`, `preview-href="/dashboards/revenue/preview"`,
+		`page-base-href="/dashboards/revenue/edit"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("builder shell missing %q:\n%s", want, output)
@@ -53,7 +53,7 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 func TestDashboardBuilderUpdatesURLCarriesSelectedPage(t *testing.T) {
 	selectedPage := "details"
 	url := dashboardBuilderUpdatesURL(uisignals.DashboardBuilderSignal{
-		WorkspaceID: "sales", DashboardID: "revenue", DraftID: "draft-7", SelectedPageID: &selectedPage,
+		DashboardID: "revenue", DraftID: "draft-7", SelectedPageID: &selectedPage,
 	})
 	if !strings.Contains(url, "route=dashboard_builder") || !strings.Contains(url, "page=details") {
 		t.Fatalf("updates URL = %q, want selected page", url)
@@ -61,7 +61,7 @@ func TestDashboardBuilderUpdatesURLCarriesSelectedPage(t *testing.T) {
 }
 
 func TestDashboardBuilderBootstrapSignalsStayUnderDedicatedKeys(t *testing.T) {
-	envelope := uisignals.DashboardBuilderEnvelope{Builder: uisignals.DashboardBuilderSignal{WorkspaceID: "sales", DashboardID: "revenue", DraftID: "draft-7"}, BuilderVisuals: map[string]uisignals.DashboardVisualizationSignal{}}
+	envelope := uisignals.DashboardBuilderEnvelope{Builder: uisignals.DashboardBuilderSignal{DashboardID: "revenue", DraftID: "draft-7"}, BuilderVisuals: map[string]uisignals.DashboardVisualizationSignal{}}
 	signals := DashboardBuilderBootstrapSignals(envelope)
 	if _, ok := signals["builder"].(uisignals.DashboardBuilderSignal); !ok {
 		t.Fatalf("builder signal = %T, want DashboardBuilderSignal", signals["builder"])
@@ -81,7 +81,7 @@ func TestDashboardBuilderBootstrapSignalsStayUnderDedicatedKeys(t *testing.T) {
 }
 
 func TestDashboardBuilderPageUsesRouteLocalFocusLayout(t *testing.T) {
-	envelope := uisignals.DashboardBuilderEnvelope{Builder: uisignals.DashboardBuilderSignal{WorkspaceID: "sales", DashboardID: "revenue", DraftID: "draft-7", Title: "Revenue"}}
+	envelope := uisignals.DashboardBuilderEnvelope{Builder: uisignals.DashboardBuilderSignal{DashboardID: "revenue", DraftID: "draft-7", Title: "Revenue"}}
 	provider := func(webpage.Context) webpage.Layout {
 		return webpage.Layout{
 			Presentation: webpage.Presentation{ProductName: "Test", FaviconPath: "/test.svg"},

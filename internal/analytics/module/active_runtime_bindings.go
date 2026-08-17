@@ -11,13 +11,14 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // ActiveRuntimeBindingEvidence is the non-secret, immutable connection proof
 // retained with a ready release.
 type ActiveRuntimeBindingEvidence struct {
-	BindingID          string
-	LogicalConnection  string
+	BindingID          connectionbinding.BindingID
+	ConnectionID       projectgraph.ResourceID
 	ConnectorKind      string
 	Revision           int64
 	ValidatedVersion   string
@@ -39,7 +40,7 @@ func (m *Module) ConfigureActiveRuntimeBindings(source ActiveRuntimeBindingEvide
 type activeRuntimeConnectionResolver struct {
 	module         *Module
 	servingStateID string
-	workspaceID    string
+	projectID      projectgraph.ResourceID
 	environment    string
 
 	mu       sync.Mutex
@@ -71,26 +72,26 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 	if err != nil {
 		return semanticmodel.Connection{}, err
 	}
-	logicalID, err := connectionbinding.ParseLogicalConnectionID(strings.TrimSpace(name))
+	connectionID, err := connectionbinding.ParseConnectionID(strings.TrimSpace(name))
 	if err != nil {
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	binding, err := r.module.connectionBindings.Binding(ctx, connectionbinding.BindingScope{
-		WorkspaceID: r.workspaceID, Environment: r.environment,
-	}, r.module.targetID, logicalID)
+		ProjectID: r.projectID, Environment: r.environment,
+	}, connectionbinding.TargetID(r.module.targetID), connectionID)
 	if err != nil {
 		return semanticmodel.Connection{}, err
 	}
 	actual := binding.Evidence()
 	if !binding.Enabled || binding.ID != evidence.BindingID ||
-		binding.LogicalConnectionID.String() != evidence.LogicalConnection ||
+		binding.ConnectionID != evidence.ConnectionID ||
 		binding.ConnectorKind != evidence.ConnectorKind || binding.Revision < evidence.Revision ||
 		actual.EndpointConfigHash != evidence.EndpointConfigHash ||
 		strings.TrimSpace(evidence.ValidatedVersion) == "" {
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	resolver, err := connectionbinding.SelectResolver(connectionbinding.ResolverSelection{
-		TargetID: binding.TargetID, Environment: binding.Scope.Environment,
+		TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
 		TargetClass: r.module.targetClass, Kind: r.module.connectionResolverKind(),
 	}, r.module.targetResolvers)
 	if err != nil {
@@ -130,19 +131,24 @@ func (r *activeRuntimeConnectionResolver) evidenceFor(
 	defer r.mu.Unlock()
 	if r.evidence == nil {
 		values, err := r.module.activeRuntimeBindingEvidence.BindingEvidence(
-			ctx, r.servingStateID, r.workspaceID,
+			ctx, r.servingStateID, r.projectID.String(),
 		)
 		if err != nil {
 			return ActiveRuntimeBindingEvidence{}, err
 		}
 		evidence := make(map[string]ActiveRuntimeBindingEvidence, len(values))
 		for _, value := range values {
-			value.BindingID = strings.TrimSpace(value.BindingID)
-			value.LogicalConnection = strings.TrimSpace(value.LogicalConnection)
-			value.ConnectorKind = strings.TrimSpace(value.ConnectorKind)
-			value.ValidatedVersion = strings.TrimSpace(value.ValidatedVersion)
-			value.EndpointConfigHash = strings.TrimSpace(value.EndpointConfigHash)
-			if value.LogicalConnection == "" || value.BindingID == "" || value.ConnectorKind == "" ||
+			if value.BindingID.String() != strings.TrimSpace(value.BindingID.String()) ||
+				value.ConnectionID.String() != strings.TrimSpace(value.ConnectionID.String()) ||
+				value.ConnectorKind != strings.TrimSpace(value.ConnectorKind) ||
+				value.ValidatedVersion != strings.TrimSpace(value.ValidatedVersion) ||
+				value.EndpointConfigHash != strings.TrimSpace(value.EndpointConfigHash) {
+				return ActiveRuntimeBindingEvidence{}, fmt.Errorf(
+					"%w: active binding evidence is not canonical",
+					connectionbinding.ErrIncompatibleBinding,
+				)
+			}
+			if value.ConnectionID == "" || value.BindingID == "" || value.ConnectorKind == "" ||
 				value.Revision < 1 || value.ValidatedVersion == "" ||
 				platformdigest.ValidateSHA256Identity(value.EndpointConfigHash) != nil {
 				return ActiveRuntimeBindingEvidence{}, fmt.Errorf(
@@ -150,13 +156,13 @@ func (r *activeRuntimeConnectionResolver) evidenceFor(
 					connectionbinding.ErrIncompatibleBinding,
 				)
 			}
-			if _, exists := evidence[value.LogicalConnection]; exists {
+			if _, exists := evidence[value.ConnectionID.String()]; exists {
 				return ActiveRuntimeBindingEvidence{}, fmt.Errorf(
 					"%w: duplicate active binding evidence",
 					connectionbinding.ErrIncompatibleBinding,
 				)
 			}
-			evidence[value.LogicalConnection] = value
+			evidence[value.ConnectionID.String()] = value
 		}
 		r.evidence = evidence
 	}

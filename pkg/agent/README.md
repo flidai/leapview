@@ -46,17 +46,17 @@ type DashboardService interface {
 	ListDashboards(ctx context.Context) ([]string, error)
 }
 
-func NewWorkspaceAgent(service DashboardService, model agent.Model) (*agent.Agent, error) {
+func NewProjectAgent(service DashboardService, model agent.Model) (*agent.Agent, error) {
 	return agent.New(agent.Definition{
-		Name: "workspace-assistant",
-		SystemPrompt: `You help users understand and operate this BI workspace.
-Use tools for workspace facts. Do not invent dashboard IDs.`,
+		Name: "project-assistant",
+		SystemPrompt: `You help users understand and operate this BI project.
+Use tools for project facts. Do not invent dashboard IDs.`,
 		Model:  model,
 		Events: agent.EventSinkFunc(logAgentEvent),
 		Tools: []agent.ToolDefinition{
 			{
 				Name:        "list_dashboards",
-				Description: "List dashboards available in the current workspace.",
+				Description: "List dashboards available in the current project.",
 				InputSchema: json.RawMessage(`{
 					"type": "object",
 					"properties": {},

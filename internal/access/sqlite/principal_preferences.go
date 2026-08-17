@@ -37,8 +37,8 @@ func (r *Repository) SetPrincipalThemeAudited(ctx context.Context, principalID s
 		preferences, err := writer.SetPrincipalTheme(ctx, principalID, theme)
 		metadata, _ := json.Marshal(map[string]string{"theme": string(theme)})
 		return access.AuditEventInput{
-			PrincipalID: principalID, Action: "principal.theme.updated", TargetType: "principal",
-			TargetID: preferences.PrincipalID, Status: "success", MetadataJSON: string(metadata),
+			PrincipalID: principalID, Action: "principal.theme.updated", ResourceKind: "principal",
+			ResourceID: preferences.PrincipalID, Status: "success", MetadataJSON: string(metadata),
 		}, err
 	})
 }

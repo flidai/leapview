@@ -15,7 +15,6 @@ type AgentReferenceKeySignal = signalcontracts.AgentReferenceKeySignal
 type AgentReferenceLocationSignal = signalcontracts.AgentReferenceLocationSignal
 type AgentReferenceSearchSignal = signalcontracts.AgentReferenceSearchSignal
 type AgentReferenceSignal = signalcontracts.AgentReferenceSignal
-type AgentReferenceWorkspaceSignal = signalcontracts.AgentReferenceWorkspaceSignal
 type ChatArtifactSignal = signalcontracts.ChatArtifactSignal
 type ChatConversationSummary = signalcontracts.ChatConversationSummary
 type ChatSignal = signalcontracts.ChatSignal
@@ -98,34 +97,33 @@ func referenceSignalFromTurn(reference agent.TurnReference) AgentReferenceSignal
 				hierarchy = append(hierarchy, value)
 			}
 		}
-		appendUnique(reference.Workspace.Name)
+		appendUnique(reference.Resource.Name)
 		if len(reference.Locations) > 0 {
-			if reference.Reference.Type == "page" || reference.Reference.Type == "visual" {
+			if reference.Reference.Kind == "page" || reference.Reference.Kind == "visual" {
 				appendUnique(reference.Locations[0].DashboardName)
 			}
-			if reference.Reference.Type == "visual" {
+			if reference.Reference.Kind == "visual" {
 				appendUnique(reference.Locations[0].PageName)
 			}
 		}
 	}
 	return AgentReferenceSignal{
-		Reference: AgentReferenceKeySignal{WorkspaceID: reference.Reference.WorkspaceID, Type: reference.Reference.Type, ID: reference.Reference.ID},
+		Reference: AgentReferenceKeySignal{Kind: reference.Reference.Kind, ID: reference.Reference.ID},
 		Name:      reference.Name, Description: Optional(reference.Description), VisualType: Optional(reference.VisualType),
-		Workspace: AgentReferenceWorkspaceSignal{ID: reference.Workspace.ID, Name: reference.Workspace.Name},
 		Hierarchy: hierarchy, Href: reference.Href, Locations: locations, Context: append([]string(nil), reference.Context...),
 	}
 }
 
-func chatInitialSignals(workspaceID, view string, state ChatViewState) map[string]any {
+func chatInitialSignals(projectID, view string, state ChatViewState) map[string]any {
 	return map[string]any{
 		"page": ChatPageSignal{
 			Kind: RouteChat, View: normalizedView(view), Title: "Chats",
 			Description: "Ask about governed BI or make authorized dashboard changes.",
 		},
-		"runtime": RouteRuntimeSignal{Kind: RouteChat, WorkspaceID: Optional(workspaceID)},
+		"runtime": RouteRuntimeSignal{Kind: RouteChat, ProjectID: Optional(projectID)},
 		"agent":   state.Agent,
 		"agentContext": AgentContextSignal{
-			Surface: "chat", WorkspaceID: workspaceID,
+			Surface: "chat",
 			Filters: DashboardFilterState{
 				AppliedControls: map[string]signalcontracts.DashboardAppliedFilterState{},
 				DraftControls:   map[string]signalcontracts.DashboardFilterExpression{},

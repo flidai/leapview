@@ -19,7 +19,6 @@ const emptyPreview: DataPreviewSignal = {
 }
 
 const emptyCommand: DataExplorerCommand = {
-  workspaceId: '',
   objectKey: '',
   offset: 0,
   limit: 100,
@@ -68,7 +67,7 @@ class DataPreviewTable extends LitElement {
     const preview = this.preview ?? emptyPreview
     const command = this.command ?? emptyCommand
     return {
-      tableKey: `${command.workspaceId ?? ''}:${command.objectKey ?? ''}`,
+      tableKey: command.objectKey ?? '',
       title: 'Data preview',
       columns: (preview.columns ?? []).map((column): WindowedTableColumn => ({
         key: column.key,
@@ -104,7 +103,6 @@ class DataPreviewTable extends LitElement {
       bubbles: true,
       composed: true,
       detail: {
-        workspaceId: current.workspaceId,
         objectKey: current.objectKey,
         offset: request.start,
         limit: request.count,
@@ -127,7 +125,6 @@ class DataPreviewTable extends LitElement {
       bubbles: true,
       composed: true,
       detail: {
-        workspaceId: current.workspaceId,
         objectKey: current.objectKey,
         offset: current.offset ?? current.start ?? 0,
         limit: current.limit ?? current.count ?? 100,
@@ -150,7 +147,6 @@ class DataPreviewTable extends LitElement {
       bubbles: true,
       composed: true,
       detail: {
-        workspaceId: current.workspaceId,
         objectKey: current.objectKey,
         offset: current.offset ?? current.start ?? 0,
         limit: current.limit ?? current.count ?? 100,

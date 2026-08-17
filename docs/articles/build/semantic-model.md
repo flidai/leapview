@@ -24,15 +24,15 @@ For a small Sales model, `orders` is the fact and `customers` is a dimension rea
 
 ### Create the resource
 
-Create `dashboards/workspaces/sales/semantic-models/sales.yaml`:
+Create `dashboards/semantic-models/sales.yaml`:
 
 ```yaml
 apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata:
-  workspace: sales
+  id: semantic-model:sales
   name: sales
-  title: Sales semantic model
+  displayName: Sales semantic model
   description: Governed order and revenue analysis.
 spec:
   tables:
@@ -85,7 +85,7 @@ Prefer one unambiguous relationship path. If the model needs role-playing dimens
 
 ## Validate the semantic model
 
-Ensure the workspace includes semantic model files and validate the project:
+Ensure the project manifest includes semantic model files and validate the project:
 
 ```sh
 leapview validate --project dashboards/leapview.yaml
@@ -99,7 +99,6 @@ Deploy to development and inspect the model:
 
 ```sh
 leapview semantic-models describe sales \
-  --workspace sales \
   --target "$LEAPVIEW_TARGET" \
   --token "$LEAPVIEW_API_TOKEN"
 ```

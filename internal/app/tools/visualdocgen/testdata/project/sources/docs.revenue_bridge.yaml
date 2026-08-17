@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:docs.revenue_bridge
   name: docs.revenue_bridge
-  title: Documentation revenue bridge
+  displayName: Documentation revenue bridge
 spec:
   connection: docs
   path: revenue_bridge.csv

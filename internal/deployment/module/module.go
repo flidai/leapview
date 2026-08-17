@@ -9,10 +9,13 @@ import (
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 type Module struct {
@@ -34,6 +37,8 @@ type Module struct {
 	currentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
 	authorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
 	authorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
+	bootstrapPolicies         BootstrapPolicyStore
+	authorizeBootstrap        func(context.Context, deployment.BootstrapActivationPolicy) error
 }
 
 type Principal struct {
@@ -47,7 +52,7 @@ type CandidateConnectionRequest = deployment.CandidateConnectionRequest
 type CandidateConnectionEvidence = deployment.CandidateConnectionEvidence
 type CandidateConnectionLeases = deployment.CandidateConnectionLeases
 type CandidateRuntimeRequest = deployment.CandidateRuntimeRequest
-type CandidateWorkspaceRuntime = deployment.CandidateWorkspaceRuntime
+type CandidateGenerationRuntime = deployment.CandidateGenerationRuntime
 type CandidateConnectionRequirement = deployment.CandidateConnectionRequirement
 type CandidateAuthoredConnection = deployment.CandidateAuthoredConnection
 type CandidateRestriction = deployment.CandidateRestriction
@@ -79,15 +84,36 @@ func (admit CandidatePreparationAdmitterFunc) AcquireCandidatePreparation(
 	return admit(ctx)
 }
 
+// BootstrapPolicyStore is the module-owned contract for the durable,
+// one-shot first-activation policy. The persistence adapter remains private to
+// this module; composition may provide a store without depending on SQLite.
+type BootstrapPolicyStore interface {
+	ArmBootstrapActivation(context.Context, deployment.BootstrapActivationPolicy) (deployment.BootstrapActivationPolicy, error)
+	BootstrapActivationPolicy(context.Context, string) (deployment.BootstrapActivationPolicy, error)
+}
+
+// ProjectClaimReader is the read-only module contract used to bind process
+// startup and bootstrap authorization to the durable instance claim.
+type ProjectClaimReader interface {
+	GetProjectClaim(context.Context) (deployment.ProjectClaim, error)
+}
+
+// BootstrapPersistence combines the bootstrap policy and project-claim ports
+// exposed by the module-owned persistence factory.
+type BootstrapPersistence interface {
+	BootstrapPolicyStore
+	ProjectClaimReader
+}
+
 // CandidateSourceBlobAuditEvent is the transport-neutral audit record emitted
 // after an immutable candidate source blob has been accepted. Action and
-// Privilege are copied from the generated command contract by the module.
+// Capability is copied from the generated command contract by the module.
 type CandidateSourceBlobAuditEvent struct {
 	PrincipalID   string
-	ProjectID     string
+	ProjectID     projectgraph.ResourceID
 	Digest        string
 	Action        string
-	Privilege     string
+	Capability    access.Capability
 	Status        string
 	RequestID     string
 	CorrelationID string
@@ -118,7 +144,6 @@ type Config struct {
 	States                    ServingStatePort
 	Runtime                   deployment.Runtime
 	ManagedData               deployment.ManagedDataResolver
-	DeploymentMetadata        apiadapter.Metadata
 	ActivationHooks           ActivationHooks
 	MaxJSONBodyBytes          int64
 	Logger                    *slog.Logger
@@ -136,15 +161,27 @@ type Config struct {
 	CandidateSources          deployment.CandidateSourceSynchronizer
 	CandidateArtifacts        release.CandidateArtifactPreparer
 	CandidateAdmission        CandidatePreparationAdmitter
-	RuntimeVersion            string
-	CurrentPrincipal          func(*http.Request) (Principal, bool)
-	CurrentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
-	AuthorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
-	AuthorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
-	Protected                 bool
-	Jobs                      JobConfig
-	API                       APIConfig
-	PublicationAuthorization  PublicationAuthorizationConfig
+	// BindClaimedProject binds the process runtime to the durable instance
+	// claim after candidate start commits.
+	BindClaimedProject   func(context.Context, projectgraph.ResourceID, servingstate.Environment) error
+	RuntimeVersion       string
+	CurrentPrincipal     func(*http.Request) (Principal, bool)
+	CurrentApprovalActor func(*http.Request) (deployment.ApprovalActor, bool)
+	AuthorizeApproval    func(context.Context, deployment.ApprovalActor, string, string) error
+	AuthorizeActivation  func(context.Context, deployment.ApprovalActor, string, string) error
+	// BootstrapPolicies is the durable one-shot first-activation policy store.
+	// It is intentionally separate from approvals and active-generation
+	// snapshots; composition supplies the access-role/credential and
+	// no-active-generation revalidator.
+	BootstrapPolicies  BootstrapPolicyStore
+	AuthorizeBootstrap func(context.Context, deployment.BootstrapActivationPolicy) error
+	// AfterActivated runs after runtime publication and durable activation.
+	// It is observational and cannot influence activation.
+	AfterActivated           func(context.Context, deployment.Deployment)
+	Protected                bool
+	Jobs                     JobConfig
+	API                      APIConfig
+	PublicationAuthorization PublicationAuthorizationConfig
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -164,9 +201,13 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var candidates *deployment.CandidateService
 	var approvals *deployment.ApprovalService
 	var candidateRuntimes *deployment.CandidateRuntimeService
+	var durableBootstrapPolicies BootstrapPolicyStore
 	if config.Database != nil {
-		if config.States == nil || config.Runtime == nil || config.ManagedData == nil || config.DeploymentMetadata == nil {
-			return nil, errors.New("deployment states, runtime, managed data, and metadata are required")
+		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
+			return nil, errors.New("deployment states, runtime, and managed data are required")
+		}
+		if config.BindClaimedProject == nil {
+			return nil, errors.New("candidate project claim binder is required")
 		}
 		repository, activation, candidateRepository, approvalRepository := newPersistence(
 			config.Database,
@@ -174,10 +215,14 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			config.API.Releases,
 			config.API.Workflow,
 		)
+		if policyStore, ok := repository.(BootstrapPolicyStore); ok {
+			durableBootstrapPolicies = policyStore
+		}
 		service, err := deployment.New(repository, activation, config.States, config.Runtime, config.ManagedData)
 		if err != nil {
 			return nil, err
 		}
+		service.SetAfterActivated(config.AfterActivated)
 		if config.CandidateConnections != nil || config.CandidateRuntime != nil {
 			if config.CandidateAdmission == nil {
 				return nil, errors.New(
@@ -195,7 +240,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				return nil, err
 			}
 		}
-		coordinator, err = apiadapter.New(service, config.DeploymentMetadata)
+		coordinator, err = apiadapter.New(service)
 		if err != nil {
 			return nil, err
 		}
@@ -208,6 +253,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			MaxActivePerOwner: config.MaxCandidatesPerOwner, Audit: config.CandidateAudit,
 			Logger:           config.Logger,
 			RuntimeLifecycle: config.CandidateRuntimeLifecycle,
+			BindProject:      config.BindClaimedProject,
 		})
 		if err != nil {
 			return nil, err
@@ -242,6 +288,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		currentApprovalActor: config.CurrentApprovalActor,
 		authorizeApproval:    config.AuthorizeApproval,
 		authorizeActivation:  config.AuthorizeActivation,
+		bootstrapPolicies:    config.BootstrapPolicies, authorizeBootstrap: config.AuthorizeBootstrap,
+	}
+	if m.bootstrapPolicies == nil {
+		m.bootstrapPolicies = durableBootstrapPolicies
 	}
 	if m.logger == nil {
 		m.logger = slog.Default()

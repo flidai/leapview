@@ -1980,6 +1980,22 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
+    "LEAPVIEW_DEV_MCP_ATTEMPTS": {
+      "default": "20",
+      "description": "Attempts made by the development MCP smoke check while the active project converges.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
+    "LEAPVIEW_DEV_MCP_INTERVAL": {
+      "default": "500ms",
+      "description": "Delay between development MCP smoke-check attempts.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
     "LEAPVIEW_DEV_PORT_COUNT": {
       "default": "100",
       "description": "Number of ports scanned by the managed development server.",
@@ -2486,22 +2502,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_QUERY_CACHE_WORKSPACE_MAX_BYTES": {
-      "default": "134217728",
-      "description": "Maximum conservatively retained Arrow cache bytes across one workspace's serving generations.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_QUERY_CACHE_WORKSPACE_MAX_ENTRIES": {
-      "default": "512",
-      "description": "Maximum cached result entries retained across one workspace's serving generations.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
     "LEAPVIEW_QUERY_RESULT_MAX_BYTES": {
       "default": "33554432",
       "description": "Maximum conservatively retained Arrow bytes for one logical analytical operation.",
@@ -2616,14 +2616,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_WORKLOAD_BACKGROUND_MAX_QUEUED_PER_WORKSPACE": {
-      "default": "4",
-      "description": "Maximum queued background operations for one workspace.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
     "LEAPVIEW_WORKLOAD_BACKGROUND_MAX_RUNNING": {
       "default": "1",
       "description": "Maximum concurrently running background operations.",
@@ -2677,14 +2669,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_WORKLOAD_CONTROL_MAX_QUEUED_PER_WORKSPACE": {
-      "default": "16",
-      "description": "Maximum queued node-scoped control operations.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
     "LEAPVIEW_WORKLOAD_CONTROL_MAX_RUNNING": {
       "default": "1",
       "description": "Maximum concurrently running control operations.",
@@ -2725,14 +2709,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_WORKLOAD_INTERACTIVE_MAX_QUEUED_PER_WORKSPACE": {
-      "default": "16",
-      "description": "Maximum queued interactive operations for one workspace.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
     "LEAPVIEW_WORKLOAD_INTERACTIVE_MAX_RUNNING": {
       "default": "4",
       "description": "Maximum concurrently running interactive operations.",
@@ -2768,14 +2744,6 @@
     "LEAPVIEW_WORKLOAD_MAINTENANCE_MAX_QUEUED": {
       "default": "0",
       "description": "Maximum queued maintenance operations; zero makes maintenance skip when saturated.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_WORKLOAD_MAINTENANCE_MAX_QUEUED_PER_WORKSPACE": {
-      "default": "0",
-      "description": "Maximum queued node-scoped maintenance operations.",
       "pattern": "^-?[0-9]+$",
       "type": "string",
       "x-lifecycle": "supported",
@@ -2838,14 +2806,6 @@
     "LEAPVIEW_WORKLOAD_REFRESH_MAX_QUEUED": {
       "default": "16",
       "description": "Maximum queued refresh operations.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_WORKLOAD_REFRESH_MAX_QUEUED_PER_WORKSPACE": {
-      "default": "1",
-      "description": "Maximum queued refresh operations for one workspace.",
       "pattern": "^-?[0-9]+$",
       "type": "string",
       "x-lifecycle": "supported",

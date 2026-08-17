@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -17,17 +19,17 @@ const (
 )
 
 type Key struct {
-	WorkspaceID string
-	DashboardID string
+	ProjectID   projectgraph.ResourceID
+	DashboardID projectgraph.ResourceID
 }
 
 func (key Key) CatalogID() string {
-	return key.WorkspaceID + "." + key.DashboardID
+	return key.DashboardID.String()
 }
 
 type View struct {
-	WorkspaceID string
-	DashboardID string
+	ProjectID   projectgraph.ResourceID
+	DashboardID projectgraph.ResourceID
 	PageID      string
 	PrincipalID string
 	ViewedAt    time.Time
@@ -35,12 +37,18 @@ type View struct {
 
 func (view View) Validate() error {
 	for label, value := range map[string]string{
-		"workspace": view.WorkspaceID, "dashboard": view.DashboardID,
+		"project": view.ProjectID.String(), "dashboard": view.DashboardID.String(),
 		"page": view.PageID, "principal": view.PrincipalID,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("dashboard view %s is required", label)
 		}
+	}
+	if err := view.ProjectID.Validate(); err != nil {
+		return fmt.Errorf("dashboard view project ID is invalid: %w", err)
+	}
+	if err := view.DashboardID.Validate(); err != nil {
+		return fmt.Errorf("dashboard view dashboard ID is invalid: %w", err)
 	}
 	if view.ViewedAt.IsZero() {
 		return fmt.Errorf("dashboard view timestamp is required")
@@ -101,10 +109,10 @@ func RankPopularity(summaries []Summary, dashboardCount int) []RankedPopularity 
 			}
 			return 1
 		}
-		if left.WorkspaceID != right.WorkspaceID {
-			return strings.Compare(left.WorkspaceID, right.WorkspaceID)
+		if left.ProjectID != right.ProjectID {
+			return strings.Compare(left.ProjectID.String(), right.ProjectID.String())
 		}
-		return strings.Compare(left.DashboardID, right.DashboardID)
+		return strings.Compare(left.DashboardID.String(), right.DashboardID.String())
 	})
 	highLimit := percentageCeiling(dashboardCount, 10)
 	mediumLimit := percentageCeiling(dashboardCount, 20)

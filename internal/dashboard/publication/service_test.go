@@ -3,6 +3,8 @@ package publication
 import (
 	"context"
 	"testing"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type serviceRepository struct {
@@ -13,15 +15,15 @@ type serviceRepository struct {
 func (r *serviceRepository) GetByPublicID(context.Context, string) (Publication, error) {
 	return r.row, nil
 }
-func (r *serviceRepository) Suspend(context.Context, string, string, string) (Publication, error) {
+func (r *serviceRepository) Suspend(context.Context, projectgraph.ResourceID, string, string) (Publication, error) {
 	r.action = ActionSuspend
 	return r.row, nil
 }
-func (r *serviceRepository) Resume(context.Context, string, string, string) (Publication, error) {
+func (r *serviceRepository) Resume(context.Context, projectgraph.ResourceID, string, string) (Publication, error) {
 	r.action = ActionResume
 	return r.row, nil
 }
-func (r *serviceRepository) Rotate(context.Context, string, string, string) (Publication, error) {
+func (r *serviceRepository) Rotate(context.Context, projectgraph.ResourceID, string, string) (Publication, error) {
 	r.action = ActionRotate
 	return r.row, nil
 }

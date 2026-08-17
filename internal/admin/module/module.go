@@ -22,7 +22,6 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/internal/workload"
-	"github.com/flidai/leapview/internal/workspace"
 )
 
 type PublicationService interface {
@@ -49,21 +48,13 @@ type AccessReader interface {
 	ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error)
 	ListAllGroups(context.Context) ([]access.Group, error)
 	ListGroupMembersByGroup(context.Context, string) ([]access.GroupMember, error)
-	ListRoles(context.Context) ([]access.Role, error)
-	ListAllRoleBindings(context.Context) ([]access.RoleBinding, error)
-	Authorize(context.Context, string, access.Privilege, access.ObjectRef) (access.AuthorizationDecision, error)
 }
 
 type SettingsAccess interface {
 	access.Repository
+	adminsettings.ServiceAccountReader
 	access.AuditedPrincipalPreferences
-	adminsettings.ServicePrincipalSecretReader
 	personalsettings.IdentityManagementReader
-}
-
-type WorkspaceSettings interface {
-	workspace.ReadModel
-	workspace.AdministrationReadModel
 }
 
 type PersonalAvatar interface {
@@ -90,54 +81,55 @@ type StorageConfig struct {
 }
 
 type Config struct {
-	Access                AccessReader
-	AgentDetails          func(context.Context) (api.AdminAgentResponse, error)
-	QueryAuditReader      QueryAuditReaderProvider
-	CSRFToken             func(*http.Request) string
-	CurrentPrincipal      func(*http.Request) (Principal, bool)
-	CurrentCredential     func(*http.Request) (access.APICredential, bool)
-	AuthorizeAnyWorkspace func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
-	Publications          PublicationService
-	AgentConfigCommand    uicommand.Binding
-	PublicationCommands   map[string]uicommand.Binding
-	AuthConfigured        bool
-	LocalPasswordEnabled  bool
-	AccessConfigured      bool
-	Storage               StorageConfig
-	Layout                func(*http.Request) webpage.Provider
-	EnsureClientID        func(http.ResponseWriter, *http.Request)
-	Broker                *pagestream.Broker
-	Product               *product.Service
-	ProductCommands       product.CommandExecutor
-	ProductUICommands     productsettings.CommandContract
-	ProductCommandFailure product.CommandFailureWriter
-	ProductStatus         product.Status
-	SettingsAccess        SettingsAccess
-	PersonalAvatar        PersonalAvatar
-	AuthoringSessions     AuthoringSessions
-	CurrentSession        func(*http.Request) (string, bool)
-	WorkspaceSettings     WorkspaceSettings
-	WorkspaceAccess       access.WorkspaceAccessService
-	SettingsEnvironment   string
+	Access                       AccessReader
+	AgentDetails                 func(context.Context) (api.AdminAgentResponse, error)
+	QueryAuditReader             QueryAuditReaderProvider
+	CSRFToken                    func(*http.Request) string
+	CurrentPrincipal             func(*http.Request) (Principal, bool)
+	CurrentCredential            func(*http.Request) (access.APICredential, bool)
+	AuthorizeAnyProject          func(context.Context, string, *access.APICredential, access.Capability) (bool, error)
+	Publications                 PublicationService
+	AgentConfigCommand           uicommand.Binding
+	PublicationCommands          map[string]uicommand.Binding
+	AuthConfigured               bool
+	LocalPasswordEnabled         bool
+	AccessConfigured             bool
+	Storage                      StorageConfig
+	Layout                       func(*http.Request) webpage.Provider
+	EnsureClientID               func(http.ResponseWriter, *http.Request)
+	Broker                       *pagestream.Broker
+	Product                      *product.Service
+	ProductCommands              product.CommandExecutor
+	ProductUICommands            productsettings.CommandContract
+	ProductCommandFailure        product.CommandFailureWriter
+	ProductStatus                product.Status
+	SettingsAccess               SettingsAccess
+	AuthorizationProjection      adminsettings.AuthorizationProjectionReader
+	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	PersonalAvatar               PersonalAvatar
+	AuthoringSessions            AuthoringSessions
+	CurrentSession               func(*http.Request) (string, bool)
 }
 
 type Module struct {
-	handler               adminhttp.Handler
-	access                AccessReader
-	currentPrincipal      func(*http.Request) (Principal, bool)
-	currentCredential     func(*http.Request) (access.APICredential, bool)
-	authorizeAnyWorkspace func(context.Context, string, *access.APICredential, access.Privilege) (bool, error)
-	publications          PublicationService
-	product               *product.Handler
-	publicationCommands   map[string]uicommand.Binding
-	productCommands       productsettings.CommandContract
+	handler                      adminhttp.Handler
+	access                       AccessReader
+	currentPrincipal             func(*http.Request) (Principal, bool)
+	currentCredential            func(*http.Request) (access.APICredential, bool)
+	authorizeAnyProject          func(context.Context, string, *access.APICredential, access.Capability) (bool, error)
+	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	publications                 PublicationService
+	product                      *product.Handler
+	publicationCommands          map[string]uicommand.Binding
+	productCommands              productsettings.CommandContract
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		access: config.Access, currentPrincipal: config.CurrentPrincipal,
-		currentCredential: config.CurrentCredential, authorizeAnyWorkspace: config.AuthorizeAnyWorkspace,
-		publications: config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
+		currentCredential: config.CurrentCredential, authorizeAnyProject: config.AuthorizeAnyProject,
+		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		publications:                 config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
 	}
 	readModel := adminhttp.ReadModel{
 		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
@@ -155,28 +147,29 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				ID: principal.ID, Email: principal.Email, DisplayName: principal.DisplayName, DevBypass: principal.DevBypass,
 			}, ok
 		},
-		Publications:        m.adminPublications,
-		AgentConfigCommand:  config.AgentConfigCommand,
-		PublicationCommands: config.PublicationCommands,
-		ProductCommands:     config.ProductUICommands.Bindings,
-		AuthConfigured:      config.AuthConfigured,
-		AccessConfigured:    config.AccessConfigured,
+		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		Publications:                 m.adminPublications,
+		AgentConfigCommand:           config.AgentConfigCommand,
+		PublicationCommands:          config.PublicationCommands,
+		ProductCommands:              config.ProductUICommands.Bindings,
+		AuthConfigured:               config.AuthConfigured,
+		AccessConfigured:             config.AccessConfigured,
 	}
 	m.handler = adminhttp.Handler{
 		ReadModel: readModel, Layout: config.Layout,
 		EnsureClientID: config.EnsureClientID, Broker: config.Broker,
-		PublicationMutation: m.mutatePublication,
-		SettingsRepository:  config.SettingsAccess, WorkspaceSettings: config.WorkspaceSettings,
-		WorkspaceAccess: config.WorkspaceAccess, SettingsEnvironment: config.SettingsEnvironment,
-		CurrentCredential: config.CurrentCredential,
+		PublicationMutation:     m.mutatePublication,
+		SettingsRepository:      config.SettingsAccess,
+		AuthorizationProjection: config.AuthorizationProjection,
+		CurrentCredential:       config.CurrentCredential,
 	}
 	if config.SettingsAccess != nil {
 		personalService := &personalsettings.Service{
 			Repository: config.SettingsAccess, IdentityManagement: config.SettingsAccess,
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
-			Workspaces:           config.WorkspaceSettings,
-			LocalPasswordEnabled: config.LocalPasswordEnabled,
+			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			LocalPasswordEnabled:         config.LocalPasswordEnabled,
 		}
 		m.handler.PersonalSettings = &personalsettings.Handler{
 			Service: personalService, CurrentSession: config.CurrentSession,

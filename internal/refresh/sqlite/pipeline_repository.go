@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	platformdb "github.com/flidai/leapview/internal/refresh/internal/db"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
@@ -30,11 +30,11 @@ func (repository *Repository) Reconcile(ctx context.Context, input refreshschedu
 	if repository == nil || repository.db == nil {
 		return fmt.Errorf("refresh pipeline database is required")
 	}
-	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
-	input.Environment = strings.TrimSpace(input.Environment)
-	input.ArtifactDigest = strings.TrimSpace(input.ArtifactDigest)
-	if input.WorkspaceID == "" || input.Environment == "" || input.ArtifactDigest == "" {
-		return fmt.Errorf("workspace, environment, and artifact digest are required")
+	if err := refreshschedule.ValidateScope(input.Identity); err != nil {
+		return fmt.Errorf("refresh serving identity is required: %w", err)
+	}
+	if err := refreshschedule.ValidateArtifactDigest(input.ArtifactDigest); err != nil {
+		return err
 	}
 	if input.Now.IsZero() {
 		input.Now = time.Now()
@@ -45,16 +45,19 @@ func (repository *Repository) Reconcile(ctx context.Context, input refreshschedu
 	}
 	defer tx.Rollback()
 	queries := repository.q.WithTx(tx)
-	existing, err := loadPersistedSchedules(ctx, queries, input.WorkspaceID, input.Environment)
+	existing, err := loadPersistedSchedules(ctx, queries, input.Identity)
 	if err != nil {
 		return err
 	}
-	if err := queries.DeleteRefreshPipelineSchedules(ctx, platformdb.DeleteRefreshPipelineSchedulesParams{WorkspaceID: input.WorkspaceID, Environment: input.Environment}); err != nil {
+	if err := queries.DeleteRefreshPipelineSchedules(ctx, platformdb.DeleteRefreshPipelineSchedulesParams{ProjectID: input.Identity.ProjectID.String(), Environment: input.Identity.Environment, GenerationID: input.Identity.GenerationID}); err != nil {
 		return err
 	}
 	for _, pipeline := range input.Pipelines {
+		if err := pipeline.Validate(); err != nil {
+			return err
+		}
 		for _, schedule := range pipeline.Schedules {
-			key := scheduleKey(pipeline.ID, schedule.Expression, schedule.Timezone)
+			key := scheduleKey(pipeline.ID.String(), schedule.Expression, schedule.Timezone)
 			next := schedule.Next(input.Now)
 			if prior, ok := existing[key]; ok && prior.artifactDigest == input.ArtifactDigest {
 				next = prior.nextRunAt
@@ -63,8 +66,8 @@ func (repository *Repository) Reconcile(ctx context.Context, input refreshschedu
 				return fmt.Errorf("refresh pipeline %q schedule %q has no next occurrence", pipeline.ID, schedule.Expression)
 			}
 			if err := queries.CreateRefreshPipelineSchedule(ctx, platformdb.CreateRefreshPipelineScheduleParams{
-				WorkspaceID: input.WorkspaceID, Environment: input.Environment, PipelineID: pipeline.ID,
-				SemanticModelID: pipeline.SemanticModel, ArtifactDigest: input.ArtifactDigest,
+				ProjectID: input.Identity.ProjectID.String(), Environment: input.Identity.Environment, PipelineID: pipeline.ID.String(),
+				SemanticModelID: pipeline.SemanticModelID.String(), GenerationID: input.Identity.GenerationID, ArtifactDigest: input.ArtifactDigest,
 				Cron: schedule.Expression, Timezone: schedule.Timezone, NextRunAt: formatTime(next),
 			}); err != nil {
 				return err
@@ -74,8 +77,8 @@ func (repository *Repository) Reconcile(ctx context.Context, input refreshschedu
 	return tx.Commit()
 }
 
-func loadPersistedSchedules(ctx context.Context, queries *platformdb.Queries, workspaceID, environment string) (map[string]persistedSchedule, error) {
-	rows, err := queries.ListRefreshPipelineSchedules(ctx, platformdb.ListRefreshPipelineSchedulesParams{WorkspaceID: workspaceID, Environment: environment})
+func loadPersistedSchedules(ctx context.Context, queries *platformdb.Queries, identity projectgraph.ServingIdentity) (map[string]persistedSchedule, error) {
+	rows, err := queries.ListRefreshPipelineSchedules(ctx, platformdb.ListRefreshPipelineSchedulesParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
 	if err != nil {
 		return nil, err
 	}
@@ -91,26 +94,24 @@ func loadPersistedSchedules(ctx context.Context, queries *platformdb.Queries, wo
 }
 
 type dueSchedule struct {
-	workspaceID    string
-	environment    string
-	pipelineID     string
-	semanticModel  string
-	expression     string
-	timezone       string
-	artifactDigest string
-	nextRunAt      time.Time
+	identity        projectgraph.ServingIdentity
+	pipelineID      projectgraph.ResourceID
+	semanticModelID projectgraph.ResourceID
+	expression      string
+	timezone        string
+	artifactDigest  string
+	nextRunAt       time.Time
 }
 
-func (repository *Repository) ClaimDue(ctx context.Context, environment string, now time.Time) ([]refreshschedule.Occurrence, error) {
+func (repository *Repository) ClaimDue(ctx context.Context, identity projectgraph.ServingIdentity, now time.Time) ([]refreshschedule.Occurrence, error) {
 	if repository == nil || repository.db == nil {
 		return nil, fmt.Errorf("refresh pipeline database is required")
 	}
 	if now.IsZero() {
 		now = time.Now()
 	}
-	environment = strings.TrimSpace(environment)
-	if environment == "" {
-		return nil, fmt.Errorf("refresh pipeline environment is required")
+	if err := refreshschedule.ValidateScope(identity); err != nil {
+		return nil, fmt.Errorf("refresh pipeline serving identity is required: %w", err)
 	}
 	tx, err := repository.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -119,21 +120,24 @@ func (repository *Repository) ClaimDue(ctx context.Context, environment string, 
 	defer tx.Rollback()
 	queries := repository.q.WithTx(tx)
 	claimedBefore := formatTime(now.Add(-occurrenceClaimTimeout))
-	if err := queries.RequeueAbandonedRefreshPipelineSchedules(ctx, platformdb.RequeueAbandonedRefreshPipelineSchedulesParams{ClaimedBefore: claimedBefore, Environment: environment}); err != nil {
+	if err := queries.RequeueAbandonedRefreshPipelineSchedules(ctx, platformdb.RequeueAbandonedRefreshPipelineSchedulesParams{ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, ClaimedBefore: claimedBefore, Environment: identity.Environment}); err != nil {
 		return nil, err
 	}
-	if err := queries.DeleteAbandonedRefreshPipelineOccurrences(ctx, platformdb.DeleteAbandonedRefreshPipelineOccurrencesParams{ClaimedBefore: claimedBefore, Environment: environment}); err != nil {
+	if err := queries.DeleteAbandonedRefreshPipelineOccurrences(ctx, platformdb.DeleteAbandonedRefreshPipelineOccurrencesParams{ProjectID: identity.ProjectID.String(), GenerationID: identity.GenerationID, ClaimedBefore: claimedBefore, Environment: identity.Environment}); err != nil {
 		return nil, err
 	}
-	rows, err := queries.ListDueRefreshPipelineSchedules(ctx, platformdb.ListDueRefreshPipelineSchedulesParams{Environment: environment, NextRunAt: formatTime(now)})
+	rows, err := queries.ListDueRefreshPipelineSchedules(ctx, platformdb.ListDueRefreshPipelineSchedulesParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, NextRunAt: formatTime(now)})
 	if err != nil {
 		return nil, err
 	}
 	due := make([]dueSchedule, 0, len(rows))
 	for _, row := range rows {
 		item := dueSchedule{
-			workspaceID: row.WorkspaceID, environment: row.Environment, pipelineID: row.PipelineID,
-			semanticModel: row.SemanticModelID, expression: row.Cron, timezone: row.Timezone, artifactDigest: row.ArtifactDigest,
+			identity: projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(row.ProjectID), Environment: row.Environment, GenerationID: row.GenerationID}, pipelineID: projectgraph.ResourceID(row.PipelineID),
+			semanticModelID: projectgraph.ResourceID(row.SemanticModelID), expression: row.Cron, timezone: row.Timezone, artifactDigest: row.ArtifactDigest,
+		}
+		if item.identity != identity {
+			return nil, fmt.Errorf("refresh schedule returned unexpected serving identity %v", item.identity)
 		}
 		item.nextRunAt, err = parseTime(row.NextRunAt)
 		if err != nil {
@@ -160,17 +164,17 @@ func (repository *Repository) ClaimDue(ctx context.Context, environment string, 
 			return nil, fmt.Errorf("refresh pipeline %q schedule %q has no next occurrence", item.pipelineID, item.expression)
 		}
 		if err := queries.AdvanceRefreshPipelineSchedule(ctx, platformdb.AdvanceRefreshPipelineScheduleParams{
-			NextRunAt: formatTime(next), WorkspaceID: item.workspaceID, Environment: item.environment,
-			PipelineID: item.pipelineID, Cron: item.expression, Timezone: item.timezone,
+			NextRunAt: formatTime(next), ProjectID: item.identity.ProjectID.String(), Environment: item.identity.Environment,
+			GenerationID: item.identity.GenerationID, PipelineID: item.pipelineID.String(), Cron: item.expression, Timezone: item.timezone,
 		}); err != nil {
 			return nil, err
 		}
-		key := item.workspaceID + "\x00" + item.environment + "\x00" + item.pipelineID
+		key := item.identity.ProjectID.String() + "\x00" + item.identity.Environment + "\x00" + item.identity.GenerationID + "\x00" + item.pipelineID.String()
 		current := grouped[key]
 		if current.occurrence.ScheduledAt.IsZero() || scheduledAt.After(current.occurrence.ScheduledAt) {
 			current.occurrence = refreshschedule.Occurrence{
-				WorkspaceID: item.workspaceID, Environment: item.environment, PipelineID: item.pipelineID,
-				SemanticModel: item.semanticModel, ArtifactDigest: item.artifactDigest, ScheduledAt: scheduledAt,
+				Identity:   item.identity,
+				PipelineID: item.pipelineID, SemanticModelID: item.semanticModelID, ArtifactDigest: item.artifactDigest, ScheduledAt: scheduledAt,
 			}
 			grouped[key] = current
 		}
@@ -184,8 +188,8 @@ func (repository *Repository) ClaimDue(ctx context.Context, environment string, 
 	for _, key := range keys {
 		occurrence := grouped[key].occurrence
 		result, err := queries.ClaimRefreshPipelineOccurrence(ctx, platformdb.ClaimRefreshPipelineOccurrenceParams{
-			WorkspaceID: occurrence.WorkspaceID, Environment: occurrence.Environment, PipelineID: occurrence.PipelineID,
-			ArtifactDigest: occurrence.ArtifactDigest, ScheduledAt: formatTime(occurrence.ScheduledAt), ClaimedAt: formatTime(now),
+			ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment, PipelineID: occurrence.PipelineID.String(),
+			GenerationID: occurrence.Identity.GenerationID, ArtifactDigest: occurrence.ArtifactDigest, ScheduledAt: formatTime(occurrence.ScheduledAt), ClaimedAt: formatTime(now),
 		})
 		if err != nil {
 			return nil, err
@@ -205,9 +209,15 @@ func (repository *Repository) ClaimDue(ctx context.Context, environment string, 
 }
 
 func (repository *Repository) AttachRun(ctx context.Context, occurrence refreshschedule.Occurrence, runID string) error {
+	if err := validateOccurrence(occurrence); err != nil {
+		return err
+	}
+	if err := refreshschedule.ValidateOperationalID(runID); err != nil {
+		return err
+	}
 	result, err := repository.q.AttachRefreshPipelineRun(ctx, platformdb.AttachRefreshPipelineRunParams{
-		RunID: sql.NullString{String: strings.TrimSpace(runID), Valid: true}, WorkspaceID: occurrence.WorkspaceID,
-		Environment: occurrence.Environment, PipelineID: occurrence.PipelineID, ScheduledAt: formatTime(occurrence.ScheduledAt),
+		RunID: sql.NullString{String: runID, Valid: true}, ProjectID: occurrence.Identity.ProjectID.String(),
+		Environment: occurrence.Identity.Environment, PipelineID: occurrence.PipelineID.String(), GenerationID: occurrence.Identity.GenerationID, ScheduledAt: formatTime(occurrence.ScheduledAt),
 	})
 	if err != nil {
 		return err
@@ -223,6 +233,9 @@ func (repository *Repository) AttachRun(ctx context.Context, occurrence refreshs
 }
 
 func (repository *Repository) ReleaseOccurrence(ctx context.Context, occurrence refreshschedule.Occurrence) error {
+	if err := validateOccurrence(occurrence); err != nil {
+		return err
+	}
 	tx, err := repository.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -230,8 +243,8 @@ func (repository *Repository) ReleaseOccurrence(ctx context.Context, occurrence 
 	defer tx.Rollback()
 	queries := repository.q.WithTx(tx)
 	result, err := queries.DeleteUnattachedRefreshPipelineOccurrence(ctx, platformdb.DeleteUnattachedRefreshPipelineOccurrenceParams{
-		WorkspaceID: occurrence.WorkspaceID, Environment: occurrence.Environment,
-		PipelineID: occurrence.PipelineID, ScheduledAt: formatTime(occurrence.ScheduledAt),
+		ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment,
+		PipelineID: occurrence.PipelineID.String(), GenerationID: occurrence.Identity.GenerationID, ScheduledAt: formatTime(occurrence.ScheduledAt),
 	})
 	if err != nil {
 		return err
@@ -240,20 +253,27 @@ func (repository *Repository) ReleaseOccurrence(ctx context.Context, occurrence 
 	if err != nil {
 		return err
 	}
-	if affected == 1 {
-		if err := queries.RetryRefreshPipelineSchedules(ctx, platformdb.RetryRefreshPipelineSchedulesParams{
-			RetryAt: formatTime(occurrence.ScheduledAt), WorkspaceID: occurrence.WorkspaceID, Environment: occurrence.Environment,
-			PipelineID: occurrence.PipelineID, ArtifactDigest: occurrence.ArtifactDigest,
-		}); err != nil {
-			return err
-		}
+	if affected != 1 {
+		return fmt.Errorf("refresh pipeline occurrence no longer exists in serving generation")
+	}
+	if err := queries.RetryRefreshPipelineSchedules(ctx, platformdb.RetryRefreshPipelineSchedulesParams{
+		RetryAt: formatTime(occurrence.ScheduledAt), ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment,
+		PipelineID: occurrence.PipelineID.String(), GenerationID: occurrence.Identity.GenerationID, ArtifactDigest: occurrence.ArtifactDigest,
+	}); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
 
-func (repository *Repository) NextRun(ctx context.Context, workspaceID, environment, pipelineID string) (time.Time, bool, error) {
+func (repository *Repository) NextRun(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID projectgraph.ResourceID) (time.Time, bool, error) {
+	if err := refreshschedule.ValidateScope(identity); err != nil {
+		return time.Time{}, false, err
+	}
+	if err := pipelineID.Validate(); err != nil {
+		return time.Time{}, false, err
+	}
 	value, err := repository.q.GetRefreshPipelineNextRun(ctx, platformdb.GetRefreshPipelineNextRunParams{
-		WorkspaceID: workspaceID, Environment: environment, PipelineID: pipelineID,
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, PipelineID: pipelineID.String(),
 	})
 	if err == sql.ErrNoRows {
 		return time.Time{}, false, nil
@@ -269,22 +289,41 @@ func (repository *Repository) NextRun(ctx context.Context, workspaceID, environm
 }
 
 func (repository *Repository) SaveDataVersion(ctx context.Context, version refreshschedule.DataVersion) error {
-	if version.WorkspaceID == "" || version.Environment == "" || version.SemanticModel == "" || version.SnapshotID <= 0 || version.ServingStateID == "" || version.RefreshedAt.IsZero() {
+	if err := refreshschedule.ValidateScope(version.Identity); err != nil {
+		return fmt.Errorf("complete semantic-model data version is required: %w", err)
+	}
+	if err := version.SemanticModelID.Validate(); err != nil || version.SnapshotID <= 0 || version.RefreshedAt.IsZero() {
 		return fmt.Errorf("complete semantic-model data version is required")
+	}
+	if version.PipelineID != "" {
+		if err := version.PipelineID.Validate(); err != nil {
+			return fmt.Errorf("pipeline id is invalid: %w", err)
+		}
+	}
+	if version.RunID != "" {
+		if err := refreshschedule.ValidateOperationalID(version.RunID); err != nil {
+			return err
+		}
 	}
 	if version.Source != refreshschedule.DataVersionSourcePublish && version.Source != refreshschedule.DataVersionSourceRefresh {
 		return fmt.Errorf("semantic-model data version source must be publish or refresh")
 	}
 	return repository.q.UpsertSemanticModelDataVersion(ctx, platformdb.UpsertSemanticModelDataVersionParams{
-		WorkspaceID: version.WorkspaceID, Environment: version.Environment, SemanticModelID: version.SemanticModel,
-		SnapshotID: version.SnapshotID, ServingStateID: version.ServingStateID, RefreshedAt: formatTime(version.RefreshedAt),
-		Source: version.Source, PipelineID: version.PipelineID, RunID: version.RunID,
+		ProjectID: version.Identity.ProjectID.String(), Environment: version.Identity.Environment, SemanticModelID: version.SemanticModelID.String(),
+		SnapshotID: version.SnapshotID, GenerationID: version.Identity.GenerationID, RefreshedAt: formatTime(version.RefreshedAt),
+		Source: version.Source, PipelineID: version.PipelineID.String(), RunID: version.RunID,
 	})
 }
 
-func (repository *Repository) DataVersion(ctx context.Context, workspaceID, environment, semanticModel string) (refreshschedule.DataVersion, bool, error) {
+func (repository *Repository) DataVersion(ctx context.Context, identity projectgraph.ServingIdentity, semanticModelID projectgraph.ResourceID) (refreshschedule.DataVersion, bool, error) {
+	if err := refreshschedule.ValidateScope(identity); err != nil {
+		return refreshschedule.DataVersion{}, false, err
+	}
+	if err := semanticModelID.Validate(); err != nil {
+		return refreshschedule.DataVersion{}, false, err
+	}
 	row, err := repository.q.GetSemanticModelDataVersion(ctx, platformdb.GetSemanticModelDataVersionParams{
-		WorkspaceID: workspaceID, Environment: environment, SemanticModelID: semanticModel,
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, SemanticModelID: semanticModelID.String(),
 	})
 	if err == sql.ErrNoRows {
 		return refreshschedule.DataVersion{}, false, nil
@@ -296,12 +335,34 @@ func (repository *Repository) DataVersion(ctx context.Context, workspaceID, envi
 	if err != nil {
 		return refreshschedule.DataVersion{}, false, err
 	}
+	storedIdentity, err := projectgraph.NewServingIdentity(identity.ProjectID, row.Environment, row.GenerationID)
+	if err != nil || storedIdentity != identity {
+		return refreshschedule.DataVersion{}, false, fmt.Errorf("stored semantic-model data version has stale serving identity")
+	}
 	version := refreshschedule.DataVersion{
-		WorkspaceID: row.WorkspaceID, Environment: row.Environment, SemanticModel: row.SemanticModelID,
-		SnapshotID: row.SnapshotID, ServingStateID: row.ServingStateID, RefreshedAt: refreshedAt,
-		Source: row.Source, PipelineID: row.PipelineID, RunID: row.RunID,
+		Identity: storedIdentity, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID),
+		SnapshotID: row.SnapshotID, RefreshedAt: refreshedAt, Source: row.Source, PipelineID: projectgraph.ResourceID(row.PipelineID), RunID: row.RunID,
 	}
 	return version, true, nil
+}
+
+func validateOccurrence(occurrence refreshschedule.Occurrence) error {
+	if err := refreshschedule.ValidateScope(occurrence.Identity); err != nil {
+		return err
+	}
+	if err := occurrence.PipelineID.Validate(); err != nil {
+		return err
+	}
+	if err := occurrence.SemanticModelID.Validate(); err != nil {
+		return err
+	}
+	if err := refreshschedule.ValidateArtifactDigest(occurrence.ArtifactDigest); err != nil {
+		return err
+	}
+	if occurrence.ScheduledAt.IsZero() {
+		return fmt.Errorf("scheduled occurrence time is required")
+	}
+	return nil
 }
 
 func scheduleKey(pipelineID, expression, timezone string) string {

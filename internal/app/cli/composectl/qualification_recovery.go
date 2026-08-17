@@ -136,7 +136,7 @@ func (c *Controller) runQualificationRecovery(
 ) (report qualificationRecoveryReport, runErr error) {
 	rootContext := ctx
 	if options.ProjectID == "" {
-		options.ProjectID = "leapview-evaluation"
+		options.ProjectID = "project:leapview-evaluation"
 	}
 	for label, value := range map[string]string{
 		"bundle root":            options.BundleRoot,
@@ -575,7 +575,7 @@ func (c *Controller) runQualificationRecovery(
 	refreshIDKey := fmt.Sprintf("qualification-refresh-%d", time.Now().Unix())
 	if err := qualificationAPI(
 		ctx, client, http.MethodPost,
-		apiRoot+"/api/v1/workspaces/evaluation/refresh-runs",
+		apiRoot+"/api/v1/projects/"+urlPath(options.ProjectID)+"/refresh-runs",
 		options.WorkloadToken,
 		map[string]string{"pipelineId": "evaluation-refresh"},
 		refreshIDKey,
@@ -583,7 +583,7 @@ func (c *Controller) runQualificationRecovery(
 	); err != nil {
 		return report, err
 	}
-	refreshURL := apiRoot + "/api/v1/workspaces/evaluation/refresh-runs/" + urlPath(refresh.ID)
+	refreshURL := apiRoot + "/api/v1/projects/" + urlPath(options.ProjectID) + "/refresh-runs/" + urlPath(refresh.ID)
 	if err := waitForQualificationStatus(
 		ctx, client, refreshURL, options.WorkloadToken, "running",
 	); err != nil {
@@ -641,7 +641,7 @@ func (c *Controller) runQualificationRecovery(
 		}
 		if err := qualificationAPI(
 			ctx, client, http.MethodPost,
-			apiRoot+"/api/v1/workspaces/evaluation/semantic-models/sales/query",
+			apiRoot+"/api/v1/semantic-models/semantic-model:sales/query",
 			options.WorkloadToken, queryBody, "", &queryResult,
 		); err != nil {
 			return report, err
@@ -652,7 +652,7 @@ func (c *Controller) runQualificationRecovery(
 		if err := observeQualificationSSE(
 			ctx,
 			client,
-			apiRoot+"/updates?route=dashboard&workspace=evaluation&dashboard=sales-overview&page=overview",
+			apiRoot+"/updates?route=dashboard&dashboard=dashboard:sales-overview&page=overview",
 			options.WorkloadToken,
 		); err != nil {
 			return report, fmt.Errorf("SSE reconnect cycle %d: %w", cycle, err)
@@ -778,8 +778,8 @@ func (c *Controller) runQualificationRecovery(
 	}
 	postRestoreOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.WorkloadToken,
-		"leapview", "semantic-models", "--workspace", "evaluation",
-		"query", "sales", "--body-json", mustQualificationJSON(queryBody),
+		"leapview", "api", "call", "querySemanticModel",
+		"--path", "model=semantic-model:sales", "--body-json", mustQualificationJSON(queryBody),
 	)
 	if err != nil {
 		return report, err
@@ -901,24 +901,24 @@ func (c *Controller) prepareQualificationRecoveryData(
 		return err
 	}
 	for name, title := range map[string]string{
-		"project-a": "Recovery Release Workspace",
-		"project-b": "Recovery Deployment Workspace",
+		"project-a": "Recovery Release Project",
+		"project-b": "Recovery Deployment Project",
 	} {
 		target := filepath.Join(workDir, name)
 		if err := copyQualificationTree(sourceProject, target); err != nil {
 			return err
 		}
-		workspacePath := filepath.Join(target, "workspaces", "evaluation", "workspace.yaml")
-		contents, err := os.ReadFile(workspacePath)
+		projectPath := filepath.Join(target, "leapview.yaml")
+		contents, err := os.ReadFile(projectPath)
 		if err != nil {
 			return err
 		}
 		contents = bytes.ReplaceAll(
 			contents,
-			[]byte("title: Evaluation Workspace"),
-			[]byte("title: "+title),
+			[]byte("name: leapview-evaluation"),
+			[]byte("name: "+title),
 		)
-		if err := os.WriteFile(workspacePath, contents, 0o600); err != nil {
+		if err := os.WriteFile(projectPath, contents, 0o600); err != nil {
 			return err
 		}
 	}

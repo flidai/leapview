@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddataapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/spf13/cobra"
 )
 
@@ -32,14 +33,17 @@ const (
 type SyncRequest struct {
 	ProjectPath string
 	ProjectID   string
-	Connection  string
-	Root        string
-	Target      string
-	Token       string
-	Plan        localplan.Result
-	Out         io.Writer
-	HTTPClient  *http.Client
-	Format      string
+	// Connection is the user-facing selector (usually an authored name).
+	Connection string
+	// ConnectionID is the canonical authored ID sent to the target API.
+	ConnectionID string
+	Root         string
+	Target       string
+	Token        string
+	Plan         localplan.Result
+	Out          io.Writer
+	HTTPClient   *http.Client
+	Format       string
 }
 
 type dataSyncRequest = SyncRequest
@@ -89,7 +93,7 @@ func dataSyncCommand(ctx context.Context, planner dataPlanner, dependencies Depe
 				httpClient = http.DefaultClient
 			}
 			return runDataSync(ctx, dataSyncRequest{
-				ProjectPath: projectPath, ProjectID: projectID, Connection: connection, Root: plan.Root,
+				ProjectPath: projectPath, ProjectID: projectID, Connection: connection, ConnectionID: plan.Connection, Root: plan.Root,
 				Target: credentials.Target, Token: credentials.Token, Plan: plan, Out: cmd.OutOrStdout(), HTTPClient: httpClient,
 				Format: format,
 			})
@@ -109,9 +113,23 @@ func RunSync(ctx context.Context, request SyncRequest) error {
 	if ctx == nil || strings.TrimSpace(request.ProjectID) == "" || strings.TrimSpace(request.Connection) == "" || strings.TrimSpace(request.Root) == "" {
 		return fmt.Errorf("managed data sync requires project, connection, and source root")
 	}
-	if request.Plan.Connection != "" && request.Plan.Connection != request.Connection {
+	connectionID := strings.TrimSpace(request.Plan.Connection)
+	if connectionID == "" {
+		return fmt.Errorf("managed data sync plan has no canonical connection ID")
+	}
+	if _, err := projectgraph.NewResourceID(connectionID); err != nil {
+		return fmt.Errorf("managed data sync plan has invalid connection ID %q: %w", connectionID, err)
+	}
+	if request.ConnectionID != "" && strings.TrimSpace(request.ConnectionID) != connectionID {
 		return fmt.Errorf("planned connection does not match sync connection")
 	}
+	selector := strings.TrimSpace(request.Connection)
+	if request.Plan.ConnectionName != "" && selector != request.Plan.ConnectionName && selector != connectionID {
+		return fmt.Errorf("planned connection does not match sync connection")
+	}
+	// The remainder of the transfer deliberately uses only the canonical ID;
+	// the symbolic selector is retained solely for CLI validation and UX.
+	request.Connection = connectionID
 	if request.Format == "" {
 		request.Format = "text"
 	}

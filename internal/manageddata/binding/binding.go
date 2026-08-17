@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/manageddata"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -19,14 +20,15 @@ var (
 )
 
 // Repository is the metadata surface needed to resolve artifact-owned pins.
-// ReplaceServingStateBindings must replace the complete set atomically.
+// InstallServingStateBindings writes immutable generation evidence. Replays
+// must be identical; conflicting pins are rejected.
 type Repository interface {
-	CollectionByProjectConnection(context.Context, string, string) (manageddata.Collection, error)
-	ListRevisions(context.Context, string) ([]manageddata.Revision, error)
-	RevisionByID(context.Context, string) (manageddata.Revision, error)
-	EnvironmentPointer(context.Context, string, manageddata.Environment) (manageddata.EnvironmentPointer, error)
-	ReplaceServingStateBindings(context.Context, string, []manageddata.ServingStateBinding) error
-	ListServingStateBindings(context.Context, string) ([]manageddata.ServingStateBinding, error)
+	CollectionByProjectConnection(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (manageddata.Collection, error)
+	ListRevisions(context.Context, projectgraph.ResourceID) ([]manageddata.Revision, error)
+	RevisionByID(context.Context, manageddata.RevisionID) (manageddata.Revision, error)
+	EnvironmentPointer(context.Context, projectgraph.ResourceID, manageddata.Environment) (manageddata.EnvironmentPointer, error)
+	InstallServingStateBindings(context.Context, projectgraph.ServingIdentity, []manageddata.ServingStateBinding) error
+	ListServingStateBindings(context.Context, projectgraph.ServingIdentity) ([]manageddata.ServingStateBinding, error)
 }
 
 // Binder resolves project-global revision pins during publish validation.
@@ -46,8 +48,8 @@ func (b *Binder) AfterArtifactValidation(ctx context.Context, candidate servings
 	if b == nil || b.repository == nil {
 		return ErrRepository
 	}
-	projectID := strings.TrimSpace(validation.ProjectID)
-	if strings.TrimSpace(string(candidate.ID)) == "" || projectID == "" || projectID != validation.ProjectID || validation.ManagedDataRevisions == nil {
+	projectID := validation.ProjectID
+	if !projectID.Valid() || string(candidate.ID) == "" || projectID != validation.ProjectID || validation.ManagedDataRevisions == nil {
 		return ErrArtifactMetadata
 	}
 
@@ -63,9 +65,17 @@ func (b *Binder) AfterArtifactValidation(ctx context.Context, candidate servings
 		connections = append(connections, connection)
 	}
 	sort.Strings(connections)
+	identity, identityErr := projectgraph.NewServingIdentity(projectID, string(environment), string(candidate.ID))
+	if identityErr != nil {
+		return ErrArtifactMetadata
+	}
 	bindings := make([]manageddata.ServingStateBinding, 0, len(connections))
 	for _, connection := range connections {
-		binding, bindErr := b.pinnedBinding(ctx, candidate.ID, projectID, connection, validation.ManagedDataRevisions[connection], environment)
+		connectionID, parseErr := projectgraph.NewResourceID(connection)
+		if parseErr != nil {
+			return ErrArtifactMetadata
+		}
+		binding, bindErr := b.pinnedBinding(ctx, identity, projectID, connectionID, validation.ManagedDataRevisions[connection], environment)
 		if bindErr != nil {
 			return bindErr
 		}
@@ -77,7 +87,7 @@ func (b *Binder) AfterArtifactValidation(ctx context.Context, candidate servings
 		}
 		return bindings[i].RevisionID < bindings[j].RevisionID
 	})
-	if err := b.repository.ReplaceServingStateBindings(ctx, string(candidate.ID), bindings); err != nil {
+	if err := b.repository.InstallServingStateBindings(ctx, identity, bindings); err != nil {
 		return repositoryError(err)
 	}
 	return nil
@@ -87,25 +97,23 @@ func (b *Binder) AfterArtifactValidation(ctx context.Context, candidate servings
 // AfterArtifactValidation exactly match the release manifest. Release pins are
 // content digests, while serving-state bindings use internal revision IDs, so
 // each expected digest must first be resolved within its project connection.
-func (b *Binder) ValidateServingStatePins(ctx context.Context, servingStateID, projectID string, expected map[string]string) error {
-	servingStateID = strings.TrimSpace(servingStateID)
-	projectID = strings.TrimSpace(projectID)
+func (b *Binder) ValidateServingStatePins(ctx context.Context, identity projectgraph.ServingIdentity, expected map[projectgraph.ResourceID]string) error {
 	if b == nil || b.repository == nil {
 		return ErrRepository
 	}
-	if servingStateID == "" || projectID == "" || expected == nil {
+	if identity.Validate() != nil || expected == nil {
 		return ErrArtifactMetadata
 	}
-	actual, err := b.repository.ListServingStateBindings(ctx, servingStateID)
+	actual, err := b.repository.ListServingStateBindings(ctx, identity)
 	if err != nil {
 		return repositoryError(err)
 	}
 	if len(actual) != len(expected) {
 		return ErrArtifactMetadata
 	}
-	actualByCollection := make(map[string]manageddata.ServingStateBinding, len(actual))
+	actualByCollection := make(map[projectgraph.ResourceID]manageddata.ServingStateBinding, len(actual))
 	for _, binding := range actual {
-		if binding.ServingStateID != servingStateID || binding.CollectionID == "" || binding.RevisionID == "" {
+		if binding.Identity != identity || !binding.CollectionID.Valid() || binding.RevisionID.String() == "" {
 			return ErrArtifactMetadata
 		}
 		if _, duplicate := actualByCollection[binding.CollectionID]; duplicate {
@@ -113,11 +121,11 @@ func (b *Binder) ValidateServingStatePins(ctx context.Context, servingStateID, p
 		}
 		actualByCollection[binding.CollectionID] = binding
 	}
-	for connection, digest := range expected {
-		if connection == "" || connection != strings.TrimSpace(connection) || manageddata.ValidateRevisionID(digest) != nil {
+	for connectionID, digest := range expected {
+		if !connectionID.Valid() || manageddata.ValidateRevisionID(digest) != nil {
 			return ErrArtifactMetadata
 		}
-		resolved, resolveErr := b.pinnedBinding(ctx, servingstate.ID(servingStateID), projectID, connection, digest, manageddata.Environment("dev"))
+		resolved, resolveErr := b.pinnedBinding(ctx, identity, identity.ProjectID, connectionID, digest, manageddata.Environment(identity.Environment))
 		if resolveErr != nil {
 			return resolveErr
 		}
@@ -134,26 +142,29 @@ func (b *Binder) ValidateServingStatePins(ctx context.Context, servingStateID, p
 // the newest ready revision, which is then pinned immutably in the candidate.
 func (b *Binder) ResolveCandidatePins(
 	ctx context.Context,
-	projectID string,
-	connections []string,
+	projectID projectgraph.ResourceID,
+	connections []projectgraph.ResourceID,
 	environment string,
-) (map[string]string, error) {
-	projectID = strings.TrimSpace(projectID)
+) (map[projectgraph.ResourceID]string, error) {
 	normalizedEnvironment, err := manageddata.NormalizeEnvironment(environment)
 	if b == nil || b.repository == nil {
 		return nil, ErrRepository
 	}
-	if err != nil || projectID == "" {
-		return nil, ErrArtifactMetadata
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid candidate environment %q", ErrArtifactMetadata, environment)
 	}
-	connections = append([]string(nil), connections...)
-	sort.Strings(connections)
-	pins := make(map[string]string, len(connections))
+	if !projectID.Valid() {
+		return nil, fmt.Errorf("%w: invalid candidate project %q", ErrArtifactMetadata, projectID)
+	}
+	connections = append([]projectgraph.ResourceID(nil), connections...)
+	sort.Slice(connections, func(i, j int) bool { return connections[i] < connections[j] })
+	pins := make(map[projectgraph.ResourceID]string, len(connections))
 	for index, connection := range connections {
-		connection = strings.TrimSpace(connection)
-		if connection == "" ||
-			index > 0 && connections[index-1] == connection {
-			return nil, ErrArtifactMetadata
+		if !connection.Valid() {
+			return nil, fmt.Errorf("%w: invalid candidate connection %q", ErrArtifactMetadata, connection)
+		}
+		if index > 0 && connections[index-1] == connection {
+			return nil, fmt.Errorf("%w: duplicate candidate connection %q", ErrArtifactMetadata, connection)
 		}
 		collection, err := b.repository.CollectionByProjectConnection(
 			ctx,
@@ -168,7 +179,7 @@ func (b *Binder) ResolveCandidatePins(
 		}
 		if collection.Status != manageddata.CollectionStatusActive ||
 			collection.ProjectID != projectID ||
-			collection.ConnectionName != connection {
+			collection.ConnectionID != connection {
 			return nil, ErrPinnedRevisionUnavailable
 		}
 		revision, err := b.candidateRevision(
@@ -198,8 +209,8 @@ func (b *Binder) candidateRevision(
 	if err == nil {
 		if pointer.CollectionID != collection.ID ||
 			pointer.Environment != environment ||
-			strings.TrimSpace(pointer.RevisionID) == "" {
-			return manageddata.Revision{}, ErrArtifactMetadata
+			pointer.RevisionID.String() == "" {
+			return manageddata.Revision{}, fmt.Errorf("%w: environment pointer does not match collection %q and environment %q", ErrArtifactMetadata, collection.ID, environment)
 		}
 		revision, revisionErr := b.repository.RevisionByID(
 			ctx,
@@ -220,7 +231,7 @@ func (b *Binder) candidateRevision(
 	var selected manageddata.Revision
 	for _, revision := range revisions {
 		if revision.CollectionID != collection.ID {
-			return manageddata.Revision{}, ErrArtifactMetadata
+			return manageddata.Revision{}, fmt.Errorf("%w: revision %q belongs to collection %q, want %q", ErrArtifactMetadata, revision.ID, revision.CollectionID, collection.ID)
 		}
 		if revision.Status != manageddata.RevisionStatusReady {
 			continue
@@ -230,7 +241,7 @@ func (b *Binder) candidateRevision(
 			continue
 		}
 		if revision.Sequence == selected.Sequence && revision.ID != selected.ID {
-			return manageddata.Revision{}, ErrArtifactMetadata
+			return manageddata.Revision{}, fmt.Errorf("%w: revisions %q and %q share sequence %d", ErrArtifactMetadata, selected.ID, revision.ID, revision.Sequence)
 		}
 	}
 	if selected.ID == "" {
@@ -239,15 +250,15 @@ func (b *Binder) candidateRevision(
 	return selected, nil
 }
 
-func (b *Binder) pinnedBinding(ctx context.Context, servingStateID servingstate.ID, projectID, connectionName, digest string, environment manageddata.Environment) (manageddata.ServingStateBinding, error) {
-	collection, err := b.repository.CollectionByProjectConnection(ctx, projectID, connectionName)
+func (b *Binder) pinnedBinding(ctx context.Context, identity projectgraph.ServingIdentity, projectID, connectionID projectgraph.ResourceID, digest string, environment manageddata.Environment) (manageddata.ServingStateBinding, error) {
+	collection, err := b.repository.CollectionByProjectConnection(ctx, projectID, connectionID)
 	if err != nil {
 		if errors.Is(err, manageddata.ErrNotFound) {
 			return manageddata.ServingStateBinding{}, ErrPinnedRevisionUnavailable
 		}
 		return manageddata.ServingStateBinding{}, repositoryError(err)
 	}
-	if collection.ID == "" || collection.ProjectID != projectID || collection.ConnectionName != connectionName {
+	if !collection.ID.Valid() || collection.ProjectID != projectID || collection.ConnectionID != connectionID {
 		return manageddata.ServingStateBinding{}, ErrArtifactMetadata
 	}
 	if collection.Status != manageddata.CollectionStatusActive {
@@ -276,10 +287,9 @@ func (b *Binder) pinnedBinding(ctx context.Context, servingStateID servingstate.
 		return manageddata.ServingStateBinding{}, ErrPinnedRevisionUnavailable
 	}
 	return manageddata.ServingStateBinding{
-		ServingStateID: string(servingStateID),
-		CollectionID:   collection.ID,
-		RevisionID:     match.ID,
-		Environment:    environment,
+		Identity:     identity,
+		CollectionID: collection.ID,
+		RevisionID:   match.ID,
 	}, nil
 }
 

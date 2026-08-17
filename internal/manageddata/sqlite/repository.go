@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	platformdb "github.com/flidai/leapview/internal/manageddata/internal/db"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Repository struct {
@@ -30,42 +32,44 @@ func NewRepositoryWithWorkflow(db *sql.DB, workflow jobs.WorkflowRecorder) *Repo
 }
 
 func (r *Repository) CreateCollection(ctx context.Context, input manageddata.CreateCollectionInput) (manageddata.Collection, error) {
-	input.ID = strings.TrimSpace(input.ID)
-	input.ProjectID = strings.TrimSpace(input.ProjectID)
-	input.ConnectionName = strings.TrimSpace(input.ConnectionName)
+	if input.ID.String() != strings.TrimSpace(input.ID.String()) || input.ProjectID.String() != strings.TrimSpace(input.ProjectID.String()) || input.ConnectionID.String() != strings.TrimSpace(input.ConnectionID.String()) {
+		return manageddata.Collection{}, fmt.Errorf("managed data collection graph identities must be canonical")
+	}
 	input.Name = strings.TrimSpace(input.Name)
 	if input.ID != "" {
-		if err := manageddata.ValidateCollectionID(input.ID); err != nil {
+		if err := manageddata.ValidateCollectionID(input.ID.String()); err != nil {
 			return manageddata.Collection{}, err
 		}
 	}
-	if err := validateIdentityPart("project id", input.ProjectID); err != nil {
-		return manageddata.Collection{}, err
+	if !input.ProjectID.Valid() {
+		return manageddata.Collection{}, fmt.Errorf("project id is invalid")
 	}
-	if err := validateIdentityPart("connection name", input.ConnectionName); err != nil {
-		return manageddata.Collection{}, err
+	if !input.ConnectionID.Valid() {
+		return manageddata.Collection{}, fmt.Errorf("connection id is invalid")
 	}
 	if input.Name == "" {
-		input.Name = input.ConnectionName
+		input.Name = input.ConnectionID.String()
 	}
-	if existing, err := r.CollectionByProjectConnection(ctx, input.ProjectID, input.ConnectionName); err == nil {
+	if existing, err := r.CollectionByProjectConnection(ctx, input.ProjectID, input.ConnectionID); err == nil {
 		return idempotentCollection(existing, input)
 	} else if !errors.Is(err, manageddata.ErrNotFound) {
 		return manageddata.Collection{}, err
 	}
 	var err error
 	if input.ID == "" {
-		input.ID, err = newID("collection")
+		var generated string
+		generated, err = newID("collection")
+		input.ID = projectgraph.ResourceID(generated)
 		if err != nil {
 			return manageddata.Collection{}, err
 		}
 	}
 	err = r.q.CreateManagedDataCollection(ctx, platformdb.CreateManagedDataCollectionParams{
-		ID: input.ID, ProjectID: input.ProjectID, ConnectionName: input.ConnectionName,
+		ID: input.ID.String(), ProjectID: input.ProjectID.String(), ConnectionID: input.ConnectionID.String(),
 		Name: input.Name, Description: strings.TrimSpace(input.Description), CreatedBy: strings.TrimSpace(input.CreatedBy),
 	})
 	if err != nil {
-		if existing, lookupErr := r.CollectionByProjectConnection(ctx, input.ProjectID, input.ConnectionName); lookupErr == nil {
+		if existing, lookupErr := r.CollectionByProjectConnection(ctx, input.ProjectID, input.ConnectionID); lookupErr == nil {
 			return idempotentCollection(existing, input)
 		}
 		return manageddata.Collection{}, mapError(err)
@@ -73,9 +77,9 @@ func (r *Repository) CreateCollection(ctx context.Context, input manageddata.Cre
 	return r.CollectionByID(ctx, input.ID)
 }
 
-func (r *Repository) CollectionByProjectConnection(ctx context.Context, projectID, connectionName string) (manageddata.Collection, error) {
+func (r *Repository) CollectionByProjectConnection(ctx context.Context, projectID, connectionID projectgraph.ResourceID) (manageddata.Collection, error) {
 	row, err := r.q.GetManagedDataCollectionByProjectConnection(ctx, platformdb.GetManagedDataCollectionByProjectConnectionParams{
-		ProjectID: strings.TrimSpace(projectID), ConnectionName: strings.TrimSpace(connectionName),
+		ProjectID: projectID.String(), ConnectionID: connectionID.String(),
 	})
 	if err != nil {
 		return manageddata.Collection{}, mapError(err)
@@ -83,8 +87,8 @@ func (r *Repository) CollectionByProjectConnection(ctx context.Context, projectI
 	return mapCollection(row), nil
 }
 
-func (r *Repository) CollectionByID(ctx context.Context, id string) (manageddata.Collection, error) {
-	row, err := r.q.GetManagedDataCollection(ctx, strings.TrimSpace(id))
+func (r *Repository) CollectionByID(ctx context.Context, id projectgraph.ResourceID) (manageddata.Collection, error) {
+	row, err := r.q.GetManagedDataCollection(ctx, id.String())
 	if err != nil {
 		return manageddata.Collection{}, mapError(err)
 	}
@@ -109,17 +113,18 @@ func (r *Repository) ListCollections(ctx context.Context, includeArchived bool) 
 	return out, nil
 }
 
-func (r *Repository) ArchiveCollection(ctx context.Context, id string) error {
-	result, err := r.q.ArchiveManagedDataCollection(ctx, strings.TrimSpace(id))
+func (r *Repository) ArchiveCollection(ctx context.Context, id projectgraph.ResourceID) error {
+	result, err := r.q.ArchiveManagedDataCollection(ctx, id.String())
 	return expectOne(result, err, "collection is not active")
 }
 
 func (r *Repository) CreateUploadSession(ctx context.Context, input manageddata.CreateUploadSessionInput) (manageddata.UploadSession, error) {
-	input.CollectionID = strings.TrimSpace(input.CollectionID)
-	input.BaseRevisionID = strings.TrimSpace(input.BaseRevisionID)
+	if input.CollectionID.String() != strings.TrimSpace(input.CollectionID.String()) || input.BaseRevisionID != manageddata.RevisionID(strings.TrimSpace(string(input.BaseRevisionID))) {
+		return manageddata.UploadSession{}, fmt.Errorf("upload graph and revision identities must be canonical")
+	}
 	input.StorageBackend = strings.TrimSpace(input.StorageBackend)
 	input.StagingPrefix = strings.TrimSpace(input.StagingPrefix)
-	if input.CollectionID == "" {
+	if !input.CollectionID.Valid() {
 		return manageddata.UploadSession{}, fmt.Errorf("collection id is required")
 	}
 	if input.StorageBackend == "" {
@@ -136,7 +141,7 @@ func (r *Repository) CreateUploadSession(ctx context.Context, input manageddata.
 		return manageddata.UploadSession{}, err
 	}
 	fileCount, sizeBytes := manifestTotals(input.Manifest)
-	id := strings.TrimSpace(input.ID)
+	id := input.ID.String()
 	if id == "" {
 		id, err = newID("upload")
 		if err != nil {
@@ -144,26 +149,26 @@ func (r *Repository) CreateUploadSession(ctx context.Context, input manageddata.
 		}
 	}
 	err = r.q.CreateManagedDataUploadSession(ctx, platformdb.CreateManagedDataUploadSessionParams{
-		ID: id, CollectionID: input.CollectionID, BaseRevisionID: nullable(input.BaseRevisionID), ManifestJson: string(manifestJSON),
+		ID: id, CollectionID: input.CollectionID.String(), BaseRevisionID: nullable(string(input.BaseRevisionID)), ManifestJson: string(manifestJSON),
 		ExpectedFileCount: fileCount, ExpectedSizeBytes: sizeBytes, StorageBackend: input.StorageBackend,
 		StagingPrefix: input.StagingPrefix, CreatedBy: strings.TrimSpace(input.CreatedBy), ExpiresAt: timestamp(input.ExpiresAt),
 	})
 	if err != nil {
 		return manageddata.UploadSession{}, mapError(err)
 	}
-	return r.UploadSessionByID(ctx, id)
+	return r.UploadSessionByID(ctx, manageddata.UploadID(id))
 }
 
-func (r *Repository) UploadSessionByID(ctx context.Context, id string) (manageddata.UploadSession, error) {
-	row, err := r.q.GetManagedDataUploadSession(ctx, strings.TrimSpace(id))
+func (r *Repository) UploadSessionByID(ctx context.Context, id manageddata.UploadID) (manageddata.UploadSession, error) {
+	row, err := r.q.GetManagedDataUploadSession(ctx, id.String())
 	if err != nil {
 		return manageddata.UploadSession{}, mapError(err)
 	}
 	return mapUploadSession(row), nil
 }
 
-func (r *Repository) ListUploadSessions(ctx context.Context, collectionID string) ([]manageddata.UploadSession, error) {
-	rows, err := r.q.ListManagedDataUploadSessions(ctx, strings.TrimSpace(collectionID))
+func (r *Repository) ListUploadSessions(ctx context.Context, collectionID projectgraph.ResourceID) ([]manageddata.UploadSession, error) {
+	rows, err := r.q.ListManagedDataUploadSessions(ctx, collectionID.String())
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -189,33 +194,33 @@ func (r *Repository) ListUploadSessionsForCleanup(ctx context.Context, limit int
 	return out, nil
 }
 
-func (r *Repository) MarkUploadCleanupComplete(ctx context.Context, id string) error {
-	_, err := r.q.MarkManagedDataUploadCleanupComplete(ctx, strings.TrimSpace(id))
+func (r *Repository) MarkUploadCleanupComplete(ctx context.Context, id manageddata.UploadID) error {
+	_, err := r.q.MarkManagedDataUploadCleanupComplete(ctx, id.String())
 	return err
 }
 
-func (r *Repository) UpdateUploadProgress(ctx context.Context, id string, progress manageddata.UploadProgress) error {
+func (r *Repository) UpdateUploadProgress(ctx context.Context, id manageddata.UploadID, progress manageddata.UploadProgress) error {
 	if progress.UploadedFileCount < 0 || progress.UploadedSizeBytes < 0 {
 		return fmt.Errorf("upload progress cannot be negative")
 	}
 	result, err := r.q.UpdateManagedDataUploadProgress(ctx, platformdb.UpdateManagedDataUploadProgressParams{
-		UploadedFileCount: progress.UploadedFileCount, UploadedSizeBytes: progress.UploadedSizeBytes, ID: strings.TrimSpace(id),
+		UploadedFileCount: progress.UploadedFileCount, UploadedSizeBytes: progress.UploadedSizeBytes, ID: id.String(),
 		ExpectedFileCount: progress.UploadedFileCount, ExpectedSizeBytes: progress.UploadedSizeBytes,
 	})
 	return expectOne(result, err, "upload session is not open or progress exceeds its manifest")
 }
 
-func (r *Repository) BeginUploadFinalization(ctx context.Context, id string, workflow jobs.WorkflowIntent) (manageddata.UploadSession, error) {
-	id = strings.TrimSpace(id)
+func (r *Repository) BeginUploadFinalization(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent) (manageddata.UploadSession, error) {
+	idString := id.String()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	result, err := q.BeginManagedDataUploadFinalization(ctx, id)
+	result, err := q.BeginManagedDataUploadFinalization(ctx, idString)
 	if err := expectOne(result, err, "upload session changed while beginning finalization"); err != nil {
-		row, getErr := q.GetManagedDataUploadSession(ctx, id)
+		row, getErr := q.GetManagedDataUploadSession(ctx, idString)
 		if getErr != nil || mapUploadSession(row).Status != manageddata.UploadStatusCommitting {
 			return manageddata.UploadSession{}, err
 		}
@@ -228,7 +233,7 @@ func (r *Repository) BeginUploadFinalization(ctx context.Context, id string, wor
 			return manageddata.UploadSession{}, err
 		}
 	}
-	row, err := q.GetManagedDataUploadSession(ctx, id)
+	row, err := q.GetManagedDataUploadSession(ctx, idString)
 	if err != nil {
 		return manageddata.UploadSession{}, mapError(err)
 	}
@@ -238,32 +243,32 @@ func (r *Repository) BeginUploadFinalization(ctx context.Context, id string, wor
 	return mapUploadSession(row), nil
 }
 
-func (r *Repository) FailUploadFinalization(ctx context.Context, id, message string) (manageddata.UploadSession, error) {
-	id, message = strings.TrimSpace(id), strings.TrimSpace(message)
+func (r *Repository) FailUploadFinalization(ctx context.Context, id manageddata.UploadID, message string) (manageddata.UploadSession, error) {
+	idString, message := id.String(), strings.TrimSpace(message)
 	if message == "" {
 		message = "upload finalization failed"
 	}
-	result, err := r.q.FailManagedDataUploadFinalization(ctx, platformdb.FailManagedDataUploadFinalizationParams{Error: message, ID: id})
+	result, err := r.q.FailManagedDataUploadFinalization(ctx, platformdb.FailManagedDataUploadFinalizationParams{Error: message, ID: idString})
 	if err := expectOne(result, err, "upload session changed while failing finalization"); err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	row, err := r.q.GetManagedDataUploadSession(ctx, id)
+	row, err := r.q.GetManagedDataUploadSession(ctx, idString)
 	return mapUploadSession(row), mapError(err)
 }
 
-func (r *Repository) AbortUploadSession(ctx context.Context, id string) error {
-	result, err := r.q.AbortManagedDataUploadSession(ctx, strings.TrimSpace(id))
+func (r *Repository) AbortUploadSession(ctx context.Context, id manageddata.UploadID) error {
+	result, err := r.q.AbortManagedDataUploadSession(ctx, id.String())
 	return expectOne(result, err, "upload session is not open")
 }
 
-func (r *Repository) AbortUploadSessionWithWorkflow(ctx context.Context, id string, workflow jobs.WorkflowIntent) error {
+func (r *Repository) AbortUploadSessionWithWorkflow(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	result, err := q.AbortManagedDataUploadSession(ctx, strings.TrimSpace(id))
+	result, err := q.AbortManagedDataUploadSession(ctx, id.String())
 	if err := expectOne(result, err, "upload session is not open"); err != nil {
 		return err
 	}
@@ -288,12 +293,14 @@ func (r *Repository) ExpireUploadSessions(ctx context.Context, now time.Time) (i
 }
 
 func (r *Repository) CreateS3MultipartUpload(ctx context.Context, input manageddata.CreateS3MultipartUploadInput) (manageddata.S3MultipartUpload, error) {
-	input.ID = strings.TrimSpace(input.ID)
-	input.UploadSessionID = strings.TrimSpace(input.UploadSessionID)
+	if input.ID.String() != strings.TrimSpace(input.ID.String()) || input.UploadSessionID.String() != strings.TrimSpace(input.UploadSessionID.String()) {
+		return manageddata.S3MultipartUpload{}, fmt.Errorf("multipart operational identities must be canonical")
+	}
+	inputID, inputSessionID := input.ID.String(), input.UploadSessionID.String()
 	input.LogicalPath = strings.TrimSpace(input.LogicalPath)
 	input.SHA256 = strings.TrimSpace(input.SHA256)
 	input.IdempotencyIdentity = strings.TrimSpace(input.IdempotencyIdentity)
-	if input.ID == "" || input.UploadSessionID == "" || input.LogicalPath == "" {
+	if inputID == "" || inputSessionID == "" || input.LogicalPath == "" {
 		return manageddata.S3MultipartUpload{}, fmt.Errorf("multipart upload id, session id, and logical path are required")
 	}
 	if err := validateHexIdentity("multipart SHA-256", input.SHA256); err != nil {
@@ -306,25 +313,25 @@ func (r *Repository) CreateS3MultipartUpload(ctx context.Context, input managedd
 		return manageddata.S3MultipartUpload{}, err
 	}
 	err := r.q.CreateManagedDataS3MultipartUpload(ctx, platformdb.CreateManagedDataS3MultipartUploadParams{
-		ID: input.ID, UploadSessionID: input.UploadSessionID, LogicalPath: input.LogicalPath, Sha256: input.SHA256,
+		ID: inputID, UploadSessionID: inputSessionID, LogicalPath: input.LogicalPath, Sha256: input.SHA256,
 		SizeBytes: input.SizeBytes, IdempotencyIdentity: input.IdempotencyIdentity,
 	})
 	if err == nil {
 		return r.S3MultipartUploadByID(ctx, input.ID)
 	}
-	if row, lookupErr := r.q.GetManagedDataS3MultipartUpload(ctx, input.ID); lookupErr == nil {
+	if row, lookupErr := r.q.GetManagedDataS3MultipartUpload(ctx, inputID); lookupErr == nil {
 		return idempotentS3MultipartUpload(mapS3MultipartUpload(row), input)
 	}
 	if _, lookupErr := r.q.GetManagedDataS3MultipartUploadByIdentity(ctx, platformdb.GetManagedDataS3MultipartUploadByIdentityParams{
-		UploadSessionID: input.UploadSessionID, IdempotencyIdentity: input.IdempotencyIdentity,
+		UploadSessionID: inputSessionID, IdempotencyIdentity: input.IdempotencyIdentity,
 	}); lookupErr == nil {
 		return manageddata.S3MultipartUpload{}, fmt.Errorf("%w: multipart idempotency identity is already in use", manageddata.ErrConflict)
 	}
 	return manageddata.S3MultipartUpload{}, mapError(err)
 }
 
-func (r *Repository) S3MultipartUploadByID(ctx context.Context, id string) (manageddata.S3MultipartUpload, error) {
-	row, err := r.q.GetManagedDataS3MultipartUpload(ctx, strings.TrimSpace(id))
+func (r *Repository) S3MultipartUploadByID(ctx context.Context, id manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error) {
+	row, err := r.q.GetManagedDataS3MultipartUpload(ctx, id.String())
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, mapError(err)
 	}
@@ -332,10 +339,13 @@ func (r *Repository) S3MultipartUploadByID(ctx context.Context, id string) (mana
 }
 
 func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, input manageddata.InitializeS3MultipartUploadInput) (manageddata.S3MultipartUpload, error) {
-	input.ID = strings.TrimSpace(input.ID)
+	if input.ID.String() != strings.TrimSpace(input.ID.String()) {
+		return manageddata.S3MultipartUpload{}, fmt.Errorf("multipart upload id must be canonical")
+	}
+	inputID := input.ID.String()
 	input.ObjectKey = strings.TrimSpace(input.ObjectKey)
 	input.ProviderUploadID = strings.TrimSpace(input.ProviderUploadID)
-	if input.ID == "" || input.ObjectKey == "" || !safeMetadata(input.ObjectKey, 2048) {
+	if inputID == "" || input.ObjectKey == "" || !safeMetadata(input.ObjectKey, 2048) {
 		return manageddata.S3MultipartUpload{}, fmt.Errorf("multipart upload id and safe object key are required")
 	}
 	if input.Existing && input.ProviderUploadID != "" || !input.Existing && (input.ProviderUploadID == "" || !safeMetadata(input.ProviderUploadID, 2048)) {
@@ -347,7 +357,7 @@ func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, input mana
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	row, err := q.GetManagedDataS3MultipartUpload(ctx, input.ID)
+	row, err := q.GetManagedDataS3MultipartUpload(ctx, inputID)
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, mapError(err)
 	}
@@ -360,14 +370,14 @@ func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, input mana
 	}
 	var result sql.Result
 	if input.Existing {
-		result, err = q.InitializeExistingManagedDataS3MultipartUpload(ctx, platformdb.InitializeExistingManagedDataS3MultipartUploadParams{ObjectKey: input.ObjectKey, ID: input.ID})
+		result, err = q.InitializeExistingManagedDataS3MultipartUpload(ctx, platformdb.InitializeExistingManagedDataS3MultipartUploadParams{ObjectKey: input.ObjectKey, ID: inputID})
 	} else {
-		result, err = q.InitializeManagedDataS3MultipartUpload(ctx, platformdb.InitializeManagedDataS3MultipartUploadParams{ObjectKey: input.ObjectKey, ProviderUploadID: input.ProviderUploadID, ID: input.ID})
+		result, err = q.InitializeManagedDataS3MultipartUpload(ctx, platformdb.InitializeManagedDataS3MultipartUploadParams{ObjectKey: input.ObjectKey, ProviderUploadID: input.ProviderUploadID, ID: inputID})
 	}
 	if err := expectOne(result, err, "multipart upload changed while initializing"); err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	row, err = q.GetManagedDataS3MultipartUpload(ctx, input.ID)
+	row, err = q.GetManagedDataS3MultipartUpload(ctx, inputID)
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
@@ -378,7 +388,9 @@ func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, input mana
 }
 
 func (r *Repository) ReserveS3MultipartPart(ctx context.Context, part manageddata.S3MultipartPart) (manageddata.S3MultipartPart, error) {
-	part.MultipartUploadID = strings.TrimSpace(part.MultipartUploadID)
+	if part.MultipartUploadID.String() != strings.TrimSpace(part.MultipartUploadID.String()) {
+		return manageddata.S3MultipartPart{}, fmt.Errorf("multipart upload id must be canonical")
+	}
 	part.SHA256 = strings.TrimSpace(part.SHA256)
 	if part.MultipartUploadID == "" || part.PartNumber < 1 || part.PartNumber > 10_000 || part.SizeBytes <= 0 {
 		return manageddata.S3MultipartPart{}, fmt.Errorf("invalid multipart part reservation")
@@ -394,7 +406,7 @@ func (r *Repository) ReserveS3MultipartPart(ctx context.Context, part manageddat
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	uploadRow, err := q.GetManagedDataS3MultipartUpload(ctx, part.MultipartUploadID)
+	uploadRow, err := q.GetManagedDataS3MultipartUpload(ctx, part.MultipartUploadID.String())
 	if err != nil {
 		return manageddata.S3MultipartPart{}, mapError(err)
 	}
@@ -402,7 +414,7 @@ func (r *Repository) ReserveS3MultipartPart(ctx context.Context, part manageddat
 		return manageddata.S3MultipartPart{}, fmt.Errorf("%w: multipart upload is %s", manageddata.ErrConflict, uploadRow.Status)
 	}
 	existing, err := q.GetManagedDataS3MultipartPart(ctx, platformdb.GetManagedDataS3MultipartPartParams{
-		MultipartUploadID: part.MultipartUploadID, PartNumber: int64(part.PartNumber),
+		MultipartUploadID: part.MultipartUploadID.String(), PartNumber: int64(part.PartNumber),
 	})
 	if err == nil {
 		mapped := mapS3MultipartPart(existing)
@@ -414,7 +426,7 @@ func (r *Repository) ReserveS3MultipartPart(ctx context.Context, part manageddat
 	if !errors.Is(err, sql.ErrNoRows) {
 		return manageddata.S3MultipartPart{}, err
 	}
-	total, err := q.SumManagedDataS3MultipartPartSizes(ctx, part.MultipartUploadID)
+	total, err := q.SumManagedDataS3MultipartPartSizes(ctx, part.MultipartUploadID.String())
 	if err != nil {
 		return manageddata.S3MultipartPart{}, err
 	}
@@ -422,7 +434,7 @@ func (r *Repository) ReserveS3MultipartPart(ctx context.Context, part manageddat
 		return manageddata.S3MultipartPart{}, fmt.Errorf("%w: multipart part reservations exceed blob size", manageddata.ErrConflict)
 	}
 	if err := q.CreateManagedDataS3MultipartPart(ctx, platformdb.CreateManagedDataS3MultipartPartParams{
-		MultipartUploadID: part.MultipartUploadID, PartNumber: int64(part.PartNumber), SizeBytes: part.SizeBytes, Sha256: part.SHA256,
+		MultipartUploadID: part.MultipartUploadID.String(), PartNumber: int64(part.PartNumber), SizeBytes: part.SizeBytes, Sha256: part.SHA256,
 	}); err != nil {
 		return manageddata.S3MultipartPart{}, mapError(err)
 	}
@@ -432,8 +444,8 @@ func (r *Repository) ReserveS3MultipartPart(ctx context.Context, part manageddat
 	return part, nil
 }
 
-func (r *Repository) ListS3MultipartParts(ctx context.Context, id string) ([]manageddata.S3MultipartPart, error) {
-	rows, err := r.q.ListManagedDataS3MultipartParts(ctx, strings.TrimSpace(id))
+func (r *Repository) ListS3MultipartParts(ctx context.Context, id manageddata.MultipartUploadID) ([]manageddata.S3MultipartPart, error) {
+	rows, err := r.q.ListManagedDataS3MultipartParts(ctx, id.String())
 	if err != nil {
 		return nil, err
 	}
@@ -445,10 +457,13 @@ func (r *Repository) ListS3MultipartParts(ctx context.Context, id string) ([]man
 }
 
 func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, input manageddata.BeginS3MultipartCompletionInput) (manageddata.S3MultipartCompletion, error) {
-	input.ID = strings.TrimSpace(input.ID)
+	if input.ID.String() != strings.TrimSpace(input.ID.String()) {
+		return manageddata.S3MultipartCompletion{}, fmt.Errorf("multipart upload id must be canonical")
+	}
+	inputID := input.ID.String()
 	input.IdempotencyIdentity = strings.TrimSpace(input.IdempotencyIdentity)
 	input.RequestHash = strings.TrimSpace(input.RequestHash)
-	if input.ID == "" {
+	if inputID == "" {
 		return manageddata.S3MultipartCompletion{}, fmt.Errorf("multipart upload id is required")
 	}
 	if err := validateHexIdentity("completion idempotency identity", input.IdempotencyIdentity); err != nil {
@@ -463,7 +478,7 @@ func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, input manag
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	row, err := q.GetManagedDataS3MultipartUpload(ctx, input.ID)
+	row, err := q.GetManagedDataS3MultipartUpload(ctx, inputID)
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, mapError(err)
 	}
@@ -472,12 +487,12 @@ func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, input manag
 	switch upload.Status {
 	case manageddata.S3MultipartStatusOpen:
 		result, updateErr := q.BeginManagedDataS3MultipartCompletion(ctx, platformdb.BeginManagedDataS3MultipartCompletionParams{
-			CompletionIdentity: input.IdempotencyIdentity, CompletionRequestHash: input.RequestHash, ID: input.ID,
+			CompletionIdentity: input.IdempotencyIdentity, CompletionRequestHash: input.RequestHash, ID: inputID,
 		})
 		if err := expectOne(result, updateErr, "multipart upload changed while beginning completion"); err != nil {
 			return manageddata.S3MultipartCompletion{}, err
 		}
-		row, err = q.GetManagedDataS3MultipartUpload(ctx, input.ID)
+		row, err = q.GetManagedDataS3MultipartUpload(ctx, inputID)
 		if err != nil {
 			return manageddata.S3MultipartCompletion{}, err
 		}
@@ -494,7 +509,7 @@ func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, input manag
 	default:
 		return manageddata.S3MultipartCompletion{}, fmt.Errorf("%w: multipart upload is %s", manageddata.ErrConflict, upload.Status)
 	}
-	partRows, err := q.ListManagedDataS3MultipartParts(ctx, input.ID)
+	partRows, err := q.ListManagedDataS3MultipartParts(ctx, inputID)
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, err
 	}
@@ -508,14 +523,17 @@ func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, input manag
 	return manageddata.S3MultipartCompletion{Upload: upload, Parts: parts, Execute: execute}, nil
 }
 
-func (r *Repository) FinishS3MultipartCompletion(ctx context.Context, id string) (manageddata.S3MultipartUpload, error) {
-	return r.finishS3Multipart(ctx, strings.TrimSpace(id), manageddata.S3MultipartStatusCompleting, manageddata.S3MultipartStatusCompleted)
+func (r *Repository) FinishS3MultipartCompletion(ctx context.Context, id manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error) {
+	return r.finishS3Multipart(ctx, id.String(), manageddata.S3MultipartStatusCompleting, manageddata.S3MultipartStatusCompleted)
 }
 
 func (r *Repository) BeginS3MultipartAbort(ctx context.Context, input manageddata.BeginS3MultipartAbortInput) (manageddata.S3MultipartAbort, error) {
-	input.ID = strings.TrimSpace(input.ID)
+	if input.ID.String() != strings.TrimSpace(input.ID.String()) {
+		return manageddata.S3MultipartAbort{}, fmt.Errorf("multipart upload id must be canonical")
+	}
+	inputID := input.ID.String()
 	input.IdempotencyIdentity = strings.TrimSpace(input.IdempotencyIdentity)
-	if input.ID == "" {
+	if inputID == "" {
 		return manageddata.S3MultipartAbort{}, fmt.Errorf("multipart upload id is required")
 	}
 	if err := validateHexIdentity("abort idempotency identity", input.IdempotencyIdentity); err != nil {
@@ -527,7 +545,7 @@ func (r *Repository) BeginS3MultipartAbort(ctx context.Context, input manageddat
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	row, err := q.GetManagedDataS3MultipartUpload(ctx, input.ID)
+	row, err := q.GetManagedDataS3MultipartUpload(ctx, inputID)
 	if err != nil {
 		return manageddata.S3MultipartAbort{}, mapError(err)
 	}
@@ -535,11 +553,11 @@ func (r *Repository) BeginS3MultipartAbort(ctx context.Context, input manageddat
 	execute := true
 	switch upload.Status {
 	case manageddata.S3MultipartStatusCreating, manageddata.S3MultipartStatusOpen, manageddata.S3MultipartStatusFailed:
-		result, updateErr := q.BeginManagedDataS3MultipartAbort(ctx, platformdb.BeginManagedDataS3MultipartAbortParams{AbortIdentity: input.IdempotencyIdentity, ID: input.ID})
+		result, updateErr := q.BeginManagedDataS3MultipartAbort(ctx, platformdb.BeginManagedDataS3MultipartAbortParams{AbortIdentity: input.IdempotencyIdentity, ID: inputID})
 		if err := expectOne(result, updateErr, "multipart upload changed while beginning abort"); err != nil {
 			return manageddata.S3MultipartAbort{}, err
 		}
-		row, err = q.GetManagedDataS3MultipartUpload(ctx, input.ID)
+		row, err = q.GetManagedDataS3MultipartUpload(ctx, inputID)
 		if err != nil {
 			return manageddata.S3MultipartAbort{}, err
 		}
@@ -562,14 +580,14 @@ func (r *Repository) BeginS3MultipartAbort(ctx context.Context, input manageddat
 	return manageddata.S3MultipartAbort{Upload: upload, Execute: execute}, nil
 }
 
-func (r *Repository) FinishS3MultipartAbort(ctx context.Context, id string) (manageddata.S3MultipartUpload, error) {
-	return r.finishS3Multipart(ctx, strings.TrimSpace(id), manageddata.S3MultipartStatusAborting, manageddata.S3MultipartStatusAborted)
+func (r *Repository) FinishS3MultipartAbort(ctx context.Context, id manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error) {
+	return r.finishS3Multipart(ctx, id.String(), manageddata.S3MultipartStatusAborting, manageddata.S3MultipartStatusAborted)
 }
 
-func (r *Repository) FailS3MultipartUpload(ctx context.Context, id, message string) (manageddata.S3MultipartUpload, error) {
-	id = strings.TrimSpace(id)
+func (r *Repository) FailS3MultipartUpload(ctx context.Context, id manageddata.MultipartUploadID, message string) (manageddata.S3MultipartUpload, error) {
+	idString := id.String()
 	message = strings.TrimSpace(message)
-	if id == "" || message == "" || !safeMetadata(message, 2048) {
+	if idString == "" || message == "" || !safeMetadata(message, 2048) {
 		return manageddata.S3MultipartUpload{}, fmt.Errorf("multipart upload id and safe terminal error are required")
 	}
 	current, err := r.S3MultipartUploadByID(ctx, id)
@@ -582,7 +600,7 @@ func (r *Repository) FailS3MultipartUpload(ctx context.Context, id, message stri
 		}
 		return manageddata.S3MultipartUpload{}, fmt.Errorf("%w: multipart terminal error conflicts", manageddata.ErrConflict)
 	}
-	result, err := r.q.FailManagedDataS3MultipartUpload(ctx, platformdb.FailManagedDataS3MultipartUploadParams{Error: message, ID: id})
+	result, err := r.q.FailManagedDataS3MultipartUpload(ctx, platformdb.FailManagedDataS3MultipartUploadParams{Error: message, ID: idString})
 	if err := expectOne(result, err, "multipart upload cannot fail from its current state"); err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
@@ -683,7 +701,10 @@ func (r *Repository) finishS3Multipart(ctx context.Context, id string, from, to 
 }
 
 func (r *Repository) CompleteUpload(ctx context.Context, input manageddata.CompleteUploadInput) (manageddata.Revision, error) {
-	input.SessionID = strings.TrimSpace(input.SessionID)
+	if input.SessionID.String() != strings.TrimSpace(input.SessionID.String()) || input.RevisionID.String() != strings.TrimSpace(input.RevisionID.String()) {
+		return manageddata.Revision{}, fmt.Errorf("upload and revision identities must be canonical")
+	}
+	sessionID := input.SessionID.String()
 	if input.SessionID == "" {
 		return manageddata.Revision{}, fmt.Errorf("upload session id is required")
 	}
@@ -693,7 +714,7 @@ func (r *Repository) CompleteUpload(ctx context.Context, input manageddata.Compl
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	result, err := q.MarkManagedDataUploadCommitting(ctx, input.SessionID)
+	result, err := q.MarkManagedDataUploadCommitting(ctx, sessionID)
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
@@ -702,7 +723,7 @@ func (r *Repository) CompleteUpload(ctx context.Context, input manageddata.Compl
 		return manageddata.Revision{}, err
 	}
 	if affected != 1 {
-		session, getErr := q.GetManagedDataUploadSession(ctx, input.SessionID)
+		session, getErr := q.GetManagedDataUploadSession(ctx, sessionID)
 		if getErr != nil {
 			return manageddata.Revision{}, mapError(getErr)
 		}
@@ -712,7 +733,7 @@ func (r *Repository) CompleteUpload(ctx context.Context, input manageddata.Compl
 		}
 		return manageddata.Revision{}, fmt.Errorf("%w: upload session is %s or expired", manageddata.ErrConflict, session.Status)
 	}
-	session, err := q.GetManagedDataUploadSession(ctx, input.SessionID)
+	session, err := q.GetManagedDataUploadSession(ctx, sessionID)
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
@@ -727,7 +748,7 @@ func (r *Repository) CompleteUpload(ctx context.Context, input manageddata.Compl
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
-	revisionID := strings.TrimSpace(input.RevisionID)
+	revisionID := input.RevisionID.String()
 	if revisionID == "" {
 		revisionID, err = newID("revision")
 		if err != nil {
@@ -748,7 +769,7 @@ func (r *Repository) CompleteUpload(ctx context.Context, input manageddata.Compl
 			return manageddata.Revision{}, mapError(err)
 		}
 	}
-	result, err = q.CompleteManagedDataUploadSession(ctx, platformdb.CompleteManagedDataUploadSessionParams{RevisionID: nullable(revisionID), ID: input.SessionID})
+	result, err = q.CompleteManagedDataUploadSession(ctx, platformdb.CompleteManagedDataUploadSessionParams{RevisionID: nullable(revisionID), ID: sessionID})
 	if err != nil {
 		return manageddata.Revision{}, err
 	}
@@ -758,19 +779,19 @@ func (r *Repository) CompleteUpload(ctx context.Context, input manageddata.Compl
 	if err := tx.Commit(); err != nil {
 		return manageddata.Revision{}, mapError(err)
 	}
-	return r.RevisionByID(ctx, revisionID)
+	return r.RevisionByID(ctx, manageddata.RevisionID(revisionID))
 }
 
-func (r *Repository) RevisionByID(ctx context.Context, id string) (manageddata.Revision, error) {
-	row, err := r.q.GetManagedDataRevision(ctx, strings.TrimSpace(id))
+func (r *Repository) RevisionByID(ctx context.Context, id manageddata.RevisionID) (manageddata.Revision, error) {
+	row, err := r.q.GetManagedDataRevision(ctx, id.String())
 	if err != nil {
 		return manageddata.Revision{}, mapError(err)
 	}
 	return mapRevision(row), nil
 }
 
-func (r *Repository) ListRevisions(ctx context.Context, collectionID string) ([]manageddata.Revision, error) {
-	rows, err := r.q.ListManagedDataRevisions(ctx, strings.TrimSpace(collectionID))
+func (r *Repository) ListRevisions(ctx context.Context, collectionID projectgraph.ResourceID) ([]manageddata.Revision, error) {
+	rows, err := r.q.ListManagedDataRevisions(ctx, collectionID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -781,16 +802,16 @@ func (r *Repository) ListRevisions(ctx context.Context, collectionID string) ([]
 	return out, nil
 }
 
-func (r *Repository) UploadSessionIDByRevisionID(ctx context.Context, revisionID string) (string, error) {
-	id, err := r.q.GetManagedDataUploadSessionIDByRevision(ctx, nullable(strings.TrimSpace(revisionID)))
+func (r *Repository) UploadSessionIDByRevisionID(ctx context.Context, revisionID manageddata.RevisionID) (manageddata.UploadID, error) {
+	id, err := r.q.GetManagedDataUploadSessionIDByRevision(ctx, nullable(revisionID.String()))
 	if err != nil {
 		return "", mapError(err)
 	}
-	return id, nil
+	return manageddata.UploadID(id), nil
 }
 
-func (r *Repository) ListRevisionFiles(ctx context.Context, revisionID string) ([]manageddata.RevisionFile, error) {
-	rows, err := r.q.ListManagedDataRevisionFiles(ctx, strings.TrimSpace(revisionID))
+func (r *Repository) ListRevisionFiles(ctx context.Context, revisionID manageddata.RevisionID) ([]manageddata.RevisionFile, error) {
+	rows, err := r.q.ListManagedDataRevisionFiles(ctx, revisionID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -801,71 +822,130 @@ func (r *Repository) ListRevisionFiles(ctx context.Context, revisionID string) (
 	return out, nil
 }
 
-func (r *Repository) EnvironmentPointer(ctx context.Context, collectionID string, environment manageddata.Environment) (manageddata.EnvironmentPointer, error) {
+func (r *Repository) EnvironmentPointer(ctx context.Context, collectionID projectgraph.ResourceID, environment manageddata.Environment) (manageddata.EnvironmentPointer, error) {
 	normalized, err := manageddata.NormalizeEnvironment(string(environment))
 	if err != nil {
 		return manageddata.EnvironmentPointer{}, err
 	}
-	row, err := r.q.GetManagedDataEnvironmentPointer(ctx, platformdb.GetManagedDataEnvironmentPointerParams{CollectionID: strings.TrimSpace(collectionID), Environment: string(normalized)})
+	row, err := r.q.GetManagedDataEnvironmentPointer(ctx, platformdb.GetManagedDataEnvironmentPointerParams{CollectionID: collectionID.String(), Environment: string(normalized)})
 	if err != nil {
 		return manageddata.EnvironmentPointer{}, mapError(err)
 	}
 	return mapEnvironmentPointer(row), nil
 }
 
-func (r *Repository) ReplaceServingStateBindings(ctx context.Context, servingStateID string, bindings []manageddata.ServingStateBinding) error {
-	servingStateID = strings.TrimSpace(servingStateID)
-	if servingStateID == "" {
-		return fmt.Errorf("serving state id is required")
+func (r *Repository) InstallServingStateBindings(ctx context.Context, identity projectgraph.ServingIdentity, bindings []manageddata.ServingStateBinding) error {
+	if err := identity.Validate(); err != nil {
+		return fmt.Errorf("serving identity is required: %w", err)
 	}
 	normalized := make([]manageddata.ServingStateBinding, 0, len(bindings))
-	seen := map[string]struct{}{}
+	seen := map[projectgraph.ResourceID]struct{}{}
 	for _, binding := range bindings {
-		binding.CollectionID = strings.TrimSpace(binding.CollectionID)
-		binding.RevisionID = strings.TrimSpace(binding.RevisionID)
-		if binding.CollectionID == "" || binding.RevisionID == "" {
+		if !binding.CollectionID.Valid() || binding.RevisionID.String() == "" || binding.RevisionID.String() != strings.TrimSpace(binding.RevisionID.String()) {
 			return fmt.Errorf("binding collection and revision ids are required")
+		}
+		if binding.Identity != (projectgraph.ServingIdentity{}) && binding.Identity != identity {
+			return fmt.Errorf("binding serving identity does not match replacement identity")
 		}
 		if _, exists := seen[binding.CollectionID]; exists {
 			return fmt.Errorf("duplicate binding for collection %q", binding.CollectionID)
 		}
 		seen[binding.CollectionID] = struct{}{}
-		environment, err := manageddata.NormalizeEnvironment(string(binding.Environment))
-		if err != nil {
-			return err
-		}
-		binding.Environment = environment
-		binding.ServingStateID = servingStateID
+		binding.Identity = identity
 		normalized = append(normalized, binding)
 	}
 	sort.Slice(normalized, func(i, j int) bool { return normalized[i].CollectionID < normalized[j].CollectionID })
+	digest, err := servingBindingDigest(normalized)
+	if err != nil {
+		return err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	if err := q.DeleteManagedDataServingStateBindings(ctx, servingStateID); err != nil {
-		return err
+	markerResult, err := q.InstallManagedDataServingStateBindingSet(ctx, platformdb.InstallManagedDataServingStateBindingSetParams{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+		BindingDigest: digest, BindingCount: int64(len(normalized)),
+	})
+	if err != nil {
+		return mapError(err)
 	}
-	for _, binding := range normalized {
-		if err := q.CreateManagedDataServingStateBinding(ctx, platformdb.CreateManagedDataServingStateBindingParams{
-			ServingStateID: servingStateID, CollectionID: binding.CollectionID, RevisionID: binding.RevisionID, Environment: string(binding.Environment),
-		}); err != nil {
-			return mapError(err)
+	markerAffected := markerResult
+	if markerAffected == 0 {
+		marker, getErr := q.GetManagedDataServingStateBindingSet(ctx, platformdb.GetManagedDataServingStateBindingSetParams{
+			ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+		})
+		if getErr != nil {
+			return mapError(getErr)
 		}
+		if marker.BindingDigest != digest || marker.BindingCount != int64(len(normalized)) {
+			return fmt.Errorf("%w: serving binding set conflicts with immutable generation evidence", manageddata.ErrConflict)
+		}
+	}
+	if markerAffected == 1 {
+		for _, binding := range normalized {
+			if err := q.InstallManagedDataServingStateBinding(ctx, platformdb.InstallManagedDataServingStateBindingParams{
+				ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+				CollectionID: binding.CollectionID.String(), RevisionID: binding.RevisionID.String(),
+			}); err != nil {
+				return mapError(err)
+			}
+		}
+	}
+	rows, err := q.ListManagedDataServingStateBindings(ctx, platformdb.ListManagedDataServingStateBindingsParams{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+	})
+	if err != nil {
+		return mapError(err)
+	}
+	if !servingBindingRowsMatch(rows, normalized) {
+		return fmt.Errorf("%w: serving binding rows do not match immutable generation evidence", manageddata.ErrConflict)
 	}
 	return tx.Commit()
 }
 
-func (r *Repository) ListServingStateBindings(ctx context.Context, servingStateID string) ([]manageddata.ServingStateBinding, error) {
-	rows, err := r.q.ListManagedDataServingStateBindings(ctx, strings.TrimSpace(servingStateID))
+func servingBindingDigest(bindings []manageddata.ServingStateBinding) (string, error) {
+	type digestEntry struct {
+		CollectionID string `json:"collection_id"`
+		RevisionID   string `json:"revision_id"`
+	}
+	entries := make([]digestEntry, 0, len(bindings))
+	for _, binding := range bindings {
+		entries = append(entries, digestEntry{CollectionID: binding.CollectionID.String(), RevisionID: binding.RevisionID.String()})
+	}
+	payload, err := json.Marshal(entries)
+	if err != nil {
+		return "", fmt.Errorf("marshal serving binding set: %w", err)
+	}
+	digest := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func servingBindingRowsMatch(rows []platformdb.ManagedDataServingStateBinding, want []manageddata.ServingStateBinding) bool {
+	if len(rows) != len(want) {
+		return false
+	}
+	for i, row := range rows {
+		if row.CollectionID != want[i].CollectionID.String() || row.RevisionID != want[i].RevisionID.String() {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Repository) ListServingStateBindings(ctx context.Context, identity projectgraph.ServingIdentity) ([]manageddata.ServingStateBinding, error) {
+	if err := identity.Validate(); err != nil {
+		return nil, fmt.Errorf("serving identity is required: %w", err)
+	}
+	rows, err := r.q.ListManagedDataServingStateBindings(ctx, platformdb.ListManagedDataServingStateBindingsParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]manageddata.ServingStateBinding, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, manageddata.ServingStateBinding{ServingStateID: row.ServingStateID, CollectionID: row.CollectionID, RevisionID: row.RevisionID, Environment: manageddata.Environment(row.Environment), BoundAt: row.BoundAt})
+		out = append(out, manageddata.ServingStateBinding{Identity: identity, CollectionID: projectgraph.ResourceID(row.CollectionID), RevisionID: manageddata.RevisionID(row.RevisionID), BoundAt: row.BoundAt})
 	}
 	return out, nil
 }
@@ -921,24 +1001,24 @@ func sortedStoredFiles(files []manageddata.StoredFile) []manageddata.StoredFile 
 }
 
 func mapCollection(row platformdb.ManagedDataCollection) manageddata.Collection {
-	return manageddata.Collection{ID: row.ID, ProjectID: row.ProjectID, ConnectionName: row.ConnectionName, Name: row.Name, Description: row.Description, Status: manageddata.CollectionStatus(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ArchivedAt: row.ArchivedAt.String}
+	return manageddata.Collection{ID: projectgraph.ResourceID(row.ID), ProjectID: projectgraph.ResourceID(row.ProjectID), ConnectionID: projectgraph.ResourceID(row.ConnectionID), Name: row.Name, Description: row.Description, Status: manageddata.CollectionStatus(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ArchivedAt: row.ArchivedAt.String}
 }
 
 func mapRevision(row platformdb.ManagedDataRevision) manageddata.Revision {
-	return manageddata.Revision{ID: row.ID, CollectionID: row.CollectionID, Sequence: row.Sequence, Digest: row.Digest, Status: manageddata.RevisionStatus(row.Status), ManifestJSON: row.ManifestJson, FileCount: row.FileCount, SizeBytes: row.SizeBytes, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ReadyAt: row.ReadyAt.String, Error: row.Error}
+	return manageddata.Revision{ID: manageddata.RevisionID(row.ID), CollectionID: projectgraph.ResourceID(row.CollectionID), Sequence: row.Sequence, Digest: row.Digest, Status: manageddata.RevisionStatus(row.Status), ManifestJSON: row.ManifestJson, FileCount: row.FileCount, SizeBytes: row.SizeBytes, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ReadyAt: row.ReadyAt.String, Error: row.Error}
 }
 
 func mapRevisionFile(row platformdb.ManagedDataRevisionFile) manageddata.RevisionFile {
-	return manageddata.RevisionFile{RevisionID: row.RevisionID, StoredFile: manageddata.StoredFile{File: manageddata.File{Path: row.LogicalPath, Size: row.SizeBytes, SHA256: row.Sha256}, StorageKey: row.StorageKey, MediaType: row.MediaType, ETag: row.Etag}, CreatedAt: row.CreatedAt}
+	return manageddata.RevisionFile{RevisionID: manageddata.RevisionID(row.RevisionID), StoredFile: manageddata.StoredFile{File: manageddata.File{Path: row.LogicalPath, Size: row.SizeBytes, SHA256: row.Sha256}, StorageKey: row.StorageKey, MediaType: row.MediaType, ETag: row.Etag}, CreatedAt: row.CreatedAt}
 }
 
 func mapUploadSession(row platformdb.ManagedDataUploadSession) manageddata.UploadSession {
-	return manageddata.UploadSession{ID: row.ID, CollectionID: row.CollectionID, BaseRevisionID: row.BaseRevisionID.String, RevisionID: row.RevisionID.String, Status: manageddata.UploadStatus(row.Status), ManifestJSON: row.ManifestJson, ExpectedFileCount: row.ExpectedFileCount, ExpectedSizeBytes: row.ExpectedSizeBytes, UploadedFileCount: row.UploadedFileCount, UploadedSizeBytes: row.UploadedSizeBytes, StorageBackend: row.StorageBackend, StagingPrefix: row.StagingPrefix, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ExpiresAt: row.ExpiresAt, CompletedAt: row.CompletedAt.String, Error: row.Error}
+	return manageddata.UploadSession{ID: manageddata.UploadID(row.ID), CollectionID: projectgraph.ResourceID(row.CollectionID), BaseRevisionID: manageddata.RevisionID(row.BaseRevisionID.String), RevisionID: manageddata.RevisionID(row.RevisionID.String), Status: manageddata.UploadStatus(row.Status), ManifestJSON: row.ManifestJson, ExpectedFileCount: row.ExpectedFileCount, ExpectedSizeBytes: row.ExpectedSizeBytes, UploadedFileCount: row.UploadedFileCount, UploadedSizeBytes: row.UploadedSizeBytes, StorageBackend: row.StorageBackend, StagingPrefix: row.StagingPrefix, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, ExpiresAt: row.ExpiresAt, CompletedAt: row.CompletedAt.String, Error: row.Error}
 }
 
 func mapS3MultipartUpload(row platformdb.ManagedDataS3MultipartUpload) manageddata.S3MultipartUpload {
 	return manageddata.S3MultipartUpload{
-		ID: row.ID, UploadSessionID: row.UploadSessionID, LogicalPath: row.LogicalPath, SHA256: row.Sha256, SizeBytes: row.SizeBytes,
+		ID: manageddata.MultipartUploadID(row.ID), UploadSessionID: manageddata.UploadID(row.UploadSessionID), LogicalPath: row.LogicalPath, SHA256: row.Sha256, SizeBytes: row.SizeBytes,
 		ObjectKey: row.ObjectKey, ProviderUploadID: row.ProviderUploadID, Status: manageddata.S3MultipartStatus(row.Status),
 		Existing: row.Existing == 1, IdempotencyIdentity: row.IdempotencyIdentity,
 		CompletionIdentity: row.CompletionIdentity, CompletionRequestHash: row.CompletionRequestHash,
@@ -948,7 +1028,7 @@ func mapS3MultipartUpload(row platformdb.ManagedDataS3MultipartUpload) managedda
 }
 
 func mapS3MultipartPart(row platformdb.ManagedDataS3MultipartPart) manageddata.S3MultipartPart {
-	return manageddata.S3MultipartPart{MultipartUploadID: row.MultipartUploadID, PartNumber: int32(row.PartNumber), SizeBytes: row.SizeBytes, SHA256: row.Sha256}
+	return manageddata.S3MultipartPart{MultipartUploadID: manageddata.MultipartUploadID(row.MultipartUploadID), PartNumber: int32(row.PartNumber), SizeBytes: row.SizeBytes, SHA256: row.Sha256}
 }
 
 func idempotentS3MultipartUpload(existing manageddata.S3MultipartUpload, input manageddata.CreateS3MultipartUploadInput) (manageddata.S3MultipartUpload, error) {
@@ -1008,13 +1088,13 @@ func validateIdentityPart(name, value string) error {
 
 func idempotentCollection(existing manageddata.Collection, input manageddata.CreateCollectionInput) (manageddata.Collection, error) {
 	if input.ID != "" && existing.ID != input.ID || existing.Name != input.Name || existing.Description != strings.TrimSpace(input.Description) {
-		return manageddata.Collection{}, fmt.Errorf("%w: collection %q/%q already exists with different identity or metadata", manageddata.ErrConflict, input.ProjectID, input.ConnectionName)
+		return manageddata.Collection{}, fmt.Errorf("%w: collection %q/%q already exists with different identity or metadata", manageddata.ErrConflict, input.ProjectID, input.ConnectionID)
 	}
 	return existing, nil
 }
 
 func mapEnvironmentPointer(row platformdb.ManagedDataEnvironmentPointer) manageddata.EnvironmentPointer {
-	return manageddata.EnvironmentPointer{CollectionID: row.CollectionID, Environment: manageddata.Environment(row.Environment), RevisionID: row.RevisionID, DeploymentID: row.DeploymentID, Generation: row.Generation, UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt}
+	return manageddata.EnvironmentPointer{CollectionID: projectgraph.ResourceID(row.CollectionID), Environment: manageddata.Environment(row.Environment), RevisionID: manageddata.RevisionID(row.RevisionID), DeploymentID: row.DeploymentID, Generation: row.Generation, UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt}
 }
 
 func timestamp(value time.Time) string { return value.UTC().Format("2006-01-02 15:04:05.000000000") }

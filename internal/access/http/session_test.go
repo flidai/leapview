@@ -56,6 +56,10 @@ type sessionLifecycleRepository struct {
 	audit              access.AuditEventInput
 }
 
+func (r *sessionLifecycleRepository) IsPlatformAdmin(context.Context, string) (bool, error) {
+	return true, nil
+}
+
 func (r *sessionLifecycleRepository) ListSessions(_ context.Context, principalID string) ([]access.Session, error) {
 	r.listPrincipalID = principalID
 	return r.sessions, nil
@@ -85,7 +89,7 @@ func TestAdministratorListsPrincipalSessionsWithoutCredentialMaterial(t *testing
 		ExpiresAt:         "2026-07-29T18:00:00Z",
 		AbsoluteExpiresAt: "2026-07-29T18:00:00Z",
 	}}}
-	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }}
+	handler := Handler{Repository: func() (access.Repository, error) { return repository, nil }, CurrentEffectiveCapabilities: allowProjectAdmin, CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal_admin"}, true }}
 	request := requestWithRouteParam(stdhttp.MethodGet, "/api/v1/principals/principal_target/sessions", "principal", "principal_target")
 	response := httptest.NewRecorder()
 
@@ -119,7 +123,8 @@ func TestCurrentSessionListMarksOnlyTheCredentialUsedForTheRequest(t *testing.T)
 		{ID: "session_other", PrincipalID: "principal_me", Kind: access.SessionKindDesktop, CreatedAt: "2026-07-28T10:00:00Z", ExpiresAt: "2026-07-28T18:00:00Z"},
 	}}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repository, nil },
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: "principal_me"}, true
 		},
@@ -147,7 +152,8 @@ func TestCurrentSessionListMarksOnlyTheCredentialUsedForTheRequest(t *testing.T)
 func TestAdministratorRevokesOnlyTheTargetPrincipalsSession(t *testing.T) {
 	repository := &sessionLifecycleRepository{}
 	handler := Handler{
-		Repository: func() (access.Repository, error) { return repository, nil },
+		Repository:                   func() (access.Repository, error) { return repository, nil },
+		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
 			return Principal{ID: "principal_admin"}, true
 		},
@@ -167,16 +173,8 @@ func TestAdministratorRevokesOnlyTheTargetPrincipalsSession(t *testing.T) {
 	if repository.revokedPrincipalID != "principal_target" || repository.revokedSessionID != "session_device" {
 		t.Fatalf("revoked principal/session = %q/%q, want principal_target/session_device", repository.revokedPrincipalID, repository.revokedSessionID)
 	}
-	if repository.audit.PrincipalID != "principal_admin" || repository.audit.Privilege != access.PrivilegeManageGrants {
-		t.Fatalf("audit actor/privilege = %q/%q, want principal_admin/%q", repository.audit.PrincipalID, repository.audit.Privilege, access.PrivilegeManageGrants)
-	}
-	var metadata map[string]any
-	if err := json.Unmarshal([]byte(repository.audit.MetadataJSON), &metadata); err != nil {
-		t.Fatalf("decode audit metadata: %v", err)
-	}
-	payload, _ := metadata["payload"].(map[string]any)
-	if got := payload["targetPrincipalId"]; got != "principal_target" {
-		t.Fatalf("audit target principal = %#v, want principal_target", got)
+	if repository.audit.PrincipalID != "principal_admin" || repository.audit.ResourceKind != "session" || repository.audit.ResourceID != "session_device" {
+		t.Fatalf("audit actor/resource = %q/%q/%q, want principal_admin/session/session_device", repository.audit.PrincipalID, repository.audit.ResourceKind, repository.audit.ResourceID)
 	}
 }
 

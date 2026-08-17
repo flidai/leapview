@@ -31,8 +31,8 @@ func TestConnectionBindingRepositoryPersistsOnlyNonSecretTargetStateAcrossRestar
 
 	restarted := NewConnectionBindingRepository(store.SQLDB())
 	loaded, err := restarted.Binding(ctx, connectionbinding.BindingScope{
-		WorkspaceID: "sales", Environment: "prod",
-	}, "lvinst_prod", binding.LogicalConnectionID)
+		ProjectID: "sales", Environment: "prod",
+	}, "lvinst_prod", binding.ConnectionID)
 	require.NoError(t, err)
 	if loaded.ID != binding.ID || loaded.CredentialReference != binding.CredentialReference ||
 		loaded.Endpoint.Host != "warehouse.internal" || loaded.Revision != 1 {
@@ -96,7 +96,7 @@ func TestConnectionBindingRepositoryListsOnlyRequestedTargetScope(t *testing.T) 
 	first := testTargetBinding(t)
 	second := first
 	second.ID = "binding_reporting"
-	second.LogicalConnectionID = "reporting"
+	second.ConnectionID = "reporting"
 	for _, binding := range []connectionbinding.TargetBinding{first, second} {
 		if err := repository.Create(ctx, binding); err != nil {
 			t.Fatal(err)
@@ -106,13 +106,13 @@ func TestConnectionBindingRepositoryListsOnlyRequestedTargetScope(t *testing.T) 
 	bindings, err := repository.List(ctx, first.Scope, first.TargetID)
 	require.NoError(t, err)
 	if len(bindings) != 2 ||
-		bindings[0].LogicalConnectionID != second.LogicalConnectionID ||
-		bindings[1].LogicalConnectionID != first.LogicalConnectionID {
+		bindings[0].ConnectionID != second.ConnectionID ||
+		bindings[1].ConnectionID != first.ConnectionID {
 		t.Fatalf("listed bindings = %#v", bindings)
 	}
 	other, err := repository.List(
 		ctx,
-		connectionbinding.BindingScope{WorkspaceID: "sales", Environment: "dev"},
+		connectionbinding.BindingScope{ProjectID: "sales", Environment: "dev"},
 		first.TargetID,
 	)
 	require.NoError(t, err)
@@ -124,9 +124,9 @@ func TestConnectionBindingRepositoryListsOnlyRequestedTargetScope(t *testing.T) 
 func testTargetBinding(t *testing.T) connectionbinding.TargetBinding {
 	t.Helper()
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", LogicalConnectionID: "warehouse",
+		ID: "binding_prod_warehouse", TargetID: "lvinst_prod", ConnectionID: "warehouse",
 		ConnectorKind: "postgres", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
-		Scope: connectionbinding.BindingScope{WorkspaceID: "sales", Environment: "prod"},
+		Scope: connectionbinding.BindingScope{ProjectID: "sales", Environment: "prod"},
 		Endpoint: connectionbinding.EndpointConfig{
 			Host: "warehouse.internal", Port: 5432, Database: "analytics", SourceIdentity: "leapview_runtime", TLSMode: "verify-full",
 		},

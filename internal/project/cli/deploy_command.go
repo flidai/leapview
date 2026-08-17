@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strings"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
@@ -25,16 +24,13 @@ type DeployOperations interface {
 }
 
 // DeployCommand constructs the project deployment command.
-func DeployCommand(ctx context.Context, client cliapi.Client, operations DeployOperations, forbiddenWorkspaceID string) *cobra.Command {
+func DeployCommand(ctx context.Context, client cliapi.Client, operations DeployOperations) *cobra.Command {
 	values := DeployOptions{ProjectPath: filepath.Join("dashboards", "leapview.yaml")}
 	command := &cobra.Command{
 		Use:   "deploy",
 		Short: "Atomically deploy a configuration-as-code project",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			if strings.TrimSpace(forbiddenWorkspaceID) != "" {
-				return fmt.Errorf("deploy is project-wide and does not accept --workspace")
-			}
 			if client == nil {
 				return fmt.Errorf("Project CLI API client is required")
 			}

@@ -9,8 +9,10 @@ import (
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyConfig {
@@ -21,9 +23,6 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 	if options.AccessRepo == nil {
 		options.AccessRepo = accesssqlite.NewRepository(store.SQLDB())
 	}
-	if options.WorkspaceRepo == nil && options.WorkspaceDirectory == nil {
-		options.WorkspaceRepo = workspacesqlite.NewRepository(store.SQLDB())
-	}
 	if options.AccessModule == nil && options.Auth != nil {
 		publicURL := options.PublicURL
 		if publicURL == "" {
@@ -33,20 +32,6 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 			Database:     store.SQLDB(),
 			ExistingAuth: options.Auth, PublicURL: publicURL,
 			MCPIssuerURL: options.MCPOAuth.IssuerURL,
-			WorkspaceIDs: func(ctx context.Context) ([]string, error) {
-				if options.WorkspaceDirectory != nil {
-					return options.WorkspaceDirectory.WorkspaceIDs(ctx)
-				}
-				rows, err := options.WorkspaceRepo.List(ctx)
-				if err != nil {
-					return nil, err
-				}
-				ids := make([]string, 0, len(rows))
-				for _, row := range rows {
-					ids = append(ids, string(row.ID))
-				}
-				return ids, nil
-			},
 		})
 		if err != nil {
 			panic(err)
@@ -59,6 +44,66 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 			panic(err)
 		}
 		options.ServingStateRepo = states
+	}
+	if options.RuntimeHost == nil {
+		environment := servingstate.NormalizeEnvironment(servingstate.Environment(options.DefaultEnvironment))
+		host, err := ensureTestRuntimeHost(context.Background(), store, options.ServingStateRepo.(*servingstatemodule.Module), testProjectID, environment)
+		if err != nil {
+			panic(err)
+		}
+		options.RuntimeHost = host
+		options.ProjectID = testProjectID
+		options.DefaultEnvironment = string(environment)
+	}
+	if options.RuntimeHost != nil {
+		host := options.RuntimeHost
+		activeIdentity := func(ctx context.Context) (projectgraph.ServingIdentity, error) {
+			lease, err := host.Acquire(ctx)
+			if err != nil {
+				return projectgraph.ServingIdentity{}, err
+			}
+			defer lease.Release()
+			identity := lease.Identity()
+			if err := identity.Validate(); err != nil {
+				return projectgraph.ServingIdentity{}, err
+			}
+			return identity, nil
+		}
+		if options.ProjectIDResolver == nil {
+			options.ProjectIDResolver = func(ctx context.Context) (projectgraph.ResourceID, error) {
+				identity, err := activeIdentity(ctx)
+				if err != nil {
+					return "", err
+				}
+				return identity.ProjectID, nil
+			}
+		}
+		if options.ServingSnapshotResolver == nil {
+			options.ServingSnapshotResolver = func(ctx context.Context) (string, error) {
+				identity, err := activeIdentity(ctx)
+				if err != nil {
+					return "", err
+				}
+				return identity.GenerationID, nil
+			}
+		}
+	}
+	if options.ProjectGraph == nil {
+		if graph, ok := options.ServingStateRepo.(interface {
+			ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (servingstate.AssetGraph, bool, error)
+		}); ok {
+			options.ProjectGraph = graph
+		}
+	}
+	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
+		catalog, err := projectcatalog.NewService(
+			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
+			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
+		)
+		if err != nil {
+			panic(err)
+		}
+		options.ProjectCatalog = catalog
 	}
 	if options.QueryAudit == nil && (options.AnalyticsModule == nil || options.AnalyticsModule.QueryAuditReader() == nil) {
 		options.QueryAudit = analyticsmodule.BuildQueryAuditSurface(store.SQLDB())

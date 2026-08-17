@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	platformdb "github.com/flidai/leapview/internal/access/internal/db"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 func (r *Repository) CreateDeviceAuthorization(ctx context.Context, record access.DeviceAuthorization) error {
-	privileges, err := json.Marshal(record.Scope.Privileges)
+	capabilities, err := json.Marshal(record.Scope.Capabilities)
 	if err != nil {
 		return err
 	}
@@ -27,8 +27,8 @@ func (r *Repository) CreateDeviceAuthorization(ctx context.Context, record acces
 	if err := txRepo.q.CreateDeviceAuthorization(ctx, platformdb.CreateDeviceAuthorizationParams{
 		ID: record.ID, ClientID: record.ClientID,
 		DeviceCodeHash: record.DeviceCodeHash, UserCodeHash: record.UserCodeHash,
-		TargetID: record.Scope.TargetID, ProjectID: record.Scope.ProjectID,
-		PrivilegesJson: string(privileges), Status: string(record.Status),
+		TargetID: record.Scope.TargetID, ProjectID: record.Scope.ProjectID.String(),
+		CapabilitiesJson: string(capabilities), Status: string(record.Status),
 		ExpiresAt:           formatAuthoringTime(record.ExpiresAt),
 		PollIntervalSeconds: int64(record.PollInterval / time.Second),
 		CreatedAt:           formatAuthoringTime(record.CreatedAt),
@@ -392,60 +392,36 @@ func (r *Repository) RevokeAuthoringSessionByAccessTokenHash(ctx context.Context
 func authoringDeviceAudit(action string, record access.DeviceAuthorization, principalID, status string) access.AuditEventInput {
 	metadataValues := map[string]any{
 		"clientId": record.ClientID, "targetId": record.Scope.TargetID,
-		"projectId": record.Scope.ProjectID, "privileges": record.Scope.Privileges,
+		"projectId": record.Scope.ProjectID.String(), "capabilities": record.Scope.Capabilities,
 		"decision": string(record.Status),
 	}
 	metadata, _ := json.Marshal(metadataValues)
-	if action == "authoring.device.decided" {
-		privileges := make([]string, len(record.Scope.Privileges))
-		for index, privilege := range record.Scope.Privileges {
-			privileges[index] = string(privilege)
-		}
-		if encoded, encodeErr := accessgen.EncodeGenDecideDeviceAuthorizationAuditPayload(accessgen.GenSchemaDeviceAuthorizationDecidedAuditPayload{
-			ClientId: record.ClientID, TargetId: record.Scope.TargetID, ProjectId: record.Scope.ProjectID,
-			Privileges: privileges, Decision: string(record.Status),
-		}); encodeErr == nil {
-			metadata = []byte(encoded)
-		}
-	}
 	return access.AuditEventInput{
-		PrincipalID: principalID, Action: action, TargetType: "device_authorization",
-		TargetID: record.ID, Status: status, MetadataJSON: string(metadata),
+		PrincipalID: principalID, Action: action, ResourceKind: "device_authorization",
+		ResourceID: record.ID, Status: status, MetadataJSON: string(metadata),
 	}
 }
 
 func authoringSessionAudit(action string, session access.AuthoringSession, status string) access.AuditEventInput {
 	metadataValues := map[string]any{
 		"kind": session.Kind, "clientId": session.ClientID, "targetId": session.Scope.TargetID,
-		"projectId": session.Scope.ProjectID, "privileges": session.Scope.Privileges,
+		"projectId": session.Scope.ProjectID.String(), "capabilities": session.Scope.Capabilities,
 	}
 	metadata, _ := json.Marshal(metadataValues)
-	if action == "authoring.session.revoked" {
-		privileges := make([]string, len(session.Scope.Privileges))
-		for index, privilege := range session.Scope.Privileges {
-			privileges[index] = string(privilege)
-		}
-		if encoded, err := accessgen.EncodeGenRevokeCurrentAuthoringSessionAuditPayload(accessgen.GenSchemaAuthoringSessionRevokedAuditPayload{
-			Kind: string(session.Kind), ClientId: session.ClientID, TargetId: session.Scope.TargetID,
-			ProjectId: session.Scope.ProjectID, Privileges: privileges,
-		}); err == nil {
-			metadata = []byte(encoded)
-		}
-	}
 	return access.AuditEventInput{
-		PrincipalID: session.PrincipalID, Action: action, TargetType: "authoring_session",
-		TargetID: session.ID, Status: status, MetadataJSON: string(metadata),
+		PrincipalID: session.PrincipalID, Action: action, ResourceKind: "authoring_session",
+		ResourceID: session.ID, Status: status, MetadataJSON: string(metadata),
 	}
 }
 
 func createAuthoringSession(ctx context.Context, queries *platformdb.Queries, session access.AuthoringSession) error {
-	privileges, err := json.Marshal(session.Scope.Privileges)
+	capabilities, err := json.Marshal(session.Scope.Capabilities)
 	if err != nil {
 		return err
 	}
 	return queries.CreateAuthoringSession(ctx, platformdb.CreateAuthoringSessionParams{
 		ID: session.ID, Kind: string(session.Kind), ClientID: session.ClientID, PrincipalID: session.PrincipalID,
-		TargetID: session.Scope.TargetID, ProjectID: session.Scope.ProjectID, PrivilegesJson: string(privileges),
+		TargetID: session.Scope.TargetID, ProjectID: session.Scope.ProjectID.String(), CapabilitiesJson: string(capabilities),
 		CreatedAt: formatAuthoringTime(session.CreatedAt), ExpiresAt: formatAuthoringTime(session.ExpiresAt),
 	})
 }
@@ -464,7 +440,7 @@ func createAuthoringCredential(
 }
 
 func mapDeviceAuthorization(row platformdb.OauthDeviceAuthorization) (access.DeviceAuthorization, error) {
-	scope, err := mapAuthoringScope(row.TargetID, row.ProjectID, row.PrivilegesJson)
+	scope, err := mapAuthoringScope(row.TargetID, row.ProjectID, row.CapabilitiesJson)
 	if err != nil {
 		return access.DeviceAuthorization{}, err
 	}
@@ -501,7 +477,7 @@ func mapDeviceAuthorization(row platformdb.OauthDeviceAuthorization) (access.Dev
 }
 
 func mapAuthoringSession(row platformdb.OauthAuthoringSession) (access.AuthoringSession, error) {
-	scope, err := mapAuthoringScope(row.TargetID, row.ProjectID, row.PrivilegesJson)
+	scope, err := mapAuthoringScope(row.TargetID, row.ProjectID, row.CapabilitiesJson)
 	if err != nil {
 		return access.AuthoringSession{}, err
 	}
@@ -531,7 +507,7 @@ func mapAuthoringSession(row platformdb.OauthAuthoringSession) (access.Authoring
 func mapAccessCredential(row platformdb.GetAuthoringCredentialByAccessHashRow) (access.AuthoringCredential, error) {
 	return mapCredential(
 		row.CredentialID, row.SessionID, row.AccessExpiresAt, row.RefreshExpiresAt,
-		row.Kind, row.ClientID, row.PrincipalID, row.TargetID, row.ProjectID, row.PrivilegesJson,
+		row.Kind, row.ClientID, row.PrincipalID, row.TargetID, row.ProjectID, row.CapabilitiesJson,
 		row.SessionCreatedAt, row.LastUsedAt, row.SessionExpiresAt, row.RevokedAt,
 		row.ID, row.PrincipalKind, row.Email, row.DisplayName, row.DisabledAt, row.BlockedAt,
 		row.PrincipalCreatedAt, row.PrincipalUpdatedAt,
@@ -541,7 +517,7 @@ func mapAccessCredential(row platformdb.GetAuthoringCredentialByAccessHashRow) (
 func mapRefreshCredential(row platformdb.GetAuthoringCredentialByRefreshHashRow) (access.AuthoringCredential, error) {
 	return mapCredential(
 		row.CredentialID, row.SessionID, row.AccessExpiresAt, row.RefreshExpiresAt,
-		row.Kind, row.ClientID, row.PrincipalID, row.TargetID, row.ProjectID, row.PrivilegesJson,
+		row.Kind, row.ClientID, row.PrincipalID, row.TargetID, row.ProjectID, row.CapabilitiesJson,
 		row.SessionCreatedAt, row.LastUsedAt, row.SessionExpiresAt, row.RevokedAt,
 		row.ID, row.PrincipalKind, row.Email, row.DisplayName, row.DisabledAt, row.BlockedAt,
 		row.PrincipalCreatedAt, row.PrincipalUpdatedAt,
@@ -550,12 +526,12 @@ func mapRefreshCredential(row platformdb.GetAuthoringCredentialByRefreshHashRow)
 
 func mapCredential(
 	credentialID, sessionID, accessExpiresValue string, refreshExpiresValue sql.NullString,
-	kind, clientID, principalID, targetID, projectID, privilegesJSON, sessionCreatedValue string,
+	kind, clientID, principalID, targetID, projectID, capabilitiesJSON, sessionCreatedValue string,
 	lastUsedValue sql.NullString, sessionExpiresValue string, revokedValue sql.NullString,
 	id, principalKind, email, displayName string, disabledValue, blockedValue sql.NullString,
 	principalCreatedAt, principalUpdatedAt string,
 ) (access.AuthoringCredential, error) {
-	scope, err := mapAuthoringScope(targetID, projectID, privilegesJSON)
+	scope, err := mapAuthoringScope(targetID, projectID, capabilitiesJSON)
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
@@ -598,12 +574,12 @@ func mapCredential(
 	}, nil
 }
 
-func mapAuthoringScope(targetID, projectID, privilegesJSON string) (access.AuthoringScope, error) {
-	var privileges []access.Privilege
-	if err := json.Unmarshal([]byte(privilegesJSON), &privileges); err != nil {
+func mapAuthoringScope(targetID, projectID, capabilitiesJSON string) (access.AuthoringScope, error) {
+	var capabilities []access.Capability
+	if err := json.Unmarshal([]byte(capabilitiesJSON), &capabilities); err != nil {
 		return access.AuthoringScope{}, fmt.Errorf("decode authoring actions: %w", err)
 	}
-	return access.NewAuthoringScope(targetID, projectID, privileges)
+	return access.NewAuthoringScope(targetID, graph.ResourceID(projectID), capabilities)
 }
 
 func formatAuthoringTime(value time.Time) string {

@@ -40,7 +40,7 @@ func (m *Module) MountDesktopAuth(router chi.Router) {
 	}
 	authorize := http.Handler(http.HandlerFunc(m.DesktopAuthorize))
 	if m.auth != nil {
-		authorize = m.auth.Middleware("", authorize)
+		authorize = m.auth.Middleware(authorize)
 	}
 	router.Method(http.MethodGet, DesktopAuthorizePath, authorize)
 	router.Get(DesktopSessionStatusPath, m.DesktopSessionStatus)
@@ -178,7 +178,7 @@ func (m *Module) DesktopRedeem(w http.ResponseWriter, r *http.Request) {
 			r.Context(), principalID, request.InstanceID, request.ProfileID, access.DesktopSessionAbsoluteLifetime,
 		)
 		return authAuditInput(
-			r, "desktop_session.created", principalID, "", "desktop_profile",
+			r, "desktop_session.created", principalID, "desktop_profile",
 			request.ProfileID, "", "success",
 			map[string]any{"client": desktopauth.DesktopClientID, "instance_id": request.InstanceID},
 		), mutationErr
@@ -239,7 +239,7 @@ func (m *Module) DesktopDisconnect(w http.ResponseWriter, r *http.Request) {
 			r.Context(), cookie.Value, instanceID, profileID,
 		)
 		return authAuditInput(
-			r, "desktop_session.revoked", binding.PrincipalID, "", "desktop_profile",
+			r, "desktop_session.revoked", binding.PrincipalID, "desktop_profile",
 			profileID, "", "success", map[string]any{"instance_id": instanceID},
 		), mutationErr
 	})

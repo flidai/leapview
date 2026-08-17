@@ -1,0 +1,26 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:visual-docs
+  name: visual-docs
+  displayName: Visual documentation
+spec:
+  semanticModel: visual_examples
+  visuals:
+    placeholder:
+      type: kpi
+      query:
+        measures:
+          order_count: null
+  pages:
+  - id: placeholder
+    title: Placeholder
+    components:
+    - id: placeholder
+      kind: visual
+      visual: placeholder
+      placement:
+        col: 1
+        row: 1
+        col_span: 3
+        row_span: 2

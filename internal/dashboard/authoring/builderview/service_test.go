@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -25,7 +26,7 @@ func TestBuildAuthorizesEditBeforeDraftRevisionDisclosure(t *testing.T) {
 	fixture := newBuilderFixture(t)
 	fixture.authorizer.errByAction[authoring.AuthorizationActionEdit] = errors.Join(errors.New("policy"), access.ErrForbidden)
 
-	_, err := fixture.service.Build(context.Background(), Request{WorkspaceID: " workspace ", ActorID: "actor", DashboardID: "sales"})
+	_, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if !errors.Is(err, access.ErrForbidden) {
 		t.Fatalf("Build error = %v, want forbidden", err)
 	}
@@ -37,11 +38,22 @@ func TestBuildAuthorizesEditBeforeDraftRevisionDisclosure(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsUnvalidatedProjectIdentity(t *testing.T) {
+	fixture := newBuilderFixture(t)
+	_, err := fixture.service.Build(context.Background(), Request{ProjectID: " project ", ActorID: "actor", DashboardID: "sales"})
+	if err == nil || !strings.Contains(err.Error(), "project ID is invalid") {
+		t.Fatalf("Build error = %v, want invalid typed project identity", err)
+	}
+	if fixture.repository.revisionCalls != 0 || fixture.provider.acquireCalls != 0 {
+		t.Fatalf("invalid project disclosed/acquired revisionCalls=%d acquireCalls=%d", fixture.repository.revisionCalls, fixture.provider.acquireCalls)
+	}
+}
+
 func TestBuildUsesExactDraftRevisionAndReleasesOneLease(t *testing.T) {
 	fixture := newBuilderFixture(t)
 	fixture.repository.lifecycle.Draft.Revision.ContentHash = "wrong" // the repository pointer is malformed
 
-	_, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"})
+	_, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if err == nil || !strings.Contains(err.Error(), "validate current draft pointer") {
 		t.Fatalf("Build error = %v, want invalid exact draft pointer", err)
 	}
@@ -50,7 +62,7 @@ func TestBuildUsesExactDraftRevisionAndReleasesOneLease(t *testing.T) {
 	}
 
 	fixture = newBuilderFixture(t)
-	signal, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"})
+	signal, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +91,7 @@ func TestBuildReleasesLeaseOnEveryPostAcquireFailure(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newBuilderFixture(t)
 			test.mutate(fixture)
-			if _, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"}); err == nil {
+			if _, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"}); err == nil {
 				t.Fatal("Build succeeded with invalid active runtime")
 			}
 			if fixture.provider.acquireCalls != 1 || fixture.lease.releaseCalls != 1 {
@@ -96,7 +108,7 @@ func TestBuildProjectsDetachedSemanticModelWithoutMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"}); err != nil {
+	if _, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"}); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(fixture.runtime.model, beforeModel) {
@@ -112,8 +124,8 @@ func TestBuildSeparatesOriginAndForkEvidence(t *testing.T) {
 	fixture.revision.Provenance = authoring.Provenance{
 		Origin: authoring.OriginFile, ActorID: "actor",
 		Source: &authoring.SourceMetadata{Path: "dashboards/sales.yaml"},
-		ForkedFrom: &authoring.ForkEvidence{Kind: authoring.ForkSourceWorkspace, Workspace: &authoring.WorkspaceForkEvidence{
-			SourceWorkspaceID: "source", SourceDashboardID: "upstream", SourceRevision: fixture.revision.Token(),
+		ForkedFrom: &authoring.ForkEvidence{Kind: authoring.ForkSourceProject, Project: &authoring.ProjectForkEvidence{
+			SourceProjectID: "source", SourceDashboardID: "upstream", Identity: mustServingIdentity(t, "source", "production", "state-1"),
 		}},
 	}
 	// The revision hash/provenance are immutable fields, so rebuild it with the
@@ -126,7 +138,7 @@ func TestBuildSeparatesOriginAndForkEvidence(t *testing.T) {
 	fixture.repository.revisions[revision.ID] = revision
 	fixture.repository.lifecycle.Draft.Revision = revision.Token()
 
-	signal, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"})
+	signal, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,10 +146,10 @@ func TestBuildSeparatesOriginAndForkEvidence(t *testing.T) {
 		t.Fatalf("origin = %#v", signal.Origin)
 	}
 	if signal.SourceEvidence == nil || signal.SourceEvidence.Value == nil {
-		t.Fatalf("source evidence = %#v, want workspace fork evidence", signal.SourceEvidence)
+		t.Fatalf("source evidence = %#v, want project fork evidence", signal.SourceEvidence)
 	}
 	kind, err := signal.SourceEvidence.Kind()
-	if err != nil || kind != "workspace" {
+	if err != nil || kind != "project" {
 		t.Fatalf("source evidence kind = %q, err=%v", kind, err)
 	}
 	if signal.Origin.Kind == kind {
@@ -146,21 +158,9 @@ func TestBuildSeparatesOriginAndForkEvidence(t *testing.T) {
 }
 
 func TestSourceEvidenceProjectsBothForkVariants(t *testing.T) {
-	workspace := sourceEvidenceSignal(authoring.Provenance{ForkedFrom: &authoring.ForkEvidence{
-		Kind:      authoring.ForkSourceWorkspace,
-		Workspace: &authoring.WorkspaceForkEvidence{SourceWorkspaceID: "source", SourceDashboardID: "upstream", SourceRevision: authoring.RevisionToken{RevisionID: "revision-1", Number: 2, ContentHash: "sha256:" + strings.Repeat("a", 64)}},
-	}})
-	if workspace == nil || workspace.Value == nil {
-		t.Fatalf("workspace evidence = %#v", workspace)
-	}
-	workspaceKind, err := workspace.Kind()
-	if err != nil || workspaceKind != "workspace" {
-		t.Fatalf("workspace evidence kind = %q, err=%v", workspaceKind, err)
-	}
-
 	project := sourceEvidenceSignal(authoring.Provenance{ForkedFrom: &authoring.ForkEvidence{
 		Kind:    authoring.ForkSourceProject,
-		Project: &authoring.ProjectForkEvidence{SourceWorkspaceID: "source", SourceDashboardID: "upstream", ServingStateID: "serving-1", Path: "dashboards/upstream.yaml"},
+		Project: &authoring.ProjectForkEvidence{SourceProjectID: "source", SourceDashboardID: "upstream", Identity: mustServingIdentity(t, "source", "production", "state-1")},
 	}})
 	if project == nil || project.Value == nil {
 		t.Fatalf("project evidence = %#v", project)
@@ -169,9 +169,27 @@ func TestSourceEvidenceProjectsBothForkVariants(t *testing.T) {
 	if err != nil || projectKind != "project" {
 		t.Fatalf("project evidence kind = %q, err=%v", projectKind, err)
 	}
-	if workspaceKind == projectKind {
-		t.Fatal("workspace and project fork evidence kinds collapsed")
+
+	second := sourceEvidenceSignal(authoring.Provenance{ForkedFrom: &authoring.ForkEvidence{
+		Kind:    authoring.ForkSourceProject,
+		Project: &authoring.ProjectForkEvidence{SourceProjectID: "source", SourceDashboardID: "upstream", Identity: mustServingIdentity(t, "source", "production", "serving-1"), Path: "dashboards/upstream.yaml"},
+	}})
+	if second == nil || second.Value == nil {
+		t.Fatalf("project evidence = %#v", second)
 	}
+	secondKind, err := second.Kind()
+	if err != nil || secondKind != "project" {
+		t.Fatalf("project evidence kind = %q, err=%v", secondKind, err)
+	}
+}
+
+func mustServingIdentity(t *testing.T, project, environment, generation string) projectgraph.ServingIdentity {
+	t.Helper()
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(project), environment, generation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity
 }
 
 func TestBuildDeterministicProjectionAndComponentIdentity(t *testing.T) {
@@ -192,11 +210,11 @@ func TestBuildDeterministicProjectionAndComponentIdentity(t *testing.T) {
 	fixture.repository.revisions[revision.ID] = revision
 	fixture.repository.lifecycle.Draft.Revision = revision.Token()
 
-	one, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"})
+	one, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	two, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"})
+	two, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +248,7 @@ func TestBuildBoundsGlobalCountsAndDoesNotLeakAuthoredUnion(t *testing.T) {
 	fixture.revision = revision
 	fixture.repository.revisions[revision.ID] = revision
 	fixture.repository.lifecycle.Draft.Revision = revision.Token()
-	signal, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"})
+	signal, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +271,7 @@ func TestBuildBoundsGlobalCountsAndDoesNotLeakAuthoredUnion(t *testing.T) {
 	}
 	fixture.repository.revisions[tooManyRevision.ID] = tooManyRevision
 	fixture.repository.lifecycle.Draft.Revision = tooManyRevision.Token()
-	if _, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"}); err == nil || !strings.Contains(err.Error(), "pages exceed bounded limit") {
+	if _, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"}); err == nil || !strings.Contains(err.Error(), "pages exceed bounded limit") {
 		t.Fatalf("global page bound error = %v", err)
 	}
 }
@@ -262,7 +280,7 @@ func TestBuildCapabilityMappingTreatsForbiddenAsFalseAndBackendErrorsAsFatal(t *
 	fixture := newBuilderFixture(t)
 	fixture.authorizer.errByAction[authoring.AuthorizationActionPublish] = access.ErrForbidden
 	fixture.authorizer.errByAction[authoring.AuthorizationActionView] = access.ErrForbidden
-	signal, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"})
+	signal, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +290,7 @@ func TestBuildCapabilityMappingTreatsForbiddenAsFalseAndBackendErrorsAsFatal(t *
 
 	fixture = newBuilderFixture(t)
 	fixture.authorizer.errByAction[authoring.AuthorizationActionPublish] = errors.New("policy backend unavailable")
-	if _, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"}); err == nil || !strings.Contains(err.Error(), "policy backend unavailable") {
+	if _, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"}); err == nil || !strings.Contains(err.Error(), "policy backend unavailable") {
 		t.Fatalf("backend authorization error = %v", err)
 	}
 	if fixture.provider.acquireCalls != 0 {
@@ -306,7 +324,7 @@ func TestBuildRejectsInvalidCurrentLifecycleBeforeRevisionOrRuntime(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newBuilderFixture(t)
 			test.mutate(fixture)
-			_, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"})
+			_, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Build error = %v, want %q", err, test.want)
 			}
@@ -323,7 +341,7 @@ func TestRevisionNumberOverflowFailsBeforeSignalConversion(t *testing.T) {
 	fixture.revision.ContentHash = fixture.revision.Token().ContentHash
 	fixture.repository.revisions[fixture.revision.ID] = fixture.revision
 	fixture.repository.lifecycle.Draft.Revision = fixture.revision.Token()
-	if _, err := fixture.service.Build(context.Background(), Request{WorkspaceID: "workspace", ActorID: "actor", DashboardID: "sales"}); err == nil || !strings.Contains(err.Error(), "exceeds signal range") {
+	if _, err := fixture.service.Build(context.Background(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"}); err == nil || !strings.Contains(err.Error(), "exceeds signal range") {
 		t.Fatalf("overflow error = %v", err)
 	}
 }
@@ -421,7 +439,7 @@ func newBuilderFixture(t *testing.T) *builderFixture {
 		t.Fatal(err)
 	}
 	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
-		WorkspaceID: "workspace", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales", SemanticModel: "sales", Visibility: authoring.VisibilityPrivate,
+		ProjectID: "project", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales", SemanticModel: "sales", Visibility: authoring.VisibilityPrivate,
 		Draft: &authoring.Draft{ID: "draft-1", DashboardID: "sales", Revision: revision.Token(), Provenance: provenance},
 	})
 	if err != nil {
@@ -453,16 +471,16 @@ type builderRepository struct {
 func (r *builderRepository) Create(context.Context, authoring.CreateInput) (authoring.DashboardLifecycle, error) {
 	return authoring.DashboardLifecycle{}, errors.New("unexpected create")
 }
-func (r *builderRepository) Get(context.Context, string, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+func (r *builderRepository) Get(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
 	return r.lifecycle, nil
 }
-func (r *builderRepository) List(context.Context, string) ([]authoring.DashboardLifecycle, error) {
+func (r *builderRepository) List(context.Context, projectgraph.ResourceID) ([]authoring.DashboardLifecycle, error) {
 	return nil, errors.New("unexpected list")
 }
-func (r *builderRepository) CountBySemanticModel(context.Context, string) ([]authoring.SemanticModelUsage, error) {
+func (r *builderRepository) CountBySemanticModel(context.Context, projectgraph.ResourceID) ([]authoring.SemanticModelUsage, error) {
 	return nil, errors.New("unexpected count")
 }
-func (r *builderRepository) GetRevision(_ context.Context, _ string, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
+func (r *builderRepository) GetRevision(_ context.Context, _ projectgraph.ResourceID, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
 	r.revisionCalls++
 	r.revisionID = id
 	revision, ok := r.revisions[id]
@@ -471,7 +489,7 @@ func (r *builderRepository) GetRevision(_ context.Context, _ string, _ authoring
 	}
 	return revision, nil
 }
-func (r *builderRepository) LookupCommandResult(context.Context, string, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
+func (r *builderRepository) LookupCommandResult(context.Context, projectgraph.ResourceID, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
 	return authoring.CommandResult{}, false, errors.New("unexpected command lookup")
 }
 func (r *builderRepository) AppendDraft(context.Context, authoring.AppendDraftInput) (authoring.Revision, error) {
@@ -483,7 +501,7 @@ func (r *builderRepository) Publish(context.Context, authoring.PublishInput) (au
 func (r *builderRepository) Archive(context.Context, authoring.ArchiveInput) (authoring.DashboardLifecycle, error) {
 	return authoring.DashboardLifecycle{}, errors.New("unexpected archive")
 }
-func (r *builderRepository) GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error) {
+func (r *builderRepository) GetPublishedCompilation(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	return authoring.CompiledRevision{}, errors.New("unexpected compilation")
 }
 
@@ -511,7 +529,10 @@ type builderLease struct {
 	releaseCalls int
 }
 
-func (l *builderLease) Runtime() runtimehost.Runtime    { return l.runtime }
+func (l *builderLease) Runtime() runtimehost.Runtime { return l.runtime }
+func (l *builderLease) Identity() projectgraph.ServingIdentity {
+	return projectgraph.ServingIdentity{ProjectID: "project", Environment: "dev", GenerationID: string(l.servingState)}
+}
 func (l *builderLease) ServingStateID() servingstate.ID { return l.servingState }
 func (l *builderLease) DuckLakeSnapshotID() int64       { return 0 }
 func (l *builderLease) Release()                        { l.releaseCalls++ }
@@ -521,8 +542,8 @@ type builderRuntime struct {
 }
 
 func (r *builderRuntime) Close() error { return nil }
-func (r *builderRuntime) SemanticModelProjection(id string) (*semanticmodel.Model, bool) {
-	if r.model == nil || r.model.Name != id {
+func (r *builderRuntime) SemanticModelProjection(id projectgraph.ResourceID) (*semanticmodel.Model, bool) {
+	if r.model == nil || r.model.Name != id.String() {
 		return nil, false
 	}
 	return r.model, true

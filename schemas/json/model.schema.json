@@ -1,0 +1,166 @@
+{
+  "$defs": {
+    "#APIVersion": {
+      "const": "leapview.dev/v1"
+    },
+    "#Identifier": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "type": "string"
+    },
+    "#Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/%23ResourceID"
+        },
+        "name": {
+          "$ref": "#/$defs/%23ResourceName"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/%23Provenance"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "#Model": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "fields": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string"
+                },
+                "expr": {
+                  "type": "string"
+                },
+                "expression": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "grain": {
+          "$ref": "#/$defs/%23Identifier"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "primaryKey": {
+          "$ref": "#/$defs/%23Identifier"
+        },
+        "source": {
+          "$ref": "#/$defs/%23ResourceID"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/%23ResourceID"
+          },
+          "type": "array"
+        },
+        "sql": {
+          "type": "string"
+        },
+        "transform": {
+          "additionalProperties": false,
+          "properties": {
+            "sql": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "primaryKey"
+      ],
+      "type": "object"
+    },
+    "#Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "#ResourceID": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "#ResourceName": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "#/$defs/%23APIVersion"
+    },
+    "kind": {
+      "const": "Model"
+    },
+    "metadata": {
+      "$ref": "#/$defs/%23Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/%23Model"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "type": "object"
+}

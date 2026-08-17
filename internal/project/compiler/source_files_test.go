@@ -18,29 +18,6 @@ func TestSourceFilesFromProjectReturnsOnlyResolvedReachableFiles(t *testing.T) {
 			"warehouse": path("connections/warehouse.yaml"),
 		},
 		SourcePaths: map[string]string{"orders": path("sources/orders.yaml")},
-		Workspaces: map[string]*WorkspaceProject{
-			"sales": {
-				Path: path("workspaces/sales/workspace.yaml"),
-				ModelPaths: map[string]string{
-					"orders": path("workspaces/sales/models/orders.yaml"),
-				},
-				SemanticModelPaths: map[string]string{
-					"sales": path("workspaces/sales/semantic-models/sales.yaml"),
-				},
-				DashboardPaths: map[string]string{
-					"overview": path("workspaces/sales/dashboards/overview.yaml"),
-				},
-				AccessPaths: map[string]string{
-					"readers": path("workspaces/sales/access/readers.yaml"),
-				},
-				PublicationPaths: map[string]string{
-					"internal": path("workspaces/sales/publications/internal.yaml"),
-				},
-				RefreshPipelinePaths: map[string]string{
-					"daily": path("workspaces/sales/refresh/daily.yaml"),
-				},
-			},
-		},
 	}
 	projectPath := path("leapview.yaml")
 	got, err := sourceFilesFromProject(projectPath, project)
@@ -49,13 +26,6 @@ func TestSourceFilesFromProjectReturnsOnlyResolvedReachableFiles(t *testing.T) {
 		projectPath,
 		path("connections/warehouse.yaml"),
 		path("sources/orders.yaml"),
-		path("workspaces/sales/access/readers.yaml"),
-		path("workspaces/sales/dashboards/overview.yaml"),
-		path("workspaces/sales/models/orders.yaml"),
-		path("workspaces/sales/publications/internal.yaml"),
-		path("workspaces/sales/refresh/daily.yaml"),
-		path("workspaces/sales/semantic-models/sales.yaml"),
-		path("workspaces/sales/workspace.yaml"),
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {

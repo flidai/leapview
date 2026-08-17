@@ -99,7 +99,7 @@ func TestDesktopAuthorizationEstablishesHttpOnlySessionWithoutReturningSecret(t 
 		t.Fatal("session secret leaked into desktop redemption response")
 	}
 
-	protected := module.Auth().Middleware("", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	protected := module.Auth().Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := PrincipalFromContext(r.Context())
 		if !ok || principal.ID != "dev" {
 			t.Fatalf("authenticated desktop principal = %#v, %v; want dev", principal, ok)

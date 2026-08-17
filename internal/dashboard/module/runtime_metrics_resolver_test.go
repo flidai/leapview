@@ -15,24 +15,25 @@ import (
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 func TestRuntimeMetricsResolverPublishedSuccessUsesOneLease(t *testing.T) {
-	compiled := moduleCompiledRevision(t, "workspace", "published", "state-1")
+	compiled := moduleCompiledRevision(t, "project_1", "published", "state-1")
 	provider := &resolverTestProvider{runtime: &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "project_1", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 
 	resolved, err := metrics.(interface {
 		Resolver() dashboardresolver.Resolver
-	}).Resolver().Resolve("published")
+	}).Resolver().Resolve(projectgraph.ResourceID("published"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Source.Kind != dashboardresolver.SourceWorkspace || resolved.Source.AuthoredRevision.ID != "revision-1" {
+	if resolved.Source.Kind != dashboardresolver.SourceInstance || resolved.Source.AuthoredRevision.ID != "revision-1" {
 		t.Fatalf("source = %#v", resolved.Source)
 	}
 	if provider.acquires != 1 || provider.lease == nil || provider.lease.releases != 1 {
@@ -40,16 +41,34 @@ func TestRuntimeMetricsResolverPublishedSuccessUsesOneLease(t *testing.T) {
 	}
 }
 
+func TestRuntimeMetricsUnboundStartupUsesLeaseProjectIdentity(t *testing.T) {
+	provider := &resolverTestProvider{runtime: &resolverTestRuntime{}, stateID: "state-1"}
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider})
+	runtime := metrics.(runtimeMetrics)
+	lease, err := provider.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := runtime.identityForLease(lease)
+	lease.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.ProjectID != "project_1" || identity.GenerationID != "state-1" {
+		t.Fatalf("identity = %#v, want lease-bound project/state-1", identity)
+	}
+}
+
 func TestRuntimeMetricsResolverStalePublishedDoesNotFallbackToProject(t *testing.T) {
-	compiled := moduleCompiledRevision(t, "workspace", "same", "old-state")
+	compiled := moduleCompiledRevision(t, "project_1", "same", "old-state")
 	provider := &resolverTestProvider{runtime: &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "project_1", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 
 	_, err := metrics.(interface {
 		Resolver() dashboardresolver.Resolver
-	}).Resolver().Resolve("same")
+	}).Resolver().Resolve(projectgraph.ResourceID("same"))
 	if !errors.Is(err, dashboardresolver.ErrStaleSemanticState) {
 		t.Fatalf("error = %v, want ErrStaleSemanticState", err)
 	}
@@ -59,14 +78,14 @@ func TestRuntimeMetricsResolverStalePublishedDoesNotFallbackToProject(t *testing
 }
 
 func TestRuntimeMetricsResolverSameIDCollisionIsAmbiguous(t *testing.T) {
-	compiled := moduleCompiledRevision(t, "workspace", "same", "state-1")
+	compiled := moduleCompiledRevision(t, "project_1", "same", "state-1")
 	provider := &resolverTestProvider{runtime: &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "project_1", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 	_, err := metrics.(interface {
 		Resolver() dashboardresolver.Resolver
-	}).Resolver().Resolve("same")
+	}).Resolver().Resolve(projectgraph.ResourceID("same"))
 	if !errors.Is(err, dashboardresolver.ErrAmbiguous) {
 		t.Fatalf("error = %v, want ErrAmbiguous", err)
 	}
@@ -75,28 +94,28 @@ func TestRuntimeMetricsResolverSameIDCollisionIsAmbiguous(t *testing.T) {
 func TestRuntimeMetricsResolverPinsRuntimeProviderAcrossResolve(t *testing.T) {
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
-	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, WorkspaceID: "workspace"})
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: "project_1"})
 	resolver := metrics.(interface {
 		Resolver() dashboardresolver.Resolver
 	}).Resolver()
-	resolved, err := resolver.Resolve("project")
+	resolved, err := resolver.Resolve(projectgraph.ResourceID("project"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if provider.acquires != 1 || provider.lease.releases != 1 || runtime.resolveCalls != 1 || runtime.modelCalls != 0 {
 		t.Fatalf("provider/runtime calls acquire=%d release=%d resolve=%d model=%d", provider.acquires, provider.lease.releases, runtime.resolveCalls, runtime.modelCalls)
 	}
-	if resolved.Source.ServingStateID != "state-1" {
+	if resolved.Source.Identity.GenerationID != "state-1" {
 		t.Fatalf("source = %#v", resolved.Source)
 	}
 }
 
 func TestRuntimeMetricsPublishedQueryExecutesExactCompiledDefinitionOnOneLease(t *testing.T) {
-	compiled := moduleCompiledRevision(t, "workspace", "published", "state-1")
+	compiled := moduleCompiledRevision(t, "project_1", "published", "state-1")
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "project_1", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 	if _, err := metrics.QueryDashboardPage(context.Background(), "published", "overview", dashboard.Filters{}); err != nil {
 		t.Fatal(err)
@@ -110,11 +129,11 @@ func TestRuntimeMetricsPublishedQueryExecutesExactCompiledDefinitionOnOneLease(t
 }
 
 func TestRuntimeMetricsPublishedVisualizationExecutesExactCompiledDefinition(t *testing.T) {
-	compiled := moduleCompiledRevision(t, "workspace", "published", "state-1")
+	compiled := moduleCompiledRevision(t, "project_1", "published", "state-1")
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
 	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-		Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+		Provider: provider, ProjectID: "project_1", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 	})
 	if _, err := metrics.QueryVisualization(context.Background(), "published", "overview", dashboard.Filters{}, "visual"); err != nil {
 		t.Fatal(err)
@@ -130,7 +149,7 @@ func TestRuntimeMetricsPublishedVisualizationExecutesExactCompiledDefinition(t *
 func TestRuntimeMetricsProjectQueryKeepsNativeRuntimePath(t *testing.T) {
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
-	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, WorkspaceID: "workspace"})
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: "project_1"})
 	if _, err := metrics.QueryDashboardPage(context.Background(), "project", "overview", dashboard.Filters{}); err != nil {
 		t.Fatal(err)
 	}
@@ -150,11 +169,11 @@ func TestRuntimeMetricsPublishedStaleAndCollisionNeverExecute(t *testing.T) {
 		{name: "collision", stateID: "state-1", dashID: "same", wantErr: "ambiguous"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			compiled := moduleCompiledRevision(t, "workspace", test.dashID, test.stateID)
+			compiled := moduleCompiledRevision(t, "project_1", test.dashID, test.stateID)
 			runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 			provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
 			metrics := NewRuntimeMetrics(RuntimeMetricsOptions{
-				Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
+				Provider: provider, ProjectID: "project_1", PublishedCompilationReader: moduleCompilationReader{compiled: compiled},
 			})
 			patch, err := metrics.QueryDashboardPage(context.Background(), test.dashID, "overview", dashboard.Filters{})
 			if err != nil {
@@ -171,13 +190,13 @@ func TestRuntimeMetricsPublishedStaleAndCollisionNeverExecute(t *testing.T) {
 }
 
 func TestRuntimeMetricsRefreshPinsPublishedDefinitionAndLease(t *testing.T) {
-	first := moduleCompiledRevision(t, "workspace", "published", "state-1")
+	first := moduleCompiledRevision(t, "project_1", "published", "state-1")
 	second := first
 	second.Definition.Title = "Changed"
 	reader := &countingModuleCompilationReader{compiled: first}
 	runtime := &resolverTestRuntime{model: &semanticmodel.Model{Name: "sales_model"}}
 	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
-	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, WorkspaceID: "workspace", PublishedCompilationReader: reader})
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: "project_1", PublishedCompilationReader: reader})
 	err := metrics.(interface {
 		WithDashboardRefreshLease(context.Context, func(context.Context) error) error
 	}).WithDashboardRefreshLease(context.Background(), func(ctx context.Context) error {
@@ -218,7 +237,10 @@ type resolverTestLease struct {
 	releases int
 }
 
-func (l *resolverTestLease) Runtime() runtimehost.Runtime    { return l.runtime }
+func (l *resolverTestLease) Runtime() runtimehost.Runtime { return l.runtime }
+func (l *resolverTestLease) Identity() projectgraph.ServingIdentity {
+	return projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "dev", GenerationID: string(l.stateID)}
+}
 func (l *resolverTestLease) ServingStateID() servingstate.ID { return l.stateID }
 func (l *resolverTestLease) DuckLakeSnapshotID() int64       { return 0 }
 func (l *resolverTestLease) Release()                        { l.releases++ }
@@ -237,14 +259,25 @@ type resolverTestRuntime struct {
 
 func (r *resolverTestRuntime) Close() error                         { return nil }
 func (r *resolverTestRuntime) Resolver() dashboardresolver.Resolver { return r }
-func (r *resolverTestRuntime) Resolve(id string) (dashboardresolver.Resolved, error) {
+func (r *resolverTestRuntime) Resolve(id projectgraph.ResourceID) (dashboardresolver.Resolved, error) {
 	r.resolveCalls++
 	if id != "project" && id != "same" {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
 	}
-	return dashboardresolver.Resolved{Definition: dashboarddefinition.Definition{ID: id, SemanticModel: "sales_model"}, Model: r.model}, nil
+	return dashboardresolver.Resolved{
+		Definition:      dashboarddefinition.Definition{ID: id.String(), SemanticModel: "sales_model"},
+		Model:           r.model,
+		SemanticModelID: projectgraph.ResourceID("sales_model"),
+		Source: dashboardresolver.SourceMetadata{Identity: projectgraph.ServingIdentity{
+			ProjectID: "project_1", Environment: "dev", GenerationID: "state-1",
+		}},
+	}, nil
 }
 func (r *resolverTestRuntime) SemanticModel(string) (*semanticmodel.Model, bool) {
+	r.modelCalls++
+	return r.model, r.model != nil
+}
+func (r *resolverTestRuntime) SemanticModelByID(projectgraph.ResourceID) (*semanticmodel.Model, bool) {
 	r.modelCalls++
 	return r.model, r.model != nil
 }
@@ -303,7 +336,7 @@ func (r *resolverTestRuntime) ExecuteConsumersPageForDefinition(_ context.Contex
 
 type moduleCompilationReader struct{ compiled authoring.CompiledRevision }
 
-func (r moduleCompilationReader) GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error) {
+func (r moduleCompilationReader) GetPublishedCompilation(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	if r.compiled.Definition.ID == "" {
 		return authoring.CompiledRevision{}, authoring.ErrNotFound
 	}
@@ -315,18 +348,22 @@ type countingModuleCompilationReader struct {
 	calls    int
 }
 
-func (r *countingModuleCompilationReader) GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error) {
+func (r *countingModuleCompilationReader) GetPublishedCompilation(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	r.calls++
 	return r.compiled, nil
 }
 
-func moduleCompiledRevision(t *testing.T, workspace, dashboardID, stateID string) authoring.CompiledRevision {
+func moduleCompiledRevision(t *testing.T, projectID, dashboardID, stateID string) authoring.CompiledRevision {
 	t.Helper()
 	definition, err := dashboarddefinition.New(dashboardID, "Sales", "", "sales_model", []dashboard.Page{{ID: "overview", Title: "Overview"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := authoring.NewCompiledRevision(workspace, authoring.DashboardID(dashboardID), authoring.RevisionToken{RevisionID: "revision-1", Number: 1, ContentHash: "sha256:" + strings.Repeat("b", 64)}, definition, stateID, time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC))
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID(projectID), "dev", stateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := authoring.NewCompiledRevision(projectgraph.ResourceID(projectID), authoring.DashboardID(dashboardID), authoring.RevisionToken{RevisionID: "revision-1", Number: 1, ContentHash: "sha256:" + strings.Repeat("b", 64)}, definition, identity, time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

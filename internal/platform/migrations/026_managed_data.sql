@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS managed_data_collections (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
-  connection_name TEXT NOT NULL COLLATE NOCASE,
+  connection_id TEXT NOT NULL,
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
@@ -10,10 +10,10 @@ CREATE TABLE IF NOT EXISTS managed_data_collections (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   archived_at TEXT,
-  UNIQUE(project_id, connection_name),
-  CHECK(length(id) BETWEEN 1 AND 128),
-  CHECK(length(trim(project_id)) > 0),
-  CHECK(length(trim(connection_name)) > 0),
+  UNIQUE(project_id, connection_id),
+  CHECK(length(id) BETWEEN 1 AND 128 AND id = trim(id)),
+  CHECK(length(trim(project_id)) > 0 AND project_id = trim(project_id)),
+  CHECK(length(trim(connection_id)) > 0 AND connection_id = trim(connection_id)),
   CHECK(length(trim(name)) > 0),
   CHECK((status = 'archived') = (archived_at IS NOT NULL))
 );
@@ -102,6 +102,9 @@ CREATE TABLE IF NOT EXISTS project_deployments (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  artifact_digest TEXT NOT NULL,
+  prior_generation_id TEXT,
   request_digest TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'active', 'failed', 'cancelled', 'superseded')),
   created_by TEXT NOT NULL DEFAULT '',
@@ -110,40 +113,15 @@ CREATE TABLE IF NOT EXISTS project_deployments (
   error TEXT NOT NULL DEFAULT '',
   CHECK(length(trim(project_id)) > 0),
   CHECK(length(environment) BETWEEN 1 AND 128),
-  CHECK(length(request_digest) > 0),
+  CHECK(length(trim(generation_id)) > 0),
+  CHECK(length(artifact_digest) = 71 AND artifact_digest GLOB 'sha256:[0-9a-f]*' AND substr(artifact_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  CHECK(length(request_digest) = 71 AND request_digest GLOB 'sha256:[0-9a-f]*' AND substr(request_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  CHECK(prior_generation_id IS NULL OR length(trim(prior_generation_id)) > 0),
+  CHECK(prior_generation_id IS NULL OR generation_id <> prior_generation_id),
+  FOREIGN KEY(generation_id, project_id, environment) REFERENCES serving_states(id, project_id, environment) ON DELETE RESTRICT,
+  FOREIGN KEY(prior_generation_id, project_id, environment) REFERENCES serving_states(id, project_id, environment) ON DELETE RESTRICT,
   CHECK((status IN ('active', 'superseded')) = (activated_at IS NOT NULL)),
   CHECK(status <> 'failed' OR length(error) > 0)
-);
-
-CREATE TABLE IF NOT EXISTS project_deployment_targets (
-  deployment_id TEXT NOT NULL REFERENCES project_deployments(id) ON DELETE CASCADE,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
-  serving_state_id TEXT NOT NULL REFERENCES serving_states(id) ON DELETE RESTRICT,
-  prior_serving_state_id TEXT REFERENCES serving_states(id) ON DELETE RESTRICT,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'active', 'failed')),
-  activated_at TEXT,
-  error TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY(deployment_id, workspace_id),
-  UNIQUE(deployment_id, serving_state_id),
-  CHECK(serving_state_id <> COALESCE(prior_serving_state_id, '')),
-  CHECK((status = 'active') = (activated_at IS NOT NULL)),
-  CHECK(status <> 'failed' OR length(error) > 0)
-);
-
-CREATE INDEX IF NOT EXISTS project_deployment_targets_serving_state_idx
-  ON project_deployment_targets(serving_state_id);
-
-CREATE TABLE IF NOT EXISTS project_deployment_connections (
-  deployment_id TEXT NOT NULL REFERENCES project_deployments(id) ON DELETE CASCADE,
-  collection_id TEXT NOT NULL,
-  revision_id TEXT NOT NULL,
-  prior_revision_id TEXT,
-  prior_generation INTEGER NOT NULL DEFAULT 0 CHECK(prior_generation >= 0),
-  activated_generation INTEGER CHECK(activated_generation > 0),
-  PRIMARY KEY(deployment_id, collection_id),
-  FOREIGN KEY(collection_id, revision_id) REFERENCES managed_data_revisions(collection_id, id) ON DELETE RESTRICT,
-  FOREIGN KEY(collection_id, prior_revision_id) REFERENCES managed_data_revisions(collection_id, id) ON DELETE RESTRICT,
-  CHECK((prior_generation = 0) = (prior_revision_id IS NULL))
 );
 
 CREATE TABLE IF NOT EXISTS managed_data_environment_pointers (
@@ -156,7 +134,7 @@ CREATE TABLE IF NOT EXISTS managed_data_environment_pointers (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(collection_id, environment),
   FOREIGN KEY(collection_id, revision_id) REFERENCES managed_data_revisions(collection_id, id) ON DELETE RESTRICT,
-  CHECK(length(environment) BETWEEN 1 AND 128)
+  CHECK(length(environment) BETWEEN 1 AND 128 AND environment = trim(environment))
 );
 
 CREATE INDEX IF NOT EXISTS managed_data_environment_pointers_revision_idx
@@ -166,24 +144,47 @@ CREATE INDEX IF NOT EXISTS project_deployments_project_environment_idx
   ON project_deployments(project_id, environment, created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS managed_data_serving_state_bindings (
-  serving_state_id TEXT NOT NULL REFERENCES serving_states(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
   collection_id TEXT NOT NULL,
   revision_id TEXT NOT NULL,
-  environment TEXT NOT NULL,
   bound_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY(serving_state_id, collection_id),
+  PRIMARY KEY(project_id, environment, generation_id, collection_id),
+  FOREIGN KEY(generation_id, project_id, environment) REFERENCES serving_states(id, project_id, environment) ON DELETE CASCADE,
   FOREIGN KEY(collection_id, revision_id) REFERENCES managed_data_revisions(collection_id, id) ON DELETE RESTRICT,
-  CHECK(length(environment) BETWEEN 1 AND 128)
+  CHECK(length(environment) BETWEEN 1 AND 128 AND environment = trim(environment)),
+  CHECK(length(project_id) > 0 AND project_id = trim(project_id)),
+  CHECK(length(generation_id) > 0 AND generation_id = trim(generation_id)),
+  CHECK(length(collection_id) > 0 AND collection_id = trim(collection_id)),
+  CHECK(length(revision_id) > 0 AND revision_id = trim(revision_id))
 );
 
 CREATE INDEX IF NOT EXISTS managed_data_serving_state_bindings_revision_idx
   ON managed_data_serving_state_bindings(revision_id);
 
+-- A serving generation's managed-data binding set is installed as one
+-- immutable evidence record.  The marker also seals an intentionally empty
+-- set, preventing a later request from appending bindings to the generation.
+CREATE TABLE IF NOT EXISTS managed_data_serving_state_binding_sets (
+  project_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  binding_digest TEXT NOT NULL,
+  binding_count INTEGER NOT NULL CHECK(binding_count >= 0),
+  installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(project_id, environment, generation_id),
+  FOREIGN KEY(generation_id, project_id, environment) REFERENCES serving_states(id, project_id, environment) ON DELETE CASCADE,
+  CHECK(length(environment) BETWEEN 1 AND 128 AND environment = trim(environment)),
+  CHECK(length(project_id) > 0 AND project_id = trim(project_id)),
+  CHECK(length(generation_id) > 0 AND generation_id = trim(generation_id)),
+  CHECK(length(binding_digest) = 71 AND substr(binding_digest, 1, 7) = 'sha256:' AND binding_digest = lower(binding_digest))
+);
+
 -- +goose Down
+DROP TABLE IF EXISTS managed_data_serving_state_binding_sets;
 DROP TABLE IF EXISTS managed_data_serving_state_bindings;
 DROP TABLE IF EXISTS managed_data_environment_pointers;
-DROP TABLE IF EXISTS project_deployment_connections;
-DROP TABLE IF EXISTS project_deployment_targets;
 DROP TABLE IF EXISTS project_deployments;
 DROP TABLE IF EXISTS managed_data_upload_sessions;
 DROP TABLE IF EXISTS managed_data_revision_files;

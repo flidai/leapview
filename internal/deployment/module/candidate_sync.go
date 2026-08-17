@@ -15,12 +15,14 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/digest"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/project"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -35,11 +37,26 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeCandidateAPIError(w, r, err)
+		return
+	}
+	// Planning is the first CLI side effect: claim the exact project and
+	// environment before reporting missing blobs. The durable singleton claim
+	// is idempotent for the same project and fails closed for a race with a
+	// different project.
+	if m.candidates != nil {
+		if err := m.candidates.ClaimProject(r.Context(), projectID, principalID); err != nil {
+			writeCandidateAPIError(w, r, err)
+			return
+		}
+	}
 	if !m.validateExpectedCandidate(w, r, project, principalID, request, nil) {
 		return
 	}
 	missing, err := m.candidateSources.Plan(r.Context(), deployment.CandidateSourceScope{
-		ProjectID: project, OwnerID: principalID, CandidateKey: request.CandidateKey,
+		ProjectID: projectID, OwnerID: principalID, CandidateKey: request.CandidateKey,
 	}, request)
 	if err != nil {
 		writeCandidateAPIError(w, r, err)
@@ -60,10 +77,15 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 	if !ok {
 		return
 	}
-	identity = strings.TrimSpace(identity)
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return
+	}
 	if contentType != "application/octet-stream" ||
+		identity != strings.TrimSpace(identity) || contentDigest != strings.TrimSpace(contentDigest) ||
 		digest.ValidateSHA256Identity(identity) != nil ||
-		strings.TrimSpace(contentDigest) != candidateSourceContentDigest(identity) {
+		contentDigest != candidateSourceContentDigest(identity) {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), apigenfailure.New("source_blob_invalid", "Candidate source blob headers do not match the canonical content identity"))
 		return
 	}
@@ -71,7 +93,7 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 		w, r.Body, maxCandidateSourceBlobBytes,
 	)}
 	if err := m.candidateSources.Upload(r.Context(), deployment.CandidateSourceScope{
-		ProjectID: project, OwnerID: principalID,
+		ProjectID: projectID, OwnerID: principalID,
 	}, identity, counter); err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), err)
 		return
@@ -119,6 +141,14 @@ func (m *Module) recordCandidateSourceBlobAudit(
 	if m == nil || m.candidateSourceBlobAudit == nil {
 		return errors.New("required candidate source blob audit sink is unavailable")
 	}
+	parsedProjectID, err := projectgraph.NewResourceID(projectID)
+	if err != nil {
+		return fmt.Errorf("candidate source blob project ID: %w", err)
+	}
+	capability, err := access.ParseCapability(contract.Command.Privilege)
+	if err != nil {
+		return fmt.Errorf("candidate source blob capability: %w", err)
+	}
 	// Caller surface headers affect audit attribution only. APIGen authorization
 	// has already enforced the generated privilege independently of this value.
 	surface := "api"
@@ -138,8 +168,8 @@ func (m *Module) recordCandidateSourceBlobAudit(
 		correlationID = requestID
 	}
 	return m.candidateSourceBlobAudit(r.Context(), CandidateSourceBlobAuditEvent{
-		PrincipalID: principalID, ProjectID: strings.TrimSpace(projectID), Digest: identity,
-		Action: contract.Command.Audit.SuccessAction, Privilege: contract.Command.Privilege,
+		PrincipalID: principalID, ProjectID: parsedProjectID, Digest: identity,
+		Action: contract.Command.Audit.SuccessAction, Capability: capability,
 		Status: "success", RequestID: requestID, CorrelationID: correlationID,
 		MetadataJSON: metadata,
 	})
@@ -159,10 +189,15 @@ func (m *Module) CommitProjectCandidateSynchronization(
 	if !ok {
 		return
 	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return
+	}
 	if !m.validateExpectedCandidate(w, r, project, principalID, request, deploymentCommandOperation(operationID)) {
 		return
 	}
-	scope := deployment.CandidateSourceScope{ProjectID: project, OwnerID: principalID}
+	scope := deployment.CandidateSourceScope{ProjectID: projectID, OwnerID: principalID}
 	scope.CandidateKey = request.CandidateKey
 	source, err := m.candidateSources.Commit(r.Context(), scope, request)
 	if err != nil {
@@ -173,7 +208,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 	if request.ExpectedCandidateID == "" {
 		var started deployment.CandidateStartResult
 		started, err = m.candidates.Start(r.Context(), deployment.StartCandidateRequest{
-			ProjectID: project, OwnerID: principalID, ArtifactDigest: request.ArtifactDigest,
+			ProjectID: projectID, OwnerID: principalID, ArtifactDigest: request.ArtifactDigest,
 			Key: request.CandidateKey,
 		})
 		candidate = started.Candidate
@@ -181,8 +216,8 @@ func (m *Module) CommitProjectCandidateSynchronization(
 			candidate, err = m.candidates.Retry(r.Context(), candidateScope(candidate))
 		}
 	} else {
-		candidate, err = m.candidates.Get(r.Context(), deployment.CandidateScope{
-			ProjectID: project, CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
+		candidate, err = m.candidates.Get(r.Context(), deployment.CandidateAccessScope{
+			ProjectID: projectID, CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
 		})
 	}
 	if err != nil {
@@ -239,7 +274,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 		m.candidateLogger().Error(
 			"candidate preparation failed",
 			"candidate_id", candidate.ID,
-			"project_id", candidate.ProjectID,
+			"project_id", candidate.Scope.ProjectID.String(),
 			"error", err,
 		)
 		if request.ExpectedCandidateID == "" {
@@ -296,40 +331,34 @@ func (m *Module) prepareCandidate(
 	artifacts, err := m.candidateArtifacts.PrepareCandidateArtifacts(
 		ctx,
 		release.CandidateArtifactRequest{
-			CandidateID: candidate.ID, ProjectID: candidate.ProjectID,
-			OwnerID: candidate.OwnerID, Environment: candidate.Environment,
+			CandidateID: candidate.ID, Scope: candidate.Scope,
+			OwnerID:        candidate.OwnerID,
 			ArtifactDigest: candidate.ArtifactDigest, Source: source,
 		},
 	)
 	if err != nil {
 		return release.Provenance{}, err
 	}
-	workspaces := make([]deployment.CandidateWorkspaceRuntime, len(artifacts.Workspaces))
-	for index, workspace := range artifacts.Workspaces {
-		requirements := make(
-			[]deployment.CandidateConnectionRequirement,
-			len(workspace.Connections),
-		)
-		for requirementIndex, requirement := range workspace.Connections {
-			requirements[requirementIndex] = deployment.CandidateConnectionRequirement{
-				LogicalConnectionID: requirement.LogicalConnectionID,
-				ConnectorKind:       requirement.ConnectorKind,
-			}
+	generation := artifacts.Generation
+	identity := generation.Identity
+	if candidate.Scope.BaseGenerationID != "" {
+		if candidate.Scope.ProjectID != identity.ProjectID || candidate.Scope.Environment != identity.Environment {
+			return release.Provenance{}, release.ErrProvenanceInvalid
 		}
-		workspaces[index] = deployment.CandidateWorkspaceRuntime{
-			WorkspaceID: workspace.WorkspaceID, ServingStateID: workspace.ServingStateID,
-			ArtifactDigest: workspace.ArtifactDigest, DataRevision: workspace.DataRevision,
-			DataMode: deployment.CandidateDataMode(workspace.DataMode), Connections: requirements,
-			AuthoredConnections: candidateAuthoredConnections(workspace.AuthoredConnections),
-			ManagedDataConnections: candidateManagedDataConnections(
-				workspace.ManagedDataPins,
-			),
-			Restrictions: candidateRuntimeRestrictions(workspace.Restrictions),
+		_, err = candidate.Scope.BaseIdentity()
+		if err != nil {
+			return release.Provenance{}, err
 		}
 	}
 	receipt, err := m.candidateRuntimes.Prepare(ctx, deployment.CandidateRuntimeRequest{
 		Candidate: candidate, AuthorizationFingerprint: artifacts.AuthorizationFingerprint,
-		Workspaces: workspaces,
+		Generation: deployment.CandidateGenerationRuntime{
+			Identity: identity, ArtifactDigest: generation.ArtifactDigest,
+			DataRevision: generation.DataRevision, DataMode: deployment.CandidateDataMode(generation.DataMode),
+			Connections:            candidateConnectionRequirements(generation.Connections),
+			AuthoredConnections:    candidateAuthoredConnections(generation.AuthoredConnections),
+			ManagedDataConnections: candidateManagedDataConnections(generation.ManagedDataPins),
+		},
 	})
 	if err != nil {
 		return release.Provenance{}, err
@@ -345,7 +374,7 @@ func (m *Module) prepareCandidate(
 	}
 	retained, err := m.candidateArtifacts.RetainCandidateProvenance(
 		ctx,
-		candidate.ProjectID,
+		candidate.Scope.ProjectID,
 		provenance,
 	)
 	if err != nil {
@@ -363,9 +392,19 @@ func candidateAuthoredConnections(
 	result := make([]deployment.CandidateAuthoredConnection, len(values))
 	for index, value := range values {
 		result[index] = deployment.CandidateAuthoredConnection{
-			LogicalConnectionID: value.LogicalConnectionID,
-			ConnectorKind:       value.ConnectorKind,
+			ConnectionID:  value.ConnectionID,
+			ConnectorKind: value.ConnectorKind,
 		}
+	}
+	return result
+}
+
+func candidateConnectionRequirements(
+	values []release.CandidateConnectionRequirement,
+) []deployment.CandidateConnectionRequirement {
+	result := make([]deployment.CandidateConnectionRequirement, len(values))
+	for index, value := range values {
+		result[index] = deployment.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
 	}
 	return result
 }
@@ -386,67 +425,17 @@ func candidateReleaseProvenance(
 	receipt deployment.CandidateRuntimeReceipt,
 	sourceRevision *project.CandidateSourceRevision,
 ) (release.Provenance, error) {
-	if strings.TrimSpace(artifacts.Artifact.SourceDigest) !=
-		strings.TrimSpace(candidate.ArtifactDigest) {
+	if artifacts.Artifact.SourceDigest != candidate.ArtifactDigest {
 		return release.Provenance{}, release.ErrProvenanceInvalid
 	}
-	bindings := make(
-		map[string][]release.BindingEvidence,
-		len(receipt.Workspaces),
-	)
-	for _, workspace := range receipt.Workspaces {
-		workspaceID := strings.TrimSpace(workspace.WorkspaceID)
-		if workspaceID == "" {
-			return release.Provenance{}, release.ErrProvenanceInvalid
-		}
-		if _, exists := bindings[workspaceID]; exists {
-			return release.Provenance{}, release.ErrProvenanceInvalid
-		}
-		evidence := make([]release.BindingEvidence, len(workspace.Bindings))
-		for index, item := range workspace.Bindings {
-			evidence[index] = release.BindingEvidence{
-				BindingID: item.BindingID, LogicalConnection: item.LogicalConnection,
-				ConnectorKind: item.ConnectorKind, Revision: item.Revision,
-				ValidatedVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash,
-			}
-		}
-		bindings[workspaceID] = evidence
+	bindings := make([]release.BindingEvidence, len(receipt.Bindings))
+	for index, item := range receipt.Bindings {
+		bindings[index] = release.BindingEvidence{BindingID: item.BindingID, ConnectionID: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ValidatedVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash}
 	}
-	plans := make(
-		[]release.TargetWorkspacePlan,
-		len(artifacts.Workspaces),
-	)
-	for index, workspace := range artifacts.Workspaces {
-		workspaceID := strings.TrimSpace(workspace.WorkspaceID)
-		workspaceBindings, exists := bindings[workspaceID]
-		if !exists {
-			return release.Provenance{}, release.ErrProvenanceInvalid
-		}
-		delete(bindings, workspaceID)
-		artifactDigest, err := candidateProvenanceArtifactDigest(
-			workspace.ArtifactDigest,
-		)
-		if err != nil {
-			return release.Provenance{}, err
-		}
-		plans[index] = release.TargetWorkspacePlan{
-			WorkspaceID:    workspaceID,
-			ServingStateID: workspace.ServingStateID,
-			ArtifactDigest: artifactDigest,
-			DataRevision:   workspace.DataRevision,
-			DataMode:       release.TargetDataMode(workspace.DataMode),
-			ManagedDataPins: append(
-				[]release.ManagedDataPin(nil),
-				workspace.ManagedDataPins...,
-			),
-			Bindings: workspaceBindings,
-			AuthoredConnections: candidateProvenanceAuthoredConnections(
-				workspace.AuthoredConnections,
-			),
-		}
-	}
-	if len(bindings) != 0 {
-		return release.Provenance{}, release.ErrProvenanceInvalid
+	identity := artifacts.Generation.Identity
+	var baseIdentity *projectgraph.ServingIdentity
+	if candidate.Scope.BaseGenerationID != "" {
+		baseIdentity, _ = candidate.Scope.BaseIdentity()
 	}
 	return release.NewProvenance(release.ProvenanceInput{
 		Artifact: artifacts.Artifact,
@@ -456,13 +445,12 @@ func candidateReleaseProvenance(
 			OwnerID:  candidate.OwnerID,
 		},
 		SourceRevision: candidateSourceRevision(sourceRevision),
-		Plan: release.TargetPlanProvenance{
-			TargetID:       candidate.TargetID,
-			Environment:    candidate.Environment,
-			BaseGeneration: candidate.BaseGeneration,
-			RuntimeVersion: receipt.RuntimeVersion,
-			PolicyDigest:   artifacts.AuthorizationFingerprint,
-			Workspaces:     plans,
+		Plan: release.GenerationPlanProvenance{
+			Identity: identity, BaseIdentity: baseIdentity, TargetID: candidate.TargetID,
+			RuntimeVersion: receipt.RuntimeVersion, PolicyDigest: artifacts.AuthorizationFingerprint,
+			DataRevision: artifacts.Generation.DataRevision, DataMode: artifacts.Generation.DataMode,
+			ManagedDataPins: append([]release.ManagedDataPin(nil), artifacts.Generation.ManagedDataPins...),
+			Bindings:        bindings, AuthoredConnections: candidateProvenanceAuthoredConnections(artifacts.Generation.AuthoredConnections),
 		},
 	})
 }
@@ -473,23 +461,11 @@ func candidateProvenanceAuthoredConnections(
 	result := make([]release.AuthoredConnectionEvidence, len(values))
 	for index, value := range values {
 		result[index] = release.AuthoredConnectionEvidence{
-			LogicalConnection: value.LogicalConnectionID,
-			ConnectorKind:     value.ConnectorKind,
+			ConnectionID:  value.ConnectionID.String(),
+			ConnectorKind: value.ConnectorKind,
 		}
 	}
 	return result
-}
-
-func candidateProvenanceArtifactDigest(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if digest.ValidateSHA256Identity(value) == nil {
-		return value, nil
-	}
-	decoded, err := hex.DecodeString(value)
-	if err != nil || len(decoded) != 32 || strings.ToLower(value) != value {
-		return "", release.ErrProvenanceInvalid
-	}
-	return "sha256:" + value, nil
 }
 
 func (m *Module) verifiedCandidateProvenance(
@@ -502,7 +478,7 @@ func (m *Module) verifiedCandidateProvenance(
 	}
 	provenance, err := m.candidateArtifacts.CandidateProvenance(
 		ctx,
-		candidate.ProjectID,
+		candidate.Scope.ProjectID,
 		candidate.ID,
 		candidate.Revision,
 	)
@@ -550,7 +526,7 @@ func candidateRuntimeRestrictions(values []release.CandidateRestriction) []deplo
 	result := make([]deployment.CandidateRestriction, len(values))
 	for index, value := range values {
 		result[index] = deployment.CandidateRestriction{
-			ID: value.ID, WorkspaceID: value.WorkspaceID, ObjectID: value.ObjectID,
+			ID: value.ID, ObjectID: value.ObjectID, ObjectKind: value.ObjectKind, Subject: value.Subject,
 			PolicyType: value.PolicyType, ExpressionJSON: value.ExpressionJSON,
 		}
 	}
@@ -571,10 +547,12 @@ func tentativeCandidate(
 		request.ExpectedArtifactDigest = candidate.ArtifactDigest
 	}
 	if candidate.Status != deployment.CandidateReady ||
-		candidate.ArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) {
+		request.ExpectedArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) ||
+		request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) ||
+		candidate.ArtifactDigest != request.ExpectedArtifactDigest {
 		return deployment.Candidate{}, deployment.ErrCandidateConflict
 	}
-	candidate.ArtifactDigest = strings.TrimSpace(request.ArtifactDigest)
+	candidate.ArtifactDigest = request.ArtifactDigest
 	candidate.ProvenanceDigest = ""
 	candidate.Status = deployment.CandidatePreparing
 	candidate.FailureReason = ""
@@ -583,9 +561,9 @@ func tentativeCandidate(
 	return candidate, nil
 }
 
-func candidateScope(candidate deployment.Candidate) deployment.CandidateScope {
-	return deployment.CandidateScope{
-		ProjectID: candidate.ProjectID, CandidateID: candidate.ID,
+func candidateScope(candidate deployment.Candidate) deployment.CandidateAccessScope {
+	return deployment.CandidateAccessScope{
+		ProjectID: candidate.Scope.ProjectID, CandidateID: candidate.ID,
 		OwnerID: candidate.OwnerID, TargetID: candidate.TargetID,
 	}
 }
@@ -689,8 +667,17 @@ func (m *Module) validateExpectedCandidate(
 	request deployment.CandidateSynchronizationRequest,
 	operationID *deploymentgen.GenCommandOperationID,
 ) bool {
-	hasID := strings.TrimSpace(request.ExpectedCandidateID) != ""
-	hasDigest := strings.TrimSpace(request.ExpectedArtifactDigest) != ""
+	if request.ExpectedCandidateID != strings.TrimSpace(request.ExpectedCandidateID) || request.ExpectedArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) || request.CandidateKey != strings.TrimSpace(request.CandidateKey) {
+		err := fmt.Errorf("%w: expected candidate fields must be canonical", deployment.ErrCandidateInvalid)
+		if operationID == nil {
+			writeCandidateAPIError(w, r, err)
+		} else {
+			m.writeCandidateCommandFailure(w, r, *operationID, err)
+		}
+		return false
+	}
+	hasID := request.ExpectedCandidateID != ""
+	hasDigest := request.ExpectedArtifactDigest != ""
 	if hasID != hasDigest {
 		err := fmt.Errorf(
 			"%w: expected candidate identity and digest must be supplied together",
@@ -706,8 +693,17 @@ func (m *Module) validateExpectedCandidate(
 	if !hasID {
 		return true
 	}
-	candidate, err := m.candidates.Get(r.Context(), deployment.CandidateScope{
-		ProjectID: project, CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
+	projectID, projectErr := projectgraph.NewResourceID(project)
+	if projectErr != nil {
+		if operationID == nil {
+			writeCandidateAPIError(w, r, projectErr)
+		} else {
+			m.writeCandidateCommandFailure(w, r, *operationID, projectErr)
+		}
+		return false
+	}
+	candidate, err := m.candidates.Get(r.Context(), deployment.CandidateAccessScope{
+		ProjectID: projectID, CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
 	})
 	if err != nil {
 		if operationID == nil {
@@ -717,7 +713,7 @@ func (m *Module) validateExpectedCandidate(
 		}
 		return false
 	}
-	if candidate.ArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) {
+	if candidate.ArtifactDigest != request.ExpectedArtifactDigest {
 		if operationID == nil {
 			writeCandidateAPIError(w, r, deployment.ErrCandidateConflict)
 		} else {
@@ -725,7 +721,7 @@ func (m *Module) validateExpectedCandidate(
 		}
 		return false
 	}
-	candidateKey := strings.TrimSpace(request.CandidateKey)
+	candidateKey := request.CandidateKey
 	if candidateKey == "" {
 		candidateKey = "default"
 	}
@@ -745,7 +741,10 @@ func deploymentCommandOperation(operationID deploymentgen.GenCommandOperationID)
 }
 
 func candidateSourceContentDigest(identity string) string {
-	decoded, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(identity), "sha256:"))
+	if identity != strings.TrimSpace(identity) {
+		return ""
+	}
+	decoded, err := hex.DecodeString(strings.TrimPrefix(identity, "sha256:"))
 	if err != nil || len(decoded) != 32 {
 		return ""
 	}

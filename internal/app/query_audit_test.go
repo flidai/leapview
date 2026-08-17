@@ -5,9 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestAuditedQueryMetricsRecordsSuccessWithoutRows(t *testing.T) {
@@ -18,20 +20,20 @@ func TestAuditedQueryMetricsRecordsSuccessWithoutRows(t *testing.T) {
 	}
 	defer store.Close()
 
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
 	request := dataquery.ModelTableRows("test", "orders", []string{"order_id", "status"}, nil, 0, 2, false)
-	request.WorkspaceID = "test"
+	request.ProjectID = projectgraph.ResourceID("project:test")
 	request.Surface = dataquery.SurfaceDataExplorer
 	request.Operation = dataquery.OperationPreviewWindow
 	request.ObjectType = "model_table"
 	request.ObjectID = "test:model_table:test.orders"
-	ctx = withPrincipal(ctx, Principal{ID: "principal_admin@example.test"})
+	ctx = accessmodule.WithPrincipal(ctx, accessmodule.Principal{ID: "principal_admin@example.test"})
 
 	if _, err := server.runtime.metrics.ExecuteDataQuery(ctx, request); err != nil {
 		t.Fatal(err)
 	}
 
-	events := queryEventsForTest(t, server, queryaudit.Filter{WorkspaceID: "test"})
+	events := queryEventsForTest(t, server, queryaudit.Filter{ProjectID: projectgraph.ResourceID("project:test")})
 	if len(events) != 1 {
 		t.Fatalf("events = %d, want 1: %#v", len(events), events)
 	}
@@ -64,23 +66,23 @@ func TestAuditedQueryMetricsRecordsExecutionError(t *testing.T) {
 	}
 	defer store.Close()
 
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test"}))
-	ctx = withPrincipal(ctx, Principal{ID: "principal_admin@example.test"})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
+	ctx = accessmodule.WithPrincipal(ctx, accessmodule.Principal{ID: "principal_admin@example.test"})
 	request := dataquery.Query{
-		WorkspaceID: "test",
-		Surface:     dataquery.SurfaceAPI,
-		Operation:   dataquery.OperationAPIQuery,
-		ModelID:     "test",
-		Kind:        dataquery.Kind("unsupported"),
-		Target:      "olist.orders",
-		Limit:       1,
+		ProjectID: projectgraph.ResourceID("project:test"),
+		Surface:   dataquery.SurfaceAPI,
+		Operation: dataquery.OperationAPIQuery,
+		ModelID:   "test",
+		Kind:      dataquery.Kind("unsupported"),
+		Target:    "olist.orders",
+		Limit:     1,
 	}
 
 	if _, err := server.runtime.metrics.ExecuteDataQuery(ctx, request); err == nil {
 		t.Fatal("expected query execution error")
 	}
 
-	events := queryEventsForTest(t, server, queryaudit.Filter{WorkspaceID: "test"})
+	events := queryEventsForTest(t, server, queryaudit.Filter{ProjectID: projectgraph.ResourceID("project:test")})
 	if len(events) != 1 {
 		t.Fatalf("events = %d, want 1: %#v", len(events), events)
 	}

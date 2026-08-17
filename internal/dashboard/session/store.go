@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/filter"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -21,20 +22,33 @@ var (
 )
 
 type Key struct {
-	WorkspaceOrPublication string `json:"workspaceOrPublication"`
-	PrincipalOrClient      string `json:"principalOrClient"`
-	DashboardID            string `json:"dashboardID"`
-	ServingStateID         string `json:"servingStateID"`
-	StreamInstanceID       string `json:"streamInstanceID"`
+	ProjectID         projectgraph.ResourceID `json:"projectId,omitempty"`
+	PublicationID     string                  `json:"publicationId,omitempty"`
+	PrincipalOrClient string                  `json:"principalOrClient"`
+	DashboardID       projectgraph.ResourceID `json:"dashboardID"`
+	ServingStateID    string                  `json:"servingStateID"`
+	StreamInstanceID  string                  `json:"streamInstanceID"`
 }
 
 func (key Key) Validate() error {
+	hasProject := key.ProjectID != ""
+	hasPublication := strings.TrimSpace(key.PublicationID) != ""
+	if hasProject == hasPublication {
+		return fmt.Errorf("dashboard session requires exactly one project or publication")
+	}
+	if hasProject {
+		if err := key.ProjectID.Validate(); err != nil {
+			return fmt.Errorf("dashboard session project ID is invalid: %w", err)
+		}
+	}
+	if err := key.DashboardID.Validate(); err != nil {
+		return fmt.Errorf("dashboard session dashboard ID is invalid: %w", err)
+	}
 	for name, value := range map[string]string{
-		"workspace or publication": key.WorkspaceOrPublication,
-		"principal or client":      key.PrincipalOrClient,
-		"dashboard ID":             key.DashboardID,
-		"serving-state ID":         key.ServingStateID,
-		"stream instance ID":       key.StreamInstanceID,
+		"principal or client": key.PrincipalOrClient,
+		"dashboard ID":        key.DashboardID.String(),
+		"serving-state ID":    key.ServingStateID,
+		"stream instance ID":  key.StreamInstanceID,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("dashboard session %s is required", name)
@@ -45,7 +59,7 @@ func (key Key) Validate() error {
 
 func (key Key) ID() string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		key.WorkspaceOrPublication, key.PrincipalOrClient, key.DashboardID,
+		key.ProjectID.String(), key.PublicationID, key.PrincipalOrClient, key.DashboardID.String(),
 		key.ServingStateID, key.StreamInstanceID,
 	}, "\x00")))
 	return "dvs_" + base64.RawURLEncoding.EncodeToString(sum[:])

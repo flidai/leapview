@@ -166,12 +166,11 @@ test('chat thread renders turn-scoped references inside the user message bubble'
       kind: 'user',
       text: 'Why did revenue fall?',
       references: [{
-        reference: { workspaceId: 'sales', type: 'visual', id: 'executive-sales.revenue' },
+        reference: { kind: 'visual', id: 'executive-sales.revenue' },
         name: 'Revenue by month',
         visualType: 'line',
-        workspace: { id: 'sales', name: 'Sales' },
         hierarchy: ['Sales', 'Executive Sales', 'Overview'],
-        href: '/workspaces/sales/dashboards/executive-sales/pages/overview',
+        href: '/dashboards/executive-sales/pages/overview',
         locations: [],
         context: ['current_page'],
       }],
@@ -196,7 +195,7 @@ test('chat thread renders turn-scoped references inside the user message bubble'
 
   expect(state).toEqual({
     bubbleText: 'Revenue by month Why did revenue fall?',
-    referenceHref: '/workspaces/sales/dashboards/executive-sales/pages/overview',
+    referenceHref: '/dashboards/executive-sales/pages/overview',
     referenceInsideBubble: true,
     referenceText: 'Revenue by month',
     tooltip: 'Revenue by month · Sales › Executive Sales › Overview · Visual',
@@ -214,10 +213,9 @@ test('chat thread uses the visual subtype for reference icons', async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
     const reference = (id: string, visualType: string) => ({
-      reference: { workspaceId: 'sales', type: 'visual', id },
+      reference: { kind: 'visual', id },
       name: id,
       visualType,
-      workspace: { id: 'sales', name: 'Sales' },
       hierarchy: ['Sales'],
       href: `/${id}`,
       locations: [],
@@ -336,9 +334,9 @@ test('chat thread renders tool details with compact json and toon code blocks', 
       {
         id: 'tool-toon',
         kind: 'tool',
-        name: 'list_workspaces',
+        name: 'catalog_list',
         status: 'complete',
-        inputJson: '{\n  "name": "list_workspaces",\n  "arguments": "{}"\n}',
+        inputJson: '{\n  "name": "catalog_list",\n  "arguments": "{}"\n}',
         inputFormat: 'json',
         resultJson: 'items[2]{id,title}:\n  sales,Sales\n  ops,Operations\ncount: 2\nhasMore: false',
         resultFormat: 'toon',

@@ -12,27 +12,29 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
-	"github.com/flidai/leapview/internal/runtimehost"
+	"github.com/flidai/leapview/internal/project/graph"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
-// SourceKind is a closed discriminator. A workspace source is owned by the
-// authoring repository; a project source is retained by the active runtime
-// artifact. They have intentionally different provenance contracts.
+// SourceKind is a closed discriminator. An instance-managed source is owned
+// by the authoring repository; a deployed-project source is retained by the
+// active runtime artifact. They have intentionally different provenance
+// contracts.
 type SourceKind string
 
 const (
-	SourceWorkspace SourceKind = "workspace"
-	SourceProject   SourceKind = "project"
+	SourceInstance SourceKind = "instance"
+	SourceProject  SourceKind = "project"
 )
 
-func (k SourceKind) Valid() bool { return k == SourceWorkspace || k == SourceProject }
+func (k SourceKind) Valid() bool { return k == SourceInstance || k == SourceProject }
 
 // SourceRef identifies a dashboard without granting access to its content.
-// WorkspaceID is the scope of the source. Fork requests may choose a
-// different target workspace explicitly.
+// ProjectID is the scope of the source. Fork requests may choose a
+// different target project explicitly.
 type SourceRef struct {
 	Kind        SourceKind
-	WorkspaceID string
+	ProjectID   graph.ResourceID
 	DashboardID authoring.DashboardID
 }
 
@@ -40,22 +42,22 @@ func (r SourceRef) validate() error {
 	if !r.Kind.Valid() {
 		return fmt.Errorf("invalid dashboard source kind %q", r.Kind)
 	}
-	if strings.TrimSpace(r.WorkspaceID) == "" {
-		return fmt.Errorf("dashboard source workspace id is required")
+	if err := r.ProjectID.Validate(); err != nil {
+		return fmt.Errorf("dashboard source project id is invalid: %v", err)
 	}
-	if err := r.DashboardID.Validate(); err != nil {
+	if err := authoring.ValidateDashboardID(r.DashboardID); err != nil {
 		return err
 	}
 	return nil
 }
 
-// WorkspaceProvenance records the exact authored revision selected from the
+// InstanceProvenance records the exact authored revision selected from the
 // authoring repository. Repository/ref metadata is evidence only; no
 // checkout identity is used as source authority. PublishedRevision is set
 // only when the published source path is used; DraftRevision identifies an
 // explicit current-draft load.
-type WorkspaceProvenance struct {
-	WorkspaceID       string
+type InstanceProvenance struct {
+	ProjectID         graph.ResourceID
 	DashboardID       authoring.DashboardID
 	PublishedRevision authoring.RevisionToken
 	DraftRevision     *authoring.RevisionToken
@@ -66,18 +68,18 @@ type WorkspaceProvenance struct {
 // retained source is identified by its immutable serving state and authored
 // path, not by a fabricated authoring revision.
 type ProjectProvenance struct {
-	WorkspaceID    string
-	DashboardID    authoring.DashboardID
-	ServingStateID string
-	Path           string
+	ProjectID   graph.ResourceID
+	DashboardID authoring.DashboardID
+	Identity    graph.ServingIdentity
+	Path        string
 }
 
 // Provenance is a discriminated union. Exactly one branch is populated for a
 // loaded source, and callers can inspect Kind before reading branch details.
 type Provenance struct {
-	Kind      SourceKind
-	Workspace *WorkspaceProvenance
-	Project   *ProjectProvenance
+	Kind     SourceKind
+	Instance *InstanceProvenance
+	Project  *ProjectProvenance
 }
 
 // Source is a complete authored dashboard source. Document and source
@@ -93,8 +95,8 @@ type Source struct {
 // PublishedRepository is intentionally narrower than authoring.Repository:
 // source loading needs only lifecycle and exact retained revision reads.
 type PublishedRepository interface {
-	Get(context.Context, string, authoring.DashboardID) (authoring.DashboardLifecycle, error)
-	GetRevision(context.Context, string, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error)
+	Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error)
+	GetRevision(context.Context, graph.ResourceID, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error)
 }
 
 // ProjectRuntime is the only capability sourceadapter takes from a runtime.
@@ -104,10 +106,15 @@ type ProjectRuntime interface {
 	AuthoredDashboardSource(string) (authoring.AuthoredDashboardSource, bool)
 }
 
-// AcquireRuntime acquires one active runtime lease for a source workspace.
+// Lease is the source adapter's narrow runtime capability. Identity is the
+// exact serving generation selected for this project; no container lookup is
+// available at this boundary.
+type Lease = projectruntime.Lease
+
+// AcquireRuntime acquires one active runtime lease for a source project.
 // The callback keeps this package independent of registry topology while
-// retaining the runtimehost lease's lifetime and generation guarantees.
-type AcquireRuntime func(context.Context, string) (runtimehost.Lease, error)
+// retaining the lease's lifetime and generation guarantees.
+type AcquireRuntime func(context.Context) (projectruntime.Lease, error)
 
 // Options wires application-owned capabilities. Repository and Authorizer
 // are required for all operations. AcquireRuntime is required only for
@@ -146,7 +153,7 @@ func New(options Options) (*Adapter, error) {
 	}, nil
 }
 
-// Load resolves one exact authored source. Workspace loading reads the
+// Load resolves one exact authored source. Project loading reads the
 // published lifecycle first, authorizes VIEW, and then reads exactly the
 // published revision pointer; it never decompiles a compiled definition or
 // follows a newer draft. Project loading authorizes before touching source
@@ -163,8 +170,8 @@ func (a *Adapter) Load(ctx context.Context, ref SourceRef, actorID string) (Sour
 		return Source{}, fmt.Errorf("actor id is required")
 	}
 	switch ref.Kind {
-	case SourceWorkspace:
-		return a.loadWorkspace(ctx, ref, actorID)
+	case SourceInstance:
+		return a.loadInstance(ctx, ref, actorID)
 	case SourceProject:
 		return a.loadProject(ctx, ref, actorID)
 	default:
@@ -172,12 +179,12 @@ func (a *Adapter) Load(ctx context.Context, ref SourceRef, actorID string) (Sour
 	}
 }
 
-func (a *Adapter) loadWorkspace(ctx context.Context, ref SourceRef, actorID string) (Source, error) {
-	return a.loadWorkspaceRevision(ctx, ref, actorID, false)
+func (a *Adapter) loadInstance(ctx context.Context, ref SourceRef, actorID string) (Source, error) {
+	return a.loadInstanceRevision(ctx, ref, actorID, false)
 }
 
-// LoadDraft resolves the current draft revision for a workspace dashboard.
-// It is intentionally separate from Load: the ordinary workspace source path
+// LoadDraft resolves the current draft revision for a project dashboard.
+// It is intentionally separate from Load: the ordinary project source path
 // is the exact published source used by agent exports and forks, while the
 // builder export needs the repository-authoritative draft selected by its
 // lifecycle pointer.
@@ -188,38 +195,38 @@ func (a *Adapter) LoadDraft(ctx context.Context, ref SourceRef, actorID string) 
 	if err := ref.validate(); err != nil {
 		return Source{}, err
 	}
-	if ref.Kind != SourceWorkspace {
-		return Source{}, fmt.Errorf("draft source must be a workspace source")
+	if ref.Kind != SourceInstance {
+		return Source{}, fmt.Errorf("draft source must be an instance source")
 	}
 	actorID = strings.TrimSpace(actorID)
 	if actorID == "" {
 		return Source{}, fmt.Errorf("actor id is required")
 	}
-	return a.loadWorkspaceRevision(ctx, ref, actorID, true)
+	return a.loadInstanceRevision(ctx, ref, actorID, true)
 }
 
-func (a *Adapter) loadWorkspaceRevision(ctx context.Context, ref SourceRef, actorID string, draft bool) (Source, error) {
+func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actorID string, draft bool) (Source, error) {
 	// Lifecycle metadata is itself protected source detail. Authorize on the
 	// scoped dashboard object before loading it; owner/model fields are
 	// deliberately unavailable until after this boundary.
 	if err := a.authorizeView(ctx, actorID, ref, "", ""); err != nil {
 		return Source{}, err
 	}
-	lifecycle, err := a.repository.Get(ctx, ref.WorkspaceID, ref.DashboardID)
+	lifecycle, err := a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) || errors.Is(err, authoring.ErrSourceUnavailable) {
 			return Source{}, sourceUnavailable(ref, err)
 		}
 		return Source{}, err
 	}
-	if lifecycle.WorkspaceID != ref.WorkspaceID || lifecycle.ID != ref.DashboardID {
+	if lifecycle.ProjectID != ref.ProjectID || lifecycle.ID != ref.DashboardID {
 		return Source{}, fmt.Errorf("dashboard source lifecycle identity does not match request")
 	}
 	if err := lifecycle.Validate(); err != nil {
 		return Source{}, err
 	}
 	var selectedToken authoring.RevisionToken
-	workspaceProvenance := WorkspaceProvenance{WorkspaceID: ref.WorkspaceID, DashboardID: ref.DashboardID}
+	instanceProvenance := InstanceProvenance{ProjectID: ref.ProjectID, DashboardID: ref.DashboardID}
 	if draft {
 		if lifecycle.Status != authoring.LifecycleStatusDraft && lifecycle.Status != authoring.LifecycleStatusPublished {
 			return Source{}, sourceUnavailable(ref, fmt.Errorf("dashboard has no current draft"))
@@ -228,18 +235,18 @@ func (a *Adapter) loadWorkspaceRevision(ctx context.Context, ref SourceRef, acto
 			return Source{}, sourceUnavailable(ref, fmt.Errorf("dashboard has no current draft"))
 		}
 		selectedToken = lifecycle.Draft.Revision
-		workspaceProvenance.DraftRevision = &selectedToken
+		instanceProvenance.DraftRevision = &selectedToken
 	} else {
 		if lifecycle.Status != authoring.LifecycleStatusPublished || lifecycle.Published == nil {
 			return Source{}, sourceUnavailable(ref, fmt.Errorf("dashboard is not published"))
 		}
 		selectedToken = lifecycle.Published.Revision
-		workspaceProvenance.PublishedRevision = selectedToken
+		instanceProvenance.PublishedRevision = selectedToken
 	}
 	if err := selectedToken.ValidateComplete(); err != nil {
 		return Source{}, fmt.Errorf("validate selected authored revision pointer: %w", err)
 	}
-	revision, err := a.repository.GetRevision(ctx, ref.WorkspaceID, ref.DashboardID, selectedToken.RevisionID)
+	revision, err := a.repository.GetRevision(ctx, ref.ProjectID, ref.DashboardID, selectedToken.RevisionID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) || errors.Is(err, authoring.ErrSourceUnavailable) {
 			return Source{}, sourceUnavailable(ref, err)
@@ -252,7 +259,7 @@ func (a *Adapter) loadWorkspaceRevision(ctx context.Context, ref SourceRef, acto
 	if revision.DashboardID != ref.DashboardID || !sameToken(revision.Token(), selectedToken) {
 		return Source{}, fmt.Errorf("selected authored revision pointer does not match retained authored revision")
 	}
-	if strings.TrimSpace(revision.Document.SemanticModel) != strings.TrimSpace(lifecycle.SemanticModel) {
+	if revision.Document.SemanticModel != lifecycle.SemanticModel {
 		return Source{}, fmt.Errorf("published authored revision semantic model does not match lifecycle")
 	}
 	document, err := revision.Document.Clone()
@@ -260,7 +267,7 @@ func (a *Adapter) loadWorkspaceRevision(ctx context.Context, ref SourceRef, acto
 		return Source{}, err
 	}
 	metadata := authoring.AuthoredDashboardMetadata{
-		Workspace: ref.WorkspaceID, Name: ref.DashboardID.String(), Title: lifecycle.Title,
+		Project: ref.ProjectID, Name: ref.DashboardID.String(), Title: lifecycle.Title,
 		Owner: lifecycle.OwnerPrincipalID,
 	}
 	var evidence *authoring.SourceMetadata
@@ -274,11 +281,11 @@ func (a *Adapter) loadWorkspaceRevision(ctx context.Context, ref SourceRef, acto
 		}
 		evidence = &copy
 	}
-	workspaceProvenance.SourceEvidence = evidence
+	instanceProvenance.SourceEvidence = evidence
 	return Source{
 		Ref: ref, Document: document, Metadata: metadata,
 		Lifecycle:  cloneLifecycle(lifecycle),
-		Provenance: Provenance{Kind: SourceWorkspace, Workspace: &workspaceProvenance},
+		Provenance: Provenance{Kind: SourceInstance, Instance: &instanceProvenance},
 	}, nil
 }
 
@@ -291,7 +298,7 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 	if a.acquireRuntime == nil {
 		return Source{}, fmt.Errorf("project dashboard runtime provider is required")
 	}
-	lease, err := a.acquireRuntime(ctx, ref.WorkspaceID)
+	lease, err := a.acquireRuntime(ctx)
 	if err != nil {
 		return Source{}, err
 	}
@@ -299,6 +306,13 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 		return Source{}, fmt.Errorf("project dashboard runtime provider returned a nil lease")
 	}
 	defer lease.Release()
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return Source{}, fmt.Errorf("project runtime serving identity does not match source project: %w", err)
+	}
+	if identity.ProjectID != ref.ProjectID {
+		return Source{}, fmt.Errorf("project runtime serving identity project %q does not match %q", identity.ProjectID, ref.ProjectID)
+	}
 	runtime := lease.Runtime()
 	projectRuntime, ok := runtime.(ProjectRuntime)
 	if !ok || projectRuntime == nil {
@@ -308,8 +322,8 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 	if !ok {
 		return Source{}, sourceUnavailable(ref, nil)
 	}
-	if strings.TrimSpace(retained.Metadata.Workspace) != strings.TrimSpace(ref.WorkspaceID) ||
-		strings.TrimSpace(retained.Metadata.Name) != ref.DashboardID.String() || retained.Document.ID != ref.DashboardID.String() {
+	if retained.Metadata.Project != ref.ProjectID ||
+		strings.TrimSpace(retained.Metadata.Name) != ref.DashboardID.String() || retained.Document.ID != ref.DashboardID {
 		return Source{}, fmt.Errorf("retained project source identity does not match request")
 	}
 	if err := retained.Document.ValidateDraftStructure(); err != nil {
@@ -324,15 +338,15 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 	return Source{
 		Ref: ref, Document: document, Metadata: metadata,
 		Provenance: Provenance{Kind: SourceProject, Project: &ProjectProvenance{
-			WorkspaceID: ref.WorkspaceID, DashboardID: ref.DashboardID,
-			ServingStateID: string(lease.ServingStateID()), Path: retained.Path,
+			ProjectID: ref.ProjectID, DashboardID: ref.DashboardID,
+			Identity: identity, Path: retained.Path,
 		}},
 	}, nil
 }
 
-func (a *Adapter) authorizeView(ctx context.Context, actorID string, ref SourceRef, owner, semanticModel string) error {
+func (a *Adapter) authorizeView(ctx context.Context, actorID string, ref SourceRef, owner string, semanticModel graph.ResourceID) error {
 	return a.authorizer.Authorize(ctx, service.AuthorizationRequest{
-		ActorID: actorID, WorkspaceID: ref.WorkspaceID, DashboardID: ref.DashboardID,
+		ActorID: actorID, ProjectID: ref.ProjectID, DashboardID: ref.DashboardID,
 		OwnerPrincipalID: owner, SemanticModel: semanticModel, Action: authoring.AuthorizationActionView,
 	})
 }
@@ -355,7 +369,7 @@ func (a *Adapter) Export(ctx context.Context, request ExportRequest) ([]byte, er
 }
 
 // ExportDraft emits canonical YAML for the repository-authoritative current
-// draft of a workspace dashboard. It does not accept a slug or a caller
+// draft of a project dashboard. It does not accept a slug or a caller
 // supplied revision; the lifecycle's draft pointer is the sole identity
 // translation from dashboard ID to authored content.
 func (a *Adapter) ExportDraft(ctx context.Context, request ExportRequest) ([]byte, error) {
@@ -371,40 +385,41 @@ func (a *Adapter) exportSource(source Source) ([]byte, error) {
 		return nil, fmt.Errorf("dashboard source exporter is not configured")
 	}
 	return a.exportDashboard(source.Document, authoring.DashboardExportMetadata{
-		Name: source.Metadata.Name, Workspace: source.Metadata.Workspace,
+		Name: source.Metadata.Name, Project: source.Metadata.Project,
 		Title: source.Metadata.Title, Description: source.Metadata.Description,
-		Owner: source.Metadata.Owner, Tags: append([]string(nil), source.Metadata.Tags...),
+		Owner: source.Metadata.Owner, Domain: source.Metadata.Domain,
+		Tags: append([]string(nil), source.Metadata.Tags...),
 	})
 }
 
 // ForkRequest copies a source into a new private authoring draft. Source
-// workspace forks use the repository's exact published revision and retain
+// project forks use the repository's exact published revision and retain
 // ForkEvidence. Project forks use the retained runtime document and carry
 // serving-state/path evidence without inventing a revision. Neither path
 // compiles, publishes, deploys, or mutates semantic models/data.
 type ForkRequest struct {
-	Source            SourceRef
-	TargetWorkspaceID string
-	ActorID           string
-	OwnerPrincipalID  string
-	Title             string
-	Slug              string
-	Origin            authoring.Origin
-	ConversationID    string
-	ToolCallID        string
-	IdempotencyKey    string
+	Source           SourceRef
+	TargetProjectID  graph.ResourceID
+	ActorID          string
+	OwnerPrincipalID string
+	Title            string
+	Slug             string
+	Origin           authoring.Origin
+	ConversationID   string
+	ToolCallID       string
+	IdempotencyKey   string
 }
 
 func (a *Adapter) Fork(ctx context.Context, request ForkRequest) (service.Result, error) {
 	if a == nil || a.authoring == nil {
 		return service.Result{}, fmt.Errorf("dashboard source adapter is not configured")
 	}
-	targetWorkspaceID := strings.TrimSpace(request.TargetWorkspaceID)
-	if targetWorkspaceID == "" {
-		targetWorkspaceID = strings.TrimSpace(request.Source.WorkspaceID)
+	targetProjectID := request.TargetProjectID
+	if targetProjectID == "" {
+		targetProjectID = request.Source.ProjectID
 	}
-	if targetWorkspaceID == "" {
-		return service.Result{}, fmt.Errorf("target workspace id is required")
+	if err := targetProjectID.Validate(); err != nil {
+		return service.Result{}, fmt.Errorf("target project id is invalid: %v", err)
 	}
 	if err := request.Source.validate(); err != nil {
 		return service.Result{}, err
@@ -414,11 +429,11 @@ func (a *Adapter) Fork(ctx context.Context, request ForkRequest) (service.Result
 		return service.Result{}, fmt.Errorf("actor id is required")
 	}
 	switch request.Source.Kind {
-	case SourceWorkspace:
-		if targetWorkspaceID != request.Source.WorkspaceID {
-			return service.Result{}, fmt.Errorf("workspace source forks must remain in the source workspace")
+	case SourceInstance:
+		if targetProjectID != request.Source.ProjectID {
+			return service.Result{}, fmt.Errorf("project source forks must remain in the source project")
 		}
-		if replay, found, err := a.authoring.LookupForkReplay(ctx, service.ForkIdentityRequest{TargetWorkspaceID: targetWorkspaceID, SourceKind: string(request.Source.Kind), SourceWorkspaceID: request.Source.WorkspaceID, SourceDashboardID: request.Source.DashboardID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug, Origin: request.Origin, ConversationID: request.ConversationID, ToolCallID: request.ToolCallID, IdempotencyKey: request.IdempotencyKey}); err != nil {
+		if replay, found, err := a.authoring.LookupForkReplay(ctx, service.ForkIdentityRequest{TargetProjectID: targetProjectID, SourceKind: string(request.Source.Kind), SourceProjectID: request.Source.ProjectID, SourceDashboardID: request.Source.DashboardID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug, Origin: request.Origin, ConversationID: request.ConversationID, ToolCallID: request.ToolCallID, IdempotencyKey: request.IdempotencyKey}); err != nil {
 			return service.Result{}, err
 		} else if found {
 			return replay, nil
@@ -426,13 +441,13 @@ func (a *Adapter) Fork(ctx context.Context, request ForkRequest) (service.Result
 		// Service.Fork performs VIEW before reading source content on a first
 		// execution. Replays were resolved above without touching the source.
 		return a.authoring.Fork(ctx, service.ForkRequest{
-			WorkspaceID: request.Source.WorkspaceID, SourceDashboardID: request.Source.DashboardID,
+			ProjectID: request.Source.ProjectID, SourceDashboardID: request.Source.DashboardID,
 			ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug,
 			Origin: request.Origin, ConversationID: request.ConversationID, ToolCallID: request.ToolCallID,
 			IdempotencyKey: request.IdempotencyKey,
 		})
 	case SourceProject:
-		if replay, found, err := a.authoring.LookupForkReplay(ctx, service.ForkIdentityRequest{TargetWorkspaceID: targetWorkspaceID, SourceKind: string(request.Source.Kind), SourceWorkspaceID: request.Source.WorkspaceID, SourceDashboardID: request.Source.DashboardID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug, Origin: request.Origin, ConversationID: request.ConversationID, ToolCallID: request.ToolCallID, IdempotencyKey: request.IdempotencyKey}); err != nil {
+		if replay, found, err := a.authoring.LookupForkReplay(ctx, service.ForkIdentityRequest{TargetProjectID: targetProjectID, SourceKind: string(request.Source.Kind), SourceProjectID: request.Source.ProjectID, SourceDashboardID: request.Source.DashboardID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug, Origin: request.Origin, ConversationID: request.ConversationID, ToolCallID: request.ToolCallID, IdempotencyKey: request.IdempotencyKey}); err != nil {
 			return service.Result{}, err
 		} else if found {
 			return replay, nil
@@ -443,12 +458,12 @@ func (a *Adapter) Fork(ctx context.Context, request ForkRequest) (service.Result
 		}
 		sourceEvidence, forkEvidence := projectSourceEvidence(source)
 		return a.authoring.CreateFromDocument(ctx, service.CreateFromDocumentRequest{
-			WorkspaceID: targetWorkspaceID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID,
+			ProjectID: targetProjectID, ActorID: actorID, OwnerPrincipalID: request.OwnerPrincipalID,
 			Document: source.Document, Title: request.Title, Slug: request.Slug, Origin: request.Origin,
 			Source: sourceEvidence, ForkedFrom: forkEvidence, ConversationID: request.ConversationID,
-			ToolCallID: request.ToolCallID, BaseSemanticServingStateID: source.Provenance.Project.ServingStateID,
+			ToolCallID: request.ToolCallID, BaseSemanticIdentity: source.Provenance.Project.Identity,
 			IdempotencyKey: request.IdempotencyKey,
-			OperationSeed:  &service.ForkOperationSeed{SourceKind: string(request.Source.Kind), SourceWorkspaceID: request.Source.WorkspaceID, SourceDashboardID: request.Source.DashboardID, TargetWorkspaceID: targetWorkspaceID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug},
+			OperationSeed:  &service.ForkOperationSeed{SourceKind: string(request.Source.Kind), SourceProjectID: request.Source.ProjectID, SourceDashboardID: request.Source.DashboardID, TargetProjectID: targetProjectID, OwnerPrincipalID: request.OwnerPrincipalID, Title: request.Title, Slug: request.Slug},
 		})
 	default:
 		return service.Result{}, fmt.Errorf("invalid dashboard source kind %q", request.Source.Kind)
@@ -462,8 +477,8 @@ func projectSourceEvidence(source Source) (*authoring.SourceMetadata, *authoring
 	}
 	evidence := &authoring.SourceMetadata{Path: project.Path}
 	fork := &authoring.ForkEvidence{Kind: authoring.ForkSourceProject, Project: &authoring.ProjectForkEvidence{
-		SourceWorkspaceID: project.WorkspaceID, SourceDashboardID: project.DashboardID,
-		ServingStateID: project.ServingStateID, Path: project.Path,
+		SourceProjectID: project.ProjectID, SourceDashboardID: project.DashboardID,
+		Identity: project.Identity, Path: project.Path,
 	}}
 	return evidence, fork
 }
@@ -491,7 +506,7 @@ var ErrSourceUnavailable = errors.New("dashboard authored source is unavailable"
 
 type SourceUnavailableError struct {
 	Kind        SourceKind
-	WorkspaceID string
+	ProjectID   graph.ResourceID
 	DashboardID authoring.DashboardID
 	Cause       error
 }
@@ -500,7 +515,7 @@ func (e *SourceUnavailableError) Error() string {
 	if e == nil {
 		return ErrSourceUnavailable.Error()
 	}
-	return fmt.Sprintf("dashboard %s source %s/%s is unavailable", e.Kind, e.WorkspaceID, e.DashboardID)
+	return fmt.Sprintf("dashboard %s source %s/%s is unavailable", e.Kind, e.ProjectID, e.DashboardID)
 }
 
 func (e *SourceUnavailableError) Unwrap() error {
@@ -514,5 +529,5 @@ func (e *SourceUnavailableError) Unwrap() error {
 }
 
 func sourceUnavailable(ref SourceRef, cause error) error {
-	return &SourceUnavailableError{Kind: ref.Kind, WorkspaceID: ref.WorkspaceID, DashboardID: ref.DashboardID, Cause: cause}
+	return &SourceUnavailableError{Kind: ref.Kind, ProjectID: ref.ProjectID, DashboardID: ref.DashboardID, Cause: cause}
 }

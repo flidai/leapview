@@ -115,17 +115,6 @@ sql:
         omit_unused_structs: true
 
   - engine: "sqlite"
-    queries: "internal/workspace/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "db"
-        out: "internal/workspace/internal/db"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
     queries: "internal/manageddata/sqlite/queries"
     schema: "internal/platform/migrations"
     gen:
@@ -154,6 +143,17 @@ sql:
       go:
         package: "db"
         out: "internal/servingstate/internal/db"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "sqlite"
+    queries: "internal/project/sqlite/queries"
+    schema: "internal/platform/migrations"
+    gen:
+      go:
+        package: "db"
+        out: "internal/project/internal/db"
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true

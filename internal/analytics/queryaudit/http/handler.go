@@ -9,15 +9,16 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	api "github.com/flidai/leapview/internal/platform/http/model"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
 type ReaderProvider func() (queryaudit.Reader, error)
-type WorkspaceIDNormalizer func(string) string
+type ProjectIDNormalizer func(string) projectgraph.ResourceID
 
 type Handler struct {
-	Reader      ReaderProvider
-	WorkspaceID WorkspaceIDNormalizer
+	Reader    ReaderProvider
+	ProjectID ProjectIDNormalizer
 }
 
 func (h Handler) ListQueryEvents(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +37,7 @@ func (h Handler) ListQueryEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	cursorTime, cursorID := decodeCursor(r.URL.Query().Get("pageToken"))
 	rows, err := repo.ListQueryEvents(r.Context(), queryaudit.Filter{
-		WorkspaceID:  h.workspaceID(chi.URLParam(r, "workspace")),
+		ProjectID:    h.projectID(chi.URLParam(r, "project")),
 		PrincipalID:  r.URL.Query().Get("principal"),
 		PrincipalIDs: cleanValues(r.URL.Query()["principal"]),
 		Surface:      r.URL.Query().Get("surface"),
@@ -79,11 +80,11 @@ func (h Handler) repository() (queryaudit.Reader, error) {
 	return h.Reader()
 }
 
-func (h Handler) workspaceID(value string) string {
-	if h.WorkspaceID == nil {
-		return strings.TrimSpace(value)
+func (h Handler) projectID(value string) projectgraph.ResourceID {
+	if h.ProjectID == nil {
+		return projectgraph.ResourceID(strings.TrimSpace(value))
 	}
-	return h.WorkspaceID(value)
+	return h.ProjectID(value)
 }
 
 func eventDTO(row queryaudit.Event) map[string]any {
@@ -95,7 +96,7 @@ func eventDTO(row queryaudit.Event) map[string]any {
 		query = map[string]any{}
 	}
 	return map[string]any{
-		"id": row.ID, "workspaceId": row.WorkspaceID, "principalId": emptyToNil(row.PrincipalID),
+		"id": row.ID, "projectId": row.ProjectID.String(), "principalId": emptyToNil(row.PrincipalID),
 		"surface": row.Surface, "operation": row.Operation, "queryKind": row.QueryKind,
 		"modelId": row.ModelID, "target": row.Target, "status": row.Status,
 		"objectType": row.ObjectType, "objectId": row.ObjectID, "requestId": row.RequestID,

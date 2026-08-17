@@ -5,11 +5,13 @@ package runtimebinding
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 type Connection struct {
 	ModelID string
 	Name    string
+	ID      string
 }
 
 type Target interface {
@@ -22,7 +24,10 @@ func BindRoots(target Target, roots map[string]string) error {
 		return fmt.Errorf("managed-data binding target is required")
 	}
 	for _, connection := range target.ManagedConnections() {
-		resolvedRoot := roots[connection.Name]
+		if connection.ID == "" || connection.ID != strings.TrimSpace(connection.ID) {
+			return fmt.Errorf("semantic model %q managed connection %q has no stable ID", connection.ModelID, connection.Name)
+		}
+		resolvedRoot := roots[connection.ID]
 		if resolvedRoot == "" {
 			return fmt.Errorf("semantic model %q managed connection %q has no bound revision", connection.ModelID, connection.Name)
 		}

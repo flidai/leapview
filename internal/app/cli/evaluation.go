@@ -40,9 +40,8 @@ const (
 	evaluationProjectRelativePath   = "project/leapview.yaml"
 	evaluationDataRelativePath      = "data"
 	evaluationConnection            = "sample"
-	evaluationProjectID             = "leapview-evaluation"
-	evaluationWorkspaceID           = "evaluation"
-	evaluationDashboardID           = "sales-overview"
+	evaluationProjectID             = "project:leapview-evaluation"
+	evaluationDashboardID           = "dashboard:sales-overview"
 )
 
 type evaluationOptions struct {
@@ -66,7 +65,6 @@ type evaluationBootstrapCredentials struct {
 
 type evaluationCompletion struct {
 	ProjectID  string `json:"projectId"`
-	Workspace  string `json:"workspace"`
 	Dashboard  string `json:"dashboard"`
 	RevisionID string `json:"revisionId"`
 }
@@ -195,8 +193,7 @@ func runEvaluation(
 		return err
 	}
 	completion := evaluationCompletion{
-		ProjectID: evaluationProjectID, Workspace: evaluationWorkspaceID,
-		Dashboard: evaluationDashboardID, RevisionID: revisionID,
+		ProjectID: evaluationProjectID, Dashboard: evaluationDashboardID, RevisionID: revisionID,
 	}
 	if err := writeEvaluationCompletion(home, completion); err != nil {
 		return err
@@ -333,7 +330,7 @@ func waitForEvaluationEndpoint(ctx context.Context, serverErr chan error, endpoi
 func writeEvaluationReadyMessage(out io.Writer, target evaluationTarget) {
 	_, _ = fmt.Fprintf(
 		out,
-		"LeapView evaluation is ready at %s/workspaces/evaluation/dashboards/sales-overview\n",
+		"LeapView evaluation is ready at %s/dashboards/sales-overview\n",
 		target.PublicURL,
 	)
 	_, _ = fmt.Fprintln(out, "Run `leapview evaluate first-login` with the same LEAPVIEW_HOME once to retrieve the required sign-in credentials.")
@@ -372,8 +369,8 @@ func evaluationAssetsExist(root string) bool {
 }
 
 func writeEvaluationCompletion(home string, completion evaluationCompletion) error {
-	if completion.ProjectID != evaluationProjectID || completion.Workspace != evaluationWorkspaceID ||
-		completion.Dashboard != evaluationDashboardID || !canonicalManagedRevisionID(completion.RevisionID) {
+	if completion.ProjectID != evaluationProjectID || completion.Dashboard != evaluationDashboardID ||
+		!canonicalManagedRevisionID(completion.RevisionID) {
 		return fmt.Errorf("evaluation completion is invalid")
 	}
 	contents, err := json.Marshal(completion)
@@ -395,8 +392,8 @@ func readEvaluationCompletion(home string) (evaluationCompletion, error) {
 	if err := json.Unmarshal(contents, &completion); err != nil {
 		return evaluationCompletion{}, fmt.Errorf("decode evaluation completion: %w", err)
 	}
-	if completion.ProjectID != evaluationProjectID || completion.Workspace != evaluationWorkspaceID ||
-		completion.Dashboard != evaluationDashboardID || !canonicalManagedRevisionID(completion.RevisionID) {
+	if completion.ProjectID != evaluationProjectID || completion.Dashboard != evaluationDashboardID ||
+		!canonicalManagedRevisionID(completion.RevisionID) {
 		return evaluationCompletion{}, fmt.Errorf("evaluation completion is invalid")
 	}
 	return completion, nil

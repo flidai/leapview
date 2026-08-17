@@ -10,11 +10,12 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type candidateRuntimeBindingKey struct {
 	candidateID string
-	workspaceID string
+	projectID   projectgraph.ResourceID
 }
 
 type candidateRuntimeBindingEntry struct {
@@ -23,8 +24,8 @@ type candidateRuntimeBindingEntry struct {
 }
 
 type CandidateAuthoredConnection struct {
-	LogicalConnectionID string
-	ConnectorKind       string
+	ConnectionID  projectgraph.ResourceID
+	ConnectorKind string
 }
 
 type candidateRuntimeBindingRegistry struct {
@@ -34,7 +35,7 @@ type candidateRuntimeBindingRegistry struct {
 }
 
 // RuntimeBindingRegistration owns validated target pool leases for one
-// candidate workspace. Closing it removes future discovery and releases the
+// candidate runtime. Closing it removes future discovery and releases the
 // exact pool generations only after Runtime Host drains the candidate runtime.
 type RuntimeBindingRegistration struct {
 	once     sync.Once
@@ -46,20 +47,19 @@ type RuntimeBindingRegistration struct {
 
 func (module *Module) BindCandidateRuntime(
 	candidateID string,
-	workspaceID string,
+	projectID projectgraph.ResourceID,
 	leases *RuntimeBindingLeases,
 	authoredConnections []CandidateAuthoredConnection,
 ) (*RuntimeBindingRegistration, error) {
 	candidateID = strings.TrimSpace(candidateID)
-	workspaceID = strings.TrimSpace(workspaceID)
-	if module == nil || candidateID == "" || workspaceID == "" || leases == nil {
+	if module == nil || candidateID == "" || projectID.Validate() != nil || leases == nil {
 		return nil, fmt.Errorf(
-			"%w: candidate, workspace, and validated leases are required",
+			"%w: candidate, project, and validated leases are required",
 			connectionbinding.ErrInvalidBinding,
 		)
 	}
 	key := candidateRuntimeBindingKey{
-		candidateID: candidateID, workspaceID: workspaceID,
+		candidateID: candidateID, projectID: projectID,
 	}
 	authored, err := candidateAuthoredConnectionSet(authoredConnections)
 	if err != nil {
@@ -77,7 +77,12 @@ func (registration *RuntimeBindingRegistration) Evidence() []ConnectionBindingEv
 	if registration == nil || registration.leases == nil {
 		return nil
 	}
-	return registration.leases.Evidence()
+	runtimeEvidence := registration.leases.Evidence()
+	evidence := make([]ConnectionBindingEvidence, 0, len(runtimeEvidence))
+	for _, value := range runtimeEvidence {
+		evidence = append(evidence, value.BindingEvidence)
+	}
+	return evidence
 }
 
 func (registration *RuntimeBindingRegistration) Close() error {
@@ -129,14 +134,14 @@ func (registry *candidateRuntimeBindingRegistry) remove(
 
 func (module *Module) candidateRuntimeConnectionResolver(
 	candidateID string,
-	workspaceID string,
+	projectID projectgraph.ResourceID,
 ) (analyticsruntime.ConnectionResolver, bool) {
 	if module == nil {
 		return nil, false
 	}
 	return module.candidateRuntimeBindings.lookup(candidateRuntimeBindingKey{
 		candidateID: strings.TrimSpace(candidateID),
-		workspaceID: strings.TrimSpace(workspaceID),
+		projectID:   projectID,
 	})
 }
 
@@ -150,12 +155,12 @@ func (resolver runtimeBindingConnectionResolver) Resolve(
 	name string,
 	logical semanticmodel.Connection,
 ) (resolved semanticmodel.Connection, resultErr error) {
-	logicalID, err := connectionbinding.ParseLogicalConnectionID(strings.TrimSpace(name))
+	connectionID, err := connectionbinding.ParseConnectionID(strings.TrimSpace(name))
 	if err != nil {
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	logicalKind := strings.TrimSpace(logical.Kind)
-	if authoredKind, ok := resolver.authored[logicalID.String()]; ok {
+	if authoredKind, ok := resolver.authored[connectionID.String()]; ok {
 		if logicalKind != authoredKind {
 			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 		}
@@ -173,7 +178,7 @@ func (resolver runtimeBindingConnectionResolver) Resolve(
 		return semanticmodel.Connection{}, connectionbinding.ErrBindingNotFound
 	}
 	err = resolver.leases.UsePool(
-		logicalID,
+		connectionID,
 		func(pool connectionbinding.RuntimePool) error {
 			target, ok := pool.(analyticsruntime.ConnectionResolver)
 			if !ok {
@@ -194,8 +199,8 @@ func candidateAuthoredConnectionSet(
 ) (map[string]string, error) {
 	result := make(map[string]string, len(values))
 	for _, value := range values {
-		logicalID, err := connectionbinding.ParseLogicalConnectionID(
-			strings.TrimSpace(value.LogicalConnectionID),
+		connectionID, err := connectionbinding.ParseConnectionID(
+			strings.TrimSpace(value.ConnectionID.String()),
 		)
 		kind := strings.TrimSpace(value.ConnectorKind)
 		spec, exists := connectors.LookupConnection(kind)
@@ -203,10 +208,10 @@ func candidateAuthoredConnectionSet(
 			spec.ActivationMode != connectors.AuthoredActivation {
 			return nil, connectionbinding.ErrIncompatibleBinding
 		}
-		if _, duplicate := result[logicalID.String()]; duplicate {
+		if _, duplicate := result[connectionID.String()]; duplicate {
 			return nil, connectionbinding.ErrIncompatibleBinding
 		}
-		result[logicalID.String()] = kind
+		result[connectionID.String()] = kind
 	}
 	return result, nil
 }

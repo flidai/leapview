@@ -89,7 +89,7 @@ func ValidateDatabaseInstanceEnvironment(ctx context.Context, path, expected str
 		return fmt.Errorf("read backup instance environment: %w", err)
 	}
 	rows, err := db.QueryContext(ctx, `
-		SELECT environment FROM workspace_active_serving_states
+		SELECT environment FROM project_active_serving_states
 		UNION
 		SELECT environment FROM managed_data_environment_pointers
 	`)
@@ -112,7 +112,7 @@ func ValidateDatabaseInstanceEnvironment(ctx context.Context, path, expected str
 
 func (s *Store) activeEnvironments(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT environment FROM workspace_active_serving_states
+		SELECT environment FROM project_active_serving_states
 		UNION
 		SELECT environment FROM managed_data_environment_pointers
 	`)

@@ -7,10 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
-func TestAPIGenDefinitionsRequireAndUseExplicitWorkspace(t *testing.T) {
+func TestAPIGenDefinitionsUseBoundProjectContext(t *testing.T) {
 	var authorizedScope Scope
 	var dispatchedPath string
 	provider := APIGenProvider{
@@ -28,7 +30,7 @@ func TestAPIGenDefinitionsRequireAndUseExplicitWorkspace(t *testing.T) {
 	}
 
 	var definition agentcore.ToolDefinition
-	for _, candidate := range provider.Definitions(Scope{WorkspaceID: "embedded", PrincipalID: "principal-1"}) {
+	for _, candidate := range provider.Definitions(Scope{ProjectID: "project_demo", PrincipalID: "principal-1"}) {
 		if candidate.Name == "query_semantic_model" {
 			definition = candidate
 			break
@@ -44,25 +46,25 @@ func TestAPIGenDefinitionsRequireAndUseExplicitWorkspace(t *testing.T) {
 	if err := json.Unmarshal(definition.InputSchema, &schema); err != nil {
 		t.Fatalf("decode input schema: %v", err)
 	}
-	if _, ok := schema.Properties["workspace"]; !ok || !containsString(schema.Required, "workspace") {
-		t.Fatalf("input schema = %s, want required workspace", definition.InputSchema)
+	if _, ok := schema.Properties["project"]; ok || containsString(schema.Required, "project") {
+		t.Fatalf("input schema = %s, must not expose project selector", definition.InputSchema)
 	}
 	limit, _ := schema.Properties["limit"].(map[string]any)
 	if limit["maximum"] != float64(maxAgentQueryRows) {
 		t.Fatalf("agent query limit maximum = %#v, want %d", limit["maximum"], maxAgentQueryRows)
 	}
 
-	result, err := definition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "call-1", Arguments: json.RawMessage(`{"workspace":"sales","model":"orders"}`)})
+	result, err := definition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "call-1", Arguments: json.RawMessage(`{"model":"orders"}`)})
 	if err != nil {
 		t.Fatalf("run tool: %v", err)
 	}
-	if result.IsError && !strings.Contains(dispatchedPath, "/api/v1/workspaces/sales/") {
+	if result.IsError && !strings.Contains(dispatchedPath, "/api/v1/projects/project_demo/") {
 		t.Fatalf("tool result = %#v", result)
 	}
-	if authorizedScope.WorkspaceID != "sales" {
-		t.Fatalf("authorized workspace = %q, want sales", authorizedScope.WorkspaceID)
+	if authorizedScope.ProjectID != "project_demo" {
+		t.Fatalf("authorized project = %q, want project_demo", authorizedScope.ProjectID)
 	}
-	if dispatchedPath != "/api/v1/workspaces/sales/semantic-models/orders/query" {
+	if dispatchedPath != "/api/v1/projects/project_demo/semantic-models/orders/query" {
 		t.Fatalf("dispatched path = %q", dispatchedPath)
 	}
 }
@@ -187,15 +189,18 @@ func TestCuratedQueryArgumentsAcceptCatalogReferenceIDs(t *testing.T) {
 	}
 }
 
-func TestVisualDefinitionRequiresAndUsesExplicitWorkspace(t *testing.T) {
+func TestVisualDefinitionUsesBoundProjectContext(t *testing.T) {
 	var authorizedScope Scope
 	provider := VisualProvider{
+		Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+			return id, nil
+		},
 		Authorize: func(_ context.Context, scope Scope, _ VisualAuthorizationRequest) (agentcore.ToolResult, bool) {
 			authorizedScope = scope
 			return apigenAgentToolError("authorization_failed", "stop after scope capture"), false
 		},
 	}
-	definition := provider.Definitions(Scope{WorkspaceID: "embedded", PrincipalID: "principal-1"})[0]
+	definition := provider.Definitions(Scope{ProjectID: "project_demo", PrincipalID: "principal-1"})[0]
 	var schema struct {
 		Properties map[string]any `json:"properties"`
 		Required   []string       `json:"required"`
@@ -203,18 +208,18 @@ func TestVisualDefinitionRequiresAndUsesExplicitWorkspace(t *testing.T) {
 	if err := json.Unmarshal(definition.InputSchema, &schema); err != nil {
 		t.Fatalf("decode input schema: %v", err)
 	}
-	if _, ok := schema.Properties["workspace"]; !ok || !containsString(schema.Required, "workspace") {
-		t.Fatalf("visual schema = %s, want required workspace", definition.InputSchema)
+	if _, ok := schema.Properties["project"]; ok || containsString(schema.Required, "project") {
+		t.Fatalf("visual schema = %s, must not expose project selector", definition.InputSchema)
 	}
 	_, err := definition.Handler.Run(context.Background(), agentcore.ToolCall{
 		ID:        "call-visual",
-		Arguments: json.RawMessage(`{"workspace":"sales","type":"bar","model":"orders","dataset":"orders"}`),
+		Arguments: json.RawMessage(`{"type":"bar","semanticModelId":"orders","dataset":"orders"}`),
 	})
 	if err != nil {
 		t.Fatalf("run tool: %v", err)
 	}
-	if authorizedScope.WorkspaceID != "sales" {
-		t.Fatalf("authorized workspace = %q, want sales", authorizedScope.WorkspaceID)
+	if authorizedScope.ProjectID != "project_demo" {
+		t.Fatalf("authorized project = %q, want project_demo", authorizedScope.ProjectID)
 	}
 }
 

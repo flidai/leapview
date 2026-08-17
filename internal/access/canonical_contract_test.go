@@ -192,6 +192,39 @@ func TestCanonicalCapabilityMatrixEnforcesKinds(t *testing.T) {
 	}
 }
 
+func TestProjectRolesExposeCapturedCanonicalCapabilityBundles(t *testing.T) {
+	if got := ProjectRoleCapabilities(ProjectRoleDataDeployer); !reflect.DeepEqual(got, []Capability{CapabilityResourceUse, CapabilityResourceEdit}) {
+		t.Fatalf("data deployer capability bundle = %#v", got)
+	}
+	for _, role := range CanonicalProjectRoles() {
+		parsed, err := ParseProjectRole(string(role))
+		if err != nil || parsed != role {
+			t.Fatalf("ParseProjectRole(%q) = %q, %v", role, parsed, err)
+		}
+		bundle := ProjectRoleCapabilities(role)
+		if len(bundle) == 0 {
+			t.Fatalf("role %q has empty capability bundle", role)
+		}
+		original := append([]Capability(nil), bundle...)
+		bundle[0] = Capability("RESOURCE_PUBLISH")
+		if got := ProjectRoleCapabilities(role); !reflect.DeepEqual(got, original) {
+			t.Fatalf("role %q capability bundle leaked caller mutation: %#v", role, got)
+		}
+	}
+	if _, err := ParseProjectRole("unknown"); !errors.Is(err, ErrInvalidProjectRole) {
+		t.Fatalf("invalid role error = %v", err)
+	}
+	if _, err := ParseProjectRole("platform_admin"); !errors.Is(err, ErrInvalidProjectRole) {
+		t.Fatalf("platform role crossed project boundary: %v", err)
+	}
+	if _, err := ParsePlatformRole("owner"); !errors.Is(err, ErrInvalidPlatformRole) {
+		t.Fatalf("invalid platform role error = %v", err)
+	}
+	if role, err := ParsePlatformRole("platform_admin"); err != nil || role != PlatformRoleAdmin {
+		t.Fatalf("ParsePlatformRole() = %q, %v", role, err)
+	}
+}
+
 func TestCanonicalValidationRejectsInvalidInputs(t *testing.T) {
 	project := canonicalTestProject(t)
 	if _, err := NewResourceRef("models/orders", graph.KindModel); !errors.Is(err, graph.ErrInvalidResourceID) {
@@ -216,6 +249,24 @@ func TestCanonicalValidationRejectsInvalidInputs(t *testing.T) {
 	}
 	if _, err := NewCanonicalGrant(project, subject, resource, Capability("RESOURCE_DELETE")); !errors.Is(err, ErrInvalidCapability) {
 		t.Fatalf("invalid capability error = %v", err)
+	}
+}
+
+func TestCanonicalConstructorsRejectNonCanonicalLiterals(t *testing.T) {
+	for _, role := range []string{" admin", "admin ", "ADMIN"} {
+		if _, err := ParseProjectRole(role); !errors.Is(err, ErrInvalidProjectRole) {
+			t.Fatalf("ParseProjectRole(%q) error = %v, want invalid role", role, err)
+		}
+	}
+	for _, role := range []string{" platform_admin", "PLATFORM_ADMIN"} {
+		if _, err := ParsePlatformRole(role); !errors.Is(err, ErrInvalidPlatformRole) {
+			t.Fatalf("ParsePlatformRole(%q) error = %v, want invalid role", role, err)
+		}
+	}
+	for _, id := range []string{" alice", "alice ", "alice\t"} {
+		if _, err := NewSubjectRef(SubjectKindPrincipal, id); !errors.Is(err, ErrInvalidSubjectRef) {
+			t.Fatalf("NewSubjectRef(%q) error = %v, want invalid subject", id, err)
+		}
 	}
 }
 

@@ -7,21 +7,23 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	"github.com/flidai/leapview/internal/refresh/artifact"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -34,6 +36,12 @@ type generatedRefreshAPI interface {
 }
 
 var testRefreshWorkflow = jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return nil })
+
+func testAuthorization() AuthorizationConfig {
+	return AuthorizationConfig{AuthorizeObject: func(context.Context, string, access.Capability, access.ResourceRef) (bool, error) {
+		return true, nil
+	}}
+}
 
 var _ generatedRefreshAPI = (*Module)(nil)
 
@@ -61,7 +69,7 @@ func TestRefreshCreateVerifiesPersistedLifecycleWithoutAppendingDuplicate(t *tes
 		t.Fatal("generated refresh execution contract is unavailable")
 	}
 	store := &refreshEventStore{events: []jobs.Event{{EventType: contract.Execution.InitialEvent}}}
-	module, err := Build(t.Context(), Config{Events: store})
+	module, err := Build(t.Context(), Config{Events: store, Authorization: testAuthorization()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +77,7 @@ func TestRefreshCreateVerifiesPersistedLifecycleWithoutAppendingDuplicate(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := refreshrun.RunRecord{ID: "run-1", WorkspaceID: "sales", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
+	run := refreshrun.RunRecord{ID: "run-1", Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation"}, SemanticModelID: "orders", PipelineID: "daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
 	if err := module.verifyRunCreated(ctx, run); err != nil {
 		t.Fatal(err)
 	}
@@ -81,13 +89,14 @@ func TestRefreshCreateVerifiesPersistedLifecycleWithoutAppendingDuplicate(t *tes
 func TestRefreshCreatePersistedAuditVerificationFailureIsBestEffort(t *testing.T) {
 	var logs bytes.Buffer
 	module, err := Build(t.Context(), Config{
-		Events: &refreshEventStore{err: errors.New("event store unavailable")},
-		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+		Events:        &refreshEventStore{err: errors.New("event store unavailable")},
+		Logger:        slog.New(slog.NewTextHandler(&logs, nil)),
+		Authorization: testAuthorization(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	run := refreshrun.RunRecord{ID: "run-audit-failure", WorkspaceID: "sales", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales.daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
+	run := refreshrun.RunRecord{ID: "run-audit-failure", Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation"}, SemanticModelID: "orders", PipelineID: "daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
 	if err := module.verifyRunCreated(t.Context(), run); err != nil {
 		t.Fatalf("best-effort verification changed command result: %v", err)
 	}
@@ -99,14 +108,20 @@ func TestRefreshCreatePersistedAuditVerificationFailureIsBestEffort(t *testing.T
 }
 
 func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
-	module, err := Build(t.Context(), Config{HTTP: HTTPConfig{
-		WorkspaceID: func(value string) string { return "resolved-" + value },
-	}})
+	module, err := Build(t.Context(), Config{Authorization: testAuthorization(), HTTP: HTTPConfig{ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) {
+		return projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation"}, nil
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := module.HTTP().WorkspaceID("sales"); got != "resolved-sales" {
-		t.Fatalf("workspace = %q", got)
+	if module.HTTP().ServingIdentity == nil {
+		t.Fatal("serving identity resolver missing")
+	}
+}
+
+func TestBuildRequiresCanonicalAuthorizer(t *testing.T) {
+	if _, err := Build(t.Context(), Config{}); err == nil {
+		t.Fatal("Build accepted a missing canonical authorizer")
 	}
 }
 
@@ -116,29 +131,27 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 		t.Fatalf("open platform store: %v", err)
 	}
 	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatalf("insert workspace: %v", err)
-	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, workspace_id, environment, status) VALUES ('state_1', 'sales', 'prod', 'active')`); err != nil {
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES ('state_1', 'sales', 'prod', 'active')`); err != nil {
 		t.Fatalf("insert serving state: %v", err)
 	}
 	states := reconciliationStates{
 		state: servingstate.State{
-			ID: "state_1", WorkspaceID: "sales", Environment: "prod", Source: servingstate.SourcePublish,
+			ID: "state_1", ProjectID: "sales", Environment: "prod", Source: servingstate.SourcePublish,
 			DuckLakeSnapshotID: 42, ActivatedAt: "2026-07-22T12:00:00Z",
 		},
-		artifact: servingstate.Artifact{Digest: "sha256:artifact"},
+		artifact: servingstate.Artifact{Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
 	}
 	publisher := &versionPublisher{}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Environment: "prod", Workflow: testRefreshWorkflow,
+		Database: store.SQLDB(), Workflow: testRefreshWorkflow,
+		Authorization: testAuthorization(),
 		Service: refreshrun.Service{
 			ServingStates: states,
 			Artifacts: artifactLoaderFunc(func(context.Context, servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
 				return refreshrun.LoadedArtifact{Definition: &artifact.Definition{
 					Models: map[string]*semanticmodel.Model{"orders": {}},
 					Pipelines: map[string]refreshschedule.Definition{
-						"daily": {ID: "daily", SemanticModel: "orders"},
+						"daily": {ID: "daily", SemanticModelID: "orders"},
 					},
 				}}, nil
 			}),
@@ -151,11 +164,19 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 	if err := module.Reconcile(t.Context()); err != nil {
 		t.Fatalf("reconcile schedules: %v", err)
 	}
-	version, found, err := module.DataVersion(t.Context(), "sales", "prod", "orders")
+	identity, err := projectgraph.NewServingIdentity("sales", "prod", "state_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelID, err := projectgraph.NewResourceID("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, found, err := refreshsqlite.NewRepository(store.SQLDB()).DataVersion(t.Context(), identity, modelID)
 	if err != nil || !found {
 		t.Fatalf("data version = %#v, %v, %v", version, found, err)
 	}
-	if version.SnapshotID != 42 || version.ServingStateID != "state_1" || version.Source != refreshschedule.DataVersionSourcePublish {
+	if version.SnapshotID != 42 || version.Identity.GenerationID != "state_1" || version.Source != refreshschedule.DataVersionSourcePublish {
 		t.Fatalf("unexpected data version: %#v", version)
 	}
 	if got := publisher.modelID; got != "orders" {
@@ -163,15 +184,42 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 	}
 }
 
+func TestReconcileRejectsMultipleActiveServingScopes(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+	module, err := Build(t.Context(), Config{
+		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		Service: refreshrun.Service{
+			ServingStates: reconciliationStates{scopes: []servingstate.ActiveScope{{ProjectID: "sales", Environment: "prod"}, {ProjectID: "sales", Environment: "dev"}}},
+			Artifacts: artifactLoaderFunc(func(context.Context, servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
+				return refreshrun.LoadedArtifact{}, nil
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatalf("build module: %v", err)
+	}
+	if err := module.Reconcile(t.Context()); err == nil {
+		t.Fatal("Reconcile accepted multiple active serving scopes")
+	}
+}
+
 type reconciliationStates struct {
 	state    servingstate.State
 	artifact servingstate.Artifact
+	scopes   []servingstate.ActiveScope
 }
 
 func (s reconciliationStates) ListActiveScopes(context.Context) ([]servingstate.ActiveScope, error) {
-	return []servingstate.ActiveScope{{WorkspaceID: s.state.WorkspaceID, Environment: s.state.Environment}}, nil
+	if s.scopes != nil {
+		return s.scopes, nil
+	}
+	return []servingstate.ActiveScope{{ProjectID: s.state.ProjectID, Environment: s.state.Environment}}, nil
 }
-func (s reconciliationStates) ActiveArtifact(context.Context, servingstate.WorkspaceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+func (s reconciliationStates) ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
 	return s.state, s.artifact, nil
 }
 func (s reconciliationStates) Create(context.Context, servingstate.CreateInput) (servingstate.State, error) {
@@ -189,7 +237,7 @@ func (s reconciliationStates) ArtifactByServingState(context.Context, servingsta
 func (s reconciliationStates) RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error {
 	return nil
 }
-func (s reconciliationStates) Activate(context.Context, servingstate.WorkspaceID, servingstate.Environment, servingstate.ID) (servingstate.State, error) {
+func (s reconciliationStates) Activate(context.Context, projectgraph.ResourceID, servingstate.Environment, servingstate.ID, servingstate.ID) (servingstate.State, error) {
 	return servingstate.State{}, nil
 }
 func (s reconciliationStates) MarkFailed(context.Context, servingstate.ID, error) error { return nil }
@@ -202,47 +250,10 @@ func (f artifactLoaderFunc) Load(ctx context.Context, artifact servingstate.Arti
 
 type versionPublisher struct{ modelID string }
 
-func (*versionPublisher) PublishRefreshTarget(context.Context, string, string, string, string) {}
-func (p *versionPublisher) PublishSemanticModelVersion(_ context.Context, _, _, modelID string) {
-	p.modelID = modelID
+func (*versionPublisher) PublishRefreshTarget(context.Context, projectgraph.ServingIdentity, string, projectgraph.ResourceID) {
 }
-
-func TestActiveScopesMatchModuleEnvironment(t *testing.T) {
-	scopes := []servingstate.ActiveScope{
-		{WorkspaceID: "sales", Environment: "dev"},
-		{WorkspaceID: "sales", Environment: "prod"},
-		{WorkspaceID: "support", Environment: "prod"},
-	}
-	got := activeScopes(scopes, "prod")
-	want := []servingstate.ActiveScope{
-		{WorkspaceID: "sales", Environment: "prod"},
-		{WorkspaceID: "support", Environment: "prod"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("activeScopes() = %#v, want %#v", got, want)
-	}
-}
-
-func TestBuildConstructsCapabilityPrivatePersistence(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
-	if err != nil {
-		t.Fatalf("open platform store: %v", err)
-	}
-	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatalf("insert workspace: %v", err)
-	}
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Workflow: testRefreshWorkflow})
-	if err != nil {
-		t.Fatalf("build module: %v", err)
-	}
-	if _, err := module.ListRuns(t.Context(), "sales", refreshrun.RunPage{Limit: 10, Environment: "prod"}); err != nil {
-		t.Fatalf("list runs through module surface: %v", err)
-	}
-	repository, err := module.HTTP().Repository()
-	if err != nil || repository == nil {
-		t.Fatalf("HTTP repository delegation = %T, %v", repository, err)
-	}
+func (p *versionPublisher) PublishSemanticModelVersion(_ context.Context, _ projectgraph.ServingIdentity, modelID projectgraph.ResourceID) {
+	p.modelID = modelID.String()
 }
 
 type dispatcherFunc func(context.Context)
@@ -257,7 +268,7 @@ func TestDispatchCoalescesConcurrentRequests(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int32
-	module, err := Build(t.Context(), Config{Dispatcher: dispatcherFunc(func(context.Context) {
+	module, err := Build(t.Context(), Config{Authorization: testAuthorization(), Dispatcher: dispatcherFunc(func(context.Context) {
 		calls.Add(1)
 		close(entered)
 		<-release
@@ -284,6 +295,7 @@ func TestStartOwnsSchedulerLifecycle(t *testing.T) {
 	reconciled := make(chan struct{}, 1)
 	dispatched := make(chan struct{}, 4)
 	module, err := Build(t.Context(), Config{
+		Authorization: testAuthorization(),
 		ReconcileSchedules: func(context.Context) error {
 			reconciled <- struct{}{}
 			return nil
@@ -323,6 +335,7 @@ func TestStartOwnsSchedulerLifecycle(t *testing.T) {
 func TestStartRedispatchesAfterLeaseWindow(t *testing.T) {
 	dispatched := make(chan struct{}, 2)
 	module, err := Build(t.Context(), Config{
+		Authorization: testAuthorization(),
 		Dispatcher: dispatcherFunc(func(context.Context) {
 			dispatched <- struct{}{}
 		}),
@@ -349,7 +362,7 @@ func TestStartRedispatchesAfterLeaseWindow(t *testing.T) {
 func TestStopHonorsCancellationWhileWorkerDrains(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	module, err := Build(t.Context(), Config{Dispatcher: dispatcherFunc(func(context.Context) {
+	module, err := Build(t.Context(), Config{Authorization: testAuthorization(), Dispatcher: dispatcherFunc(func(context.Context) {
 		close(entered)
 		<-release
 	})})

@@ -16,8 +16,8 @@ Examples of separate identities include:
 
 - a project deployer for one environment;
 - a managed-data publisher for one project;
-- a read-only semantic-query integration for one workspace;
-- an MCP workload allowed to use the agent and only the required asset workspaces;
+- a read-only semantic-query integration for one project;
+- an MCP workload allowed to use the agent and only the required project resources;
 - a monitoring principal for bounded synthetic queries.
 
 Do not grant platform administration because a narrower workflow initially returns `403`. Inspect effective privileges and add the missing specific privilege at the correct scope.
@@ -43,7 +43,7 @@ For a person, `leapview login <target>` uses browser/device authorization and th
 
 ## User API tokens
 
-An authenticated user can list, create, and revoke their tokens through `/api/v1/me/api-tokens`. Token access is the intersection of the principal's effective privileges, any token workspace scope, and token privilege allowlist. A token can narrow the principal; it cannot elevate it.
+An authenticated user can list, create, and revoke their tokens through `/api/v1/me/api-tokens`. Token access is the intersection of the principal's effective privileges, any token project scope, and token privilege allowlist. A token can narrow the principal; it cannot elevate it.
 
 The same user can inspect browser sessions, API tokens, and authoring sessions through the Current User API. Revoke unused CLI sessions during credential or device incidents. Reuse of a rotated refresh credential revokes the entire CLI session family.
 
@@ -64,7 +64,7 @@ Do not extend overlap indefinitely. Record owner, purpose, creation, last rotati
 
 ## Respond to exposure
 
-Revoke the credential immediately, then inspect audit and query events for the principal, affected workspaces, operations, and time window. Rotate downstream secrets that the workload could access, correct excessive grants, and issue a replacement only after the cause is contained.
+Revoke the credential immediately, then inspect audit and query events for the principal, affected projects and resources, operations, and time window. Rotate downstream secrets that the workload could access, correct excessive grants, and issue a replacement only after the cause is contained.
 
 Deleting or disabling a service principal is appropriate when the workload is retired. Remove role bindings and ownership references as part of the same change.
 

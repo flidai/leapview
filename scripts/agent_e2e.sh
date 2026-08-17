@@ -62,7 +62,7 @@ TOKEN="$LEAPVIEW_DEV_API_TOKEN"
 SERVER_PID="$!"
 
 for _ in {1..80}; do
-  if curl -fsS -H "Authorization: Bearer $TOKEN" "$TARGET/api/workspaces" >/dev/null 2>&1; then
+  if curl -fsS -H "Authorization: Bearer $TOKEN" "$TARGET/api/v1/projects?limit=1" >/dev/null 2>&1; then
     break
   fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -157,10 +157,10 @@ answer = answers[-1] if answers else ""
 if not answer.strip():
     raise SystemExit(f"{label}: transcript has no final assistant answer")
 
-if validator == "workspace":
+if validator == "project":
     pages = results("catalog_list")
-    if not any(any(entry.get("ref", {}).get("type") == "workspace" for entry in page.get("items", [])) for page in pages):
-        raise SystemExit(f"{label}: catalog_list returned no workspace refs")
+    if not any(any(entry.get("ref", {}).get("kind") == "project" for entry in page.get("items", [])) for page in pages):
+        raise SystemExit(f"{label}: catalog_list returned no project refs")
 elif validator == "dashboard_search":
     pages = results("catalog_search")
     matches = [entry for page in pages for entry in page.get("items", [])]
@@ -227,16 +227,16 @@ elif validator == "documentation":
 }
 
 run_agent_scenario \
-  "workspace discovery" \
+  "project discovery" \
   "catalog_list" \
-  "workspace" \
-  "Use catalog browsing to list the workspaces I can access."
+  "project" \
+  "Use catalog browsing to list the project resources I can access."
 
 run_agent_scenario \
   "global dashboard search" \
   "catalog_search" \
   "dashboard_search" \
-  "Use global catalog search to find the executive sales dashboard across all workspaces."
+  "Use global catalog search to find the executive sales dashboard in the project catalog."
 
 run_agent_scenario \
   "dashboard and page browsing" \
@@ -248,25 +248,25 @@ run_agent_scenario \
   "semantic query" \
   "catalog_search,query_semantic_model" \
   "semantic_query" \
-  "Use catalog_search with semantic_model and measure type filters to find the Sales semantic model and its Revenue catalog item. Select the item whose ref type is measure and ID is sales.revenue, not the physical field sales.orders.revenue. Then call query_semantic_model with workspace sales, model sales, measure sales.revenue, and limit 1. Report the returned format and freshness."
+  "Use catalog_search with semantic_model kind to find the Sales semantic model. Then call query_semantic_model with the returned model resource, measure sales.revenue, and limit 1. Report the returned format and freshness."
 
 run_agent_scenario \
   "semantic pagination" \
   "catalog_search,query_semantic_model" \
   "semantic_pagination" \
-  "Use catalog_search to confirm the Sales semantic model and the sales.orders.order_id field. Call query_semantic_model with workspace sales, model sales, dimension sales.orders.order_id, and limit 50. Then pass its nextCursor back as pageToken in a second query_semantic_model call so at least 60 distinct order IDs are returned without skipping model-visible rows."
+  "Use catalog_search to confirm the Sales semantic model. Call query_semantic_model with its returned model resource, dimension sales.orders.order_id, and limit 50. Then pass its nextCursor back as pageToken in a second query_semantic_model call so at least 60 distinct order IDs are returned without skipping model-visible rows."
 
 run_agent_scenario \
   "dashboard visual query" \
   "catalog_search,query_dashboard_visual" \
   "dashboard_visual" \
-  "Find the revenue_kpi visual on the Executive Sales overview page in the sales workspace, then query that exact dashboard visual using its returned ref and location."
+  "Find the revenue_kpi visual on the Executive Sales overview page, then query that exact dashboard visual using its returned ref and location."
 
 run_agent_scenario \
   "generated visualization" \
   "catalog_search,query_visual" \
   "generated_visual" \
-  "Use catalog_search to find the Sales orders table, the sales.orders.status field, and the Revenue item whose ref type is measure and ID is sales.revenue. Then call query_visual for workspace sales, model sales, dataset sales.orders, a bar chart grouped by sales.orders.status with measure sales.revenue, and a governed equals filter on sales.orders.status for delivered."
+  "Use catalog_search to find the Sales semantic model. Then call query_visual with its returned model resource, dataset sales_orders, a bar chart grouped by sales_orders.status with measure sales.revenue, and a governed equals filter on sales_orders.status for delivered."
 
 run_agent_scenario \
   "documentation" \

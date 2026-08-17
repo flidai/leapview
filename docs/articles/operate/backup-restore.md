@@ -37,7 +37,7 @@ Automate these checks after backup creation:
 - enough free capacity remains for the next backup and restore staging;
 - retention matches policy without deleting the only good copy.
 
-Periodically restore into an isolated environment. Open representative workspaces, run analytical queries, inspect active revisions, and create a fresh post-restore backup. Test both ordinary recovery and the loss of a full node.
+Periodically restore into an isolated environment. Open representative project resources, run analytical queries, inspect active revisions, and create a fresh post-restore backup. Test both ordinary recovery and the loss of a full node.
 
 ## Prepare a restore
 

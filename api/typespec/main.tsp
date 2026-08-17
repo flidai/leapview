@@ -6,7 +6,6 @@ import "./projects.tsp";
 import "./releases.tsp";
 import "./current_user.tsp";
 import "./instance.tsp";
-import "./workspaces.tsp";
 import "./search.tsp";
 import "./bi.tsp";
 import "./deployments.tsp";
@@ -27,10 +26,10 @@ using TypeSpec.OpenAPI;
 using LeapViewAPI.Protocol;
 
 @service(#{ title: "LeapView Headless API" })
-@doc("Headless API for LeapView workspaces, deployments, managed data, access control, refreshes, and agent operations.")
+@doc("Headless API for LeapView projects, deployments, managed data, access control, refreshes, and agent operations.")
 @info(#{ version: "1.0.0" })
 @useAuth(BearerAuth)
-@tagMetadata(#[#{ name: "System", description: "API capabilities and protocol discovery." }, #{ name: "Instance", description: "The immutable serving identity of this LeapView installation." }, #{ name: "Projects", description: "Read-only project registry." }, #{ name: "Releases", description: "Immutable project releases and artifacts." }, #{ name: "Current User", description: "Current principal, sessions, tokens, and privileges." }, #{ name: "Workspaces", description: "Workspace and lineage discovery." }, #{ name: "Search", description: "Progressive workspace discovery across BI assets." }, #{ name: "BI", description: "Dashboard and semantic model read APIs." }, #{ name: "Connections", description: "Target-owned logical connection bindings, tests, refreshes, and redacted health." }, #{ name: "Deployments", description: "Atomic project release deployment." }, #{ name: "Refresh Runs", description: "Headless refresh run operations." }, #{ name: "Agent", description: "Headless agent conversation and run operations." }, #{ name: "Access", description: "Principals, groups, roles, and role bindings." }, #{ name: "Audit", description: "Workspace audit event discovery." }, #{ name: "Publications", description: "Anonymous public dashboard publication lifecycle." }, #{ name: "Managed Data", description: "Project-global managed-data revisions and uploads." }])
+@tagMetadata(#[#{ name: "System", description: "API capabilities and protocol discovery." }, #{ name: "Instance", description: "The immutable serving identity of this LeapView installation." }, #{ name: "Projects", description: "Active project graph assertion." }, #{ name: "Releases", description: "Immutable project releases and artifacts." }, #{ name: "Current User", description: "Current principal, sessions, tokens, and capabilities." }, #{ name: "Search", description: "Progressive project-graph discovery across governed resources." }, #{ name: "BI", description: "Dashboard and semantic model read APIs." }, #{ name: "Connections", description: "Target-owned logical connection bindings, tests, refreshes, and redacted health." }, #{ name: "Deployments", description: "Atomic project release deployment." }, #{ name: "Refresh Runs", description: "Headless refresh run operations." }, #{ name: "Agent", description: "Headless agent conversation and run operations." }, #{ name: "Access", description: "Principals, groups, roles, and role bindings." }, #{ name: "Audit", description: "Project audit event discovery." }, #{ name: "Publications", description: "Anonymous public dashboard publication lifecycle." }, #{ name: "Managed Data", description: "Project-global managed-data revisions and uploads." }])
 @apigen.transportErrors(ProblemDetails, #{
   contentType: "application/problem+json",
   failures: #[

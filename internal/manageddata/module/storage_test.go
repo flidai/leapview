@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/control"
@@ -41,6 +42,7 @@ func TestBuildKeepsPersistencePrivateAndExposesNamedServices(t *testing.T) {
 	}
 	module, err := Build(t.Context(), Config{
 		Database: store.SQLDB(), ServingStates: states, RecordAudit: discardManagedDataAudit,
+		AuthorizeConnection: allowAllConnectionAuthorization,
 		Product: ProductConfig{
 			Backend:          "local",
 			Dir:              filepath.Join(t.TempDir(), "managed"),
@@ -69,8 +71,9 @@ func TestModuleHTTPConcurrentCancelEmitsOneEventAndCleansTusState(t *testing.T) 
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	module, err := Build(t.Context(), Config{
 		Database: store.SQLDB(), Jobs: jobs, Workflow: jobs, RecordAudit: discardManagedDataAudit,
-		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-a"}, true },
-		Product:          ProductConfig{Backend: "local", Dir: managedRoot, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
+		CurrentPrincipal:    func(*http.Request) (Principal, bool) { return Principal{ID: "principal-a"}, true },
+		AuthorizeConnection: allowAllConnectionAuthorization,
+		Product:             ProductConfig{Backend: "local", Dir: managedRoot, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -162,6 +165,10 @@ func TestModuleHTTPConcurrentCancelEmitsOneEventAndCleansTusState(t *testing.T) 
 			t.Fatalf("staging %q remains after cancellation: %v", suffix, err)
 		}
 	}
+}
+
+func allowAllConnectionAuthorization(context.Context, string, string, string, access.Capability) (bool, error) {
+	return true, nil
 }
 
 func TestNewManagedDataStorageLocal(t *testing.T) {

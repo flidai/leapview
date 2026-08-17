@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
 	"github.com/flidai/leapview/internal/dashboard"
@@ -27,9 +29,8 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
-	"github.com/flidai/leapview/internal/project/manifest"
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/schema"
 	"github.com/flidai/leapview/internal/workload"
 	"gopkg.in/yaml.v3"
@@ -37,6 +38,10 @@ import (
 
 var visualShortcodePattern = regexp.MustCompile(`^\s*\{\{<\s*visual\s+id="([a-z0-9_]+)"\s*>}}\s*$`)
 var visualFencePattern = regexp.MustCompile("^```ya?ml[ \\t]+visual-example=([a-z0-9_]+)[ \\t]*$")
+
+const (
+	visualDocsDashboardID projectgraph.ResourceID = "dashboard:visual-docs"
+)
 
 type visualExample struct {
 	ID      string
@@ -133,31 +138,44 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		examplesByPage[document.Source] = examples
 	}
 
-	compiled, err := workspacecompiler.CompileProject(projectPath, workspacecompiler.Options{WorkspaceID: "visual_examples"})
+	compiled, err := projectcompiler.CompileProject(projectPath)
 	if err != nil {
 		return visualExamplesArtifact{}, fmt.Errorf("compile fixture project: %w", err)
 	}
-	compiledWorkspace, ok := compiled.Workspace("visual_examples")
-	if !ok {
-		return visualExamplesArtifact{}, fmt.Errorf("fixture project has no visual_examples workspace")
+	manifest := compiled.Manifest()
+	semanticModelID := projectgraph.ResourceID(manifest.NameIndex.SemanticModels["visual_examples"])
+	if err := semanticModelID.Validate(); err != nil {
+		return visualExamplesArtifact{}, fmt.Errorf("fixture project semantic model identity: %w", err)
 	}
-	workspaceManifest := compiledWorkspace.Manifest()
-	if workspaceManifest == nil {
-		return visualExamplesArtifact{}, fmt.Errorf("fixture project has no visual_examples manifest")
+	models := compiled.Models()
+	if _, ok := models[semanticModelID.String()]; !ok {
+		return visualExamplesArtifact{}, fmt.Errorf("fixture project has no visual_examples semantic model")
 	}
-	report := buildExampleDashboard(catalog, examplesByPage)
-	compiledReport, err := dashboardcompiler.Compile(*report, workspaceManifest.Models)
+	report := buildExampleDashboard(catalog, examplesByPage, visualDocsDashboardID, semanticModelID)
+	compiledReport, err := dashboardcompiler.Compile(*report, models)
 	if err != nil {
 		return visualExamplesArtifact{}, fmt.Errorf("validate executable examples: %w", err)
 	}
 	normalizedReport := compiledReport.Normalized
 	compiledDashboard := compiledReport.Definition
-	workspaceManifest.DashboardDefinitions = map[string]dashboarddefinition.Definition{normalizedReport.ID: compiledDashboard}
-	workspaceManifest.Catalog.Dashboards = []manifest.CatalogDashboard{{ID: normalizedReport.ID, Title: normalizedReport.Title, Path: "docs/visuals", Description: normalizedReport.Description}}
-	if err := bindFixtureRoot(workspaceManifest, dataRoot); err != nil {
+	if err := bindFixtureDataRoot(models, dataRoot); err != nil {
 		return visualExamplesArtifact{}, err
 	}
-	definition := projectartifact.DashboardProjection(workspaceManifest)
+	modelDefinitions := make(map[projectgraph.ResourceID]*semanticmodel.Model, len(models))
+	for id, model := range models {
+		resourceID, err := projectgraph.NewResourceID(id)
+		if err != nil {
+			return visualExamplesArtifact{}, fmt.Errorf("fixture semantic model %q: %w", id, err)
+		}
+		modelDefinitions[resourceID] = model
+	}
+	definition, err := dashboardruntime.NewProjectDefinition(
+		compiled.ProjectID(), manifest.Title, manifest.Description, modelDefinitions,
+		map[projectgraph.ResourceID]dashboarddefinition.Definition{visualDocsDashboardID: compiledDashboard},
+	)
+	if err != nil {
+		return visualExamplesArtifact{}, fmt.Errorf("build fixture dashboard definition: %w", err)
+	}
 
 	runtimeDir, err := os.MkdirTemp("", "leapview-visual-docs-*")
 	if err != nil {
@@ -174,11 +192,11 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		return visualExamplesArtifact{}, err
 	}
 	defer controller.Close()
-	refreshLease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Refresh, WorkspaceID: "visual_examples", Operation: "visual-docs.refresh"})
+	refreshLease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Refresh, PrincipalID: "system:visual-docs", Operation: "visual-docs.refresh", EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		return visualExamplesArtifact{}, err
 	}
-	workspaces := analyticsruntime.WorkspaceFactoryFunc(func(ctx context.Context, request analyticsruntime.WorkspaceRequest) (analyticsruntime.Workspace, error) {
+	projects := analyticsruntime.ProjectFactoryFunc(func(ctx context.Context, request analyticsruntime.ProjectRequest) (analyticsruntime.Project, error) {
 		if len(request.RequiredExtensions) > 0 {
 			lease, err := database.Acquire(refreshLease.Context())
 			if err != nil {
@@ -192,16 +210,21 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 			}
 			lease.Release()
 		}
-		return analyticsduckdb.OpenWorkspaceMaterializeRuntime(ctx, analyticsduckdb.WorkspaceRuntimeConfig{
+		return analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 			Models: request.Models, Database: database,
 			CredentialResolver: analyticsduckdb.NonSecretCredentialResolver{},
 			SnapshotID:         request.SnapshotID, ServingStateID: request.ServingStateID,
-			WorkspaceID: request.WorkspaceID, Environment: request.Environment,
+			ProjectID: request.ProjectID, Environment: request.Environment,
 			SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 			SourceDataDigest: request.SourceDataDigest, ResultLimits: request.ResultLimits,
 		})
 	})
-	service, err := dashboardruntime.NewFromDefinition(refreshLease.Context(), runtimeDir, dashboardadapter.NewFactory(dashboardadapter.Options{Workspaces: workspaces}), definition)
+	identity, err := projectgraph.NewServingIdentity(compiled.ProjectID(), "development", "visual-docs")
+	if err != nil {
+		refreshLease.Release()
+		return visualExamplesArtifact{}, fmt.Errorf("build fixture serving identity: %w", err)
+	}
+	service, err := dashboardruntime.NewFromGeneration(refreshLease.Context(), runtimeDir, dashboardadapter.NewFactory(dashboardadapter.Options{Projects: projects, ProjectID: compiled.ProjectID(), Environment: "development"}), identity, definition)
 	refreshLease.Release()
 	if err != nil {
 		return visualExamplesArtifact{}, fmt.Errorf("open fixture runtime: %w", err)
@@ -210,11 +233,11 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 
 	artifact := visualExamplesArtifact{Version: visualdocs.ArtifactVersion, Documents: map[string][]visualdocs.Payload{}, References: map[string]visualDocumentReference{}, Showcase: make([]visualdocs.Payload, 0, len(catalog.Documents))}
 	for _, document := range catalog.Documents {
-		queryLease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Interactive, WorkspaceID: "visual_examples", Operation: "visual-docs.query"})
+		queryLease, err := controller.Acquire(context.Background(), workload.Request{Class: workload.Interactive, PrincipalID: "system:visual-docs", Operation: "visual-docs.query", EstimatedMemoryBytes: 64 << 20})
 		if err != nil {
 			return visualExamplesArtifact{}, err
 		}
-		patch, err := service.QueryDashboardPage(queryLease.Context(), normalizedReport.ID, document.Source, dashboard.Filters{})
+		patch, err := service.QueryDashboardPage(queryLease.Context(), normalizedReport.ID.String(), document.Source, dashboard.Filters{})
 		queryLease.Release()
 		if err != nil {
 			return visualExamplesArtifact{}, fmt.Errorf("query %s examples: %w", document.Source, err)
@@ -484,7 +507,7 @@ func normalizeEnvelopeRevision(envelope *visualizationir.VisualizationEnvelope, 
 		state.DataRevision, state.Generation = dataRevision, generation
 	case *visualizationir.SpatialTiledVisualizationDataState:
 		state.DataRevision, state.Generation = dataRevision, generation
-		state.TileURL = "/workspaces/visual_examples/dashboards/visual_examples/visuals/" + envelope.VisualID + "/tiles/documentation/{z}/{x}/{y}.mvt"
+		state.TileURL = "/dashboards/" + url.PathEscape(visualDocsDashboardID.String()) + "/visuals/" + url.PathEscape(envelope.VisualID) + "/tiles/documentation/{z}/{x}/{y}.mvt"
 	}
 }
 
@@ -786,8 +809,8 @@ func visualAccessibilityGuidance(visual dashboardauthoring.Visual) string {
 	}
 }
 
-func buildExampleDashboard(catalog visualCatalog, examplesByPage map[string][]visualExample) *dashboardauthoring.Dashboard {
-	report := &dashboardauthoring.Dashboard{ID: "visual-docs", Title: "Visual documentation", Description: "Executable documentation examples.", SemanticModel: "visual_examples", Visuals: map[string]dashboardauthoring.AuthoringVisualization{}, Pages: make([]dashboard.Page, 0, len(catalog.Documents))}
+func buildExampleDashboard(catalog visualCatalog, examplesByPage map[string][]visualExample, dashboardID, semanticModelID projectgraph.ResourceID) *dashboardauthoring.Dashboard {
+	report := &dashboardauthoring.Dashboard{ID: dashboardID, Title: "Visual documentation", Description: "Executable documentation examples.", SemanticModel: semanticModelID, Visuals: map[string]dashboardauthoring.AuthoringVisualization{}, Pages: make([]dashboard.Page, 0, len(catalog.Documents))}
 	for _, document := range catalog.Documents {
 		page := dashboard.Page{ID: document.Source, Title: document.Title, Canvas: dashboard.PageCanvas{Width: 1366, Height: 3000}, Grid: dashboard.PageGrid{Columns: 12, RowHeight: 48, Gap: 16, Padding: 16}, Visuals: make([]dashboard.PageVisual, 0, len(examplesByPage[document.Source]))}
 		for index, example := range examplesByPage[document.Source] {
@@ -806,12 +829,12 @@ func buildExampleDashboard(catalog visualCatalog, examplesByPage map[string][]vi
 	return report
 }
 
-func bindFixtureRoot(definition *manifest.Workspace, dataRoot string) error {
+func bindFixtureDataRoot(models map[string]*semanticmodel.Model, dataRoot string) error {
 	root, err := filepath.Abs(dataRoot)
 	if err != nil {
 		return err
 	}
-	for _, model := range definition.Models {
+	for _, model := range models {
 		for name, connection := range model.Connections {
 			if connection.Kind != "managed" {
 				continue
@@ -934,7 +957,10 @@ func validateVisualExampleContract(id, filename string, node yaml.Node) error {
 	resource := map[string]any{
 		"apiVersion": "leapview.dev/v1",
 		"kind":       "Dashboard",
-		"metadata":   map[string]any{"name": "visual-doc-example"},
+		"metadata": map[string]any{
+			"id":   "dashboard:visual-doc-example",
+			"name": "visual-doc-example",
+		},
 		"spec": map[string]any{
 			"semanticModel": "visual_examples",
 			"visuals":       map[string]any{id: visual},
@@ -951,5 +977,5 @@ func validateVisualExampleContract(id, filename string, node yaml.Node) error {
 	if err != nil {
 		return err
 	}
-	return configschema.ValidateBytes(configschema.KindDashboardResource, filename, content)
+	return configschema.ValidateBytes(configschema.KindDashboard, filename, content)
 }

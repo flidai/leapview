@@ -13,14 +13,15 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type DataRuntimeFactory interface {
-	OpenDashboardWorkspaceDataRuntimes(ctx context.Context, config WorkspaceDataRuntimeConfig) (map[string]DataRuntime, error)
+	OpenDashboardProjectDataRuntimes(ctx context.Context, config ProjectDataRuntimeConfig) (map[projectgraph.ResourceID]DataRuntime, error)
 }
 
-type WorkspaceDataRuntimeConfig struct {
-	Definition *dashboarddefinition.Workspace
+type ProjectDataRuntimeConfig struct {
+	Definition *ProjectDefinition
 	DBDir      string
 }
 
@@ -46,7 +47,8 @@ type setupRequiredError interface {
 
 type Service struct {
 	mu             sync.RWMutex
-	runtimes       map[string]*modelRuntime
+	identity       projectgraph.ServingIdentity
+	runtimes       map[projectgraph.ResourceID]*modelRuntime
 	catalog        *CatalogService
 	reports        *ReportService
 	queries        *QueryService
@@ -65,9 +67,9 @@ type modelRuntime struct {
 }
 
 // definitionService creates a query service view over an already compiled
-// dashboard definition. Published workspace dashboards are immutable compiler
+// dashboard definition. Instance-managed dashboards are immutable compiler
 // output and must execute through the same model/data runtimes as project
-// dashboards; rebuilding a Workspace or opening another data runtime here
+// dashboards; rebuilding another runtime or opening another data runtime here
 // would violate that boundary. The view only replaces report metadata while
 // retaining this service's model runtimes, locks, filters, and visual cache.
 // It is intentionally unexported and consumed immediately by the
@@ -75,7 +77,7 @@ type modelRuntime struct {
 // lifecycle methods such as Close on the view, since it aliases the base
 // service's data runtimes.
 func (m *Service) definitionService(definition dashboarddefinition.Definition) (*Service, error) {
-	if m == nil || m.reports == nil || m.reports.workspace == nil {
+	if m == nil || m.reports == nil {
 		return nil, fmt.Errorf("dashboard runtime is unavailable")
 	}
 	definition.ID = strings.TrimSpace(definition.ID)
@@ -83,21 +85,29 @@ func (m *Service) definitionService(definition dashboarddefinition.Definition) (
 	if definition.ID == "" || definition.SemanticModel == "" {
 		return nil, fmt.Errorf("compiled dashboard requires ID and semantic model")
 	}
-	runtime, ok := m.runtimes[definition.SemanticModel]
+	dashboardID, err := projectgraph.NewResourceID(definition.ID)
+	if err != nil {
+		return nil, fmt.Errorf("compiled dashboard id: %w", err)
+	}
+	modelID, err := projectgraph.NewResourceID(definition.SemanticModel)
+	if err != nil {
+		return nil, fmt.Errorf("compiled dashboard semantic model: %w", err)
+	}
+	runtime, ok := m.runtimes[modelID]
 	if !ok || runtime == nil {
 		return nil, fmt.Errorf("unknown semantic model %q", definition.SemanticModel)
 	}
-	if runtime.model == nil || strings.TrimSpace(runtime.model.Name) != definition.SemanticModel {
+	if runtime.model == nil {
 		return nil, fmt.Errorf("semantic model %q does not match compiled dashboard", definition.SemanticModel)
 	}
-	workspace := *m.reports.workspace
-	workspace.Dashboards = map[string]dashboarddefinition.Definition{definition.ID: definition}
-	workspace.Models = make(map[string]*semanticmodel.Model, len(m.reports.workspace.Models)+1)
-	for modelID, model := range m.reports.workspace.Models {
-		workspace.Models[modelID] = model
+	models := make(map[projectgraph.ResourceID]*semanticmodel.Model, len(m.reports.models)+1)
+	for modelID, model := range m.reports.models {
+		models[modelID] = model
 	}
-	workspace.Models[definition.SemanticModel] = runtime.model
-	reports := &ReportService{workspace: &workspace, defaultID: definition.ID}
+	models[modelID] = runtime.model
+	reports := &ReportService{projectID: m.identity.ProjectID, identity: m.identity, models: models,
+		dashboards: map[projectgraph.ResourceID]dashboarddefinition.Definition{dashboardID: definition},
+		catalog:    m.reports.catalog, defaultID: definition.ID}
 	visualizations := *m.visualizations
 	visualizations.reports = reports
 	visualizations.runtimes = m.runtimes
@@ -109,39 +119,73 @@ func (m *Service) definitionService(definition dashboarddefinition.Definition) (
 		// Keep the execution view's lock zero-valued: query paths use the
 		// pointer-bearing Snapshot/Visualization services below, which retain
 		// the original service lock without copying a live mutex.
-		runtimes: m.runtimes, catalog: m.catalog, reports: reports,
+		identity: m.identity, runtimes: m.runtimes, catalog: m.catalog, reports: reports,
 		queries: queries, filters: m.filters, visualizations: &visualizations,
 		snapshots: &snapshots, tiles: m.tiles,
 	}, nil
 }
 
-func NewFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntimeFactory, definition *dashboarddefinition.Workspace) (*Service, error) {
+func NewFromGeneration(ctx context.Context, duckDBDir string, factory DataRuntimeFactory, identity projectgraph.ServingIdentity, definition *ProjectDefinition) (*Service, error) {
+	if err := identity.Validate(); err != nil {
+		return nil, fmt.Errorf("project serving identity: %w", err)
+	}
+	if definition == nil || definition.ProjectID() != identity.ProjectID {
+		return nil, fmt.Errorf("project generation definition does not match serving identity")
+	}
 	if factory == nil {
 		return nil, fmt.Errorf("dashboard data runtime factory is required")
 	}
-	if definition == nil {
-		return nil, fmt.Errorf("workspace definition is required")
+	service, err := newFromDefinition(ctx, duckDBDir, factory, identity, definition)
+	if err != nil {
+		return nil, err
 	}
-	return newFromDefinition(ctx, duckDBDir, factory, definition)
+	service.identity = identity
+	return service, nil
 }
 
-func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntimeFactory, definition *dashboarddefinition.Workspace) (*Service, error) {
-	service := &Service{
-		runtimes: map[string]*modelRuntime{}, tiles: newSpatialTileRegistry(),
+// Identity returns the immutable project generation this runtime executes.
+func (m *Service) Identity() projectgraph.ServingIdentity {
+	if m == nil {
+		return projectgraph.ServingIdentity{}
 	}
-	service.catalog = NewCatalogService(&service.mu, definition)
-	service.reports = &ReportService{
-		workspace: definition,
-		defaultID: definition.Catalog.Dashboards[0].ID,
+	return m.identity
+}
+
+func (m *Service) ProjectIdentity() projectgraph.ResourceID { return m.Identity().ProjectID }
+
+func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntimeFactory, identity projectgraph.ServingIdentity, definition *ProjectDefinition) (*Service, error) {
+	if err := definition.Validate(); err != nil {
+		return nil, err
+	}
+	service := &Service{
+		identity: identity,
+		runtimes: map[projectgraph.ResourceID]*modelRuntime{}, tiles: newSpatialTileRegistry(),
+	}
+	var err error
+	service.catalog, err = NewCatalogService(&service.mu, definition)
+	if err != nil {
+		return nil, err
+	}
+	service.reports = &ReportService{projectID: definition.ProjectID(), identity: identity,
+		models:     make(map[projectgraph.ResourceID]*semanticmodel.Model, len(definition.Models())),
+		dashboards: make(map[projectgraph.ResourceID]dashboarddefinition.Definition, len(definition.Dashboards())),
+		catalog:    service.catalog.catalog}
+	for modelID, model := range definition.Models() {
+		service.reports.models[modelID] = model
+	}
+	for dashboardID, dashboard := range definition.Dashboards() {
+		service.reports.dashboards[dashboardID] = dashboard
+		if service.reports.defaultID == "" {
+			service.reports.defaultID = dashboardID.String()
+		}
 	}
 	service.filters = &FilterService{}
 	service.visualizations = &VisualizationDataService{
-		mu:          &service.mu,
-		reports:     service.reports,
-		runtimes:    service.runtimes,
-		filters:     service.filters,
-		tiles:       service.tiles,
-		workspaceID: definition.Catalog.Workspace.ID,
+		mu:       &service.mu,
+		reports:  service.reports,
+		runtimes: service.runtimes,
+		filters:  service.filters,
+		tiles:    service.tiles,
 	}
 	service.snapshots = &SnapshotService{
 		mu:             &service.mu,
@@ -154,14 +198,14 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 		snapshots:      service.snapshots,
 		visualizations: service.visualizations,
 	}
-	for modelID, model := range definition.Models {
+	for modelID, model := range definition.Models() {
 		optimizer, err := consumer.NewOptimizer(model)
 		if err != nil {
 			return nil, fmt.Errorf("compile semantic model %q: %w", modelID, err)
 		}
 		service.runtimes[modelID] = &modelRuntime{model: model, optimizer: optimizer}
 	}
-	dataRuntimes, err := factory.OpenDashboardWorkspaceDataRuntimes(ctx, WorkspaceDataRuntimeConfig{
+	dataRuntimes, err := factory.OpenDashboardProjectDataRuntimes(ctx, ProjectDataRuntimeConfig{
 		Definition: definition,
 		DBDir:      duckDBDir,
 	})
@@ -177,14 +221,14 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 	for modelID, runtime := range service.runtimes {
 		dataRuntime, ok := dataRuntimes[modelID]
 		if !ok {
-			return nil, fmt.Errorf("workspace data runtime missing semantic model %q", modelID)
+			return nil, fmt.Errorf("project data runtime missing semantic model %q", modelID)
 		}
-		runtime.data = newGovernedDataRuntime(definition.Catalog.Workspace.ID, modelID, dataRuntime)
+		runtime.data = newGovernedDataRuntime(identity.ProjectID, modelID, dataRuntime)
 		runtime.ready = true
 	}
 	for modelID := range dataRuntimes {
 		if _, ok := service.runtimes[modelID]; !ok {
-			return nil, fmt.Errorf("workspace data runtime returned unknown semantic model %q", modelID)
+			return nil, fmt.Errorf("project data runtime returned unknown semantic model %q", modelID)
 		}
 	}
 	return service, nil

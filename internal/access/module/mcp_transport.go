@@ -10,7 +10,6 @@ type MCPIdentity struct {
 	PrincipalID string
 	DevBypass   bool
 	Credential  access.APICredential
-	Restricted  bool
 }
 
 func (m *Module) MCPIdentity(r *http.Request) (MCPIdentity, bool) {
@@ -24,7 +23,6 @@ func (m *Module) MCPIdentity(r *http.Request) (MCPIdentity, bool) {
 	identity := MCPIdentity{PrincipalID: principal.ID, DevBypass: principal.DevBypass}
 	if credential, ok := m.auth.APICredential(r); ok {
 		identity.Credential = credential
-		identity.Restricted = credential.Token.Privileges != nil
 	}
 	return identity, true
 }
@@ -39,7 +37,6 @@ func (m *Module) ProtectMCP(next http.Handler) http.Handler {
 			}
 			return
 		}
-		r = r.WithContext(access.WithAuthorizationCache(r.Context()))
 		var principal Principal
 		if m.auth.DevBypass() && m.auth.AcceptsPublicBearer(r) {
 			principal = LocalDeveloperPrincipal()
@@ -55,17 +52,6 @@ func (m *Module) ProtectMCP(next http.Handler) http.Handler {
 			}
 		}
 		r = r.WithContext(WithPrincipal(r.Context(), principal))
-		if !principal.DevBypass {
-			allowed, err := m.authorizeAnyWorkspace(r.Context(), principal.ID, nil, access.PrivilegeUseAgent)
-			if err != nil {
-				WriteAuthError(w, r, err, http.StatusInternalServerError)
-				return
-			}
-			if !allowed {
-				WriteAuthError(w, r, ErrForbidden, http.StatusForbidden)
-				return
-			}
-		}
 		next.ServeHTTP(w, r)
 	})
 }

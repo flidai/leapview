@@ -27,7 +27,11 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if !ok {
 		return
 	}
-	dashboardID := lddatastar.DashboardID(r, signals, metrics.DefaultDashboardID())
+	dashboardID, validDashboard := commandDashboardID(r, signals)
+	if !validDashboard {
+		nethttp.NotFound(w, r)
+		return
+	}
 	sourcePageID := lddatastar.PageID(r, signals)
 	resolved, err := resolveDashboard(metrics, dashboardID)
 	if err != nil {
@@ -57,7 +61,11 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	clientID := pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID)
 	streamInstanceID := signals.Runtime.StreamInstanceID
-	key := h.dashboardSessionKey(r, definition, clientID, streamInstanceID)
+	key, keyErr := h.dashboardSessionKey(r, definition, clientID, streamInstanceID)
+	if keyErr != nil {
+		nethttp.NotFound(w, r)
+		return
+	}
 	result, err := (dashboardsession.Service{Store: h.SessionStore}).Navigate(r.Context(), key, dashboardsession.NavigationCommand{
 		PageID: targetPage.ID, BaseFilterRevision: signals.NavigationCommand.BaseFilterRevision,
 		ClientMutationID: signals.NavigationCommand.ClientMutationID,

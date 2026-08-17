@@ -1,0 +1,12 @@
+apiVersion: leapview.dev/v1
+kind: DashboardPublication
+metadata:
+  id: publication:website-showcase
+  name: website-showcase
+spec:
+  dashboard: dashboard:visual-showcase
+  defaultPage: overview
+  embedding:
+    allowedOrigins:
+      - https://leapview.dev
+      - http://localhost:8081

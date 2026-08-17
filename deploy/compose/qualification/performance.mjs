@@ -4,6 +4,9 @@ import { request } from 'node:http'
 import process from 'node:process'
 
 const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
+const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
+const semanticModelID = 'semantic-model:sales'
+const pipelineID = 'pipeline:evaluation-refresh'
 const credentialsPath = process.env.QUALIFICATION_CREDENTIALS || '/run/secrets/credentials.json'
 const policyPath = process.env.QUALIFICATION_PERFORMANCE_POLICY || '/qualification/performance-policy.json'
 const metricsURL = process.env.QUALIFICATION_METRICS_URL || 'http://127.0.0.1:8080/metrics'
@@ -133,7 +136,10 @@ async function runWorkload(path) {
       measures: [{ field: 'order_count' }, { field: 'revenue' }],
       limit: 10,
     }
-    const queryURL = new URL('/api/v1/workspaces/evaluation/semantic-models/sales/query', baseURL).href
+    const queryURL = new URL(
+      `/api/v1/semantic-models/${encodeURIComponent(semanticModelID)}/query`,
+      baseURL,
+    ).href
     for (let index = 0; index < policy.assumptions.samples.governedQueries; index += 1) {
       const startedAt = performance.now()
       const response = await context.request.post(queryURL, {
@@ -155,7 +161,10 @@ async function runWorkload(path) {
     }
     metricSamples.push(await metricSnapshot())
 
-    const refreshURL = new URL('/api/v1/workspaces/evaluation/refresh-runs', baseURL).href
+    const refreshURL = new URL(
+      `/api/v1/projects/${encodeURIComponent(projectID)}/refresh-runs`,
+      baseURL,
+    ).href
     for (let index = 0; index < policy.assumptions.samples.refreshRuns; index += 1) {
       const startedAt = performance.now()
       const response = await context.request.post(refreshURL, {
@@ -163,7 +172,7 @@ async function runWorkload(path) {
           Authorization: `Bearer ${credentials.workloadToken}`,
           'Idempotency-Key': `qualification-performance-refresh-${Date.now()}-${index}`,
         },
-        data: { pipelineId: 'evaluation-refresh' },
+        data: { pipelineId: pipelineID },
       })
       controlled.requests += 1
       if (!response.ok()) {
@@ -322,7 +331,10 @@ async function waitForTableSort(table, previous, expectedKey, timeoutMs) {
 }
 
 async function waitForRefresh(context, id, token, controlled) {
-  const url = new URL(`/api/v1/workspaces/evaluation/refresh-runs/${id}`, baseURL).href
+  const url = new URL(
+    `/api/v1/projects/${encodeURIComponent(projectID)}/refresh-runs/${id}`,
+    baseURL,
+  ).href
   const deadline = Date.now() + 60_000
   while (Date.now() < deadline) {
     const response = await context.request.get(url, { headers: { Authorization: `Bearer ${token}` } })

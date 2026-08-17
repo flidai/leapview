@@ -278,14 +278,14 @@ Packaged applications register the separate `leapview-desktop` operating-system
 scheme. The initial contract is intentionally narrow:
 
 ```text
-leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fworkspaces%2Fsales%2Fdashboards%2Frevenue
+leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%2Frevenue
 ```
 
 - `origin` must be a canonical HTTPS origin. Unpackaged development builds also
   accept explicit loopback HTTP origins.
-- `path` may target `/`, the workspace catalog, one workspace, one dashboard,
-  or one dashboard page. Query strings, fragments, admin/data/asset routes,
-  encoded separators, and traversal are rejected.
+- `path` may target Insights, Data Explorer, a Develop resource list, one
+  dashboard, or one dashboard page. Query strings, fragments, admin and asset
+  detail routes, encoded separators, and traversal are rejected.
 - A link for an exact saved origin re-verifies the server identity before
   opening the route in that profile's isolated session.
 - A cold-start or macOS `open-url` link for an unknown origin requires native

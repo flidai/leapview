@@ -11,6 +11,7 @@ import (
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
@@ -19,20 +20,17 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
-	"github.com/flidai/leapview/internal/deployment/apiadapter"
-	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/servingstate"
-	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
+	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 )
 
 type spatialTileAcceptanceMetrics struct {
 	fakeMetrics
 }
 
-func (*spatialTileAcceptanceMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+func (*spatialTileAcceptanceMetrics) QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
 	metadata := dataquery.MetadataFromContext(ctx)
-	if workspaceID != "test-workspace" || dashboardID != "executive-sales" || visualID != "orders" || revision != "active-auth" || metadata.PrincipalID == "" {
+	if dashboardID != "executive-sales" || visualID != "orders" || revision != "active-auth" || metadata.PrincipalID == "" {
 		return dashboardruntime.SpatialTileResult{}, errors.New("tile revision scope unavailable")
 	}
 	return dashboardruntime.SpatialTileResult{Bytes: []byte{0x1a, 0x00}, Features: 1, Precision: "raw", CacheOutcome: "hit"}, nil
@@ -40,7 +38,7 @@ func (*spatialTileAcceptanceMetrics) QueryVisualizationTile(ctx context.Context,
 
 func (*spatialTileAcceptanceMetrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
 	metadata := dataquery.MetadataFromContext(ctx)
-	wantPrincipal := access.DashboardPublicationSubjectID("test-workspace", "website")
+	wantPrincipal := "dashboard_publication:project:test.website"
 	if publicID != "opaque-public-id-12345678901234" || dashboardID != "executive-sales" || visualID != "orders" || revision != "active-public" || metadata.PrincipalID != wantPrincipal || metadata.Surface != dataquery.SurfacePublicDashboard {
 		return dashboardruntime.SpatialTileResult{}, errors.New("tile revision scope unavailable")
 	}
@@ -51,7 +49,7 @@ func TestSpatialTileHTTPAuthorizationExpiryAndPublicationInvalidation(t *testing
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	metrics := &spatialTileAcceptanceMetrics{}
-	server := assembleRuntime(NewMultiWorkspaceMetrics(map[string]QueryMetrics{"test-workspace": metrics}), testStoreOptions(store, assemblyConfig{}))
+	server := assembleRuntime(metrics, testStoreOptions(store, assemblyConfig{}))
 
 	request := func(path string) *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
@@ -96,7 +94,7 @@ func TestPublicDashboardDocumentsAreAnonymousAndRouteAware(t *testing.T) {
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		WorkspaceID: "test-workspace", SecurityHeaders: SecurityHeaders(false),
+		SecurityHeaders: apihttpmiddleware.SecurityHeaders(false),
 	}))
 
 	public := httptest.NewRecorder()
@@ -144,79 +142,10 @@ func TestPublicDashboardDocumentsAreAnonymousAndRouteAware(t *testing.T) {
 	}
 }
 
-func TestPublicationDeploymentRequiresManagementPrivilege(t *testing.T) {
-	ctx := context.Background()
-	store := testStore(t)
-	states := servingstatesqlite.NewRepository(store.SQLDB())
-	created, err := states.Create(ctx, servingstate.CreateInput{WorkspaceID: "test", ProjectID: "project", CreatedBy: "tester"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	validation := completeTestValidation("test", servingstate.Validation{
-		Digest: "digest", ManifestJSON: "{}", ProjectID: "project",
-		DashboardPublicationsJSON: `{"website":{"name":"website","dashboard":"showcase","defaultPage":"","dependencyAssetIds":null,"configurationDigest":""}}`,
-	})
-	if _, err := states.SaveValidated(ctx, created.ID, validation, zeroArtifact(created.ID, "test")); err != nil {
-		t.Fatal(err)
-	}
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{ServingStateRepo: states, WorkspaceID: "test", DefaultEnvironment: "prod"}))
-	targets := []apiadapter.TargetRequest{{Workspace: "test", CandidateID: string(created.ID)}}
-
-	viewer := testPrincipal(t, ctx, store, "viewer-publication@example.com", "Viewer", "viewer")
-	if err := server.routes.deploymentModule.AuthorizePublicationDeployment(ctx, viewer.ID, "prod", targets); !errors.Is(err, deploymentmodule.ErrPublicationForbidden) {
-		t.Fatalf("viewer authorization error = %v", err)
-	}
-	owner := testPrincipal(t, ctx, store, "owner-publication@example.com", "Owner", "owner")
-	if _, err := testAccessRepository(store).CreateGrant(ctx, access.GrantInput{
-		Object:      access.ProjectEnvironmentObject("project", "prod"),
-		SubjectType: access.SubjectPrincipal,
-		SubjectID:   owner.ID,
-		Privilege:   access.PrivilegeManagePublications,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := server.routes.deploymentModule.AuthorizePublicationDeployment(ctx, owner.ID, "prod", targets); err != nil {
-		t.Fatalf("owner authorization: %v", err)
-	}
-	if err := server.routes.deploymentModule.AuthorizePublicationDeployment(ctx, viewer.ID, "dev", targets); err != nil {
-		t.Fatalf("development deployment authorization = %v, want publication check skipped", err)
-	}
-}
-
-func TestPublicationAdminAuthorizationUsesAnyManagedWorkspace(t *testing.T) {
-	ctx := context.Background()
-	store := testStore(t)
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO workspaces (id, title) VALUES ('secondary', 'Secondary')`); err != nil {
-		t.Fatal(err)
-	}
-	repo := testAccessRepository(store)
-	principal, err := repo.SetPrincipalRole(ctx, access.PrincipalRoleInput{
-		WorkspaceID: "secondary", Email: "secondary-owner@example.com", DisplayName: "Secondary Owner", Role: access.RoleOwner,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := repo.CreateAPIToken(ctx, principal.ID, "test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		WorkspaceID: "test", Auth: testAuth(store, "test", AuthConfig{APITokenOnly: true}),
-	}))
-
-	request := httptest.NewRequest(http.MethodGet, "/admin/publications", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
-	recorder := httptest.NewRecorder()
-	server.Routes().ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("secondary workspace publication manager status = %d, body=%s", recorder.Code, recorder.Body.String())
-	}
-}
-
 func TestDisabledSuspendedAndRotatedPublicationIDsReturnNotFound(t *testing.T) {
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test-workspace"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
 	request := func(path string) int {
 		recorder := httptest.NewRecorder()
 		server.Routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
@@ -247,8 +176,8 @@ func TestPublicDashboardDocumentsUseDedicatedRateLimitBucket(t *testing.T) {
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		WorkspaceID: "test-workspace",
-		RateLimits:  RateLimitConfig{Enabled: true, PublicPageLimit: 1, PublicPageWindow: time.Minute},
+
+		RateLimits: apihttpmiddleware.RateLimitConfig{Enabled: true, PublicPageLimit: 1, PublicPageWindow: time.Minute},
 	}))
 	handler := server.Routes()
 	path := "/public/dashboards/opaque-public-id-12345678901234"
@@ -268,19 +197,19 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
-		WorkspaceID: "test-workspace", PublicURL: "https://app.leapview.dev",
-		Auth: testAuth(store, "test-workspace", AuthConfig{DevBypass: true, DevAPIToken: "local-secret"}),
+		PublicURL: "https://app.leapview.dev",
+		Auth:      testAuth(store, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "local-secret"}),
 	}))
 
 	list := httptest.NewRecorder()
-	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/test-workspace/dashboard-publications", nil)
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:test/dashboard-publications", nil)
 	listRequest.Header.Set("Authorization", "Bearer local-secret")
 	server.Routes().ServeHTTP(list, listRequest)
 	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"publicUrl":"https://app.leapview.dev/public/dashboards/opaque-public-id-12345678901234"`) {
 		t.Fatalf("list response = %d %s", list.Code, list.Body.String())
 	}
 
-	path := "/api/v1/workspaces/test-workspace/dashboard-publications/website/suspend"
+	path := "/api/v1/projects/project:test/dashboard-publications/website/suspend"
 	missing := httptest.NewRecorder()
 	missingRequest := httptest.NewRequest(http.MethodPost, path, nil)
 	missingRequest.Header.Set("Authorization", "Bearer local-secret")
@@ -309,9 +238,9 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 		t.Fatal("generated suspend publication command contract is missing")
 	}
 	events, err := testAccessRepository(store).ListAuditEvents(t.Context(), access.AuditEventFilter{
-		WorkspaceID: "test-workspace", Action: contract.Command.Audit.SuccessAction,
+		ResourceKind: "project", ResourceID: "project:test", Action: contract.Command.Audit.SuccessAction,
 	})
-	if err != nil || len(events) != 1 || events[0].TargetType != "dashboard_publication" || events[0].Status != "success" {
+	if err != nil || len(events) != 1 || events[0].ResourceKind != "project" || events[0].ResourceID != "project:test" || events[0].Status != "success" {
 		t.Fatalf("suspend publication audit events = %#v, err = %v", events, err)
 	}
 }
@@ -319,7 +248,7 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 func TestPublicCommandsRequireMatchingLiveStreamAndSuspensionCancelsIt(t *testing.T) {
 	store := testStore(t)
 	seedActivePublication(t, store, "opaque-public-id-12345678901234")
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test-workspace"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
 	resolved, err := server.routes.dashboardModule.ResolvePublicDashboard(context.Background(), "opaque-public-id-12345678901234")
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +268,7 @@ func TestPublicCommandsRequireMatchingLiveStreamAndSuspensionCancelsIt(t *testin
 	if err := guard(httptest.NewRequest(http.MethodPost, "/", nil), resolved.Metrics, request, signals); err != nil {
 		t.Fatalf("matching stream rejected: %v", err)
 	}
-	secondServer := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test-workspace"}))
+	secondServer := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
 	secondResolved, err := secondServer.routes.dashboardModule.ResolvePublicDashboard(context.Background(), "opaque-public-id-12345678901234")
 	if err != nil {
 		t.Fatal(err)
@@ -421,9 +350,9 @@ func seedActivePublication(t *testing.T, store *platform.Store, publicID string)
 		query string
 		args  []any
 	}{
-		{query: `INSERT INTO workspaces (id, title) VALUES ('test-workspace', 'Test Workspace')`},
-		{query: `INSERT INTO serving_states (id, workspace_id, project_id, environment, status, source) VALUES ('state_public', 'test-workspace', 'site', 'prod', 'active', 'publish')`},
-		{query: `INSERT INTO dashboard_publications (id, project_id, workspace_id, name, public_id, dashboard, default_page, configuration_digest, allowed_origins_json, dependency_asset_ids_json, configured, active_serving_state_id, configured_at) VALUES ('pub_website', 'site', 'test-workspace', 'website', ?, 'executive-sales', 'overview', 'sha256:test', '["https://partner.example","https://leapview.dev"]', '["dashboard:test-workspace.executive-sales","semantic_model:test-workspace.test"]', 1, 'state_public', CURRENT_TIMESTAMP)`, args: []any{publicID}},
+		{query: `INSERT OR IGNORE INTO projects (id, title) VALUES ('project:test', 'Test Project')`},
+		{query: `INSERT INTO serving_states (id, project_id, environment, status, source) VALUES ('state_public', 'project:test', 'prod', 'active', 'publish')`},
+		{query: `INSERT INTO dashboard_publications (id, project_id, name, public_id, dashboard, default_page, configuration_digest, allowed_origins_json, dependency_asset_ids_json, configured, active_serving_state_id, configured_at) VALUES ('pub_website', 'project:test', 'website', ?, 'executive-sales', 'overview', 'sha256:test', '["https://partner.example","https://leapview.dev"]', '["dashboard:project:test.executive-sales","semantic_model:project:test.test"]', 1, 'state_public', CURRENT_TIMESTAMP)`, args: []any{publicID}},
 	}
 	for _, statement := range statements {
 		if _, err := store.SQLDB().Exec(statement.query, statement.args...); err != nil {

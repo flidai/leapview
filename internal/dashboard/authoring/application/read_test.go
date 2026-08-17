@@ -11,17 +11,18 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
 func TestDraftDeniedBeforeRevisionLookup(t *testing.T) {
 	repository, lifecycle, _ := previewRepository(t)
 	authorizer := &recordingAuthorizer{err: access.ErrForbidden}
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 
-	_, err := app.Draft(context.Background(), application.DraftRequest{WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID})
+	_, err := app.Draft(context.Background(), application.DraftRequest{ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID})
 	if !errors.Is(err, access.ErrForbidden) {
 		t.Fatalf("denied draft error = %v, want forbidden", err)
 	}
@@ -33,12 +34,12 @@ func TestDraftDeniedBeforeRevisionLookup(t *testing.T) {
 func TestRevisionDeniedBeforeRevisionLookup(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
 	authorizer := &recordingAuthorizer{err: access.ErrForbidden}
-	app := newApplication(t, repository, authorizer, func(context.Context, string) (runtimehost.Lease, error) {
+	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) {
 		return nil, errors.New("runtime should not be acquired")
 	})
 
 	_, err := app.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		DraftID: lifecycle.Draft.ID, RevisionID: revision.ID, Action: authoring.AuthorizationActionEdit,
 	})
 	if !errors.Is(err, access.ErrForbidden) {
@@ -51,7 +52,7 @@ func TestRevisionDeniedBeforeRevisionLookup(t *testing.T) {
 
 func TestRevisionRequiresExactCurrentDraftPointer(t *testing.T) {
 	repository, lifecycle, revision := previewRepository(t)
-	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return nil, nil })
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return nil, nil })
 
 	for _, test := range []struct {
 		name      string
@@ -65,7 +66,7 @@ func TestRevisionRequiresExactCurrentDraftPointer(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			repository.getRevisionCalls = 0
 			_, err := app.Revision(context.Background(), application.RevisionRequest{
-				WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+				ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 				DraftID: test.draftID, RevisionID: test.revision, Action: authoring.AuthorizationActionEdit,
 			})
 			if !errors.Is(err, authoring.ErrNotFound) {
@@ -78,7 +79,7 @@ func TestRevisionRequiresExactCurrentDraftPointer(t *testing.T) {
 	}
 
 	got, err := app.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		DraftID: lifecycle.Draft.ID, RevisionID: revision.ID, Action: authoring.AuthorizationActionEdit,
 	})
 	if err != nil || got.ID != revision.ID {
@@ -93,9 +94,12 @@ func TestRevisionRequiresExactPublishedPointerForView(t *testing.T) {
 	published.Published = &authoring.Published{
 		Revision: revision.Token(),
 		Compilation: authoring.CompiledRevisionToken{
-			AuthoredRevision:       revision.Token(),
-			DefinitionHash:         "sha256:" + strings.Repeat("a", 64),
-			SemanticServingStateID: "state-1",
+			AuthoredRevision: revision.Token(),
+			DefinitionHash:   "sha256:" + strings.Repeat("a", 64),
+			SemanticIdentity: func() projectgraph.ServingIdentity {
+				identity, _ := projectgraph.NewServingIdentity("project", "production", "state-1")
+				return identity
+			}(),
 		},
 		PublishedAt: time.Date(2026, 8, 15, 13, 0, 0, 0, time.UTC),
 		Provenance:  revision.Provenance,
@@ -104,10 +108,10 @@ func TestRevisionRequiresExactPublishedPointerForView(t *testing.T) {
 		t.Fatalf("published fixture invalid: %v", err)
 	}
 	repository.lifecycles[lifecycle.ID] = published
-	authApp := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return nil, nil })
+	authApp := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return nil, nil })
 
 	_, err := authApp.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		RevisionID: "other-revision", Action: authoring.AuthorizationActionView,
 	})
 	if !errors.Is(err, authoring.ErrNotFound) || repository.getRevisionCalls != 0 {
@@ -115,7 +119,7 @@ func TestRevisionRequiresExactPublishedPointerForView(t *testing.T) {
 	}
 	repository.getRevisionCalls = 0
 	got, err := authApp.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		RevisionID: revision.ID, Action: authoring.AuthorizationActionView,
 	})
 	if err != nil || got.ID != revision.ID || repository.getRevisionCalls != 1 {
@@ -128,10 +132,10 @@ func TestArchivedRevisionDoesNotDiscloseRetainedPointer(t *testing.T) {
 	archived := lifecycle
 	archived.Status = authoring.LifecycleStatusArchived
 	repository.lifecycles[lifecycle.ID] = archived
-	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context, string) (runtimehost.Lease, error) { return nil, nil })
+	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return nil, nil })
 
 	_, err := app.Revision(context.Background(), application.RevisionRequest{
-		WorkspaceID: "workspace", ActorID: "actor", DashboardID: lifecycle.ID,
+		ProjectID: "project", ActorID: "actor", DashboardID: lifecycle.ID,
 		DraftID: lifecycle.Draft.ID, RevisionID: revision.ID, Action: authoring.AuthorizationActionEdit,
 	})
 	if !errors.Is(err, authoring.ErrNotFound) || repository.getRevisionCalls != 0 {

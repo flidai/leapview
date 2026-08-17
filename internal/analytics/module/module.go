@@ -17,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticssqlite "github.com/flidai/leapview/internal/analytics/sqlite"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -33,6 +34,7 @@ type Config struct {
 	TargetCredentials     TargetCredentialConfig
 	CredentialMode        CredentialMode
 	CredentialTargetID    string
+	CredentialProjectID   projectgraph.ResourceID
 	CredentialEnvironment string
 	RootDir               string
 	CatalogPath           string
@@ -44,8 +46,6 @@ type Config struct {
 	TempDir               string
 	RuntimeCacheEntries   int
 	RuntimeCacheBytes     int64
-	WorkspaceCacheEntries int
-	WorkspaceCacheBytes   int64
 	NodeCacheEntries      int
 	NodeCacheBytes        int64
 }
@@ -123,14 +123,19 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return nil, err
 	}
 	if config.CredentialMode == CredentialModeDevelopmentEnvironment {
-		development, err := buildProcessDevelopmentTargetResolver(
-			config.CredentialTargetID,
-			config.CredentialEnvironment,
-		)
-		if err != nil {
-			return nil, err
+		if config.CredentialProjectID != "" {
+			development, err := buildProcessDevelopmentTargetResolver(
+				config.CredentialProjectID,
+				config.CredentialTargetID,
+				config.CredentialEnvironment,
+			)
+			if err != nil {
+				return nil, err
+			}
+			targetResolvers.Environment = development
+		} else {
+			targetResolvers.Environment = unboundProcessDevelopmentTargetResolver{targetID: config.CredentialTargetID, environment: config.CredentialEnvironment}
 		}
-		targetResolvers.Environment = development
 	}
 	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
 		RootDir: config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
@@ -142,7 +147,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	cache, err := resultcache.New(resultcache.Limits{
 		RuntimeEntries: config.RuntimeCacheEntries, RuntimeBytes: config.RuntimeCacheBytes,
-		WorkspaceEntries: config.WorkspaceCacheEntries, WorkspaceBytes: config.WorkspaceCacheBytes,
 		NodeEntries: config.NodeCacheEntries, NodeBytes: config.NodeCacheBytes,
 	})
 	if err != nil {
@@ -228,7 +232,7 @@ func (m *Module) NewConnectionAdministration(
 			permission connectionbinding.AdministrationPermission,
 			binding connectionbinding.TargetBinding,
 		) error {
-			if binding.TargetID != m.targetID || binding.Scope.Environment != m.targetEnvironment {
+			if binding.TargetID != connectionbinding.TargetID(m.targetID) || binding.Scope.Environment != m.targetEnvironment {
 				return connectionbinding.ErrUnauthorizedBinding
 			}
 			return authorize(ctx, actor, permission, binding)
@@ -285,14 +289,14 @@ func (m *Module) ensureConnectionPools(
 	}
 	pools, err := connectionbinding.NewPoolDirectory(connectionbinding.PoolDirectoryConfig{
 		Build: func(binding connectionbinding.TargetBinding) (*connectionbinding.PoolManager, error) {
-			if binding.TargetID != m.targetID ||
+			if binding.TargetID != connectionbinding.TargetID(m.targetID) ||
 				binding.Scope.Environment != m.targetEnvironment ||
 				binding.AuthenticationMode != connectionbinding.AuthenticationExternalBundle {
 				return nil, connectionbinding.ErrUnauthorizedBinding
 			}
 			resolver, err := connectionbinding.SelectResolver(
 				connectionbinding.ResolverSelection{
-					TargetID: binding.TargetID, Environment: binding.Scope.Environment,
+					TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
 					TargetClass: m.targetClass, Kind: m.connectionResolverKind(),
 				},
 				m.targetResolvers,
@@ -331,8 +335,13 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 	case "", CredentialModeNonSecret:
 		return analyticsduckdb.NonSecretCredentialResolver{}, nil
 	case CredentialModeDevelopmentEnvironment:
+		if config.CredentialProjectID == "" {
+			return analyticsduckdb.NewUnboundDevelopmentEnvironmentCredentialResolver(
+				connectionbinding.TargetID(config.CredentialTargetID), config.CredentialEnvironment,
+			)
+		}
 		selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-			TargetID: config.CredentialTargetID, Environment: config.CredentialEnvironment,
+			TargetID: connectionbinding.TargetID(config.CredentialTargetID), ProjectID: config.CredentialProjectID, Environment: config.CredentialEnvironment,
 			TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
 		})
 		if err != nil {
@@ -344,11 +353,11 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 	}
 }
 
-func (m *Module) WorkspaceMaterializer() analyticsmaterialization.WorkspaceExecutor {
+func (m *Module) ProjectMaterializer() analyticsmaterialization.Executor {
 	if m == nil || m.environment == nil {
 		return nil
 	}
-	return duckDBWorkspaceMaterializer{environment: m.environment, credentials: m.credentials, module: m}
+	return duckDBProjectMaterializer{environment: m.environment, credentials: m.credentials, module: m}
 }
 
 func (m *Module) RetentionSnapshots() storagemaintenance.SnapshotMaintenance {
@@ -372,21 +381,21 @@ func (m *Module) Collector() prometheus.Collector {
 	return NewCollector(m.environment, m.cache)
 }
 
-func NewWorkspaceMaterializer(environment *analyticsducklake.Environment) analyticsmaterialization.WorkspaceExecutor {
-	return NewWorkspaceMaterializerWithCredentials(environment, analyticsduckdb.NonSecretCredentialResolver{})
+func NewProjectMaterializer(environment *analyticsducklake.Environment) analyticsmaterialization.Executor {
+	return NewProjectMaterializerWithCredentials(environment, analyticsduckdb.NonSecretCredentialResolver{})
 }
 
-func NewWorkspaceMaterializerWithCredentials(
+func NewProjectMaterializerWithCredentials(
 	environment *analyticsducklake.Environment,
 	credentials analyticsduckdb.CredentialResolver,
-) analyticsmaterialization.WorkspaceExecutor {
+) analyticsmaterialization.Executor {
 	if environment == nil {
 		return nil
 	}
 	if credentials == nil {
 		credentials = analyticsduckdb.NonSecretCredentialResolver{}
 	}
-	return duckDBWorkspaceMaterializer{environment: environment, credentials: credentials}
+	return duckDBProjectMaterializer{environment: environment, credentials: credentials}
 }
 
 func (m *Module) QueryAuditReader() queryaudit.Reader {

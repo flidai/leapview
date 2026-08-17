@@ -1,6 +1,7 @@
 apiVersion: leapview.dev/v1
 kind: Project
 metadata:
+  id: project:leapview-evaluation
   name: leapview-evaluation
 spec:
   connections:
@@ -9,6 +10,18 @@ spec:
   sources:
     include:
       - sources/*.yaml
-  workspaces:
+  models:
     include:
-      - workspaces/*/workspace.yaml
+      - models/*.yaml
+  semanticModels:
+    include:
+      - semantic-models/*.yaml
+  pipelines:
+    include:
+      - pipelines/*.yaml
+  dashboards:
+    include:
+      - dashboards/*.yaml
+  access:
+    include:
+      - access/*.yaml

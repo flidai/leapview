@@ -31,6 +31,9 @@ func TestDataSyncDeduplicatesAndUsesStableIdempotencyKey(t *testing.T) {
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/upload-sessions") {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
+		if !strings.Contains(r.URL.Path, "/connections/connection:orders/") {
+			t.Fatalf("request used symbolic connection instead of canonical ID: %s", r.URL.Path)
+		}
 		keys = append(keys, r.Header.Get("Idempotency-Key"))
 		writeCreatedUploadSession(t, w, plan, "upload-1", manageddataapi.ManagedDataUploadSessionStatusCompleted, []manageddataapi.ManagedDataFileUploadResponse{{
 			File: wireFile(t, file), Status: manageddataapi.ManagedDataFileUploadStatusSkipped,
@@ -54,6 +57,26 @@ func TestDataSyncDeduplicatesAndUsesStableIdempotencyKey(t *testing.T) {
 	}
 	if len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] {
 		t.Fatalf("idempotency keys = %#v", keys)
+	}
+}
+
+func TestDataSyncRequiresCanonicalPlannedConnectionID(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		connection string
+	}{
+		{name: "missing"},
+		{name: "invalid", connection: "connection with spaces"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := runDataSync(context.Background(), dataSyncRequest{
+				ProjectID: "project:demo", Connection: "orders", Root: t.TempDir(),
+				Plan: localplan.Result{Connection: test.connection},
+			})
+			if err == nil || !strings.Contains(err.Error(), "connection ID") {
+				t.Fatalf("runDataSync() error = %v, want canonical connection ID failure", err)
+			}
+		})
 	}
 }
 
@@ -371,7 +394,7 @@ func TestSignedPartFailureDoesNotExposeSignedURL(t *testing.T) {
 }
 
 func syncPlan(root string, file manageddata.File) localplan.Result {
-	return localplan.Result{Connection: "orders", Root: root, Manifest: manageddata.Manifest{Files: []manageddata.File{file}}}
+	return localplan.Result{Connection: "connection:orders", ConnectionName: "orders", Root: root, Manifest: manageddata.Manifest{Files: []manageddata.File{file}}}
 }
 
 func uploadNegotiation(value manageddataapi.ManagedDataUploadNegotiation) *manageddataapi.ManagedDataUploadNegotiation {
@@ -408,7 +431,7 @@ func uploadSessionResponse(plan localplan.Result, id string, status manageddataa
 		wFiles[i] = manageddataapi.ManagedDataFileMetadata{Path: file.Path, Size: file.Size, Sha256: file.SHA256}
 	}
 	return manageddataapi.ManagedDataUploadSessionResponse{
-		Id: id, Project: "demo", Connection: "orders", RevisionId: plan.Manifest.RevisionID(), Status: status,
+		Id: id, Project: "demo", Connection: plan.Connection, RevisionId: plan.Manifest.RevisionID(), Status: status,
 		Manifest: manageddataapi.ManagedDataManifest{Files: wFiles}, Files: files, CreatedAt: "2026-01-01T00:00:00Z", ExpiresAt: "2030-01-01T00:00:00Z",
 	}
 }

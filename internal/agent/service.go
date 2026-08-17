@@ -31,17 +31,18 @@ func IsBusy(err error) bool {
 }
 
 type Scope struct {
-	WorkspaceID    string
+	ProjectID      string
 	PrincipalID    string
+	GroupIDs       []string
 	ConversationID string
 	Credential     CredentialScope
 	DevAuthBypass  bool
 }
 
 type CredentialScope struct {
-	WorkspaceID string
-	Privileges  []string
-	Restricted  bool
+	ProjectID    string
+	Capabilities []string
+	Restricted   bool
 }
 
 type ToolProvider func(scope Scope) []agentcore.ToolDefinition
@@ -274,13 +275,11 @@ func (s *Service) CancelPersistedRunWithWorkflow(ctx context.Context, scope Scop
 		_, _, err := terminalizer.FinishRunWorkflow(context.WithoutCancel(ctx), finish, workflow)
 		return true, err
 	}
-	return false, s.finishRun(ctx, PromptInput{Scope: scope, ConversationID: conversationID}, runID, RunStatusCanceled, "", agentcore.Usage{}, context.Canceled)
+	return false, fmt.Errorf("transactional run cancellation workflow is unavailable")
 }
 
 // SupportsCancellationWorkflow reports whether queued cancellation can be
-// committed atomically with its domain run and event. Callers must not apply
-// the legacy two-step fallback after an atomic adapter reports an error: that
-// would break its rollback guarantee.
+// committed atomically with its domain run and event.
 func (s *Service) SupportsCancellationWorkflow() bool {
 	if s == nil || s.repo == nil {
 		return false
@@ -332,16 +331,7 @@ func (s *Service) finalizePersistedRunFailure(ctx context.Context, scope Scope, 
 		_, transitioned, err := terminalizer.FinishRunWorkflow(cleanupCtx, finish, workflow)
 		return transitioned, err
 	}
-	finishErr := s.finishRun(cleanupCtx, PromptInput{Scope: scope, ConversationID: conversationID}, runID, RunStatusFailed, "", agentcore.Usage{}, runErr)
-	if finishErr == nil {
-		return true, nil
-	}
-	// Legacy repositories lack the transactional terminalizer. Treat an
-	// already-terminal row as an idempotent replay after the attempted update.
-	if current, getErr := s.GetRun(cleanupCtx, scope, conversationID, runID); getErr == nil && current.Status != RunStatusRunning && current.Status != RunStatusPreparing {
-		return false, nil
-	}
-	return false, finishErr
+	return false, fmt.Errorf("transactional run failure workflow is unavailable")
 }
 
 func (s *Service) GetRunByID(ctx context.Context, scope Scope, runID string) (Run, error) {

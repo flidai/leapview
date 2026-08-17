@@ -6,6 +6,7 @@ import (
 	stdhttp "net/http"
 
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectgen "github.com/flidai/leapview/internal/project/api/gen"
 )
 
@@ -13,9 +14,22 @@ import (
 // A provider may implement it without turning the compile-time Project
 // capability into a synthetic runtime module.
 type Handler interface {
-	ListProjects(stdhttp.ResponseWriter, *stdhttp.Request, *int32, *string)
 	GetProject(stdhttp.ResponseWriter, *stdhttp.Request, string)
-	ListProjectWorkspaces(stdhttp.ResponseWriter, *stdhttp.Request, string, *int32, *string)
+	Search(stdhttp.ResponseWriter, *stdhttp.Request, projectapi.SearchParams)
+}
+
+func (d *APIGenDispatcher) Search(w stdhttp.ResponseWriter, r *stdhttp.Request, params projectgen.GenSearchParams) {
+	var kindPointer *[]projectapi.SearchKind
+	if params.Kind != nil {
+		kinds := make([]projectapi.SearchKind, len(*params.Kind))
+		for index, kind := range *params.Kind {
+			kinds[index] = projectapi.SearchKind(kind)
+		}
+		kindPointer = &kinds
+	}
+	d.handler.Search(w, r, projectapi.SearchParams{
+		Q: params.Q, Kind: kindPointer, Domain: params.Domain, Limit: params.Limit, Cursor: params.Cursor,
+	})
 }
 
 type APIGenDispatcher struct {
@@ -26,16 +40,8 @@ func NewAPIGenDispatcher(handler Handler) *APIGenDispatcher {
 	return &APIGenDispatcher{handler: handler}
 }
 
-func (d *APIGenDispatcher) ListProjects(w stdhttp.ResponseWriter, r *stdhttp.Request, params projectgen.GenListProjectsParams) {
-	d.handler.ListProjects(w, r, params.Limit, params.PageToken)
-}
-
 func (d *APIGenDispatcher) GetProject(w stdhttp.ResponseWriter, r *stdhttp.Request, project string) {
 	d.handler.GetProject(w, r, project)
-}
-
-func (d *APIGenDispatcher) ListProjectWorkspaces(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, params projectgen.GenListProjectWorkspacesParams) {
-	d.handler.ListProjectWorkspaces(w, r, project, params.Limit, params.PageToken)
 }
 
 type APIGenTransportErrorResponder struct {

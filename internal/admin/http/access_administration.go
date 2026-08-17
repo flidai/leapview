@@ -105,23 +105,12 @@ func (h Handler) AccessAdministrationCommand(w nethttp.ResponseWriter, r *nethtt
 }
 
 func (h Handler) loadAccessAdministration(ctx context.Context, actorID, selectedPrincipalID, selectedGroupID string) (adminsettings.AccessAdministrationSignal, error) {
-	state, err := adminsettings.LoadAccessAdministration(ctx, h.SettingsRepository, actorID, selectedPrincipalID, selectedGroupID)
-	if err != nil || h.WorkspaceSettings == nil {
-		return state, err
+	var readers []adminsettings.AuthorizationProjectionReader
+	if h.AuthorizationProjection != nil {
+		readers = append(readers, h.AuthorizationProjection)
 	}
-	summaries, err := h.WorkspaceSettings.List(ctx)
-	if err != nil {
-		return state, err
-	}
-	state.Workspaces = make([]adminsettings.AccessWorkspaceSignal, 0, len(summaries))
-	for _, summary := range summaries {
-		name := strings.TrimSpace(summary.Title)
-		if name == "" {
-			name = string(summary.ID)
-		}
-		state.Workspaces = append(state.Workspaces, adminsettings.AccessWorkspaceSignal{ID: string(summary.ID), Name: name})
-	}
-	return state, nil
+	state, err := adminsettings.LoadAccessAdministration(ctx, h.SettingsRepository, actorID, selectedPrincipalID, selectedGroupID, readers...)
+	return state, err
 }
 
 func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettings.AccessAdministrationCommand) (*nethttp.Request, error) {
@@ -138,7 +127,6 @@ func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettin
 		}
 		return r.WithContext(ctx), nil
 	}
-	workspaceID := command.WorkspaceID
 	switch command.Action {
 	case "create_principal":
 		return begin(accessgen.GenUIActionCreatePrincipal(), func() (context.Context, error) {
@@ -177,27 +165,27 @@ func beginAccessAdministrationInvocation(r *nethttp.Request, command adminsettin
 		})
 	case "create_group":
 		return begin(accessgen.GenUIActionCreateGroup(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenCreateGroupCommand(r.Context(), accessgen.GenCreateGroupCommandInvocation{Surface: apigencommand.SurfaceUI, Workspace: workspaceID, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenCreateGroupCommand(r.Context(), accessgen.GenCreateGroupCommandInvocation{Surface: apigencommand.SurfaceUI, IdempotencyKey: idempotencyKey, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	case "update_group":
 		return begin(accessgen.GenUIActionUpdateGroup(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenUpdateGroupCommand(r.Context(), accessgen.GenUpdateGroupCommandInvocation{Surface: apigencommand.SurfaceUI, Workspace: workspaceID, ConcurrencyToken: command.Revision, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenUpdateGroupCommand(r.Context(), accessgen.GenUpdateGroupCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, ConcurrencyToken: command.Revision, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	case "delete_group":
 		return begin(accessgen.GenUIActionDeleteGroup(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenDeleteGroupCommand(r.Context(), accessgen.GenDeleteGroupCommandInvocation{Surface: apigencommand.SurfaceUI, Workspace: workspaceID, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenDeleteGroupCommand(r.Context(), accessgen.GenDeleteGroupCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	case "add_group_member":
 		return begin(accessgen.GenUIActionAddGroupMember(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenAddGroupMemberCommand(r.Context(), accessgen.GenAddGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, Workspace: workspaceID, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenAddGroupMemberCommand(r.Context(), accessgen.GenAddGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	case "remove_group_member":
 		return begin(accessgen.GenUIActionRemoveGroupMember(), func() (context.Context, error) {
-			ctx, _, err := accessgen.BeginGenRemoveGroupMemberCommand(r.Context(), accessgen.GenRemoveGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, Workspace: workspaceID, RequestID: requestID, CorrelationID: correlationID})
+			ctx, _, err := accessgen.BeginGenRemoveGroupMemberCommand(r.Context(), accessgen.GenRemoveGroupMemberCommandInvocation{Surface: apigencommand.SurfaceUI, Group: command.GroupID, RequestID: requestID, CorrelationID: correlationID})
 			return ctx, err
 		})
 	default:

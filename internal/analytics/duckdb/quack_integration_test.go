@@ -28,9 +28,9 @@ func TestLiveQuackTargetRuntimePool(t *testing.T) {
 	require.NoError(t, err)
 
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_quack_integration", TargetID: "lvinst_integration", LogicalConnectionID: "lakehouse",
+		ID: "binding_quack_integration", TargetID: "lvinst_integration", ConnectionID: "lakehouse",
 		ConnectorKind: "quack", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
-		Scope:    connectionbinding.BindingScope{WorkspaceID: "integration", Environment: "test"},
+		Scope:    connectionbinding.BindingScope{ProjectID: "integration", Environment: "test"},
 		Endpoint: connectionbinding.EndpointConfig{Host: host, Port: port, TLSMode: "require"},
 		CredentialReference: connectionbinding.CredentialReference{
 			ProjectID: "integration", Environment: "test", SecretPath: "/integration/quack", SecretKey: "token",

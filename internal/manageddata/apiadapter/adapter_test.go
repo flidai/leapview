@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/control"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -33,7 +34,7 @@ func TestRepositoryRevisionIDsAreCanonicalDigests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Revision.ID != digestA || got.UploadSessionID != "upload_a" {
+	if got.PublicID != digestA || got.Revision.ID != "revision_a" || got.UploadSessionID != "upload_a" {
 		t.Fatalf("revision = %#v", got)
 	}
 }
@@ -46,7 +47,7 @@ func TestListRevisionsIsDeterministicAndIncludesProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Revision.ID != digestB || got[0].UploadSessionID != "upload_b" || got[1].Revision.ID != digestA {
+	if len(got) != 2 || got[0].PublicID != digestB || got[0].UploadSessionID != "upload_b" || got[1].PublicID != digestA {
 		t.Fatalf("revisions = %#v", got)
 	}
 }
@@ -57,7 +58,7 @@ func TestEnvironmentPointerExposesDeploymentAndPublicRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RevisionID != digestA || got.DeploymentID != "deployment_a" {
+	if got.RevisionID != "revision_a" || got.RevisionDigest != digestA || got.DeploymentID != "deployment_a" {
 		t.Fatalf("pointer = %#v", got)
 	}
 }
@@ -74,14 +75,14 @@ func mustNew(t *testing.T, repository *fakeRepository) *Adapter {
 func fixtureRepository() *fakeRepository {
 	return &fakeRepository{
 		collections: map[string]manageddata.Collection{
-			"project_a\x00orders": {ID: "collection_a", ProjectID: "project_a", ConnectionName: "orders", Status: manageddata.CollectionStatusActive},
+			"project_a\x00orders": {ID: projectgraph.ResourceID("collection_a"), ProjectID: projectgraph.ResourceID("project_a"), ConnectionID: projectgraph.ResourceID("orders"), Status: manageddata.CollectionStatusActive},
 		},
 		revisions: []manageddata.Revision{
-			{ID: "revision_a", CollectionID: "collection_a", Sequence: 1, Digest: digestA, Status: manageddata.RevisionStatusReady},
-			{ID: "revision_b", CollectionID: "collection_a", Sequence: 2, Digest: digestB, Status: manageddata.RevisionStatusReady},
+			{ID: manageddata.RevisionID("revision_a"), CollectionID: projectgraph.ResourceID("collection_a"), Sequence: 1, Digest: digestA, Status: manageddata.RevisionStatusReady},
+			{ID: manageddata.RevisionID("revision_b"), CollectionID: projectgraph.ResourceID("collection_a"), Sequence: 2, Digest: digestB, Status: manageddata.RevisionStatusReady},
 		},
 		uploads: map[string]string{"revision_a": "upload_a"},
-		pointer: manageddata.EnvironmentPointer{CollectionID: "collection_a", Environment: "prod", RevisionID: "revision_a", DeploymentID: "deployment_a"},
+		pointer: manageddata.EnvironmentPointer{CollectionID: projectgraph.ResourceID("collection_a"), Environment: "prod", RevisionID: manageddata.RevisionID("revision_a"), DeploymentID: "deployment_a"},
 	}
 }
 
@@ -92,19 +93,19 @@ type fakeRepository struct {
 	pointer     manageddata.EnvironmentPointer
 }
 
-func (r *fakeRepository) ListUploadSessions(_ context.Context, collectionID string) ([]manageddata.UploadSession, error) {
-	return []manageddata.UploadSession{{ID: "upload_a", CollectionID: collectionID, CreatedAt: "2026-01-01T00:00:00Z"}}, nil
+func (r *fakeRepository) ListUploadSessions(_ context.Context, collectionID projectgraph.ResourceID) ([]manageddata.UploadSession, error) {
+	return []manageddata.UploadSession{{ID: manageddata.UploadID("upload_a"), CollectionID: collectionID, CreatedAt: "2026-01-01T00:00:00Z"}}, nil
 }
 
-func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, project, connection string) (manageddata.Collection, error) {
-	value, ok := r.collections[project+"\x00"+connection]
+func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, project, connection projectgraph.ResourceID) (manageddata.Collection, error) {
+	value, ok := r.collections[project.String()+"\x00"+connection.String()]
 	if !ok {
 		return manageddata.Collection{}, manageddata.ErrNotFound
 	}
 	return value, nil
 }
 
-func (r *fakeRepository) RevisionByID(_ context.Context, id string) (manageddata.Revision, error) {
+func (r *fakeRepository) RevisionByID(_ context.Context, id manageddata.RevisionID) (manageddata.Revision, error) {
 	for _, revision := range r.revisions {
 		if revision.ID == id {
 			return revision, nil
@@ -113,7 +114,7 @@ func (r *fakeRepository) RevisionByID(_ context.Context, id string) (manageddata
 	return manageddata.Revision{}, manageddata.ErrNotFound
 }
 
-func (r *fakeRepository) ListRevisions(_ context.Context, collectionID string) ([]manageddata.Revision, error) {
+func (r *fakeRepository) ListRevisions(_ context.Context, collectionID projectgraph.ResourceID) ([]manageddata.Revision, error) {
 	var result []manageddata.Revision
 	for _, revision := range r.revisions {
 		if revision.CollectionID == collectionID {
@@ -123,15 +124,15 @@ func (r *fakeRepository) ListRevisions(_ context.Context, collectionID string) (
 	return result, nil
 }
 
-func (r *fakeRepository) UploadSessionIDByRevisionID(_ context.Context, revisionID string) (string, error) {
-	id, ok := r.uploads[revisionID]
+func (r *fakeRepository) UploadSessionIDByRevisionID(_ context.Context, revisionID manageddata.RevisionID) (manageddata.UploadID, error) {
+	id, ok := r.uploads[revisionID.String()]
 	if !ok {
 		return "", manageddata.ErrNotFound
 	}
-	return id, nil
+	return manageddata.UploadID(id), nil
 }
 
-func (r *fakeRepository) EnvironmentPointer(context.Context, string, manageddata.Environment) (manageddata.EnvironmentPointer, error) {
+func (r *fakeRepository) EnvironmentPointer(context.Context, projectgraph.ResourceID, manageddata.Environment) (manageddata.EnvironmentPointer, error) {
 	return r.pointer, nil
 }
 

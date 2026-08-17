@@ -7,27 +7,28 @@ import (
 	"log/slog"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 )
 
 type QueueRepository interface {
 	WorkflowRepository
-	ListExecutableJobs(ctx context.Context, environment string, limit int) ([]JobRecord, error)
+	ListExecutableJobs(ctx context.Context, scope ReadScope, limit int) ([]JobRecord, error)
 	ClaimExecutableJob(ctx context.Context, candidate JobRecord, owner string, lease time.Duration) (JobRecord, bool, error)
 	RenewJobLease(ctx context.Context, job JobRecord, lease time.Duration) error
-	JobQueueStats(ctx context.Context, environment string) (JobQueueStats, error)
+	JobQueueStats(ctx context.Context, scope ReadScope) (JobQueueStats, error)
 }
 
 type Dispatcher struct {
-	Runs          QueueRepository
-	Service       Service
-	Admitter      workload.Admitter
-	LeaseTimeout  time.Duration
-	Logger        *slog.Logger
-	Owner         string
-	Environment   string
-	WorkloadStats func() workload.Stats
-	RunFinished   func(context.Context, JobRecord)
+	Runs            QueueRepository
+	Service         Service
+	Admitter        workload.Admitter
+	LeaseTimeout    time.Duration
+	Logger          *slog.Logger
+	Owner           string
+	ResolveIdentity func(context.Context) (projectgraph.ServingIdentity, error)
+	WorkloadStats   func() workload.Stats
+	RunFinished     func(context.Context, JobRecord)
 }
 
 func (d Dispatcher) Run(ctx context.Context) {
@@ -37,13 +38,33 @@ func (d Dispatcher) Run(ctx context.Context) {
 	if d.Admitter == nil {
 		d.Admitter, _ = workload.New(workload.DefaultConfig())
 	}
+	if d.ResolveIdentity == nil {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "refresh dispatcher identity resolver is unavailable")
+		}
+		return
+	}
+	identity, err := d.ResolveIdentity(ctx)
+	if err != nil {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "resolve refresh dispatcher identity failed", "error", err)
+		}
+		return
+	}
+	scope, err := ReadScopeForIdentity(identity)
+	if err != nil {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "invalid refresh dispatcher identity", "error", err)
+		}
+		return
+	}
 	owner := d.Owner
 	if owner == "" {
 		owner = fmt.Sprintf("leapview-%d", time.Now().UnixNano())
 	}
 	for {
-		queueStats, _ := d.Runs.JobQueueStats(ctx, d.Environment)
-		candidates, err := d.Runs.ListExecutableJobs(ctx, d.Environment, 16)
+		queueStats, _ := d.Runs.JobQueueStats(ctx, scope)
+		candidates, err := d.Runs.ListExecutableJobs(ctx, scope, 16)
 		if err != nil {
 			if d.Logger != nil {
 				d.Logger.WarnContext(ctx, "list refresh job candidates failed", "error", err)
@@ -69,10 +90,16 @@ func (d Dispatcher) Run(ctx context.Context) {
 }
 
 func (d Dispatcher) dispatchCandidate(ctx context.Context, owner string, candidate JobRecord, queueStats JobQueueStats) bool {
-	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, WorkspaceID: candidate.WorkspaceID, Operation: "materialization.refresh"})
+	if candidate.PrincipalID == "" || candidate.EstimatedMemoryBytes <= 0 {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "refresh job lacks durable actor or memory estimate", "job", candidate.ID)
+		}
+		return false
+	}
+	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: candidate.PrincipalID, GroupIDs: append([]string(nil), candidate.GroupIDs...), Operation: "materialization.refresh", EstimatedMemoryBytes: candidate.EstimatedMemoryBytes})
 	if err != nil {
 		if d.Logger != nil {
-			d.Logger.InfoContext(ctx, "refresh admission deferred", "workspace", candidate.WorkspaceID, "run", candidate.RunID, "error", err)
+			d.Logger.InfoContext(ctx, "refresh admission deferred", "project", candidate.Identity.ProjectID, "generation", candidate.Identity.GenerationID, "run", candidate.RunID, "error", err)
 		}
 		return false
 	}
@@ -93,7 +120,7 @@ func (d Dispatcher) dispatchCandidate(ctx context.Context, owner string, candida
 			stats = d.WorkloadStats()
 		}
 		d.Logger.InfoContext(ctx, "dispatch refresh job",
-			"workspace", job.WorkspaceID, "run", job.RunID, "kind", job.Kind,
+			"project", job.Identity.ProjectID, "generation", job.Identity.GenerationID, "run", job.RunID, "kind", job.Kind,
 			"queued_jobs", queueStats.QueuedJobs, "running_jobs", queueStats.RunningJobs,
 			"stale_leased_jobs", queueStats.StaleLeasedJobs,
 			"workload_running", stats.Running, "workload_queued", stats.Queued,
@@ -151,7 +178,7 @@ func (d Dispatcher) renewJobLease(ctx context.Context, job JobRecord, cancel con
 				if err := d.Runs.RenewJobLease(context.WithoutCancel(ctx), job, d.leaseTimeout()); err != nil {
 					cancel()
 					if d.Logger != nil {
-						d.Logger.WarnContext(ctx, "renew refresh job lease failed", "job", job.ID, "generation", job.LeaseGeneration, "error", err)
+						d.Logger.WarnContext(ctx, "renew refresh job lease failed", "job", job.ID, "lease_revision", job.LeaseRevision, "error", err)
 					}
 					return
 				}

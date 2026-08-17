@@ -8,18 +8,39 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type governedDataRuntime struct {
 	DataRuntime
-	workspaceID string
-	service     reportdef.DataService
+	projectID projectgraph.ResourceID
+	service   reportdef.DataService
 }
 
-func newGovernedDataRuntime(workspaceID, modelID string, runtime DataRuntime) DataRuntime {
-	wrapped := &governedDataRuntime{DataRuntime: runtime, workspaceID: workspaceID}
-	wrapped.service = reportdef.NewDataQueryService(modelID, wrapped)
+func newGovernedDataRuntime(projectID projectgraph.ResourceID, modelID projectgraph.ResourceID, runtime DataRuntime) DataRuntime {
+	wrapped := &governedDataRuntime{DataRuntime: runtime, projectID: projectID}
+	wrapped.service = reportdef.NewDataQueryService(projectID, modelID.String(), wrapped)
 	return wrapped
+}
+
+func (r *governedDataRuntime) bindProject(request dataquery.Query) (dataquery.Query, error) {
+	if err := r.projectID.Validate(); err != nil {
+		return dataquery.Query{}, fmt.Errorf("governed dashboard project identity: %w", err)
+	}
+	if request.ProjectID != "" && request.ProjectID != r.projectID {
+		return dataquery.Query{}, fmt.Errorf("governed dashboard query project %q does not match runtime project %q", request.ProjectID, r.projectID)
+	}
+	request.ProjectID = r.projectID
+	return request, nil
+}
+
+func (r *governedDataRuntime) bindContext(ctx context.Context) (context.Context, error) {
+	metadata := dataquery.MetadataFromContext(ctx)
+	if metadata.ProjectID != "" && metadata.ProjectID != r.projectID {
+		return ctx, fmt.Errorf("governed dashboard metadata project %q does not match runtime project %q", metadata.ProjectID, r.projectID)
+	}
+	metadata.ProjectID = r.projectID
+	return dataquery.WithMetadata(ctx, metadata), nil
 }
 
 func (r *governedDataRuntime) Query(ctx context.Context, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
@@ -43,10 +64,15 @@ func (r *governedDataRuntime) Distribution(ctx context.Context, request reportde
 }
 
 func (r *governedDataRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
-	if request.WorkspaceID == "" {
-		request.WorkspaceID = r.workspaceID
+	bound, err := r.bindProject(request)
+	if err != nil {
+		return dataquery.Result{}, err
 	}
-	return dataquery.ExecuteAudited(ctx, request, r.DataRuntime.ExecuteDataQuery)
+	boundContext, err := r.bindContext(ctx)
+	if err != nil {
+		return dataquery.Result{}, err
+	}
+	return dataquery.ExecuteAudited(boundContext, bound, r.DataRuntime.ExecuteDataQuery)
 }
 
 func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, requests []dataquery.BundleRequest) (dataquery.BundleResult, error) {
@@ -57,23 +83,32 @@ func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, reques
 	if len(requests) == 0 {
 		return dataquery.BundleResult{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("bundle is empty")}
 	}
+	boundContext, err := r.bindContext(ctx)
+	if err != nil {
+		return dataquery.BundleResult{}, err
+	}
+	boundRequests := make([]dataquery.BundleRequest, len(requests))
 	ids := make([]string, len(requests))
-	audit := requests[0].Query
+	for index, request := range requests {
+		bound, err := r.bindProject(request.Query)
+		if err != nil {
+			return dataquery.BundleResult{}, err
+		}
+		boundRequests[index] = dataquery.BundleRequest{ID: request.ID, Query: bound}
+	}
+	audit := boundRequests[0].Query
 	fieldSet := map[string]bool{}
 	measureSet := map[string]bool{}
-	for i := range requests {
-		if requests[i].Query.WorkspaceID == "" {
-			requests[i].Query.WorkspaceID = r.workspaceID
-		}
-		ids[i] = requests[i].ID
-		for _, field := range requests[i].Query.Fields {
+	for i := range boundRequests {
+		ids[i] = boundRequests[i].ID
+		for _, field := range boundRequests[i].Query.Fields {
 			key := field.Field + "\x00" + field.Alias
 			if !fieldSet[key] {
 				fieldSet[key] = true
 				audit.Fields = append(audit.Fields, field)
 			}
 		}
-		for _, measure := range requests[i].Query.Measures {
+		for _, measure := range boundRequests[i].Query.Measures {
 			key := measure.Field + "\x00" + measure.Alias
 			if !measureSet[key] {
 				measureSet[key] = true
@@ -91,9 +126,9 @@ func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, reques
 	audit.Offset = 0
 	audit.Limit = 0
 	var bundle dataquery.BundleResult
-	_, err := dataquery.ExecuteAudited(ctx, audit, func(execCtx context.Context, _ dataquery.Query) (dataquery.Result, error) {
+	_, err = dataquery.ExecuteAudited(boundContext, audit, func(execCtx context.Context, _ dataquery.Query) (dataquery.Result, error) {
 		var executeErr error
-		bundle, executeErr = port.ExecuteDataQueryBundle(execCtx, requests)
+		bundle, executeErr = port.ExecuteDataQueryBundle(execCtx, boundRequests)
 		summary := dataquery.Result{SQL: bundle.SQL}
 		if executeErr == nil {
 			summary.ExecutionState = dataquery.ExecutionSucceeded

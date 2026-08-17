@@ -1,5 +1,6 @@
 -- +goose Up
-ALTER TABLE serving_states ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+-- Serving-state project identity is part of the canonical baseline in 001.
+SELECT 1;
 
 -- +goose Down
-ALTER TABLE serving_states DROP COLUMN project_id;
+SELECT 1;

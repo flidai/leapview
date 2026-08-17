@@ -253,7 +253,7 @@ func validateBackupDatabase(ctx context.Context, path string) error {
 SELECT name
 FROM sqlite_master
 WHERE type = 'table'
-  AND name IN ('platform_settings', 'workspaces', 'serving_states', 'roles')
+  AND name IN ('platform_settings', 'serving_states', 'platform_role_bindings')
 `)
 	if err != nil {
 		return fmt.Errorf("inspect backup schema: %w", err)
@@ -270,7 +270,7 @@ WHERE type = 'table'
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for _, name := range []string{"platform_settings", "workspaces", "serving_states", "roles"} {
+	for _, name := range []string{"platform_settings", "serving_states", "platform_role_bindings"} {
 		if !seen[name] {
 			return fmt.Errorf("backup is not a valid platform database: missing table %s", name)
 		}

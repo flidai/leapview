@@ -8,6 +8,7 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func compiledDefinitionWithVisuals(order ...string) dashboarddefinition.Definition {
@@ -20,7 +21,11 @@ func compiledDefinitionWithVisuals(order ...string) dashboarddefinition.Definiti
 
 func compiledRevisionFixture(t *testing.T, definition dashboarddefinition.Definition) CompiledRevision {
 	t.Helper()
-	compiled, err := NewCompiledRevision("workspace-1", "sales", RevisionToken{RevisionID: "rev-1", Number: 1, ContentHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}, definition, "state-1", time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC))
+	identity, err := projectgraph.NewServingIdentity("project-1", "production", "state-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := NewCompiledRevision("project-1", "sales", RevisionToken{RevisionID: "rev-1", Number: 1, ContentHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}, definition, identity, time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +58,7 @@ func TestNewCompiledRevisionDeepCopiesDefinitionAndValidatesHash(t *testing.T) {
 	if err := mutated.Validate(); err == nil {
 		t.Fatal("definition hash mismatch unexpectedly validated")
 	}
-	if err := (CompiledRevision{WorkspaceID: "workspace-1", DashboardID: "sales", AuthoredRevision: compiled.AuthoredRevision, Definition: compiled.Definition, DefinitionHash: "sha256:" + "A" + "000000000000000000000000000000000000000000000000000000000000000", SemanticServingStateID: "state-1", CompiledAt: compiled.CompiledAt}).Validate(); err == nil {
+	if err := (CompiledRevision{ProjectID: "project-1", DashboardID: "sales", AuthoredRevision: compiled.AuthoredRevision, Definition: compiled.Definition, DefinitionHash: "sha256:" + "A" + "000000000000000000000000000000000000000000000000000000000000000", SemanticIdentity: compiled.SemanticIdentity, CompiledAt: compiled.CompiledAt}).Validate(); err == nil {
 		t.Fatal("uppercase definition hash unexpectedly validated")
 	}
 }

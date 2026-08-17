@@ -6,11 +6,11 @@ Runtime behavior begins with active deployment resolution and ends with a bounde
 
 `cmd/leapview/main.go` loads process-global configuration, opens platform and analytical storage, constructs repositories and domain services, registers routes, and starts the HTTP server. Production configuration validation occurs before unsafe modes are permitted.
 
-The application router composes liveness/readiness, protected metrics, authentication, workspaces, dashboards, deployments, managed data, access, audit, administration, agent, and headless API routes. Middleware establishes trusted request context such as principal, rate limits, and security headers before handlers reach domain operations.
+The application router composes liveness/readiness, protected metrics, authentication, project resources, dashboards, deployments, managed data, access, audit, administration, agent, and headless API routes. Middleware establishes trusted request context such as principal, rate limits, and security headers before handlers reach domain operations.
 
 ## Active project resolution
 
-A request resolves workspace identity while the server supplies its permanently bound instance environment. Serving-state repositories find the active deployment/artifact and associated analytical snapshot. Runtime packages construct workspace catalogs, dashboards, semantic models, and query services from validated active metadata.
+A request resolves project-resource identity while the server supplies its permanently bound instance environment. Serving-state repositories find the active deployment/artifact and associated analytical snapshot. Runtime packages construct project catalogs, dashboards, semantic models, and query services from validated active metadata.
 
 The request resolves active state once for its operation. A deployment or refresh activated during the request does not change the snapshot already leased by that request.
 
@@ -20,7 +20,7 @@ Handlers authorize the principal on known securable objects. Effective privilege
 
 Serving-state cutover never tears down a retired generation on the request
 release path. The final reader release atomically moves the generation from
-`draining_readers` to `cleanup_pending`; one bounded worker per workspace then
+`draining_readers` to `cleanup_pending`; bounded cleanup workers then
 closes the runtime, managed-data lifetime, persistent snapshot lease, and
 runtime dependencies exactly once. The retired generation remains observable
 as a tombstone, and its snapshot remains leased, until cleanup completes.
@@ -49,7 +49,7 @@ The consumer optimizer can coordinate related page work. The stream coordinator 
 
 Headless semantic requests identify model, dataset, dimensions, measures, filters, sorting, and bounds. The semantic query planner validates fields and relationships, chooses fact/join paths, and produces a plan for DuckDB. Explain operations return resolution information without turning generated SQL into a new public input surface.
 
-Query audit records operation, principal, workspace, model/target, status, timing, and safe diagnostics according to the surface contract.
+Query audit records operation, principal, project, model/target, status, timing, and safe diagnostics according to the surface contract.
 
 ## Read execution
 
@@ -59,7 +59,7 @@ The result is normalized into API or UI-owned types rather than exposing driver 
 
 ## Refresh execution
 
-Refresh commands create explicit jobs and generations. The write executor limits simultaneous materialization. Workspace refresh planning orders dependent model tables and writes isolated replacement state.
+Refresh commands create explicit jobs and generations. The write executor limits simultaneous materialization. Project refresh planning orders dependent model tables and writes isolated replacement state.
 
 After successful materialization and validation, DuckLake commits a snapshot and LeapView flips the active serving pointer. Older state drains until no active reference or query lease protects it. Failed and superseded jobs do not activate.
 

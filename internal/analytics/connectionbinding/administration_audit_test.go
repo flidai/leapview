@@ -28,7 +28,7 @@ func TestAdministrationAuditsSuccessfulMetadataMutationsWithoutCredentialMetadat
 	})
 	require.NoError(t, err)
 	key := BindingKey{
-		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	}
 
 	configuration := binding.Configuration()
@@ -54,8 +54,8 @@ func TestAdministrationAuditsSuccessfulMetadataMutationsWithoutCredentialMetadat
 	for index, event := range audit.events {
 		if event.Action != wantActions[index] || event.Actor != "operator-1" ||
 			event.BindingID != binding.ID || event.TargetID != binding.TargetID ||
-			event.WorkspaceID != binding.Scope.WorkspaceID ||
-			event.LogicalConnectionID != binding.LogicalConnectionID ||
+			event.ProjectID != binding.Scope.ProjectID ||
+			event.ConnectionID != binding.ConnectionID ||
 			event.Outcome != AdministrationAuditSucceeded {
 			t.Fatalf("audit event[%d] = %#v", index, event)
 		}
@@ -97,13 +97,13 @@ func TestAdministrationPreservesMutationAndObservesBestEffortAuditFailure(t *tes
 	})
 	require.NoError(t, err)
 	disabled, err := service.Disable(context.Background(), "operator-1", BindingKey{
-		Scope: binding.Scope, TargetID: binding.TargetID, LogicalConnectionID: binding.LogicalConnectionID,
+		Scope: binding.Scope, TargetID: binding.TargetID, ConnectionID: binding.ConnectionID,
 	})
 	if err != nil || disabled.Enabled || repository.binding.Enabled {
 		t.Fatalf("Disable() result = %#v, repository = %#v, error = %v", disabled, repository.binding, err)
 	}
 	if output := logs.String(); !strings.Contains(output, "best-effort connection administration audit failed") ||
-		!strings.Contains(output, string(AuditBindingDisabled)) || !strings.Contains(output, binding.ID) {
+		!strings.Contains(output, string(AuditBindingDisabled)) || !strings.Contains(output, binding.ID.String()) {
 		t.Fatalf("audit failure log = %s", output)
 	}
 }

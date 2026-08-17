@@ -4,19 +4,21 @@ LeapView authorization assigns privileges on securable resources to principals, 
 
 ## Securable hierarchy
 
-Securable objects include workspaces, dashboards, semantic models, sources, model tables, datasets, tables, and columns. Objects participate in a parent hierarchy, so effective access may include inherited privileges as well as direct grants.
+Securable objects include projects, dashboards, semantic models, sources, model tables, datasets, tables, and columns. Objects participate in a parent hierarchy, so effective access may include inherited privileges as well as direct grants.
+
+The authored project graph has exactly seven kinds: `project`, `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Groups, role bindings, grants, data policies, and dashboard-publication declarations are project inputs compiled into authorization and publication snapshots; they are not additional catalog graph nodes.
 
 Review the effective privilege result rather than assuming a direct binding is the only source of access. The Current User and Access APIs expose effective-privilege views for this purpose.
 
-## Workspace roles
+## Project roles
 
-Workspace role bindings apply reusable privilege sets such as viewer, member, editor, contributor, deployer, admin, or owner. Bind a stable group wherever access follows team membership:
+Project role bindings apply reusable privilege sets such as viewer, member, editor, contributor, deployer, admin, or owner. Bind a stable group wherever access follows team membership:
 
 ```yaml
 apiVersion: leapview.dev/v1
-kind: WorkspaceRoleBinding
+kind: RoleBinding
 metadata:
-  workspace: sales
+  id: role-binding:analysts-viewer
   name: analysts-viewer
 spec:
   role: viewer
@@ -35,16 +37,16 @@ Use a Grant when one subject needs one privilege on a specific securable object 
 apiVersion: leapview.dev/v1
 kind: Grant
 metadata:
-  workspace: sales
-  name: analysts-audit-view
+  id: grant:analysts-dashboard-read
+  name: analysts-dashboard-read
 spec:
   object:
-    type: workspace
-    id: sales
+    kind: dashboard
+    id: dashboard:executive
   subject:
     kind: group
     group: analysts
-  privilege: VIEW_AUDIT
+  capability: RESOURCE_READ
 ```
 
 Choose the narrowest object and privilege that supports the task. Avoid accumulating one-off direct user grants; they are harder to review and can survive team changes.
@@ -94,9 +96,9 @@ policy fails closed instead of reaching a query planner.
 
 ## Owners and administration
 
-Ownership and platform administration are distinct from ordinary workspace use. Keep platform-wide `MANAGE_PLATFORM`, workspace `MANAGE_GRANTS`, deployment, refresh, query, and view privileges separated according to operational responsibility.
+Ownership and platform administration are distinct from ordinary project-resource use. Keep the instance-wide `platform_admin` role, project `PROJECT_ADMIN`, and resource capabilities such as `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, `RESOURCE_MANAGE`, `RESOURCE_SHARE`, and `RESOURCE_PUBLISH` separated according to operational responsibility.
 
-A service principal used by CI should exist only on the target instances and receive the workspace and deployment/data privileges required by that pipeline. A read-only integration should not inherit project activation or grant management.
+A service principal used by CI should exist only on the target instances and receive the project and deployment/data privileges required by that pipeline. A read-only integration should not inherit project activation or grant management.
 
 ## Review access
 
@@ -104,11 +106,11 @@ Use this periodic review:
 
 1. List active principals, service principals, and groups.
 2. Reconcile SCIM membership and local groups.
-3. Inspect effective privileges for sensitive workspaces.
+3. Inspect effective privileges for sensitive project resources.
 4. Find direct grants that duplicate or exceed role access.
 5. Review owner, admin, deployer, and grant-manager assignments.
 6. Review data policies against current semantic fields.
 7. Remove or deactivate obsolete identities and revoke credentials.
 8. Audit every binding, policy, and ownership change.
 
-Validate project access resources before deployment and test with a non-owner principal afterward. See [Workspace Role Binding](/docs/config/workspace-role-binding), [Grant](/docs/config/grant), [Data Policy](/docs/config/data-policy), and the [Access API](/docs/api/access).
+Validate project access resources before deployment and test with a non-owner principal afterward. See [Role Binding](/docs/config/role-binding), [Grant](/docs/config/grant), [Data Policy](/docs/config/data-policy), and the [Access API](/docs/api/access).

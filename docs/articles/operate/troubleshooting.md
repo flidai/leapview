@@ -24,15 +24,15 @@ Compare direct local checks with reverse-proxy checks. A healthy local service w
 
 For browser auth, confirm exact public issuer and callback URLs, secure cookies, allowed hosts, clock synchronization, provider client credentials, and proxy scheme/host preservation. Test with a fresh private browser session to separate provider failure from a stale cookie.
 
-For tokens, confirm the token is not expired or revoked, the principal remains active, and workspace/privilege restrictions include the operation. Do not replace a scoped token with a broad owner token merely to make a test pass.
+For tokens, confirm the token is not expired or revoked, the principal remains active, and project/privilege restrictions include the operation. Do not replace a scoped token with a broad owner token merely to make a test pass.
 
 Keep a tested local break-glass path only when policy permits it. Audit every use and rotate temporary credentials afterward.
 
-## Health passes but workspaces are empty
+## Health passes but the project catalog is empty
 
-Check that the intended project deployment is active in the instance environment and that the principal has workspace access. A successful application upgrade does not publish a project.
+Check that the intended project deployment is active in the instance environment and that the principal has project-resource access. A successful application upgrade does not publish a project.
 
-List workspaces through the CLI/API with the same principal. Inspect deployment activation, the instance environment returned by `GET /api/v1/instance`, and workspace role bindings.
+List project resources through the CLI/API with the same principal. Inspect deployment activation, the instance environment returned by `GET /api/v1/instance`, and project role bindings.
 
 ## Dashboards load but queries fail
 
@@ -47,7 +47,7 @@ If every query fails, suspect runtime/storage or active deployment. If one seman
 - Confirm the service principal can deploy to the environment.
 - Verify every managed connection has a ready revision for the target to pin.
 - Verify each selected revision is staged for the same project and connection.
-- Check candidate workspace and access-resource references.
+- Check candidate project and access-resource references.
 
 A failed candidate should leave active projects and revisions unchanged. Confirm that invariant before retrying.
 

@@ -29,7 +29,7 @@ const emptyStatus: DashboardStatus = {
 
 // Keep the first picker intentionally small and accessible. These are the
 // established chart/table types with useful empty-draft defaults; the closed
-// server catalog remains authoritative for future visual types.
+// server registry remains authoritative for future visual types.
 const builderVisualTypes = ['bar', 'line', 'area', 'column', 'table'] as const
 
 type DashboardBuilderVisualWithPreview = DashboardBuilderVisualSignal & { visualId?: string }
@@ -754,7 +754,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   updated(): void {
     const builder = this.builder
     checkSignalContract('dashboard builder', builder, {
-      workspaceId: 'required',
+      projectId: 'required',
       dashboardId: 'required',
       draftId: 'required',
       revision: 'required',
@@ -791,7 +791,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           <div><strong>Dashboard builder could not load</strong><span>${status.error}</span></div>
         </section>`
       }
-      return html`<section class="state" aria-live="polite"><div><strong>Loading dashboard builder…</strong><span>Preparing the draft workspace.</span></div></section>`
+      return html`<section class="state" aria-live="polite"><div><strong>Loading dashboard builder…</strong><span>Preparing the draft dashboard.</span></div></section>`
     }
     const page = this.selectedPage(builder)
     const visual = page ? this.selectedVisual(page, builder) : undefined
@@ -974,11 +974,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderEvidence(builder: DashboardBuilderSignal) {
     const evidence = builder.sourceEvidence
     if (!evidence) return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>Not available</span></div></section>`
-    if (evidence.kind === 'workspace' && evidence.workspaceId && evidence.dashboardId && evidence.revision) {
-      return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>workspace · ${evidence.workspaceId}/${evidence.dashboardId} · ${evidence.revision.id} · ${evidence.revision.number} · ${evidence.revision.contentHash}</span></div></section>`
-    }
-    if (evidence.kind === 'project' && evidence.workspaceId && evidence.dashboardId && evidence.servingStateId) {
-      return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>project · ${evidence.workspaceId}/${evidence.dashboardId} · ${evidence.servingStateId}${evidence.path ? ` · ${evidence.path}` : ''}</span></div></section>`
+    if (evidence.kind === 'project' && evidence.projectId && evidence.dashboardId && evidence.generationId) {
+      return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>project · ${evidence.projectId}/${evidence.dashboardId} · ${evidence.generationId}${evidence.path ? ` · ${evidence.path}` : ''}</span></div></section>`
     }
     return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>Unavailable</span></div></section>`
   }
@@ -1100,8 +1097,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private commandDetail(): Record<string, string> {
     const builder = this.builder
     return {
-      workspaceId: builder?.workspaceId ?? '',
       dashboardId: builder?.dashboardId ?? '',
+      semanticModelId: builder?.semanticModel?.id ?? '',
       draftId: builder?.draftId ?? '',
       revisionId: builder?.revision.id ?? '',
       revisionNumber: String(builder?.revision.number ?? 0),

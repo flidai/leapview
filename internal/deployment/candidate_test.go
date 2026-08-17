@@ -16,8 +16,8 @@ func TestCandidateStateMachineSupportsIdempotentPreparationLifecycle(t *testing.
 	firstProvenance := "sha256:" + strings.Repeat("c", 64)
 	secondProvenance := "sha256:" + strings.Repeat("d", 64)
 	candidate, err := NewCandidate(CandidateStartInput{
-		ID: "cand_opaque", ProjectID: "finance", TargetID: "lvinst_prod",
-		Environment: "prod", OwnerID: "principal_1", BaseGeneration: "deployment_7",
+		ID: "cand_opaque", TargetID: "lvinst_prod", OwnerID: "principal_1",
+		Scope:          CandidateScope{ProjectID: "finance", Environment: "prod", BaseGenerationID: "deployment_7"},
 		ArtifactDigest: firstDigest, ExpiresAt: now.Add(time.Hour), Now: now,
 	})
 	require.NoError(t, err)
@@ -55,8 +55,8 @@ func TestCandidateStateMachineRetryCancelAndExpireAreDeterministic(t *testing.T)
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	candidate, err := NewCandidate(CandidateStartInput{
-		ID: "cand_opaque", ProjectID: "finance", TargetID: "lvinst_prod",
-		Environment: "prod", OwnerID: "principal_1", BaseGeneration: "deployment_7",
+		ID: "cand_opaque", TargetID: "lvinst_prod", OwnerID: "principal_1",
+		Scope:          CandidateScope{ProjectID: "finance", Environment: "prod", BaseGenerationID: "deployment_7"},
 		ArtifactDigest: digest, ExpiresAt: now.Add(time.Hour), Now: now,
 	})
 	require.NoError(t, err)
@@ -102,8 +102,8 @@ func TestCandidateRejectsUnsafeFailureReasons(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	candidate, err := NewCandidate(CandidateStartInput{
-		ID: "cand_opaque", ProjectID: "finance", TargetID: "lvinst_prod",
-		Environment: "prod", OwnerID: "principal_1", BaseGeneration: "deployment_7",
+		ID: "cand_opaque", TargetID: "lvinst_prod", OwnerID: "principal_1",
+		Scope:          CandidateScope{ProjectID: "finance", Environment: "prod", BaseGenerationID: "deployment_7"},
 		ArtifactDigest: digest, ExpiresAt: now.Add(time.Hour), Now: now,
 	})
 	require.NoError(t, err)
@@ -122,17 +122,17 @@ func TestCandidateRejectsUnsafeFailureReasons(t *testing.T) {
 func TestCandidateRejectsInvalidIdentityDigestAndExpiry(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	valid := CandidateStartInput{
-		ID: "cand_opaque", ProjectID: "finance", TargetID: "lvinst_prod",
-		Environment: "prod", OwnerID: "principal_1", BaseGeneration: "deployment_7",
+		ID: "cand_opaque", TargetID: "lvinst_prod", OwnerID: "principal_1",
+		Scope:          CandidateScope{ProjectID: "finance", Environment: "prod", BaseGenerationID: "deployment_7"},
 		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), ExpiresAt: now.Add(time.Hour), Now: now,
 	}
 	cases := map[string]CandidateStartInput{
 		"id":          withCandidateStart(valid, func(input *CandidateStartInput) { input.ID = "" }),
-		"project":     withCandidateStart(valid, func(input *CandidateStartInput) { input.ProjectID = "" }),
+		"project":     withCandidateStart(valid, func(input *CandidateStartInput) { input.Scope.ProjectID = "" }),
 		"target":      withCandidateStart(valid, func(input *CandidateStartInput) { input.TargetID = "" }),
-		"environment": withCandidateStart(valid, func(input *CandidateStartInput) { input.Environment = "" }),
+		"environment": withCandidateStart(valid, func(input *CandidateStartInput) { input.Scope.Environment = "" }),
 		"owner":       withCandidateStart(valid, func(input *CandidateStartInput) { input.OwnerID = "" }),
-		"base":        withCandidateStart(valid, func(input *CandidateStartInput) { input.BaseGeneration = "" }),
+		"base":        withCandidateStart(valid, func(input *CandidateStartInput) { input.Scope.BaseGenerationID = " deployment_7" }),
 		"digest":      withCandidateStart(valid, func(input *CandidateStartInput) { input.ArtifactDigest = "secret" }),
 		"expiry":      withCandidateStart(valid, func(input *CandidateStartInput) { input.ExpiresAt = now }),
 	}
@@ -142,6 +142,45 @@ func TestCandidateRejectsInvalidIdentityDigestAndExpiry(t *testing.T) {
 				t.Fatal("NewCandidate() succeeded")
 			}
 		})
+	}
+}
+
+func TestCandidateRejectsWhitespaceAliasesAtDomainBoundary(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	base := CandidateStartInput{
+		ID: "cand_opaque", TargetID: "lvinst_prod", OwnerID: "principal_1",
+		Scope:          CandidateScope{ProjectID: "finance", Environment: "prod", BaseGenerationID: "generation_7"},
+		ArtifactDigest: digest, ExpiresAt: now.Add(time.Hour), Now: now,
+	}
+	for name, mutate := range map[string]func(*CandidateStartInput){
+		"id":          func(v *CandidateStartInput) { v.ID = " cand_opaque" },
+		"project":     func(v *CandidateStartInput) { v.Scope.ProjectID = "finance " },
+		"target":      func(v *CandidateStartInput) { v.TargetID = " lvinst_prod" },
+		"environment": func(v *CandidateStartInput) { v.Scope.Environment = "prod " },
+		"owner":       func(v *CandidateStartInput) { v.OwnerID = " principal_1" },
+		"base":        func(v *CandidateStartInput) { v.Scope.BaseGenerationID = "generation_7 " },
+		"digest":      func(v *CandidateStartInput) { v.ArtifactDigest = " " + digest },
+		"key":         func(v *CandidateStartInput) { v.Key = " preview " },
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := base
+			mutate(&input)
+			if _, err := NewCandidate(input); !errors.Is(err, ErrCandidateInvalid) {
+				t.Fatalf("NewCandidate() error = %v, want ErrCandidateInvalid", err)
+			}
+		})
+	}
+	candidate, err := NewCandidate(base)
+	require.NoError(t, err)
+	if _, err := candidate.ReplaceArtifact(" "+digest, digest, now.Add(time.Minute), now.Add(2*time.Hour)); !errors.Is(err, ErrCandidateInvalid) {
+		t.Fatalf("ReplaceArtifact() error = %v, want ErrCandidateInvalid", err)
+	}
+	if _, err := candidate.MarkReady(digest, " sha256:"+strings.Repeat("b", 64), now.Add(time.Minute)); !errors.Is(err, ErrCandidateInvalid) {
+		t.Fatalf("MarkReady() error = %v, want ErrCandidateInvalid", err)
+	}
+	if _, err := candidate.MarkFailed(digest, " RUNTIME_FAILED", now.Add(time.Minute)); !errors.Is(err, ErrCandidateInvalid) {
+		t.Fatalf("MarkFailed() error = %v, want ErrCandidateInvalid", err)
 	}
 }
 

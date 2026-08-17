@@ -4,8 +4,8 @@ import (
 	"context"
 
 	manageddataresolver "github.com/flidai/leapview/internal/manageddata/resolver"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
-	"github.com/flidai/leapview/internal/servingstate"
 )
 
 type managedDataResolver struct {
@@ -13,7 +13,7 @@ type managedDataResolver struct {
 }
 
 type ManagedDataSource interface {
-	ResolveManagedData(context.Context, servingstate.ID) (manageddataresolver.Resolution, error)
+	ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error)
 }
 
 func NewManagedDataResolver(resolver ManagedDataSource) runtimehost.ManagedDataResolver {
@@ -23,14 +23,21 @@ func NewManagedDataResolver(resolver ManagedDataSource) runtimehost.ManagedDataR
 	return managedDataResolver{resolver: resolver}
 }
 
-func (r managedDataResolver) ResolveManagedData(ctx context.Context, id servingstate.ID) (runtimehost.ManagedDataResolution, error) {
-	resolved, err := r.resolver.ResolveManagedData(ctx, id)
+func (r managedDataResolver) ResolveManagedDataForIdentity(ctx context.Context, identity projectgraph.ServingIdentity) (runtimehost.ManagedDataResolution, error) {
+	if err := identity.Validate(); err != nil {
+		return runtimehost.ManagedDataResolution{}, err
+	}
+	resolved, err := r.resolver.ResolveManagedData(ctx, identity)
 	if err != nil {
 		return runtimehost.ManagedDataResolution{}, err
 	}
+	roots := make(map[string]string, len(resolved.Roots))
+	for connectionID, root := range resolved.Roots {
+		roots[connectionID.String()] = root
+	}
 	return runtimehost.ManagedDataResolution{
 		RevisionID: resolved.RevisionID,
-		Roots:      resolved.Roots,
+		Roots:      roots,
 		Lifetime:   resolved.Lifetime,
 	}, nil
 }

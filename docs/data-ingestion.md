@@ -6,7 +6,7 @@ LeapView managed data turns local files into immutable, project-global revisions
 
 Read [Managed data and revisions](/docs/concepts/managed-data) to understand content-addressed identity, staging versus activation, upload transport boundaries, atomic project delivery, and storage ownership.
 
-If you are designing physical inputs first, read [Connections and sources](/docs/concepts/connections-sources) for the boundary between a connection, a reusable source, and workspace permission.
+If you are designing physical inputs first, read [Connections and sources](/docs/concepts/connections-sources) for the boundary between a connection, a reusable source, and project-resource authorization.
 
 ## Complete a data task
 

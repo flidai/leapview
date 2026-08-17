@@ -101,7 +101,7 @@ func TestRevokeCurrentAuthoringSessionHidesForeignSession(t *testing.T) {
 	request := requestWithRouteParam(stdhttp.MethodDelete, "/api/v1/me/authoring-sessions/foreign", "session", "foreign")
 	response := httptest.NewRecorder()
 	handler.RevokeCurrentAuthoringSession(response, request)
-	if response.Code != stdhttp.StatusNotFound || !errors.Is(service.revokeErr, access.ErrInvalidAuthoringCredential) {
+	if response.Code != stdhttp.StatusBadRequest || !errors.Is(service.revokeErr, access.ErrInvalidAuthoringCredential) {
 		t.Fatalf("response = %d body=%s", response.Code, response.Body.String())
 	}
 }

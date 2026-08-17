@@ -39,8 +39,8 @@ func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliap
 	if target == "" {
 		return cliapi.Credentials{}, fmt.Errorf("target is required")
 	}
-	// Explicit tokens remain a compatibility path for ephemeral CI and small
-	// teams, but are never persisted by the CLI.
+	// Explicit tokens support ephemeral CI and one-shot automation but are
+	// never persisted by the CLI.
 	if token != "" {
 		return client.resolveResult(
 			ctx,
@@ -63,12 +63,11 @@ func (client capabilityAPIClient) Resolve(ctx context.Context, credentials cliap
 		workload, err := accesscli.ExchangeWorkloadIdentity(ctx, accesscli.StandardOAuthClient{HTTPClient: client.http()}, accesscli.WorkloadIdentityRequest{
 			Origin: target, InstanceID: instance.Id, ProjectID: cfg.WorkloadProject,
 			ClientID: cfg.WorkloadClientID, ClientSecret: cfg.WorkloadClientSecret,
-			Privileges: []string{
-				"USE_WORKSPACE",
-				"VIEW_ITEM",
-				"AUTHOR_PROJECT",
-				"PUBLISH_RELEASE",
-				"REQUEST_DEPLOYMENT",
+			Capabilities: []string{
+				"RESOURCE_USE",
+				"RESOURCE_READ",
+				"RESOURCE_EDIT",
+				"RESOURCE_PUBLISH",
 			},
 			Lifetime: 15 * time.Minute,
 		}, nil)

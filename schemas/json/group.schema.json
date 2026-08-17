@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "#APIVersion": {
+      "const": "leapview.dev/v1"
+    },
+    "#Group": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "members": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "displayName": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              },
+              "principalId": {
+                "$ref": "#/$defs/%23ResourceID"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "#Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/%23ResourceID"
+        },
+        "name": {
+          "$ref": "#/$defs/%23ResourceName"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/%23Provenance"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "#Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "#ResourceID": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "#ResourceName": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "#/$defs/%23APIVersion"
+    },
+    "kind": {
+      "const": "Group"
+    },
+    "metadata": {
+      "$ref": "#/$defs/%23Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/%23Group"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "type": "object"
+}

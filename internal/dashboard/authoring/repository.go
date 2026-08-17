@@ -5,29 +5,31 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 // CreateInput seeds a lifecycle with its first complete immutable revision.
 // A repository never constructs a partial revision; callers are expected to
 // validate the document before crossing this persistence boundary.
 type CreateInput struct {
-	WorkspaceID string
-	Lifecycle   DashboardLifecycle
-	Revision    Revision
-	// Operation carries optional durable idempotency evidence for create and
-	// fork operations. Repositories that implement CreateOperationRepository
-	// persist and enforce it atomically with the lifecycle rows.
+	ProjectID graph.ResourceID
+	Lifecycle DashboardLifecycle
+	Revision  Revision
+	// Operation carries the durable idempotency evidence required for every
+	// create and fork operation. Mutation repositories persist and enforce it
+	// atomically with the lifecycle rows.
 	Operation CreateOperation
 }
 
 // CreateOperation identifies one create/fork invocation in its actor scope.
 // IdempotencyKey is a scoped retry identity and is deliberately separate from
-// ToolCallID, which remains provenance evidence. An empty key disables
-// idempotency for legacy UI callers that do not provide one. Fingerprint
+// ToolCallID, which remains provenance evidence. Idempotency is required
+// for every create/fork invocation. Fingerprint
 // covers the normalized request payload and never includes generated
 // dashboard, draft, or revision IDs.
 type CreateOperation struct {
-	WorkspaceID    string
+	ProjectID      graph.ResourceID
 	ActorID        string
 	Kind           string
 	IdempotencyKey string
@@ -42,9 +44,9 @@ func (o CreateOperation) Enabled() bool {
 
 func (o CreateOperation) Validate() error {
 	if !o.Enabled() {
-		return nil
+		return fmt.Errorf("%w: create operation idempotency key is required", ErrInvalidAuthoring)
 	}
-	if strings.TrimSpace(o.WorkspaceID) == "" || o.WorkspaceID != strings.TrimSpace(o.WorkspaceID) || strings.TrimSpace(o.ActorID) == "" || o.ActorID != strings.TrimSpace(o.ActorID) {
+	if err := validateResourceID("create operation project id", o.ProjectID); err != nil || strings.TrimSpace(o.ActorID) == "" || o.ActorID != strings.TrimSpace(o.ActorID) {
 		return fmt.Errorf("%w: create operation scope is invalid", ErrInvalidAuthoring)
 	}
 	if o.Kind != "create" && o.Kind != "fork" {
@@ -71,15 +73,16 @@ type CreateOperationResult struct {
 	Fingerprint string
 }
 
-// CreateOperationRepository is an optional extension of Repository. Keeping
-// the extension separate preserves lightweight in-memory adapters while the
-// SQLite implementation provides durable, transactional idempotency.
+// CreateOperationRepository is the mutation capability required by any
+// repository that accepts CreateInput. It is kept separate from the
+// read-only Repository port so catalog and preview consumers do not gain
+// mutation authority.
 type CreateOperationRepository interface {
 	LookupCreateOperation(context.Context, CreateOperation) (CreateOperationResult, bool, error)
 }
 
 type AppendDraftInput struct {
-	WorkspaceID           string
+	ProjectID             graph.ResourceID
 	DashboardID           DashboardID
 	ExpectedDraftRevision RevisionToken
 	Revision              Revision
@@ -97,7 +100,7 @@ type CommandResult struct {
 }
 
 type PublishInput struct {
-	WorkspaceID           string
+	ProjectID             graph.ResourceID
 	DashboardID           DashboardID
 	ExpectedDraftRevision RevisionToken
 	Published             Published
@@ -106,7 +109,7 @@ type PublishInput struct {
 }
 
 type ArchiveInput struct {
-	WorkspaceID             string
+	ProjectID               graph.ResourceID
 	DashboardID             DashboardID
 	ExpectedCurrentRevision RevisionToken
 	Evidence                CommandEvidence
@@ -114,20 +117,20 @@ type ArchiveInput struct {
 
 // ArchiveInput.ExpectedCurrentRevision is compared with the current draft
 // pointer when one exists; otherwise it is compared with the published
-// pointer. This makes archive an optimistic, workspace-scoped transition.
+// pointer. This makes archive an optimistic, project-scoped transition.
 
 // Repository is the persistence port for dashboard authoring.  Implementations
-// own transactionality and workspace scoping, but never apply edit commands or
+// own transactionality and project scoping, but never apply edit commands or
 // trigger deployment/serving-state transitions.
 type Repository interface {
 	Create(context.Context, CreateInput) (DashboardLifecycle, error)
-	Get(context.Context, string, DashboardID) (DashboardLifecycle, error)
-	List(context.Context, string) ([]DashboardLifecycle, error)
-	CountBySemanticModel(context.Context, string) ([]SemanticModelUsage, error)
-	GetRevision(context.Context, string, DashboardID, RevisionID) (Revision, error)
-	LookupCommandResult(context.Context, string, DashboardID, CommandEvidence) (CommandResult, bool, error)
+	Get(context.Context, graph.ResourceID, DashboardID) (DashboardLifecycle, error)
+	List(context.Context, graph.ResourceID) ([]DashboardLifecycle, error)
+	CountBySemanticModel(context.Context, graph.ResourceID) ([]SemanticModelUsage, error)
+	GetRevision(context.Context, graph.ResourceID, DashboardID, RevisionID) (Revision, error)
+	LookupCommandResult(context.Context, graph.ResourceID, DashboardID, CommandEvidence) (CommandResult, bool, error)
 	AppendDraft(context.Context, AppendDraftInput) (Revision, error)
 	Publish(context.Context, PublishInput) (DashboardLifecycle, error)
 	Archive(context.Context, ArchiveInput) (DashboardLifecycle, error)
-	GetPublishedCompilation(context.Context, string, DashboardID) (CompiledRevision, error)
+	GetPublishedCompilation(context.Context, graph.ResourceID, DashboardID) (CompiledRevision, error)
 }

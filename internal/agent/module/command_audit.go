@@ -20,8 +20,11 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	if !command.Audit.Required || strings.TrimSpace(command.Audit.SuccessAction) == "" || command.Audit.Guarantee != "best-effort" {
 		return fmt.Errorf("generated agent command contract %q does not define a best-effort success audit", input.OperationID)
 	}
-	privilege, ok := access.ParsePrivilege(command.Privilege)
-	if !ok || command.AuthzMode != "privilege" || contract.AuthzMode != command.AuthzMode {
+	capability, ok := agentCommandCapability(command.Privilege)
+	if command.AuthzMode == "authenticated" && strings.TrimSpace(command.Privilege) == "" {
+		capability, ok = access.CapabilityResourceUse, true
+	}
+	if !ok || (command.AuthzMode != "privilege" && command.AuthzMode != "authenticated") || contract.AuthzMode != command.AuthzMode {
 		return fmt.Errorf("generated agent command contract %q has invalid authorization", input.OperationID)
 	}
 	if m == nil || m.recordAudit == nil {
@@ -35,29 +38,31 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 	if surface == "" {
 		surface = "api"
 	}
-	workspaceID := strings.TrimSpace(input.Scope.WorkspaceID)
 	metadata, err := encodeAgentCommandAuditPayload(operationID, agentgen.GenSchemaAgentCommandAuditPayload{
-		OperationId: operationID,
-		WorkspaceId: workspaceID,
-		TargetType:  targetType,
-		TargetId:    strings.TrimSpace(input.TargetID),
-		Surface:     surface,
+		OperationId:  operationID,
+		ResourceKind: targetType,
+		ResourceId:   strings.TrimSpace(input.TargetID),
+		Surface:      surface,
 	})
 	if err != nil {
 		return err
 	}
 	return m.recordAudit(ctx, access.AuditEventInput{
-		WorkspaceID:   workspaceID,
 		PrincipalID:   strings.TrimSpace(input.Scope.PrincipalID),
 		Action:        command.Audit.SuccessAction,
-		TargetType:    targetType,
-		TargetID:      strings.TrimSpace(input.TargetID),
-		Privilege:     privilege,
+		ResourceKind:  targetType,
+		ResourceID:    strings.TrimSpace(input.TargetID),
+		Capability:    capability,
 		Status:        "success",
 		RequestID:     strings.TrimSpace(input.RequestID),
 		CorrelationID: strings.TrimSpace(input.CorrelationID),
 		MetadataJSON:  metadata,
 	})
+}
+
+func agentCommandCapability(value string) (access.Capability, bool) {
+	capability, err := access.ParseCapability(strings.TrimSpace(value))
+	return capability, err == nil
 }
 
 func encodeAgentCommandAuditPayload(operationID string, payload agentgen.GenSchemaAgentCommandAuditPayload) (string, error) {

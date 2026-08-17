@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -24,9 +23,8 @@ func (r *Repository) RecordAuditEvent(ctx context.Context, input access.AuditEve
 		return err
 	}
 	return r.q.InsertAuditEvent(ctx, platformdb.InsertAuditEventParams{
-		ID: id, WorkspaceID: sql.NullString{String: input.WorkspaceID, Valid: strings.TrimSpace(input.WorkspaceID) != ""},
-		PrincipalID: sql.NullString{String: input.PrincipalID, Valid: strings.TrimSpace(input.PrincipalID) != ""},
-		Action:      input.Action, TargetType: input.TargetType, TargetID: input.TargetID, Privilege: string(input.Privilege),
+		ID: id, PrincipalID: nullableString(input.PrincipalID),
+		Action: input.Action, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, Capability: string(input.Capability),
 		Status: input.Status, RequestID: input.RequestID, CorrelationID: input.CorrelationID, MetadataJson: input.MetadataJSON,
 	})
 }
@@ -44,10 +42,9 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 	}
 	from, to, cursorTime := sqliteAuditTime(filter.From), sqliteAuditTime(filter.To), sqliteAuditTime(filter.CursorTime)
 	rows, err := r.q.ListAuditEvents(ctx, platformdb.ListAuditEventsParams{
-		Column1: filter.WorkspaceID, WorkspaceID: sql.NullString{String: filter.WorkspaceID, Valid: strings.TrimSpace(filter.WorkspaceID) != ""},
-		Column3: filter.PrincipalID, PrincipalID: sql.NullString{String: filter.PrincipalID, Valid: strings.TrimSpace(filter.PrincipalID) != ""},
-		Column5: filter.Action, Action: filter.Action, Column7: filter.TargetType, TargetType: filter.TargetType,
-		Column9: filter.TargetID, TargetID: filter.TargetID, Column11: from, CreatedAt: from, Column13: to, CreatedAt_2: to,
+		Column1: filter.PrincipalID, PrincipalID: nullableString(filter.PrincipalID),
+		Column3: filter.Action, Action: filter.Action, Column5: filter.ResourceKind, ResourceKind: filter.ResourceKind,
+		Column7: filter.ResourceID, ResourceID: filter.ResourceID, Column9: string(filter.Capability), Capability: string(filter.Capability), Column11: from, CreatedAt: from, Column13: to, CreatedAt_2: to,
 		Column15: cursorTime, CreatedAt_3: cursorTime, CreatedAt_4: cursorTime, ID: filter.CursorID, Limit: int64(limit),
 	})
 	if err != nil {
@@ -56,8 +53,8 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 	events := make([]access.AuditEvent, 0, len(rows))
 	for _, row := range rows {
 		events = append(events, access.AuditEvent{
-			ID: row.ID, WorkspaceID: nullString(row.WorkspaceID), PrincipalID: nullString(row.PrincipalID), Action: row.Action,
-			TargetType: row.TargetType, TargetID: row.TargetID, Privilege: access.Privilege(row.Privilege), Status: row.Status,
+			ID: row.ID, PrincipalID: row.PrincipalID.String, Action: row.Action,
+			ResourceKind: row.ResourceKind, ResourceID: row.ResourceID, Capability: access.Capability(row.Capability), Status: row.Status,
 			RequestID: row.RequestID, CorrelationID: row.CorrelationID, MetadataJSON: row.MetadataJson, CreatedAt: row.CreatedAt,
 		})
 	}

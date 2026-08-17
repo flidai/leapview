@@ -11,28 +11,23 @@ enum ReleaseStatus {
   failed;
 }
 
-model ReleaseWorkspaceManifest {
-  workspace: string;
-  artifactDigest: string;
-  servingStateId?: string;
-}
-
 model ReleaseConnectionPin {
   connection: string;
   revisionId: string;
 }
 
-model ReleaseProjectArtifactWorkspace {
-  workspaceId: string;
-  artifactDigest: string;
+model ReleaseServingIdentity {
+  projectId: ResourceId;
+  environment: string;
+  generationId: string;
 }
 
 model ReleaseProjectArtifactProvenance {
   sourceDigest: string;
   projectDigest: string;
+  contentDigest: string;
   compilerVersion: string;
   schemaVersion: int32;
-  workspaces: ReleaseProjectArtifactWorkspace[];
 }
 
 model ReleaseCandidateProvenance {
@@ -55,35 +50,35 @@ model ReleaseManagedDataPin {
 
 model ReleaseBindingEvidence {
   bindingId: string;
-  logicalConnection: string;
+  connectionId: string;
   connectorKind: string;
   revision: int64;
   validatedVersion: string;
   endpointConfigHash: string;
 }
 
-enum ReleaseTargetDataMode {
+enum ReleaseGenerationDataMode {
   reuse_snapshot;
   refresh_sources;
 }
 
-model ReleaseTargetWorkspacePlan {
-  workspaceId: string;
-  servingStateId: string;
-  artifactDigest: string;
-  dataRevision: string;
-  dataMode: ReleaseTargetDataMode;
-  managedDataPins: ReleaseManagedDataPin[];
-  bindings: ReleaseBindingEvidence[];
+model ReleaseAuthoredConnectionEvidence {
+  connectionId: string;
+  connectorKind: string;
+  displayName?: string;
 }
 
-model ReleaseTargetPlanProvenance {
+model ReleaseGenerationPlanProvenance {
+  identity: ReleaseServingIdentity;
+  baseIdentity?: ReleaseServingIdentity;
   targetId: string;
-  environment: string;
-  baseGeneration: string;
   runtimeVersion: string;
   policyDigest: string;
-  workspaces: ReleaseTargetWorkspacePlan[];
+  dataRevision: string;
+  dataMode: ReleaseGenerationDataMode;
+  managedDataPins: ReleaseManagedDataPin[];
+  bindings: ReleaseBindingEvidence[];
+  authoredConnections: ReleaseAuthoredConnectionEvidence[];
 }
 
 model ReleaseProvenance {
@@ -91,25 +86,32 @@ model ReleaseProvenance {
   artifact: ReleaseProjectArtifactProvenance;
   candidate: ReleaseCandidateProvenance;
   sourceRevision?: ReleaseSourceRevisionProvenance;
-  plan: ReleaseTargetPlanProvenance;
-  artifactDigest: string;
+  plan: ReleaseGenerationPlanProvenance;
+  artifactProvenanceDigest: string;
   planDigest: string;
   digest: string;
 }
 
 model ReleaseCreateRequest {
-  projectDigest: string;
-  workspaces: ReleaseWorkspaceManifest[];
+  environment: string;
+  generationId: string;
+  artifactDigest: string;
   connections: ReleaseConnectionPin[];
+  projectDigest: string;
+  requestDigest?: string;
   provenance?: ReleaseProvenance;
 }
 
 model ReleaseResponse {
   id: string;
-  projectId: string;
+  projectId: ResourceId;
+  environment: string;
+  generationId: string;
   projectDigest: string;
+  artifactDigest: string;
+  actualDigest?: string;
+  artifactSizeBytes: int64;
   status: ReleaseStatus;
-  workspaces: ReleaseWorkspaceManifest[];
   connections: ReleaseConnectionPin[];
   provenance?: ReleaseProvenance;
   createdBy: string;
@@ -125,8 +127,9 @@ model ReleaseListResponse {
 
 model ReleaseArtifactResponse {
   releaseId: string;
-  workspaceId: string;
+  generationId: string;
   digest: string;
+  actualDigest: string;
   sizeBytes: int64;
 }
 
@@ -137,7 +140,7 @@ model ReleaseCreatedAuditPayload {
   @apigen.auditInternal
   releaseId: string;
   @apigen.auditInternal
-  projectId: string;
+  projectId: ResourceId;
   @apigen.auditInternal
   projectDigest: string;
   @apigen.auditInternal
@@ -153,7 +156,7 @@ model ReleaseArtifactUploadedAuditPayload {
   @apigen.auditInternal
   releaseId: string;
   @apigen.auditInternal
-  workspaceId: string;
+  generationId: string;
   @apigen.auditInternal
   digest: string;
   @apigen.auditInternal
@@ -167,7 +170,7 @@ model ReleaseValidatingAuditPayload {
   @apigen.auditInternal
   releaseId: string;
   @apigen.auditInternal
-  projectId: string;
+  projectId: ResourceId;
   @apigen.auditInternal
   status: string;
 }
@@ -183,16 +186,17 @@ model ReleaseArtifactDigestMismatchFailure {}
 
 @route("/projects/{project}/releases")
 @tag("Releases")
-@apigen.authz(#{ mode: "privilege", privilege: "PUBLISH_RELEASE" })
 interface Releases {
   @summary("List project releases")
   @get
-  @extension("x-leapview-object-scope", "project-environment")
-  listReleases(@path project: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ReleaseListResponse> | CommonErrors;
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  listReleases(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<ReleaseListResponse> | CommonErrors;
 
   @summary("Create a draft project release")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(ReleaseConflictFailure)
   @apigen.command(#{
     auditAction: "release.created",
@@ -200,18 +204,20 @@ interface Releases {
     failures: #[#{ kind: "invalid", statusCode: 422, code: "INVALID_RELEASE", publicDetail: "The release request is invalid." }],
   })
   @apigen.auditPayload(ReleaseCreatedAuditPayload)
-  createRelease(@path @apigen.target project: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
+  createRelease(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: ReleaseCreateRequest): CreatedJson<ReleaseResponse> | CommonErrors;
 
   @summary("Get a project release")
   @route("/{release}")
   @get
-  @extension("x-leapview-object-scope", "project-environment")
-  getRelease(@path project: string, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  getRelease(@path project: ResourceId, @path release: string): OkJson<ReleaseResponse> | CommonErrors;
 
-  @summary("Upload an immutable workspace artifact")
-  @route("/{release}/workspaces/{workspace}/artifact")
+  @summary("Upload an immutable project-generation artifact")
+  @route("/{release}/artifact")
   @put
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(ReleaseConflictFailure)
   @apigen.failsWith(ReleaseImmutableFailure)
   @apigen.failsWith(ReleaseArtifactDigestMismatchFailure)
@@ -220,17 +226,18 @@ interface Releases {
     guarantee: "best-effort",
     failures: #[
       #{ kind: "invalid", statusCode: 422, code: "INVALID_RELEASE", publicDetail: "The release artifact request is invalid." },
-      #{ kind: "not_found", statusCode: 404, code: "RELEASE_NOT_FOUND", publicDetail: "Release or workspace artifact not found." },
+      #{ kind: "not_found", statusCode: 404, code: "RELEASE_NOT_FOUND", publicDetail: "Release artifact not found." },
     ],
   })
   @apigen.auditPayload(ReleaseArtifactUploadedAuditPayload)
   @apigen.manual
-  uploadReleaseArtifact(@path @apigen.target project: string, @path release: string, @path workspace: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
+  uploadReleaseArtifact(@path @apigen.target project: ResourceId, @path release: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<ReleaseArtifactResponse> | CommonErrors;
 
   @summary("Finalize and validate a release")
   @route("/{release}/finalize")
   @post
-  @extension("x-leapview-object-scope", "project-environment")
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_PUBLISH" })
+  @extension("x-leapview-object-scope", "project")
   @apigen.asyncExecution(Releases.getRelease, Releases.listReleaseEvents, #{
     guarantee: "transactional",
     jobKind: "release.finalize",
@@ -251,11 +258,12 @@ interface Releases {
     ],
   })
   @apigen.auditPayload(ReleaseValidatingAuditPayload)
-  finalizeRelease(@path @apigen.target project: string, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
+  finalizeRelease(@path @apigen.target project: ResourceId, @path release: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<ReleaseResponse> | CommonErrors;
 
   @summary("List or stream release events")
   @route("/{release}/events")
   @get
-  @extension("x-leapview-object-scope", "project-environment")
-  listReleaseEvents(@path project: string, @path release: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
+  @extension("x-leapview-object-scope", "project")
+  listReleaseEvents(@path project: ResourceId, @path release: string, @header accept?: string, @header("Last-Event-ID") lastEventId?: string, @query limit?: ListLimit, @query pageToken?: PageToken): EventHistoryResponse<AsyncEventListResponse> | CommonErrors;
 }

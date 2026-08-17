@@ -3,20 +3,21 @@ package module
 import (
 	"context"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
 type ActiveArtifactReader interface {
-	ActiveArtifact(context.Context, servingstate.WorkspaceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
+	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
 }
 
-func PipelineModelResolver(states ActiveArtifactReader, artifacts refreshrun.ArtifactLoader, environment servingstate.Environment) func(context.Context, string, string) (string, bool, error) {
-	return func(ctx context.Context, workspaceID, pipelineID string) (string, bool, error) {
+func PipelineModelResolver(states ActiveArtifactReader, artifacts refreshrun.ArtifactLoader) func(context.Context, projectgraph.ServingIdentity, string) (string, bool, error) {
+	return func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID string) (string, bool, error) {
 		if states == nil || artifacts == nil {
 			return "", false, nil
 		}
-		_, artifact, err := states.ActiveArtifact(ctx, servingstate.WorkspaceID(workspaceID), servingstate.NormalizeEnvironment(environment))
+		_, artifact, err := states.ActiveArtifact(ctx, identity.ProjectID, servingstate.Environment(identity.Environment))
 		if err != nil {
 			return "", false, err
 		}
@@ -31,6 +32,6 @@ func PipelineModelResolver(states ActiveArtifactReader, artifacts refreshrun.Art
 		if !ok {
 			return "", false, nil
 		}
-		return pipeline.SemanticModel, true, nil
+		return pipeline.SemanticModelID.String(), true, nil
 	}
 }

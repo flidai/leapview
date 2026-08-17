@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/flidai/leapview/internal/access"
 	accesspolicy "github.com/flidai/leapview/internal/access/policy"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 )
 
@@ -49,9 +49,9 @@ type columnMaskPolicy struct {
 //
 // Column masks are cumulative. Equivalent masks collapse, while contradictory
 // masks fail closed instead of relying on repository or traversal order.
-func composeDataPolicies(active, mandatory []access.DataPolicy) (dataPolicyComposition, error) {
+func composeDataPolicies(active, mandatory []accesssnapshot.DataPolicy) (dataPolicyComposition, error) {
 	composition := dataPolicyComposition{}
-	all := append(append([]access.DataPolicy(nil), active...), mandatory...)
+	all := append(append([]accesssnapshot.DataPolicy(nil), active...), mandatory...)
 	policyIDs := map[string]struct{}{}
 	for _, policy := range all {
 		if id := strings.TrimSpace(policy.ID); id != "" {
@@ -77,11 +77,11 @@ func composeDataPolicies(active, mandatory []access.DataPolicy) (dataPolicyCompo
 				boundary = &rowPolicyBoundary{subject: map[string]*rowPolicyGroup{}}
 				boundaries[boundaryKey] = boundary
 			}
-			if policy.SubjectType == "" {
+			if policy.Subject == nil {
 				boundary.global.filters = append(boundary.global.filters, clause...)
 				continue
 			}
-			groupKey := string(policy.SubjectType) + ":" + strings.TrimSpace(policy.SubjectID)
+			groupKey := string(policy.Subject.Kind) + ":" + strings.TrimSpace(policy.Subject.ID)
 			group := boundary.subject[groupKey]
 			if group == nil {
 				group = &rowPolicyGroup{}
@@ -155,24 +155,28 @@ func composeDataPolicies(active, mandatory []access.DataPolicy) (dataPolicyCompo
 	return composition, nil
 }
 
-func sortedPolicies(policies []access.DataPolicy) []access.DataPolicy {
-	out := append([]access.DataPolicy(nil), policies...)
+func sortedPolicies(policies []accesssnapshot.DataPolicy) []accesssnapshot.DataPolicy {
+	out := append([]accesssnapshot.DataPolicy(nil), policies...)
 	sort.SliceStable(out, func(i, j int) bool {
-		left := policyBoundaryKey(out[i]) + "\x00" + string(out[i].SubjectType) + "\x00" + out[i].SubjectID + "\x00" + out[i].ID
-		right := policyBoundaryKey(out[j]) + "\x00" + string(out[j].SubjectType) + "\x00" + out[j].SubjectID + "\x00" + out[j].ID
+		leftSubject, rightSubject := "", ""
+		if out[i].Subject != nil {
+			leftSubject = string(out[i].Subject.Kind) + "\x00" + out[i].Subject.ID
+		}
+		if out[j].Subject != nil {
+			rightSubject = string(out[j].Subject.Kind) + "\x00" + out[j].Subject.ID
+		}
+		left := policyBoundaryKey(out[i]) + "\x00" + leftSubject + "\x00" + out[i].ID
+		right := policyBoundaryKey(out[j]) + "\x00" + rightSubject + "\x00" + out[j].ID
 		return left < right
 	})
 	return out
 }
 
-func policyBoundaryKey(policy access.DataPolicy) string {
-	if objectID := strings.TrimSpace(policy.ObjectID); objectID != "" {
-		return "object:" + objectID
-	}
-	return "workspace:" + strings.TrimSpace(policy.WorkspaceID)
+func policyBoundaryKey(policy accesssnapshot.DataPolicy) string {
+	return policy.Resource.CanonicalID()
 }
 
-func rowClauseFromPolicy(policy access.DataPolicy) ([]dataquery.Filter, error) {
+func rowClauseFromPolicy(policy accesssnapshot.DataPolicy) ([]dataquery.Filter, error) {
 	if !policy.Compiled.Matches(policy.PolicyType, policy.ExpressionJSON) || policy.Compiled.Type != accesspolicy.TypeRowFilter || policy.Compiled.RowFilter == nil {
 		return nil, fmt.Errorf("row_filter data policy %q is not compiled", policy.ID)
 	}
@@ -208,7 +212,7 @@ func dataQueryFilters(filters []accesspolicy.Filter) []dataquery.Filter {
 	return out
 }
 
-func composeColumnMasks(policies []access.DataPolicy) ([]columnMaskPolicy, error) {
+func composeColumnMasks(policies []accesssnapshot.DataPolicy) ([]columnMaskPolicy, error) {
 	byField := map[string]*maskComposition{}
 	for _, policy := range sortedPolicies(policies) {
 		if policy.PolicyType != "column_mask" {

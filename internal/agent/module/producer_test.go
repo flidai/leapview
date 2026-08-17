@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type runJobStore struct {
@@ -28,12 +29,12 @@ func (s *runJobStore) Cancel(context.Context, string) error { return nil }
 
 func TestEnqueueRunRejectsNonTransactionalFallback(t *testing.T) {
 	store := &runJobStore{}
-	module, err := Build(t.Context(), Config{Jobs: store})
+	module, err := Build(t.Context(), Config{Jobs: store, ProjectID: projectgraph.ResourceID("project:agent-test")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	started := &agent.StartedPrompt{ConversationID: "conversation-1", RunID: "run-1", CorrelationID: "correlation-1"}
-	scope := agent.Scope{Credential: agent.CredentialScope{WorkspaceID: "credential-workspace"}}
+	scope := agent.Scope{Credential: agent.CredentialScope{ProjectID: "project:credential"}}
 	if err := module.EnqueueRun(t.Context(), scope, started); err == nil {
 		t.Fatal("non-transactional enqueue fallback was accepted")
 	}
@@ -44,7 +45,7 @@ func TestEnqueueRunRejectsNonTransactionalFallback(t *testing.T) {
 
 func TestEnqueueChatRunRejectsNonTransactionalFallback(t *testing.T) {
 	store := &runJobStore{}
-	module, err := Build(t.Context(), Config{Jobs: store})
+	module, err := Build(t.Context(), Config{Jobs: store, ProjectID: projectgraph.ResourceID("project:agent-test")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestEnqueueChatRunRejectsNonTransactionalFallback(t *testing.T) {
 }
 
 func TestRunWorkflowPersistsBrowserDeliveryAtomically(t *testing.T) {
-	module, err := Build(t.Context(), Config{})
+	module, err := Build(t.Context(), Config{ProjectID: projectgraph.ResourceID("project:agent-test")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,23 +78,11 @@ func TestRunWorkflowPersistsBrowserDeliveryAtomically(t *testing.T) {
 }
 
 func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
-	module, err := Build(t.Context(), Config{})
+	module, err := Build(t.Context(), Config{ProjectID: projectgraph.ResourceID("project:agent-test")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if module.HTTP() == nil {
 		t.Fatal("expected agent module to construct its HTTP handler")
-	}
-}
-
-func TestRunWorkspaceUsesExplicitScopeThenCredentialThenGlobal(t *testing.T) {
-	if got := runWorkspaceID(agent.Scope{WorkspaceID: "scope", Credential: agent.CredentialScope{WorkspaceID: "credential"}}, "_global"); got != "scope" {
-		t.Fatalf("scope workspace = %q", got)
-	}
-	if got := runWorkspaceID(agent.Scope{Credential: agent.CredentialScope{WorkspaceID: "credential"}}, "_global"); got != "credential" {
-		t.Fatalf("credential workspace = %q", got)
-	}
-	if got := runWorkspaceID(agent.Scope{}, "_global"); got != "_global" {
-		t.Fatalf("global workspace = %q", got)
 	}
 }

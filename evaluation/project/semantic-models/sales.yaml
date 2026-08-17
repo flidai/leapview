@@ -1,0 +1,45 @@
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata:
+  id: semantic-model:sales
+  name: sales
+  displayName: Governed Sales
+spec:
+  tables:
+    - orders
+  dimensions:
+    purchase_date:
+      type: date
+      bindings:
+        orders: {field: orders.purchase_date}
+    state:
+      type: string
+      bindings:
+        orders: {field: orders.state}
+    category:
+      type: string
+      bindings:
+        orders: {field: orders.category}
+    status:
+      type: string
+      bindings:
+        orders: {field: orders.status}
+  measures:
+    order_count:
+      label: Orders
+      fact: orders
+      aggregation: count_distinct
+      input: {field: orders.order_id}
+      empty: zero
+    revenue:
+      label: Revenue
+      fact: orders
+      aggregation: sum
+      input: {field: orders.revenue}
+      empty: zero
+      format: currency
+  metrics:
+    aov:
+      label: Average order value
+      expression: safe_divide(${revenue}, ${order_count})
+      format: currency

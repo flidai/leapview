@@ -24,22 +24,16 @@ func TestFriendlyListCommandsPassPaginationQuery(t *testing.T) {
 		path    string
 	}{
 		{
-			name:    "workspaces",
-			command: workspacesCommand,
-			args:    []string{"list"},
-			path:    "/api/v1/workspaces",
-		},
-		{
 			name:    "dashboards",
 			command: dashboardsCommand,
-			args:    []string{"list", "--workspace", "test"},
-			path:    "/api/v1/workspaces/test/dashboards",
+			args:    []string{"list"},
+			path:    "/api/v1/dashboards",
 		},
 		{
 			name:    "semantic-models",
 			command: semanticModelsCommand,
-			args:    []string{"list", "--workspace", "test"},
-			path:    "/api/v1/workspaces/test/semantic-models",
+			args:    []string{"list"},
+			path:    "/api/v1/semantic-models",
 		},
 		{
 			name:    "agent conversations",
@@ -50,7 +44,7 @@ func TestFriendlyListCommandsPassPaginationQuery(t *testing.T) {
 		{
 			name:    "search",
 			command: searchCommand,
-			args:    []string{"orders", "--workspace", "test", "--type", "visual"},
+			args:    []string{"orders", "--kind", "dashboard"},
 			path:    "/api/v1/search",
 		},
 	} {
@@ -62,18 +56,19 @@ func TestFriendlyListCommandsPassPaginationQuery(t *testing.T) {
 				if got := r.URL.Query().Get("limit"); got != "7" {
 					t.Fatalf("limit = %q", got)
 				}
-				if got := r.URL.Query().Get("pageToken"); got != "cursor" {
-					t.Fatalf("pageToken = %q", got)
+				cursorKey := "pageToken"
+				if tc.name == "search" {
+					cursorKey = "cursor"
+				}
+				if got := r.URL.Query().Get(cursorKey); got != "cursor" {
+					t.Fatalf("%s = %q", cursorKey, got)
 				}
 				if tc.name == "search" {
 					if got := r.URL.Query().Get("q"); got != "orders" {
 						t.Fatalf("q=%q", got)
 					}
-					if got := r.URL.Query().Get("type"); got != "visual" {
-						t.Fatalf("type=%q", got)
-					}
-					if got := r.URL.Query().Get("workspace"); got != "test" {
-						t.Fatalf("workspace=%q", got)
+					if got := r.URL.Query().Get("kind"); got != "dashboard" {
+						t.Fatalf("kind=%q", got)
 					}
 				}
 				writeCLIJSON(t, w, map[string]any{
@@ -107,7 +102,7 @@ func TestSearchCommandRendersConciseRows(t *testing.T) {
 		}
 		writeCLIJSON(t, w, map[string]any{
 			"items": []map[string]any{{
-				"reference":   map[string]any{"workspaceId": "test", "type": "visual", "id": "executive-sales.orders"},
+				"reference":   map[string]any{"kind": "dashboard", "id": "dashboard:executive"},
 				"name":        "Orders",
 				"description": "Orders visual on Overview.",
 			}},
@@ -117,13 +112,13 @@ func TestSearchCommandRendersConciseRows(t *testing.T) {
 	defer server.Close()
 
 	output := captureStdout(t, func() {
-		cmd := searchCommand(context.Background(), &rootOptions{workspaceID: "test"})
+		cmd := searchCommand(context.Background(), &rootOptions{})
 		cmd.SetArgs([]string{"orders", "--target", server.URL, "--token", "token"})
 		if err := cmd.Execute(); err != nil {
 			t.Fatalf("run search: %v", err)
 		}
 	})
-	for _, want := range []string{"WORKSPACE", "TYPE", "NAME", "DESCRIPTION", "ID", "test", "visual", "Orders", "Orders visual on Overview."} {
+	for _, want := range []string{"KIND", "NAME", "DESCRIPTION", "ID", "DASHBOARD", "Orders", "Orders visual on Overview."} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("search output missing %q:\n%s", want, output)
 		}
@@ -163,14 +158,14 @@ func TestDashboardDataCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			name:     "page",
 			args:     []string{"page", "executive-sales", "overview"},
 			method:   http.MethodGet,
-			path:     "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview",
+			path:     "/api/v1/dashboards/executive-sales/pages/overview",
 			response: map[string]any{"id": "overview", "title": "Overview", "components": []map[string]any{}},
 		},
 		{
 			name:   "visual describe",
 			args:   []string{"visual", "executive-sales", "overview", "orders"},
 			method: http.MethodGet,
-			path:   "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/orders",
+			path:   "/api/v1/dashboards/executive-sales/pages/overview/visuals/orders",
 			response: map[string]any{
 				"id": "orders", "rendererID": visualization["rendererID"],
 				"specRevision": visualization["specRevision"], "spec": visualization["spec"],
@@ -180,7 +175,7 @@ func TestDashboardDataCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			name:   "filter describe",
 			args:   []string{"filter", "executive-sales", "overview", "state"},
 			method: http.MethodGet,
-			path:   "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/filters/state",
+			path:   "/api/v1/dashboards/executive-sales/pages/overview/filters/state",
 			response: map[string]any{
 				"definition": map[string]any{
 					"id": "state", "field": "orders.state", "label": "State", "calendar": "",
@@ -199,7 +194,7 @@ func TestDashboardDataCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			name:     "visual data",
 			args:     []string{"visual-data", "executive-sales", "overview", "orders", "--count", "7", "--filter-state-json", `{"version":"typed_v1","controls":{"fb_state":{"kind":"set","operator":"in","values":[{"kind":"string","value":"SP"}]}}}`},
 			method:   http.MethodPost,
-			path:     "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/visuals/orders/query",
+			path:     "/api/v1/dashboards/executive-sales/pages/overview/visuals/orders/query",
 			wantBody: []string{`"filterState"`, `"typed_v1"`, `"fb_state"`, `"limit":7`},
 			response: visualization,
 		},
@@ -207,7 +202,7 @@ func TestDashboardDataCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			name:     "filter options",
 			args:     []string{"filter-options", "executive-sales", "overview", "state", "--limit", "7", "--page-token", "cursor"},
 			method:   http.MethodPost,
-			path:     "/api/v1/workspaces/test/dashboards/executive-sales/pages/overview/filters/state/values",
+			path:     "/api/v1/dashboards/executive-sales/pages/overview/filters/state/values",
 			wantBody: []string{},
 			response: map[string]any{"items": []map[string]any{}, "page": map[string]any{"nextCursor": ""}},
 		},
@@ -241,10 +236,10 @@ func TestDashboardDataCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			}))
 			defer server.Close()
 
-			opts := &rootOptions{workspaceID: "test"}
+			opts := &rootOptions{}
 			cmd := dashboardsCommand(context.Background(), opts)
 			args := append([]string{}, tc.args...)
-			args = append(args, "--workspace", "test", "--target", server.URL, "--token", "token")
+			args = append(args, "--target", server.URL, "--token", "token")
 			cmd.SetArgs(args)
 			captureStdout(t, func() {
 				if err := cmd.Execute(); err != nil {
@@ -268,28 +263,28 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			name:     "datasets",
 			args:     []string{"datasets", "test", "--limit", "7", "--page-token", "cursor"},
 			method:   http.MethodGet,
-			path:     "/api/v1/workspaces/test/semantic-models/test/datasets",
+			path:     "/api/v1/semantic-models/test/datasets",
 			response: map[string]any{"items": []map[string]any{}, "page": map[string]any{"nextCursor": ""}},
 		},
 		{
 			name:     "dataset",
 			args:     []string{"dataset", "test", "orders"},
 			method:   http.MethodGet,
-			path:     "/api/v1/workspaces/test/semantic-models/test/datasets/orders",
+			path:     "/api/v1/semantic-models/test/datasets/orders",
 			response: map[string]any{"id": "orders"},
 		},
 		{
 			name:     "fields",
 			args:     []string{"fields", "test", "orders", "--limit", "7", "--page-token", "cursor"},
 			method:   http.MethodGet,
-			path:     "/api/v1/workspaces/test/semantic-models/test/datasets/orders/fields",
+			path:     "/api/v1/semantic-models/test/datasets/orders/fields",
 			response: map[string]any{"items": []map[string]any{}, "page": map[string]any{"nextCursor": ""}},
 		},
 		{
 			name:     "query",
 			args:     []string{"query", "test", "--body-json", `{"dimensions":[{"field":"state"}],"measures":[{"field":"order_count"}]}`},
 			method:   http.MethodPost,
-			path:     "/api/v1/workspaces/test/semantic-models/test/query",
+			path:     "/api/v1/semantic-models/test/query",
 			wantBody: []string{`"state"`, `"order_count"`},
 			response: map[string]any{
 				"queryId": "query-1", "columns": []map[string]any{}, "rows": []map[string]any{},
@@ -301,7 +296,7 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			name:     "explain query",
 			args:     []string{"explain-query", "test", "--body-json", `{"dimensions":[{"field":"state"}],"measures":[{"field":"order_count"}]}`},
 			method:   http.MethodPost,
-			path:     "/api/v1/workspaces/test/semantic-models/test/query/explain",
+			path:     "/api/v1/semantic-models/test/query/explain",
 			wantBody: []string{`"state"`, `"order_count"`},
 			response: map[string]any{"mode": "semantic", "sql": "SELECT 1", "args": []map[string]any{}, "columns": []string{"state", "order_count"}, "warnings": []string{}},
 		},
@@ -309,7 +304,7 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			name:     "preview",
 			args:     []string{"preview", "test", "orders", "--body-json", `{"dimensions":[{"field":"orders.order_id"}]}`},
 			method:   http.MethodPost,
-			path:     "/api/v1/workspaces/test/semantic-models/test/datasets/orders/preview",
+			path:     "/api/v1/semantic-models/test/datasets/orders/preview",
 			wantBody: []string{`"orders.order_id"`},
 			response: map[string]any{
 				"queryId": "query-1", "columns": []map[string]any{}, "rows": []map[string]any{},
@@ -321,7 +316,7 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			name:     "explain preview",
 			args:     []string{"explain-preview", "test", "orders", "--body-json", `{"dimensions":[{"field":"orders.order_id"}]}`},
 			method:   http.MethodPost,
-			path:     "/api/v1/workspaces/test/semantic-models/test/datasets/orders/preview/explain",
+			path:     "/api/v1/semantic-models/test/datasets/orders/preview/explain",
 			wantBody: []string{`"orders.order_id"`},
 			response: map[string]any{"mode": "preview", "sql": "SELECT 1", "args": []map[string]any{}, "columns": []string{"order_id"}, "warnings": []string{}},
 		},
@@ -355,10 +350,10 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 			}))
 			defer server.Close()
 
-			opts := &rootOptions{workspaceID: "test"}
+			opts := &rootOptions{}
 			cmd := semanticModelsCommand(context.Background(), opts)
 			args := append([]string{}, tc.args...)
-			args = append(args, "--workspace", "test", "--target", server.URL, "--token", "token")
+			args = append(args, "--target", server.URL, "--token", "token")
 			cmd.SetArgs(args)
 			captureStdout(t, func() {
 				if err := cmd.Execute(); err != nil {

@@ -17,32 +17,35 @@ type resourceEnvelope struct {
 }
 
 type metadata struct {
-	Name        string   `yaml:"name"`
-	Workspace   string   `yaml:"workspace"`
-	Title       string   `yaml:"title"`
-	Description string   `yaml:"description"`
-	Owner       string   `yaml:"owner"`
-	Tags        []string `yaml:"tags"`
+	ID            string   `yaml:"id"`
+	Name          string   `yaml:"name"`
+	Title         string   `yaml:"title"`
+	DisplayName   string   `yaml:"displayName"`
+	Description   string   `yaml:"description"`
+	Owner         string   `yaml:"owner"`
+	Tags          []string `yaml:"tags"`
+	Domain        string   `yaml:"domain"`
+	Documentation string   `yaml:"documentation"`
+	Provenance    struct {
+		Origin string `yaml:"origin"`
+		Path   string `yaml:"path"`
+		Source string `yaml:"source"`
+	} `yaml:"provenance"`
 }
 
 type projectResource struct {
-	Connections includeList `yaml:"connections"`
-	Sources     includeList `yaml:"sources"`
-	Workspaces  includeList `yaml:"workspaces"`
+	Connections    includeList `yaml:"connections"`
+	Sources        includeList `yaml:"sources"`
+	Models         includeList `yaml:"models"`
+	SemanticModels includeList `yaml:"semanticModels"`
+	Pipelines      includeList `yaml:"pipelines"`
+	Dashboards     includeList `yaml:"dashboards"`
+	Access         includeList `yaml:"access"`
+	Publications   includeList `yaml:"publications"`
 }
 
 type includeList struct {
 	Include []string `yaml:"include"`
-}
-
-type workspaceSpec struct {
-	Uses             workspaceUses `yaml:"uses"`
-	Models           includeList   `yaml:"models"`
-	SemanticModels   includeList   `yaml:"semanticModels"`
-	Dashboards       includeList   `yaml:"dashboards"`
-	Publications     includeList   `yaml:"publications"`
-	Access           includeList   `yaml:"access"`
-	RefreshPipelines includeList   `yaml:"refreshPipelines"`
 }
 
 type dashboardPublicationSpec struct {
@@ -53,10 +56,6 @@ type dashboardPublicationSpec struct {
 
 type dashboardPublicationEmbeddingSpec struct {
 	AllowedOrigins []string `yaml:"allowedOrigins"`
-}
-
-type workspaceUses struct {
-	Sources []string `yaml:"sources"`
 }
 
 type sourceSpec struct {
@@ -83,6 +82,7 @@ type projectSemanticModelSpec struct {
 }
 
 type dashboardSpec struct {
+	Title             string                                               `yaml:"title"`
 	Appearance        dashboardappearance.Patch                            `yaml:"appearance"`
 	SemanticModel     string                                               `yaml:"semanticModel"`
 	Filters           map[string]dashboardfilter.Definition                `yaml:"filters"`
@@ -123,23 +123,23 @@ type projectDashboardPage struct {
 	Components     []dashboard.PageVisual             `yaml:"components"`
 }
 
-type workspaceGroupSpec struct {
-	Description string                     `yaml:"description"`
-	Members     []workspaceGroupMemberSpec `yaml:"members"`
+type projectGroupSpec struct {
+	Description string                   `yaml:"description"`
+	Members     []projectGroupMemberSpec `yaml:"members"`
 }
 
-type workspaceGroupMemberSpec struct {
+type projectGroupMemberSpec struct {
 	PrincipalID string `yaml:"principalId"`
 	Email       string `yaml:"email"`
 	DisplayName string `yaml:"displayName"`
 }
 
-type workspaceRoleBindingSpec struct {
-	Role    string                          `yaml:"role"`
-	Subject workspaceRoleBindingSubjectSpec `yaml:"subject"`
+type projectRoleBindingSpec struct {
+	Role    string                        `yaml:"role"`
+	Subject projectRoleBindingSubjectSpec `yaml:"subject"`
 }
 
-type workspaceRoleBindingSubjectSpec struct {
+type projectRoleBindingSubjectSpec struct {
 	Kind        string `yaml:"kind"`
 	PrincipalID string `yaml:"principalId"`
 	Email       string `yaml:"email"`
@@ -148,22 +148,25 @@ type workspaceRoleBindingSubjectSpec struct {
 	Publication string `yaml:"publication"`
 }
 
-type workspaceSecurableObjectSpec struct {
-	Type string `yaml:"type"`
+type projectGrantSpec struct {
+	Object     projectResourceRefSpec        `yaml:"object"`
+	Subject    projectRoleBindingSubjectSpec `yaml:"subject"`
+	Capability string                        `yaml:"capability"`
+}
+
+type projectDataPolicySpec struct {
+	Object     projectDataPolicyTargetSpec   `yaml:"object"`
+	Subject    projectRoleBindingSubjectSpec `yaml:"subject"`
+	PolicyType string                        `yaml:"policyType"`
+	Expression yaml.Node                     `yaml:"expression"`
+}
+type projectResourceRefSpec struct {
+	Kind string `yaml:"kind"`
 	ID   string `yaml:"id"`
 }
-
-type workspaceGrantSpec struct {
-	Object    workspaceSecurableObjectSpec    `yaml:"object"`
-	Subject   workspaceRoleBindingSubjectSpec `yaml:"subject"`
-	Privilege string                          `yaml:"privilege"`
-}
-
-type workspaceDataPolicySpec struct {
-	Object     workspaceSecurableObjectSpec    `yaml:"object"`
-	Subject    workspaceRoleBindingSubjectSpec `yaml:"subject"`
-	PolicyType string                          `yaml:"policyType"`
-	Expression yaml.Node                       `yaml:"expression"`
+type projectDataPolicyTargetSpec struct {
+	Kind string `yaml:"kind"`
+	ID   string `yaml:"id"`
 }
 type refreshPipelineSpec struct {
 	SemanticModel string                `yaml:"semanticModel"`

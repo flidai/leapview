@@ -168,7 +168,7 @@ func reportDevloopLatencyPercentiles(b *testing.B, durations []time.Duration) {
 	b.ReportMetric(float64(durations[(len(durations)*95-1)/100])/float64(time.Millisecond), "p95-ms")
 }
 
-func TestFilesystemBuilderProducesDeterministicWorkspaceArtifacts(t *testing.T) {
+func TestFilesystemBuilderProducesDeterministicProjectArtifacts(t *testing.T) {
 	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
 	builder := FilesystemBuilder{ProjectPath: projectPath}
 
@@ -176,7 +176,7 @@ func TestFilesystemBuilderProducesDeterministicWorkspaceArtifacts(t *testing.T) 
 	require.NoError(t, err)
 	second, err := builder.Build(t.Context())
 	require.NoError(t, err)
-	if first.ProjectID != "leapview-showcase" ||
+	if first.ProjectID != "project:leapview-showcase" ||
 		first.ProjectFile != "leapview.yaml" ||
 		first.Digest != second.Digest {
 		t.Fatalf(
@@ -238,7 +238,7 @@ func TestNormalizeSnapshotRejectsUnsafeArtifactPaths(t *testing.T) {
 	}
 }
 
-func TestCandidateSetDigestIsIndependentOfWorkspaceOrder(t *testing.T) {
+func TestCandidateSetDigestIsIndependentOfArtifactOrder(t *testing.T) {
 	artifacts := []Artifact{
 		{Path: "sales.yaml", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		{Path: "operations.yaml", Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},

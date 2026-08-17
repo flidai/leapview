@@ -3,6 +3,7 @@ package graph
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -164,6 +165,35 @@ func TestGraphDefensivelyCopiesInputsAndOutputs(t *testing.T) {
 	}
 	if got, _ := g.Resource("model_orders"); got.Metadata.Tags[0] != "orders" {
 		t.Fatalf("resources escaped immutable graph: %#v", got)
+	}
+}
+
+func TestAffectedDashboardsUsesTransitiveResourceIDs(t *testing.T) {
+	project, err := NewProjectGraph([]Resource{
+		{ID: "project_demo", Kind: KindProject, Name: "demo"},
+		{ID: "dashboard_sales", Kind: KindDashboard, Name: "sales_dashboard"},
+		{ID: "dashboard_ops", Kind: KindDashboard, Name: "ops_dashboard"},
+		{ID: "semantic_sales", Kind: KindSemanticModel, Name: "sales"},
+		{ID: "semantic_ops", Kind: KindSemanticModel, Name: "ops"},
+		{ID: "model_orders", Kind: KindModel, Name: "orders"},
+		{ID: "model_inventory", Kind: KindModel, Name: "inventory"},
+	}, []Edge{
+		{From: "dashboard_sales", To: "semantic_sales"},
+		{From: "semantic_sales", To: "model_orders"},
+		{From: "dashboard_ops", To: "semantic_ops"},
+		{From: "semantic_ops", To: "model_inventory"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := project.Dependencies("dashboard_sales"), []ResourceID{"dashboard_sales", "model_orders", "semantic_sales"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("dependencies = %v, want %v", got, want)
+	}
+	if got, want := project.AffectedDashboards([]ResourceID{"model_orders", "model_inventory", "model_orders"}), []ResourceID{"dashboard_ops", "dashboard_sales"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("affected dashboards = %v, want %v", got, want)
+	}
+	if got := project.AffectedDashboards([]ResourceID{"connection_unrelated"}); len(got) != 0 {
+		t.Fatalf("unrelated changed IDs affected dashboards: %v", got)
 	}
 }
 
@@ -346,6 +376,47 @@ func TestServingIdentityCanBeValidatedBeforeArtifactBinding(t *testing.T) {
 	}
 	if err := (ServingIdentity{}).Validate(); !errors.Is(err, ErrInvalidServingIdentity) {
 		t.Fatalf("zero identity error = %v", err)
+	}
+}
+
+func TestValidateServingScopeDoesNotRequireGeneration(t *testing.T) {
+	if err := ValidateServingScope("project_demo", "production"); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []struct {
+		projectID   ResourceID
+		environment string
+	}{
+		{"", "production"},
+		{" project_demo", "production"},
+		{"project_demo", ""},
+		{"project_demo", "production/env"},
+	} {
+		if err := ValidateServingScope(scope.projectID, scope.environment); !errors.Is(err, ErrInvalidServingIdentity) {
+			t.Fatalf("ValidateServingScope(%q, %q) error = %v", scope.projectID, scope.environment, err)
+		}
+	}
+}
+
+func TestCandidateScopeSupportsInitialAndExactBaseGenerations(t *testing.T) {
+	initial := CandidateScope{ProjectID: "project_demo", Environment: "production"}
+	base, err := initial.BaseIdentity()
+	if err != nil || base != nil {
+		t.Fatalf("initial BaseIdentity() = %#v, err=%v; want nil", base, err)
+	}
+	exact := CandidateScope{ProjectID: "project_demo", Environment: "production", BaseGenerationID: "generation_7"}
+	identity, err := exact.BaseIdentity()
+	if err != nil || identity == nil || identity.GenerationID != "generation_7" {
+		t.Fatalf("exact BaseIdentity() = %#v, err=%v", identity, err)
+	}
+	for _, invalid := range []CandidateScope{
+		{ProjectID: " project_demo", Environment: "production"},
+		{ProjectID: "project_demo", Environment: " production"},
+		{ProjectID: "project_demo", Environment: "production", BaseGenerationID: " generation_7"},
+	} {
+		if _, err := invalid.BaseIdentity(); err == nil {
+			t.Fatalf("BaseIdentity(%#v) succeeded", invalid)
+		}
 	}
 }
 

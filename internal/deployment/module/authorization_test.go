@@ -2,10 +2,11 @@ package module
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
-	"github.com/flidai/leapview/internal/deployment/apiadapter"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/stretchr/testify/require"
 )
@@ -13,57 +14,84 @@ import (
 type publicationStateStore map[servingstate.ID]servingstate.State
 
 func (s publicationStateStore) ByID(_ context.Context, id servingstate.ID) (servingstate.State, error) {
-	return s[id], nil
+	state, ok := s[id]
+	if !ok {
+		return servingstate.State{}, errors.New("state not found")
+	}
+	return state, nil
 }
 
-func TestPublicationAuthorizationUsesProjectEnvironmentBoundary(t *testing.T) {
-	states := publicationStateStore{
-		"state_sales": {
-			ID: "state_sales", WorkspaceID: "sales", ProjectID: "leapview-showcase",
-			DashboardPublicationsJSON: `{"executive-sales":{}}`,
-		},
-		"state_visuals": {
-			ID: "state_visuals", WorkspaceID: "visuals", ProjectID: "leapview-showcase",
-			DashboardPublicationsJSON: `{"visual-showcase":{}}`,
-		},
+func TestPublicationAuthorizationUsesDashboardResourceCapabilities(t *testing.T) {
+	states := publicationStateStore{"generation_1": {
+		ID: "generation_1", ProjectID: "leapview-showcase", Environment: "prod",
+		DashboardPublicationsJSON: `{"executive":{"dashboard":"executive-sales"},"website":{"dashboard":"visual-showcase"}}`,
+	}}
+	type decision struct {
+		project    projectgraph.ResourceID
+		resource   projectgraph.ResourceID
+		capability access.Capability
 	}
-	var authorized []access.ObjectRef
-	err := authorizePublicationDeployment(t.Context(), "release-principal", "prod", []apiadapter.TargetRequest{
-		{Workspace: "sales", CandidateID: "state_sales"},
-		{Workspace: "visuals", CandidateID: "state_visuals"},
-	}, PublicationAuthorizationConfig{
+	var authorized []decision
+	err := authorizePublicationDeployment(t.Context(), "principal:release", "prod", "generation_1", PublicationAuthorizationConfig{
 		States: states,
-		AuthorizeObject: func(_ context.Context, actor string, privilege access.Privilege, object access.ObjectRef) (bool, error) {
-			require.Equal(t, "release-principal", actor)
-			require.Equal(t, access.PrivilegeManagePublications, privilege)
-			authorized = append(authorized, object)
+		AuthorizeResource: func(_ context.Context, actor string, project projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+			require.Equal(t, "principal:release", actor)
+			require.Equal(t, projectgraph.KindDashboard, resource.Kind())
+			authorized = append(authorized, decision{project: project, resource: resource.ID(), capability: capability})
 			return true, nil
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []access.ObjectRef{access.ProjectEnvironmentObject("leapview-showcase", "prod")}, authorized)
+	require.ElementsMatch(t, []decision{
+		{project: "leapview-showcase", resource: "executive-sales", capability: access.CapabilityResourcePublish},
+		{project: "leapview-showcase", resource: "visual-showcase", capability: access.CapabilityResourcePublish},
+	}, authorized)
 }
 
-func TestPublicationAuthorizationRejectsMixedProjects(t *testing.T) {
-	states := publicationStateStore{
-		"state_sales": {
-			ID: "state_sales", WorkspaceID: "sales", ProjectID: "leapview-showcase",
-			DashboardPublicationsJSON: `{"executive-sales":{}}`,
-		},
-		"state_other": {
-			ID: "state_other", WorkspaceID: "other", ProjectID: "other-project",
-			DashboardPublicationsJSON: `{"other":{}}`,
-		},
-	}
-	err := authorizePublicationDeployment(t.Context(), "release-principal", "prod", []apiadapter.TargetRequest{
-		{Workspace: "sales", CandidateID: "state_sales"},
-		{Workspace: "other", CandidateID: "state_other"},
-	}, PublicationAuthorizationConfig{
+func TestPublicationAuthorizationRejectsDeniedDashboard(t *testing.T) {
+	states := publicationStateStore{"generation_1": {
+		ID: "generation_1", ProjectID: "leapview-showcase", Environment: "prod",
+		DashboardPublicationsJSON: `{"website":{"dashboard":"visual-showcase"}}`,
+	}}
+	err := authorizePublicationDeployment(t.Context(), "principal:viewer", "prod", "generation_1", PublicationAuthorizationConfig{
 		States: states,
-		AuthorizeObject: func(context.Context, string, access.Privilege, access.ObjectRef) (bool, error) {
-			t.Fatal("mixed-project deployment reached authorization")
+		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
 			return false, nil
 		},
 	})
-	require.ErrorContains(t, err, "multiple projects")
+	require.ErrorIs(t, err, ErrPublicationForbidden)
+}
+
+func TestPublicationAuthorizationSkipsNonProductionAndEmptySnapshots(t *testing.T) {
+	states := publicationStateStore{
+		"generation_dev":   {ID: "generation_dev", ProjectID: "project", Environment: "dev", DashboardPublicationsJSON: `{"website":{"dashboard":"showcase"}}`},
+		"generation_empty": {ID: "generation_empty", ProjectID: "project", Environment: "prod", DashboardPublicationsJSON: `{}`},
+	}
+	config := PublicationAuthorizationConfig{
+		States: states,
+		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+			t.Fatal("authorization called for an ungoverned deployment")
+			return false, nil
+		},
+	}
+	require.NoError(t, authorizePublicationDeployment(t.Context(), "principal:viewer", "dev", "generation_dev", config))
+	require.NoError(t, authorizePublicationDeployment(t.Context(), "principal:viewer", "prod", "generation_empty", config))
+}
+
+func TestPublicationAuthorizationRejectsInvalidEvidence(t *testing.T) {
+	for name, state := range map[string]servingstate.State{
+		"project":   {ID: "generation_1", Environment: "prod", DashboardPublicationsJSON: `{}`},
+		"snapshot":  {ID: "generation_1", ProjectID: "project", Environment: "prod", DashboardPublicationsJSON: `{`},
+		"dashboard": {ID: "generation_1", ProjectID: "project", Environment: "prod", DashboardPublicationsJSON: `{"website":{"dashboard":" dashboard"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := authorizePublicationDeployment(t.Context(), "principal:release", "prod", "generation_1", PublicationAuthorizationConfig{
+				States: publicationStateStore{"generation_1": state},
+				AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+					return true, nil
+				},
+			})
+			require.Error(t, err)
+		})
+	}
 }

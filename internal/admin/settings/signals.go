@@ -5,68 +5,13 @@
 package settings
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
-	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
-	"github.com/flidai/leapview/internal/workspace"
 )
-
-// WorkspaceRegistrySignal is the read-only workspace registry used by the
-// settings overview.  An item includes ownership, administrators, runtime
-// deployment state, and links to the owning API resources.
-type WorkspaceRegistrySignal struct {
-	Items      []WorkspaceRegistryItemSignal `json:"items"`
-	Empty      string                        `json:"empty,omitempty"`
-	Loading    bool                          `json:"loading"`
-	Error      string                        `json:"error,omitempty"`
-	NextCursor string                        `json:"nextCursor,omitempty"`
-	HasMore    bool                          `json:"hasMore"`
-}
-
-type WorkspaceRegistryItemSignal struct {
-	ID                   string                   `json:"id"`
-	Title                string                   `json:"title"`
-	Description          string                   `json:"description,omitempty"`
-	Href                 string                   `json:"href"`
-	CreatedAt            string                   `json:"createdAt,omitempty"`
-	UpdatedAt            string                   `json:"updatedAt,omitempty"`
-	Owner                *WorkspaceSubjectSignal  `json:"owner,omitempty"`
-	Administrators       []WorkspaceSubjectSignal `json:"administrators"`
-	Environment          string                   `json:"environment,omitempty"`
-	ActiveServingStateID string                   `json:"activeServingStateId,omitempty"`
-	ServingStateStatus   string                   `json:"servingStateStatus,omitempty"`
-	ServingStateSince    string                   `json:"servingStateSince,omitempty"`
-	ProjectID            string                   `json:"projectId,omitempty"`
-	CurrentDeploymentID  string                   `json:"currentDeploymentId,omitempty"`
-	DeploymentStatus     string                   `json:"deploymentStatus,omitempty"`
-	DeploymentSince      string                   `json:"deploymentSince,omitempty"`
-	CurrentReleaseID     string                   `json:"currentReleaseId,omitempty"`
-	Links                WorkspaceLinksSignal     `json:"links"`
-}
-
-type WorkspaceSubjectSignal struct {
-	SubjectType string `json:"subjectType"`
-	SubjectID   string `json:"subjectId"`
-	Email       string `json:"email,omitempty"`
-	DisplayName string `json:"displayName"`
-	Role        string `json:"role,omitempty"`
-}
-
-type WorkspaceLinksSignal struct {
-	Self         string `json:"self"`
-	Workspace    string `json:"workspace"`
-	Project      string `json:"project,omitempty"`
-	Release      string `json:"release,omitempty"`
-	Deployment   string `json:"deployment,omitempty"`
-	Deployments  string `json:"deployments,omitempty"`
-	Connections  string `json:"connections,omitempty"`
-	Publications string `json:"publications,omitempty"`
-	Agent        string `json:"agent,omitempty"`
-}
 
 // ServiceAccountsSignal contains account rows and the selected account's
 // secret metadata. Raw secrets are only present in ServiceAccountSecretSignal
@@ -125,12 +70,12 @@ type AuditLogSignal struct {
 
 type AuditEventSignal struct {
 	ID            string         `json:"id"`
-	WorkspaceID   string         `json:"workspaceId,omitempty"`
+	ProjectID     string         `json:"projectId,omitempty"`
 	PrincipalID   string         `json:"principalId,omitempty"`
 	Action        string         `json:"action"`
-	TargetType    string         `json:"targetType"`
-	TargetID      string         `json:"targetId"`
-	Privilege     string         `json:"privilege,omitempty"`
+	ResourceKind  string         `json:"resourceKind"`
+	ResourceID    string         `json:"resourceId"`
+	Capability    string         `json:"capability,omitempty"`
 	Status        string         `json:"status,omitempty"`
 	RequestID     string         `json:"requestId,omitempty"`
 	CorrelationID string         `json:"correlationId,omitempty"`
@@ -139,13 +84,13 @@ type AuditEventSignal struct {
 }
 
 type AuditLogFilters struct {
-	WorkspaceID string `json:"workspaceId"`
-	PrincipalID string `json:"principalId"`
-	Action      string `json:"action"`
-	TargetType  string `json:"targetType"`
-	TargetID    string `json:"targetId"`
-	From        string `json:"from"`
-	To          string `json:"to"`
+	ProjectID    string `json:"projectId"`
+	PrincipalID  string `json:"principalId"`
+	Action       string `json:"action"`
+	ResourceKind string `json:"resourceKind"`
+	ResourceID   string `json:"resourceId"`
+	From         string `json:"from"`
+	To           string `json:"to"`
 }
 
 type AuditLogCommand struct {
@@ -184,11 +129,11 @@ func NormalizeAuditLogCommand(command AuditLogCommand) AuditLogCommand {
 }
 
 func NormalizeAuditLogFilters(filters AuditLogFilters) AuditLogFilters {
-	filters.WorkspaceID = strings.TrimSpace(filters.WorkspaceID)
+	filters.ProjectID = strings.TrimSpace(filters.ProjectID)
 	filters.PrincipalID = strings.TrimSpace(filters.PrincipalID)
 	filters.Action = strings.TrimSpace(filters.Action)
-	filters.TargetType = strings.TrimSpace(filters.TargetType)
-	filters.TargetID = strings.TrimSpace(filters.TargetID)
+	filters.ResourceKind = strings.TrimSpace(filters.ResourceKind)
+	filters.ResourceID = strings.TrimSpace(filters.ResourceID)
 	filters.From = strings.TrimSpace(filters.From)
 	filters.To = strings.TrimSpace(filters.To)
 	return filters
@@ -202,17 +147,6 @@ func AuditPageToken(createdAt, id string) string {
 		return ""
 	}
 	return base64.RawURLEncoding.EncodeToString([]byte(createdAt + "\x00" + id))
-}
-
-// WorkspaceSignalFromSummary provides a useful empty-state row when an
-// administration projection is unavailable.
-func WorkspaceSignalFromSummary(summary workspace.Summary, environment string) WorkspaceRegistryItemSignal {
-	id := string(summary.ID)
-	return WorkspaceRegistryItemSignal{ID: id, Title: summary.Title, Description: summary.Description,
-		Href: "/workspaces/" + url.PathEscape(id), CreatedAt: summary.CreatedAt, UpdatedAt: summary.UpdatedAt,
-		Environment: environment, ActiveServingStateID: string(summary.ActiveServingStateID),
-		Administrators: []WorkspaceSubjectSignal{},
-		Links:          WorkspaceLinksSignal{Self: "/api/v1/workspaces/" + url.PathEscape(id), Workspace: "/workspaces/" + url.PathEscape(id)}}
 }
 
 func ServiceAccountSignalFromPrincipal(principal access.Principal) ServiceAccountSignal {
@@ -230,17 +164,37 @@ func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
 	if strings.TrimSpace(event.MetadataJSON) != "" {
 		_ = json.Unmarshal([]byte(event.MetadataJSON), &metadata)
 	}
-	return AuditEventSignal{ID: event.ID, WorkspaceID: event.WorkspaceID, PrincipalID: event.PrincipalID,
-		Action: event.Action, TargetType: event.TargetType, TargetID: event.TargetID, Privilege: string(event.Privilege),
+	return AuditEventSignal{ID: event.ID, PrincipalID: event.PrincipalID,
+		Action: event.Action, ResourceKind: event.ResourceKind, ResourceID: event.ResourceID, Capability: string(event.Capability),
 		Status: event.Status, RequestID: event.RequestID, CorrelationID: event.CorrelationID, Metadata: metadata, CreatedAt: event.CreatedAt}
 }
 
-func SortWorkspaceItems(items []WorkspaceRegistryItemSignal) {
-	sort.SliceStable(items, func(i, j int) bool {
-		left, right := strings.ToLower(items[i].Title), strings.ToLower(items[j].Title)
-		if left == right {
-			return items[i].ID < items[j].ID
-		}
-		return left < right
+// LoadAuditLog reads the canonical access audit stream. ProjectID is retained
+// in the UI filter contract for future graph-scoped events; current identity
+// audit records are globally keyed by resource kind/id.
+func LoadAuditLog(ctx context.Context, repository access.Repository, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
+	state := AuditLogSignal{Items: []AuditEventSignal{}, Filters: NormalizeAuditLogFilters(filters), NextCursor: "", LoadedCount: 0, Loading: false}
+	if repository == nil {
+		return state, nil
+	}
+	limit = normalizeLimit(limit)
+	rows, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{
+		PrincipalID: strings.TrimSpace(filters.PrincipalID), Action: strings.TrimSpace(filters.Action),
+		ResourceKind: strings.TrimSpace(filters.ResourceKind), ResourceID: strings.TrimSpace(filters.ResourceID),
+		PageToken: strings.TrimSpace(pageToken), Limit: limit + 1,
 	})
+	if err != nil {
+		return state, err
+	}
+	state.HasMore = len(rows) > limit
+	if state.HasMore {
+		rows = rows[:limit]
+		last := rows[len(rows)-1]
+		state.NextCursor = AuditPageToken(last.CreatedAt, last.ID)
+	}
+	for _, row := range rows {
+		state.Items = append(state.Items, AuditEventSignalFromDomain(row))
+	}
+	state.LoadedCount = len(state.Items)
+	return state, nil
 }

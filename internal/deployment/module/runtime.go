@@ -8,9 +8,9 @@ import (
 )
 
 type RuntimeRegistry interface {
-	PrepareServingStateCandidates(context.Context, []runtimehost.ServingStateCandidate) (*runtimehost.PreparedSet, error)
-	VerifyPreparedSet(context.Context, *runtimehost.PreparedSet) (runtimehost.PreparedVerification, error)
-	ActivatePreparedSet(*runtimehost.PreparedSet, func() error) error
+	PrepareServingStateCandidate(context.Context, runtimehost.ServingStateCandidate) (*runtimehost.Prepared, error)
+	VerifyPrepared(context.Context, *runtimehost.Prepared) (runtimehost.PreparedVerification, error)
+	ActivatePrepared(*runtimehost.Prepared, func() error) error
 }
 
 func NewRuntime(registry RuntimeRegistry) (deployment.Runtime, error) {

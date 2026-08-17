@@ -8,7 +8,6 @@ import (
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	appshell "github.com/flidai/leapview/internal/app/shell"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
-	workspaceview "github.com/flidai/leapview/internal/workspace"
 )
 
 func TestAdminBootstrapSignalsUseAdminOwnedContracts(t *testing.T) {
@@ -21,7 +20,6 @@ func TestAdminBootstrapSignalsUseAdminOwnedContracts(t *testing.T) {
 	})
 	signals := AdminBootstrapSignals("profile",
 		AdminData{
-			Workspace:         workspaceview.WorkspaceView{ID: "platform", Title: "Platform"},
 			AuthConfigured:    true,
 			AccessConfigured:  true,
 			AccessStatusLabel: "Configured",
@@ -184,7 +182,7 @@ func TestAdminDirectoryExcludesMachinePrincipals(t *testing.T) {
 func TestAdminPageRendersAdminRouteShell(t *testing.T) {
 	var output strings.Builder
 	provider := appshell.Provider(appshell.Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
-	err := AdminPage("general", AdminData{Workspace: workspaceview.WorkspaceView{ID: "platform", Title: "Platform"}}, provider).Render(&output)
+	err := AdminPage("general", AdminData{}, provider).Render(&output)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -120,8 +120,12 @@ type dataPlanDiff struct {
 }
 
 func writeDataPlan(out io.Writer, result localplan.Result) error {
+	connection := result.ConnectionName
+	if connection == "" {
+		connection = result.Connection
+	}
 	document := dataPlanOutput{
-		Connection: result.Connection,
+		Connection: connection,
 		Root:       result.Root,
 		Sources:    append([]string{}, result.Sources...),
 		RevisionID: result.Manifest.RevisionID(),

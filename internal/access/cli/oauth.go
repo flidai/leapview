@@ -18,9 +18,9 @@ import (
 const authoringDeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code"
 
 type DeviceAuthorizationRequest struct {
-	Origin     string
-	ProjectID  string
-	Privileges []string
+	Origin       string
+	ProjectID    string
+	Capabilities []string
 }
 
 type OAuthRefreshRequest struct {
@@ -51,12 +51,12 @@ type StandardOAuthClient struct {
 
 func (client StandardOAuthClient) Begin(ctx context.Context, request DeviceAuthorizationRequest) (DeviceAuthorization, error) {
 	origin := strings.TrimRight(strings.TrimSpace(request.Origin), "/")
-	if origin == "" || strings.TrimSpace(request.ProjectID) == "" || len(request.Privileges) == 0 {
-		return nil, fmt.Errorf("device authorization origin, project, and privileges are required")
+	if origin == "" || strings.TrimSpace(request.ProjectID) == "" || len(request.Capabilities) == 0 {
+		return nil, fmt.Errorf("device authorization origin, project, and capabilities are required")
 	}
 	config := oauth2.Config{
 		ClientID: access.AuthoringCLIClientID,
-		Scopes:   append([]string(nil), request.Privileges...),
+		Scopes:   append([]string(nil), request.Capabilities...),
 		Endpoint: oauth2.Endpoint{
 			DeviceAuthURL: origin + "/oauth/device/code",
 			TokenURL:      origin + "/oauth/token",
@@ -114,14 +114,14 @@ func (client StandardOAuthClient) Workload(ctx context.Context, request Workload
 	clientID := strings.TrimSpace(request.ClientID)
 	if origin == "" || strings.TrimSpace(request.ProjectID) == "" ||
 		clientID == "" || strings.TrimSpace(request.ClientSecret) == "" ||
-		len(request.Privileges) == 0 || request.Lifetime < time.Second {
-		return nil, fmt.Errorf("OAuth workload origin, project, client credentials, privileges, and lifetime are required")
+		len(request.Capabilities) == 0 || request.Lifetime < time.Second {
+		return nil, fmt.Errorf("OAuth workload origin, project, client credentials, capabilities, and lifetime are required")
 	}
 	config := clientcredentials.Config{
 		ClientID:     clientID,
 		ClientSecret: request.ClientSecret,
 		TokenURL:     origin + "/oauth/token",
-		Scopes:       append([]string(nil), request.Privileges...),
+		Scopes:       append([]string(nil), request.Capabilities...),
 		AuthStyle:    oauth2.AuthStyleInParams,
 		EndpointParams: url.Values{
 			"project_id":       {request.ProjectID},

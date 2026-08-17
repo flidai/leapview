@@ -3,22 +3,15 @@ package release
 // FinalizationEventData returns the durable public event projection for a
 // terminal release finalization transition.
 func FinalizationEventData(row Release) map[string]any {
-	workspaces := make([]map[string]any, 0, len(row.Manifest.Workspaces))
-	for _, item := range row.Manifest.Workspaces {
-		mapped := map[string]any{"workspace": item.WorkspaceID, "artifactDigest": item.ArtifactDigest}
-		if item.ServingStateID != "" {
-			mapped["servingStateId"] = item.ServingStateID
-		}
-		workspaces = append(workspaces, mapped)
-	}
 	connections := make([]map[string]any, 0, len(row.Manifest.Connections))
 	for _, item := range row.Manifest.Connections {
 		connections = append(connections, map[string]any{"connection": item.ConnectionID, "revisionId": item.RevisionID})
 	}
 	result := map[string]any{
-		"id": row.ID, "projectId": row.ProjectID, "projectDigest": row.ProjectDigest,
-		"status": string(row.Status), "createdBy": row.CreatedBy, "createdAt": row.CreatedAt,
-		"workspaces": workspaces, "connections": connections,
+		"id": row.ID, "projectId": row.ServingIdentity.ProjectID.String(), "environment": row.ServingIdentity.Environment,
+		"generationId": row.ServingIdentity.GenerationID, "projectDigest": row.ProjectDigest,
+		"artifactDigest": row.ArtifactDigest, "status": string(row.Status),
+		"createdBy": row.CreatedBy, "createdAt": row.CreatedAt, "connections": connections,
 	}
 	if row.FinalizedAt != "" {
 		result["finalizedAt"] = row.FinalizedAt

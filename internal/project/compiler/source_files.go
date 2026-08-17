@@ -69,25 +69,23 @@ func sourceFilesFromProject(projectPath string, project Project) ([]string, erro
 	if err := addPaths(project.SourcePaths); err != nil {
 		return nil, err
 	}
-	for _, workspaceProject := range project.Workspaces {
-		if workspaceProject == nil {
-			continue
-		}
-		if err := add(workspaceProject.Path); err != nil {
-			return nil, err
-		}
-		for _, paths := range []map[string]string{
-			workspaceProject.ModelPaths,
-			workspaceProject.SemanticModelPaths,
-			workspaceProject.DashboardPaths,
-			workspaceProject.PublicationPaths,
-			workspaceProject.AccessPaths,
-			workspaceProject.RefreshPipelinePaths,
-		} {
-			if err := addPaths(paths); err != nil {
-				return nil, err
-			}
-		}
+	if err := addPaths(project.ModelPaths); err != nil {
+		return nil, err
+	}
+	if err := addPaths(project.SemanticModelPaths); err != nil {
+		return nil, err
+	}
+	if err := addPaths(project.DashboardPaths); err != nil {
+		return nil, err
+	}
+	if err := addPaths(project.PipelinePaths); err != nil {
+		return nil, err
+	}
+	if err := addPaths(project.PublicationPaths); err != nil {
+		return nil, err
+	}
+	if err := addPaths(project.AccessPaths); err != nil {
+		return nil, err
 	}
 	files := make([]string, 0, len(seen))
 	for path := range seen {

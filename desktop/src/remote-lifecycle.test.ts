@@ -21,7 +21,7 @@ describe("installRemoteLifecyclePolicy", () => {
       {},
       -105,
       "NAME_NOT_RESOLVED",
-      "https://analytics.company.com/workspaces/sales",
+      "https://analytics.company.com/dashboards/sales",
       true,
     );
     contents.emit(
@@ -29,7 +29,7 @@ describe("installRemoteLifecyclePolicy", () => {
       {},
       -105,
       "NAME_NOT_RESOLVED",
-      "https://analytics.company.com/workspaces/sales",
+      "https://analytics.company.com/dashboards/sales",
       true,
     );
 
@@ -103,33 +103,33 @@ describe("installRemoteLifecyclePolicy", () => {
     contents.emit(
       "did-navigate",
       {},
-      "https://analytics.company.com/workspaces/sales?period=q1#visual",
+      "https://analytics.company.com/dashboards/sales?period=q1#visual",
       200,
       "OK",
     );
     contents.emit(
       "did-navigate-in-page",
       {},
-      "https://analytics.company.com/workspaces/finance?period=q2",
+      "https://analytics.company.com/dashboards/finance?period=q2",
       true,
     );
     contents.emit(
       "did-navigate-in-page",
       {},
-      "https://analytics.company.com/workspaces/ignored",
+      "https://analytics.company.com/dashboards/ignored",
       false,
     );
     contents.emit(
       "did-navigate",
       {},
-      "https://attacker.example/workspaces/stolen",
+      "https://attacker.example/dashboards/stolen",
       200,
       "OK",
     );
     contents.emit(
       "did-navigate",
       {},
-      "https://user@analytics.company.com/workspaces/credentialed",
+      "https://user@analytics.company.com/dashboards/credentialed",
       200,
       "OK",
     );
@@ -142,8 +142,8 @@ describe("installRemoteLifecyclePolicy", () => {
     );
 
     expect(routes).toEqual([
-      "/workspaces/sales",
-      "/workspaces/finance",
+      "/dashboards/sales",
+      "/dashboards/finance",
     ]);
   });
 });

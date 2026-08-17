@@ -2,6 +2,7 @@ package module
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddataapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/control"
@@ -31,6 +33,9 @@ func TestFinalizeManagedDataUploadGeneratedExecutionContractEndToEnd(t *testing.
 	module, err := Build(t.Context(), Config{
 		Database: store.SQLDB(), Jobs: jobStore, Workflow: jobStore, RecordAudit: discardManagedDataAudit,
 		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-a"}, true },
+		AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) {
+			return true, nil
+		},
 		Product: ProductConfig{
 			Backend: "local", Dir: managedRoot,
 			UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour,

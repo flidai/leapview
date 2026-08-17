@@ -9,11 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	managedhttp "github.com/flidai/leapview/internal/manageddata/http"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -78,6 +80,21 @@ func TestRevisionOperationsAreScopedAndPaginated(t *testing.T) {
 	assertPublicError(t, recorder, http.StatusNotFound, "unrelated-secret")
 }
 
+func TestRevisionResponseRejectsMissingPublicID(t *testing.T) {
+	repo := metadataFixture()
+	missingID := "sha256:" + strings.Repeat("d", 64)
+	row := repo.revisions[revisionA]
+	row.PublicID = ""
+	row.Revision.Digest = missingID
+	repo.revisions[missingID] = row
+	handler := newHandler(repo, nil, nil)
+
+	recorder := call(t, ``, func(w http.ResponseWriter, r *http.Request) {
+		handler.GetManagedDataRevision(w, r, "project-a", "orders", missingID)
+	})
+	assertPublicError(t, recorder, http.StatusInternalServerError, "invalid revision metadata")
+}
+
 func TestUploadSessionOperationsUseControlServiceAndPrincipal(t *testing.T) {
 	uploads := &fakeUploads{result: uploadFixture()}
 	handler := newHandler(metadataFixture(), uploads, nil)
@@ -119,6 +136,32 @@ func TestUploadSessionOperationsUseControlServiceAndPrincipal(t *testing.T) {
 	}
 	if uploads.recoverCalls != 1 || uploads.abortCalls != 1 || uploads.finalizeCalls != 1 {
 		t.Fatalf("upload calls = recover %d, abort %d, finalize %d", uploads.recoverCalls, uploads.abortCalls, uploads.finalizeCalls)
+	}
+}
+
+func TestDevelopmentBypassOnlySkipsConnectionSnapshotAuthorization(t *testing.T) {
+	deny := func(context.Context, string, string, string, access.Capability) (bool, error) { return false, nil }
+	for _, test := range []struct {
+		name       string
+		principal  managedhttp.Principal
+		wantStatus int
+	}{
+		{name: "development bypass", principal: managedhttp.Principal{ID: "dev", DevBypass: true}, wantStatus: http.StatusOK},
+		{name: "ordinary principal denied", principal: managedhttp.Principal{ID: "principal-a"}, wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := managedhttp.NewHandler(managedhttp.Options{
+				Uploads: &fakeUploads{result: uploadFixture()}, Environment: "prod",
+				CurrentPrincipal:    func(*http.Request) (managedhttp.Principal, bool) { return test.principal, true },
+				AuthorizeConnection: deny,
+			})
+			recorder := call(t, "", func(w http.ResponseWriter, r *http.Request) {
+				handler.GetManagedDataUploadSession(w, r, "project-a", "orders", "upload-a")
+			})
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", recorder.Code, test.wantStatus, recorder.Body.String())
+			}
+		})
 	}
 }
 
@@ -294,20 +337,20 @@ type fakeRepository struct {
 }
 
 func metadataFixture() *fakeRepository {
-	collection := manageddata.Collection{ID: "collection-a", ProjectID: "project-a", ConnectionName: "orders", Status: manageddata.CollectionStatusActive}
+	collection := manageddata.Collection{ID: projectgraph.ResourceID("collection-a"), ProjectID: projectgraph.ResourceID("project-a"), ConnectionID: projectgraph.ResourceID("orders"), Status: manageddata.CollectionStatusActive}
 	return &fakeRepository{
 		collection: collection,
 		revisions: map[string]managedhttp.RevisionMetadata{
-			revisionA: {Revision: manageddata.Revision{ID: revisionA, CollectionID: collection.ID, Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"orders.csv","size":3,"sha256":"` + digestA + `"}]}`, FileCount: 1, SizeBytes: 3, CreatedAt: "2026-01-01T00:00:00Z"}, UploadSessionID: "upload-a"},
-			revisionB: {Revision: manageddata.Revision{ID: revisionB, CollectionID: collection.ID, Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"customers.csv","size":4,"sha256":"` + digestB + `"}]}`, FileCount: 1, SizeBytes: 4, CreatedAt: "2026-01-02T00:00:00Z"}, UploadSessionID: "upload-b"},
-			revisionC: {Revision: manageddata.Revision{ID: revisionC, CollectionID: "collection-other", Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"unrelated-secret.csv","size":4,"sha256":"` + digestC + `"}]}`}, UploadSessionID: "upload-secret"},
+			revisionA: {Revision: manageddata.Revision{ID: manageddata.RevisionID("revision-a"), CollectionID: collection.ID, Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"orders.csv","size":3,"sha256":"` + digestA + `"}]}`, FileCount: 1, SizeBytes: 3, CreatedAt: "2026-01-01T00:00:00Z"}, PublicID: revisionA, UploadSessionID: "upload-a"},
+			revisionB: {Revision: manageddata.Revision{ID: manageddata.RevisionID("revision-b"), CollectionID: collection.ID, Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"customers.csv","size":4,"sha256":"` + digestB + `"}]}`, FileCount: 1, SizeBytes: 4, CreatedAt: "2026-01-02T00:00:00Z"}, PublicID: revisionB, UploadSessionID: "upload-b"},
+			revisionC: {Revision: manageddata.Revision{ID: manageddata.RevisionID("revision-c"), CollectionID: projectgraph.ResourceID("collection-other"), Status: manageddata.RevisionStatusReady, ManifestJSON: `{"files":[{"path":"unrelated-secret.csv","size":4,"sha256":"` + digestC + `"}]}`}, PublicID: revisionC, UploadSessionID: "upload-secret"},
 		},
-		pointer: manageddata.EnvironmentPointer{CollectionID: collection.ID, Environment: "prod", RevisionID: revisionA, DeploymentID: "deployment-a", UpdatedAt: "2026-01-03T00:00:00Z"},
+		pointer: manageddata.EnvironmentPointer{CollectionID: collection.ID, Environment: "prod", RevisionID: manageddata.RevisionID("revision-a"), RevisionDigest: revisionA, DeploymentID: "deployment-a", UpdatedAt: "2026-01-03T00:00:00Z"},
 	}
 }
 
 func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, project, connection string) (manageddata.Collection, error) {
-	if project != r.collection.ProjectID || connection != r.collection.ConnectionName {
+	if project != r.collection.ProjectID.String() || connection != r.collection.ConnectionID.String() {
 		return manageddata.Collection{}, manageddata.ErrNotFound
 	}
 	return r.collection, nil
@@ -318,7 +361,7 @@ func (r *fakeRepository) RevisionByID(_ context.Context, collectionID, id string
 		return managedhttp.RevisionMetadata{}, r.revisionErr
 	}
 	revision, ok := r.revisions[id]
-	if !ok || revision.Revision.CollectionID != collectionID {
+	if !ok || revision.Revision.CollectionID.String() != collectionID {
 		return managedhttp.RevisionMetadata{}, manageddata.ErrNotFound
 	}
 	return revision, nil
@@ -423,8 +466,9 @@ func newHandler(repo managedhttp.Repository, uploads managedhttp.UploadCoordinat
 func handlerOptions(repo managedhttp.Repository, uploads managedhttp.UploadCoordinator, multipart s3multipart.Coordinator) managedhttp.Options {
 	return managedhttp.Options{
 		Repository: repo, Uploads: uploads, Multipart: multipart, Environment: "prod",
-		EnqueueFinalize:    func(context.Context, control.UploadRequest) error { return nil },
-		RecordCommandAudit: func(context.Context, managedhttp.CommandAuditInput) error { return nil },
+		AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) { return true, nil },
+		EnqueueFinalize:     func(context.Context, control.UploadRequest) error { return nil },
+		RecordCommandAudit:  func(context.Context, managedhttp.CommandAuditInput) error { return nil },
 		CurrentPrincipal: func(*http.Request) (managedhttp.Principal, bool) {
 			return managedhttp.Principal{ID: "principal-a"}, true
 		},

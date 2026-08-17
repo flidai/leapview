@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"log/slog"
 	"sort"
 	"strings"
@@ -27,9 +28,9 @@ const (
 )
 
 type BindingKey struct {
-	Scope               BindingScope
-	TargetID            string
-	LogicalConnectionID LogicalConnectionID
+	Scope        BindingScope
+	TargetID     TargetID
+	ConnectionID projectgraph.ResourceID
 }
 
 type BindingDependency struct {
@@ -56,7 +57,7 @@ type AdministrationPoolDirectory interface {
 
 type BindingCatalog interface {
 	Repository
-	List(context.Context, BindingScope, string) ([]TargetBinding, error)
+	List(context.Context, BindingScope, TargetID) ([]TargetBinding, error)
 }
 
 type AdministrationConfig struct {
@@ -100,7 +101,7 @@ func NewAdministration(config AdministrationConfig) (*Administration, error) {
 }
 
 type BindingChangePlan struct {
-	BindingID            string              `json:"bindingId"`
+	BindingID            BindingID           `json:"bindingId"`
 	ExpectedRevision     int64               `json:"expectedRevision"`
 	RequiresConfirmation bool                `json:"requiresConfirmation"`
 	ConfirmationToken    string              `json:"confirmationToken,omitempty"`
@@ -143,12 +144,14 @@ func (service *Administration) List(
 	ctx context.Context,
 	actorID string,
 	scope BindingScope,
-	targetID string,
+	targetID TargetID,
 ) ([]TargetBinding, error) {
 	if service == nil {
 		return nil, ErrProviderUnavailable
 	}
-	targetID = strings.TrimSpace(targetID)
+	if _, err := ParseTargetID(targetID.String()); err != nil {
+		return nil, err
+	}
 	authorizationScope := TargetBinding{TargetID: targetID, Scope: scope}
 	if err := service.authorize(
 		ctx, strings.TrimSpace(actorID), PermissionManageConnectionMetadata, authorizationScope,
@@ -160,7 +163,7 @@ func (service *Administration) List(
 		return nil, err
 	}
 	sort.Slice(bindings, func(i, j int) bool {
-		return bindings[i].LogicalConnectionID < bindings[j].LogicalConnectionID
+		return bindings[i].ConnectionID < bindings[j].ConnectionID
 	})
 	return bindings, nil
 }
@@ -432,13 +435,13 @@ func (service *Administration) binding(ctx context.Context, key BindingKey) (Tar
 	if service == nil {
 		return TargetBinding{}, ErrProviderUnavailable
 	}
-	return service.repository.Binding(ctx, key.Scope, strings.TrimSpace(key.TargetID), key.LogicalConnectionID)
+	return service.repository.Binding(ctx, key.Scope, key.TargetID, key.ConnectionID)
 }
 
 func bindingHealthWithoutPool(binding TargetBinding) BindingHealthStatus {
 	return BindingHealthStatus{
 		BindingID: binding.ID, TargetID: binding.TargetID,
-		LogicalConnection: binding.LogicalConnectionID, ConnectorKind: binding.ConnectorKind,
+		ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind,
 		Scope: binding.Scope, BindingRevision: binding.Revision,
 		ValidatedVersion: binding.ValidatedVersion, Health: binding.Health,
 		DiagnosticCode: binding.HealthReason, LastValidatedAt: binding.LastValidatedAt,
@@ -451,7 +454,7 @@ func changeConfirmationToken(
 	dependencies []BindingDependency,
 ) string {
 	payload := struct {
-		BindingID     string
+		BindingID     BindingID
 		Revision      int64
 		Configuration TargetBindingConfiguration
 		Dependencies  []BindingDependency

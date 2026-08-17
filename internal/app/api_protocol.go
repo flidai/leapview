@@ -11,7 +11,6 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
-	workspacemodule "github.com/flidai/leapview/internal/workspace/module"
 )
 
 func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, database *sql.DB) error {
@@ -41,7 +40,7 @@ func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, pl
 		},
 		PublicRequest: isPublicAPIGenRequest,
 		CursorSnapshot: func(r *http.Request) string {
-			return cursorSnapshot(routes.workspaceModule, routes.releaseModule, r)
+			return cursorSnapshot(routes.releaseModule, r)
 		},
 	})
 	if err != nil {
@@ -75,20 +74,13 @@ func publicDocs(protocol *apiprotocol.Protocol, w http.ResponseWriter, r *http.R
 	protocol.PublicDocs(w, r)
 }
 
-func cursorSnapshot(workspaces *workspacemodule.Module, releases *releasemodule.Module, r *http.Request) string {
+func cursorSnapshot(releases *releasemodule.Module, r *http.Request) string {
 	segments := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	for index, segment := range segments {
 		if index+1 >= len(segments) {
 			continue
 		}
 		switch segment {
-		case "workspaces":
-			if workspaces != nil {
-				snapshot, err := workspaces.ActiveServingStateID(r.Context(), segments[index+1])
-				if err == nil && snapshot != "" {
-					return snapshot
-				}
-			}
 		case "projects":
 			if releases != nil {
 				if snapshot := releases.ProjectCursorSnapshot(r, segments[index+1]); snapshot != "" {

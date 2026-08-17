@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -17,6 +16,7 @@ import (
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type QueryAuditRecorder = queryaudit.Recorder
@@ -34,13 +34,13 @@ func WithQueryAudit(metrics queryruntime.Metrics, recorder queryaudit.Recorder, 
 	return auditedMetrics{Metrics: metrics, recorder: recorder, principalID: principalID}
 }
 
-func (m auditedMetrics) MetricsForWorkspace(workspaceID string) (queryruntime.Metrics, bool) {
-	if workspaceID == "" {
+func (m auditedMetrics) MetricsForProject(projectID projectgraph.ResourceID) (queryruntime.Metrics, bool) {
+	if err := projectID.Validate(); err != nil {
 		return nil, false
 	}
-	provider, ok := m.Metrics.(queryruntime.WorkspaceMetrics)
+	provider, ok := m.Metrics.(queryruntime.ProjectMetrics)
 	if ok {
-		metrics, found := provider.MetricsForWorkspace(workspaceID)
+		metrics, found := provider.MetricsForProject(projectID)
 		if !found || metrics == nil {
 			return nil, found
 		}
@@ -50,7 +50,7 @@ func (m auditedMetrics) MetricsForWorkspace(workspaceID string) (queryruntime.Me
 		return nil, false
 	}
 	catalog := m.Metrics.Catalog()
-	if catalog.Workspace.ID == workspaceID {
+	if catalog.Project.ID == projectID {
 		return m, true
 	}
 	return nil, false
@@ -62,8 +62,8 @@ func (m auditedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.
 	}
 	ctx = m.auditContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, errors.New("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	return dataquery.ExecuteAudited(ctx, request, m.Metrics.ExecuteDataQuery)
 }
@@ -75,8 +75,8 @@ func (m auditedMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataq
 	}
 	ctx = m.auditContext(ctx)
 	request = request.WithMetadata(dataquery.MetadataFromContext(ctx))
-	if strings.TrimSpace(request.WorkspaceID) == "" {
-		return dataquery.Result{}, errors.New("workspace ID is required")
+	if err := request.ProjectID.Validate(); err != nil {
+		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	return dataquery.ExecuteAudited(ctx, request, func(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 		return executor.ExecuteDataQueryArrow(ctx, request, sink)
@@ -125,12 +125,12 @@ func (m auditedMetrics) QueryVisualizationWindow(ctx context.Context, dashboardI
 	return m.Metrics.QueryVisualizationWindow(m.auditContext(ctx), dashboardID, pageID, filters, request)
 }
 
-func (m auditedMetrics) QueryVisualizationTile(ctx context.Context, workspaceID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
+func (m auditedMetrics) QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {
 	port, ok := m.Metrics.(visualizationTileMetrics)
 	if !ok {
 		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
 	}
-	return port.QueryVisualizationTile(m.auditContext(ctx), workspaceID, dashboardID, visualID, revision, zoom, x, y)
+	return port.QueryVisualizationTile(m.auditContext(ctx), dashboardID, visualID, revision, zoom, x, y)
 }
 
 func (m auditedMetrics) ExpireVisualizationTileStream(streamID string) {
@@ -208,7 +208,7 @@ func (r queryEventRecorder) RecordDataQuery(ctx context.Context, request dataque
 
 func queryEventInput(request dataquery.Query, result dataquery.Result) queryaudit.EventInput {
 	return queryaudit.EventInput{
-		WorkspaceID: request.WorkspaceID, PrincipalID: request.PrincipalID, Surface: request.Surface,
+		ProjectID: request.ProjectID, PrincipalID: request.PrincipalID, Surface: request.Surface,
 		Operation: request.Operation, QueryKind: string(request.Kind), ModelID: request.ModelID, Target: request.Target,
 		ObjectType: request.ObjectType, ObjectID: request.ObjectID, RequestID: request.RequestID, CorrelationID: request.CorrelationID,
 		Status: firstNonEmpty(result.Status, dataquery.StatusSuccess), DurationMS: result.DurationMS,
@@ -221,7 +221,7 @@ func queryEventInput(request dataquery.Query, result dataquery.Result) queryaudi
 
 func queryShapeJSON(request dataquery.Query) string {
 	bytes, err := json.Marshal(struct {
-		WorkspaceID   string             `json:"workspaceId,omitempty"`
+		ProjectID     string             `json:"projectId,omitempty"`
 		Surface       string             `json:"surface,omitempty"`
 		Operation     string             `json:"operation,omitempty"`
 		RequestID     string             `json:"requestId,omitempty"`
@@ -242,7 +242,7 @@ func queryShapeJSON(request dataquery.Query) string {
 		BinCount      int                `json:"binCount,omitempty"`
 		IncludeTotal  bool               `json:"includeTotal,omitempty"`
 	}{
-		request.WorkspaceID, request.Surface, request.Operation, request.RequestID, request.ObjectType,
+		request.ProjectID.String(), request.Surface, request.Operation, request.RequestID, request.ObjectType,
 		request.ObjectID, request.CorrelationID, request.ModelID, request.Kind, request.Target, request.Fields,
 		request.Measures, request.Value, request.Time, request.Filters, request.Sort, request.Offset, request.Limit,
 		request.BinCount, request.IncludeTotal,

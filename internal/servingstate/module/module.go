@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 )
@@ -76,15 +77,22 @@ func (m *Module) ReconcileRetention(ctx context.Context, environment string, now
 func (m *Module) SaveValidated(ctx context.Context, id servingstate.ID, validation servingstate.Validation, artifact servingstate.Artifact) (servingstate.State, error) {
 	return m.states.SaveValidated(ctx, id, validation, artifact)
 }
-func (m *Module) Activate(ctx context.Context, workspaceID servingstate.WorkspaceID, environment servingstate.Environment, id servingstate.ID) (servingstate.State, error) {
-	return m.states.Activate(ctx, workspaceID, environment, id)
+func (m *Module) Activate(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment, id, expectedActiveID servingstate.ID) (servingstate.State, error) {
+	return m.states.Activate(ctx, projectID, environment, id, expectedActiveID)
 }
-func (m *Module) ActiveArtifact(ctx context.Context, workspaceID servingstate.WorkspaceID, environment servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
-	return m.states.ActiveArtifact(ctx, workspaceID, environment)
+func (m *Module) ActiveArtifact(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+	return m.states.ActiveArtifact(ctx, projectID, environment)
 }
 func (m *Module) ListActiveScopes(ctx context.Context) ([]servingstate.ActiveScope, error) {
 	return m.states.ListActiveScopes(ctx)
 }
 func (m *Module) ArtifactByServingState(ctx context.Context, id servingstate.ID) (servingstate.Artifact, error) {
 	return m.states.ArtifactByServingState(ctx, id)
+}
+
+// ActiveServingStateGraph returns the project-owned asset projection for the
+// exact active serving generation. It is a read-only browser composition port;
+// callers still bind project identity through the runtime host.
+func (m *Module) ActiveServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string) (servingstate.AssetGraph, bool, error) {
+	return m.states.ActiveServingStateGraph(ctx, projectID, environment)
 }

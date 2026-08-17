@@ -14,14 +14,15 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/agent"
 	agentconfig "github.com/flidai/leapview/internal/agent/config"
 )
 
 func TestAgentAPIReportsDisabledWhenProviderMissing(t *testing.T) {
 	store := testStore(t)
-	auth := testAuth(store, "test", AuthConfig{DevBypass: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{}), WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{DevBypass: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agent.NewService(testAgentRepository(store), agent.Config{})}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/conversations", nil)
 	req.Header.Set("Authorization", "Bearer dev")
@@ -36,11 +37,11 @@ func TestAgentAPIReportsDisabledWhenProviderMissing(t *testing.T) {
 func TestGlobalAgentAPIListsPrincipalConversations(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", "viewer")
+	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer")
 	token := testAPIToken(t, ctx, store, principal.ID, "agent-global")
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	agentService := agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService, WorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService}))
 
 	createReq := authedJSONRequest(http.MethodPost, "/api/v1/agent/conversations", token, `{"title":"Global ask"}`)
 	createRec := httptest.NewRecorder()
@@ -60,10 +61,9 @@ func TestGlobalAgentAPIListsPrincipalConversations(t *testing.T) {
 	}
 
 	scopedToken, _, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID: principal.ID,
-		WorkspaceID: "test",
-		Name:        "agent-workspace-bound",
-		Privileges:  []access.Privilege{access.PrivilegeUseAgent, access.PrivilegeViewAgent},
+		PrincipalID:  principal.ID,
+		Name:         "agent-workspace-bound",
+		Capabilities: []access.Capability{access.CapabilityResourceUse, access.CapabilityResourceRead},
 	})
 	if err != nil {
 		t.Fatalf("create workspace-bound token: %v", err)
@@ -75,7 +75,7 @@ func TestGlobalAgentAPIListsPrincipalConversations(t *testing.T) {
 		t.Fatalf("workspace-bound token did not retain principal conversation ownership: status=%d body=%s", scopedRec.Code, scopedRec.Body.String())
 	}
 
-	other := testPrincipal(t, ctx, store, "other@example.com", "Other", "viewer")
+	other := testPrincipal(t, ctx, store, "other@example.com", "Other")
 	otherToken := testAPIToken(t, ctx, store, other.ID, "agent-other")
 	otherReq := authedJSONRequest(http.MethodGet, "/api/v1/agent/conversations", otherToken, "")
 	otherRec := httptest.NewRecorder()
@@ -95,7 +95,7 @@ func TestGlobalAgentAPIListsPrincipalConversations(t *testing.T) {
 func TestAgentAPIConversationTurnPersistsMessagesAndEvents(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", "viewer")
+	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer")
 	token := testAPIToken(t, ctx, store, principal.ID, "agent-test")
 	if err := store.UpsertSetting(ctx, agentconfig.SystemPromptSettingKey, "Stored admin system prompt."); err != nil {
 		t.Fatalf("seed system prompt: %v", err)
@@ -121,9 +121,9 @@ func TestAgentAPIConversationTurnPersistsMessagesAndEvents(t *testing.T) {
 		writeRawJSON(t, w, `{"choices":[{"message":{"role":"assistant","content":"Executive Sales is available."},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25}}`)
 	}))
 	defer modelServer.Close()
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	agentService := agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", BaseURL: modelServer.URL, Model: "fake-model"})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService, WorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService}))
 	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
 	server.StartBackgroundJobs(backgroundCtx)
 	t.Cleanup(func() {
@@ -183,7 +183,7 @@ func TestAgentAPIConversationTurnPersistsMessagesAndEvents(t *testing.T) {
 }
 
 func TestAdminAgentConfigurationIsNotPublicAPI(t *testing.T) {
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{WorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{}))
 	for _, method := range []string{http.MethodGet, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/api/v1/admin/agent/config", nil)
 		rec := httptest.NewRecorder()
@@ -197,10 +197,10 @@ func TestAdminAgentConfigurationIsNotPublicAPI(t *testing.T) {
 func TestAgentConfigurationCommandUsesGeneratedPublicContract(t *testing.T) {
 	ctx := t.Context()
 	store := testStore(t)
-	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner", access.RolePlatformAdmin)
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
 	token := testAPIToken(t, ctx, store, owner.ID, "agent-config")
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
 	getReq := authedJSONRequest(http.MethodGet, "/api/v1/agent/config", token, "")
 	getRec := httptest.NewRecorder()
@@ -236,19 +236,19 @@ func TestAgentConfigurationCommandUsesGeneratedPublicContract(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("agent config audits=%d err=%v", len(events), err)
 	}
-	if events[0].WorkspaceID != "" {
-		t.Fatalf("agent config audit workspace=%q, want platform scope", events[0].WorkspaceID)
+	if events[0].ResourceID != agentconfig.SystemPromptSettingKey {
+		t.Fatalf("agent config audit resource=%q, want stable setting target %q", events[0].ResourceID, agentconfig.SystemPromptSettingKey)
 	}
 }
 
 func TestAgentAPISupportsConversationAndRunReads(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", "viewer")
+	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer")
 	token := testAPIToken(t, ctx, store, principal.ID, "agent-test")
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	agentService := agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "fake-model"})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService, WorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService}))
 	scope := agent.Scope{PrincipalID: principal.ID}
 	conversation, err := agentService.CreateConversation(ctx, scope, "Original")
 	if err != nil {
@@ -331,16 +331,16 @@ func TestAgentAPISupportsConversationAndRunReads(t *testing.T) {
 func TestAgentAPIRejectsConcurrentTurnsForConversation(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer", "viewer")
+	principal := testPrincipal(t, ctx, store, "viewer@example.com", "Viewer")
 	token := testAPIToken(t, ctx, store, principal.ID, "agent-test")
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(150 * time.Millisecond)
 		writeRawJSON(t, w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
 	}))
 	defer modelServer.Close()
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	agentService := agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", BaseURL: modelServer.URL, Model: "fake-model"})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService, WorkspaceID: "test"}))
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: agentService}))
 	conversation, err := agentService.CreateConversation(ctx, agent.Scope{PrincipalID: principal.ID}, "Ask")
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
@@ -375,11 +375,11 @@ func TestAgentAPIRejectsConcurrentTurnsForConversation(t *testing.T) {
 func TestRefreshRunAPIRejectsExternallySuppliedTarget(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "editor@example.com", "Editor", "editor")
+	principal := testPrincipal(t, ctx, store, "editor@example.com", "Editor")
 	token := testAPIToken(t, ctx, store, principal.ID, "refresh-contract-test")
-	auth := testAuth(store, "test", AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, WorkspaceID: "test"}))
-	req := authedJSONRequest(http.MethodPost, "/api/v1/workspaces/test/refresh-runs", token, `{"modelId":"model.orders","targetType":"model_table"}`)
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
+	req := authedJSONRequest(http.MethodPost, "/api/v1/projects/project:test/refresh-runs", token, `{"modelId":"model.orders","targetType":"model_table"}`)
 	req.Header.Set("Idempotency-Key", "legacy-refresh-target")
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)

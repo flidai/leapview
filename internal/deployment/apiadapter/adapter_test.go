@@ -2,146 +2,82 @@ package apiadapter
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/deployment"
-	"github.com/flidai/leapview/internal/manageddata"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateProducesStableIdAndRequestDigestForIdempotentReplay(t *testing.T) {
+func TestCreateProducesStableIDAndRequestDigestForIdempotentReplay(t *testing.T) {
 	service := &fakeService{}
-	metadata := &fakeMetadata{}
-	adapter, err := New(service, metadata)
+	adapter, err := New(service)
 	require.NoError(t, err)
-	request := CreateRequest{
-		Project: "project", Environment: "prod", Actor: "principal", IdempotencyKey: "deploy-1",
-		Targets: []TargetRequest{{Workspace: "support", CandidateID: "support_2"}, {Workspace: "sales", CandidateID: "sales_2"}},
-	}
-
-	first, err := adapter.Create(context.Background(), request)
+	request := CreateRequest{Project: "project", Environment: "prod", GenerationID: "generation_2", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Actor: "principal", IdempotencyKey: "deploy-1"}
+	first, err := adapter.Create(t.Context(), request)
 	require.NoError(t, err)
-	second, err := adapter.Create(context.Background(), request)
+	second, err := adapter.Create(t.Context(), request)
 	require.NoError(t, err)
-	if first.ID == "" || first.ID != second.ID || first.RequestDigest == "" || first.RequestDigest != second.RequestDigest {
-		t.Fatalf("first = %#v, second = %#v", first, second)
-	}
-	if service.created.Targets[0].WorkspaceID != "sales" || first.Project != "project" || first.Status != StatusPending {
-		t.Fatalf("created input = %#v, response = %#v", service.created, first)
-	}
+	require.Equal(t, first.ID, second.ID)
+	require.Equal(t, first.RequestDigest, second.RequestDigest)
+	require.Equal(t, StatusPending, first.Status)
+	require.Equal(t, "project", service.created.ServingIdentity.ProjectID.String())
 }
 
 func TestCreateRequestDigestBindsImmutablePublishEvidence(t *testing.T) {
-	firstService := &fakeService{}
-	first, err := New(firstService, &fakeMetadata{})
+	request := CreateRequest{Project: "project", Environment: "prod", GenerationID: "generation_2", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Actor: "principal", IdempotencyKey: "publish-1", ReleaseID: "release_1", Evidence: PublishEvidence{ReleaseDigest: "sha256:" + strings.Repeat("e", 64), ArtifactContentDigest: "sha256:" + strings.Repeat("a", 64), ArtifactProvenanceDigest: "sha256:" + strings.Repeat("f", 64), PlanDigest: "sha256:" + strings.Repeat("b", 64), CandidateID: "candidate_1", CandidateRevision: 7, TargetID: "target_prod", Environment: "prod", GenerationID: "generation_2", RuntimeVersion: "v1.2.3", PolicyDigest: "sha256:" + strings.Repeat("c", 64)}}
+	firstService, secondService := &fakeService{}, &fakeService{}
+	first, err := New(firstService)
 	require.NoError(t, err)
-	secondService := &fakeService{}
-	second, err := New(secondService, &fakeMetadata{})
+	second, err := New(secondService)
 	require.NoError(t, err)
-	request := CreateRequest{
-		Project: "project", Environment: "prod", Actor: "principal",
-		IdempotencyKey: "publish-1", ReleaseID: "release_1",
-		Targets: []TargetRequest{{Workspace: "sales", CandidateID: "state_2"}},
-		Evidence: PublishEvidence{
-			ReleaseDigest:  "sha256:" + strings.Repeat("e", 64),
-			ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
-			PlanDigest:     "sha256:" + strings.Repeat("b", 64),
-			CandidateID:    "candidate_1", CandidateRevision: 7,
-			TargetID: "lvinst_prod", BaseGeneration: "deployment_6",
-			RuntimeVersion: "v1.2.3",
-			PolicyDigest:   "sha256:" + strings.Repeat("c", 64),
-		},
-	}
-	if _, err := first.Create(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, func() error { _, err := first.Create(t.Context(), request); return err }())
 	request.Evidence.PlanDigest = "sha256:" + strings.Repeat("d", 64)
-	if _, err := second.Create(context.Background(), request); err != nil {
-		t.Fatal(err)
-	}
-	if firstService.created.RequestDigest == secondService.created.RequestDigest {
-		t.Fatalf(
-			"request digest did not bind plan evidence: %q",
-			firstService.created.RequestDigest,
-		)
-	}
+	require.NoError(t, func() error { _, err := second.Create(t.Context(), request); return err }())
+	require.NotEqual(t, firstService.created.RequestDigest, secondService.created.RequestDigest)
 }
 
 func TestCreateRejectsIncompleteImmutablePublishEvidence(t *testing.T) {
-	adapter, err := New(&fakeService{}, &fakeMetadata{})
+	adapter, err := New(&fakeService{})
 	require.NoError(t, err)
-	_, err = adapter.Create(context.Background(), CreateRequest{
-		Project: "project", Environment: "prod", Actor: "principal",
-		IdempotencyKey: "publish-1", ReleaseID: "release_1",
-		Targets:  []TargetRequest{{Workspace: "sales", CandidateID: "state_2"}},
-		Evidence: PublishEvidence{TargetID: "lvinst_prod"},
-	})
-	if !errors.Is(err, ErrInvalid) {
-		t.Fatalf("error = %v, want invalid immutable publish evidence", err)
-	}
+	_, err = adapter.Create(t.Context(), CreateRequest{Project: "project", Environment: "prod", GenerationID: "generation_2", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Actor: "principal", IdempotencyKey: "publish-1", ReleaseID: "release_1", Evidence: PublishEvidence{TargetID: "target_prod"}})
+	require.ErrorIs(t, err, ErrInvalid)
 }
 
-func TestCreateRejectsDuplicateWorkspaceAsInvalidRequest(t *testing.T) {
-	adapter, err := New(&fakeService{}, &fakeMetadata{})
+func TestCreateRejectsMissingGenerationAsInvalidRequest(t *testing.T) {
+	adapter, err := New(&fakeService{})
 	require.NoError(t, err)
-	_, err = adapter.Create(context.Background(), CreateRequest{
-		Project: "project", Environment: "prod", Actor: "principal", IdempotencyKey: "deploy-1",
-		Targets: []TargetRequest{{Workspace: "sales", CandidateID: "sales_1"}, {Workspace: "sales", CandidateID: "sales_2"}},
-	})
-	if !errors.Is(err, ErrInvalid) {
-		t.Fatalf("error = %v, want invalid request", err)
-	}
+	_, err = adapter.Create(t.Context(), CreateRequest{Project: "project", Environment: "prod", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Actor: "principal", IdempotencyKey: "deploy-1"})
+	require.ErrorIs(t, err, ErrInvalid)
 }
 
-func TestMapResponseExposesPublicManagedRevisionDigests(t *testing.T) {
-	service := &fakeService{row: deployment.Deployment{
-		ID: "deployment_1", ProjectID: "project", Environment: "prod", RequestDigest: "sha256:request", Status: deployment.StatusActive,
-		CreatedBy: "publisher", ActivationPrincipal: "activator",
-		VerificationDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		VerifiedAt:         "2026-07-30T09:00:00Z",
-		Targets:            []deployment.Target{{DeploymentID: "deployment_1", WorkspaceID: "sales", ServingStateID: "sales_2", Status: deployment.TargetStatusActive}},
-		Connections:        []deployment.ConnectionPointer{{DeploymentID: "deployment_1", CollectionID: "orders", RevisionID: "revision_2", PriorRevisionID: "revision_1", PriorGeneration: 1, ActivatedGeneration: 2}},
-	}}
-	metadata := &fakeMetadata{
-		collections: map[string]manageddata.Collection{"orders": {ID: "orders", ProjectID: "project", ConnectionName: "orders"}},
-		revisions: map[string]manageddata.Revision{
-			"revision_1": {ID: "revision_1", CollectionID: "orders", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Status: manageddata.RevisionStatusReady},
-			"revision_2": {ID: "revision_2", CollectionID: "orders", Digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Status: manageddata.RevisionStatusReady},
-		},
-	}
-	adapter, _ := New(service, metadata)
-
-	got, err := adapter.Get(context.Background(), Scope{Project: "project", DeploymentID: "deployment_1"})
+func TestMapResponseExposesGenerationIdentityAndActivationEvidence(t *testing.T) {
+	service := &fakeService{row: deployment.Deployment{ID: "deployment_1", ServingIdentity: servingIdentity("project", "generation_2"), RequestDigest: "sha256:" + strings.Repeat("a", 64), Status: deployment.StatusActive, CreatedBy: "publisher", ActivationPrincipal: "activator", VerificationDigest: "sha256:" + strings.Repeat("f", 64), VerifiedAt: "2026-07-30T09:00:00Z"}}
+	adapter, err := New(service)
 	require.NoError(t, err)
-	if got.Project != "project" || got.CreatedBy != "publisher" ||
-		got.Status != StatusActive || len(got.Connections) != 1 ||
-		got.Connections[0].RevisionID != metadata.revisions["revision_2"].Digest ||
-		got.ActivationPrincipal != "activator" ||
-		got.VerificationDigest != service.row.VerificationDigest ||
-		got.VerifiedAt != service.row.VerifiedAt {
-		t.Fatalf("response = %#v", got)
-	}
+	got, err := adapter.Get(t.Context(), Scope{Project: "project", DeploymentID: "deployment_1"})
+	require.NoError(t, err)
+	require.Equal(t, "project", got.Project)
+	require.Equal(t, "generation_2", got.GenerationID)
+	require.Equal(t, StatusActive, got.Status)
+	require.Equal(t, "activator", got.ActivationPrincipal)
+	require.Equal(t, service.row.VerificationDigest, got.VerificationDigest)
 }
 
 func TestActivateForwardsTheBoundedActivationPrincipal(t *testing.T) {
-	service := &fakeService{row: deployment.Deployment{
-		ID: "deployment_1", ProjectID: "project", Status: deployment.StatusActive,
-	}}
-	adapter, err := New(service, &fakeMetadata{})
+	service := &fakeService{row: deployment.Deployment{ID: "deployment_1", ServingIdentity: servingIdentity("project", "generation_2"), Status: deployment.StatusActive}}
+	adapter, err := New(service)
 	require.NoError(t, err)
-	if _, err := adapter.Activate(context.Background(), ActivateRequest{
-		Scope: Scope{Project: "project", DeploymentID: "deployment_1"},
-		Actor: "principal_activator", IdempotencyKey: "activation-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if service.activation.ProjectID != "project" ||
-		service.activation.DeploymentID != "deployment_1" ||
-		service.activation.ActorID != "principal_activator" {
-		t.Fatalf("activation request = %#v", service.activation)
-	}
+	_, err = adapter.Activate(t.Context(), ActivateRequest{Scope: Scope{Project: "project", DeploymentID: "deployment_1"}, Actor: "principal_activator", IdempotencyKey: "activation-1"})
+	require.NoError(t, err)
+	require.Equal(t, "project", service.activation.ProjectID.String())
+	require.Equal(t, "deployment_1", service.activation.DeploymentID)
+	require.Equal(t, "principal_activator", service.activation.ActorID)
+}
+
+func servingIdentity(project, generation string) (identity projectgraph.ServingIdentity) {
+	return projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(project), Environment: "prod", GenerationID: generation}
 }
 
 type fakeService struct {
@@ -153,36 +89,21 @@ type fakeService struct {
 func (s *fakeService) Create(_ context.Context, input deployment.CreateInput) (deployment.Deployment, error) {
 	s.created = input
 	if s.row.ID == "" {
-		s.row = deployment.Deployment{ID: input.ID, ProjectID: input.ProjectID, Environment: input.Environment, RequestDigest: input.RequestDigest, Status: deployment.StatusPending, CreatedBy: input.CreatedBy}
-		for _, target := range input.Targets {
-			s.row.Targets = append(s.row.Targets, deployment.Target{DeploymentID: input.ID, WorkspaceID: target.WorkspaceID, ServingStateID: target.ServingStateID, Status: deployment.TargetStatusPending})
-		}
+		s.row = deployment.Deployment{ID: input.ID, ServingIdentity: input.ServingIdentity, ArtifactDigest: input.ArtifactDigest, RequestDigest: input.RequestDigest, Status: deployment.StatusPending, CreatedBy: input.CreatedBy}
 	}
 	return s.row, nil
 }
 func (s *fakeService) Get(context.Context, deployment.Scope) (deployment.Deployment, error) {
+	if s.row.ID == "" {
+		return deployment.Deployment{}, deployment.ErrNotFound
+	}
 	return s.row, nil
 }
-func (s *fakeService) Activate(
-	_ context.Context,
-	request deployment.ActivationRequest,
-) (deployment.Deployment, error) {
+func (s *fakeService) Activate(_ context.Context, request deployment.ActivationRequest) (deployment.Deployment, error) {
 	s.activation = request
 	return s.row, nil
 }
 func (s *fakeService) Cancel(context.Context, deployment.Scope) (deployment.Deployment, error) {
 	s.row.Status = deployment.StatusCancelled
 	return s.row, nil
-}
-
-type fakeMetadata struct {
-	collections map[string]manageddata.Collection
-	revisions   map[string]manageddata.Revision
-}
-
-func (m *fakeMetadata) CollectionByID(_ context.Context, id string) (manageddata.Collection, error) {
-	return m.collections[id], nil
-}
-func (m *fakeMetadata) RevisionByID(_ context.Context, id string) (manageddata.Revision, error) {
-	return m.revisions[id], nil
 }

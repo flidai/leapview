@@ -20,7 +20,7 @@ const testSCIMToken = "test-scim-token"
 
 func TestSCIMRoutesRequireBearerAndServeMetadata(t *testing.T) {
 	store := testStore(t)
-	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", SCIMBearerToken: testSCIMToken}))
+	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{SCIMBearerToken: testSCIMToken}))
 
 	missingToken := httptest.NewRequest(http.MethodGet, "/scim/v2/ServiceProviderConfig", nil)
 	missingRec := httptest.NewRecorder()
@@ -57,7 +57,6 @@ func TestSCIMRoutesUseAPIRateLimit(t *testing.T) {
 	store := testStore(t)
 	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 
-		WorkspaceID:     "test",
 		SCIMBearerToken: testSCIMToken,
 		RateLimits:      RateLimitConfig{Enabled: true, APILimit: 1, APIWindow: time.Minute},
 	}))
@@ -77,10 +76,10 @@ func TestSCIMRoutesUseAPIRateLimit(t *testing.T) {
 	}
 }
 
-func TestSCIMUserAndGroupProvisioningDriveGrantAccess(t *testing.T) {
+func TestSCIMUserAndGroupProvisioningMaintainsMembership(t *testing.T) {
 	store := testStore(t)
 	repo := testAccessRepository(store)
-	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, WorkspaceID: "test", SCIMBearerToken: testSCIMToken}))
+	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, SCIMBearerToken: testSCIMToken}))
 	ctx := context.Background()
 
 	userID := createSCIMUser(t, server, "user-ext-1", "analyst@example.com", "Analyst User")
@@ -92,21 +91,9 @@ func TestSCIMUserAndGroupProvisioningDriveGrantAccess(t *testing.T) {
 	if !hasSCIMGroup(groups, groupID) {
 		t.Fatalf("directory groups = %#v, want SCIM group %s", groups, groupID)
 	}
-	if _, err := repo.CreateGrant(ctx, access.GrantInput{
-		Object:      access.WorkspaceObject("test"),
-		SubjectType: access.SubjectGroup,
-		SubjectID:   groupID,
-		Privilege:   access.PrivilegeUseWorkspace,
-	}); err != nil {
-		t.Fatalf("create group grant: %v", err)
-	}
-
-	decision, err := repo.Authorize(ctx, userID, access.PrivilegeUseWorkspace, access.WorkspaceObject("test"))
-	if err != nil {
-		t.Fatalf("authorize provisioned group member: %v", err)
-	}
-	if !decision.Allowed {
-		t.Fatalf("provisioned group member was not allowed: %#v", decision)
+	members, err := repo.ListSCIMGroupMembers(ctx, groupID)
+	if err != nil || len(members) != 1 || members[0].PrincipalID != userID {
+		t.Fatalf("provisioned group members = %#v, err=%v", members, err)
 	}
 
 	removeBody := map[string]any{
@@ -119,48 +106,39 @@ func TestSCIMUserAndGroupProvisioningDriveGrantAccess(t *testing.T) {
 		t.Fatalf("remove group member status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	decision, err = repo.Authorize(ctx, userID, access.PrivilegeUseWorkspace, access.WorkspaceObject("test"))
+	members, err = repo.ListSCIMGroupMembers(ctx, groupID)
 	if err != nil {
-		t.Fatalf("authorize removed member: %v", err)
+		t.Fatalf("list members after removal: %v", err)
 	}
-	if decision.Allowed {
-		t.Fatalf("removed SCIM member still has group grant access: %#v", decision)
+	if len(members) != 0 {
+		t.Fatalf("removed SCIM member remains in group: %#v", members)
 	}
 }
 
 func hasSCIMGroup(groups []access.Group, id string) bool {
 	for _, group := range groups {
-		if group.ID == id && group.Provider == "scim" && group.WorkspaceID == "" {
+		if group.ID == id && group.Provider == "scim" {
 			return true
 		}
 	}
 	return false
 }
 
-func TestSCIMDisableRevokesCredentialsAndBlocksAuthorization(t *testing.T) {
+func TestSCIMDisableRevokesCredentials(t *testing.T) {
 	store := testStore(t)
 	repo := testAccessRepository(store)
-	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, WorkspaceID: "test", SCIMBearerToken: testSCIMToken}))
+	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, SCIMBearerToken: testSCIMToken}))
 	ctx := context.Background()
 
 	userID := createSCIMUser(t, server, "user-ext-2", "disabled@example.com", "Disabled User")
-	if _, err := repo.CreateGrant(ctx, access.GrantInput{
-		Object:      access.WorkspaceObject("test"),
-		SubjectType: access.SubjectPrincipal,
-		SubjectID:   userID,
-		Privilege:   access.PrivilegeUseWorkspace,
-	}); err != nil {
-		t.Fatalf("create direct grant: %v", err)
-	}
 	sessionToken, err := repo.CreateSession(ctx, userID, time.Hour)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	apiToken, _, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-		PrincipalID: userID,
-		WorkspaceID: "test",
-		Name:        "disabled-user-token",
-		Privileges:  []access.Privilege{access.PrivilegeUseWorkspace},
+		PrincipalID:  userID,
+		Name:         "disabled-user-token",
+		Capabilities: []access.Capability{access.CapabilityResourceRead},
 	})
 	if err != nil {
 		t.Fatalf("create api token: %v", err)
@@ -182,18 +160,11 @@ func TestSCIMDisableRevokesCredentialsAndBlocksAuthorization(t *testing.T) {
 	if _, err := repo.CredentialForAPIToken(ctx, apiToken); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("disabled principal api token err = %v, want sql.ErrNoRows", err)
 	}
-	decision, err := repo.Authorize(ctx, userID, access.PrivilegeUseWorkspace, access.WorkspaceObject("test"))
-	if err != nil {
-		t.Fatalf("authorize disabled principal: %v", err)
-	}
-	if decision.Allowed || decision.Reason != access.ReasonPrincipalDisabled {
-		t.Fatalf("disabled principal decision = %#v, want denied principal_disabled", decision)
-	}
 }
 
 func TestSCIMFiltersUsersAndGroups(t *testing.T) {
 	store := testStore(t)
-	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{WorkspaceID: "test", SCIMBearerToken: testSCIMToken}))
+	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{SCIMBearerToken: testSCIMToken}))
 	userID := createSCIMUser(t, server, "filter-user", "filter@example.com", "Filter User")
 	groupID := createSCIMGroup(t, server, "filter-group", "Filter Analysts", []string{userID})
 
@@ -219,7 +190,7 @@ func TestSCIMFiltersUsersAndGroups(t *testing.T) {
 func TestSCIMUserRoundTripsExternalIDAndNestedPatch(t *testing.T) {
 	store := testStore(t)
 	repo := testAccessRepository(store)
-	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, WorkspaceID: "test", SCIMBearerToken: testSCIMToken}))
+	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, SCIMBearerToken: testSCIMToken}))
 	userID := createSCIMUser(t, server, "nested-user-ext", "old@example.com", "Old User")
 
 	getRec := httptest.NewRecorder()
@@ -261,7 +232,7 @@ func TestSCIMUserRoundTripsExternalIDAndNestedPatch(t *testing.T) {
 func TestSCIMCannotMutateNonSCIMPrincipal(t *testing.T) {
 	store := testStore(t)
 	repo := accesssqlite.NewRepository(store.SQLDB())
-	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, WorkspaceID: "test", SCIMBearerToken: testSCIMToken}))
+	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, SCIMBearerToken: testSCIMToken}))
 	ctx := context.Background()
 	local, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{ID: "local_user", Email: "local@example.com", DisplayName: "Local"})
 	if err != nil {
@@ -285,7 +256,7 @@ func TestSCIMCannotMutateNonSCIMPrincipal(t *testing.T) {
 func TestSCIMGroupPatchReplaceAndClearMembers(t *testing.T) {
 	store := testStore(t)
 	repo := testAccessRepository(store)
-	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, WorkspaceID: "test", SCIMBearerToken: testSCIMToken}))
+	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, SCIMBearerToken: testSCIMToken}))
 	first := createSCIMUser(t, server, "replace-member-1", "member1@example.com", "Member 1")
 	second := createSCIMUser(t, server, "replace-member-2", "member2@example.com", "Member 2")
 	groupID := createSCIMGroup(t, server, "replace-group", "Replace Group", []string{first})
@@ -328,7 +299,7 @@ func TestSCIMGroupPatchReplaceAndClearMembers(t *testing.T) {
 func TestSCIMAuditIncludesRequestMetadataOnSuccessAndFailure(t *testing.T) {
 	store := testStore(t)
 	repo := testAccessRepository(store)
-	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, WorkspaceID: "test", SCIMBearerToken: testSCIMToken}))
+	server := assembleSCIMTestHarness(fakeMetrics{}, testStoreOptions(store, assemblyConfig{AccessRepo: repo, SCIMBearerToken: testSCIMToken}))
 
 	req := scimRequest(http.MethodPost, "/scim/v2/Users", map[string]any{
 		"schemas":    []string{"urn:ietf:params:scim:schemas:core:2.0:User"},

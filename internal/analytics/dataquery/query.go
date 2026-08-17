@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Kind string
@@ -21,7 +23,7 @@ const (
 )
 
 type Query struct {
-	WorkspaceID   string
+	ProjectID     projectgraph.ResourceID
 	Surface       string
 	Operation     string
 	PrincipalID   string
@@ -263,7 +265,7 @@ const (
 )
 
 type Metadata struct {
-	WorkspaceID   string
+	ProjectID     projectgraph.ResourceID
 	Surface       string
 	Operation     string
 	PrincipalID   string
@@ -286,8 +288,8 @@ func MetadataFromContext(ctx context.Context) Metadata {
 }
 
 func (q Query) WithMetadata(metadata Metadata) Query {
-	if metadata.WorkspaceID != "" {
-		q.WorkspaceID = metadata.WorkspaceID
+	if metadata.ProjectID != "" {
+		q.ProjectID = metadata.ProjectID
 	}
 	if metadata.Surface != "" {
 		q.Surface = metadata.Surface

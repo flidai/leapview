@@ -9,7 +9,19 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+type runtimeAuditRecorder struct {
+	queries []dataquery.Query
+	results []dataquery.Result
+}
+
+func (r *runtimeAuditRecorder) RecordDataQuery(_ context.Context, query dataquery.Query, result dataquery.Result) error {
+	r.queries = append(r.queries, query)
+	r.results = append(r.results, result)
+	return nil
+}
 
 type failingBundleDataRuntime struct{ snapshotDataRuntime }
 
@@ -20,6 +32,77 @@ func (f failingBundleDataRuntime) ExecuteDataQueryBundle(context.Context, []data
 type cacheOutcomeBundleDataRuntime struct {
 	snapshotDataRuntime
 	result dataquery.BundleResult
+}
+
+type bindingDataRuntime struct {
+	snapshotDataRuntime
+	query  dataquery.Query
+	bundle []dataquery.BundleRequest
+}
+
+func (r *bindingDataRuntime) ExecuteDataQuery(_ context.Context, query dataquery.Query) (dataquery.Result, error) {
+	r.query = query
+	return dataquery.Result{Status: dataquery.StatusSuccess, ExecutionState: dataquery.ExecutionSucceeded, PlanningMS: 1, DatabaseMS: 1}, nil
+}
+
+func (r *bindingDataRuntime) ExecuteDataQueryBundle(_ context.Context, requests []dataquery.BundleRequest) (dataquery.BundleResult, error) {
+	r.bundle = append([]dataquery.BundleRequest(nil), requests...)
+	return dataquery.BundleResult{Results: map[string]dataquery.Result{
+		requests[0].ID: {Status: dataquery.StatusSuccess, ExecutionState: dataquery.ExecutionSucceeded, PlanningMS: 1, DatabaseMS: 1},
+	}}, nil
+}
+
+func TestGovernedDataRuntimeBindsProjectIdentityAndAudit(t *testing.T) {
+	underlying := &bindingDataRuntime{}
+	runtime := newGovernedDataRuntime("project_1", "model_1", underlying)
+	port := runtime.(DataRuntime)
+	recorder := &runtimeAuditRecorder{}
+	ctx := dataquery.WithAuditRecorder(context.Background(), recorder)
+	request := dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "order_count"}}}
+	if _, err := port.ExecuteDataQuery(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if underlying.query.ProjectID != "project_1" || len(recorder.queries) != 1 || recorder.queries[0].ProjectID != "project_1" {
+		t.Fatalf("bound query=%#v audit=%#v", underlying.query, recorder.queries)
+	}
+
+	request.ProjectID = "other_project"
+	if _, err := port.ExecuteDataQuery(ctx, request); err == nil {
+		t.Fatal("mismatched project query was accepted")
+	}
+	if underlying.query.ProjectID != "project_1" {
+		t.Fatalf("mismatched query reached runtime: %#v", underlying.query)
+	}
+	request.ProjectID = ""
+	metadataMismatch := dataquery.WithMetadata(context.Background(), dataquery.Metadata{ProjectID: "other_project"})
+	if _, err := port.ExecuteDataQuery(metadataMismatch, request); err == nil {
+		t.Fatal("mismatched project metadata was accepted")
+	}
+}
+
+func TestGovernedDataRuntimeBindsEveryBundleBranch(t *testing.T) {
+	underlying := &bindingDataRuntime{}
+	runtime := newGovernedDataRuntime("project_1", "model_1", underlying)
+	port := runtime.(dataquery.BundleExecutor)
+	requests := []dataquery.BundleRequest{
+		{ID: "one", Query: dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "one"}}}},
+		{ID: "two", Query: dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "two"}}}},
+	}
+	if _, err := port.ExecuteDataQueryBundle(context.Background(), requests); err != nil {
+		t.Fatal(err)
+	}
+	if len(underlying.bundle) != 2 {
+		t.Fatalf("bundle = %#v", underlying.bundle)
+	}
+	for _, request := range underlying.bundle {
+		if request.Query.ProjectID != "project_1" {
+			t.Fatalf("bundle branch query = %#v", request.Query)
+		}
+	}
+	requests[1].Query.ProjectID = "other_project"
+	if _, err := port.ExecuteDataQueryBundle(context.Background(), requests); err == nil {
+		t.Fatal("mismatched bundle branch was accepted")
+	}
 }
 
 func (r cacheOutcomeBundleDataRuntime) ExecuteDataQueryBundle(ctx context.Context, _ []dataquery.BundleRequest) (dataquery.BundleResult, error) {
@@ -115,7 +198,7 @@ func TestGovernedBundleAuditDoesNotReportSucceededExecutionOnError(t *testing.T)
 
 func TestServiceDuckLakeSnapshotIDRequiresOneWorkspaceSnapshot(t *testing.T) {
 	service := &Service{
-		runtimes: map[string]*modelRuntime{
+		runtimes: map[projectgraph.ResourceID]*modelRuntime{
 			"orders":   {data: snapshotDataRuntime{snapshotID: 42}},
 			"products": {data: snapshotDataRuntime{snapshotID: 42}},
 		},
@@ -132,7 +215,7 @@ func TestServiceDuckLakeSnapshotIDRequiresOneWorkspaceSnapshot(t *testing.T) {
 
 func TestServiceAdvertisesConcurrencyOnlyForPinnedSnapshotReaders(t *testing.T) {
 	service := &Service{
-		runtimes: map[string]*modelRuntime{
+		runtimes: map[projectgraph.ResourceID]*modelRuntime{
 			"orders": {ready: true, data: snapshotDataRuntime{snapshotID: 42, readConcurrency: 3}},
 		},
 	}

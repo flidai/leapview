@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
@@ -13,6 +14,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	"github.com/go-chi/chi/v5"
 )
@@ -29,7 +31,7 @@ type candidateRouteDependencies struct {
 	dashboards       *dashboardmodule.Module
 	deployments      *deploymentmodule.Module
 	runtimeHost      *runtimehostmodule.Module
-	candidateMetrics func(runtimehostmodule.Provider, string) QueryMetrics
+	candidateMetrics func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
 }
 
 func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
@@ -49,31 +51,23 @@ func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r 
 		return
 	}
 	view, err := deps.runtimeHost.ResolveOwnedCandidate(candidate.ID, principalID)
-	if err != nil || len(view.Workspaces) == 0 || deps.candidateMetrics == nil {
+	if err != nil || view.Provider == nil || deps.candidateMetrics == nil {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	for _, workspace := range view.Workspaces {
-		workspaceID := string(workspace.WorkspaceID)
-		metrics := deps.candidateMetrics(workspace.Provider, workspaceID)
-		if metrics == nil {
-			continue
-		}
-		dashboardID := strings.TrimSpace(metrics.DefaultDashboardID())
-		if dashboardID == "" {
-			continue
-		}
-		w.Header().Set("Cache-Control", "no-store")
-		http.Redirect(
-			w,
-			r,
-			candidateRouteBase(candidate.ID, workspaceID)+
-				"/dashboards/"+url.PathEscape(dashboardID),
-			http.StatusFound,
-		)
+	projectID := view.ProjectID
+	metrics := deps.candidateMetrics(view.Provider, projectID)
+	if metrics == nil {
+		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	http.NotFound(w, r)
+	dashboardID := strings.TrimSpace(metrics.DefaultDashboardID())
+	if dashboardID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, candidateRouteBase(candidate.ID)+"/dashboards/"+url.PathEscape(dashboardID), http.StatusFound)
 }
 
 func candidateDashboard(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request, action func(dashboardmodule.HTTP)) {
@@ -141,7 +135,6 @@ func resolveCandidateDashboardHTTP(
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return dashboardmodule.HTTP{}, false
 	}
-	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspace"))
 	view, err := deps.runtimeHost.ResolveOwnedCandidate(candidate.ID, principalID)
 	if err != nil {
 		status := http.StatusServiceUnavailable
@@ -152,34 +145,36 @@ func resolveCandidateDashboardHTTP(
 		http.Error(w, http.StatusText(status), status)
 		return dashboardmodule.HTTP{}, false
 	}
-	for _, workspace := range view.Workspaces {
-		if string(workspace.WorkspaceID) != workspaceID {
-			continue
-		}
-		metrics := deps.candidateMetrics(workspace.Provider, workspaceID)
-		restrictions := make([]dashboardmodule.CandidateRestriction, len(workspace.Restrictions))
-		for index, restriction := range workspace.Restrictions {
-			restrictions[index] = dashboardmodule.CandidateRestriction{
-				ID: restriction.ID, WorkspaceID: restriction.WorkspaceID,
-				ObjectID: restriction.ObjectID, PolicyType: restriction.PolicyType,
-				ExpressionJSON: restriction.ExpressionJSON,
-			}
-		}
-		handler, err := deps.dashboards.CandidateHTTP(dashboardmodule.CandidateHTTPConfig{
-			Metrics: metrics, CandidateID: candidate.ID, OwnerPrincipalID: principalID,
-			WorkspaceID: workspaceID, ArtifactDigest: candidate.ArtifactDigest,
-			AuthorizationFingerprint: workspace.AuthorizationFingerprint,
-			RouteBasePath:            candidateRouteBase(candidate.ID, workspaceID),
-			Restrictions:             restrictions,
-		})
+	if view.Provider == nil {
+		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
+		return dashboardmodule.HTTP{}, false
+	}
+	projectID := view.ProjectID
+	metrics := deps.candidateMetrics(view.Provider, projectID)
+	restrictions := make([]dashboardmodule.CandidateRestriction, len(view.Restrictions))
+	for index, restriction := range view.Restrictions {
+		resource, err := access.NewResourceRef(restriction.ObjectID, restriction.ObjectKind)
 		if err != nil {
 			http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 			return dashboardmodule.HTTP{}, false
 		}
-		return handler, true
+		restrictions[index] = dashboardmodule.CandidateRestriction{
+			ID: restriction.ID, Resource: resource, Subject: restriction.Subject, PolicyType: restriction.PolicyType,
+			ExpressionJSON: restriction.ExpressionJSON,
+		}
 	}
-	http.NotFound(w, r)
-	return dashboardmodule.HTTP{}, false
+	handler, err := deps.dashboards.CandidateHTTP(dashboardmodule.CandidateHTTPConfig{
+		Metrics: metrics, CandidateID: candidate.ID, OwnerPrincipalID: principalID,
+		ProjectID: projectID, ArtifactDigest: candidate.ArtifactDigest,
+		AuthorizationFingerprint: view.AuthorizationFingerprint,
+		RouteBasePath:            candidateRouteBase(candidate.ID),
+		Restrictions:             restrictions,
+	})
+	if err != nil {
+		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
+		return dashboardmodule.HTTP{}, false
+	}
+	return handler, true
 }
 
 func resolveOwnedCandidate(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request) (deploymentmodule.Candidate, string, bool) {
@@ -208,9 +203,8 @@ func resolveOwnedCandidate(deps candidateRouteDependencies, w http.ResponseWrite
 	return candidate, principal.ID, true
 }
 
-func candidateRouteBase(candidateID, workspaceID string) string {
-	return "/candidates/" + url.PathEscape(strings.TrimSpace(candidateID)) +
-		"/workspaces/" + url.PathEscape(strings.TrimSpace(workspaceID))
+func candidateRouteBase(candidateID string) string {
+	return "/candidates/" + url.PathEscape(strings.TrimSpace(candidateID))
 }
 
 func serveCandidatePreview(

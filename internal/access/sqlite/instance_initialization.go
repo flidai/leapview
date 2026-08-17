@@ -46,21 +46,21 @@ func (r *Repository) InitializeInstance(
 			PrincipalID: created.Principal.ID,
 			Email:       input.Email,
 			DisplayName: input.Email,
-			Role:        access.RolePlatformAdmin,
+			Role:        access.PlatformRoleAdmin,
 		})
 		if err != nil {
 			return nil, err
 		}
 		expires := input.Now.UTC().Add(24 * time.Hour).Truncate(time.Second)
-		privileges := access.InitialPublisherPrivileges()
+		capabilities := access.InitialPublisherCapabilities()
 		if input.EvaluationDataIngest {
-			privileges = access.LocalEvaluationPublisherPrivileges()
+			capabilities = access.LocalEvaluationPublisherCapabilities()
 		}
 		token, _, err := txRepo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-			PrincipalID: principal.ID,
-			Name:        access.APITokenNameInitialPublisher,
-			Privileges:  privileges,
-			ExpiresAt:   expires,
+			PrincipalID:  principal.ID,
+			Name:         access.APITokenNameInitialPublisher,
+			Capabilities: capabilities,
+			ExpiresAt:    expires,
 		})
 		if err != nil {
 			return nil, err
@@ -77,12 +77,11 @@ func (r *Repository) InitializeInstance(
 			}
 		}
 		return []access.AuditEventInput{{
-			PrincipalID: principal.ID,
-			Action:      "instance.initialized",
-			TargetType:  "instance",
-			TargetID:    input.Environment,
-			Privilege:   access.PrivilegeManagePlatform,
-			Status:      "success",
+			PrincipalID:  principal.ID,
+			Action:       "instance.initialized",
+			ResourceKind: "instance",
+			ResourceID:   input.Environment,
+			Status:       "success",
 		}}, nil
 	})
 	return result, err

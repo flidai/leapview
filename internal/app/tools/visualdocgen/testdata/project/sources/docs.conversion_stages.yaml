@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:docs.conversion_stages
   name: docs.conversion_stages
-  title: Documentation conversion stages
+  displayName: Documentation conversion stages
 spec:
   connection: docs
   path: conversion_stages.csv

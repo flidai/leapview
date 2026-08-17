@@ -116,8 +116,8 @@ func (r *spatialTileRegistry) resolve(token, dashboardID, visualID, publicID, pr
 	return entry, nil
 }
 
-func spatialTileURL(workspaceID, dashboardID, visualID, token string) string {
-	return "/workspaces/" + url.PathEscape(workspaceID) + "/dashboards/" + url.PathEscape(dashboardID) + "/visuals/" + url.PathEscape(visualID) + "/tiles/" + url.PathEscape(token) + "/{z}/{x}/{y}.mvt"
+func spatialTileURL(dashboardID, visualID, token string) string {
+	return "/dashboards/" + url.PathEscape(dashboardID) + "/visuals/" + url.PathEscape(visualID) + "/tiles/" + url.PathEscape(token) + "/{z}/{x}/{y}.mvt"
 }
 
 func publicSpatialTileURL(publicID, visualID, token string) string {

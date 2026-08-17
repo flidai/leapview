@@ -12,7 +12,7 @@ import (
 func TestManagedDataCommandAuditRecorderPersistsAccessAudit(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "data@example.com", "Data Author", "owner")
+	principal := testPrincipal(t, ctx, store, "data@example.com", "Data Author")
 	accessModule, err := accessmodule.Build(ctx, accessmodule.Config{
 		Database: store.SQLDB(),
 		Auth:     accessmodule.AuthConfig{Disabled: true},
@@ -25,7 +25,7 @@ func TestManagedDataCommandAuditRecorderPersistsAccessAudit(t *testing.T) {
 	err = record(ctx, manageddatamodule.CommandAuditEvent{
 		PrincipalID: principal.ID, Action: "managed_data.upload_session.created",
 		TargetType: "managed_data_upload_session", TargetID: "upload-a",
-		Privilege: "AUTHOR_PROJECT", Status: "success",
+		Privilege: string(access.CapabilityResourceEdit), Status: "success",
 		RequestID: "req-upload", CorrelationID: "corr-upload",
 		MetadataJSON: `{"operationId":"createManagedDataUploadSession","surface":"api"}`,
 	})
@@ -42,8 +42,8 @@ func TestManagedDataCommandAuditRecorderPersistsAccessAudit(t *testing.T) {
 		t.Fatalf("managed-data audits = %d, want 1", len(events))
 	}
 	event := events[0]
-	if event.WorkspaceID != "" || event.PrincipalID != principal.ID || event.TargetType != "managed_data_upload_session" ||
-		event.TargetID != "upload-a" || event.Privilege != access.PrivilegeAuthorProject ||
+	if event.ResourceKind != "managed_data_upload_session" || event.PrincipalID != principal.ID ||
+		event.ResourceID != "upload-a" || event.Capability != access.CapabilityResourceEdit ||
 		event.Status != "success" || event.RequestID != "req-upload" || event.CorrelationID != "corr-upload" {
 		t.Fatalf("persisted managed-data audit = %#v", event)
 	}

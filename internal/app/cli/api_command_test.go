@@ -39,9 +39,9 @@ func TestGeneratedCommandHeadersFollowIdempotencyAndConcurrencyPolicy(t *testing
 		t.Fatalf("create command headers = %q/%q", key, ifMatch)
 	}
 
-	update, ok := apiaggregate.GetAPIGenOperationContract("updateRoleBinding")
+	update, ok := apiaggregate.GetAPIGenOperationContract("updateGrant")
 	if !ok || update.Command == nil {
-		t.Fatal("updateRoleBinding command contract is missing")
+		t.Fatal("updateGrant command contract is missing")
 	}
 	key, ifMatch = generatedCommandHeaders(update, &apiCallOptions{idempotencyKey: "ignored", ifMatch: `"revision-1"`})
 	if key != "" || ifMatch != `"revision-1"` {
@@ -93,7 +93,7 @@ func TestAPICommandCallUsesGeneratedContract(t *testing.T) {
 	defer server.Close()
 
 	output := captureStdout(t, func() {
-		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token", workspaceID: "test"})
+		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
 			"call", "createAgentRun",
 			"--target", server.URL,
@@ -112,44 +112,44 @@ func TestAPICommandCallUsesGeneratedContract(t *testing.T) {
 	}
 }
 
-func TestAPICommandInvokesRoleBindingOperation(t *testing.T) {
+func TestAPICommandInvokesGrantOperation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/workspaces/sales/role-bindings" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/sales/grants" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("X-LeapView-Client"); got != "cli" {
 			t.Fatalf("X-LeapView-Client = %q", got)
 		}
-		if got := r.Header.Get("Idempotency-Key"); got != "binding-commit-a" {
+		if got := r.Header.Get("Idempotency-Key"); got != "grant-commit-a" {
 			t.Fatalf("Idempotency-Key = %q", got)
 		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		if body["subjectId"] != "principal-viewer" || body["role"] != "viewer" {
+		if body["resourceKind"] != "dashboard" || body["resourceId"] != "dashboard:executive" || body["subjectId"] != "principal-viewer" || body["capability"] != "RESOURCE_READ" {
 			t.Fatalf("body = %#v", body)
 		}
 		w.WriteHeader(http.StatusCreated)
-		writeCLIJSON(t, w, map[string]any{"id": "binding-1"})
+		writeCLIJSON(t, w, map[string]any{"id": "grant-1"})
 	}))
 	defer server.Close()
 
 	output := captureStdout(t, func() {
 		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
-			"call", "createRoleBinding",
+			"call", "createGrant",
 			"--target", server.URL,
 			"--token", "token",
-			"--path", "workspace=sales",
-			"--body-json", `{"subjectType":"principal","subjectId":"principal-viewer","role":"viewer"}`,
-			"--idempotency-key", "binding-commit-a",
+			"--path", "project=sales",
+			"--body-json", `{"resourceKind":"dashboard","resourceId":"dashboard:executive","subjectType":"principal","subjectId":"principal-viewer","capability":"RESOURCE_READ"}`,
+			"--idempotency-key", "grant-commit-a",
 		})
 		if err := cmd.Execute(); err != nil {
-			t.Fatalf("api call createRoleBinding: %v", err)
+			t.Fatalf("api call createGrant: %v", err)
 		}
 	})
-	if strings.TrimSpace(output) != `{"id":"binding-1"}` {
+	if strings.TrimSpace(output) != `{"id":"grant-1"}` {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -168,7 +168,7 @@ func TestAPICommandCallDefaultsJSONBodyFileContentTypeFromGeneratedContract(t *t
 	defer server.Close()
 
 	captureStdout(t, func() {
-		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token", workspaceID: "test"})
+		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
 			"call", "createAgentRun",
 			"--target", server.URL,
@@ -191,7 +191,7 @@ func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t 
 		if r.Method != http.MethodPut {
 			t.Fatalf("method = %s", r.Method)
 		}
-		if r.URL.Path != "/api/v1/projects/project/releases/release_1/workspaces/test/artifact" {
+		if r.URL.Path != "/api/v1/projects/project/releases/release_1/artifact" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
 		if got := r.Header.Get("Content-Type"); got != "application/octet-stream" {
@@ -202,7 +202,7 @@ func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t 
 	defer server.Close()
 
 	captureStdout(t, func() {
-		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token", workspaceID: "test"})
+		cmd := apiCommand(context.Background(), &rootOptions{target: server.URL, token: "token"})
 		cmd.SetArgs([]string{
 			"call", "uploadReleaseArtifact",
 			"--target", server.URL,
@@ -218,7 +218,7 @@ func TestAPICommandCallDefaultsBinaryBodyFileContentTypeFromGeneratedContract(t 
 }
 
 func TestAPICommandRejectsMissingPathParameter(t *testing.T) {
-	cmd := apiCommand(context.Background(), &rootOptions{target: "https://leapview.example", token: "token", workspaceID: "test"})
+	cmd := apiCommand(context.Background(), &rootOptions{target: "https://leapview.example", token: "token"})
 	cmd.SetArgs([]string{"call", "getAgentRun", "--target", "https://leapview.example", "--token", "token", "--path", "conversation=conv_1"})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "run") {
 		t.Fatalf("err = %v, want missing run path parameter", err)

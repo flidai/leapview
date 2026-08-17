@@ -2,9 +2,47 @@ package schedule
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func TestRefreshScopeRequiresExactServingIdentity(t *testing.T) {
+	identity := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}
+	if err := ValidateScope(identity); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []projectgraph.ServingIdentity{
+		{ProjectID: " project_sales", Environment: "prod", GenerationID: "generation_a"},
+		{ProjectID: "project_sales", Environment: "prod ", GenerationID: "generation_a"},
+		{ProjectID: "project_sales", Environment: "prod", GenerationID: " generation_a"},
+	} {
+		if err := ValidateScope(value); err == nil {
+			t.Fatalf("ValidateScope(%#v) = nil", value)
+		}
+	}
+}
+
+func TestRefreshArtifactDigestIsCanonical(t *testing.T) {
+	valid := "sha256:" + strings.Repeat("a", 64)
+	if err := ValidateArtifactDigest(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{valid + " ", "sha256:a", "SHA256:" + valid[7:]} {
+		if err := ValidateArtifactDigest(value); err == nil {
+			t.Fatalf("ValidateArtifactDigest(%q) = nil", value)
+		}
+	}
+}
+
+func TestManualOnlyPipelineDefinitionIsValid(t *testing.T) {
+	definition := Definition{ID: "pipeline_manual", SemanticModelID: "semantic_sales"}
+	if err := definition.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestScheduleNextAfterArtifactRoundTrip(t *testing.T) {
 	schedule, err := ParseSchedule("0 6 * * *", "Europe/Copenhagen")

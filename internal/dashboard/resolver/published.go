@@ -4,92 +4,97 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // PublishedCompilationReader is the minimal authoring capability needed by
 // the runtime resolver. Implementations may be backed by SQLite or another
 // repository; resolution does not depend on the repository implementation.
 type PublishedCompilationReader interface {
-	GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error)
+	GetPublishedCompilation(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error)
 }
 
 // SemanticModelProvider supplies models from the same active runtime lease as
 // the project resolver. Keeping this interface small prevents a published
 // dashboard from accidentally resolving its model from another generation.
 type SemanticModelProvider interface {
-	SemanticModel(modelID string) (*semanticmodel.Model, bool)
+	SemanticModelByID(projectgraph.ResourceID) (*semanticmodel.Model, bool)
 }
 
-// PublishedCompilationResolver resolves the latest published compilation for
-// one workspace, pinned to one active semantic serving state.
+// PublishedCompilationResolver resolves the latest instance compilation for
+// one project, pinned to one active serving identity.
 type PublishedCompilationResolver struct {
-	workspaceID    string
-	activeStateID  string
+	identity       projectgraph.ServingIdentity
 	reader         PublishedCompilationReader
 	semanticModels SemanticModelProvider
 }
 
 // NewPublishedCompilationResolver constructs a resolver pinned to the active
-// runtime lease. The reader is intentionally optional for project-only test
-// composition; a nil reader resolves as ErrNotFound.
-func NewPublishedCompilationResolver(workspaceID, activeServingStateID string, reader PublishedCompilationReader, semanticModels SemanticModelProvider) Resolver {
-	return PublishedCompilationResolver{
-		workspaceID:    strings.TrimSpace(workspaceID),
-		activeStateID:  strings.TrimSpace(activeServingStateID),
-		reader:         reader,
-		semanticModels: semanticModels,
+// runtime lease. Reader and model provider are required capabilities.
+
+func NewPublishedCompilationResolver(identity projectgraph.ServingIdentity, reader PublishedCompilationReader, semanticModels SemanticModelProvider) (Resolver, error) {
+	if err := identity.Validate(); err != nil {
+		return nil, fmt.Errorf("published resolver serving identity: %w", err)
 	}
+	if reader == nil || semanticModels == nil {
+		return nil, fmt.Errorf("published resolver reader and semantic model provider are required")
+	}
+	return PublishedCompilationResolver{identity: identity, reader: reader, semanticModels: semanticModels}, nil
 }
 
-func (r PublishedCompilationResolver) Resolve(dashboardID string) (Resolved, error) {
+func (r PublishedCompilationResolver) Resolve(dashboardID projectgraph.ResourceID) (Resolved, error) {
 	// Resolver is intentionally synchronous today; use Background only at this
 	// boundary. A future context-aware resolver contract can thread request
 	// cancellation into repository reads without changing source pinning.
-	workspaceID := strings.TrimSpace(r.workspaceID)
-	id := strings.TrimSpace(dashboardID)
-	if workspaceID == "" || id == "" || r.reader == nil {
+	projectID := r.identity.ProjectID
+	if !projectID.Valid() || !dashboardID.Valid() {
 		return Resolved{}, ErrNotFound
 	}
-	parsedID := authoring.DashboardID(id)
+	parsedID := authoring.DashboardID(dashboardID.String())
 	if err := parsedID.Validate(); err != nil {
-		return Resolved{}, fmt.Errorf("%w: invalid dashboard id %q", ErrNotFound, id)
+		return Resolved{}, fmt.Errorf("%w: invalid dashboard id %q", ErrNotFound, dashboardID)
 	}
-	compiled, err := r.reader.GetPublishedCompilation(context.Background(), workspaceID, parsedID)
+	compiled, err := r.reader.GetPublishedCompilation(context.Background(), projectID, parsedID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) {
-			return Resolved{}, fmt.Errorf("%w: %q", ErrNotFound, id)
+			return Resolved{}, fmt.Errorf("%w: %q", ErrNotFound, dashboardID)
 		}
 		return Resolved{}, err
 	}
 	if err := compiled.Validate(); err != nil {
-		return Resolved{}, fmt.Errorf("%w: invalid published dashboard %q: %v", ErrNotFound, id, err)
+		return Resolved{}, fmt.Errorf("%w: invalid published dashboard %q: %v", ErrNotFound, dashboardID, err)
 	}
-	if strings.TrimSpace(compiled.WorkspaceID) != workspaceID || compiled.DashboardID.String() != id || strings.TrimSpace(compiled.Definition.ID) != id {
-		return Resolved{}, fmt.Errorf("%w: published dashboard %q is outside resolver scope", ErrScopeMismatch, id)
+	if compiled.ProjectID != projectID || compiled.DashboardID != parsedID || compiled.Definition.ID != dashboardID.String() {
+		return Resolved{}, fmt.Errorf("%w: published dashboard %q is outside resolver scope", ErrScopeMismatch, dashboardID)
 	}
-	compiledStateID := strings.TrimSpace(compiled.SemanticServingStateID)
-	if compiledStateID == "" || compiledStateID != r.activeStateID {
-		return Resolved{}, fmt.Errorf("%w: dashboard %q compiled for %q, active %q", ErrStaleSemanticState, id, compiledStateID, r.activeStateID)
+	if compiled.SemanticIdentity != r.identity {
+		return Resolved{}, fmt.Errorf("%w: dashboard %q compiled for serving identity %#v, active %#v", ErrStaleSemanticState, dashboardID, compiled.SemanticIdentity, r.identity)
 	}
-	modelID := strings.TrimSpace(compiled.Definition.SemanticModel)
-	if modelID == "" || r.semanticModels == nil {
-		return Resolved{}, fmt.Errorf("%w: published dashboard %q has no semantic model", ErrNotFound, id)
+	modelID := compiled.Definition.SemanticModel
+	if modelID == "" {
+		return Resolved{}, fmt.Errorf("%w: published dashboard %q has no semantic model", ErrNotFound, dashboardID)
 	}
-	model, ok := r.semanticModels.SemanticModel(modelID)
-	if !ok || model == nil || strings.TrimSpace(model.Name) != modelID {
-		return Resolved{}, fmt.Errorf("%w: published dashboard %q references semantic model %q", ErrNotFound, id, modelID)
+	modelIDValue, err := projectgraph.NewResourceID(modelID)
+	if err != nil {
+		return Resolved{}, fmt.Errorf("%w: published dashboard %q references invalid semantic model %q", ErrNotFound, dashboardID, modelID)
+	}
+	if compiled.SemanticModelID != modelIDValue {
+		return Resolved{}, fmt.Errorf("%w: published dashboard %q semantic model evidence %q does not match definition %q", ErrStaleSemanticState, dashboardID, compiled.SemanticModelID, modelIDValue)
+	}
+	model, ok := r.semanticModels.SemanticModelByID(modelIDValue)
+	if !ok || model == nil {
+		return Resolved{}, fmt.Errorf("%w: published dashboard %q references semantic model %q", ErrNotFound, dashboardID, modelID)
 	}
 	return Resolved{
-		Definition: compiled.Definition,
-		Model:      model,
+		Definition:      compiled.Definition,
+		Model:           model,
+		SemanticModelID: modelIDValue,
 		Source: SourceMetadata{
-			Kind:                   SourceWorkspace,
-			WorkspaceID:            workspaceID,
-			SemanticServingStateID: compiledStateID,
+			Kind:     SourceInstance,
+			Identity: r.identity,
 			AuthoredRevision: AuthoredRevisionEvidence{
 				ID:          string(compiled.AuthoredRevision.RevisionID),
 				Number:      compiled.AuthoredRevision.Number,

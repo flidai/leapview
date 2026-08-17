@@ -6,12 +6,12 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	dashboardhttp "github.com/flidai/leapview/internal/dashboard/http"
 	dashboardui "github.com/flidai/leapview/internal/dashboard/ui"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
 type RouteGuard struct {
-	Protect            func(access.Privilege, http.HandlerFunc) http.HandlerFunc
-	ProtectWithObjects func(access.Privilege, func(*http.Request, string) []access.ObjectRef, http.HandlerFunc) http.HandlerFunc
+	ProtectWithResources func(access.Capability, func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, http.HandlerFunc) http.HandlerFunc
 }
 
 func (m *Module) MountPublicDocuments(r chi.Router) {
@@ -49,21 +49,28 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 		return
 	}
 	h := m.handler
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.Dashboard))
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.Page))
+	// Dashboard delivery is project-wide. The dashboard resource ID is the only
+	// route identity; project/environment/generation are selected by the
+	// composed serving runtime.
+	protectResource := guard.ProtectWithResources
+	if protectResource == nil {
+		return
+	}
+	r.Get("/dashboards/{dashboard}", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Dashboard))
+	r.Get("/dashboards/{dashboard}/pages/{page}", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Page))
 	// Builder documents and mutations are edit-scoped. The application
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/edit", guard.ProtectWithObjects(access.PrivilegeEditItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilder))
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/preview", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderPreview))
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/export.yaml", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderExportYAML))
-	r.Post("/workspaces/{workspace}/dashboards/{dashboard}/draft/command", guard.ProtectWithObjects(access.PrivilegeEditItem, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderCommand))
-	r.Get("/workspaces/{workspace}/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", guard.ProtectWithObjects(access.PrivilegeViewItem, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
-	r.Post("/workspaces/{workspace}/commands/visual-window", guard.Protect(access.PrivilegeViewItem, h.VisualWindow))
-	r.Post("/workspaces/{workspace}/commands/select", guard.Protect(access.PrivilegeViewItem, h.Select))
-	r.Post("/workspaces/{workspace}/commands/spatial-select", guard.Protect(access.PrivilegeViewItem, h.SpatialSelect))
-	r.Post("/workspaces/{workspace}/commands/clear-selection", guard.Protect(access.PrivilegeViewItem, h.ClearSelection))
-	r.Post("/workspaces/{workspace}/commands/filter", guard.Protect(access.PrivilegeViewItem, h.FilterCommand))
-	r.Post("/workspaces/{workspace}/commands/filter-options", guard.Protect(access.PrivilegeViewItem, h.FilterOptions))
-	r.Post("/workspaces/{workspace}/commands/navigate", guard.Protect(access.PrivilegeViewItem, h.Navigate))
+	r.Get("/dashboards/{dashboard}/edit", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilder))
+	r.Get("/dashboards/{dashboard}/preview", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderPreview))
+	r.Get("/dashboards/{dashboard}/export.yaml", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderExportYAML))
+	r.Post("/dashboards/{dashboard}/draft/command", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderCommand))
+	r.Get("/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
+	r.Post("/dashboards/{dashboard}/commands/visual-window", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.VisualWindow))
+	r.Post("/dashboards/{dashboard}/commands/select", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Select))
+	r.Post("/dashboards/{dashboard}/commands/spatial-select", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.SpatialSelect))
+	r.Post("/dashboards/{dashboard}/commands/clear-selection", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.ClearSelection))
+	r.Post("/dashboards/{dashboard}/commands/filter", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.FilterCommand))
+	r.Post("/dashboards/{dashboard}/commands/filter-options", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.FilterOptions))
+	r.Post("/dashboards/{dashboard}/commands/navigate", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Navigate))
 }

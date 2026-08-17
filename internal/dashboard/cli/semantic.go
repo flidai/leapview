@@ -14,7 +14,6 @@ import (
 type semanticOptions struct {
 	remote      cliapi.RemoteOptions
 	pagination  cliapi.PaginationOptions
-	workspaceID string
 	bodyJSON    string
 }
 
@@ -22,11 +21,9 @@ type semanticOptions struct {
 func SemanticModelsCommand(ctx context.Context, client cliapi.Client) *cobra.Command {
 	values := &semanticOptions{}
 	parent := &cobra.Command{Use: "semantic-models", Short: "Inspect semantic models"}
-	parent.PersistentFlags().StringVar(&values.workspaceID, "workspace", "", "workspace id")
 
 	list := semanticRequestCommand(ctx, client, values, "list", "List semantic models", 0, func(ctx context.Context, api *dashboardgen.GenClient, _ []string) (dashboardgen.GenSchemaSemanticModelListResponse, error) {
 		response, err := api.ListSemanticModels(ctx, dashboardgen.GenListSemanticModelsClientRequest{
-			Workspace: values.workspaceID,
 			Params: dashboardgen.GenListSemanticModelsClientParams{
 				Limit:     values.pagination.LimitPtr(),
 				PageToken: optionalString(values.pagination.PageToken),
@@ -37,13 +34,13 @@ func SemanticModelsCommand(ctx context.Context, client cliapi.Client) *cobra.Com
 	values.pagination.AddFlags(list)
 	describe := semanticRequestCommand(ctx, client, values, "describe <model>", "Describe a semantic model", 1, func(ctx context.Context, api *dashboardgen.GenClient, args []string) (dashboardgen.GenSchemaSemanticModelDescriptionResponse, error) {
 		response, err := api.GetSemanticModel(ctx, dashboardgen.GenGetSemanticModelClientRequest{
-			Workspace: values.workspaceID, Model: args[0],
+			Model: args[0],
 		})
 		return response.Body, err
 	})
 	datasets := semanticRequestCommand(ctx, client, values, "datasets <model>", "List semantic model datasets", 1, func(ctx context.Context, api *dashboardgen.GenClient, args []string) (dashboardgen.GenSchemaSemanticDatasetListResponse, error) {
 		response, err := api.ListSemanticDatasets(ctx, dashboardgen.GenListSemanticDatasetsClientRequest{
-			Workspace: values.workspaceID, Model: args[0],
+			Model: args[0],
 			Params: dashboardgen.GenListSemanticDatasetsClientParams{
 				Limit:     values.pagination.LimitPtr(),
 				PageToken: optionalString(values.pagination.PageToken),
@@ -54,13 +51,13 @@ func SemanticModelsCommand(ctx context.Context, client cliapi.Client) *cobra.Com
 	values.pagination.AddFlags(datasets)
 	dataset := semanticRequestCommand(ctx, client, values, "dataset <model> <dataset>", "Describe a semantic model dataset", 2, func(ctx context.Context, api *dashboardgen.GenClient, args []string) (dashboardgen.GenSchemaSemanticDatasetResponse, error) {
 		response, err := api.GetSemanticDataset(ctx, dashboardgen.GenGetSemanticDatasetClientRequest{
-			Workspace: values.workspaceID, Model: args[0], Dataset: args[1],
+			Model: args[0], Dataset: args[1],
 		})
 		return response.Body, err
 	})
 	fields := semanticRequestCommand(ctx, client, values, "fields <model> <dataset>", "List semantic model dataset fields", 2, func(ctx context.Context, api *dashboardgen.GenClient, args []string) (dashboardgen.GenSchemaSemanticFieldListResponse, error) {
 		response, err := api.ListSemanticFields(ctx, dashboardgen.GenListSemanticFieldsClientRequest{
-			Workspace: values.workspaceID, Model: args[0], Dataset: args[1],
+			Model: args[0], Dataset: args[1],
 			Params: dashboardgen.GenListSemanticFieldsClientParams{
 				Limit:     values.pagination.LimitPtr(),
 				PageToken: optionalString(values.pagination.PageToken),
@@ -76,7 +73,7 @@ func SemanticModelsCommand(ctx context.Context, client cliapi.Client) *cobra.Com
 			return dashboardgen.GenSchemaSemanticQueryResponse{}, err
 		}
 		response, err := api.QuerySemanticModel(ctx, dashboardgen.GenQuerySemanticModelClientRequest{
-			Workspace: values.workspaceID, Model: args[0], Body: body,
+			Model: args[0], Body: body,
 		})
 		return response.Body, err
 	})
@@ -86,7 +83,7 @@ func SemanticModelsCommand(ctx context.Context, client cliapi.Client) *cobra.Com
 			return dashboardgen.GenSchemaSemanticQueryResponse{}, err
 		}
 		response, err := api.PreviewSemanticDataset(ctx, dashboardgen.GenPreviewSemanticDatasetClientRequest{
-			Workspace: values.workspaceID, Model: args[0], Dataset: args[1], Body: body,
+			Model: args[0], Dataset: args[1], Body: body,
 		})
 		return response.Body, err
 	})
@@ -96,7 +93,7 @@ func SemanticModelsCommand(ctx context.Context, client cliapi.Client) *cobra.Com
 			return dashboardgen.GenSchemaSemanticExplainResponse{}, err
 		}
 		response, err := api.ExplainSemanticModelQuery(ctx, dashboardgen.GenExplainSemanticModelQueryClientRequest{
-			Workspace: values.workspaceID, Model: args[0], Body: body,
+			Model: args[0], Body: body,
 		})
 		return response.Body, err
 	})
@@ -106,7 +103,7 @@ func SemanticModelsCommand(ctx context.Context, client cliapi.Client) *cobra.Com
 			return dashboardgen.GenSchemaSemanticExplainResponse{}, err
 		}
 		response, err := api.ExplainSemanticPreview(ctx, dashboardgen.GenExplainSemanticPreviewClientRequest{
-			Workspace: values.workspaceID, Model: args[0], Dataset: args[1], Body: body,
+			Model: args[0], Dataset: args[1], Body: body,
 		})
 		return response.Body, err
 	})
@@ -131,9 +128,6 @@ func semanticRequestCommand[T any](
 		Use:   use,
 		Short: short,
 		RunE: func(command *cobra.Command, args []string) error {
-			if err := requireWorkspace(values.workspaceID); err != nil {
-				return err
-			}
 			if err := values.pagination.Validate(command); err != nil {
 				return err
 			}

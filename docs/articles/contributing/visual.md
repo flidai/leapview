@@ -54,7 +54,7 @@ For transformed structures such as graph edges, Sankey links, or hierarchy nodes
 
 ## Add a showcase example
 
-Add a representative visual definition and page component to the visual showcase workspace. Use data that exercises meaningful labels, multiple series or edge cases, and empty/null behavior without making the example unbounded.
+Add a representative visual definition and page component to the visual showcase project. Use data that exercises meaningful labels, multiple series or edge cases, and empty/null behavior without making the example unbounded.
 
 The example should demonstrate the recommended query shape, not every possible option.
 

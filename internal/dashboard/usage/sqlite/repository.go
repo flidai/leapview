@@ -9,6 +9,7 @@ import (
 
 	dashboarddb "github.com/flidai/leapview/internal/dashboard/internal/db"
 	"github.com/flidai/leapview/internal/dashboard/usage"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Repository struct {
@@ -29,7 +30,7 @@ func (repository *Repository) RecordView(ctx context.Context, view usage.View) e
 	}
 	viewedAt := view.ViewedAt.UTC()
 	if err := repository.q.UpsertDashboardViewDay(ctx, dashboarddb.UpsertDashboardViewDayParams{
-		WorkspaceID: strings.TrimSpace(view.WorkspaceID), DashboardID: strings.TrimSpace(view.DashboardID),
+		ProjectID: strings.TrimSpace(view.ProjectID.String()), DashboardID: strings.TrimSpace(view.DashboardID.String()),
 		PrincipalID: strings.TrimSpace(view.PrincipalID), ViewedOn: viewedAt.Format(time.DateOnly),
 		PageID: strings.TrimSpace(view.PageID), ViewedAt: viewedAt.Format(time.RFC3339Nano),
 	}); err != nil {
@@ -52,8 +53,16 @@ func (repository *Repository) ListSummaries(ctx context.Context, cutoff time.Tim
 		if err != nil {
 			return nil, fmt.Errorf("decode dashboard usage timestamp: %w", err)
 		}
+		projectID, err := projectgraph.NewResourceID(strings.TrimSpace(row.ProjectID))
+		if err != nil {
+			return nil, fmt.Errorf("decode dashboard usage project ID: %w", err)
+		}
+		dashboardID, err := projectgraph.NewResourceID(strings.TrimSpace(row.DashboardID))
+		if err != nil {
+			return nil, fmt.Errorf("decode dashboard usage dashboard ID: %w", err)
+		}
 		summaries = append(summaries, usage.Summary{
-			Key:         usage.Key{WorkspaceID: row.WorkspaceID, DashboardID: row.DashboardID},
+			Key:         usage.Key{ProjectID: projectID, DashboardID: dashboardID},
 			ViewerCount: row.ViewerCount, ViewerDays: row.ViewerDays, LastViewedAt: lastViewedAt,
 		})
 	}

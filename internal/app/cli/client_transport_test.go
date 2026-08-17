@@ -13,59 +13,12 @@ import (
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
-	workspacegen "github.com/flidai/leapview/internal/workspace/api/gen"
 )
 
 type failingAPIGenTransport struct{ err error }
 
 func (transport failingAPIGenTransport) DoAPIGen(context.Context, apigenclient.Request, any) (apigenclient.Response, error) {
 	return apigenclient.Response{}, transport.err
-}
-
-func TestCapabilityAPITransportExecutesGeneratedTypedClient(t *testing.T) {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/api/v1/workspaces" {
-			t.Fatalf("path = %q", request.URL.Path)
-		}
-		if request.URL.Query().Get("limit") != "7" || request.URL.Query().Get("pageToken") != "cursor" {
-			t.Fatalf("query = %q", request.URL.RawQuery)
-		}
-		if request.Header.Get("Authorization") != "Bearer secret" {
-			t.Fatalf("authorization = %q", request.Header.Get("Authorization"))
-		}
-		if request.Header.Get("Accept") != "application/json" {
-			t.Fatalf("accept = %q", request.Header.Get("Accept"))
-		}
-		writer.Header().Set("Content-Type", "application/json")
-		writer.Header().Set("X-Request-ID", "request-1")
-		_, _ = writer.Write([]byte(`{"items":[],"page":{"nextCursor":""}}`))
-	}))
-	defer server.Close()
-
-	limit := int32(7)
-	pageToken := "cursor"
-	client := workspacegen.NewGenClient(capabilityAPITransport{
-		target: server.URL,
-		token:  "secret",
-		client: server.Client(),
-	})
-	response, err := client.ListWorkspaces(context.Background(), workspacegen.GenListWorkspacesClientRequest{
-		Params: workspacegen.GenListWorkspacesClientParams{
-			Limit:     &limit,
-			PageToken: &pageToken,
-		},
-	})
-	if err != nil {
-		t.Fatalf("list workspaces: %v", err)
-	}
-	if response.StatusCode != http.StatusOK || response.Headers.Get("X-Request-ID") != "request-1" {
-		t.Fatalf("response metadata = %#v", response)
-	}
-	if len(response.Body.Items) != 0 {
-		t.Fatalf("items = %#v", response.Body.Items)
-	}
 }
 
 func TestFinalizeReleaseGeneratedClientReturnsDeclaredFailure(t *testing.T) {
@@ -190,7 +143,7 @@ func TestDeploymentCLIClientCreateReleaseUsesGeneratedCommandContract(t *testing
 
 func TestDeploymentCLIClientStreamsReleaseArtifactThroughGeneratedCommandContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPut || request.URL.Path != "/api/v1/projects/project-1/releases/release-1/workspaces/sales/artifact" {
+		if request.Method != http.MethodPut || request.URL.Path != "/api/v1/projects/project-1/releases/release-1/artifact" {
 			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
 		}
 		payload, err := io.ReadAll(request.Body)
@@ -204,12 +157,12 @@ func TestDeploymentCLIClientStreamsReleaseArtifactThroughGeneratedCommandContrac
 		writer.Header().Set("Content-Type", "application/json")
 		writer.Header().Set("Location", "/artifact")
 		writer.WriteHeader(http.StatusCreated)
-		_, _ = writer.Write([]byte(`{"digest":"sha256:digest","releaseId":"release-1","sizeBytes":14,"workspaceId":"sales"}`))
+		_, _ = writer.Write([]byte(`{"digest":"sha256:digest","releaseId":"release-1","sizeBytes":14}`))
 	}))
 	defer server.Close()
 
 	response, err := newDeploymentCLIClient(server.Client(), server.URL, "secret").uploadReleaseArtifact(
-		context.Background(), "project-1", "release-1", "sales", "sha256:digest", strings.NewReader("artifact bytes"),
+		context.Background(), "project-1", "release-1", "sha256:digest", strings.NewReader("artifact bytes"),
 	)
 	if err != nil {
 		t.Fatalf("upload release artifact: %v", err)

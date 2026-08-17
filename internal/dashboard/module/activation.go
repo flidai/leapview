@@ -7,14 +7,15 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type PublicationActivationInput struct {
-	ProjectID, WorkspaceID, ServingStateID, ActorID string
-	Publications                                    map[string]json.RawMessage
+	ProjectID, ServingStateID, ActorID string
+	Publications                       map[string]json.RawMessage
 }
 
-type PublicationPrincipalActivator func(context.Context, transaction.Transaction, string, string) error
+type PublicationPrincipalActivator func(context.Context, transaction.Transaction, projectgraph.ResourceID, string) error
 
 func ReconcilePublications(
 	ctx context.Context,
@@ -22,6 +23,10 @@ func ReconcilePublications(
 	input PublicationActivationInput,
 	activatePrincipal PublicationPrincipalActivator,
 ) error {
+	projectID, err := projectgraph.NewResourceID(input.ProjectID)
+	if err != nil {
+		return err
+	}
 	publications := make(map[string]publication.Definition, len(input.Publications))
 	for name, raw := range input.Publications {
 		var definition publication.Definition
@@ -31,7 +36,7 @@ func ReconcilePublications(
 		publications[name] = definition
 	}
 	return publicationsqlite.ReconcileTx(ctx, tx, publication.ReconcileInput{
-		ProjectID: input.ProjectID, WorkspaceID: input.WorkspaceID,
+		ProjectID:      projectID,
 		ServingStateID: input.ServingStateID, ActorID: input.ActorID,
 		Publications: publications,
 	}, activatePrincipal)

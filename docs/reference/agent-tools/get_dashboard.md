@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/get_dashboard.json) · 
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `VIEW_ITEM` |
+| Authorization | `RESOURCE_READ` |
 | Effect | `read` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `catalog` |
@@ -23,18 +23,13 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/get_dashboard.json) · 
 {
   "additionalProperties": false,
   "properties": {
-    "dashboard": {
-      "minLength": 1,
-      "type": "string"
-    },
-    "workspace": {
+    "dashboardId": {
       "minLength": 1,
       "type": "string"
     }
   },
   "required": [
-    "dashboard",
-    "workspace"
+    "dashboardId"
   ],
   "type": "object"
 }

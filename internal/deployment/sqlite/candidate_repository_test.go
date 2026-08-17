@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCandidateRepositoryPersistsResumeAndOptimisticReplacementAcrossRestart(t *testing.T) {
 	ctx, db, repository := testRepository(t)
 	insertCandidatePrincipal(t, ctx, db, "principal_1")
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, request_digest, status, activated_at) VALUES ('deployment_current', 'finance', 'prod', 'sha256:current', 'active', CURRENT_TIMESTAMP)`); err != nil {
+	if err := insertCandidateActiveDeployment(ctx, db, "deployment_current"); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
@@ -33,17 +34,17 @@ func TestCandidateRepositoryPersistsResumeAndOptimisticReplacementAcrossRestart(
 	if _, err := db.ExecContext(ctx, `UPDATE project_deployments SET status = 'superseded' WHERE id = 'deployment_current'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, request_digest, status, activated_at) VALUES ('deployment_advanced_after_candidate_started', 'finance', 'prod', 'sha256:advanced', 'active', CURRENT_TIMESTAMP)`); err != nil {
+	if err := insertCandidateActiveDeployment(ctx, db, "deployment_advanced_after_candidate_started"); err != nil {
 		t.Fatal(err)
 	}
 	replayRequest := candidateRecord(t, now.Add(time.Minute), "cand_other", "finance", "principal_1", firstDigest)
-	replayRequest.BaseGeneration = "deployment_advanced_after_candidate_started"
+	replayRequest.Scope.BaseGenerationID = "deployment_advanced_after_candidate_started"
 	replayed, resumed, err := restarted.StartCandidate(ctx, replayRequest, 4)
-	if err != nil || resumed || replayed.ID == created.ID || replayed.BaseGeneration != replayRequest.BaseGeneration {
+	if err != nil || resumed || replayed.ID == created.ID || replayed.Scope.BaseGenerationID != replayRequest.Scope.BaseGenerationID {
 		t.Fatalf("stale StartCandidate() = %#v, resumed=%v, err=%v", replayed, resumed, err)
 	}
 	conflicting := candidateRecord(t, now, "cand_conflict", "finance", "principal_1", secondDigest)
-	conflicting.BaseGeneration = "deployment_current"
+	conflicting.Scope.BaseGenerationID = "deployment_current"
 	if _, _, err := restarted.StartCandidate(ctx, conflicting, 4); !errors.Is(err, deployment.ErrCandidateConflict) {
 		t.Fatalf("conflicting StartCandidate() error = %v", err)
 	}
@@ -89,7 +90,7 @@ func TestCandidateRepositoryIsolatesActiveSessionsByCandidateKey(t *testing.T) {
 func TestCandidateRepositoryConcurrentStartsFenceAgainstCutover(t *testing.T) {
 	ctx, db, repository := testRepository(t)
 	insertCandidatePrincipal(t, ctx, db, "principal_1")
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, request_digest, status, activated_at) VALUES ('deployment_before', 'finance', 'prod', 'sha256:before', 'active', CURRENT_TIMESTAMP)`); err != nil {
+	if err := insertCandidateActiveDeployment(ctx, db, "deployment_before"); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
@@ -117,19 +118,19 @@ func TestCandidateRepositoryConcurrentStartsFenceAgainstCutover(t *testing.T) {
 		t.Fatal(err)
 	}
 	for candidate := range results {
-		if candidate.BaseGeneration != "deployment_before" {
-			t.Fatalf("concurrent candidate base=%q", candidate.BaseGeneration)
+		if candidate.Scope.BaseGenerationID != "deployment_before" {
+			t.Fatalf("concurrent candidate base=%q", candidate.Scope.BaseGenerationID)
 		}
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE project_deployments SET status = 'superseded' WHERE id = 'deployment_before'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, request_digest, status, activated_at) VALUES ('deployment_after', 'finance', 'prod', 'sha256:after', 'active', CURRENT_TIMESTAMP)`); err != nil {
+	if err := insertCandidateActiveDeployment(ctx, db, "deployment_after"); err != nil {
 		t.Fatal(err)
 	}
 	replaced := candidateRecord(t, now.Add(time.Hour), "after-cutover", "finance", "principal_1", digest)
 	stored, resumed, err := repository.StartCandidate(ctx, replaced, 20)
-	if err != nil || resumed || stored.BaseGeneration != "deployment_after" {
+	if err != nil || resumed || stored.Scope.BaseGenerationID != "deployment_after" {
 		t.Fatalf("post-cutover candidate=%#v resumed=%v err=%v", stored, resumed, err)
 	}
 }
@@ -138,7 +139,7 @@ func TestCandidateRepositoryWriteFenceBlocksCutoverUntilCandidateCommit(t *testi
 	ctx, db, repository := testRepository(t)
 	db.SetMaxOpenConns(2)
 	insertCandidatePrincipal(t, ctx, db, "principal_1")
-	if _, err := db.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, request_digest, status, activated_at) VALUES ('deployment_before', 'finance', 'prod', 'sha256:before', 'active', CURRENT_TIMESTAMP)`); err != nil {
+	if err := insertCandidateActiveDeployment(ctx, db, "deployment_before"); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
@@ -179,7 +180,7 @@ func TestCandidateRepositoryWriteFenceBlocksCutoverUntilCandidateCommit(t *testi
 			activationDone <- updateErr
 			return
 		}
-		if _, insertErr := tx.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, request_digest, status, activated_at) VALUES ('deployment_after', 'finance', 'prod', 'sha256:after', 'active', CURRENT_TIMESTAMP)`); insertErr != nil {
+		if insertErr := insertCandidateActiveDeployment(ctx, tx, "deployment_after"); insertErr != nil {
 			_ = tx.Rollback()
 			activationDone <- insertErr
 			return
@@ -196,15 +197,15 @@ func TestCandidateRepositoryWriteFenceBlocksCutoverUntilCandidateCommit(t *testi
 	if err := <-candidateErr; err != nil {
 		t.Fatalf("candidate start: %v", err)
 	}
-	if stored.BaseGeneration != "deployment_before" {
-		t.Fatalf("candidate base=%q, want deployment_before", stored.BaseGeneration)
+	if stored.Scope.BaseGenerationID != "deployment_before" {
+		t.Fatalf("candidate base=%q, want deployment_before", stored.Scope.BaseGenerationID)
 	}
 	if err := <-activationDone; err != nil {
 		t.Fatalf("activation after candidate commit: %v", err)
 	}
-	active, err := repository.ActiveCandidateBaseGeneration(ctx, "finance", "prod")
-	if err != nil || active != "deployment_after" {
-		t.Fatalf("active generation=%q err=%v", active, err)
+	active, err := repository.ActiveCandidateBaseScope(ctx, "finance", "prod")
+	if err != nil || active.BaseGenerationID != "deployment_after" {
+		t.Fatalf("active scope=%#v err=%v", active, err)
 	}
 }
 
@@ -245,7 +246,12 @@ func TestCandidateRepositoryEnforcesQuotaAndExpiresOnlyMatchingTarget(t *testing
 func TestCandidateRepositoryNeverChangesActiveServingState(t *testing.T) {
 	ctx, db, repository := testRepository(t)
 	insertCandidatePrincipal(t, ctx, db, "principal_1")
-	insertWorkspaceCandidate(t, ctx, db, "sales", "sales_old", "sales_new", "prod")
+	if _, err := db.ExecContext(ctx, `INSERT INTO serving_states (id, project_id, environment, status, source, digest) VALUES ('finance_active', 'finance', 'prod', 'active', 'publish', ?)`, "sha256:"+strings.Repeat("d", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO project_active_serving_states (project_id, environment, generation_id) VALUES ('finance', 'prod', 'finance_active')`); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	candidate := candidateRecord(t, now, "cand_1", "finance", "principal_1", "sha256:"+strings.Repeat("a", 64))
 	if _, _, err := repository.StartCandidate(ctx, candidate, 4); err != nil {
@@ -256,7 +262,13 @@ func TestCandidateRepositoryNeverChangesActiveServingState(t *testing.T) {
 	if _, err := repository.SaveCandidate(ctx, cancelled, candidate.Revision); err != nil {
 		t.Fatal(err)
 	}
-	assertActiveState(t, ctx, db, "sales", "prod", "sales_old")
+	var active string
+	if err := db.QueryRowContext(ctx, `SELECT generation_id FROM project_active_serving_states WHERE project_id='finance' AND environment='prod'`).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != "finance_active" {
+		t.Fatalf("active generation = %q, want finance_active", active)
+	}
 }
 
 func TestCandidateRepositoryRejectsReadyCandidateWithoutReleaseProvenance(t *testing.T) {
@@ -295,8 +307,9 @@ func TestCandidateRepositoryRejectsReadyCandidateWithoutReleaseProvenance(t *tes
 func candidateRecord(t *testing.T, now time.Time, id, project, owner, artifactDigest string) deployment.Candidate {
 	t.Helper()
 	candidate, err := deployment.NewCandidate(deployment.CandidateStartInput{
-		ID: id, ProjectID: project, TargetID: "lvinst_prod", Environment: "prod", OwnerID: owner,
-		BaseGeneration: "deployment_7", ArtifactDigest: artifactDigest, ExpiresAt: now.Add(time.Hour), Now: now,
+		ID: id, TargetID: "lvinst_prod", OwnerID: owner,
+		Scope:          deployment.CandidateScope{ProjectID: projectgraph.ResourceID(project), Environment: "prod", BaseGenerationID: "deployment_7"},
+		ArtifactDigest: artifactDigest, ExpiresAt: now.Add(time.Hour), Now: now,
 	})
 	require.NoError(t, err)
 	return candidate
@@ -307,4 +320,17 @@ func insertCandidatePrincipal(t *testing.T, ctx context.Context, db *sql.DB, id 
 	if _, err := db.ExecContext(ctx, `INSERT INTO principals (id, email, display_name) VALUES (?, ?, ?)`, id, id+"@example.test", id); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type candidateDeploymentExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertCandidateActiveDeployment(ctx context.Context, execer candidateDeploymentExecer, id string) error {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := execer.ExecContext(ctx, `INSERT INTO serving_states (id, project_id, environment, status, source, digest) VALUES (?, 'finance', 'prod', 'inactive', 'publish', ?)`, id, digest); err != nil {
+		return err
+	}
+	_, err := execer.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, generation_id, artifact_digest, request_digest, status, created_by, activated_at) VALUES (?, 'finance', 'prod', ?, ?, ?, 'active', 'publisher', CURRENT_TIMESTAMP)`, id, id, digest, digest)
+	return err
 }

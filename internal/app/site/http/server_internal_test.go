@@ -1020,7 +1020,7 @@ func TestDocumentationNavigationUsesExplicitOverviewLabelsAndDeveloperGroups(t *
 		`href="/docs/architecture" title="Overview">Overview</a>`,
 		`href="/docs/data-ingestion" title="Overview">Overview</a>`,
 		`href="/docs/config" title="Overview">Overview</a>`,
-		`title="Projects, workspaces, and environments">Projects, workspaces, and environments</a>`,
+		`title="Projects and environments">Projects and environments</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("architecture navigation missing %q", want)
@@ -1122,7 +1122,7 @@ func TestSiteAPIReferenceIsGeneratedFromOpenAPI(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()
 
-	response, err := server.Client().Get(server.URL + "/docs/api/workspaces")
+	response, err := server.Client().Get(server.URL + "/docs/api/projects")
 	if err != nil {
 		t.Fatalf("get API reference: %v", err)
 	}
@@ -1131,7 +1131,7 @@ func TestSiteAPIReferenceIsGeneratedFromOpenAPI(t *testing.T) {
 		t.Fatalf("API reference status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 	body := readBody(t, response)
-	for _, want := range []string{"<title>Workspaces</title>", `<h1 id="workspaces">Workspaces</h1>`, "Get the active asset graph", "<code>GET /api/v1/workspaces"} {
+	for _, want := range []string{"<title>Projects</title>", `<h1 id="projects">Projects</h1>`, "Get a materialized project", "<code>GET /api/v1/projects/{project}"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("API reference missing %q:\n%s", want, body)
 		}
@@ -1162,11 +1162,11 @@ func TestSiteServesMachineDocumentationArtifacts(t *testing.T) {
 		{path: "/llms.txt", contentType: "text/plain", contains: []string{"# LeapView", "/mcp", "/docs/cli/manifest.json", "/docs/api/operations.json"}},
 		{path: "/docs/cli/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"id": "publish"`, `"effect": "write"`}},
 		{path: "/docs/agent-tools/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"name": "catalog_search"`, `"inputSchema": {`, `"outputSchema": {`}},
-		{path: "/docs/agent-tools/tools/catalog_search.json", contentType: "application/json", contains: []string{`"name": "catalog_search"`, `"privilege": "VIEW_ITEM"`, `"readOnlyHint": true`}},
+		{path: "/docs/agent-tools/tools/catalog_search.json", contentType: "application/json", contains: []string{`"name": "catalog_search"`, `"privilege": "RESOURCE_READ"`, `"readOnlyHint": true`}},
 		{path: "/docs/agent-tools/tools/catalog_search.md", contentType: "text/markdown", contains: []string{"# `catalog_search`", "## Input schema", "## Output schema"}},
-		{path: "/docs/api/operations.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"operationId": "listWorkspaces"`}},
-		{path: "/docs/api/operations/listWorkspaces.json", contentType: "application/json", contains: []string{`"operationId": "listWorkspaces"`, `"method": "GET"`, `"schemas": {`, `"WorkspaceListResponse": {`}},
-		{path: "/docs/api/operations/listWorkspaces.md", contentType: "text/markdown", contains: []string{"# List workspaces", "`GET /api/v1/workspaces`", "USE_WORKSPACE"}},
+		{path: "/docs/api/operations.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"operationId": "getProject"`}},
+		{path: "/docs/api/operations/getProject.json", contentType: "application/json", contains: []string{`"operationId": "getProject"`, `"method": "GET"`, `"schemas": {`, `"ProjectResponse": {`}},
+		{path: "/docs/api/operations/getProject.md", contentType: "text/markdown", contains: []string{"# Get a materialized project", "`GET /api/v1/projects/{project}`", "PROJECT_ADMIN"}},
 		{path: "/docs/cli/commands/dev.json", contentType: "application/json", contains: []string{`"id": "dev"`, `"usage": "leapview dev`}},
 		{path: "/docs/cli/commands/publish.md", contentType: "text/markdown", contains: []string{"# leapview publish", "## Usage"}},
 		{path: "/docs/cli/commands/semantic-models-query.md", contentType: "text/markdown", contains: []string{"# leapview semantic-models query", "## Usage", "## Behavior", "--body-json"}},
@@ -1252,8 +1252,8 @@ func TestSiteDocumentationMCPTools(t *testing.T) {
 		t.Errorf("search response does not contain line chart:\n%s", search)
 	}
 
-	read := postMCP(t, server.URL, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"docs_read","arguments":{"id":"api:listWorkspaces","format":"json"}}}`)
-	if !strings.Contains(read, "listWorkspaces") || !strings.Contains(read, "/api/v1/workspaces") {
+	read := postMCP(t, server.URL, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"docs_read","arguments":{"id":"api:getProject","format":"json"}}}`)
+	if !strings.Contains(read, "getProject") || !strings.Contains(read, "/api/v1/projects/{project}") {
 		t.Errorf("read response does not contain operation slice:\n%s", read)
 	}
 

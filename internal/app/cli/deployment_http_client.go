@@ -67,13 +67,13 @@ func createReleaseCLIError(failure releasegen.GenCreateReleaseFailure) error {
 	)
 }
 
-func (client *deploymentCLIClient) uploadReleaseArtifact(ctx context.Context, project, releaseID, workspaceID, contentDigest string, body io.Reader) (releasegen.ReleaseArtifactResponse, error) {
+func (client *deploymentCLIClient) uploadReleaseArtifact(ctx context.Context, project, releaseID, contentDigest string, body io.Reader) (releasegen.ReleaseArtifactResponse, error) {
 	generated := releasegen.NewGenClient(streamingBodyTransport{
 		transport: capabilityAPITransport{target: client.target, token: client.token, client: client.http},
 		body:      body,
 	})
 	response, err := generated.UploadReleaseArtifact(ctx, releasegen.GenUploadReleaseArtifactClientRequest{
-		Project: project, Release: releaseID, Workspace: workspaceID,
+		Project: project, Release: releaseID,
 		Headers: releasegen.GenUploadReleaseArtifactClientHeaders{
 			ContentType: "application/octet-stream", ContentDigest: contentDigest,
 		},

@@ -24,19 +24,18 @@ var contractsCUE string
 type Kind string
 
 const (
-	KindProject               Kind = "project"
-	KindConnection            Kind = "connection"
-	KindSource                Kind = "source"
-	KindWorkspace             Kind = "workspace"
-	KindWorkspaceGroup        Kind = "workspace-group"
-	KindWorkspaceRoleBinding  Kind = "workspace-role-binding"
-	KindGrant                 Kind = "grant"
-	KindDataPolicy            Kind = "data-policy"
-	KindRefreshPipeline       Kind = "refresh-pipeline"
-	KindModelTable            Kind = "model-table"
-	KindSemanticModelResource Kind = "semantic-model-resource"
-	KindDashboardResource     Kind = "dashboard-resource"
-	KindDashboardPublication  Kind = "dashboard-publication"
+	KindProject              Kind = "project"
+	KindConnection           Kind = "connection"
+	KindSource               Kind = "source"
+	KindModel                Kind = "model"
+	KindSemanticModel        Kind = "semantic-model"
+	KindPipeline             Kind = "pipeline"
+	KindDashboard            Kind = "dashboard"
+	KindGroup                Kind = "group"
+	KindRoleBinding          Kind = "role-binding"
+	KindGrant                Kind = "grant"
+	KindDataPolicy           Kind = "data-policy"
+	KindDashboardPublication Kind = "dashboard-publication"
 )
 
 type Severity string
@@ -161,7 +160,7 @@ func compiledDefinition(kind Kind) (*cue.Context, cue.Value, string, error) {
 }
 
 func JSONSchemaFiles() (map[string][]byte, error) {
-	kinds := []Kind{KindProject, KindConnection, KindSource, KindWorkspace, KindWorkspaceGroup, KindWorkspaceRoleBinding, KindGrant, KindDataPolicy, KindRefreshPipeline, KindModelTable, KindSemanticModelResource, KindDashboardResource, KindDashboardPublication}
+	kinds := []Kind{KindProject, KindConnection, KindSource, KindModel, KindSemanticModel, KindPipeline, KindDashboard, KindGroup, KindRoleBinding, KindGrant, KindDataPolicy, KindDashboardPublication}
 	files := map[string][]byte{}
 	for _, kind := range kinds {
 		content, err := JSONSchema(kind)
@@ -181,24 +180,22 @@ func JSONSchemaFilename(kind Kind) string {
 		return "connection.schema.json"
 	case KindSource:
 		return "source.schema.json"
-	case KindWorkspace:
-		return "workspace.schema.json"
-	case KindWorkspaceGroup:
-		return "workspace-group.schema.json"
-	case KindWorkspaceRoleBinding:
-		return "workspace-role-binding.schema.json"
+	case KindModel:
+		return "model.schema.json"
+	case KindSemanticModel:
+		return "semantic-model.schema.json"
+	case KindPipeline:
+		return "pipeline.schema.json"
+	case KindDashboard:
+		return "dashboard.schema.json"
+	case KindGroup:
+		return "group.schema.json"
+	case KindRoleBinding:
+		return "role-binding.schema.json"
 	case KindGrant:
 		return "grant.schema.json"
 	case KindDataPolicy:
 		return "data-policy.schema.json"
-	case KindRefreshPipeline:
-		return "refresh-pipeline.schema.json"
-	case KindModelTable:
-		return "model-table.schema.json"
-	case KindSemanticModelResource:
-		return "semantic-model.schema.json"
-	case KindDashboardResource:
-		return "dashboard.schema.json"
 	case KindDashboardPublication:
 		return "dashboard-publication.schema.json"
 	default:
@@ -239,24 +236,22 @@ func definitionName(kind Kind) (string, error) {
 		return "ConnectionResource", nil
 	case KindSource:
 		return "SourceResource", nil
-	case KindWorkspace:
-		return "WorkspaceResource", nil
-	case KindWorkspaceGroup:
-		return "WorkspaceGroupResource", nil
-	case KindWorkspaceRoleBinding:
-		return "WorkspaceRoleBindingResource", nil
+	case KindModel:
+		return "ModelResource", nil
+	case KindSemanticModel:
+		return "SemanticModelResource", nil
+	case KindPipeline:
+		return "PipelineResource", nil
+	case KindDashboard:
+		return "DashboardResource", nil
+	case KindGroup:
+		return "GroupResource", nil
+	case KindRoleBinding:
+		return "RoleBindingResource", nil
 	case KindGrant:
 		return "GrantResource", nil
 	case KindDataPolicy:
 		return "DataPolicyResource", nil
-	case KindRefreshPipeline:
-		return "RefreshPipelineResource", nil
-	case KindModelTable:
-		return "ModelTableResource", nil
-	case KindSemanticModelResource:
-		return "SemanticModelResource", nil
-	case KindDashboardResource:
-		return "DashboardResource", nil
 	case KindDashboardPublication:
 		return "DashboardPublicationResource", nil
 	default:
@@ -407,7 +402,10 @@ var schemaOverlays = map[Kind]schemaOverlay{
 		collections: []collectionRule{
 			definitionCollection("#Project", "connections", collectionMapping),
 			definitionCollection("#Project", "sources", collectionMapping),
-			definitionCollection("#Project", "workspaces", collectionMapping),
+			definitionCollection("#Project", "models", collectionMapping),
+			definitionCollection("#Project", "semanticModels", collectionMapping),
+			definitionCollection("#Project", "pipelines", collectionMapping),
+			definitionCollection("#Project", "dashboards", collectionMapping),
 		},
 	},
 	KindConnection: {
@@ -416,13 +414,29 @@ var schemaOverlays = map[Kind]schemaOverlay{
 	KindSource: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
 	},
-	KindWorkspace: {
+	KindModel: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
 	},
-	KindWorkspaceGroup: {
+	KindSemanticModel: {
+		required: []string{"apiVersion", "kind", "metadata", "spec"},
+		collections: []collectionRule{
+			definitionCollection("#ProjectSemanticModelSpec", "tables", collectionSequence),
+		},
+	},
+	KindPipeline: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
 	},
-	KindWorkspaceRoleBinding: {
+	KindDashboard: {
+		required: []string{"apiVersion", "kind", "metadata", "spec"},
+		collections: []collectionRule{
+			definitionCollection("#DashboardSpec", "visuals", collectionMapping),
+			definitionCollection("#DashboardSpec", "pages", collectionSequence),
+		},
+	},
+	KindGroup: {
+		required: []string{"apiVersion", "kind", "metadata", "spec"},
+	},
+	KindRoleBinding: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
 	},
 	KindGrant: {
@@ -430,25 +444,6 @@ var schemaOverlays = map[Kind]schemaOverlay{
 	},
 	KindDataPolicy: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindRefreshPipeline: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindModelTable: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-	},
-	KindSemanticModelResource: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-		collections: []collectionRule{
-			definitionCollection("#ProjectSemanticModelSpec", "tables", collectionSequence),
-		},
-	},
-	KindDashboardResource: {
-		required: []string{"apiVersion", "kind", "metadata", "spec"},
-		collections: []collectionRule{
-			definitionCollection("#DashboardSpec", "visuals", collectionMapping),
-			definitionCollection("#DashboardSpec", "pages", collectionSequence),
-		},
 	},
 	KindDashboardPublication: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},

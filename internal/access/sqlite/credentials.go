@@ -5,10 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/flidai/leapview/internal/access"
-	platformdb "github.com/flidai/leapview/internal/access/internal/db"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/access"
+	platformdb "github.com/flidai/leapview/internal/access/internal/db"
 )
 
 func (r *Repository) CreateSession(ctx context.Context, principalID string, ttl time.Duration) (string, error) {
@@ -153,15 +154,15 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 	if strings.TrimSpace(input.Name) == "" {
 		return "", access.APIToken{}, fmt.Errorf("token name is required")
 	}
+	capabilitiesJSON, err := marshalTokenCapabilities(input.Capabilities)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
 	token, err := newSecret()
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
 	id, err := newID("token")
-	if err != nil {
-		return "", access.APIToken{}, err
-	}
-	privilegesJSON, err := json.Marshal(input.Privileges)
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
@@ -183,11 +184,10 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 	if err := r.q.CreateAPIToken(ctx, platformdb.CreateAPITokenParams{
 		ID:               id,
 		PrincipalID:      input.PrincipalID,
-		WorkspaceID:      sql.NullString{String: input.WorkspaceID, Valid: strings.TrimSpace(input.WorkspaceID) != ""},
 		Name:             input.Name,
 		TokenFingerprint: fingerprint,
 		TokenVerifier:    verifier,
-		PrivilegesJson:   string(privilegesJSON),
+		CapabilitiesJson: capabilitiesJSON,
 		ExpiresAt:        expiresAt,
 	}); err != nil {
 		return "", access.APIToken{}, err
@@ -201,7 +201,30 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 			return token, mapAPIToken(row), nil
 		}
 	}
-	return token, access.APIToken{ID: id, PrincipalID: input.PrincipalID, WorkspaceID: input.WorkspaceID, Name: input.Name, Privileges: input.Privileges, ExpiresAt: nullString(expiresAt)}, nil
+	return token, access.APIToken{ID: id, PrincipalID: input.PrincipalID, Name: input.Name, Capabilities: cloneTokenCapabilities(input.Capabilities), ExpiresAt: nullString(expiresAt)}, nil
+}
+
+func cloneTokenCapabilities(capabilities []access.Capability) []access.Capability {
+	if capabilities == nil {
+		return nil
+	}
+	cloned := make([]access.Capability, len(capabilities))
+	copy(cloned, capabilities)
+	return cloned
+}
+
+func marshalTokenCapabilities(capabilities []access.Capability) (sql.NullString, error) {
+	if err := access.ValidateTokenCapabilities(capabilities, access.CanonicalCapabilities()); err != nil {
+		return sql.NullString{}, fmt.Errorf("invalid API token capabilities: %w", err)
+	}
+	if capabilities == nil {
+		return sql.NullString{}, nil
+	}
+	encoded, err := json.Marshal(capabilities)
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("encode API token capabilities: %w", err)
+	}
+	return sql.NullString{String: string(encoded), Valid: true}, nil
 }
 
 func (r *Repository) PrincipalForAPIToken(ctx context.Context, token string) (access.Principal, error) {
@@ -229,6 +252,44 @@ func (r *Repository) CredentialForAPIToken(ctx context.Context, token string) (a
 		Principal: principal,
 		Token:     mapAPIToken(apiToken),
 	}, nil
+}
+
+// BootstrapAPITokenEvidence resolves the durable evidence required by the
+// protected first-activation path. It intentionally addresses a token by ID,
+// not by a bearer secret or request-carried capability list. The SQL query
+// binds the token to the actor, requires an enabled platform administrator,
+// and applies revocation and expiry at the supplied instant.
+func (r *Repository) BootstrapAPITokenEvidence(ctx context.Context, principalID, tokenID string, now time.Time) (access.APIToken, error) {
+	principalID = strings.TrimSpace(principalID)
+	tokenID = strings.TrimSpace(tokenID)
+	if principalID == "" || tokenID == "" {
+		return access.APIToken{}, access.ErrForbidden
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	row, err := r.q.GetBootstrapAPITokenEvidence(ctx, platformdb.GetBootstrapAPITokenEvidenceParams{
+		TokenID: tokenID, PrincipalID: principalID, Now: now.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return access.APIToken{}, err
+	}
+	token := mapAPIToken(row)
+	// A bootstrap token must opt into an explicit, non-empty capability list;
+	// dynamic (NULL), empty, malformed, or otherwise attenuated lists deny.
+	if token.Capabilities == nil || len(token.Capabilities) == 0 || !containsTokenCapability(token.Capabilities, access.CapabilityResourcePublish) {
+		return access.APIToken{}, access.ErrForbidden
+	}
+	return token, nil
+}
+
+func containsTokenCapability(capabilities []access.Capability, expected access.Capability) bool {
+	for _, capability := range capabilities {
+		if capability == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Repository) DisabledPrincipalForAPIToken(ctx context.Context, token string) (string, string, error) {
@@ -303,7 +364,6 @@ func (r *Repository) RevokeAPITokenForPrincipal(ctx context.Context, principalID
 }
 
 func (r *Repository) CreateServicePrincipal(ctx context.Context, input access.ServicePrincipalInput) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
 		generatedID, err := newID("sp")
@@ -336,7 +396,6 @@ func (r *Repository) ListServicePrincipals(ctx context.Context) ([]access.Princi
 }
 
 func (r *Repository) UpdateServicePrincipal(ctx context.Context, id string, input access.ServicePrincipalInput) (access.Principal, error) {
-	access.ClearAuthorizationCache(ctx)
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return access.Principal{}, fmt.Errorf("service principal id is required")
@@ -357,7 +416,6 @@ func (r *Repository) UpdateServicePrincipal(ctx context.Context, id string, inpu
 }
 
 func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) error {
-	access.ClearAuthorizationCache(ctx)
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("service principal id is required")
@@ -368,9 +426,6 @@ func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) erro
 	}
 	if principal.Kind != access.PrincipalKindServicePrincipal {
 		return sql.ErrNoRows
-	}
-	if err := r.preparePrincipalDeletion(ctx, id); err != nil {
-		return err
 	}
 	return r.q.DeleteServicePrincipal(ctx, id)
 }

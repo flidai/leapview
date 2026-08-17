@@ -4,13 +4,13 @@ Dashboard publications expose one compiled dashboard as an anonymous, governed r
 
 ## Declare a publication
 
-Add a `DashboardPublication` resource to the workspace publication include path:
+Add a `DashboardPublication` resource to the project's publication include path:
 
 ```yaml
 apiVersion: leapview.dev/v1
 kind: DashboardPublication
 metadata:
-  workspace: visuals
+  id: publication:website-showcase
   name: website-showcase
 spec:
   dashboard: visual-showcase
@@ -32,12 +32,12 @@ Public execution uses a credential-less `dashboard_publication` principal scoped
 apiVersion: leapview.dev/v1
 kind: DataPolicy
 metadata:
-  workspace: visuals
+  id: data-policy:website-public-region
   name: website-public-region
 spec:
   object:
-    type: semantic_model
-    id: visuals
+    kind: semantic_model
+    id: semantic-model:visuals
   subject:
     kind: dashboard_publication
     publication: website-showcase
@@ -52,7 +52,7 @@ Publication subjects are supported only by data policies, not role bindings or g
 
 ## Operate publications
 
-Users with `MANAGE_PUBLICATIONS` can use **Admin → Publications** or the dashboard-publication API to copy URLs, inspect origins and history, suspend, resume, or rotate a public ID. Owner, admin, and platform-admin roles receive this privilege by default.
+Users with `RESOURCE_PUBLISH` on the governed dashboard can use **Admin → Publications** or the dashboard-publication API to copy URLs, inspect origins and history, suspend, resume, or rotate a public ID. Project administrators and other principals with this dashboard capability can manage publications.
 
 - Suspension immediately makes documents and commands unavailable and terminates active streams.
 - Resume succeeds only while the publication remains in the active production configuration.

@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/storage"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -71,8 +72,8 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (UploadResu
 	if file.Size == 0 || file.Size > MaximumObjectSize {
 		return UploadResult{}, fmt.Errorf("%w: file size is outside S3 multipart limits", control.ErrInvalid)
 	}
-	identity := identityHash("create", session.ID, request.IdempotencyKey)
-	id := "multipart_" + identity
+	identity := identityHash("create", session.ID.String(), request.IdempotencyKey)
+	id := manageddata.MultipartUploadID("multipart_" + identity)
 	existingRecord := false
 	if existing, lookupErr := s.repo.S3MultipartUploadByID(ctx, id); lookupErr == nil {
 		existingRecord = true
@@ -120,12 +121,12 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (UploadResu
 		if listErr != nil {
 			return UploadResult{}, repositoryError(listErr)
 		}
-		if len(owners) > 0 && upload.ID != owners[0] {
+		if len(owners) > 0 && upload.ID.String() != owners[0] {
 			return UploadResult{}, fmt.Errorf("%w: multipart creation is owned by another intent", control.ErrConflict)
 		}
 	}
 
-	claimCtx, release, claimErr := acquireMultipartClaim(ctx, s.repo, file.SHA256, upload.ID)
+	claimCtx, release, claimErr := acquireMultipartClaim(ctx, s.repo, file.SHA256, upload.ID.String())
 	if claimErr != nil {
 		return UploadResult{}, claimErr
 	}
@@ -182,7 +183,7 @@ func (s *Service) reconcileCreating(ctx context.Context, upload manageddata.S3Mu
 	// compensation are part of the same critical section as CreateMultipart;
 	// otherwise two processes can both classify an upload as orphaned and race
 	// to abort or replace it.
-	claimCtx, release, claimErr := acquireMultipartClaim(ctx, s.repo, upload.SHA256, upload.ID)
+	claimCtx, release, claimErr := acquireMultipartClaim(ctx, s.repo, upload.SHA256, upload.ID.String())
 	if claimErr != nil {
 		return claimErr
 	}
@@ -220,7 +221,7 @@ func (s *Service) reconcileCreating(ctx context.Context, upload manageddata.S3Mu
 			if listErr != nil {
 				return repositoryError(listErr)
 			}
-			if len(owners) > 0 && upload.ID != owners[0] {
+			if len(owners) > 0 && upload.ID.String() != owners[0] {
 				return nil // deterministic owner will compensate the unknowns
 			}
 		}
@@ -370,7 +371,7 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest) (Upload
 		}
 	}
 	claim, err := s.repo.BeginS3MultipartCompletion(ctx, manageddata.BeginS3MultipartCompletionInput{
-		ID: upload.ID, IdempotencyIdentity: identityHash("complete", upload.ID, request.IdempotencyKey), RequestHash: requestHash,
+		ID: upload.ID, IdempotencyIdentity: identityHash("complete", upload.ID.String(), request.IdempotencyKey), RequestHash: requestHash,
 	})
 	if err != nil {
 		return UploadResult{}, repositoryError(err)
@@ -410,7 +411,7 @@ func (s *Service) Abort(ctx context.Context, request AbortRequest) (UploadResult
 		return UploadResult{}, err
 	}
 	claim, err := s.repo.BeginS3MultipartAbort(ctx, manageddata.BeginS3MultipartAbortInput{
-		ID: upload.ID, IdempotencyIdentity: identityHash("abort", upload.ID, request.IdempotencyKey),
+		ID: upload.ID, IdempotencyIdentity: identityHash("abort", upload.ID.String(), request.IdempotencyKey),
 	})
 	if err != nil {
 		return UploadResult{}, repositoryError(err)
@@ -476,7 +477,7 @@ func (s *Service) RecoverOrphaned(ctx context.Context, before time.Time, limit i
 		}
 		if upload.Status != manageddata.S3MultipartStatusAborting {
 			claim, claimErr := s.repo.BeginS3MultipartAbort(ctx, manageddata.BeginS3MultipartAbortInput{
-				ID: upload.ID, IdempotencyIdentity: identityHash("recovery", upload.ID, upload.ID),
+				ID: upload.ID, IdempotencyIdentity: identityHash("recovery", upload.ID.String(), upload.ID.String()),
 			})
 			if claimErr != nil {
 				return result, repositoryError(claimErr)
@@ -512,14 +513,26 @@ func (s *Service) scopedSession(ctx context.Context, project, connection, sessio
 	if err := validateIdentity("upload session id", sessionID, 160); err != nil {
 		return manageddata.UploadSession{}, manageddata.Manifest{}, err
 	}
-	collection, err := s.repo.CollectionByProjectConnection(ctx, project, connection)
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		return manageddata.UploadSession{}, manageddata.Manifest{}, fmt.Errorf("%w: invalid project id", control.ErrInvalid)
+	}
+	connectionID, err := projectgraph.NewResourceID(connection)
+	if err != nil {
+		return manageddata.UploadSession{}, manageddata.Manifest{}, fmt.Errorf("%w: invalid connection id", control.ErrInvalid)
+	}
+	collection, err := s.repo.CollectionByProjectConnection(ctx, projectID, connectionID)
 	if err != nil {
 		return manageddata.UploadSession{}, manageddata.Manifest{}, repositoryError(err)
 	}
 	if collection.Status != manageddata.CollectionStatusActive {
 		return manageddata.UploadSession{}, manageddata.Manifest{}, control.ErrConflict
 	}
-	session, err := s.repo.UploadSessionByID(ctx, sessionID)
+	uploadID, err := manageddata.ParseUploadID(sessionID)
+	if err != nil {
+		return manageddata.UploadSession{}, manageddata.Manifest{}, fmt.Errorf("%w: invalid upload session id", control.ErrInvalid)
+	}
+	session, err := s.repo.UploadSessionByID(ctx, uploadID)
 	if err != nil {
 		return manageddata.UploadSession{}, manageddata.Manifest{}, repositoryError(err)
 	}
@@ -544,7 +557,11 @@ func (s *Service) scopedUpload(ctx context.Context, project, connection, session
 	if err := validateIdentity("multipart upload id", multipartID, 160); err != nil {
 		return manageddata.UploadSession{}, manageddata.S3MultipartUpload{}, manageddata.File{}, err
 	}
-	upload, err := s.repo.S3MultipartUploadByID(ctx, multipartID)
+	multipartUploadID, err := manageddata.ParseMultipartUploadID(multipartID)
+	if err != nil {
+		return manageddata.UploadSession{}, manageddata.S3MultipartUpload{}, manageddata.File{}, fmt.Errorf("%w: invalid multipart upload id", control.ErrInvalid)
+	}
+	upload, err := s.repo.S3MultipartUploadByID(ctx, multipartUploadID)
 	if err != nil {
 		return manageddata.UploadSession{}, manageddata.S3MultipartUpload{}, manageddata.File{}, repositoryError(err)
 	}
@@ -579,7 +596,7 @@ func strictManifest(value string) (manageddata.Manifest, error) {
 	return manifest, nil
 }
 
-func sameCreateIdentity(upload manageddata.S3MultipartUpload, sessionID string, file manageddata.File, identity string) bool {
+func sameCreateIdentity(upload manageddata.S3MultipartUpload, sessionID manageddata.UploadID, file manageddata.File, identity string) bool {
 	return upload.UploadSessionID == sessionID && upload.LogicalPath == file.Path && upload.SHA256 == file.SHA256 &&
 		upload.SizeBytes == file.Size && upload.IdempotencyIdentity == identity
 }
@@ -697,7 +714,7 @@ func resultFor(upload manageddata.S3MultipartUpload, session manageddata.UploadS
 	default:
 		return UploadResult{}, fmt.Errorf("%w: multipart upload transition is incomplete", control.ErrConflict)
 	}
-	return UploadResult{ID: upload.ID, UploadSessionID: upload.UploadSessionID, File: file, Status: status, Existing: upload.Existing, CreatedAt: upload.CreatedAt, ExpiresAt: session.ExpiresAt}, nil
+	return UploadResult{ID: upload.ID.String(), UploadSessionID: upload.UploadSessionID.String(), File: file, Status: status, Existing: upload.Existing, CreatedAt: upload.CreatedAt, ExpiresAt: session.ExpiresAt}, nil
 }
 
 func providerUpload(upload manageddata.S3MultipartUpload) storage.MultipartUpload {

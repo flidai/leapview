@@ -31,81 +31,101 @@
       ],
       "type": "object"
     },
+    "#Capability": {
+      "enum": [
+        "PROJECT_ADMIN",
+        "RESOURCE_USE",
+        "RESOURCE_READ",
+        "RESOURCE_EDIT",
+        "RESOURCE_MANAGE",
+        "RESOURCE_SHARE",
+        "RESOURCE_PUBLISH"
+      ]
+    },
     "#Metadata": {
       "additionalProperties": false,
       "properties": {
         "description": {
           "type": "string"
         },
-        "name": {
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
           "$ref": "#/$defs/%23ResourceID"
+        },
+        "name": {
+          "$ref": "#/$defs/%23ResourceName"
         },
         "owner": {
           "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/%23Provenance"
         },
         "tags": {
           "items": {
             "type": "string"
           },
           "type": "array"
-        },
-        "title": {
-          "type": "string"
-        },
-        "workspace": {
-          "$ref": "#/$defs/%23ResourceID"
         }
       },
       "required": [
+        "id",
         "name"
       ],
       "type": "object"
     },
-    "#Privilege": {
-      "enum": [
-        "USE_WORKSPACE",
-        "VIEW_ITEM",
-        "EDIT_ITEM",
-        "MANAGE_ITEM",
-        "QUERY_DATA",
-        "PREVIEW_DATA",
-        "REFRESH_DATA",
-        "DEPLOY",
-        "ACTIVATE_DEPLOYMENT",
-        "MANAGE_PUBLICATIONS",
-        "USE_AGENT",
-        "VIEW_AGENT",
-        "MANAGE_GRANTS",
-        "VIEW_AUDIT",
-        "MANAGE_WORKSPACE",
-        "MANAGE_PLATFORM"
-      ]
+    "#Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
     },
     "#ResourceID": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "#ResourceName": {
       "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
       "type": "string"
     },
-    "#SecurableObjectRef": {
+    "#ResourceRef": {
       "additionalProperties": false,
       "properties": {
         "id": {
-          "type": "string"
+          "$ref": "#/$defs/%23ResourceID"
         },
-        "type": {
+        "kind": {
           "enum": [
-            "workspace",
-            "dashboard",
-            "semantic_model",
+            "project",
+            "connection",
             "source",
-            "model_table",
-            "dataset",
-            "table",
-            "column"
+            "model",
+            "semantic_model",
+            "pipeline",
+            "dashboard"
           ]
         }
       },
       "required": [
-        "type"
+        "id",
+        "kind"
       ],
       "type": "object"
     }
@@ -125,19 +145,19 @@
     "spec": {
       "additionalProperties": false,
       "properties": {
-        "object": {
-          "$ref": "#/$defs/%23SecurableObjectRef"
+        "capability": {
+          "$ref": "#/$defs/%23Capability"
         },
-        "privilege": {
-          "$ref": "#/$defs/%23Privilege"
+        "object": {
+          "$ref": "#/$defs/%23ResourceRef"
         },
         "subject": {
           "$ref": "#/$defs/%23AccessSubject"
         }
       },
       "required": [
+        "capability",
         "object",
-        "privilege",
         "subject"
       ],
       "type": "object"

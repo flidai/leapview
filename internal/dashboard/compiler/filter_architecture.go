@@ -175,7 +175,7 @@ func validatePredicateTypes(definition dashboardfilter.Definition) error {
 func compileFilterBinding(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, id string, scope dashboardfilter.Scope, pageID string, binding dashboardfilter.Binding) (dashboardfilter.Binding, error) {
 	definition := d.FilterDefinitions[binding.Filter]
 	binding.ID, binding.Scope, binding.PageID, binding.ValueKind = id, scope, pageID, definition.ValueKind
-	binding.Key = dashboardfilter.BindingKey(d.ID, scope, pageID, id)
+	binding.Key = dashboardfilter.BindingKey(d.ID.String(), scope, pageID, id)
 	if binding.Default.Kind == "" {
 		binding.Default.Kind = dashboardfilter.ExpressionUnfiltered
 	}

@@ -1,6 +1,6 @@
 # Define model tables
 
-A model table transforms permitted project sources into a workspace-owned analytical table. The goal is not merely to make SQL run; it is to establish a stable grain and field contract that semantic measures can safely reuse.
+A model table transforms permitted project sources into a project-owned analytical table. The goal is not merely to make SQL run; it is to establish a stable grain and field contract that semantic measures can safely reuse.
 
 ## Before you begin
 
@@ -24,15 +24,15 @@ For an order-grain table, joining raw order items directly would duplicate order
 
 ### Create the resource
 
-Create `dashboards/workspaces/sales/models/orders.yaml`:
+Create `dashboards/models/orders.yaml`:
 
 ```yaml
 apiVersion: leapview.dev/v1
-kind: ModelTable
+kind: Model
 metadata:
-  workspace: sales
+  id: model:orders
   name: orders
-  title: Sales orders
+  displayName: Sales orders
   description: One row per order with normalized purchase date and revenue.
 spec:
   primaryKey: order_id
@@ -74,7 +74,7 @@ Avoid silent lossy conversions. `try_cast` can keep a refresh running, but unexp
 
 ### Discover and validate
 
-Ensure the workspace manifest discovers the model file:
+Ensure the project manifest discovers the model file:
 
 ```yaml
 spec:
@@ -101,7 +101,7 @@ After deploying and refreshing in development, verify:
 5. Joins have not multiplied the declared grain.
 6. A repeated refresh over the same revision produces equivalent output.
 
-Use the workspace asset page and refresh history to inspect the table and its lineage. When several model tables are related, validate each table independently before declaring semantic relationships between them.
+Use the project resource browser and refresh history to inspect the table and its lineage. When several model tables are related, validate each table independently before declaring semantic relationships between them.
 
 ## Choose the materialization boundary
 
@@ -113,4 +113,4 @@ If refresh multiplies rows, inspect each join against the declared grain and agg
 
 ## Next steps
 
-Continue with [Build a semantic model](/docs/guides/build/semantic-model). The generated [Model Table configuration](/docs/config/model-table) remains the exact syntax reference.
+Continue with [Build a semantic model](/docs/guides/build/semantic-model). The generated [Model configuration](/docs/config/model) remains the exact syntax reference.

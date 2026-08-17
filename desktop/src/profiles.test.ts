@@ -60,40 +60,6 @@ describe("ProfileStore", () => {
     }
   });
 
-  test("migrates version-one profiles without changing their partition identity", async () => {
-    const directoryPath = await mkdtemp(join(tmpdir(), "leapview-profiles-"));
-    try {
-      const path = join(directoryPath, "profiles.json");
-      const legacyProfile = {
-        id: "profile_0123456789abcdef0123456789abcdef",
-        canonicalOrigin: discovery.canonicalOrigin,
-        instanceId: discovery.instanceId,
-        displayName: discovery.displayName,
-        lastSafePath: "/workspaces",
-      };
-      await writeFile(path, JSON.stringify({
-        schemaVersion: 1,
-        profiles: [legacyProfile],
-      }), { mode: 0o600 });
-
-      const [migrated] = await new ProfileStore(path).list();
-
-      expect(migrated).toEqual({
-        ...legacyProfile,
-        partitionVersion: 1,
-      });
-      expect(profilePartitionName(migrated!)).toBe(
-        "persist:leapview-profile-0123456789abcdef0123456789abcdef",
-      );
-      expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
-        schemaVersion: 2,
-        profiles: [migrated],
-      });
-    } finally {
-      await rm(directoryPath, { force: true, recursive: true });
-    }
-  });
-
   test("keeps a user label separate from the server-controlled display name", async () => {
     const directoryPath = await mkdtemp(join(tmpdir(), "leapview-profiles-"));
     try {
@@ -124,20 +90,20 @@ describe("ProfileStore", () => {
 
       const updated = await store.setLastSafePath(
         profile.id,
-        "/workspaces/sales",
+        "/dashboards/sales",
       );
 
-      expect(updated.lastSafePath).toBe("/workspaces/sales");
+      expect(updated.lastSafePath).toBe("/dashboards/sales");
       expect((await new ProfileStore(path).list())[0]?.lastSafePath).toBe(
-        "/workspaces/sales",
+        "/dashboards/sales",
       );
       for (const candidate of [
         "https://attacker.example/",
         "//attacker.example/",
         "/admin",
-        "/workspaces/%2fadmin",
-        "/workspaces?token=secret",
-        "/workspaces#fragment",
+        "/dashboards/%2fadmin",
+        "/explore?token=secret",
+        "/explore#fragment",
         "/".repeat(2_049),
       ]) {
         await expect(

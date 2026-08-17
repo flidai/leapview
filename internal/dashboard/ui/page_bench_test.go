@@ -57,7 +57,7 @@ func benchmarkDashboardBridge(b *testing.B) {
 }
 
 func benchmarkDashboardDocument(catalog catalog.Catalog, report dashboardauthoring.Dashboard, model *semanticmodel.Model, activePage dashboard.Page, _ map[string]any) g.Node {
-	dashboardUpdatesURL := updatesURL(catalog.Workspace.ID, report.ID, activePage.ID)
+	dashboardUpdatesURL := updatesURL("", string(report.ID), activePage.ID)
 	body := benchmarkDatastarLitDashboardRoot(catalog, report, model)
 	mainAttrs := []g.Node{
 		h.ID("dashboard"),
@@ -83,11 +83,11 @@ func benchmarkDatastarLitDashboardRoot(catalog catalog.Catalog, report dashboard
 
 func benchmarkDashboardCommandAttrs(catalog catalog.Catalog, report dashboardauthoring.Dashboard, model *semanticmodel.Model) []g.Node {
 	return []g.Node{
-		g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/filter", "runtime", "filterCommand")),
-		g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/filter-options", "runtime", "filterOptionRequest")),
-		g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/clear-selection", "runtime")),
-		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/select", "runtime", "interactionCommand")),
-		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost("/workspaces/"+catalog.Workspace.ID+"/commands/visual-window", "runtime", "visualWindowCommand")),
+		g.Attr("data-on:lv-filter-command", "$filterCommand = evt.detail; "+uiactions.EventPost("/dashboards/"+string(report.ID)+"/commands/filter", "runtime", "filterCommand")),
+		g.Attr("data-on:lv-filter-options-request", "$filterOptionRequest = evt.detail; "+uiactions.EventPost("/dashboards/"+string(report.ID)+"/commands/filter-options", "runtime", "filterOptionRequest")),
+		g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost("/dashboards/"+string(report.ID)+"/commands/clear-selection", "runtime")),
+		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost("/dashboards/"+string(report.ID)+"/commands/select", "runtime", "interactionCommand")),
+		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost("/dashboards/"+string(report.ID)+"/commands/visual-window", "runtime", "visualWindowCommand")),
 	}
 }
 
@@ -178,6 +178,6 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 		},
 		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}},
 	}
-	catalog := catalog.Catalog{Workspace: catalog.Workspace{ID: "benchmark", Title: "Benchmark Workspace"}}
+	catalog := catalog.Catalog{Project: catalog.Project{ID: "benchmark", Title: "Benchmark Workspace"}}
 	return report, model, catalog
 }

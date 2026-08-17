@@ -93,7 +93,7 @@ docker run --rm "$LEAPVIEW_IMAGE" version --json
 The `version` and `revision` values must agree with
 `release-identity.json`; the release must also report `"dirty": false` and
 `"development": false`. Once the server is running, an API token authorized
-to use a workspace can verify the authenticated runtime endpoint:
+to use the evaluation project can verify the authenticated runtime endpoint:
 
 ```sh
 curl --fail --silent --show-error \

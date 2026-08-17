@@ -15,7 +15,7 @@ func TestCommandPatchesAreScopedToClientAndPage(t *testing.T) {
 
 	status := h.postCommand(t, "/commands/select", mergeSignals(runtimeSignals("route-target", "overview"), map[string]any{
 		"interactionCommand":  ordersRowSelectionCommand(t, "delivered", initialPatches),
-		"visualWindowCommand": visualWindowCommand("orders_table", "all", 0, 50, 12, 0),
+		"visualWindowCommand": visualWindowCommand("order_rows", "all", 0, 50, 12, 0),
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d", status, http.StatusOK)
@@ -36,12 +36,8 @@ func TestUpdatesQueryParamsTakePrecedenceOverRuntimeSignalIDs(t *testing.T) {
 		},
 	})
 
-	requireVisual(t, patches, "total_orders")
-	requireTable(t, patches, "orders_table")
-	requirePatch(t, patches, func(patch map[string]any) bool {
-		visuals := mapAt(patch, "visuals")
-		return len(visuals) > 0 && hasKey(visuals, "revenue_by_month")
-	})
+	requireVisual(t, patches, "orders")
+	requireTable(t, patches, "order_rows")
 }
 
 func drainInitialStreamPatches(t *testing.T, stream *streamClient) {

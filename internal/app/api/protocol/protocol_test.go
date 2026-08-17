@@ -34,6 +34,23 @@ func TestBuildConstructsProtocolPersistence(t *testing.T) {
 	}
 }
 
+func TestCursorSnapshotNeverFabricatesIdentity(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project/semantic-models", nil)
+	if got := apiCursorSnapshotForRequest(request); got != "" {
+		t.Fatalf("cursor snapshot = %q; want unavailable without active identity", got)
+	}
+	if got := SignPageCursor(request, "cursor"); got != "" {
+		t.Fatalf("signed cursor = %q; want no cursor without active identity", got)
+	}
+	request.Header.Set(CursorSnapshotHeader, "deployment:active")
+	if got := apiCursorSnapshotForRequest(request); got != "deployment:active" {
+		t.Fatalf("cursor snapshot = %q", got)
+	}
+	if got := SignPageCursor(request, "cursor"); got == "" {
+		t.Fatal("cursor was not signed with active serving identity")
+	}
+}
+
 func TestAdversarialIdempotencyNeverStoresOneTimeCredentials(t *testing.T) {
 	status, header, body := safeIdempotencyResponse(http.StatusCreated, http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"token":"plaintext-secret","id":"x"}`))
 	if status != http.StatusConflict || header.Get("Content-Type") != "application/problem+json" {
@@ -120,7 +137,7 @@ func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	request := func() *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/groups", strings.NewReader(`{"name":"x"}`))
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/groups", strings.NewReader(`{"name":"x"}`))
 		r.Header.Set("Authorization", "Bearer credential")
 		r.Header.Set("Idempotency-Key", "replay-auth")
 		rec := httptest.NewRecorder()
@@ -153,7 +170,7 @@ func TestAdversarialInMemoryReplayReauthorizesCurrentCredentialAndGrants(t *test
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	request := func() *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/groups", strings.NewReader(`{"name":"x"}`))
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/groups", strings.NewReader(`{"name":"x"}`))
 		r.Header.Set("Authorization", "Bearer credential")
 		r.Header.Set("Idempotency-Key", "replay-auth-memory")
 		rec := httptest.NewRecorder()
@@ -191,7 +208,7 @@ func TestAdversarialIdempotencyCanonicalizesEquivalentBearerHeaders(t *testing.T
 		_, _ = w.Write([]byte(`{"id":"created"}`))
 	})
 	request := func(authorization string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/groups", strings.NewReader(`{"name":"x"}`))
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/groups", strings.NewReader(`{"name":"x"}`))
 		r.Header.Set("Authorization", authorization)
 		r.Header.Set("Idempotency-Key", "canonical-bearer")
 		rec := httptest.NewRecorder()
@@ -314,7 +331,7 @@ func testLeaseProtocol(store idempotencyStore, lease, renewEvery time.Duration) 
 }
 
 func invokeIdempotentProtocol(p *Protocol, next http.Handler, key string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/test/groups", strings.NewReader(`{"name":"x"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/groups", strings.NewReader(`{"name":"x"}`))
 	request.Header.Set("Authorization", "Bearer credential")
 	request.Header.Set("Idempotency-Key", key)
 	recorder := httptest.NewRecorder()

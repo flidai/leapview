@@ -24,7 +24,7 @@ func TestNonSecretCredentialResolverRejectsEnvironmentCredentials(t *testing.T) 
 
 func TestDevelopmentEnvironmentCredentialResolverRequiresExplicitDevelopmentSelection(t *testing.T) {
 	production, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: "target-prod", Environment: "prod", TargetClass: connectionbinding.TargetProduction,
+		TargetID: "target-prod", ProjectID: "sales", Environment: "prod", TargetClass: connectionbinding.TargetProduction,
 		Kind: connectionbinding.ResolverInfisical,
 	})
 	require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestDevelopmentEnvironmentCredentialResolverRequiresExplicitDevelopmentSele
 	}
 
 	development, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
-		TargetID: "target-dev", Environment: "dev", TargetClass: connectionbinding.TargetDevelopment,
+		TargetID: "target-dev", ProjectID: "sales", Environment: "dev", TargetClass: connectionbinding.TargetDevelopment,
 		Kind: connectionbinding.ResolverEnvironment,
 	})
 	require.NoError(t, err)

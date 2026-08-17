@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
@@ -27,39 +26,38 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
-	productsearch "github.com/flidai/leapview/internal/workspace/search"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
 type Module struct {
-	handler                  *agenthttp.Handler
-	service                  *agent.Service
-	jobs                     JobStore
-	runWorkloadClass         string
-	globalWorkspaceID        string
-	search                   SearchPort
-	environment              func(*http.Request) string
-	dashboardMetrics         func(string) (queryruntime.Metrics, bool)
-	authorizeAnyObject       func(context.Context, string, access.Privilege, []access.ObjectRef) (bool, error)
-	skipContextAuthorization bool
-	recordAudit              func(context.Context, access.AuditEventInput) error
-	dispatchAPIGen           func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
-	catalog                  agenttools.Catalog
-	documentation            agenttools.Documentation
-	queryMetadata            func(context.Context, string, string) agenttools.VisualQueryMetadata
-	queryContext             func(context.Context, agent.Scope) context.Context
-	enableSystemPrompt       bool
-	broker                   *pagestream.Broker
-	logger                   *slog.Logger
-	chatTitleMu              sync.Mutex
-	pendingChatTitles        map[string]struct{}
-	mcpScope                 func(*http.Request) (agent.Scope, bool)
-	mcpProtect               func(http.Handler) http.Handler
-	productName              string
-	buildVersion             string
-	apiOperations            []agenttools.APIGenOperation
-	dashboardAuthoring       *authoringapplication.Application
-	runExecution             apigencommand.AsyncExecutionContract
+	handler            *agenthttp.Handler
+	service            *agent.Service
+	jobs               JobStore
+	runWorkloadClass   string
+	projectID          projectgraph.ResourceID
+	projectIDResolver  func(context.Context) (projectgraph.ResourceID, error)
+	currentPrincipal   func(*http.Request) (Principal, bool)
+	dashboardMetrics   func(string) (queryruntime.Metrics, bool)
+	recordAudit        func(context.Context, access.AuditEventInput) error
+	dispatchAPIGen     func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
+	catalog            agenttools.Catalog
+	documentation      agenttools.Documentation
+	queryMetadata      func(context.Context, string, string) agenttools.VisualQueryMetadata
+	queryContext       func(context.Context, agent.Scope) context.Context
+	enableSystemPrompt bool
+	broker             *pagestream.Broker
+	logger             *slog.Logger
+	chatTitleMu        sync.Mutex
+	pendingChatTitles  map[string]struct{}
+	mcpScope           func(*http.Request) (agent.Scope, bool)
+	mcpProtect         func(http.Handler) http.Handler
+	productName        string
+	buildVersion       string
+	apiOperations      []agenttools.APIGenOperation
+	dashboardAuthoring *authoringapplication.Application
+	resolveResource    ResourceResolver
+	runExecution       apigencommand.AsyncExecutionContract
 }
 
 type Service = agent.Service
@@ -85,38 +83,33 @@ func BuildAPIGenOperations(operationContracts map[string]APIGenOperationContract
 }
 
 type Config struct {
-	Database                 *sql.DB
-	Model                    ModelConfig
-	Service                  *agent.Service
-	Jobs                     JobStore
-	RunWorkloadClass         string
-	GlobalWorkspaceID        string
-	Search                   SearchPort
-	Environment              func(*http.Request) string
-	DashboardMetrics         func(string) (queryruntime.Metrics, bool)
-	AuthorizeAnyObject       func(context.Context, string, access.Privilege, []access.ObjectRef) (bool, error)
-	SkipContextAuthorization bool
-	RecordAudit              func(context.Context, access.AuditEventInput) error
-	DispatchAPIGen           func(Scope, string, http.ResponseWriter, *http.Request) bool
-	Catalog                  agenttools.Catalog
-	Documentation            agenttools.Documentation
-	QueryMetadata            func(context.Context, string, string) agenttools.VisualQueryMetadata
-	QueryContext             func(context.Context, Scope) context.Context
-	EnableSystemPrompt       bool
-	Logger                   *slog.Logger
-	MCPScope                 func(*http.Request) (Scope, bool)
-	MCPProtect               func(http.Handler) http.Handler
-	ProductName              string
-	BuildVersion             string
-	APIGenOperations         []agenttools.APIGenOperation
-	DashboardAuthoring       *authoringapplication.Application
-	HTTP                     HTTPConfig
-}
-
-type SearchPort interface {
-	SearchSubject(*http.Request) (productsearch.Subject, bool)
-	Search(context.Context, productsearch.Subject, productsearch.Query) (productsearch.Page, error)
-	ResolveSearchReferences(context.Context, productsearch.Subject, string, []productsearch.Reference) ([]productsearch.Result, error)
+	Database         *sql.DB
+	Model            ModelConfig
+	Service          *agent.Service
+	Jobs             JobStore
+	RunWorkloadClass string
+	ProjectID        projectgraph.ResourceID
+	// ResolveProjectID returns the exact project bound to the active serving
+	// lease. It is required for fresh installations where ProjectID is empty at
+	// process startup, and is evaluated for each project-dependent operation.
+	ResolveProjectID   func(context.Context) (projectgraph.ResourceID, error)
+	DashboardMetrics   func(string) (queryruntime.Metrics, bool)
+	RecordAudit        func(context.Context, access.AuditEventInput) error
+	DispatchAPIGen     func(Scope, string, http.ResponseWriter, *http.Request) bool
+	Catalog            agenttools.Catalog
+	Documentation      agenttools.Documentation
+	QueryMetadata      func(context.Context, string, string) agenttools.VisualQueryMetadata
+	QueryContext       func(context.Context, Scope) context.Context
+	EnableSystemPrompt bool
+	Logger             *slog.Logger
+	MCPScope           func(*http.Request) (Scope, bool)
+	MCPProtect         func(http.Handler) http.Handler
+	ProductName        string
+	BuildVersion       string
+	APIGenOperations   []agenttools.APIGenOperation
+	DashboardAuthoring *authoringapplication.Application
+	ResolveResource    ResourceResolver
+	HTTP               HTTPConfig
 }
 
 type Principal struct {
@@ -131,17 +124,24 @@ type ModelConfig struct {
 }
 
 type Scope struct {
-	WorkspaceID    string
+	ProjectID      string
 	PrincipalID    string
+	GroupIDs       []string
 	ConversationID string
 	Credential     CredentialScope
 	DevAuthBypass  bool
 }
 
+// ResourceResolver resolves an exact graph resource through the authorized
+// active-generation catalog before an authoring or query tool executes. The
+// module-owned scope keeps application composition independent from the
+// implementation package used by the built-in tools.
+type ResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
+
 type CredentialScope struct {
-	WorkspaceID string
-	Privileges  []string
-	Restricted  bool
+	ProjectID    string
+	Capabilities []string
+	Restricted   bool
 }
 
 type Settings interface {
@@ -151,6 +151,7 @@ type Settings interface {
 
 type HTTPConfig struct {
 	Settings           Settings
+	PlatformAdmin      func(context.Context, string) (bool, error)
 	CurrentPrincipal   func(*http.Request) (Principal, bool)
 	CurrentCredential  func(*http.Request) (access.APICredential, bool)
 	Broker             *pagestream.Broker
@@ -169,8 +170,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.RunWorkloadClass == "" {
 		config.RunWorkloadClass = "background"
 	}
-	if config.GlobalWorkspaceID == "" {
-		config.GlobalWorkspaceID = "_global"
+	if config.ResolveProjectID == nil {
+		if err := config.ProjectID.Validate(); err != nil {
+			return nil, fmt.Errorf("agent active project: %w", err)
+		}
 	}
 	service := config.Service
 	workflow, durableWorkflow := config.Jobs.(jobs.WorkflowRecorder)
@@ -179,14 +182,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		service = agent.NewService(repository, agent.Config{
 			APIKey: config.Model.APIKey, BaseURL: config.Model.BaseURL, Model: config.Model.Model,
 		})
-		if reconciler, ok := repository.(agent.PreparingRunReconciler); ok && workflow != nil {
-			reconcileCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			reconcileErr := reconciler.ReconcilePreparingRuns(reconcileCtx)
-			cancel()
-			if reconcileErr != nil {
-				return nil, fmt.Errorf("reconcile preparing agent runs: %w", reconcileErr)
-			}
-		}
 	}
 	if service != nil {
 		if config.RecordAudit == nil {
@@ -223,10 +218,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		service: service, jobs: config.Jobs,
 		runWorkloadClass:  config.RunWorkloadClass,
-		globalWorkspaceID: config.GlobalWorkspaceID, search: config.Search, environment: config.Environment,
-		dashboardMetrics: config.DashboardMetrics, authorizeAnyObject: config.AuthorizeAnyObject,
-		skipContextAuthorization: config.SkipContextAuthorization,
-		recordAudit:              config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
+		projectID:         config.ProjectID,
+		projectIDResolver: config.ResolveProjectID,
+		currentPrincipal:  config.HTTP.CurrentPrincipal,
+		dashboardMetrics:  config.DashboardMetrics,
+		recordAudit:       config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
 		catalog: config.Catalog, documentation: config.Documentation,
 		queryMetadata: config.QueryMetadata, queryContext: queryContext,
 		enableSystemPrompt: config.EnableSystemPrompt, broker: config.HTTP.Broker, logger: config.Logger,
@@ -235,6 +231,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		productName: config.ProductName, buildVersion: config.BuildVersion,
 		apiOperations:      append([]agenttools.APIGenOperation(nil), config.APIGenOperations...),
 		dashboardAuthoring: config.DashboardAuthoring,
+		resolveResource:    config.ResolveResource,
 		runExecution:       runExecution,
 	}
 	if err := validateRunJobHandlers(runExecution, m.JobHandlers(nil)); err != nil {
@@ -259,7 +256,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		return agenthttp.Principal{ID: principal.ID, DevAuthBypass: principal.DevAuthBypass}, ok
 	}
 	m.handler = agenthttp.NewHandler(agenthttp.Options{
-		Service: service, Settings: config.HTTP.Settings,
+		Service: service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
+		PlatformAdmin:    config.HTTP.PlatformAdmin,
 		CurrentPrincipal: currentPrincipal, CurrentCredential: config.HTTP.CurrentCredential,
 		Broker: config.HTTP.Broker, CSRFToken: config.HTTP.CSRFToken,
 		CurrentRoleLabel: config.HTTP.CurrentRoleLabel, Layout: config.HTTP.Layout, ChatSignal: m.chatSignal,
@@ -276,24 +274,24 @@ func Build(_ context.Context, config Config) (*Module, error) {
 
 func scopeFromAgent(scope agent.Scope) Scope {
 	return Scope{
-		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
-			WorkspaceID: scope.Credential.WorkspaceID,
-			Privileges:  append([]string(nil), scope.Credential.Privileges...),
-			Restricted:  scope.Credential.Restricted,
+			ProjectID:    scope.Credential.ProjectID,
+			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
+			Restricted:   scope.Credential.Restricted,
 		},
 	}
 }
 
 func scopeToAgent(scope Scope) agent.Scope {
 	return agent.Scope{
-		WorkspaceID: scope.WorkspaceID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: agent.CredentialScope{
-			WorkspaceID: scope.Credential.WorkspaceID,
-			Privileges:  append([]string(nil), scope.Credential.Privileges...),
-			Restricted:  scope.Credential.Restricted,
+			ProjectID:    scope.Credential.ProjectID,
+			Capabilities: append([]string(nil), scope.Credential.Capabilities...),
+			Restricted:   scope.Credential.Restricted,
 		},
 	}
 }

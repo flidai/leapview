@@ -155,9 +155,9 @@ func renderIndex(tools []agenttools.ToolReference) string {
 	out.WriteString(generatedMarker + "\n\n# Agent tool reference\n\n")
 	out.WriteString("The exact tool catalog exposed by built-in chat, deployment MCP, and `leapview agent tools`. Names, metadata, defaults, and schemas are generated from the canonical runtime providers.\n\n")
 	out.WriteString("Machine-readable: [complete tool manifest](/docs/agent-tools/manifest.json). Focused JSON and Markdown slices are available at `/docs/agent-tools/tools/{name}.json` and `.md`.\n\n")
-	out.WriteString("## Tools\n\n| Tool | Privilege | Effect | Description |\n| --- | --- | --- | --- |\n")
+	out.WriteString("## Tools\n\n| Tool | Authorization | Effect | Description |\n| --- | --- | --- | --- |\n")
 	for _, tool := range tools {
-		out.WriteString("| [`" + tool.Name + "`](/docs/agent-tools/" + tool.Name + ") | `" + tool.Privilege + "` | `" + tool.Effect + "` | " + escapeTable(firstSentence(tool.Description)) + " |\n")
+		out.WriteString("| [`" + tool.Name + "`](/docs/agent-tools/" + tool.Name + ") | `" + toolAuthorization(tool) + "` | `" + tool.Effect + "` | " + escapeTable(firstSentence(tool.Description)) + " |\n")
 	}
 	return out.String()
 }
@@ -168,7 +168,7 @@ func renderTool(tool agenttools.ToolReference) string {
 	out.WriteString(strings.TrimSpace(tool.Description) + "\n\n")
 	out.WriteString("Machine-readable: [focused JSON](/docs/agent-tools/tools/" + tool.Name + ".json) · [complete manifest](/docs/agent-tools/manifest.json)\n\n")
 	out.WriteString("## Contract\n\n| Property | Value |\n| --- | --- |\n")
-	out.WriteString("| Required privilege | `" + tool.Privilege + "` |\n")
+	out.WriteString("| Authorization | `" + toolAuthorization(tool) + "` |\n")
 	out.WriteString("| Effect | `" + tool.Effect + "` |\n")
 	out.WriteString("| Operation | `" + tool.OperationID + "` |\n")
 	out.WriteString("| Tags | " + codeList(tool.Tags) + " |\n")
@@ -177,6 +177,13 @@ func renderTool(tool agenttools.ToolReference) string {
 	writeSchema(&out, "Input schema", tool.InputSchema, tool.Name)
 	writeSchema(&out, "Output schema", tool.OutputSchema, tool.Name)
 	return out.String()
+}
+
+func toolAuthorization(tool agenttools.ToolReference) string {
+	if tool.AuthzMode == "authenticated" {
+		return "authenticated"
+	}
+	return tool.Privilege
 }
 
 func annotationSummary(annotations agenttools.ToolAnnotations) string {

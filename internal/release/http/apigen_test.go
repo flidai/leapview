@@ -19,7 +19,7 @@ func TestAPIGenDispatcherMapsReleaseTransportInputs(t *testing.T) {
 
 	dispatcher.CreateRelease(recorder, request, "p1", releasegen.GenCreateReleaseHeaders{IdempotencyKey: "create-1"})
 	dispatcher.ListReleases(recorder, request, "p1", releasegen.GenListReleasesParams{Limit: int32Ptr(25), PageToken: stringPtr("page-1")})
-	dispatcher.UploadReleaseArtifact(recorder, request, "p1", "r1", "w1", releasegen.GenUploadReleaseArtifactHeaders{
+	dispatcher.UploadReleaseArtifact(recorder, request, "p1", "r1", releasegen.GenUploadReleaseArtifactHeaders{
 		ContentType: "application/octet-stream", ContentDigest: "sha256:artifact",
 	})
 	dispatcher.FinalizeRelease(recorder, request, "p1", "r1", releasegen.GenFinalizeReleaseHeaders{IdempotencyKey: "finalize-1"})
@@ -70,7 +70,7 @@ func (h *recordingReleaseHandler) ListReleases(_ stdhttp.ResponseWriter, _ *stdh
 func (*recordingReleaseHandler) GetRelease(stdhttp.ResponseWriter, *stdhttp.Request, string, string) {
 }
 
-func (h *recordingReleaseHandler) UploadReleaseArtifact(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, _, _, contentType, contentDigest string) {
+func (h *recordingReleaseHandler) UploadReleaseArtifact(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, _, contentType, contentDigest string) {
 	h.contentType, h.contentDigest = contentType, contentDigest
 }
 

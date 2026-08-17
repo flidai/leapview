@@ -8,18 +8,18 @@ import (
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
 )
 
-type workspaceBindingTarget struct {
+type bindingTarget struct {
 	definition *refreshartifact.Definition
 }
 
 func bindManagedDataRoots(definition *refreshartifact.Definition, roots map[string]string) error {
 	if definition == nil {
-		return fmt.Errorf("workspace definition is required")
+		return fmt.Errorf("project definition is required")
 	}
-	return manageddataruntimebinding.BindRoots(workspaceBindingTarget{definition: definition}, roots)
+	return manageddataruntimebinding.BindRoots(bindingTarget{definition: definition}, roots)
 }
 
-func (t workspaceBindingTarget) ManagedConnections() []manageddataruntimebinding.Connection {
+func (t bindingTarget) ManagedConnections() []manageddataruntimebinding.Connection {
 	var connections []manageddataruntimebinding.Connection
 	for modelID, model := range t.definition.Models {
 		if model == nil {
@@ -27,7 +27,7 @@ func (t workspaceBindingTarget) ManagedConnections() []manageddataruntimebinding
 		}
 		for name, connection := range model.Connections {
 			if connection.Kind == "managed" {
-				connections = append(connections, manageddataruntimebinding.Connection{ModelID: modelID, Name: name})
+				connections = append(connections, manageddataruntimebinding.Connection{ModelID: modelID, Name: name, ID: t.definition.ConnectionIDs[name]})
 			}
 		}
 	}
@@ -40,7 +40,7 @@ func (t workspaceBindingTarget) ManagedConnections() []manageddataruntimebinding
 	return connections
 }
 
-func (t workspaceBindingTarget) BindManagedRoot(ref manageddataruntimebinding.Connection, root string) error {
+func (t bindingTarget) BindManagedRoot(ref manageddataruntimebinding.Connection, root string) error {
 	model := t.definition.Models[ref.ModelID]
 	if model == nil {
 		return fmt.Errorf("semantic model %q is unavailable while binding managed data", ref.ModelID)

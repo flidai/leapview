@@ -21,6 +21,7 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -64,13 +65,10 @@ func (m *Module) ResolvePublicDashboard(ctx context.Context, publicID string) (R
 	if err != nil {
 		return ResolvedPublicDashboard{}, publication.ErrNotFound
 	}
-	if m.handler.MetricsForWorkspace == nil {
+	if m.handler.Metrics == nil {
 		return ResolvedPublicDashboard{}, publication.ErrNotFound
 	}
-	metrics, ok := m.handler.MetricsForWorkspace(row.WorkspaceID)
-	if !ok || metrics == nil {
-		return ResolvedPublicDashboard{}, publication.ErrNotFound
-	}
+	metrics := m.handler.Metrics
 	resolvedDashboard, err := dashboardhttp.ResolveDashboard(metrics, row.Dashboard)
 	if err != nil {
 		return ResolvedPublicDashboard{}, publication.ErrNotFound
@@ -161,7 +159,7 @@ func (m *Module) PublicDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	streamFinished := m.observePublicStream(presentation)
 	defer streamFinished()
 	query := r.URL.Query()
-	query.Set("workspace", resolved.Publication.WorkspaceID)
+	query.Set("project", resolved.Publication.ProjectID.String())
 	query.Set("dashboard", resolved.Publication.Dashboard)
 	query.Set("model", resolved.ModelID)
 	query.Set("page", pageID)
@@ -182,7 +180,7 @@ func (m *Module) PublicDashboardCommand(commandName string) http.HandlerFunc {
 			return
 		}
 		query := r.URL.Query()
-		query.Set("workspace", resolved.Publication.WorkspaceID)
+		query.Set("project", resolved.Publication.ProjectID.String())
 		query.Set("dashboard", resolved.Publication.Dashboard)
 		query.Set("model", resolved.ModelID)
 		r.URL.RawQuery = query.Encode()
@@ -221,19 +219,20 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 	handler := m.HTTP()
 	handler.Metrics = resolved.Metrics
 	handler.Broker = m.publicBroker
-	handler.MetricsForWorkspace = func(workspaceID string) (dashboardhttp.Metrics, bool) {
-		return resolved.Metrics, workspaceID == resolved.Publication.WorkspaceID
-	}
 	handler.CSRFToken = nil
 	handler.Layout = nil
-	handler.SessionKey = func(_ *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {
-		return dashboardsession.Key{
-			WorkspaceOrPublication: resolved.Publication.ID,
-			PrincipalOrClient:      clientID,
-			DashboardID:            definition.ID,
-			ServingStateID:         resolved.Publication.ServingStateID,
-			StreamInstanceID:       streamInstanceID,
+	handler.SessionKey = func(_ *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
+		dashboardID, err := projectgraph.NewResourceID(definition.ID)
+		if err != nil {
+			return dashboardsession.Key{}, err
 		}
+		return dashboardsession.Key{
+			PublicationID:     resolved.Publication.ID,
+			PrincipalOrClient: clientID,
+			DashboardID:       dashboardID,
+			ServingStateID:    resolved.Publication.ServingStateID,
+			StreamInstanceID:  streamInstanceID,
+		}, nil
 	}
 	handler.CommandGuard = func(r *http.Request, _ dashboardhttp.Metrics, request command.Request, signals dashboard.Signals) error {
 		current, err := m.PublicationByPublicID(r.Context(), resolved.Publication.PublicID)
@@ -262,16 +261,43 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 }
 
 func PublicationExecutionContext(ctx context.Context, row publication.Publication, modelID string) context.Context {
-	principalID := access.DashboardPublicationSubjectID(row.WorkspaceID, row.Name)
+	principalID := "dashboard_publication:" + row.ProjectID.String() + "." + strings.TrimSpace(row.Name)
+	dashboard := canonicalPublicationResource(row.Dashboard, projectgraph.KindDashboard)
+	model := canonicalPublicationResource(modelID, projectgraph.KindSemanticModel)
+	dependencies := make([]access.ResourceRef, 0, len(row.DependencyAssetIDs))
+	for _, id := range row.DependencyAssetIDs {
+		if resource := canonicalPublicationResourceID(id); resource.Validate() == nil {
+			dependencies = append(dependencies, resource)
+		}
+	}
 	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
-		WorkspaceID: row.WorkspaceID, Surface: dataquery.SurfacePublicDashboard,
+		ProjectID: row.ProjectID, Surface: dataquery.SurfacePublicDashboard,
 		PrincipalID: principalID, ObjectType: "dashboard_publication", ObjectID: row.Name,
 	})
 	return queryauthz.WithDashboardPublicationCapability(ctx, queryauthz.DashboardPublicationCapability{
-		WorkspaceID: row.WorkspaceID, Publication: row.Name,
-		Dashboard: row.Dashboard, ModelID: modelID,
-		DependencyAssetIDs: append([]string(nil), row.DependencyAssetIDs...),
+		ProjectID: row.ProjectID, Publication: row.Name,
+		Dashboard: dashboard, ModelID: model, DependencyAssetIDs: dependencies,
 	})
+}
+
+func canonicalPublicationResource(id string, kind projectgraph.Kind) access.ResourceRef {
+	resourceID, err := projectgraph.NewResourceID(strings.TrimSpace(id))
+	if err != nil {
+		return access.ResourceRef{}
+	}
+	resource, err := access.NewResourceRef(resourceID, kind)
+	if err != nil {
+		return access.ResourceRef{}
+	}
+	return resource
+}
+
+func canonicalPublicationResourceID(id string) access.ResourceRef {
+	parts := strings.SplitN(strings.TrimSpace(id), ":", 2)
+	if len(parts) != 2 {
+		return access.ResourceRef{}
+	}
+	return canonicalPublicationResource(id, projectgraph.Kind(parts[0]))
 }
 
 func publicationPageExists(pages []dashboard.Page, pageID string) bool {

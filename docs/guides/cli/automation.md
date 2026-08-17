@@ -6,7 +6,7 @@ Treat validation, candidate creation, publication, approval, activation, and ver
 
 Use `LEAPVIEW_WORKLOAD_CLIENT_ID`, `LEAPVIEW_WORKLOAD_CLIENT_SECRET`, and `LEAPVIEW_WORKLOAD_PROJECT` for production CI. Inject the service-principal secret from the CI secret manager and prevent pull requests from untrusted forks from reading it. The CLI exchanges it on demand for a short-lived target credential. The validation job does not need target credentials. `LEAPVIEW_API_TOKEN` remains a compatibility option for smaller teams.
 
-The automation principal needs `AUTHOR_PROJECT`, `PUBLISH_RELEASE`, and `REQUEST_DEPLOYMENT` for its exact project. It must not receive human login, approval, activation, secret-provider administration, connection-secret, or source-data credentials. Target-owned connection resolution and row-level policy evaluation still run under the automation principal. Use a deliberately restricted automation role; do not impersonate an end user to make a candidate pass.
+The automation principal needs `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, and `RESOURCE_PUBLISH` for its exact project. It must not receive human login, approval, activation, secret-provider administration, connection-secret, or source-data credentials. Target-owned connection resolution and row-level policy evaluation still run under the automation principal. Use a deliberately restricted automation role; do not impersonate an end user to make a candidate pass.
 
 Keep the target and project identity in reviewable pipeline configuration:
 
@@ -57,7 +57,7 @@ leapview publish \
 
 `publish` does not read, compile, or upload the project again. It submits the exact retained candidate revision and provenance produced by `dev`. An environment configured for immediate publication waits for activation to finish. A protected environment returns the immutable deployment and approval request without activating it.
 
-Approve the exact persisted plan with a different principal holding `APPROVE_DEPLOYMENT`, then request cutover with a principal holding `ACTIVATE_DEPLOYMENT`. Immediately before cutover, LeapView rechecks the release, plan digest, approval revision, expiry, reviewer credential and grant, and activator credential and grant. Revocation or expiry closes the workflow safely.
+Approve the exact persisted plan with a different principal holding `PROJECT_ADMIN`, then request cutover with a principal holding `PROJECT_ADMIN`. Immediately before cutover, LeapView rechecks the release, plan digest, approval revision, expiry, reviewer credential and grant, and activator credential and grant. Revocation or expiry closes the workflow safely.
 
 ## Reconcile change lifecycle
 
@@ -88,7 +88,7 @@ Candidates also expire on the target, so a missed close event does not leave an 
 
 The `dev` and `publish` output records the exact source revision when present, artifact, target, candidate revision, principal, and result. Retain those logs with the source-control run. The Release and Deployment APIs expose the same source revision and digest-bound evidence after the runner disappears.
 
-After activation, verify readiness and exercise a representative workspace query or dashboard with a separate verifier identity. A transport retry must reuse the same stable candidate key and immutable revision; never rebuild from a moving branch between attempts.
+After activation, verify readiness and exercise a representative project query or dashboard with a separate verifier identity. A transport retry must reuse the same stable candidate key and immutable revision; never rebuild from a moving branch between attempts.
 
 The maintained GitHub Actions reference is [`/.github/examples/leapview-authoring.yml`](https://github.com/flidai/leapview/blob/main/.github/examples/leapview-authoring.yml). It keeps fork validation credential-free, gates trusted candidate creation, uses protected publication, and reconciles closed pull requests. Adapt only the source-control event syntax; keep the LeapView commands and target policy unchanged.
 

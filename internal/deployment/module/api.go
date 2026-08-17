@@ -21,7 +21,9 @@ import (
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 var (
@@ -33,13 +35,21 @@ var (
 type PageParams = deploymentapi.PageParams
 
 type ReleasePort interface {
-	Get(context.Context, string, string) (release.Release, error)
+	Get(context.Context, projectgraph.ResourceID, string) (release.Release, error)
 	PublishCandidate(context.Context, release.PublishCandidateInput) (release.Release, error)
 	LinkDeployment(context.Context, string, string, string, string) error
 	LinkDeploymentTx(context.Context, transaction.Transaction, string, string, string, string) error
 	DeploymentRelease(context.Context, string, string) (string, string, error)
 	ListDeploymentIDs(context.Context, string) ([]string, error)
 	PriorDeploymentRelease(context.Context, string, string) (string, error)
+}
+
+func (m *Module) getRelease(ctx context.Context, project, releaseID string) (release.Release, error) {
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		return release.Release{}, err
+	}
+	return m.api.Releases.Get(ctx, projectID, releaseID)
 }
 
 type JobStore interface {
@@ -66,6 +76,10 @@ func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request, projec
 }
 
 func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string) {
+	m.createDeploymentWithBootstrap(w, r, operationID, project, releaseID, idempotencyKey, rollbackOf, false)
+}
+
+func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string, bootstrap bool) {
 	operationIDValue := operationID.APIGenOperationID()
 	execution, err := m.execution(operationIDValue)
 	if err != nil {
@@ -84,12 +98,17 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 			m.writeCommandFailure(w, r, operationID, apigenfailure.New("approval_credential_required", "A bounded publication credential is required"))
 			return
 		}
+	} else {
+		// Ungated development deployments still need the authenticated actor on
+		// their durable activation job. Approval credential evidence is only
+		// required and inspected for protected targets.
+		approvalActor.PrincipalID = principal.ID
 	}
 	if m.jobs.Coordinator == nil || m.api.Releases == nil {
 		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))
 		return
 	}
-	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
 		return
@@ -107,16 +126,8 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	targets := make([]apiadapter.TargetRequest, 0, len(targetRelease.Artifacts))
-	for _, artifact := range targetRelease.Artifacts {
-		if artifact.ServingStateID == "" {
-			m.writeCommandFailure(w, r, operationID, apigenfailure.New("release_incomplete", "Release is missing a workspace artifact"))
-			return
-		}
-		targets = append(targets, apiadapter.TargetRequest{Workspace: artifact.WorkspaceID, CandidateID: artifact.ServingStateID})
-	}
 	if !m.protected && m.jobs.Authorize != nil {
-		if err := m.jobs.Authorize(r.Context(), principal.ID, m.handlerEnvironment(), targets); err != nil {
+		if err := m.jobs.Authorize(r.Context(), principal.ID, m.handlerEnvironment(), targetRelease.ServingIdentity.GenerationID); err != nil {
 			if errors.Is(err, ErrPublicationForbidden) {
 				m.writeCommandFailure(w, r, operationID, err)
 				return
@@ -126,19 +137,45 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		}
 	}
 	createRequest := apiadapter.CreateRequest{
-		Project: project, Environment: m.handlerEnvironment(), Targets: targets, Actor: principal.ID, IdempotencyKey: idempotencyKey,
+		Project: project, Environment: m.handlerEnvironment(), GenerationID: targetRelease.ServingIdentity.GenerationID, ArtifactDigest: targetRelease.ArtifactDigest, PriorGenerationID: evidence.BaseGenerationID, Actor: principal.ID, IdempotencyKey: idempotencyKey,
 		ReleaseID: releaseID, Evidence: evidence, RollbackOf: rollbackOf,
 	}
 	createRequest.Workflow = func(deploymentID string) (jobs.WorkflowIntent, error) {
-		return activationWorkflowForOperation(operationIDValue, execution,
-			!m.protected,
+		return activationWorkflowForOperationWithBootstrap(operationIDValue, execution,
+			!m.protected || bootstrap,
 			project,
 			deploymentID,
 			releaseID,
-			deployment.ApprovalActor{PrincipalID: principal.ID},
+			approvalActor,
 			deployment.Approval{},
-			idempotencyKey+":cutover",
+			idempotencyKey+":cutover", bootstrap,
 		)
+	}
+	if bootstrap {
+		if !m.protected || m.bootstrapPolicies == nil || m.authorizeBootstrap == nil || approvalActor.CredentialClass != deployment.CredentialClassAPIToken {
+			m.writeCommandFailure(w, r, operationID, deployment.ErrApprovalRequired)
+			return
+		}
+		requestDigest, digestErr := apiadapter.RequestDigest(createRequest)
+		if digestErr != nil {
+			m.writeCommandFailure(w, r, operationID, digestErr)
+			return
+		}
+		deploymentID := apiadapter.DeploymentID(project, principal.ID, idempotencyKey)
+		bootstrapPolicy := deployment.BootstrapActivationPolicy{
+			ProjectID: projectgraph.ResourceID(project), Environment: servingstate.Environment(m.handlerEnvironment()), DeploymentID: deploymentID,
+			RequestDigest: requestDigest, ActorID: principal.ID, CredentialID: approvalActor.CredentialID,
+			CredentialExpiresAt: approvalActor.CredentialExpiresAt, ArmedAt: time.Now().UTC(),
+		}
+		if err := m.authorizeBootstrap(r.Context(), bootstrapPolicy); err != nil {
+			m.writeCommandFailure(w, r, operationID, err)
+			return
+		}
+		_, armErr := m.bootstrapPolicies.ArmBootstrapActivation(r.Context(), bootstrapPolicy)
+		if armErr != nil {
+			m.writeCommandFailure(w, r, operationID, armErr)
+			return
+		}
 	}
 	created, err := m.jobs.Coordinator.Create(r.Context(), createRequest)
 	if err != nil {
@@ -146,7 +183,7 @@ func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operat
 		return
 	}
 	response := deploymentResponse(created, targetRelease)
-	if m.protected {
+	if m.protected && !bootstrap {
 		approval, approvalErr := m.requestApproval(
 			r.Context(),
 			created,
@@ -170,14 +207,7 @@ func publishEvidence(
 	instanceID,
 	environment string,
 ) (apiadapter.PublishEvidence, error) {
-	instanceID = strings.TrimSpace(instanceID)
-	environment = strings.TrimSpace(environment)
-	if targetRelease.Provenance == nil ||
-		targetRelease.ProjectID == "" ||
-		targetRelease.ProjectDigest == "" ||
-		targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.SourceDigest ||
-		targetRelease.Provenance.Plan.TargetID != instanceID ||
-		targetRelease.Provenance.Plan.Environment != environment {
+	if instanceID != strings.TrimSpace(instanceID) || environment != strings.TrimSpace(environment) || targetRelease.Provenance == nil || targetRelease.ServingIdentity.ProjectID == "" || targetRelease.ProjectDigest == "" || targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.ProjectDigest || targetRelease.Provenance.Plan.TargetID != instanceID || targetRelease.Provenance.Plan.Identity != targetRelease.ServingIdentity || targetRelease.Provenance.Plan.Identity.Environment != environment {
 		return apiadapter.PublishEvidence{}, fmt.Errorf(
 			"%w: release provenance does not belong to this target",
 			deployment.ErrConflict,
@@ -190,47 +220,30 @@ func publishEvidence(
 			err,
 		)
 	}
-	planned := make(map[string]release.TargetWorkspacePlan, len(targetRelease.Provenance.Plan.Workspaces))
-	for _, workspace := range targetRelease.Provenance.Plan.Workspaces {
-		planned[workspace.WorkspaceID] = workspace
-	}
-	if len(planned) != len(targetRelease.Artifacts) {
-		return apiadapter.PublishEvidence{}, fmt.Errorf(
-			"%w: release target plan is incomplete",
-			deployment.ErrConflict,
-		)
-	}
-	for _, artifact := range targetRelease.Artifacts {
-		workspace, ok := planned[artifact.WorkspaceID]
-		if !ok || workspace.ServingStateID != artifact.ServingStateID ||
-			workspace.ArtifactDigest != publishArtifactDigest(artifact.ActualDigest) ||
-			artifact.ActualDigest != artifact.ExpectedDigest {
-			return apiadapter.PublishEvidence{}, fmt.Errorf(
-				"%w: release target plan drifted for workspace %q",
-				deployment.ErrConflict,
-				artifact.WorkspaceID,
-			)
-		}
+	if targetRelease.ActualDigest != targetRelease.ArtifactDigest || targetRelease.ServingIdentity.GenerationID != targetRelease.Provenance.Plan.Identity.GenerationID {
+		return apiadapter.PublishEvidence{}, fmt.Errorf("%w: release generation artifact drifted", deployment.ErrConflict)
 	}
 	return apiadapter.PublishEvidence{
-		ReleaseDigest:     targetRelease.Provenance.Digest,
-		ArtifactDigest:    targetRelease.Provenance.ArtifactDigest,
-		PlanDigest:        targetRelease.Provenance.PlanDigest,
-		CandidateID:       targetRelease.Provenance.Candidate.ID,
-		CandidateRevision: targetRelease.Provenance.Candidate.Revision,
-		TargetID:          targetRelease.Provenance.Plan.TargetID,
-		BaseGeneration:    targetRelease.Provenance.Plan.BaseGeneration,
-		RuntimeVersion:    targetRelease.Provenance.Plan.RuntimeVersion,
-		PolicyDigest:      targetRelease.Provenance.Plan.PolicyDigest,
+		ReleaseDigest:            targetRelease.Provenance.Digest,
+		ArtifactContentDigest:    targetRelease.ArtifactDigest,
+		ArtifactProvenanceDigest: targetRelease.Provenance.ArtifactProvenanceDigest,
+		PlanDigest:               targetRelease.Provenance.PlanDigest,
+		CandidateID:              targetRelease.Provenance.Candidate.ID,
+		CandidateRevision:        targetRelease.Provenance.Candidate.Revision,
+		TargetID:                 targetRelease.Provenance.Plan.TargetID,
+		Environment:              targetRelease.Provenance.Plan.Identity.Environment,
+		GenerationID:             targetRelease.Provenance.Plan.Identity.GenerationID,
+		BaseGenerationID:         baseGenerationID(targetRelease.Provenance.Plan.BaseIdentity),
+		RuntimeVersion:           targetRelease.Provenance.Plan.RuntimeVersion,
+		PolicyDigest:             targetRelease.Provenance.Plan.PolicyDigest,
 	}, nil
 }
 
-func publishArtifactDigest(value string) string {
-	value = strings.TrimSpace(value)
-	if strings.HasPrefix(value, "sha256:") {
-		return value
+func baseGenerationID(identity *projectgraph.ServingIdentity) string {
+	if identity == nil {
+		return ""
 	}
-	return "sha256:" + value
+	return identity.GenerationID
 }
 
 func (m *Module) GetDeployment(w http.ResponseWriter, r *http.Request, project, deploymentID string) {
@@ -243,7 +256,7 @@ func (m *Module) GetDeployment(w http.ResponseWriter, r *http.Request, project, 
 		writeAPIError(w, r, err)
 		return
 	}
-	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 	if err != nil {
 		writeAPIError(w, r, err)
 		return
@@ -274,7 +287,7 @@ func (m *Module) ListDeployments(w http.ResponseWriter, r *http.Request, project
 		if err != nil {
 			continue
 		}
-		targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+		targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 		if err != nil {
 			continue
 		}
@@ -305,7 +318,7 @@ func (m *Module) CancelDeployment(w http.ResponseWriter, r *http.Request, projec
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
 		return
@@ -517,7 +530,7 @@ func (m *Module) ActivateDeployment(
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.Wrap("queue_unavailable", err))
 		return
 	}
-	targetRelease, err := m.api.Releases.Get(r.Context(), project, releaseID)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
 	if err != nil {
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), err)
 		return
@@ -962,27 +975,12 @@ func deploymentResponse(
 	result := deploymentapi.Response{
 		ID: row.ID, ProjectID: row.Project, ReleaseID: targetRelease.ID,
 		Environment: row.Environment, RequestDigest: row.RequestDigest,
+		GenerationID: row.GenerationID, ArtifactDigest: row.ArtifactDigest,
 		Evidence: publishEvidenceResponse(targetRelease), Status: status,
-		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Targets: make([]deploymentapi.TargetResponse, 0, len(row.Targets)),
-		Connections: make([]deploymentapi.ConnectionResponse, 0, len(row.Connections)),
+		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt,
 	}
-	for _, target := range row.Targets {
-		stateID := target.CandidateID
-		mapped := deploymentapi.TargetResponse{WorkspaceID: target.Workspace, ServingStateID: &stateID, Status: string(target.Status)}
-		if target.PriorCandidateID != "" {
-			mapped.PriorServingStateID = &target.PriorCandidateID
-		}
-		if target.Error != "" {
-			mapped.Error = &target.Error
-		}
-		result.Targets = append(result.Targets, mapped)
-	}
-	for _, connection := range row.Connections {
-		mapped := deploymentapi.ConnectionResponse{ConnectionID: connection.Connection, RevisionID: connection.RevisionID}
-		if connection.PriorRevisionID != "" {
-			mapped.PriorRevisionID = &connection.PriorRevisionID
-		}
-		result.Connections = append(result.Connections, mapped)
+	if row.PriorGenerationID != "" {
+		result.PriorGenerationID = &row.PriorGenerationID
 	}
 	if row.ActivatedAt != "" {
 		result.StartedAt = &row.ActivatedAt
@@ -1006,25 +1004,20 @@ func publishEvidenceResponse(
 	targetRelease release.Release,
 ) deploymentapi.PublishEvidenceResponse {
 	if targetRelease.Provenance == nil {
-		return deploymentapi.PublishEvidenceResponse{
-			Workspaces: []deploymentapi.WorkspacePublishEvidence{},
-		}
+		return deploymentapi.PublishEvidenceResponse{}
 	}
 	response := deploymentapi.PublishEvidenceResponse{
-		ReleaseDigest:     targetRelease.Provenance.Digest,
-		ArtifactDigest:    targetRelease.Provenance.ArtifactDigest,
-		PlanDigest:        targetRelease.Provenance.PlanDigest,
-		CandidateID:       targetRelease.Provenance.Candidate.ID,
-		CandidateRevision: targetRelease.Provenance.Candidate.Revision,
-		TargetID:          targetRelease.Provenance.Plan.TargetID,
-		BaseGeneration:    targetRelease.Provenance.Plan.BaseGeneration,
-		RuntimeVersion:    targetRelease.Provenance.Plan.RuntimeVersion,
-		PolicyDigest:      targetRelease.Provenance.Plan.PolicyDigest,
-		Workspaces: make(
-			[]deploymentapi.WorkspacePublishEvidence,
-			0,
-			len(targetRelease.Provenance.Plan.Workspaces),
-		),
+		ReleaseDigest:            targetRelease.Provenance.Digest,
+		ArtifactContentDigest:    targetRelease.ArtifactDigest,
+		ArtifactProvenanceDigest: targetRelease.Provenance.ArtifactProvenanceDigest,
+		PlanDigest:               targetRelease.Provenance.PlanDigest,
+		CandidateID:              targetRelease.Provenance.Candidate.ID,
+		CandidateRevision:        targetRelease.Provenance.Candidate.Revision,
+		TargetID:                 targetRelease.Provenance.Plan.TargetID,
+		Environment:              targetRelease.Provenance.Plan.Identity.Environment,
+		GenerationID:             targetRelease.Provenance.Plan.Identity.GenerationID,
+		RuntimeVersion:           targetRelease.Provenance.Plan.RuntimeVersion,
+		PolicyDigest:             targetRelease.Provenance.Plan.PolicyDigest,
 	}
 	if source := targetRelease.Provenance.SourceRevision; source != nil {
 		response.SourceRevision = &deploymentapi.CandidateSourceRevision{
@@ -1042,34 +1035,6 @@ func publishEvidenceResponse(
 			value := source.ChangeID
 			response.SourceRevision.ChangeID = &value
 		}
-	}
-	for _, workspace := range targetRelease.Provenance.Plan.Workspaces {
-		mapped := deploymentapi.WorkspacePublishEvidence{
-			WorkspaceID: workspace.WorkspaceID, ServingStateID: workspace.ServingStateID,
-			ArtifactDigest: workspace.ArtifactDigest,
-			DataRevision:   workspace.DataRevision, DataMode: string(workspace.DataMode),
-			ManagedDataPins: make(
-				[]deploymentapi.ManagedDataPinEvidence,
-				len(workspace.ManagedDataPins),
-			),
-			Bindings: make(
-				[]deploymentapi.BindingEvidence,
-				len(workspace.Bindings),
-			),
-		}
-		for index, pin := range workspace.ManagedDataPins {
-			mapped.ManagedDataPins[index] = deploymentapi.ManagedDataPinEvidence{
-				ConnectionID: pin.ConnectionID, RevisionID: pin.RevisionID,
-			}
-		}
-		for index, binding := range workspace.Bindings {
-			mapped.Bindings[index] = deploymentapi.BindingEvidence{
-				BindingID: binding.BindingID, LogicalConnection: binding.LogicalConnection,
-				ConnectorKind: binding.ConnectorKind, Revision: binding.Revision,
-				ValidatedVersion: binding.ValidatedVersion, EndpointConfigHash: binding.EndpointConfigHash,
-			}
-		}
-		response.Workspaces = append(response.Workspaces, mapped)
 	}
 	return response
 }

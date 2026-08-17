@@ -11,7 +11,6 @@ import (
 type rootOptions struct {
 	addr               string
 	production         bool
-	workspaceID        string
 	environment        string
 	target             string
 	token              string
@@ -62,7 +61,6 @@ func NewCommand(ctx context.Context) *cobra.Command {
 	root.AddCommand(apiCommand(ctx, opts))
 	root.AddCommand(agentCommand(ctx, opts))
 	root.AddCommand(searchCommand(ctx, opts))
-	root.AddCommand(workspacesCommand(ctx, opts))
 	root.AddCommand(dashboardsCommand(ctx, opts))
 	root.AddCommand(semanticModelsCommand(ctx, opts))
 	authentication := applicationAuthoringAuthentication{}

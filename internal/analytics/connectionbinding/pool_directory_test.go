@@ -67,7 +67,7 @@ func TestPoolDirectoryBoundsRefreshConcurrencyAndTimeout(t *testing.T) {
 	binding := validTargetBinding(t)
 	second := binding
 	second.ID = "binding_reporting"
-	second.LogicalConnectionID = "reporting"
+	second.ConnectionID = "reporting"
 	resolvers := map[string]*blockingResolver{}
 	concurrency := &resolverConcurrency{}
 	directory, err := NewPoolDirectory(PoolDirectoryConfig{
@@ -75,7 +75,7 @@ func TestPoolDirectoryBoundsRefreshConcurrencyAndTimeout(t *testing.T) {
 			resolver := &blockingResolver{
 				started: make(chan struct{}), release: make(chan struct{}), concurrency: concurrency,
 			}
-			resolvers[current.ID] = resolver
+			resolvers[current.ID.String()] = resolver
 			return NewPoolManager(PoolManagerConfig{
 				Binding: current, Resolver: resolver, Factory: &recordingPoolFactory{},
 				Store: &recordingBindingStore{}, Now: time.Now, StaleAfter: time.Hour,
@@ -98,7 +98,7 @@ func TestPoolDirectoryBoundsRefreshConcurrencyAndTimeout(t *testing.T) {
 			Actor: "principal:operator-1", Operation: RefreshTest,
 		})
 	}()
-	<-resolvers[binding.ID].started
+	<-resolvers[binding.ID.String()].started
 
 	start := time.Now()
 	err = other.Refresh(context.Background(), RefreshRequest{

@@ -23,7 +23,7 @@ same trusted analytics through interactive dashboards and AI agents.
 ## Try LeapView
 
 The evaluation image is the quickest way to explore LeapView. It requires only
-Docker—no source checkout—and includes a disposable sample workspace.
+Docker—no source checkout—and includes a disposable sample project.
 
 ```sh
 docker pull ghcr.io/flidai/leapview:latest

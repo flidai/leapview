@@ -19,7 +19,6 @@ type generationTarget struct {
 	name       string
 	outputPath string
 	tags       []string
-	names      []string
 }
 
 var generationTargets = []generationTarget{
@@ -27,7 +26,6 @@ var generationTargets = []generationTarget{
 		name:       "access",
 		outputPath: "internal/access/ui/signals/models.gen.go",
 		tags:       []string{"login"},
-		names:      []string{"WorkspaceAccessSignal"},
 	},
 	{
 		name:       "admin",
@@ -45,9 +43,9 @@ var generationTargets = []generationTarget{
 		tags:       []string{"dashboard"},
 	},
 	{
-		name:       "workspace",
-		outputPath: "internal/workspace/ui/signals/models.gen.go",
-		tags:       []string{"workspace", "catalog", "connections", "data"},
+		name:       "project",
+		outputPath: "internal/project/ui/signals/models.gen.go",
+		tags:       []string{"catalog", "project", "pipelines", "connections", "data", "resource", "shared"},
 	},
 }
 
@@ -113,7 +111,7 @@ func generatedOutputs(root string, doc ir.Document) (map[string][]byte, error) {
 func contractsForTarget(doc ir.Document, target generationTarget) []ir.Contract {
 	contracts := make([]ir.Contract, 0, len(doc.Contracts))
 	for _, contract := range doc.Contracts {
-		if slices.Contains(target.names, contract.Name) || containsAny(contract.Tags, target.tags) {
+		if containsAny(contract.Tags, target.tags) {
 			contracts = append(contracts, contract)
 		}
 	}

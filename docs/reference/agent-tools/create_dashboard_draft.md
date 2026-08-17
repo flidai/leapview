@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/create_dashboard_draft.
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `EDIT_ITEM` |
+| Authorization | `RESOURCE_EDIT` |
 | Effect | `write` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `create` |
@@ -27,7 +27,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/create_dashboard_draft.
       "minLength": 1,
       "type": "string"
     },
-    "semanticModel": {
+    "semanticModelId": {
       "minLength": 1,
       "type": "string"
     },
@@ -38,16 +38,11 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/create_dashboard_draft.
     "title": {
       "minLength": 1,
       "type": "string"
-    },
-    "workspace": {
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
-    "semanticModel",
-    "title",
-    "workspace"
+    "semanticModelId",
+    "title"
   ],
   "type": "object"
 }

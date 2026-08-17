@@ -1,11 +1,10 @@
 -- +goose Up
-
-ALTER TABLE serving_states ADD COLUMN dashboard_publications_json TEXT NOT NULL DEFAULT '{}';
+-- Dashboard publication metadata is unchanged; serving-state publication JSON
+-- is canonical in the baseline.
 
 CREATE TABLE dashboard_publications (
   id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   public_id TEXT NOT NULL UNIQUE,
   dashboard TEXT NOT NULL DEFAULT '',
@@ -22,11 +21,11 @@ CREATE TABLE dashboard_publications (
   rotated_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(project_id, workspace_id, name)
+  UNIQUE(project_id, name)
 );
 
-CREATE INDEX dashboard_publications_workspace_idx
-  ON dashboard_publications(workspace_id, configured, name);
+CREATE INDEX dashboard_publications_project_idx
+  ON dashboard_publications(project_id, configured, name);
 
 CREATE TABLE dashboard_publication_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,13 +66,11 @@ CREATE INDEX dashboard_publication_stream_events_stream_idx
   ON dashboard_publication_stream_events(stream_id, id);
 
 -- +goose Down
-
 DROP INDEX dashboard_publication_stream_events_stream_idx;
 DROP TABLE dashboard_publication_stream_events;
 DROP INDEX dashboard_publication_streams_expiry_idx;
 DROP TABLE dashboard_publication_streams;
 DROP INDEX dashboard_publication_events_publication_idx;
 DROP TABLE dashboard_publication_events;
-DROP INDEX dashboard_publications_workspace_idx;
+DROP INDEX dashboard_publications_project_idx;
 DROP TABLE dashboard_publications;
-ALTER TABLE serving_states DROP COLUMN dashboard_publications_json;

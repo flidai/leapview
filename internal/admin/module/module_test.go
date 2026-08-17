@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	"github.com/flidai/leapview/internal/access"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
@@ -59,12 +60,53 @@ func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", nil)
 	r.Header.Set("X-Request-ID", "ui-request-1")
 	r.Header.Set(uicommand.HeaderOperationID, dashboardgen.GenUIActionSuspendDashboardPublication().OperationID())
-	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{WorkspaceID: "sales", Publication: "executive", Action: "suspend"})
+	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{ProjectID: "sales", Publication: "executive", Action: "suspend"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if service.invocation.Surface != string(apigencommand.SurfaceUI) || service.invocation.RequestID != "ui-request-1" || service.invocation.IdempotencyKey != "ui-request-1" {
 		t.Fatalf("invocation = %#v", service.invocation)
+	}
+}
+
+func TestCapabilityAllowedIntersectsSnapshotAndCredentialScope(t *testing.T) {
+	allowed := true
+	m := &Module{currentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
+		if !allowed {
+			return nil, nil
+		}
+		return []access.Capability{access.CapabilityResourcePublish}, nil
+	}}
+	scope, err := access.NewAuthoringScope("instance", "sales", []access.Capability{access.CapabilityResourcePublish})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := access.APICredential{Authoring: &access.AuthoringSession{Scope: scope}}
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	if ok, err := m.capabilityAllowed(r, "principal", "operations", access.CapabilityResourcePublish, credential, true); err != nil || ok {
+		t.Fatalf("cross-project authoring credential allowed = %v, err=%v", ok, err)
+	}
+	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, credential, true); err != nil || !ok {
+		t.Fatalf("matching authoring credential allowed = %v, err=%v", ok, err)
+	}
+	allowed = false
+	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, credential, true); err != nil || ok {
+		t.Fatalf("revoked authoring capability allowed = %v, err=%v", ok, err)
+	}
+}
+
+func TestCapabilityAllowedPreservesTokenDynamicAndDenyAll(t *testing.T) {
+	m := &Module{currentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
+		return []access.Capability{access.CapabilityResourcePublish}, nil
+	}}
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	dynamic := access.APICredential{Token: access.APIToken{Capabilities: nil}}
+	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, dynamic, true); err != nil || !ok {
+		t.Fatalf("dynamic token allowed = %v, err=%v", ok, err)
+	}
+	denyAll := access.APICredential{Token: access.APIToken{Capabilities: []access.Capability{}}}
+	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, denyAll, true); err != nil || ok {
+		t.Fatalf("deny-all token allowed = %v, err=%v", ok, err)
 	}
 }
 

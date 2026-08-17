@@ -18,6 +18,7 @@ import (
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/project"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const candidateSourcePlanLifetime = 5 * time.Minute
@@ -32,7 +33,7 @@ type candidateSourceSynchronizer struct {
 }
 
 type candidateSourcePlanKey struct {
-	projectID      string
+	projectID      projectgraph.ResourceID
 	ownerID        string
 	candidateKey   string
 	artifactDigest string
@@ -44,13 +45,13 @@ type candidateSourcePlan struct {
 }
 
 type candidateSourcePlanRecord struct {
-	Version        int      `json:"version"`
-	ProjectID      string   `json:"projectId"`
-	OwnerID        string   `json:"ownerId"`
-	CandidateKey   string   `json:"candidateKey,omitempty"`
-	ArtifactDigest string   `json:"artifactDigest"`
-	ExpiresAt      string   `json:"expiresAt"`
-	Missing        []string `json:"missing"`
+	Version        int                     `json:"version"`
+	ProjectID      projectgraph.ResourceID `json:"projectId"`
+	OwnerID        string                  `json:"ownerId"`
+	CandidateKey   string                  `json:"candidateKey,omitempty"`
+	ArtifactDigest string                  `json:"artifactDigest"`
+	ExpiresAt      string                  `json:"expiresAt"`
+	Missing        []string                `json:"missing"`
 }
 
 func NewCandidateSourceSynchronizer(root string) (project.CandidateSourceSynchronizer, error) {
@@ -79,6 +80,9 @@ func (synchronizer *candidateSourceSynchronizer) Plan(
 	if synchronizer == nil || synchronizer.store == nil {
 		return nil, project.ErrCandidateSourceUnavailable
 	}
+	if err := scope.ProjectID.Validate(); err != nil {
+		return nil, candidateSourceInvalid(fmt.Errorf("project identity: %w", err))
+	}
 	missing, err := synchronizer.store.Missing(ctx, synchronizationPlanRequest(scope, request))
 	if err != nil {
 		return nil, candidateSourceInvalid(err)
@@ -91,7 +95,7 @@ func (synchronizer *candidateSourceSynchronizer) Plan(
 		allowed[identity] = struct{}{}
 	}
 	key := candidateSourcePlanKey{
-		projectID: strings.TrimSpace(scope.ProjectID), ownerID: strings.TrimSpace(scope.OwnerID),
+		projectID: scope.ProjectID, ownerID: strings.TrimSpace(scope.OwnerID),
 		candidateKey:   normalizeCandidateSourceKey(scope.CandidateKey),
 		artifactDigest: strings.TrimSpace(request.ArtifactDigest),
 	}
@@ -114,7 +118,10 @@ func (synchronizer *candidateSourceSynchronizer) Upload(
 	if synchronizer == nil || synchronizer.store == nil {
 		return project.ErrCandidateSourceUnavailable
 	}
-	projectID := strings.TrimSpace(scope.ProjectID)
+	if err := scope.ProjectID.Validate(); err != nil {
+		return candidateSourceInvalid(fmt.Errorf("project identity: %w", err))
+	}
+	projectID := scope.ProjectID
 	ownerID := strings.TrimSpace(scope.OwnerID)
 	identity = strings.TrimSpace(identity)
 	synchronizer.mu.Lock()
@@ -150,13 +157,16 @@ func (synchronizer *candidateSourceSynchronizer) Commit(
 	if synchronizer == nil || synchronizer.store == nil {
 		return project.CandidateSourceSnapshot{}, project.ErrCandidateSourceUnavailable
 	}
+	if err := scope.ProjectID.Validate(); err != nil {
+		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(fmt.Errorf("project identity: %w", err))
+	}
 	stored, err := synchronizer.store.Commit(ctx, synchronizationPlanRequest(scope, request))
 	if err != nil {
 		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(err)
 	}
 	synchronizer.mu.Lock()
 	key := candidateSourcePlanKey{
-		projectID: strings.TrimSpace(scope.ProjectID), ownerID: strings.TrimSpace(scope.OwnerID),
+		projectID: scope.ProjectID, ownerID: strings.TrimSpace(scope.OwnerID),
 		candidateKey:   normalizeCandidateSourceKey(scope.CandidateKey),
 		artifactDigest: strings.TrimSpace(request.ArtifactDigest),
 	}
@@ -208,10 +218,13 @@ func (synchronizer *candidateSourceSynchronizer) loadPlans() error {
 			return fmt.Errorf("decode %s expiry: %w", entry.Name(), err)
 		}
 		key := candidateSourcePlanKey{
-			projectID:      strings.TrimSpace(record.ProjectID),
+			projectID:      record.ProjectID,
 			ownerID:        strings.TrimSpace(record.OwnerID),
 			candidateKey:   normalizeCandidateSourceKey(record.CandidateKey),
 			artifactDigest: strings.TrimSpace(record.ArtifactDigest),
+		}
+		if err := key.projectID.Validate(); err != nil {
+			return fmt.Errorf("decode %s project identity: %w", entry.Name(), err)
 		}
 		if entry.Name() != filepath.Base(synchronizer.planPath(key)) {
 			return fmt.Errorf("%s identity does not match filename", entry.Name())
@@ -254,7 +267,7 @@ func (synchronizer *candidateSourceSynchronizer) savePlan(
 
 func (synchronizer *candidateSourceSynchronizer) planPath(key candidateSourcePlanKey) string {
 	key.candidateKey = normalizeCandidateSourceKey(key.candidateKey)
-	identity := key.projectID + "\x00" + key.ownerID + "\x00" + key.artifactDigest
+	identity := key.projectID.String() + "\x00" + key.ownerID + "\x00" + key.artifactDigest
 	if key.candidateKey != "default" {
 		identity += "\x00" + key.candidateKey
 	}
@@ -269,7 +282,7 @@ func synchronizationPlanRequest(
 	request project.CandidateSynchronizationRequest,
 ) projectdevloop.SynchronizationPlanRequest {
 	result := projectdevloop.SynchronizationPlanRequest{
-		ProjectID: strings.TrimSpace(scope.ProjectID), ProjectFile: request.ProjectFile,
+		ProjectID: scope.ProjectID, ProjectFile: request.ProjectFile,
 		CandidateKey:           request.CandidateKey,
 		ArtifactDigest:         request.ArtifactDigest,
 		ExpectedCandidateID:    request.ExpectedCandidateID,

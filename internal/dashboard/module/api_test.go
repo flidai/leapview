@@ -8,10 +8,7 @@ import (
 )
 
 func TestServingSnapshotIsResolvedByDashboardModule(t *testing.T) {
-	module := &Module{snapshot: func(_ context.Context, workspaceID string) (string, error) {
-		if workspaceID != "sales" {
-			t.Fatalf("workspace = %q", workspaceID)
-		}
+	module := &Module{snapshot: func(_ context.Context) (string, error) {
 		return "state-current", nil
 	}}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/sales/semantic-models/orders/query", nil)

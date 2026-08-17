@@ -55,7 +55,7 @@ func TestPlanChanges(t *testing.T) {
 			}},
 			want: Jobs{
 				Prepare:         true,
-				Frontend:        []string{"core", "reports", "chat", "workspace"},
+				Frontend:        []string{"core", "reports", "chat", "data"},
 				UIRouteQA:       true,
 				Docs:            true,
 				SiteImage:       true,
@@ -202,7 +202,7 @@ func TestPlanChanges(t *testing.T) {
 			input: Input{Event: "pull_request", PullRequestNumber: 1},
 			changes: []Change{{
 				Status: "M",
-				Paths:  []string{"dashboards/workspaces/sales/workspace.yaml"},
+				Paths:  []string{"dashboards/leapview.yaml"},
 			}},
 			want: Jobs{
 				Prepare:         true,

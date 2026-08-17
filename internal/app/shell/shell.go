@@ -32,11 +32,9 @@ type Config struct {
 // principal may open. A nil value preserves the complete navigation for
 // callers that do not provide authorization context, such as static previews.
 type AdminNavigationAccess struct {
-	ManagePlatform     bool
-	ManageGrants       bool
-	ManageWorkspace    bool
-	ManagePublications bool
-	ViewAudit          bool
+	ManagePlatform bool
+	ManageIdentity bool
+	ViewAudit      bool
 }
 
 type Chrome struct {
@@ -63,7 +61,6 @@ type Sidebar struct {
 	UserName         *string  `json:"userName,omitempty"`
 	UserRole         *string  `json:"userRole,omitempty"`
 	UserSettingsHref string   `json:"userSettingsHref"`
-	WorkspaceTitle   string   `json:"workspaceTitle"`
 }
 
 type Area struct {
@@ -126,8 +123,8 @@ func Provider(config Config) webpage.Provider {
 			ModelID: optional(context.RelatedID), ModelTitle: optional(context.RelatedTitle),
 			PageTitle: context.PageTitle, ProductLogoURL: optional(config.ProductLogoURL), ProductName: firstNonEmpty(config.Presentation.ProductName, "LeapView"),
 			UserAvatarURL: optional(config.UserAvatarURL), UserName: optional(config.UserName), UserRole: optional(config.RoleLabel),
-			UserSettingsHref: "/admin/profile", WorkspaceTitle: firstNonEmpty(context.ScopeTitle, context.ScopeID, config.Presentation.ProductName),
-			Groups: navigation,
+			UserSettingsHref: "/admin/profile",
+			Groups:           navigation,
 		}
 		if isAdmin {
 			sidebar.PrimaryAction = &Action{Label: "Back to app", Href: "/", Icon: "back"}
@@ -157,14 +154,16 @@ func Provider(config Config) webpage.Provider {
 func productAreas() []Area {
 	return []Area{
 		{ID: "insights", Label: "Insights", Href: "/", Icon: "insights"},
-		{ID: "develop", Label: "Develop", Href: "/workspaces", Icon: "code"},
+		{ID: "develop", Label: "Develop", Href: "/sources", Icon: "code"},
 	}
 }
 
 func areaForActive(active string) string {
 	switch strings.TrimSpace(active) {
-	case "workspaces", "connections", "pipelines", "develop":
+	case "sources", "models", "semantic-models", "connections", "pipelines", "develop":
 		return "develop"
+	case "data-explorer", "explore":
+		return "insights"
 	default:
 		return "insights"
 	}
@@ -182,24 +181,24 @@ func areaNavigation(area string) []Group {
 
 func insightsNavigation() []Item {
 	return []Item{
-		{ID: "dashboards", Label: "Dashboards", Href: "/", Icon: "dashboard", Meta: optional("Reports")},
-		{ID: "data", Label: "Explore", Href: "/data", Icon: "cache", Meta: optional("Ad hoc analysis")},
-		{ID: "chat", Label: "Chats", Href: "/chats", Icon: "chat", Meta: optional("Agent interface")},
+		{ID: "dashboards", Label: "Dashboards", Href: "/", Icon: "dashboard"},
+		{ID: "data-explorer", Label: "Data Explorer", Href: "/explore", Icon: "database"},
 	}
 }
 
 func developNavigation() []Item {
 	return []Item{
-		{ID: "workspaces", Label: "Workspaces", Href: "/workspaces", Icon: "catalog", Meta: optional("Published assets")},
-		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow", Meta: optional("Refresh monitoring")},
-		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data", Meta: optional("Data sources")},
+		{ID: "sources", Label: "Sources", Href: "/sources", Icon: "database"},
+		{ID: "models", Label: "Models", Href: "/models", Icon: "boxes"},
+		{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "waypoints"},
+		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"},
+		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"},
 	}
 }
 
 func adminNavigation(access *AdminNavigationAccess) []Group {
 	allowed := AdminNavigationAccess{
-		ManagePlatform: true, ManageGrants: true, ManageWorkspace: true,
-		ManagePublications: true, ViewAudit: true,
+		ManagePlatform: true, ManageIdentity: true, ViewAudit: true,
 	}
 	if access != nil {
 		allowed = *access
@@ -217,14 +216,13 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 			Label: "Product",
 			Items: filterItems([]conditionalItem{
 				{allowed: allowed.ManagePlatform, item: Item{ID: "general", Label: "General", Href: "/admin/general", Icon: "settings"}},
-				{allowed: allowed.ManageWorkspace, item: Item{ID: "workspaces-admin", Label: "Workspaces", Href: "/admin/workspaces", Icon: "catalog"}},
 			}),
 		},
 		{
 			Label: "Access",
 			Items: filterItems([]conditionalItem{
-				{allowed: allowed.ManageGrants, item: Item{ID: "principals", Label: "Principals", Href: "/admin/principals", Icon: "users"}},
-				{allowed: allowed.ManageGrants, item: Item{ID: "groups", Label: "Groups", Href: "/admin/groups", Icon: "users-round"}},
+				{allowed: allowed.ManageIdentity, item: Item{ID: "principals", Label: "Principals", Href: "/admin/principals", Icon: "users"}},
+				{allowed: allowed.ManageIdentity, item: Item{ID: "groups", Label: "Groups", Href: "/admin/groups", Icon: "users-round"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "service-accounts", Label: "Service accounts", Href: "/admin/service-accounts", Icon: "bot"}},
 				{allowed: allowed.ManagePlatform, item: Item{ID: "authentication", Label: "Authentication", Href: "/admin/authentication", Icon: "system"}},
 			}),
@@ -233,7 +231,7 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 			Label: "Data & sharing",
 			Items: filterItems([]conditionalItem{
 				{allowed: allowed.ManagePlatform, item: Item{ID: "storage", Label: "Storage", Href: "/admin/storage", Icon: "database"}},
-				{allowed: allowed.ManagePublications, item: Item{ID: "publications", Label: "Publications", Href: "/admin/publications", Icon: "globe"}},
+				{allowed: allowed.ManagePlatform, item: Item{ID: "publications", Label: "Publications", Href: "/admin/publications", Icon: "globe"}},
 			}),
 		},
 		{

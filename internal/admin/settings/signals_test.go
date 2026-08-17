@@ -5,15 +5,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
-	"github.com/flidai/leapview/internal/workspace"
 )
-
-func TestWorkspaceSignalFromSummaryEscapesLinks(t *testing.T) {
-	item := WorkspaceSignalFromSummary(workspace.Summary{ID: "sales team", Title: "Sales", Description: "Revenue"}, "prod")
-	if item.Href != "/workspaces/sales%20team" || item.Links.Self != "/api/v1/workspaces/sales%20team" {
-		t.Fatalf("links = %#v", item)
-	}
-}
 
 func TestNormalizeAuditLogCommandResetsCursorAndBoundsLimit(t *testing.T) {
 	command := NormalizeAuditLogCommand(AuditLogCommand{Action: "filter", PageToken: "stale", Limit: 500, Filters: AuditLogFilters{Action: " create "}})

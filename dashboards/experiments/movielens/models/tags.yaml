@@ -1,0 +1,43 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:tags
+  name: tags
+  displayName: Tags Fact
+  description: User-generated tag events from MovieLens.
+spec:
+  primaryKey: tag_id
+  grain: tag_id
+  sources:
+    - movielens.tags
+  fields:
+    tag_id: {label: Tag ID, description: Stable tag event identifier.}
+    user_id: {label: User ID, description: Anonymized MovieLens user identifier.}
+    movie_id: {label: Movie ID, description: MovieLens movie identifier.}
+    tag: {label: Tag, description: User-generated tag text.}
+    tagged_at: {label: Tagged at, description: Timestamp when the tag was applied.}
+    tag_date: {label: Tag date, description: Date when the tag was applied.}
+    tag_month: {label: Tag month, description: Calendar month when the tag was applied.}
+  transform:
+    sql: |
+      SELECT
+        concat(
+          CAST(userId AS VARCHAR),
+          '-',
+          CAST(movieId AS VARCHAR),
+          '-',
+          CAST(timestamp AS VARCHAR),
+          '-',
+          md5(COALESCE(tag, ''))
+        ) AS tag_id,
+        try_cast(userId AS BIGINT) AS user_id,
+        try_cast(movieId AS BIGINT) AS movie_id,
+        tag,
+        CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS TIMESTAMP) AS tagged_at,
+        CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS DATE) AS tag_date,
+        strftime(CAST(to_timestamp(try_cast(timestamp AS BIGINT)) AS TIMESTAMP), '%Y-%m') AS tag_month
+      FROM source."movielens.tags"
+      WHERE userId IS NOT NULL
+        AND movieId IS NOT NULL
+        AND tag IS NOT NULL
+        AND timestamp IS NOT NULL

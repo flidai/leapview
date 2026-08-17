@@ -1,6 +1,7 @@
 apiVersion: leapview.dev/v1
 kind: Project
 metadata:
+  id: project:movielens-experiment
   name: movielens-experiment
 spec:
   connections:
@@ -9,6 +10,16 @@ spec:
   sources:
     include:
       - sources/*.yaml
-  workspaces:
+  models:
     include:
-      - workspaces/*/workspace.yaml
+      - models/*.yaml
+  semanticModels:
+    include:
+      - semantic-models/*.yaml
+  pipelines:
+    include: []
+  dashboards:
+    include:
+      - dashboards/*.yaml
+  access:
+    include: []

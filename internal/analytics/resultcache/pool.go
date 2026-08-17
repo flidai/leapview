@@ -16,9 +16,8 @@ import (
 type Constraint string
 
 const (
-	ConstraintRuntime   Constraint = "runtime"
-	ConstraintWorkspace Constraint = "workspace"
-	ConstraintNode      Constraint = "node"
+	ConstraintRuntime Constraint = "runtime"
+	ConstraintNode    Constraint = "node"
 )
 
 type StoreOutcome string
@@ -31,28 +30,26 @@ const (
 )
 
 type Limits struct {
-	RuntimeEntries   int
-	RuntimeBytes     int64
-	WorkspaceEntries int
-	WorkspaceBytes   int64
-	NodeEntries      int
-	NodeBytes        int64
+	RuntimeEntries int
+	RuntimeBytes   int64
+	NodeEntries    int
+	NodeBytes      int64
 }
 
 func (l Limits) Validate() error {
-	if l.RuntimeEntries <= 0 || l.WorkspaceEntries <= 0 || l.NodeEntries <= 0 || l.RuntimeBytes <= 0 || l.WorkspaceBytes <= 0 || l.NodeBytes <= 0 {
+	if l.RuntimeEntries <= 0 || l.NodeEntries <= 0 || l.RuntimeBytes <= 0 || l.NodeBytes <= 0 {
 		return fmt.Errorf("query cache limits must be positive")
 	}
-	if l.RuntimeEntries > l.WorkspaceEntries || l.WorkspaceEntries > l.NodeEntries {
-		return fmt.Errorf("query cache entry limits must satisfy runtime <= workspace <= node")
+	if l.RuntimeEntries > l.NodeEntries {
+		return fmt.Errorf("query cache entry limits must satisfy runtime <= node")
 	}
-	if l.RuntimeBytes > l.WorkspaceBytes || l.WorkspaceBytes > l.NodeBytes {
-		return fmt.Errorf("query cache byte limits must satisfy runtime <= workspace <= node")
+	if l.RuntimeBytes > l.NodeBytes {
+		return fmt.Errorf("query cache byte limits must satisfy runtime <= node")
 	}
 	return nil
 }
 
-type ScopeID struct{ WorkspaceID, RuntimeID string }
+type ScopeID struct{ RuntimeID string }
 type Token uint64
 
 // ScopeProvider is the cache capability required by runtime consumers.
@@ -67,7 +64,6 @@ type Pool struct {
 	entries      map[string]*list.Element
 	lru          *list.List
 	scopes       map[string]*scopeState
-	workspaces   map[string]*usage
 	bytes        int64
 	evictions    map[Constraint]uint64
 	stores       map[StoreOutcome]uint64
@@ -214,29 +210,28 @@ func (s *Scope) Stats() UsageSnapshot {
 }
 
 type Snapshot struct {
-	Entries    int
-	Bytes      int64
-	Workspaces map[string]UsageSnapshot
-	Scopes     map[string]ScopeSnapshot
-	Evictions  map[Constraint]uint64
-	Stores     map[StoreOutcome]uint64
+	Entries   int
+	Bytes     int64
+	Scopes    map[string]ScopeSnapshot
+	Evictions map[Constraint]uint64
+	Stores    map[StoreOutcome]uint64
 }
 
 func New(limits Limits) (*Pool, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &Pool{limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, workspaces: map[string]*usage{}, evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{}, arrowFlights: map[string]*arrowFlight{}}, nil
+	return &Pool{limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{}, arrowFlights: map[string]*arrowFlight{}}, nil
 }
 
 func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 	if p == nil {
 		return nil, fmt.Errorf("result cache pool is required")
 	}
-	if id.WorkspaceID == "" || id.RuntimeID == "" {
-		return nil, fmt.Errorf("result cache workspace and runtime IDs are required")
+	if id.RuntimeID == "" {
+		return nil, fmt.Errorf("result cache runtime ID is required")
 	}
-	key := id.WorkspaceID + "\x00" + id.RuntimeID
+	key := id.RuntimeID
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
@@ -334,7 +329,7 @@ func (s *Scope) StoreArrow(key string, token Token, result *arrowresult.Result, 
 		return StoreStale
 	}
 	bytes := int64(len(key)) + result.Bytes() + metadataBytes(metadata)
-	if bytes > p.limits.RuntimeBytes || bytes > p.limits.WorkspaceBytes || bytes > p.limits.NodeBytes {
+	if bytes > p.limits.RuntimeBytes || bytes > p.limits.NodeBytes {
 		p.stores[StoreOversized]++
 		return StoreOversized
 	}
@@ -353,9 +348,6 @@ func (s *Scope) StoreArrow(key string, token Token, result *arrowresult.Result, 
 	state.entries[composite] = struct{}{}
 	state.usage.entries++
 	state.usage.bytes += bytes
-	workspace := p.workspaceLocked(state.id.WorkspaceID)
-	workspace.entries++
-	workspace.bytes += bytes
 	p.bytes += bytes
 	p.enforceLocked(state)
 	p.stores[StoreStored]++
@@ -363,7 +355,7 @@ func (s *Scope) StoreArrow(key string, token Token, result *arrowresult.Result, 
 }
 
 // StoreBytes copies and retains one immutable byte entry under the same
-// runtime/workspace/node budgets as Arrow results.
+// runtime/node budgets as Arrow results.
 func (s *Scope) StoreBytes(key string, token Token, value []byte) StoreOutcome {
 	if s == nil || s.pool == nil || value == nil {
 		return StoreClosed
@@ -381,7 +373,7 @@ func (s *Scope) StoreBytes(key string, token Token, value []byte) StoreOutcome {
 		return StoreStale
 	}
 	bytes := int64(len(key) + len(value))
-	if bytes > p.limits.RuntimeBytes || bytes > p.limits.WorkspaceBytes || bytes > p.limits.NodeBytes {
+	if bytes > p.limits.RuntimeBytes || bytes > p.limits.NodeBytes {
 		p.stores[StoreOversized]++
 		return StoreOversized
 	}
@@ -397,9 +389,6 @@ func (s *Scope) StoreBytes(key string, token Token, value []byte) StoreOutcome {
 	state.entries[composite] = struct{}{}
 	state.usage.entries++
 	state.usage.bytes += bytes
-	workspace := p.workspaceLocked(state.id.WorkspaceID)
-	workspace.entries++
-	workspace.bytes += bytes
 	p.bytes += bytes
 	p.enforceLocked(state)
 	p.stores[StoreStored]++
@@ -423,10 +412,6 @@ func (s *Scope) Delete(key string) {
 func (p *Pool) enforceLocked(state *scopeState) {
 	for state.usage.entries > p.limits.RuntimeEntries || state.usage.bytes > p.limits.RuntimeBytes {
 		p.removeLocked(p.oldestLocked(func(e entry) bool { return e.scope == scopeKey(state.id) }), ConstraintRuntime)
-	}
-	workspace := p.workspaceLocked(state.id.WorkspaceID)
-	for workspace.entries > p.limits.WorkspaceEntries || workspace.bytes > p.limits.WorkspaceBytes {
-		p.removeLocked(p.oldestLocked(func(e entry) bool { return p.scopes[e.scope].id.WorkspaceID == state.id.WorkspaceID }), ConstraintWorkspace)
 	}
 	for len(p.entries) > p.limits.NodeEntries || p.bytes > p.limits.NodeBytes {
 		p.removeLocked(p.lru.Back(), ConstraintNode)
@@ -457,9 +442,6 @@ func (p *Pool) removeLocked(element *list.Element, constraint Constraint) {
 		delete(state.entries, e.composite)
 		state.usage.entries--
 		state.usage.bytes -= e.bytes
-		ws := p.workspaceLocked(state.id.WorkspaceID)
-		ws.entries--
-		ws.bytes -= e.bytes
 	}
 	if constraint != "" {
 		p.evictions[constraint]++
@@ -478,13 +460,7 @@ func metadataBytes(metadata Metadata) int64 {
 	}
 	return bytes
 }
-func (p *Pool) workspaceLocked(id string) *usage {
-	if p.workspaces[id] == nil {
-		p.workspaces[id] = &usage{}
-	}
-	return p.workspaces[id]
-}
-func scopeKey(id ScopeID) string { return id.WorkspaceID + "\x00" + id.RuntimeID }
+func scopeKey(id ScopeID) string { return id.RuntimeID }
 
 func (s *Scope) Invalidate() {
 	if s == nil || s.pool == nil {
@@ -663,12 +639,7 @@ func (p *Pool) Stats() Snapshot {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	result := Snapshot{Entries: len(p.entries), Bytes: p.bytes, Workspaces: map[string]UsageSnapshot{}, Scopes: map[string]ScopeSnapshot{}, Evictions: map[Constraint]uint64{}, Stores: map[StoreOutcome]uint64{}}
-	for id, u := range p.workspaces {
-		if u.entries != 0 || u.bytes != 0 {
-			result.Workspaces[id] = UsageSnapshot{Entries: u.entries, Bytes: u.bytes}
-		}
-	}
+	result := Snapshot{Entries: len(p.entries), Bytes: p.bytes, Scopes: map[string]ScopeSnapshot{}, Evictions: map[Constraint]uint64{}, Stores: map[StoreOutcome]uint64{}}
 	for key, state := range p.scopes {
 		result.Scopes[key] = ScopeSnapshot{ScopeID: state.id, Entries: state.usage.entries, Bytes: state.usage.bytes, Generation: state.generation}
 	}

@@ -1,6 +1,6 @@
 # Model tables
 
-Model tables are workspace-owned analytical tables built from permitted project sources. They form the stable boundary between physical input data and the semantic layer.
+Model tables are project-owned analytical tables built from permitted project sources. They form the stable boundary between physical input data and the semantic layer.
 
 Raw inputs often contain transport-oriented names, weakly typed values, duplicate records, or joins that should not be repeated for every chart. A model table makes that cleanup and shaping explicit once.
 
@@ -10,11 +10,11 @@ A model table declares a stable identity, primary key, grain, source dependencie
 
 ```yaml
 apiVersion: leapview.dev/v1
-kind: ModelTable
+kind: Model
 metadata:
-  workspace: sales
+  id: model:orders
   name: orders
-  title: Orders Fact
+  displayName: Orders Fact
 spec:
   primaryKey: order_id
   grain: order_id
@@ -34,7 +34,7 @@ spec:
       WHERE order_id IS NOT NULL
 ```
 
-The generated [Model Table configuration](/docs/config/model-table) is the exact field reference. Real transformations can use several declared sources and should expose every field needed by downstream semantic models.
+The generated [Model configuration](/docs/config/model) is the exact field reference. Real transformations can use several declared sources and should expose every field needed by downstream semantic models.
 
 ## Grain and key
 
@@ -57,7 +57,7 @@ Business aggregations such as revenue, active customers, or conversion rate gene
 
 ## Source namespace
 
-Transform SQL reads permitted project sources through the source namespace. Quoted names are important when source IDs contain dots. Depend only on sources listed by the workspace and declared on the model table; this keeps lineage and refresh planning accurate.
+Transform SQL reads permitted project sources through the source namespace. Quoted names are important when source IDs contain dots. Depend only on sources declared on the model table; this keeps lineage and refresh planning accurate.
 
 ## Refresh and activation
 

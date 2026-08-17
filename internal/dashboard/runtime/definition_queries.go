@@ -12,7 +12,7 @@ import (
 
 // QueryDashboardPageForDefinition executes an already compiled dashboard
 // definition against this service's existing model/data runtime. It is used by
-// workspace-published dashboards whose definition does not live in the
+// instance-managed dashboards whose definition does not live in the
 // project catalog.
 func (m *Service) QueryDashboardPageForDefinition(ctx context.Context, definition dashboarddefinition.Definition, pageID string, filters dashboard.Filters) (dashboard.Patch, error) {
 	view, err := m.definitionService(definition)

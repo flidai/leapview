@@ -1,7 +1,7 @@
 {
   "title": "LeapView Headless API",
   "version": "1.0.0",
-  "description": "Headless API for LeapView workspaces, deployments, managed data, access control, refreshes, and agent operations.",
+  "description": "Headless API for LeapView projects, deployments, managed data, access control, refreshes, and agent operations.",
   "documents": [
     {
       "slug": "system",
@@ -16,7 +16,7 @@
     {
       "slug": "projects",
       "title": "Projects",
-      "summary": "Read-only project registry."
+      "summary": "Active project graph assertion."
     },
     {
       "slug": "releases",
@@ -26,17 +26,12 @@
     {
       "slug": "current-user",
       "title": "Current User",
-      "summary": "Current principal, sessions, tokens, and privileges."
-    },
-    {
-      "slug": "workspaces",
-      "title": "Workspaces",
-      "summary": "Workspace and lineage discovery."
+      "summary": "Current principal, sessions, tokens, and capabilities."
     },
     {
       "slug": "search",
       "title": "Search",
-      "summary": "Progressive workspace discovery across BI assets."
+      "summary": "Progressive project-graph discovery across governed resources."
     },
     {
       "slug": "bi",
@@ -71,7 +66,7 @@
     {
       "slug": "audit",
       "title": "Audit",
-      "summary": "Workspace audit event discovery."
+      "summary": "Project audit event discovery."
     },
     {
       "slug": "publications",

@@ -129,17 +129,6 @@ func (s *Module) MCPOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
-	if !principal.DevBypass {
-		allowed, err := s.authorizeAnyWorkspace(r.Context(), principal.ID, nil, access.PrivilegeUseAgent)
-		if err != nil {
-			writeAuthError(w, r, err, http.StatusInternalServerError)
-			return
-		}
-		if !allowed {
-			writeAuthError(w, r, errForbidden, http.StatusForbidden)
-			return
-		}
-	}
 	consent, err := s.oauth.Consent(r)
 	if err != nil {
 		http.Error(w, "Invalid OAuth authorization request", http.StatusBadRequest)
@@ -169,8 +158,8 @@ func (s *Module) recordMCPOAuthAuthorization(r *http.Request, principalID, clien
 	}
 	metadata, _ := json.Marshal(map[string]any{"clientId": clientID, "approved": approved})
 	_ = access.PersistAuditEvent(r.Context(), repository, access.AuditEventInput{
-		PrincipalID: principalID, Action: "mcp_oauth.authorization", TargetType: "oauth_client",
-		TargetID: clientID, Privilege: access.PrivilegeUseAgent, Status: status,
+		PrincipalID: principalID, Action: "mcp_oauth.authorization", ResourceKind: "oauth_client",
+		ResourceID: clientID, Status: status,
 		RequestID: r.Header.Get("X-Request-ID"), CorrelationID: r.Header.Get("X-Correlation-ID"),
 		MetadataJSON: string(metadata),
 	})

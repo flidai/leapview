@@ -9,10 +9,23 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/filter"
 )
 
+func TestKeyRequiresExactlyOneProjectOrPublicationScope(t *testing.T) {
+	base := Key{PrincipalOrClient: "user-1", DashboardID: "executive", ServingStateID: "ss-1", StreamInstanceID: "tab-1"}
+	if err := base.Validate(); err == nil {
+		t.Fatal("unscoped session key validation = nil")
+	}
+	projectAndPublication := base
+	projectAndPublication.ProjectID = "sales"
+	projectAndPublication.PublicationID = "pub-1"
+	if err := projectAndPublication.Validate(); err == nil {
+		t.Fatal("project/publication session key validation = nil")
+	}
+}
+
 func TestMemoryStoreCompareAndSwapAllowsOneConcurrentWriter(t *testing.T) {
 	store := NewMemoryStore()
 	key := Key{
-		WorkspaceOrPublication: "sales", PrincipalOrClient: "user-1",
+		ProjectID: "sales", PrincipalOrClient: "user-1",
 		DashboardID: "executive", ServingStateID: "ss-1", StreamInstanceID: "tab-1",
 	}
 	created, err := store.Create(context.Background(), key, State{ActivePage: "overview", StreamGeneration: 1})
@@ -58,7 +71,7 @@ func TestServiceNavigateUsesFilterRevisionAndIdempotentCAS(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore()
 	key := Key{
-		WorkspaceOrPublication: "sales", PrincipalOrClient: "user-1",
+		ProjectID: "sales", PrincipalOrClient: "user-1",
 		DashboardID: "executive", ServingStateID: "ss-1", StreamInstanceID: "tab-1",
 	}
 	machine := filter.NewMachine(filter.ApplicationImmediate, map[string]filter.BindingSpec{})
@@ -95,7 +108,7 @@ func TestServiceUpdateSelectionsPreservesFilterRevision(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore()
 	key := Key{
-		WorkspaceOrPublication: "sales", PrincipalOrClient: "user-1",
+		ProjectID: "sales", PrincipalOrClient: "user-1",
 		DashboardID: "executive", ServingStateID: "ss-1", StreamInstanceID: "tab-1",
 	}
 	machine := filter.NewMachine(filter.ApplicationImmediate, map[string]filter.BindingSpec{})
@@ -130,7 +143,7 @@ func TestServicePersistsFilterIdempotencyAndKeepsIndependentSelectionRoots(t *te
 		Bindings: specs,
 	}
 	key := Key{
-		WorkspaceOrPublication: "sales", PrincipalOrClient: "user-1",
+		ProjectID: "sales", PrincipalOrClient: "user-1",
 		DashboardID: "executive", ServingStateID: "ss-1", StreamInstanceID: "tab-1",
 	}
 	initial := NewState("overview", filter.NewMachine(filter.ApplicationImmediate, specs).Snapshot())

@@ -1,0 +1,17 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:operations_customers
+  name: operations_customers
+  displayName: Customers
+spec:
+  primaryKey: customer_id
+  sources:
+    - olist.customers
+  fields:
+    customer_id: {label: Customer ID}
+    state: {label: State}
+  transform:
+    sql: |
+      SELECT customer_id, customer_state AS state
+      FROM source."olist.customers"

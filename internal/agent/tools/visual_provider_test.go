@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -35,7 +37,7 @@ func TestAgentVisualShapeUsesVisualTypeDefaults(t *testing.T) {
 func TestAgentVisualInputRejectsLegacyAndUnknownProperties(t *testing.T) {
 	for _, property := range []string{"shape", "options", "rendererOptions", "unexpected"} {
 		t.Run(property, func(t *testing.T) {
-			_, err := decodeAgentVisualInput([]byte(`{"type":"histogram","model":"sales","dataset":"orders","` + property + `":{}}`))
+			_, err := decodeAgentVisualInput([]byte(`{"type":"histogram","semanticModelId":"sales","dataset":"orders","` + property + `":{}}`))
 			if err == nil || !strings.Contains(err.Error(), property) {
 				t.Fatalf("decode error = %v, want closed-contract rejection for %q", err, property)
 			}
@@ -49,11 +51,25 @@ func TestAgentVisualInputRejectsLegacyAndUnknownProperties(t *testing.T) {
 	}
 }
 
+func TestAgentVisualQueryRequiresServingSnapshot(t *testing.T) {
+	provider := VisualProvider{Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+		return id, nil
+	}}
+	result := provider.Run(context.Background(), Scope{ProjectID: "project", PrincipalID: "principal"}, agentcore.ToolCall{
+		ID:        "query-without-snapshot",
+		Arguments: json.RawMessage(`{"type":"bar","semanticModelId":"orders","dataset":"orders"}`),
+	})
+	content, _ := result.Content.(map[string]any)
+	failure, _ := content["error"].(map[string]any)
+	if !result.IsError || !strings.Contains(failure["message"].(string), "serving snapshot") {
+		t.Fatalf("result = %#v; want serving snapshot failure", result)
+	}
+}
+
 func TestAgentVisualInputAcceptsAndNormalizesGovernedFilters(t *testing.T) {
 	input, err := decodeAgentVisualInput([]byte(`{
-		"workspace":"sales",
 		"type":"bar",
-		"model":"commerce",
+		"semanticModelId":"commerce",
 		"dataset":"commerce.orders",
 		"dimensions":[{"field":"commerce.orders.country"}],
 		"measures":[{"field":"commerce.revenue"}],
@@ -84,9 +100,8 @@ func TestAgentVisualInputAcceptsAndNormalizesGovernedFilters(t *testing.T) {
 
 func TestAgentVisualInputAcceptsGroupOnlyFilters(t *testing.T) {
 	input, err := decodeAgentVisualInput([]byte(`{
-		"workspace":"sales",
 		"type":"bar",
-		"model":"commerce",
+		"semanticModelId":"commerce",
 		"dataset":"orders",
 		"dimensions":[{"field":"orders.country"}],
 		"measures":[{"field":"revenue"}],
@@ -103,6 +118,9 @@ func TestAgentVisualInputAcceptsGroupOnlyFilters(t *testing.T) {
 func TestAgentVisualQueriesApplyGovernedFilters(t *testing.T) {
 	var captured reportdef.AggregateQuery
 	provider := VisualProvider{
+		Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+			return id, nil
+		},
 		AggregateRows: func(_ context.Context, _, _ string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
 			captured = request
 			return reportdef.QueryRows{{"label": "DK", "value": 3}}, nil
@@ -131,6 +149,9 @@ func TestVisualProviderDecoratesQueryContextWithScope(t *testing.T) {
 	type contextKey struct{}
 	var authorizedValue string
 	provider := VisualProvider{
+		Resolve: func(_ context.Context, _ Scope, id projectgraph.ResourceID, _ projectgraph.Kind, _ access.Capability) (projectgraph.ResourceID, error) {
+			return id, nil
+		},
 		QueryContext: func(ctx context.Context, scope Scope) context.Context {
 			return context.WithValue(ctx, contextKey{}, scope.PrincipalID)
 		},
@@ -140,9 +161,9 @@ func TestVisualProviderDecoratesQueryContextWithScope(t *testing.T) {
 		},
 	}
 
-	provider.Run(context.Background(), Scope{PrincipalID: "principal-1"}, agentcore.ToolCall{
+	provider.Run(context.Background(), Scope{ProjectID: "project_demo", PrincipalID: "principal-1"}, agentcore.ToolCall{
 		ID:        "call-visual",
-		Arguments: json.RawMessage(`{"workspace":"sales","type":"bar","model":"orders","dataset":"orders"}`),
+		Arguments: json.RawMessage(`{"type":"bar","semanticModelId":"orders","dataset":"orders"}`),
 	})
 
 	if authorizedValue != "principal-1" {
@@ -157,7 +178,7 @@ func TestAgentVisualFieldUsagePreservesSemanticUnitsAndFormats(t *testing.T) {
 		},
 	}
 	got := agentVisualFieldUsage("sales", "commerce", model, agentVisualFieldRef{Field: "return_rate", Alias: "rate"}, "measure")
-	if got.Ref.Type != "measure" || got.Ref.ID != "commerce.return_rate" || got.Label != "Return rate" ||
+	if got.Role != "measure" || got.FieldID != "commerce.return_rate" || got.Label != "Return rate" ||
 		got.Alias == nil || *got.Alias != "rate" || got.Unit == nil || *got.Unit != "percent" ||
 		got.Format == nil || *got.Format != "percent_1" {
 		t.Fatalf("field usage = %#v", got)

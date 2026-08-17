@@ -323,7 +323,7 @@ func closedSignal() chan struct{} {
 }
 
 // EnsureExtension installs and loads only LeapView's fixed official extension
-// allowlist. Concurrent first use is coalesced across workspaces.
+// allowlist. Concurrent first use is coalesced across projects.
 func (e *Environment) EnsureExtension(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if _, ok := approvedExtensions[name]; !ok {
@@ -367,7 +367,7 @@ func (e *Environment) EnsureExtension(ctx context.Context, name string) error {
 }
 
 // AnalyticalStats is an immutable bounded telemetry snapshot. Connector keys
-// come only from LeapView's compiled registry; request and workspace identity
+// come only from LeapView's compiled registry; request and project identity
 // never enter metric labels.
 type AnalyticalStats struct {
 	ConnectionAcquisitions uint64

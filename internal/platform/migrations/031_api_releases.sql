@@ -2,37 +2,34 @@
 CREATE TABLE api_releases (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
   project_digest TEXT NOT NULL,
+  artifact_digest TEXT NOT NULL,
+  artifact_actual_digest TEXT NOT NULL DEFAULT '',
+  artifact_size_bytes INTEGER NOT NULL DEFAULT 0 CHECK(artifact_size_bytes >= 0),
+  artifact_uploaded_at TEXT,
   request_digest TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft', 'validating', 'ready', 'failed')),
-  manifest_json TEXT NOT NULL CHECK(json_valid(manifest_json)),
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   finalized_at TEXT,
   error TEXT NOT NULL DEFAULT '',
   UNIQUE(project_id, idempotency_key),
   CHECK(length(trim(project_id)) > 0),
-  CHECK(length(project_digest) > 0),
-  CHECK(length(request_digest) > 0),
+  CHECK(length(trim(environment)) BETWEEN 1 AND 128),
+  CHECK(length(trim(generation_id)) > 0),
+  CHECK(length(project_digest) = 71 AND project_digest GLOB 'sha256:[0-9a-f]*' AND substr(project_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  CHECK(length(artifact_digest) = 71 AND artifact_digest GLOB 'sha256:[0-9a-f]*' AND substr(artifact_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  CHECK(length(request_digest) = 71 AND request_digest GLOB 'sha256:[0-9a-f]*' AND substr(request_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  CHECK(artifact_actual_digest = '' OR (length(artifact_actual_digest) = 71 AND artifact_actual_digest GLOB 'sha256:[0-9a-f]*' AND substr(artifact_actual_digest, 8) NOT GLOB '*[^0-9a-f]*')),
+  CHECK((artifact_uploaded_at IS NULL AND artifact_actual_digest = '' AND artifact_size_bytes = 0) OR (artifact_uploaded_at IS NOT NULL AND artifact_actual_digest = artifact_digest AND artifact_size_bytes >= 0)),
+  FOREIGN KEY(generation_id, project_id, environment) REFERENCES serving_states(id, project_id, environment) ON DELETE RESTRICT,
   CHECK((status IN ('ready', 'failed')) = (finalized_at IS NOT NULL)),
   CHECK(status <> 'failed' OR length(error) > 0)
 );
 CREATE INDEX api_releases_project_created_idx ON api_releases(project_id, created_at DESC, id DESC);
-CREATE TABLE api_release_artifacts (
-  release_id TEXT NOT NULL REFERENCES api_releases(id) ON DELETE CASCADE,
-  workspace_id TEXT NOT NULL,
-  expected_digest TEXT NOT NULL,
-  serving_state_id TEXT REFERENCES serving_states(id) ON DELETE RESTRICT,
-  actual_digest TEXT NOT NULL DEFAULT '',
-  size_bytes INTEGER NOT NULL DEFAULT 0 CHECK(size_bytes >= 0),
-  uploaded_at TEXT,
-  PRIMARY KEY(release_id, workspace_id),
-  UNIQUE(release_id, serving_state_id),
-  CHECK(length(trim(workspace_id)) > 0),
-  CHECK(length(expected_digest) > 0),
-  CHECK(uploaded_at IS NULL OR serving_state_id IS NOT NULL)
-);
 CREATE TABLE api_release_connections (
   release_id TEXT NOT NULL REFERENCES api_releases(id) ON DELETE CASCADE,
   connection_id TEXT NOT NULL,
@@ -62,5 +59,4 @@ CREATE TABLE api_async_events (
 DROP TABLE api_async_events;
 DROP TABLE api_deployment_releases;
 DROP TABLE api_release_connections;
-DROP TABLE api_release_artifacts;
 DROP TABLE api_releases;

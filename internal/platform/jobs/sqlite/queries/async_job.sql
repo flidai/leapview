@@ -1,32 +1,32 @@
 -- Shared API async jobs and events.
 
 -- name: EnqueueAPIAsyncJob :exec
-INSERT INTO api_async_jobs (id, job_kind, workload_class, workspace_id, resource_kind, resource_id, payload_json, request_digest, status)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued');
+INSERT INTO api_async_jobs (id, job_kind, workload_class, principal_id, group_ids_json, resource_kind, resource_id, estimated_memory_bytes, payload_json, request_digest, status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued');
 
 -- name: GetAPIAsyncJobDigest :one
 SELECT request_digest FROM api_async_jobs WHERE id = ?;
 
 -- name: GetAPIAsyncJob :one
-SELECT id, job_kind, workload_class, workspace_id, resource_kind, resource_id, payload_json, status, attempt_count, lease_owner, lease_generation,
+SELECT id, job_kind, workload_class, principal_id, group_ids_json, resource_kind, resource_id, estimated_memory_bytes, payload_json, status, attempt_count, lease_owner, lease_generation,
   COALESCE(lease_expires_at, '') AS lease_expires_at, created_at, COALESCE(started_at, '') AS started_at,
   COALESCE(finished_at, '') AS finished_at, error_json
 FROM api_async_jobs WHERE id = ?;
 
 -- name: ListAPIAsyncJobCandidates :many
 WITH eligible AS (
-  SELECT id, job_kind, workload_class, workspace_id, resource_kind, resource_id, payload_json, status,
+  SELECT id, job_kind, workload_class, principal_id, group_ids_json, resource_kind, resource_id, estimated_memory_bytes, payload_json, status,
     attempt_count, lease_owner, lease_generation, COALESCE(lease_expires_at, '') AS lease_expires_at, created_at,
     COALESCE(started_at, '') AS started_at, COALESCE(finished_at, '') AS finished_at, error_json,
-    ROW_NUMBER() OVER (PARTITION BY workspace_id ORDER BY created_at, id) AS workspace_position
+    ROW_NUMBER() OVER (PARTITION BY principal_id ORDER BY created_at, id) AS principal_position
   FROM api_async_jobs
   WHERE workload_class = sqlc.arg(workload_class)
     AND (status = 'queued' OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= CURRENT_TIMESTAMP)))
 )
-SELECT id, job_kind, workload_class, workspace_id, resource_kind, resource_id, payload_json, status,
+SELECT id, job_kind, workload_class, principal_id, group_ids_json, resource_kind, resource_id, estimated_memory_bytes, payload_json, status,
   attempt_count, lease_owner, lease_generation, lease_expires_at, created_at, started_at, finished_at, error_json
 FROM eligible
-WHERE workspace_position = 1
+WHERE principal_position = 1
 ORDER BY created_at, id
 LIMIT sqlc.arg(result_limit);
 
@@ -37,7 +37,7 @@ UPDATE api_async_jobs SET status = 'running', started_at = COALESCE(started_at, 
 WHERE id = sqlc.arg(id)
   AND workload_class = sqlc.arg(workload_class)
   AND (status = 'queued' OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= CURRENT_TIMESTAMP)))
-RETURNING id, job_kind, workload_class, workspace_id, resource_kind, resource_id, payload_json, status, attempt_count, lease_owner, lease_generation,
+RETURNING id, job_kind, workload_class, principal_id, group_ids_json, resource_kind, resource_id, estimated_memory_bytes, payload_json, status, attempt_count, lease_owner, lease_generation,
   COALESCE(lease_expires_at, '') AS lease_expires_at, created_at, COALESCE(started_at, '') AS started_at,
   COALESCE(finished_at, '') AS finished_at, error_json;
 

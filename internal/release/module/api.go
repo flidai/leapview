@@ -7,12 +7,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
+	projectapi "github.com/flidai/leapview/internal/project/api"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
@@ -26,6 +31,159 @@ type Principal struct {
 
 type PageParams = releaseapi.PageParams
 
+// Search dispatches through the active-lease project catalog. The catalog is
+// authorization-filtered and snapshot-bound; release does not maintain a
+// second index or accept a project selector from the request.
+func (m *Module) Search(w http.ResponseWriter, r *http.Request, params projectapi.SearchParams) {
+	if m == nil || m.searchCatalog == nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "SEARCH_UNAVAILABLE", "Project search is unavailable", nil)
+		return
+	}
+	principal, ok := m.currentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
+	kinds, err := searchKinds(params.Kind)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_SEARCH_KIND", err.Error(), nil)
+		return
+	}
+	request := projectcatalog.SearchRequest{
+		PrincipalID: principal.ID, Query: strings.TrimSpace(params.Q), Kinds: kinds,
+		Limit: searchLimit(params.Limit), Cursor: searchCursor(params.Cursor),
+	}
+	if params.Domain != nil {
+		request.Domain = strings.TrimSpace(*params.Domain)
+	}
+	page, err := m.searchCatalog.Search(r.Context(), request)
+	if err != nil {
+		status, code := searchErrorStatus(err)
+		detail := err.Error()
+		if status == http.StatusServiceUnavailable {
+			if m.logger != nil {
+				m.logger.WarnContext(r.Context(), "project catalog search unavailable", "error", err)
+			}
+			detail = "Project search is temporarily unavailable"
+		}
+		apitransport.WriteProblem(w, r, status, code, detail, nil)
+		return
+	}
+	items := make([]searchResultResponse, 0, len(page.Items))
+	for _, item := range page.Items {
+		items = append(items, searchResult(item))
+	}
+	apitransport.WriteJSON(w, http.StatusOK, searchResponse{
+		Items: items,
+		Page:  searchPageInfo{NextCursor: searchStringPointer(page.NextCursor)},
+	})
+}
+
+type searchResponse struct {
+	Items []searchResultResponse `json:"items"`
+	Page  searchPageInfo         `json:"page"`
+}
+
+type searchPageInfo struct {
+	NextCursor *string `json:"nextCursor,omitempty"`
+}
+
+type searchResultResponse struct {
+	Description *string `json:"description,omitempty"`
+	DisplayName *string `json:"displayName,omitempty"`
+	Domain      *string `json:"domain,omitempty"`
+	Href        *string `json:"href,omitempty"`
+	Name        string  `json:"name"`
+	Owner       *string `json:"owner,omitempty"`
+	Reference   struct {
+		ID   string `json:"id"`
+		Kind string `json:"kind"`
+	} `json:"reference"`
+	Tags []string `json:"tags"`
+}
+
+var publicSearchKinds = []projectgraph.Kind{
+	projectgraph.KindProject, projectgraph.KindConnection, projectgraph.KindSource,
+	projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline,
+	projectgraph.KindDashboard,
+}
+
+func searchKinds(values *[]projectapi.SearchKind) ([]projectgraph.Kind, error) {
+	if values == nil || len(*values) == 0 {
+		return append([]projectgraph.Kind(nil), publicSearchKinds...), nil
+	}
+	allowed := make([]projectgraph.Kind, 0, len(*values))
+	for _, value := range *values {
+		kind, err := projectgraph.ParseKind(string(value))
+		if err != nil || !containsSearchKind(kind) {
+			return nil, fmt.Errorf("unsupported search kind %q", value)
+		}
+		allowed = append(allowed, kind)
+	}
+	return allowed, nil
+}
+
+func containsSearchKind(want projectgraph.Kind) bool {
+	for _, kind := range publicSearchKinds {
+		if kind == want {
+			return true
+		}
+	}
+	return false
+}
+
+func searchLimit(value *int32) int {
+	if value == nil {
+		return 0
+	}
+	return int(*value)
+}
+
+func searchCursor(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func searchErrorStatus(err error) (int, string) {
+	switch {
+	case errors.Is(err, projectcatalog.ErrInvalidRequest), errors.Is(err, projectcatalog.ErrInvalidCursor):
+		return http.StatusBadRequest, "INVALID_SEARCH_REQUEST"
+	case errors.Is(err, projectcatalog.ErrUnavailable), errors.Is(err, projectcatalog.ErrSnapshotChanged):
+		return http.StatusServiceUnavailable, "SEARCH_UNAVAILABLE"
+	default:
+		// Authorization and lease errors fail closed without exposing internal
+		// details through a successful or ambiguous response.
+		return http.StatusServiceUnavailable, "SEARCH_UNAVAILABLE"
+	}
+}
+
+func searchResult(item projectcatalog.Result) searchResultResponse {
+	return searchResultResponse{
+		Reference: struct {
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
+		}{ID: item.Ref.ID.String(), Kind: string(item.Ref.Kind)},
+		Name: item.Name, DisplayName: searchOptionalString(item.DisplayName), Description: searchOptionalString(item.Description),
+		Domain: searchOptionalString(item.Domain), Owner: searchOptionalString(item.Owner), Tags: append([]string(nil), item.Tags...),
+	}
+}
+
+func searchOptionalString(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
+}
+
+func searchStringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
 type JobStore interface {
 	Enqueue(context.Context, jobs.EnqueueInput) (jobs.Job, error)
 	AppendEvent(context.Context, string, string, string, []byte) (jobs.Event, error)
@@ -33,9 +191,20 @@ type JobStore interface {
 }
 
 type APIConfig struct {
-	CurrentPrincipal func(*http.Request) (Principal, bool)
-	Jobs             JobStore
-	Workflow         jobs.WorkflowRecorder
+	CurrentPrincipal     func(*http.Request) (Principal, bool)
+	ProjectSearchCatalog projectcatalogSearcher
+	AuthorizeConnection  func(context.Context, string, string, string, access.Capability) (bool, error)
+	Jobs                 JobStore
+	Workflow             jobs.WorkflowRecorder
+}
+
+// SetProjectSearchCatalog binds the one active-lease catalog assembled by application
+// composition. Keeping the setter separate lets release persistence be built
+// before the runtime host while still sharing the exact same catalog service.
+func (m *Module) SetProjectSearchCatalog(catalog projectcatalogSearcher) {
+	if m != nil {
+		m.searchCatalog = catalog
+	}
 }
 
 func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
@@ -49,16 +218,18 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
 		return
 	}
-	input := release.CreateInput{ProjectID: project, ProjectDigest: body.ProjectDigest, IdempotencyKey: idempotencyKey, CreatedBy: principal.ID}
+	identity, identityErr := projectgraph.NewServingIdentity(projectgraph.ResourceID(project), body.Environment, body.GenerationID)
+	if identityErr != nil {
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), identityErr)
+		return
+	}
+	input := release.CreateInput{ServingIdentity: identity, ProjectDigest: body.ProjectDigest, ArtifactDigest: body.ArtifactDigest, RequestDigest: body.RequestDigest, IdempotencyKey: idempotencyKey, CreatedBy: principal.ID}
 	provenance, err := releaseProvenanceFromAPI(body.Provenance)
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), fmt.Errorf("%w: invalid provenance", release.ErrInvalid))
 		return
 	}
 	input.Provenance = provenance
-	for _, item := range body.Workspaces {
-		input.Workspaces = append(input.Workspaces, release.WorkspaceManifest{WorkspaceID: item.Workspace, ArtifactDigest: item.ArtifactDigest})
-	}
 	for _, item := range body.Connections {
 		input.Connections = append(input.Connections, release.ConnectionPin{ConnectionID: item.Connection, RevisionID: item.RevisionID})
 	}
@@ -71,7 +242,7 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 		r.Context(), string(releasegen.GenOperationCreateRelease), created.ID,
 		releaseCreatedAuditAction, releasegen.GenSchemaReleaseCreatedAuditPayload{
 			OperationId: string(releasegen.GenOperationCreateRelease), ReleaseId: created.ID,
-			ProjectId: created.ProjectID, ProjectDigest: created.ProjectDigest,
+			ProjectId: created.ServingIdentity.ProjectID.String(), ProjectDigest: created.ProjectDigest,
 			Status: string(created.Status), CreatedBy: created.CreatedBy,
 		},
 	)
@@ -80,7 +251,12 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 }
 
 func (m *Module) ListReleases(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
-	rows, err := m.service.List(r.Context(), project)
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeError(w, r, release.ErrInvalid)
+		return
+	}
+	rows, err := m.service.List(r.Context(), projectID)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -98,7 +274,12 @@ func (m *Module) ListReleases(w http.ResponseWriter, r *http.Request, project st
 }
 
 func (m *Module) GetRelease(w http.ResponseWriter, r *http.Request, project, releaseID string) {
-	row, err := m.service.Get(r.Context(), project, releaseID)
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeError(w, r, release.ErrInvalid)
+		return
+	}
+	row, err := m.service.Get(r.Context(), projectID, releaseID)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -107,29 +288,32 @@ func (m *Module) GetRelease(w http.ResponseWriter, r *http.Request, project, rel
 	apitransport.WriteJSON(w, http.StatusOK, response(row))
 }
 
-func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, project, releaseID, workspaceID, contentType, contentDigest string) {
+func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, project, releaseID, contentType, contentDigest string) {
 	if contentType != "application/octet-stream" {
 		apitransport.WriteProblem(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Release artifacts require application/octet-stream", nil)
 		return
 	}
-	artifact, err := m.service.UploadArtifact(r.Context(), project, releaseID, workspaceID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
+	artifact, err := m.service.UploadArtifact(r.Context(), project, releaseID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), err)
 		return
 	}
-	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, WorkspaceID: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes}
-	m.recordBestEffortEvent(
-		r.Context(), string(releasegen.GenOperationUploadReleaseArtifact), releaseID,
-		releaseArtifactUploadedAuditAction, releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{
-			OperationId: string(releasegen.GenOperationUploadReleaseArtifact), ReleaseId: releaseID,
-			WorkspaceId: workspaceID, Digest: artifact.ExpectedDigest, SizeBytes: artifact.SizeBytes,
-		},
-	)
-	w.Header().Set("Location", location(project, releaseID)+"/workspaces/"+workspaceID+"/artifact")
+	identity, identityErr := artifact.Identity()
+	if identityErr != nil {
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), identityErr)
+		return
+	}
+	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, GenerationID: identity.GenerationID, Digest: artifact.ExpectedDigest, ActualDigest: artifact.ActualDigest, SizeBytes: artifact.SizeBytes}
+	w.Header().Set("Location", location(project, releaseID)+"/artifact")
 	apitransport.WriteJSON(w, http.StatusCreated, result)
 }
 
 func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, _ string) {
+	principal, ok := m.currentPrincipal(r)
+	if !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
 	payload, err := json.Marshal(FinalizeJob{Project: project, Release: releaseID})
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), err)
@@ -164,7 +348,7 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 					},
 					Job: jobs.EnqueueInput{
 						ID: "release:" + releaseID + ":finalize", Kind: execution.JobKind,
-						WorkloadClass: "control", WorkspaceID: "_node",
+						WorkloadClass: "control", PrincipalID: principal.ID, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
 						ResourceKind: execution.ResourceKind, ResourceID: releaseID, Payload: payload,
 					},
 				})
@@ -185,7 +369,12 @@ func (m *Module) writeCommandFailure(w http.ResponseWriter, r *http.Request, ope
 }
 
 func (m *Module) ListReleaseEvents(w http.ResponseWriter, r *http.Request, project, releaseID string, limit *int32, pageToken *string) {
-	if _, err := m.service.Get(r.Context(), project, releaseID); err != nil {
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		writeError(w, r, release.ErrInvalid)
+		return
+	}
+	if _, err := m.service.Get(r.Context(), projectID, releaseID); err != nil {
 		writeError(w, r, err)
 		return
 	}
@@ -263,23 +452,11 @@ func (m *Module) recordBestEffortEvent(
 func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 	if values, ok := data.(map[string]any); ok {
 		str := func(key string) string { value, _ := values[key].(string); return value }
-		int64Value := func(key string) int64 {
-			switch value := values[key].(type) {
-			case int64:
-				return value
-			case int:
-				return int64(value)
-			case float64:
-				return int64(value)
-			default:
-				return 0
-			}
-		}
 		switch operationID {
 		case string(releasegen.GenOperationCreateRelease):
 			return releasegen.EncodeGenCreateReleaseAuditPayload(releasegen.GenSchemaReleaseCreatedAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), ProjectDigest: str("projectDigest"), Status: str("status"), CreatedBy: str("createdBy")})
 		case string(releasegen.GenOperationUploadReleaseArtifact):
-			return releasegen.EncodeGenUploadReleaseArtifactAuditPayload(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), WorkspaceId: str("workspaceId"), Digest: str("digest"), SizeBytes: int64Value("sizeBytes")})
+			return "", fmt.Errorf("release artifact audit contract is not generation-scoped")
 		case string(releasegen.GenOperationFinalizeRelease):
 			return releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), Status: str("status")})
 		}
@@ -292,11 +469,7 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 		}
 		return releasegen.EncodeGenCreateReleaseAuditPayload(payload)
 	case string(releasegen.GenOperationUploadReleaseArtifact):
-		payload, ok := data.(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload)
-		if !ok {
-			return "", fmt.Errorf("release artifact audit payload has type %T", data)
-		}
-		return releasegen.EncodeGenUploadReleaseArtifactAuditPayload(payload)
+		return "", fmt.Errorf("release artifact audit contract is not generation-scoped")
 	case string(releasegen.GenOperationFinalizeRelease):
 		payload, ok := data.(releasegen.GenSchemaReleaseValidatingAuditPayload)
 		if !ok {
@@ -310,17 +483,11 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 
 func response(row release.Release) releaseapi.Response {
 	result := releaseapi.Response{
-		ID: row.ID, ProjectID: row.ProjectID, ProjectDigest: row.ProjectDigest, Status: releaseapi.Status(row.Status),
-		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, Workspaces: make([]releaseapi.WorkspaceManifest, 0, len(row.Manifest.Workspaces)),
+		ID: row.ID, ProjectID: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment, GenerationID: row.ServingIdentity.GenerationID,
+		ArtifactDigest: row.ArtifactDigest, ActualDigest: row.ActualDigest, ArtifactSize: row.ArtifactSizeBytes,
+		ProjectDigest: row.ProjectDigest, Status: releaseapi.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt,
 		Connections: make([]releaseapi.ConnectionPin, 0, len(row.Manifest.Connections)),
 		Provenance:  releaseProvenanceToAPI(row.Provenance),
-	}
-	for _, item := range row.Manifest.Workspaces {
-		mapped := releaseapi.WorkspaceManifest{Workspace: item.WorkspaceID, ArtifactDigest: item.ArtifactDigest}
-		if item.ServingStateID != "" {
-			mapped.ServingStateID = &item.ServingStateID
-		}
-		result.Workspaces = append(result.Workspaces, mapped)
 	}
 	for _, item := range row.Manifest.Connections {
 		result.Connections = append(result.Connections, releaseapi.ConnectionPin{Connection: item.ConnectionID, RevisionID: item.RevisionID})

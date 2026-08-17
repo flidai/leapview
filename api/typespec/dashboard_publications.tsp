@@ -12,9 +12,8 @@ enum DashboardPublicationStatus {
 
 model DashboardPublicationResponse {
   name: string;
-  workspaceId: string;
-  projectId: string;
-  dashboard: string;
+  projectId: ResourceId;
+  dashboard: ResourceId;
   defaultPage: string;
   status: DashboardPublicationStatus;
   configured: boolean;
@@ -53,54 +52,68 @@ model DashboardPublicationNotFoundFailure {}
 model DashboardPublicationNotConfiguredFailure {}
 
 @tag("Publications")
-@doc("Dashboard publication discovery and lifecycle commands within a workspace. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
-@route("/workspaces/{workspace}/dashboard-publications")
-@apigen.authz(#{ mode: "privilege", privilege: "MANAGE_PUBLICATIONS" })
+@doc("Project-wide dashboard publication discovery and lifecycle commands. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
+@route("/projects/{project}/dashboard-publications")
+@apigen.authz(#{ mode: "authenticated" })
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
 interface DashboardPublications {
-  @summary("List dashboard publications in a workspace")
+  @summary("List project dashboard publications")
   @get
-  listDashboardPublications(@path workspace: string): OkJson<DashboardPublicationListResponse> | CommonErrors;
+  @apigen.authz(#{ mode: "authenticated" })
+  listDashboardPublications(@path project: ResourceId): OkJson<DashboardPublicationListResponse> | CommonErrors;
 
   @summary("Get a dashboard publication")
   @route("/{publication}")
   @get
-  getDashboardPublication(@path workspace: string, @path publication: string): OkJson<DashboardPublicationResponse> | CommonErrors;
+  @apigen.authz(#{ mode: "authenticated" })
+  getDashboardPublication(@path project: ResourceId, @path publication: string): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Suspend a dashboard publication immediately")
   @route("/{publication}/suspend")
   @post
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.publication.suspend")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
   @apigen.command(#{
     auditAction: "dashboard_publication.suspended",
-    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
+    failures: #[
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
+    ],
   })
-  suspendDashboardPublication(@path @apigen.target workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  suspendDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Resume a configured dashboard publication")
   @route("/{publication}/resume")
   @post
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.publication.resume")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
   @apigen.command(#{
     auditAction: "dashboard_publication.resumed",
-    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
+    failures: #[
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
+    ],
   })
-  resumeDashboardPublication(@path @apigen.target workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  resumeDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 
   @summary("Rotate a dashboard publication public ID")
   @route("/{publication}/rotate")
   @post
+  @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.publication.rotate")
   @apigen.failsWith(DashboardPublicationNotFoundFailure)
   @apigen.failsWith(DashboardPublicationNotConfiguredFailure)
   @apigen.command(#{
     auditAction: "dashboard_publication.public_id_rotated",
-    failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." }],
+    failures: #[
+      #{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Dashboard publication audit could not be persisted." },
+      #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Dashboard authorization could not be evaluated." },
+    ],
   })
-  rotateDashboardPublication(@path @apigen.target workspace: string, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
+  rotateDashboardPublication(@path @apigen.target project: ResourceId, @path publication: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): OkJson<DashboardPublicationResponse> | CommonErrors;
 }

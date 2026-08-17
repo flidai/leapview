@@ -28,7 +28,7 @@ func TestPrincipalThemePreferencePersistsAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].TargetID != principal.ID {
+	if len(events) != 1 || events[0].ResourceID != principal.ID {
 		t.Fatalf("audit events = %#v", events)
 	}
 }

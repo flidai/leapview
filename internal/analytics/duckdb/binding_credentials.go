@@ -45,7 +45,7 @@ func ApplyTargetBinding(
 	}); err != nil {
 		return semanticmodel.Connection{}, connectionbinding.ErrInvalidCredentialBundle
 	}
-	validated, err := resolved.Validate(binding.LogicalConnectionID.String())
+	validated, err := resolved.Validate(binding.ConnectionID.String())
 	if err != nil {
 		clear(resolved.Auth)
 		return semanticmodel.Connection{}, connectionbinding.ErrInvalidCredentialBundle

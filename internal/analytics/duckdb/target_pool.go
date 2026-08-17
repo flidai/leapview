@@ -99,7 +99,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	}
 	defer clear(connection.Auth)
 
-	secret, ok, err := compileConnectionSecret(binding.LogicalConnectionID.String(), connection)
+	secret, ok, err := compileConnectionSecret(binding.ConnectionID.String(), connection)
 	if err != nil || !ok {
 		return nil, connectionbinding.ErrInvalidCredentialBundle
 	}
@@ -108,7 +108,7 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	activationStatements := make([]string, 0, 2)
 	switch spec.AttachKind {
 	case connectors.AttachDatabase:
-		attach, err := compileDatabaseAttach(binding.LogicalConnectionID.String(), connection)
+		attach, err := compileDatabaseAttach(binding.ConnectionID.String(), connection)
 		if err != nil {
 			return nil, connectionbinding.ErrInvalidCredentialBundle
 		}

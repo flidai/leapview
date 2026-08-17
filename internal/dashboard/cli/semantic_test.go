@@ -42,7 +42,6 @@ func TestSemanticModelsCommandOwnsSemanticQuery(t *testing.T) {
 	command := SemanticModelsCommand(context.Background(), client)
 	command.SetArgs([]string{
 		"query", "orders",
-		"--workspace", "sales",
 		"--target", "https://example.test", "--token", "secret",
 		"--body-json", `{"dimensions":[{"field":"state"}]}`,
 	})
@@ -54,7 +53,6 @@ func TestSemanticModelsCommandOwnsSemanticQuery(t *testing.T) {
 	}
 	request := client.transport.requests[0]
 	if request.OperationID != dashboardgen.GenOperationQuerySemanticModel ||
-		request.PathParams["workspace"] != "sales" ||
 		request.PathParams["model"] != "orders" {
 		t.Fatalf("request = %#v", request)
 	}
@@ -64,10 +62,10 @@ func TestSemanticModelsCommandOwnsSemanticQuery(t *testing.T) {
 	}
 }
 
-func TestSemanticModelsCommandRequiresWorkspace(t *testing.T) {
+func TestSemanticModelsCommandRejectsRemovedWorkspaceFlag(t *testing.T) {
 	command := SemanticModelsCommand(context.Background(), &semanticFakeClient{})
-	command.SetArgs([]string{"list"})
+	command.SetArgs([]string{"list", "--workspace", "sales"})
 	if err := command.Execute(); err == nil {
-		t.Fatal("semantic-model command accepted missing workspace")
+		t.Fatal("semantic-model command accepted removed --workspace flag")
 	}
 }

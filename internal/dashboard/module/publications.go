@@ -9,10 +9,13 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func (m *Module) PublicationsConfigured() bool {
@@ -37,7 +40,7 @@ func (m *Module) PublicationByPublicID(ctx context.Context, publicID string) (pu
 // the admin surface. It validates the generated cross-surface policy before
 // mutating state, then executes the generated audit contract with the same
 // request identity.
-func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceID, name, actorID string, action publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
+func (m *Module) MutatePublicationWithInvocation(ctx context.Context, projectID, name, actorID string, action publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
 	if m == nil || m.publicationService == nil || m.recordPublicationCommandAudit == nil {
 		return publication.Publication{}, publication.ErrNotFound
 	}
@@ -49,11 +52,15 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 	if invocation.Surface == "" {
 		invocation.Surface = string(apigencommand.SurfaceUI)
 	}
-	ctx, err := beginGeneratedPublicationInvocation(ctx, action, workspaceID, invocation)
+	parsedProjectID, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	row, err := m.publicationService.Mutate(ctx, workspaceID, name, actorID, action)
+	ctx, err = beginGeneratedPublicationInvocation(ctx, action, parsedProjectID, invocation)
+	if err != nil {
+		return publication.Publication{}, err
+	}
+	row, err := m.publicationService.Mutate(ctx, parsedProjectID, name, actorID, action)
 	if err != nil {
 		return row, err
 	}
@@ -64,14 +71,14 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 	err = executor.Execute(ctx, operationIDValue, apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
 			return m.recordPublicationCommandAudit(ctx, publicationCommandAuditInput{
-				operationID: operationIDValue, workspaceID: strings.TrimSpace(workspaceID), principalID: strings.TrimSpace(actorID),
+				operationID: operationIDValue, projectID: parsedProjectID, principalID: strings.TrimSpace(actorID),
 				targetID: strings.TrimSpace(row.ID), requestID: strings.TrimSpace(invocation.RequestID),
 				correlationID: strings.TrimSpace(invocation.CorrelationID), surface: string(invocation.Surface),
 			})
 		},
 		LogMessage: "best-effort dashboard publication command audit failed",
 		LogAttributes: []slog.Attr{
-			slog.String("workspace_id", strings.TrimSpace(workspaceID)),
+			slog.String("project_id", parsedProjectID.String()),
 			slog.String("principal_id", strings.TrimSpace(actorID)),
 			slog.String("target_id", strings.TrimSpace(row.ID)),
 		},
@@ -79,7 +86,7 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, workspaceI
 	return row, err
 }
 
-func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, workspaceID string, invocation publication.CommandInvocation) (context.Context, error) {
+func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, projectID projectgraph.ResourceID, invocation publication.CommandInvocation) (context.Context, error) {
 	operationID, ok := publicationOperationID(action)
 	if !ok {
 		return ctx, publication.ErrConflict
@@ -87,23 +94,23 @@ func beginGeneratedPublicationInvocation(ctx context.Context, action publication
 	if claimed := strings.TrimSpace(invocation.OperationID); claimed != "" && claimed != operationID.APIGenOperationID() {
 		return ctx, apigencommand.ErrOperationMismatch
 	}
-	workspaceID = strings.TrimSpace(workspaceID)
+	projectIDString := projectID.String()
 	switch action {
 	case publication.ActionSuspend:
 		started, _, err := dashboardgen.BeginGenSuspendDashboardPublicationCommand(ctx, dashboardgen.GenSuspendDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
 	case publication.ActionResume:
 		started, _, err := dashboardgen.BeginGenResumeDashboardPublicationCommand(ctx, dashboardgen.GenResumeDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
 	case publication.ActionRotate:
 		started, _, err := dashboardgen.BeginGenRotateDashboardPublicationCommand(ctx, dashboardgen.GenRotateDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Workspace: workspaceID, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
@@ -130,44 +137,66 @@ func (m *Module) PublicationDTO(row publication.Publication) dashboardapi.Public
 	return m.dashboardPublicationDTO(row)
 }
 
-func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Request, workspaceID string) {
+func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Request, projectID string) {
 	if m == nil || m.publications == nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATIONS_NOT_AVAILABLE", "Dashboard publications are not available", nil)
 		return
 	}
-	rows, err := m.publications.List(r.Context(), workspaceID)
+	parsedProjectID, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_PROJECT", "Project identity is invalid", nil)
+		return
+	}
+	rows, err := m.publications.List(r.Context(), parsedProjectID)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PUBLICATION_LIST_FAILED", "Dashboard publications could not be loaded", nil)
 		return
 	}
 	items := make([]dashboardapi.PublicationResponse, 0, len(rows))
 	for _, row := range rows {
+		allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID.String(), row.Dashboard, access.CapabilityResourceRead)
+		if authErr != nil {
+			apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUTHORIZATION_UNAVAILABLE", "Dashboard authorization could not be evaluated", nil)
+			return
+		}
+		if !allowed {
+			continue
+		}
 		items = append(items, m.dashboardPublicationDTO(row))
 	}
 	writeJSON(w, http.StatusOK, dashboardapi.PublicationListResponse{Items: items})
 }
 
-func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
-	row, ok := m.dashboardPublication(w, r, workspaceID, name)
+func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
+	row, ok := m.dashboardPublication(w, r, projectID, name)
 	if !ok {
+		return
+	}
+	allowed, err := m.authorizeDashboardPublication(r, row.ProjectID.String(), row.Dashboard, access.CapabilityResourceRead)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "AUTHORIZATION_UNAVAILABLE", "Dashboard authorization could not be evaluated", nil)
+		return
+	}
+	if !allowed {
+		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found", nil)
 		return
 	}
 	writeJSON(w, http.StatusOK, m.dashboardPublicationDTO(row))
 }
 
-func (m *Module) SuspendDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
-	m.mutateDashboardPublication(w, r, workspaceID, name, publication.ActionSuspend)
+func (m *Module) SuspendDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
+	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionSuspend)
 }
 
-func (m *Module) ResumeDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
-	m.mutateDashboardPublication(w, r, workspaceID, name, publication.ActionResume)
+func (m *Module) ResumeDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
+	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionResume)
 }
 
-func (m *Module) RotateDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) {
-	m.mutateDashboardPublication(w, r, workspaceID, name, publication.ActionRotate)
+func (m *Module) RotateDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
+	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionRotate)
 }
 
-func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string, action publication.Action) {
+func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string, action publication.Action) {
 	operationID, operationKnown := publicationOperationID(action)
 	if !operationKnown {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PUBLICATION_COMMAND_UNKNOWN", "Dashboard publication command is unknown", nil)
@@ -184,11 +213,29 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, errPublicationCommandAuditUnavailable)
 		return
 	}
+	row, ok := m.dashboardPublication(w, r, projectID, name)
+	if !ok {
+		return
+	}
+	allowed, authErr := m.authorizeDashboardPublication(r, row.ProjectID.String(), row.Dashboard, access.CapabilityResourcePublish)
+	if authErr != nil {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, apigenfailure.Wrap("authorization_unavailable", authErr))
+		return
+	}
+	if !allowed {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, publication.ErrNotFound)
+		return
+	}
 	actor := ""
 	if m.currentActor != nil {
 		actor = m.currentActor(r)
 	}
-	row, err := m.publicationService.Mutate(r.Context(), workspaceID, name, actor, action)
+	parsedProjectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(projectID))
+	if parseErr != nil {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, parseErr)
+		return
+	}
+	row, err := m.publicationService.Mutate(r.Context(), parsedProjectID, name, actor, action)
 	if err == nil {
 		logger := m.logger
 		if logger == nil {
@@ -200,11 +247,11 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		} else {
 			err = executor.Execute(r.Context(), operationIDValue, apigencommand.Execution{
 				BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
-					return m.recordPublicationCommandAudit(ctx, publicationAuditRequestInput(r, operationIDValue, workspaceID, actor, row.ID))
+					return m.recordPublicationCommandAudit(ctx, publicationAuditRequestInput(r, operationIDValue, parsedProjectID, actor, row.ID))
 				},
 				LogMessage: "best-effort dashboard publication command audit failed",
 				LogAttributes: []slog.Attr{
-					slog.String("workspace_id", strings.TrimSpace(workspaceID)),
+					slog.String("project_id", parsedProjectID.String()),
 					slog.String("principal_id", strings.TrimSpace(actor)),
 					slog.String("target_type", "dashboard_publication"),
 					slog.String("target_id", strings.TrimSpace(row.ID)),
@@ -216,12 +263,40 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 	m.writePublicationMutation(w, r, operationID, row, err)
 }
 
-func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, workspaceID, name string) (publication.Publication, bool) {
+func (m *Module) authorizeDashboardPublication(r *http.Request, projectID, dashboardID string, capability access.Capability) (bool, error) {
+	if m == nil || m.handler.CurrentPrincipalID == nil || m.handler.AuthorizeListResource == nil {
+		return false, errors.New("dashboard authorization is unavailable")
+	}
+	principalID := strings.TrimSpace(m.handler.CurrentPrincipalID(r))
+	if principalID == "" {
+		return false, nil
+	}
+	_, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
+	if err != nil {
+		return false, err
+	}
+	dashboard, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return false, err
+	}
+	resource, err := access.NewResourceRef(dashboard, projectgraph.KindDashboard)
+	if err != nil {
+		return false, err
+	}
+	return m.handler.AuthorizeListResource(r.Context(), principalID, resource, capability)
+}
+
+func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) (publication.Publication, bool) {
 	if m == nil || m.publications == nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found", nil)
 		return publication.Publication{}, false
 	}
-	row, err := m.publications.Get(r.Context(), workspaceID, name)
+	parsedProjectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(projectID))
+	if parseErr != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_PROJECT", "Project identity is invalid", nil)
+		return publication.Publication{}, false
+	}
+	row, err := m.publications.Get(r.Context(), parsedProjectID, name)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, publication.ErrNotFound) {
@@ -252,7 +327,7 @@ func (m *Module) dashboardPublicationDTO(row publication.Publication) dashboarda
 	embedURL := m.absolutePublicURL(embedPath)
 	iframe := `<iframe src="` + html.EscapeString(embedURL) + `" title="` + html.EscapeString(row.Name) + `" loading="lazy" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>`
 	dto := dashboardapi.PublicationResponse{
-		Name: row.Name, WorkspaceID: row.WorkspaceID, ProjectID: row.ProjectID, Dashboard: row.Dashboard,
+		Name: row.Name, ProjectID: row.ProjectID.String(), Dashboard: row.Dashboard,
 		DefaultPage: row.DefaultPage, Status: dashboardapi.PublicationStatus(row.Status()), Configured: row.Configured,
 		AllowedOrigins: append([]string(nil), row.AllowedOrigins...), PublicURL: publicURL, EmbedURL: embedURL, IFrameSnippet: iframe,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,

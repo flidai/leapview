@@ -15,8 +15,6 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
-	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -36,10 +34,7 @@ func newModuleJobFixture(t *testing.T) moduleJobFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatal(err)
-	}
-	owner, err := accesssqlite.NewRepository(store.SQLDB()).SetPrincipalRole(ctx, access.PrincipalRoleInput{WorkspaceID: "test", Email: "jobs@example.com", DisplayName: "Jobs", Role: "viewer"})
+	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(ctx, access.PrincipalInput{ID: "agent-jobs", Kind: access.PrincipalKindUser, Email: "jobs@example.com", DisplayName: "Jobs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +51,7 @@ func newModuleJobFixture(t *testing.T) moduleJobFixture {
 }
 
 func (f moduleJobFixture) scope() agent.Scope {
-	return agent.Scope{WorkspaceID: "test", PrincipalID: f.owner.ID}
+	return agent.Scope{ProjectID: "project:test", PrincipalID: f.owner.ID}
 }
 
 func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversation, agent.Run) {
@@ -82,7 +77,7 @@ func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversati
 func (f moduleJobFixture) claim(t *testing.T, conv agent.Conversation, run agent.Run) jobs.Job {
 	t.Helper()
 	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: conv.ID, Run: run.ID})
-	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: run.ID, Payload: payload})
+	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: run.ID, Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +255,7 @@ func TestJobHandlerInvalidPersistedStatusFailsSafely(t *testing.T) {
 func TestJobHandlerMissingRunFailsWithoutDomainEvent(t *testing.T) {
 	f := newModuleJobFixture(t)
 	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: "missing-conversation", Run: "missing-run"})
-	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:missing-run:run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, WorkspaceID: "test", ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: "missing-run", Payload: payload})
+	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:missing-run:run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: "missing-run", Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}

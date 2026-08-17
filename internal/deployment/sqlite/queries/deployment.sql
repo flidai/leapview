@@ -1,84 +1,43 @@
--- Project deployment transaction and activation records.
+-- Canonical project-generation deployment records.
+
+-- name: GetServingStateForDeployment :one
+SELECT project_id, environment, digest, status FROM serving_states WHERE id = ?;
+
+-- name: GetActiveServingState :one
+SELECT generation_id FROM project_active_serving_states
+WHERE project_id = ? AND environment = ?;
+
+-- Activation state transitions are deliberately named separately from the
+-- serving-state reads above.  Each method returns RowsAffected so the
+-- repository can preserve the multi-row compare-and-swap fence.
+
+-- name: DrainServingStateForActivation :execresult
+UPDATE serving_states
+SET status = 'draining', superseded_at = CURRENT_TIMESTAMP
+WHERE id = ? AND project_id = ? AND environment = ? AND status = 'active';
+
+-- name: ActivateServingStateForActivation :execresult
+UPDATE serving_states
+SET status = 'active', activated_at = CURRENT_TIMESTAMP, error = ''
+WHERE id = ? AND project_id = ? AND environment = ? AND status IN ('validated', 'inactive');
+
+-- name: InsertActiveServingStateForActivation :execresult
+INSERT INTO project_active_serving_states (project_id, environment, generation_id, updated_at)
+VALUES (?, ?, ?, CURRENT_TIMESTAMP);
+
+-- name: UpdateActiveServingStateForActivation :execresult
+UPDATE project_active_serving_states
+SET generation_id = sqlc.arg(candidate_generation_id), updated_at = CURRENT_TIMESTAMP
+WHERE project_id = sqlc.arg(project_id)
+  AND environment = sqlc.arg(environment)
+  AND generation_id = sqlc.arg(prior_generation_id);
 
 -- name: CreateProjectDeployment :exec
-INSERT INTO project_deployments (id, project_id, environment, request_digest, status, created_by)
-VALUES (?, ?, ?, ?, 'pending', ?);
-
--- name: CreateProjectDeploymentTarget :exec
-INSERT INTO project_deployment_targets (
-  deployment_id, workspace_id, serving_state_id, prior_serving_state_id, status
-)
-VALUES (?, ?, ?, ?, 'pending');
-
--- name: CreateProjectDeploymentConnection :exec
-INSERT INTO project_deployment_connections (
-  deployment_id, collection_id, revision_id, prior_revision_id, prior_generation
-)
-VALUES (?, ?, ?, ?, ?);
+INSERT INTO project_deployments (id, project_id, environment, generation_id, artifact_digest, prior_generation_id, request_digest, status, created_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?);
 
 -- name: GetProjectDeployment :one
 SELECT * FROM project_deployments WHERE id = ?;
-
--- These serving-state statements belong to the deployment activation unit of
--- work. They deliberately live with the consuming workflow so deployment does
--- not import serving-state generated queries while retaining one atomic SQLite
--- transaction.
-
--- name: GetServingState :one
-SELECT * FROM serving_states WHERE id = ?;
-
--- name: MarkOtherServingStatesDraining :exec
-UPDATE serving_states
-SET status = 'draining',
-    superseded_at = CURRENT_TIMESTAMP,
-    error = ''
-WHERE workspace_id = ?
-  AND environment = ?
-  AND id <> ?
-  AND status = 'active';
-
--- name: MarkServingStateActive :exec
-UPDATE serving_states
-SET status = 'active', activated_at = CURRENT_TIMESTAMP, error = ''
-WHERE id = ?;
-
--- name: SetActiveServingState :exec
-INSERT INTO workspace_active_serving_states (workspace_id, environment, serving_state_id, updated_at)
-VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-ON CONFLICT(workspace_id, environment) DO UPDATE SET
-  serving_state_id = excluded.serving_state_id,
-  updated_at = CURRENT_TIMESTAMP;
-
--- name: PersistPublishSemanticModelDataVersions :exec
-INSERT INTO semantic_model_data_versions (
-  workspace_id, environment, semantic_model_id, snapshot_id, serving_state_id, refreshed_at, source, pipeline_id, run_id
-)
-SELECT workspace_id, sqlc.arg(environment), substr(asset_key, instr(asset_key, '.') + 1), sqlc.arg(snapshot_id), serving_state_id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'publish', NULL, NULL
-FROM assets
-WHERE assets.serving_state_id = sqlc.arg(target_serving_state_id) AND asset_type = 'semantic_model'
-ON CONFLICT (workspace_id, environment, semantic_model_id) DO UPDATE SET
-  snapshot_id = excluded.snapshot_id,
-  serving_state_id = excluded.serving_state_id,
-  refreshed_at = excluded.refreshed_at,
-  source = excluded.source,
-  pipeline_id = NULL,
-  run_id = NULL;
-
--- name: DeleteUndeployedSemanticModelDataVersions :exec
-DELETE FROM semantic_model_data_versions
-WHERE workspace_id = sqlc.arg(workspace_id)
-  AND environment = sqlc.arg(environment)
-  AND serving_state_id <> sqlc.arg(target_serving_state_id);
-
--- name: ListProjectDeploymentTargets :many
-SELECT * FROM project_deployment_targets
-WHERE deployment_id = ?
-ORDER BY workspace_id;
-
--- name: ListProjectDeploymentConnections :many
-SELECT * FROM project_deployment_connections
-WHERE deployment_id = ?
-ORDER BY collection_id;
 
 -- Deployment approval decisions are immutable in scope and optimistic in
 -- transition. A revoked decision remains as audit evidence; a later request
@@ -117,37 +76,6 @@ WHERE id = ?
   AND deployment_id = ?
   AND revision = ?;
 
--- name: GetWorkspaceActiveServingStateID :one
-SELECT serving_state_id
-FROM workspace_active_serving_states
-WHERE workspace_id = ? AND environment = ?;
-
--- name: GetManagedDataEnvironmentPointer :one
-SELECT * FROM managed_data_environment_pointers
-WHERE collection_id = ? AND environment = ?;
-
--- name: UpsertManagedDataEnvironmentPointer :exec
-INSERT INTO managed_data_environment_pointers (
-  collection_id, environment, revision_id, deployment_id, generation, updated_by
-)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(collection_id, environment) DO UPDATE SET
-  revision_id = excluded.revision_id,
-  deployment_id = excluded.deployment_id,
-  generation = excluded.generation,
-  updated_by = excluded.updated_by,
-  updated_at = CURRENT_TIMESTAMP;
-
--- name: ActivateProjectDeploymentTarget :execresult
-UPDATE project_deployment_targets
-SET status = 'active', activated_at = CURRENT_TIMESTAMP, error = ''
-WHERE deployment_id = ? AND workspace_id = ? AND status = 'pending';
-
--- name: ActivateProjectDeploymentConnection :execresult
-UPDATE project_deployment_connections
-SET activated_generation = ?
-WHERE deployment_id = ? AND collection_id = ? AND activated_generation IS NULL;
-
 -- name: ActivateProjectDeployment :execresult
 UPDATE project_deployments
 SET status = 'active',
@@ -173,28 +101,41 @@ UPDATE project_deployments
 SET status = 'cancelled'
 WHERE id = ? AND status = 'pending';
 
--- name: DeleteManagedDataServingStateBindings :exec
-DELETE FROM managed_data_serving_state_bindings
-WHERE serving_state_id = ?;
-
--- name: CreateManagedDataServingStateBinding :exec
-INSERT INTO managed_data_serving_state_bindings (
-  serving_state_id, collection_id, revision_id, environment
-)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(serving_state_id, collection_id) DO UPDATE SET
-  revision_id = excluded.revision_id,
-  environment = excluded.environment,
-  bound_at = CURRENT_TIMESTAMP;
-
--- name: ListManagedDataServingStateBindings :many
-SELECT * FROM managed_data_serving_state_bindings
-WHERE serving_state_id = ?
-ORDER BY collection_id;
-
 -- Deployment-owned validation projections over managed-data records.
 
 -- Durable private project candidate sessions.
+
+-- name: InsertInstanceProjectClaim :execresult
+INSERT INTO instance_project_claim (singleton_id, project_id, environment, claimed_by, claimed_at)
+VALUES (1, ?, ?, ?, ?)
+ON CONFLICT(singleton_id) DO NOTHING;
+
+-- name: GetInstanceProjectClaim :one
+SELECT project_id, environment, claimed_by, claimed_at
+FROM instance_project_claim
+WHERE singleton_id = 1;
+
+-- Permanent one-shot binding for first protected activation.
+
+-- name: InsertBootstrapActivationPolicy :execresult
+INSERT INTO bootstrap_activation_policies (
+  deployment_id, project_id, environment, request_digest, actor_id,
+  credential_id, credential_expires_at, armed_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(deployment_id) DO NOTHING;
+
+-- name: GetBootstrapActivationPolicy :one
+SELECT deployment_id, project_id, environment, request_digest, actor_id,
+       credential_id, credential_expires_at, armed_at
+FROM bootstrap_activation_policies
+WHERE deployment_id = ?;
+
+-- name: GetBootstrapActivationPolicyByScope :one
+SELECT deployment_id, project_id, environment, request_digest, actor_id,
+       credential_id, credential_expires_at, armed_at
+FROM bootstrap_activation_policies
+WHERE project_id = ? AND environment = ?;
 
 -- name: CreateProjectCandidate :exec
 INSERT INTO project_candidates (

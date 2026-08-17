@@ -7,15 +7,16 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	"github.com/flidai/leapview/internal/project/graph"
 	"gopkg.in/yaml.v3"
 )
 
 type Dashboard struct {
-	ID                string                                `yaml:"id"`
+	ID                graph.ResourceID                      `yaml:"id"`
 	Appearance        dashboardappearance.Patch             `yaml:"appearance,omitempty" json:"appearance,omitempty"`
 	Title             string                                `yaml:"title"`
 	Description       string                                `yaml:"description"`
-	SemanticModel     string                                `yaml:"semantic_model"`
+	SemanticModel     graph.ResourceID                      `yaml:"semantic_model"`
 	FilterDefinitions map[string]dashboardfilter.Definition `yaml:"filter_definitions,omitempty"`
 	FilterBindings    map[string]dashboardfilter.Binding    `yaml:"filter_bindings,omitempty"`
 	FilterApplication dashboardfilter.ApplicationPolicy     `yaml:"filter_application,omitempty"`

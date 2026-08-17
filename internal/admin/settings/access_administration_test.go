@@ -8,8 +8,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/workspace"
-	workspacesqlite "github.com/flidai/leapview/internal/workspace/sqlite"
 )
 
 func TestLoadAccessAdministrationDerivesSourceAwareCapabilities(t *testing.T) {
@@ -27,31 +25,27 @@ func TestLoadAccessAdministrationDerivesSourceAwareCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	localGroup, err := repository.UpsertGroup(ctx, access.GroupInput{WorkspaceID: "test", Name: "Local team"})
+	localGroup, err := repository.UpsertGroup(ctx, access.GroupInput{Provider: "local", Name: "Local team"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.AddGroupMember(ctx, "test", localGroup.ID, local.Principal.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.CreateRoleBinding(ctx, access.RoleBindingInput{WorkspaceID: "test", SubjectType: access.SubjectPrincipal, SubjectID: local.Principal.ID, Role: access.RoleViewer}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repository.CreateRoleBinding(ctx, access.RoleBindingInput{WorkspaceID: "test", SubjectType: access.SubjectGroup, SubjectID: localGroup.ID, Role: access.RoleEditor}); err != nil {
+	if err := repository.AddGroupMember(ctx, localGroup.ID, local.Principal.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.CreateSession(ctx, local.Principal.ID, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.RecordAuditEvent(ctx, access.AuditEventInput{PrincipalID: actor.Principal.ID, Action: "principal.updated", TargetType: "principal", TargetID: local.Principal.ID, Status: "success"}); err != nil {
+	if err := repository.RecordAuditEvent(ctx, access.AuditEventInput{PrincipalID: actor.Principal.ID, Action: "principal.updated", ResourceKind: "principal", ResourceID: local.Principal.ID, Status: "success"}); err != nil {
 		t.Fatal(err)
 	}
-	externalGroup, err := repository.UpsertGroup(ctx, access.GroupInput{WorkspaceID: "test", Provider: "scim", ExternalID: "directory-team", Name: "Directory team"})
+	externalGroup, err := repository.UpsertGroup(ctx, access.GroupInput{Provider: "scim", ExternalID: "directory-team", Name: "Directory team"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	state, err := LoadAccessAdministration(ctx, repository, actor.Principal.ID, local.Principal.ID, externalGroup.ID)
+	state, err := LoadAccessAdministration(ctx, repository, actor.Principal.ID, local.Principal.ID, externalGroup.ID, func(context.Context, string) ([]AccessRoleAssignmentSignal, error) {
+		return []AccessRoleAssignmentSignal{{ProjectID: "project-1", ResourceKind: "dashboard", ResourceID: "dashboard-1", Role: "viewer", Capabilities: []string{string(access.CapabilityResourceRead)}, SourceType: "direct", SourceID: local.Principal.ID, SourceName: "Local"}}, nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +56,7 @@ func TestLoadAccessAdministrationDerivesSourceAwareCapabilities(t *testing.T) {
 	if localSignal.LastSeenAt == "" || len(state.Sessions) != 1 {
 		t.Fatalf("local activity = principal %#v sessions %#v", localSignal, state.Sessions)
 	}
-	if len(state.RoleAssignments) != 2 || state.RoleAssignments[0].SourceType != "group" || state.RoleAssignments[1].SourceType != "direct" {
+	if len(state.RoleAssignments) != 1 || state.RoleAssignments[0].ResourceKind != "dashboard" || len(state.RoleAssignments[0].Capabilities) != 1 {
 		t.Fatalf("role assignments = %#v", state.RoleAssignments)
 	}
 	if len(state.Activity) != 1 || state.Activity[0].Action != "principal.updated" || state.Activity[0].ActorName != "Admin" {
@@ -153,7 +147,7 @@ func TestApplyAccessAdministrationCommandAddsMultipleGroupMembers(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := repository.UpsertGroup(ctx, access.GroupInput{WorkspaceID: "test", Name: "Analysts"})
+	group, err := repository.UpsertGroup(ctx, access.GroupInput{Provider: "local", Name: "Analysts"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +160,7 @@ func TestApplyAccessAdministrationCommandAddsMultipleGroupMembers(t *testing.T) 
 	if result.Message != "2 members added." {
 		t.Fatalf("result = %#v", result)
 	}
-	members, err := repository.ListGroupMembers(ctx, "test", group.ID)
+	members, err := repository.ListGroupMembers(ctx, group.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,9 +176,6 @@ func openAccessAdministrationRepository(t *testing.T, ctx context.Context) *acce
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := workspacesqlite.NewRepository(store.SQLDB()).Ensure(ctx, workspace.EnsureInput{ID: "test", Title: "Test"}); err != nil {
-		t.Fatal(err)
-	}
 	return accesssqlite.NewRepository(store.SQLDB())
 }
 

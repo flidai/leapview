@@ -35,6 +35,11 @@ var (
 	ErrUnboundCanonicalGrant = errors.New("canonical grant is not bound to a project graph")
 	// ErrInvalidSubjectRef indicates a missing or unsupported subject identity.
 	ErrInvalidSubjectRef = errors.New("invalid canonical subject reference")
+	// ErrInvalidProjectRole indicates an unsupported project role name.
+	ErrInvalidProjectRole = errors.New("invalid canonical project role")
+	// ErrInvalidPlatformRole indicates an unsupported instance-wide platform
+	// role name. Platform roles are deliberately distinct from project roles.
+	ErrInvalidPlatformRole = errors.New("invalid canonical platform role")
 )
 
 // ResourceRef is the canonical authorization and audit reference for one
@@ -201,6 +206,64 @@ func (capability Capability) Validate() error {
 // String returns the wire representation of a capability.
 func (capability Capability) String() string { return string(capability) }
 
+// ValidateTokenCapabilities validates an API-token attenuation request against
+// the principal's current effective capabilities. A nil request is the
+// dynamic form: the token carries no allowlist and each authorization decision
+// must use the principal's effective capabilities at that time. A non-nil
+// request is an explicit least-privilege allowlist and every capability must be
+// present in the current effective set.
+func ValidateTokenCapabilities(requested, effective []Capability) error {
+	if requested == nil {
+		return nil
+	}
+	allowed := make(map[Capability]struct{}, len(effective))
+	for _, capability := range effective {
+		if err := capability.Validate(); err != nil {
+			return err
+		}
+		allowed[capability] = struct{}{}
+	}
+	seen := make(map[Capability]struct{}, len(requested))
+	for _, capability := range requested {
+		if err := capability.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seen[capability]; duplicate {
+			return fmt.Errorf("%w: duplicate API token capability %q", ErrInvalidCapability, capability)
+		}
+		seen[capability] = struct{}{}
+		if _, ok := allowed[capability]; !ok {
+			return fmt.Errorf("%w: API token capability %q exceeds effective access", ErrCapabilityNotAllowed, capability)
+		}
+	}
+	return nil
+}
+
+// IntersectTokenCapabilities applies a stored API-token allowlist to the
+// principal's effective capabilities. A nil allowlist is intentionally
+// dynamic and therefore returns a defensive copy of effective. Explicit
+// allowlists are intersected as defense in depth even after creation-time
+// subset validation.
+func IntersectTokenCapabilities(token, effective []Capability) []Capability {
+	if len(effective) == 0 {
+		return []Capability{}
+	}
+	if token == nil {
+		return append([]Capability(nil), effective...)
+	}
+	allowed := make(map[Capability]struct{}, len(token))
+	for _, capability := range token {
+		allowed[capability] = struct{}{}
+	}
+	result := make([]Capability, 0, len(effective))
+	for _, capability := range effective {
+		if _, ok := allowed[capability]; ok {
+			result = append(result, capability)
+		}
+	}
+	return result
+}
+
 // MarshalText rejects invalid capability values and supports the canonical
 // text representation in encoders using encoding.TextMarshaler.
 func (capability Capability) MarshalText() ([]byte, error) {
@@ -279,6 +342,76 @@ func ValidateCapabilityForKind(kind graph.Kind, capability Capability) error {
 	return nil
 }
 
+// ProjectRole is an explicit project-wide RBAC role. Roles are captured in a
+// serving authorization snapshot with their capability bundle; they are not
+// expanded into one grant per graph node.
+type ProjectRole string
+
+const (
+	ProjectRoleOwner        ProjectRole = "owner"
+	ProjectRoleAdmin        ProjectRole = "admin"
+	ProjectRoleDeployer     ProjectRole = "deployer"
+	ProjectRoleDataDeployer ProjectRole = "data_deployer"
+	ProjectRoleContributor  ProjectRole = "contributor"
+	ProjectRoleEditor       ProjectRole = "editor"
+	ProjectRoleMember       ProjectRole = "member"
+	ProjectRoleViewer       ProjectRole = "viewer"
+)
+
+var projectRoleCapabilities = map[ProjectRole][]Capability{
+	ProjectRoleOwner:        {CapabilityProjectAdmin, CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
+	ProjectRoleAdmin:        {CapabilityProjectAdmin, CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage, CapabilityResourceShare, CapabilityResourcePublish},
+	ProjectRoleDeployer:     {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourcePublish},
+	ProjectRoleDataDeployer: {CapabilityResourceUse, CapabilityResourceEdit},
+	ProjectRoleContributor:  {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit},
+	ProjectRoleEditor:       {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit},
+	ProjectRoleMember:       {CapabilityResourceUse, CapabilityResourceRead, CapabilityResourceEdit, CapabilityResourceManage},
+	ProjectRoleViewer:       {CapabilityResourceUse, CapabilityResourceRead},
+}
+
+var projectRoleOrder = []ProjectRole{
+	ProjectRoleOwner, ProjectRoleAdmin, ProjectRoleDeployer, ProjectRoleDataDeployer, ProjectRoleContributor,
+	ProjectRoleEditor, ProjectRoleMember, ProjectRoleViewer,
+}
+
+// ParseProjectRole validates a canonical project role name.
+func ParseProjectRole(value string) (ProjectRole, error) {
+	role := ProjectRole(value)
+	if _, ok := projectRoleCapabilities[role]; !ok {
+		return "", fmt.Errorf("%w %q", ErrInvalidProjectRole, value)
+	}
+	return role, nil
+}
+
+// ProjectRoleCapabilities returns the immutable role bundle in deterministic
+// capability order. Callers receive a defensive copy.
+func ProjectRoleCapabilities(role ProjectRole) []Capability {
+	return append([]Capability(nil), projectRoleCapabilities[role]...)
+}
+
+// CanonicalProjectRoles returns the supported project roles in contract order.
+func CanonicalProjectRoles() []ProjectRole { return append([]ProjectRole(nil), projectRoleOrder...) }
+
+func (role ProjectRole) Valid() bool {
+	_, ok := projectRoleCapabilities[role]
+	return ok
+}
+
+// PlatformRole is intentionally separate from project RBAC. Platform access
+// controls instance-wide administration and is never serialized into a
+// project-generation authorization snapshot.
+type PlatformRole string
+
+const PlatformRoleAdmin PlatformRole = "platform_admin"
+
+func ParsePlatformRole(value string) (PlatformRole, error) {
+	role := PlatformRole(value)
+	if role != PlatformRoleAdmin {
+		return "", fmt.Errorf("%w %q", ErrInvalidPlatformRole, value)
+	}
+	return role, nil
+}
+
 // SubjectKind identifies the explicit subject class used by canonical grants.
 // Service principals use SubjectKindPrincipal.
 type SubjectKind string
@@ -300,8 +433,7 @@ func NewSubjectRef(kind SubjectKind, id string) (SubjectRef, error) {
 	if kind != SubjectKindPrincipal && kind != SubjectKindGroup {
 		return SubjectRef{}, fmt.Errorf("%w: kind %q", ErrInvalidSubjectRef, kind)
 	}
-	id = strings.TrimSpace(id)
-	if id == "" || strings.ContainsAny(id, "\x00\r\n\t") {
+	if id == "" || id != strings.TrimSpace(id) || strings.ContainsAny(id, "\x00\r\n\t") {
 		return SubjectRef{}, fmt.Errorf("%w: subject ID is blank or contains control characters", ErrInvalidSubjectRef)
 	}
 	return SubjectRef{Kind: kind, ID: id}, nil

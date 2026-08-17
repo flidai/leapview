@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	nethttp "net/http"
 	"strings"
@@ -21,9 +22,20 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
+var readStreamInstanceRandom = rand.Read
+
 func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
+	projectID, projectErr := h.projectIDForRequest(r.Context())
+	if projectErr != nil {
+		projectID, projectErr = projectgraph.NewResourceID(strings.TrimSpace(r.URL.Query().Get("project")))
+	}
+	if projectErr != nil {
+		nethttp.NotFound(w, r)
+		return
+	}
 	metrics, ok := h.metricsForRequest(r)
 	if !ok {
 		nethttp.NotFound(w, r)
@@ -63,14 +75,22 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	clientID := pagestream.ClientIDFromRequest(r, strings.TrimSpace(r.URL.Query().Get("clientId")))
 	streamInstanceID := strings.TrimSpace(r.URL.Query().Get("streamInstance"))
 	if streamInstanceID == "" {
-		streamInstanceID = fallbackStreamInstanceID()
+		streamInstanceID, err = fallbackStreamInstanceID()
+		if err != nil {
+			nethttp.Error(w, "dashboard stream identity is unavailable", nethttp.StatusServiceUnavailable)
+			return
+		}
 	}
 	filterState, err := reportDefinition.FilterStateFromURL(activePage.ID, r.URL.Query())
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
-	sessionKey := h.dashboardSessionKey(r, reportDefinition, clientID, streamInstanceID)
+	sessionKey, sessionKeyErr := h.dashboardSessionKey(r, reportDefinition, clientID, streamInstanceID)
+	if sessionKeyErr != nil {
+		nethttp.NotFound(w, r)
+		return
+	}
 	newSession := false
 	if h.SessionStore != nil {
 		key := sessionKey
@@ -89,7 +109,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		filterState = record.State.Filters.State
 	}
 	if newSession {
-		h.recordDashboardView(r, metrics.Catalog().Workspace.ID, dashboardID, activePage.ID)
+		h.recordDashboardView(r, projectID, dashboardID, activePage.ID)
 	}
 	initialFilters.CompiledState = &filterState
 	initialFilters.ServingStateID = sessionKey.ServingStateID
@@ -124,7 +144,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		delete(bootstrap, "agent")
 		delete(bootstrap, "agentVisuals")
 	} else if h.AgentBootstrap != nil {
-		agentState := h.AgentBootstrap(r, metrics.Catalog().Workspace.ID)
+		agentState := h.AgentBootstrap(r, projectID.String())
 		bootstrap["agent"] = agentState.Agent
 		bootstrap["agentVisuals"] = agentState.Visuals
 	}
@@ -134,7 +154,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		environment = h.Environment(r)
 	}
 	if h.DataRefreshedAt != nil {
-		status["lastUpdated"] = h.DataRefreshedAt(r.Context(), metrics.Catalog().Workspace.ID, environment, request.ModelID)
+		status["lastUpdated"] = h.DataRefreshedAt(r.Context(), projectID.String(), environment, request.ModelID)
 	}
 	bootstrap["status"] = status
 	if err := updates.Patch(bootstrap); err != nil {
@@ -152,7 +172,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	defer closeCoordinator()
 	h.observeRefreshes(coordinator, dashboardID, activePage.ID)
 	service := command.Service{Metrics: metrics}
-	registry.Bind(streamID, metrics.Catalog().Workspace.ID, environment, request.ModelID, func() {
+	registry.Bind(streamID, projectID, environment, request.ModelID, func() {
 		_, _ = coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 			prepared, err := service.PrepareInitial(request, current)
 			return streamPreparation(prepared), err
@@ -185,7 +205,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	_ = updates.ForwardUpdates(r.Context(), mailbox)
 }
 
-func (h Handler) recordDashboardView(r *nethttp.Request, workspaceID, dashboardID, pageID string) {
+func (h Handler) recordDashboardView(r *nethttp.Request, projectID projectgraph.ResourceID, dashboardID, pageID string) {
 	if h.RecordDashboardView == nil || h.CurrentUsagePrincipal == nil {
 		return
 	}
@@ -193,8 +213,12 @@ func (h Handler) recordDashboardView(r *nethttp.Request, workspaceID, dashboardI
 	if !human || strings.TrimSpace(principalID) == "" {
 		return
 	}
+	dashboardResourceID, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return
+	}
 	view := usage.View{
-		WorkspaceID: workspaceID, DashboardID: dashboardID, PageID: pageID,
+		ProjectID: projectID, DashboardID: dashboardResourceID, PageID: pageID,
 		PrincipalID: principalID, ViewedAt: time.Now().UTC(),
 	}
 	if err := h.RecordDashboardView(r.Context(), view); err != nil {
@@ -203,7 +227,7 @@ func (h Handler) recordDashboardView(r *nethttp.Request, workspaceID, dashboardI
 			logger = slog.Default()
 		}
 		logger.ErrorContext(r.Context(), "dashboard usage recording failed",
-			"workspace", workspaceID, "dashboard", dashboardID, "page", pageID, "error", err)
+			"project", projectID, "dashboard", dashboardID, "page", pageID, "error", err)
 	}
 }
 
@@ -226,12 +250,12 @@ func streamActivePage(pages []dashboard.Page, pageID string) (dashboard.Page, bo
 	return dashboard.Page{}, false
 }
 
-func fallbackStreamInstanceID() string {
+func fallbackStreamInstanceID() (string, error) {
 	var value [16]byte
-	if _, err := rand.Read(value[:]); err == nil {
-		return hex.EncodeToString(value[:])
+	if _, err := readStreamInstanceRandom(value[:]); err != nil {
+		return "", fmt.Errorf("generate dashboard stream identity: %w", err)
 	}
-	return "server-stream"
+	return hex.EncodeToString(value[:]), nil
 }
 
 func (h Handler) refreshObserver(dashboardID, pageID string) dashboardstream.SummaryObserver {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestBuildConstructsAgentServiceAndPersistence(t *testing.T) {
@@ -17,7 +18,7 @@ func TestBuildConstructsAgentServiceAndPersistence(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(),
+		Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:agent-test"),
 		RecordAudit: func(context.Context, access.AuditEventInput) error {
 			return nil
 		},
@@ -37,7 +38,37 @@ func TestBuildRejectsEnabledAgentCommandsWithoutAuditRecorder(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	if _, err := Build(t.Context(), Config{Database: store.SQLDB()}); err == nil {
+	if _, err := Build(t.Context(), Config{Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:agent-test")}); err == nil {
 		t.Fatal("agent module accepted an enabled command service without an audit recorder")
+	}
+}
+
+func TestBuildAllowsUnboundProjectUntilActiveResolverBinds(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	var active projectgraph.ResourceID
+	module, err := Build(t.Context(), Config{
+		Database: store.SQLDB(),
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return active, nil
+		},
+		RecordAudit: func(context.Context, access.AuditEventInput) error {
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("unbound build failed: %v", err)
+	}
+	if _, err := module.activeProjectID(t.Context()); err == nil {
+		t.Fatal("unbound project-dependent operation unexpectedly succeeded")
+	}
+
+	active = projectgraph.ResourceID("project:activated")
+	if got, err := module.activeProjectID(t.Context()); err != nil || got != active.String() {
+		t.Fatalf("resolved active project = %q, err=%v; want %q", got, err, active)
 	}
 }

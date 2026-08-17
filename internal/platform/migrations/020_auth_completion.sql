@@ -16,7 +16,5 @@ CREATE TABLE IF NOT EXISTS service_principal_secrets (
 CREATE INDEX IF NOT EXISTS service_principal_secrets_principal_idx
   ON service_principal_secrets(service_principal_id, created_at DESC);
 
-ALTER TABLE audit_events ADD COLUMN privilege TEXT NOT NULL DEFAULT '';
-ALTER TABLE audit_events ADD COLUMN status TEXT NOT NULL DEFAULT '';
-ALTER TABLE audit_events ADD COLUMN request_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE audit_events ADD COLUMN correlation_id TEXT NOT NULL DEFAULT '';
+-- Audit provenance columns are part of the project-wide table created by
+-- migration 001; this migration is retained as an ordering marker only.

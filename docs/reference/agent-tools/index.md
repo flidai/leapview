@@ -8,25 +8,25 @@ Machine-readable: [complete tool manifest](/docs/agent-tools/manifest.json). Foc
 
 ## Tools
 
-| Tool | Privilege | Effect | Description |
+| Tool | Authorization | Effect | Description |
 | --- | --- | --- | --- |
-| [`add_dashboard_page`](/docs/agent-tools/add_dashboard_page) | `EDIT_ITEM` | `write` | Add one dashboard page to a private draft using an exact expected revision. |
-| [`add_dashboard_visual`](/docs/agent-tools/add_dashboard_visual) | `EDIT_ITEM` | `write` | Add a governed dashboard visual to a private draft using an exact expected revision. |
-| [`assign_dashboard_field`](/docs/agent-tools/assign_dashboard_field) | `EDIT_ITEM` | `write` | Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision. |
-| [`catalog_get`](/docs/agent-tools/catalog_get) | `VIEW_ITEM` | `read` | Get the compact definition and type-specific metadata for one exact catalog ref. |
-| [`catalog_list`](/docs/agent-tools/catalog_list) | `VIEW_ITEM` | `read` | Browse one deterministic level of the authorized LeapView catalog hierarchy. |
-| [`catalog_search`](/docs/agent-tools/catalog_search) | `VIEW_ITEM` | `read` | Search the complete authorized LeapView BI catalog across workspaces. |
-| [`create_dashboard_draft`](/docs/agent-tools/create_dashboard_draft) | `EDIT_ITEM` | `write` | Create a private dashboard draft owned by the authenticated principal. |
-| [`docs_read`](/docs/agent-tools/docs_read) | `USE_AGENT` | `read` | Read a bounded line window from one LeapView document returned by docs_search. |
-| [`docs_search`](/docs/agent-tools/docs_search) | `USE_AGENT` | `read` | Search LeapView's version-matched product documentation. |
-| [`execute_dashboard_command`](/docs/agent-tools/execute_dashboard_command) | `MANAGE_ITEM` | `destructive` | Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. |
-| [`export_dashboard_yaml`](/docs/agent-tools/export_dashboard_yaml) | `VIEW_ITEM` | `read` | Export an authorized authored dashboard source as canonical project YAML. |
-| [`fork_dashboard`](/docs/agent-tools/fork_dashboard) | `EDIT_ITEM` | `write` | Fork an authorized workspace or retained project dashboard source into a private draft. |
-| [`get_dashboard`](/docs/agent-tools/get_dashboard) | `VIEW_ITEM` | `read` | Get one authorized dashboard's governed metadata. |
-| [`get_dashboard_draft`](/docs/agent-tools/get_dashboard_draft) | `EDIT_ITEM` | `read` | Read the exact current private draft and retained revision for one dashboard. |
-| [`list_dashboards`](/docs/agent-tools/list_dashboards) | `VIEW_ITEM` | `read` | List the authorized dashboard catalog for one workspace. |
-| [`preview_dashboard_draft`](/docs/agent-tools/preview_dashboard_draft) | `EDIT_ITEM` | `read` | Preview an exact private dashboard draft revision and page against the active governed runtime. |
-| [`query_dashboard_visual`](/docs/agent-tools/query_dashboard_visual) | `QUERY_DATA` | `read` | Query an existing dashboard visual with governed filters and compact analytical output |
-| [`query_semantic_model`](/docs/agent-tools/query_semantic_model) | `QUERY_DATA` | `read` | Query governed semantic data with typed columns, filters, pagination, and provenance |
-| [`query_visual`](/docs/agent-tools/query_visual) | `QUERY_DATA` | `read` | Create one read-only visual from LeapView semantic model fields. |
-| [`set_dashboard_visibility`](/docs/agent-tools/set_dashboard_visibility) | `EDIT_ITEM` | `write` | Set a private dashboard draft's visibility using an exact expected revision. |
+| [`add_dashboard_page`](/docs/agent-tools/add_dashboard_page) | `RESOURCE_EDIT` | `write` | Add one dashboard page to a private draft using an exact expected revision. |
+| [`add_dashboard_visual`](/docs/agent-tools/add_dashboard_visual) | `RESOURCE_EDIT` | `write` | Add a governed dashboard visual to a private draft using an exact expected revision. |
+| [`assign_dashboard_field`](/docs/agent-tools/assign_dashboard_field) | `RESOURCE_EDIT` | `write` | Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision. |
+| [`catalog_get`](/docs/agent-tools/catalog_get) | `RESOURCE_READ` | `read` | Resolve one exact authorized project resource ID and return its compact metadata. |
+| [`catalog_list`](/docs/agent-tools/catalog_list) | `RESOURCE_READ` | `read` | Browse authorized project resources. |
+| [`catalog_search`](/docs/agent-tools/catalog_search) | `RESOURCE_READ` | `read` | Search authorized project resources by stable ID, name, description, or domain metadata. |
+| [`create_dashboard_draft`](/docs/agent-tools/create_dashboard_draft) | `RESOURCE_EDIT` | `write` | Create a private dashboard draft owned by the authenticated principal. |
+| [`docs_read`](/docs/agent-tools/docs_read) | `authenticated` | `read` | Read a bounded line window from one LeapView document returned by docs_search. |
+| [`docs_search`](/docs/agent-tools/docs_search) | `authenticated` | `read` | Search LeapView's version-matched product documentation. |
+| [`execute_dashboard_command`](/docs/agent-tools/execute_dashboard_command) | `RESOURCE_MANAGE` | `destructive` | Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. |
+| [`export_dashboard_yaml`](/docs/agent-tools/export_dashboard_yaml) | `RESOURCE_READ` | `read` | Export an authorized authored dashboard source as canonical project YAML. |
+| [`fork_dashboard`](/docs/agent-tools/fork_dashboard) | `RESOURCE_EDIT` | `write` | Fork an authorized project or instance dashboard source into a private draft. |
+| [`get_dashboard`](/docs/agent-tools/get_dashboard) | `RESOURCE_READ` | `read` | Get one authorized dashboard's governed metadata. |
+| [`get_dashboard_draft`](/docs/agent-tools/get_dashboard_draft) | `RESOURCE_EDIT` | `read` | Read the exact current private draft and retained revision for one dashboard. |
+| [`list_dashboards`](/docs/agent-tools/list_dashboards) | `RESOURCE_READ` | `read` | List the authorized project dashboard catalog. |
+| [`preview_dashboard_draft`](/docs/agent-tools/preview_dashboard_draft) | `RESOURCE_EDIT` | `read` | Preview an exact private dashboard draft revision and page against the active governed runtime. |
+| [`query_dashboard_visual`](/docs/agent-tools/query_dashboard_visual) | `RESOURCE_READ` | `read` | Query an existing dashboard visual with governed filters and compact analytical output |
+| [`query_semantic_model`](/docs/agent-tools/query_semantic_model) | `RESOURCE_USE` | `read` | Query governed semantic data with typed columns, filters, pagination, and provenance |
+| [`query_visual`](/docs/agent-tools/query_visual) | `RESOURCE_USE` | `read` | Create one read-only visual from LeapView semantic model fields. |
+| [`set_dashboard_visibility`](/docs/agent-tools/set_dashboard_visibility) | `RESOURCE_EDIT` | `write` | Set a private dashboard draft's visibility using an exact expected revision. |

@@ -1,0 +1,10 @@
+apiVersion: leapview.dev/v1
+kind: RoleBinding
+metadata:
+  id: role-binding:visuals-developers-editor
+  name: visuals-developers-editor
+spec:
+  role: editor
+  subject:
+    kind: group
+    group: group:visuals-developers

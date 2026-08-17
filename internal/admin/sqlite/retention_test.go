@@ -145,9 +145,6 @@ func testMaintenanceStore(t *testing.T, ctx context.Context) *platform.Store {
 func seedAuthState(t *testing.T, ctx context.Context, store *platform.Store, now time.Time) {
 	t.Helper()
 	db := store.SQLDB()
-	if _, err := db.ExecContext(ctx, `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatalf("seed workspace: %v", err)
-	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO principals (id, kind, email, display_name) VALUES
 		('principal_1', 'user', 'owner@example.com', 'Owner'),
 		('service_1', 'service_principal', '', 'Service')`); err != nil {
@@ -166,10 +163,10 @@ func seedAuthState(t *testing.T, ctx context.Context, store *platform.Store, now
 		('session_recent', 'principal_1', 'session_fp_recent', 'verifier', ?, NULL)`, old, recent); err != nil {
 		t.Fatalf("seed sessions: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO api_tokens (id, principal_id, workspace_id, name, token_fingerprint, token_verifier, privileges_json, expires_at, revoked_at) VALUES
-		('token_expired_old', 'principal_1', 'sales', 'expired old', 'token_fp_expired_old', 'verifier', '[]', ?, NULL),
-		('token_revoked_old', 'principal_1', 'sales', 'revoked old', 'token_fp_revoked_old', 'verifier', '[]', NULL, ?),
-		('token_recent', 'principal_1', 'sales', 'recent', 'token_fp_recent', 'verifier', '[]', ?, NULL)`, old, old, future); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO api_tokens (id, principal_id, name, token_fingerprint, token_verifier, expires_at, revoked_at) VALUES
+		('token_expired_old', 'principal_1', 'expired old', 'token_fp_expired_old', 'verifier', ?, NULL),
+		('token_revoked_old', 'principal_1', 'revoked old', 'token_fp_revoked_old', 'verifier', NULL, ?),
+		('token_recent', 'principal_1', 'recent', 'token_fp_recent', 'verifier', ?, NULL)`, old, old, future); err != nil {
 		t.Fatalf("seed api tokens: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO service_principal_secrets (id, service_principal_id, name, secret_fingerprint, secret_verifier, expires_at, revoked_at) VALUES
@@ -183,9 +180,6 @@ func seedAuthState(t *testing.T, ctx context.Context, store *platform.Store, now
 func seedAuthStateWithRFC3339Times(t *testing.T, ctx context.Context, store *platform.Store, now time.Time) {
 	t.Helper()
 	db := store.SQLDB()
-	if _, err := db.ExecContext(ctx, `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatalf("seed workspace: %v", err)
-	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO principals (id, kind, email, display_name) VALUES
 		('principal_1', 'user', 'owner@example.com', 'Owner'),
 		('service_1', 'service_principal', '', 'Service')`); err != nil {
@@ -204,10 +198,10 @@ func seedAuthStateWithRFC3339Times(t *testing.T, ctx context.Context, store *pla
 		('session_recent_rfc3339', 'principal_1', 'session_fp_recent_rfc3339', 'verifier', ?, NULL)`, old, recent); err != nil {
 		t.Fatalf("seed sessions: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO api_tokens (id, principal_id, workspace_id, name, token_fingerprint, token_verifier, privileges_json, expires_at, revoked_at) VALUES
-		('token_expired_old_rfc3339', 'principal_1', 'sales', 'expired old', 'token_fp_expired_old_rfc3339', 'verifier', '[]', ?, NULL),
-		('token_revoked_old_rfc3339', 'principal_1', 'sales', 'revoked old', 'token_fp_revoked_old_rfc3339', 'verifier', '[]', NULL, ?),
-		('token_recent_rfc3339', 'principal_1', 'sales', 'recent', 'token_fp_recent_rfc3339', 'verifier', '[]', ?, NULL)`, old, old, future); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO api_tokens (id, principal_id, name, token_fingerprint, token_verifier, expires_at, revoked_at) VALUES
+		('token_expired_old_rfc3339', 'principal_1', 'expired old', 'token_fp_expired_old_rfc3339', 'verifier', ?, NULL),
+		('token_revoked_old_rfc3339', 'principal_1', 'revoked old', 'token_fp_revoked_old_rfc3339', 'verifier', NULL, ?),
+		('token_recent_rfc3339', 'principal_1', 'recent', 'token_fp_recent_rfc3339', 'verifier', ?, NULL)`, old, old, future); err != nil {
 		t.Fatalf("seed api tokens: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO service_principal_secrets (id, service_principal_id, name, secret_fingerprint, secret_verifier, expires_at, revoked_at) VALUES
@@ -221,24 +215,21 @@ func seedAuthStateWithRFC3339Times(t *testing.T, ctx context.Context, store *pla
 func seedOperationalHistory(t *testing.T, ctx context.Context, store *platform.Store, now time.Time) {
 	t.Helper()
 	db := store.SQLDB()
-	if _, err := db.ExecContext(ctx, `INSERT INTO workspaces (id, title) VALUES ('sales', 'Sales')`); err != nil {
-		t.Fatalf("seed workspace: %v", err)
-	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO principals (id, email, display_name) VALUES ('principal_1', 'owner@example.com', 'Owner')`); err != nil {
 		t.Fatalf("seed principal: %v", err)
 	}
 	oldAudit := sqliteTime(now.Add(-(366 * 24 * time.Hour)))
 	recentAudit := sqliteTime(now.Add(-(30 * 24 * time.Hour)))
-	if _, err := db.ExecContext(ctx, `INSERT INTO audit_events (id, workspace_id, principal_id, action, created_at) VALUES
-		('audit_old', 'sales', 'principal_1', 'old', ?),
-		('audit_recent', 'sales', 'principal_1', 'recent', ?)`, oldAudit, recentAudit); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO audit_events (id, project_id, principal_id, action, resource_kind, resource_id, capability, status, created_at) VALUES
+		('audit_old', 'project_demo', 'principal_1', 'old', 'product', 'instance', 'RESOURCE_MANAGE', 'success', ?),
+		('audit_recent', 'project_demo', 'principal_1', 'recent', 'product', 'instance', 'RESOURCE_MANAGE', 'success', ?)`, oldAudit, recentAudit); err != nil {
 		t.Fatalf("seed audit events: %v", err)
 	}
 	oldQuery := sqliteTime(now.Add(-(91 * 24 * time.Hour)))
 	recentQuery := sqliteTime(now.Add(-(10 * 24 * time.Hour)))
-	if _, err := db.ExecContext(ctx, `INSERT INTO query_events (id, workspace_id, principal_id, status, created_at) VALUES
-		('query_old', 'sales', 'principal_1', 'success', ?),
-		('query_recent', 'sales', 'principal_1', 'success', ?)`, oldQuery, recentQuery); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO query_events (id, project_id, principal_id, status, created_at) VALUES
+		('query_old', 'project_demo', 'principal_1', 'success', ?),
+		('query_recent', 'project_demo', 'principal_1', 'success', ?)`, oldQuery, recentQuery); err != nil {
 		t.Fatalf("seed query events: %v", err)
 	}
 	oldArchived := sqliteTime(now.Add(-(181 * 24 * time.Hour)))

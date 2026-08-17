@@ -142,9 +142,6 @@ func (h *Handler) ChatTurn(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
-	if turnContext != nil {
-		scope.WorkspaceID = turnContext.WorkspaceID
-	}
 	activeConversationID := strings.TrimSpace(signals.Agent.ActiveConversationID)
 	if activeConversationID == "" {
 		h.startDraftChatTurn(w, r, service, scope, clientID, input, turnContext, embedded)
@@ -186,14 +183,14 @@ func (h *Handler) ChatReferenceSearch(w nethttp.ResponseWriter, r *nethttp.Reque
 func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	scope := h.chatScope(r)
 	signal, view := h.chatBootstrapSignal(r, scope)
-	workspaceID := ""
+	projectID := ""
 	streamID := chatStreamID(scope, chatClientID(r))
 	var trace *pagestream.TraceStore
 	if h.options.Broker != nil {
 		trace = h.options.Broker.TraceStore()
 	}
 	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(trace, streamID, "chat.bootstrap"))
-	if err := updates.Patch(ui.ChatBootstrapSignals(workspaceID, view, signal, h.layout(r))); err != nil {
+	if err := updates.Patch(ui.ChatBootstrapSignals(projectID, view, signal, h.layout(r))); err != nil {
 		return
 	}
 	if h.options.Service == nil || !h.options.Service.Enabled() || scope.PrincipalID == "" || h.options.Broker == nil {
@@ -207,8 +204,8 @@ func (h *Handler) renderChat(w nethttp.ResponseWriter, r *nethttp.Request, view 
 	_ = pagestream.EnsureClientID(w, r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
-	workspaceID := ""
-	if err := ui.ChatPage(workspaceID, h.csrfToken(r), view, signal, h.layout(r)).Render(w); err != nil {
+	projectID := ""
+	if err := ui.ChatPage(projectID, h.csrfToken(r), view, signal, h.layout(r)).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }
@@ -372,7 +369,16 @@ func (h *Handler) chatScope(r *nethttp.Request) agent.Scope {
 			devBypass = principal.DevAuthBypass
 		}
 	}
-	scope := agent.Scope{PrincipalID: principalID, DevAuthBypass: devBypass}
+	projectID := strings.TrimSpace(h.options.ActiveProjectID)
+	if h.options.ResolveProjectID != nil {
+		resolved, err := h.options.ResolveProjectID(r.Context())
+		if err != nil || resolved.Validate() != nil {
+			projectID = ""
+		} else {
+			projectID = resolved.String()
+		}
+	}
+	scope := agent.Scope{ProjectID: projectID, PrincipalID: principalID, DevAuthBypass: devBypass}
 	if h.options.CurrentCredential != nil {
 		if credential, ok := h.options.CurrentCredential(r); ok {
 			scope.Credential = agentCredentialScope(credential)

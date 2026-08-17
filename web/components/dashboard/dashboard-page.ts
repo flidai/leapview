@@ -1250,8 +1250,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const visualType = component.visual ? this.visuals[component.visual]?.spec.kind ?? '' : ''
 		const currentPage = this.renderSnapshot?.page ?? this.page
 		const askReference = currentPage ? this.agentReference(component, currentPage) : undefined
-		const referenced = askReference ? this.agentReferences.some((reference) => reference.reference.workspaceId === askReference.reference.workspaceId
-			&& reference.reference.type === askReference.reference.type && reference.reference.id === askReference.reference.id) : false
+		const referenced = askReference ? this.agentReferences.some((reference) => reference.reference.kind === askReference.reference.kind
+			&& reference.reference.id === askReference.reference.id) : false
     return html`
               <lv-dashboard-visual-frame
                 data-canvas-visual
@@ -1396,17 +1396,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 		if (component.kind !== 'visual' || !component.visual) return undefined
 		const visual = this.visuals[component.visual]
 		if (!visual) return undefined
-		const workspaceId = this.agentContext?.workspaceId ?? ''
-		const href = `/workspaces/${encodeURIComponent(workspaceId)}/dashboards/${encodeURIComponent(page.dashboardId)}/pages/${encodeURIComponent(page.pageId)}`
+		const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' })
+		const projectId = runtime.projectId ?? ''
+		const href = `/dashboards/${encodeURIComponent(page.dashboardId)}/pages/${encodeURIComponent(page.pageId)}`
 		return {
-			reference: { workspaceId, type: 'visual', id: `${page.dashboardId}.${component.visual}` },
-			name: component.title || visual.spec.title || component.visual,
-			visualType: visualizationType(visual),
-			workspace: { id: workspaceId, name: workspaceId },
-			hierarchy: [workspaceId, this.agentContext?.dashboardTitle ?? page.dashboardTitle, page.pageTitle].filter(Boolean),
+				reference: { kind: 'visual', id: `${page.dashboardId}.${component.visual}` },
+				name: component.title || visual.spec.title || component.visual,
+				visualType: visualizationType(visual),
+				hierarchy: [projectId, this.agentContext?.dashboardTitle ?? page.dashboardTitle, page.pageTitle].filter(Boolean),
 			href,
 			locations: [{ dashboardId: page.dashboardId, dashboardName: this.agentContext?.dashboardTitle, pageId: page.pageId, pageName: page.pageTitle, href }],
-			context: ['current_page', 'current_dashboard', 'current_workspace'],
+			context: ['current_page', 'current_dashboard', 'current_project'],
 		}
 	}
 

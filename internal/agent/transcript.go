@@ -114,7 +114,7 @@ func turnReferencesFromContentJSON(raw string) []TurnReference {
 			Reference:   reference.Reference,
 			Name:        reference.Name,
 			Description: reference.Description,
-			Workspace:   reference.Workspace,
+			Resource:    reference.Resource,
 			Hierarchy:   append([]string(nil), reference.Hierarchy...),
 			Href:        reference.Href,
 			Locations:   append([]TurnReferenceLocation(nil), reference.Locations...),

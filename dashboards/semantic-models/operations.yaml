@@ -1,0 +1,49 @@
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata:
+  id: semantic-model:operations
+  name: operations
+  displayName: Operations Semantic Model
+spec:
+  tables:
+    - operations_orders
+    - operations_customers
+  relationships:
+    - id: orders_customers
+      from: operations_orders.customer_id
+      to: operations_customers.customer_id
+      cardinality: many_to_one
+  dimensions:
+    state:
+      type: string
+      bindings:
+        operations_orders:
+          field: operations_customers.state
+          path: [orders_customers]
+    status:
+      type: string
+      bindings:
+        operations_orders: {field: operations_orders.status}
+    delivery_bucket:
+      type: string
+      bindings:
+        operations_orders: {field: operations_orders.delivery_bucket}
+  measures:
+    order_count:
+      label: Orders
+      fact: operations_orders
+      aggregation: count_distinct
+      input: {field: operations_orders.order_id}
+      empty: zero
+    review_score:
+      label: Review score
+      fact: operations_orders
+      aggregation: avg
+      input: {field: operations_orders.review_score}
+      empty: "null"
+    delivery_days:
+      label: Delivery days
+      fact: operations_orders
+      aggregation: avg
+      input: {field: operations_orders.delivery_days}
+      empty: "null"

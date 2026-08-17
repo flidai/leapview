@@ -12,9 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// TestRouteInventory is the migration contract for moving route ownership out
-// of process composition. Generated public API routes come from the TypeSpec
-// contract; UI and operational routes are deliberately enumerated here.
+// TestRouteInventory is the ownership and authorization contract for every
+// mounted route. Generated public API routes come from TypeSpec; browser and
+// operational routes are deliberately enumerated here.
 func TestRouteInventory(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, assemblyConfig{})
 	server.runtime.persistenceConfigured = true
@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "e8c50d150858aa25b4341c460fd4ba9cf329a15329514314226ace6120e9ab3b"
+	const expectedRouteContractDigest = "2b812581c9eec9759ca366e1e9e2133367d72a4902c3cdd5d74493bf855ee06a"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -137,62 +137,38 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 		authenticated.owner = "admin"
 	case path == "/admin/agent" || path == "/admin/agent/config":
 		authenticated.owner = "agent"
-		authenticated.privilege = "MANAGE_PLATFORM"
-	case strings.HasPrefix(path, "/admin/publications"):
-		authenticated.owner = "admin"
-		authenticated.privilege = "MANAGE_PUBLICATIONS"
-	case strings.HasPrefix(path, "/admin/queries") || strings.HasPrefix(path, "/admin/audit"):
-		authenticated.owner = "admin"
-		authenticated.privilege = "VIEW_AUDIT"
-	case path == "/admin/workspaces":
-		authenticated.owner = "admin"
-		authenticated.privilege = "MANAGE_WORKSPACE"
-	case path == "/admin/access/command" || strings.HasPrefix(path, "/admin/principals") || strings.HasPrefix(path, "/admin/groups"):
-		authenticated.owner = "admin"
-		authenticated.privilege = "MANAGE_GRANTS"
+		authenticated.privilege = "platform_admin"
 	case strings.HasPrefix(path, "/admin"):
 		authenticated.owner = "admin"
-		authenticated.privilege = "MANAGE_PLATFORM"
+		authenticated.privilege = "platform_admin"
 	case strings.HasPrefix(path, "/chats"):
 		authenticated.owner = "agent"
-		switch {
-		case path == "/chats/turns":
-			authenticated.privilege = "USE_AGENT"
-		case path == "/chats/references/search":
-			authenticated.privilege = "VIEW_ITEM"
-		default:
-			authenticated.privilege = "VIEW_AGENT"
+		if path == "/chats/references/search" {
+			authenticated.privilege = "RESOURCE_READ"
 		}
-	case strings.HasPrefix(path, "/chat"):
-		authenticated.owner = "agent"
 	case path == "/candidates/{candidate}":
 		authenticated.owner = "deployment"
-		authenticated.privilege = "AUTHOR_PROJECT"
+		authenticated.privilege = "PROJECT_ADMIN"
 	case strings.HasPrefix(path, "/candidates/{candidate}/"):
 		authenticated.owner = "dashboard"
-		authenticated.privilege = "AUTHOR_PROJECT"
-	case path == "/workspaces/{workspace}/dashboards/{dashboard}/edit" || path == "/workspaces/{workspace}/dashboards/{dashboard}/draft/command":
+		authenticated.privilege = "PROJECT_ADMIN"
+	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command":
 		authenticated.owner = "dashboard"
-		authenticated.privilege = "EDIT_ITEM"
-	case path == "/workspaces/{workspace}/dashboards/{dashboard}/preview" || path == "/workspaces/{workspace}/dashboards/{dashboard}/export.yaml":
+		authenticated.privilege = "RESOURCE_EDIT"
+	case path == "/dashboards/{dashboard}/preview" || path == "/dashboards/{dashboard}/export.yaml":
 		authenticated.owner = "dashboard"
-		authenticated.privilege = "VIEW_ITEM"
+		authenticated.privilege = "RESOURCE_READ"
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
-		authenticated.privilege = "VIEW_ITEM"
-	case strings.Contains(path, "/assets/") && strings.HasSuffix(path, "/refresh"):
-		authenticated.owner = "workspace"
-		authenticated.privilege = "REFRESH_DATA"
-	case strings.Contains(path, "/access/") || strings.HasSuffix(path, "/access/upsert") || strings.HasSuffix(path, "/access/remove"):
-		authenticated.owner = "workspace"
-		authenticated.privilege = "MANAGE_GRANTS"
-	case path == "/workspaces/{workspace}/catalog/appearance":
-		authenticated.owner = "workspace"
-		authenticated.privilege = "MANAGE_WORKSPACE"
-	case path == "/" || path == "/catalog/search" || path == "/pipelines" || path == "/pipelines/command" || path == "/data" || path == "/data/command" ||
-		strings.HasPrefix(path, "/workspaces") || strings.HasPrefix(path, "/connections"):
-		authenticated.owner = "workspace"
-		authenticated.privilege = "VIEW_ITEM"
+		authenticated.privilege = "RESOURCE_READ"
+	case path == "/explore":
+		authenticated.owner = "project"
+		authenticated.privilege = "RESOURCE_USE"
+	case path == "/" || path == "/catalog/search" || path == "/sources" || strings.HasPrefix(path, "/sources/") ||
+		path == "/models" || strings.HasPrefix(path, "/models/") || path == "/semantic-models" || strings.HasPrefix(path, "/semantic-models/") ||
+		path == "/pipelines" || strings.HasPrefix(path, "/pipelines/") || path == "/connections" || strings.HasPrefix(path, "/connections/"):
+		authenticated.owner = "project"
+		authenticated.privilege = "RESOURCE_READ"
 	case path == "/updates":
 		authenticated.owner = "ui"
 	default:
@@ -208,7 +184,7 @@ func apiOwner(tags []string) (string, bool) {
 		"Connections": "analytics",
 		"Agent":       "agent", "BI": "dashboard", "Dashboards": "dashboard", "Publications": "dashboard",
 		"Deployments": "deployment", "Managed Data": "manageddata", "Refresh": "refresh",
-		"Releases": "release", "Projects": "release", "Workspaces": "workspace",
+		"Releases": "release", "Projects": "release",
 		"Instance": "platform", "System": "platform",
 	}
 	for _, tag := range tags {
@@ -226,8 +202,8 @@ func apiOwner(tags []string) (string, bool) {
 			return "deployment", true
 		case strings.Contains(tag, "Release") || strings.Contains(tag, "Project"):
 			return "release", true
-		case strings.Contains(tag, "Workspace") || strings.Contains(tag, "Search"):
-			return "workspace", true
+		case strings.Contains(tag, "Search"):
+			return "project", true
 		case strings.Contains(tag, "Agent"):
 			return "agent", true
 		case strings.Contains(tag, "Access") || strings.Contains(tag, "Principal") ||
@@ -271,60 +247,54 @@ GET /admin/service-accounts
 GET /admin/storage
 GET /admin/storage/tables/{schema}/{table}
 GET /admin/system
-GET /admin/workspaces
 GET /api/docs
 GET /api/openapi.json
 GET /auth/{provider}
 GET /auth/{provider}/callback
 GET /auth/desktop/authorize
 GET /auth/desktop/session
-GET /chat
-GET /chat/*
-GET /chat/updates
 GET /chats
 GET /chats/new
 GET /chats/references/search
 GET /chats/restore
 GET /chats/{conversation}
 GET /candidates/{candidate}
-GET /candidates/{candidate}/workspaces/{workspace}/dashboards/{dashboard}
-GET /candidates/{candidate}/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}
-GET /candidates/{candidate}/workspaces/{workspace}/updates
+GET /candidates/{candidate}/dashboards/{dashboard}
+GET /candidates/{candidate}/dashboards/{dashboard}/pages/{page}
+GET /candidates/{candidate}/updates
 GET /connections
-GET /connections/{asset}
 GET /connections/{asset}/{section}
-GET /connections/{connection}/sources/{source}
-GET /connections/{connection}/sources/{source}/{section}
-GET /data
+GET /sources
+GET /sources/{asset}/{section}
 GET /device
+GET /dashboards/{dashboard}
+GET /dashboards/{dashboard}/edit
+GET /dashboards/{dashboard}/export.yaml
+GET /dashboards/{dashboard}/pages/{page}
+GET /dashboards/{dashboard}/preview
+GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
+GET /explore
 GET /favicon.ico
 GET /healthz
 GET /login
 GET /profile/avatars/{principal}/{digest}
 GET /product/logo/{digest}
 GET /metrics
+GET /models
+GET /models/{asset}/{section}
 GET /pipelines
+GET /pipelines/{asset}/{section}
 GET /public/dashboards/{publicId}
 GET /public/dashboards/{publicId}/pages/{page}
 GET /public/dashboards/{publicId}/updates
 GET /public/dashboards/{publicId}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /readyz
+GET /semantic-models
+GET /semantic-models/{asset}/{section}
 GET /static/*
 GET /updates
-GET /workspaces
-GET /workspaces/{workspace}
-GET /workspaces/{workspace}/access/search
-GET /workspaces/{workspace}/assets/{asset}
-GET /workspaces/{workspace}/assets/{asset}/{section}
-GET /workspaces/{workspace}/dashboards/{dashboard}
-GET /workspaces/{workspace}/dashboards/{dashboard}/edit
-GET /workspaces/{workspace}/dashboards/{dashboard}/export.yaml
-GET /workspaces/{workspace}/dashboards/{dashboard}/preview
-GET /workspaces/{workspace}/dashboards/{dashboard}/pages/{page}
-GET /workspaces/{workspace}/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
-GET /workspaces/{workspace}/data
 HEAD /metrics
 HEAD /static/*
 OPTIONS /metrics
@@ -346,20 +316,27 @@ POST /auth/desktop/redeem
 POST /auth/local/login
 POST /auth/local/password
 POST /auth/logout
-POST /chat/turns
 POST /chats/turns
-POST /candidates/{candidate}/workspaces/{workspace}/commands/{command}
-POST /workspaces/{workspace}/catalog/appearance
+POST /candidates/{candidate}/commands/{command}
 POST /catalog/search
 POST /connections/search
-POST /data/command
+POST /dashboards/{dashboard}/commands/clear-selection
+POST /dashboards/{dashboard}/commands/filter
+POST /dashboards/{dashboard}/commands/filter-options
+POST /dashboards/{dashboard}/commands/navigate
+POST /dashboards/{dashboard}/commands/select
+POST /dashboards/{dashboard}/commands/spatial-select
+POST /dashboards/{dashboard}/commands/visual-window
+POST /dashboards/{dashboard}/draft/command
+POST /sources/search
+POST /models/search
+POST /semantic-models/search
 POST /device
 POST /metrics
 POST /oauth/register
 POST /oauth/device/code
 POST /oauth/revoke
 POST /oauth/token
-POST /pipelines/command
 PUT /profile/avatar
 PUT /admin/product-logo
 POST /public/dashboards/{publicId}/commands/clear-selection
@@ -370,21 +347,6 @@ POST /public/dashboards/{publicId}/commands/select
 POST /public/dashboards/{publicId}/commands/spatial-select
 POST /public/dashboards/{publicId}/commands/visual-window
 POST /static/*
-POST /workspaces/{workspace}/access/remove
-POST /workspaces/{workspace}/access/upsert
-POST /workspaces/{workspace}/assets/{asset}/access/remove
-POST /workspaces/{workspace}/assets/{asset}/access/upsert
-POST /workspaces/{workspace}/assets/{asset}/refresh
-POST /workspaces/{workspace}/commands/clear-selection
-POST /workspaces/{workspace}/commands/filter
-POST /workspaces/{workspace}/commands/filter-options
-POST /workspaces/{workspace}/commands/navigate
-POST /workspaces/{workspace}/commands/select
-POST /workspaces/{workspace}/commands/spatial-select
-POST /workspaces/{workspace}/commands/visual-window
-POST /workspaces/{workspace}/dashboards/{dashboard}/draft/command
-POST /workspaces/search
-POST /workspaces/{workspace}/search
 PUT /metrics
 PUT /static/*
 TRACE /metrics

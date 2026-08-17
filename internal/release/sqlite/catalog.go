@@ -3,30 +3,26 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"strings"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
-	platformdb "github.com/flidai/leapview/internal/release/internal/db"
+	releasedb "github.com/flidai/leapview/internal/release/internal/db"
+	"github.com/flidai/leapview/internal/servingstate"
 )
 
-func (r *Repository) ListProjects(ctx context.Context) ([]release.ProjectRecord, error) {
-	rows, err := r.q.ListAPIProjects(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]release.ProjectRecord, 0, len(rows))
-	for _, row := range rows {
-		item := release.ProjectRecord{ID: row.ProjectID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
-		r.populateProjectPointers(ctx, &item)
-		result = append(result, item)
-	}
-	return result, nil
-}
-
 func (r *Repository) GetProject(ctx context.Context, projectID string) (release.ProjectRecord, error) {
-	item := release.ProjectRecord{ID: projectID}
-	row, err := r.q.GetAPIProject(ctx, projectID)
+	if projectID == "" || projectID != strings.TrimSpace(projectID) || projectgraph.ResourceID(projectID).Validate() != nil {
+		return release.ProjectRecord{}, release.ErrInvalid
+	}
+	var item release.ProjectRecord
+	item.ID = projectID
+	row, err := r.queries.GetAPIProject(ctx, item.ID)
+	if err != nil {
+		return release.ProjectRecord{}, err
+	}
 	item.CreatedAt, item.UpdatedAt = row.CreatedAt, row.UpdatedAt
-	if err != nil || item.CreatedAt == "" {
+	if item.CreatedAt == "" {
 		return release.ProjectRecord{}, sql.ErrNoRows
 	}
 	r.populateProjectPointers(ctx, &item)
@@ -34,37 +30,45 @@ func (r *Repository) GetProject(ctx context.Context, projectID string) (release.
 }
 
 func (r *Repository) populateProjectPointers(ctx context.Context, item *release.ProjectRecord) {
-	item.LatestReleaseID, _ = r.q.GetLatestAPIProjectReleaseID(ctx, item.ID)
-	item.ActiveDeploymentID, _ = r.q.GetActiveAPIProjectDeploymentID(ctx, item.ID)
-}
-
-func (r *Repository) ListProjectWorkspaces(ctx context.Context, projectID, environment string) ([]release.WorkspaceRecord, error) {
-	rows, err := r.q.ListAPIProjectWorkspaces(ctx, platformdb.ListAPIProjectWorkspacesParams{Environment: environment, ProjectID: projectID})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]release.WorkspaceRecord, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, release.WorkspaceRecord{ID: row.WorkspaceID, Title: row.Title, Description: row.Description, ActiveServingStateID: row.ActiveServingStateID})
-	}
-	return result, nil
+	item.LatestReleaseID, _ = r.queries.GetLatestAPIProjectReleaseID(ctx, item.ID)
+	item.ActiveDeploymentID, _ = r.queries.GetActiveAPIProjectDeploymentID(ctx, item.ID)
 }
 
 func (r *Repository) ListConnections(ctx context.Context, projectID, environment string) ([]release.ConnectionRecord, error) {
-	rows, err := r.q.ListAPIProjectConnections(ctx, platformdb.ListAPIProjectConnectionsParams{Environment: environment, ProjectID: projectID})
+	if err := validateCatalogScope(projectID, environment); err != nil {
+		return nil, err
+	}
+	rows, err := r.queries.ListAPIProjectConnections(ctx, releasedb.ListAPIProjectConnectionsParams{Environment: environment, ProjectID: projectID})
 	if err != nil {
 		return nil, err
 	}
-	result := make([]release.ConnectionRecord, 0, len(rows))
+	out := make([]release.ConnectionRecord, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, release.ConnectionRecord{ID: row.ConnectionName, Title: row.Name, Description: row.Description, ActiveRevisionID: row.ActiveRevisionID})
+		out = append(out, release.ConnectionRecord{ID: row.ConnectionID, Title: row.Name, Description: row.Description, ActiveRevisionID: row.ActiveRevisionID})
 	}
-	return result, nil
+	return out, nil
 }
 
 func (r *Repository) GetConnection(ctx context.Context, projectID, connectionID, environment string) (release.ConnectionRecord, error) {
-	item := release.ConnectionRecord{ID: connectionID}
-	row, err := r.q.GetAPIProjectConnection(ctx, platformdb.GetAPIProjectConnectionParams{Environment: environment, ProjectID: projectID, ConnectionName: connectionID})
-	item.Title, item.Description, item.ActiveRevisionID = row.Name, row.Description, row.ActiveRevisionID
-	return item, err
+	if err := validateCatalogScope(projectID, environment); err != nil {
+		return release.ConnectionRecord{}, err
+	}
+	if connectionID == "" || connectionID != strings.TrimSpace(connectionID) || projectgraph.ResourceID(connectionID).Validate() != nil {
+		return release.ConnectionRecord{}, release.ErrInvalid
+	}
+	row, err := r.queries.GetAPIProjectConnection(ctx, releasedb.GetAPIProjectConnectionParams{Environment: environment, ProjectID: projectID, ConnectionID: connectionID})
+	if err != nil {
+		return release.ConnectionRecord{}, err
+	}
+	return release.ConnectionRecord{ID: connectionID, Title: row.Name, Description: row.Description, ActiveRevisionID: row.ActiveRevisionID}, nil
+}
+
+func validateCatalogScope(projectID, environment string) error {
+	if projectID == "" || projectID != strings.TrimSpace(projectID) || projectgraph.ResourceID(projectID).Validate() != nil {
+		return release.ErrInvalid
+	}
+	if environment == "" || environment != strings.TrimSpace(environment) || servingstate.ValidateEnvironment(servingstate.Environment(environment)) != nil {
+		return release.ErrInvalid
+	}
+	return nil
 }

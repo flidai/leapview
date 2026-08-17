@@ -14,12 +14,14 @@ import (
 	"strings"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
 	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 const (
@@ -45,7 +47,7 @@ func (h *Handler) GetActiveManagedDataRevision(w stdhttp.ResponseWriter, r *stdh
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	pointer, err := h.options.Repository.EnvironmentPointer(r.Context(), collection.ID, manageddata.Environment(environment))
+	pointer, err := h.options.Repository.EnvironmentPointer(r.Context(), collection.ID.String(), manageddata.Environment(environment))
 	if errors.Is(err, manageddata.ErrNotFound) || errors.Is(err, ErrNotFound) {
 		h.writeJSON(w, stdhttp.StatusOK, apigenapi.ManagedDataActiveRevisionResponse{})
 		return
@@ -54,16 +56,20 @@ func (h *Handler) GetActiveManagedDataRevision(w stdhttp.ResponseWriter, r *stdh
 		h.writeError(w, r, err)
 		return
 	}
-	if pointer.CollectionID != collection.ID || string(pointer.Environment) != environment {
+	if pointer.CollectionID.String() != collection.ID.String() || string(pointer.Environment) != environment {
 		h.writeError(w, r, ErrNotFound)
 		return
 	}
-	metadata, err := h.options.Repository.RevisionByID(r.Context(), collection.ID, pointer.RevisionID)
+	if pointer.RevisionDigest == "" {
+		h.writeError(w, r, ErrNotFound)
+		return
+	}
+	metadata, err := h.options.Repository.RevisionByID(r.Context(), collection.ID.String(), pointer.RevisionDigest)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	summary, err := revisionSummary(metadata, collection.ID)
+	summary, err := revisionSummary(metadata, collection.ID.String())
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -79,14 +85,14 @@ func (h *Handler) ListManagedDataRevisions(w stdhttp.ResponseWriter, r *stdhttp.
 	if !ok {
 		return
 	}
-	rows, err := h.options.Repository.ListRevisions(r.Context(), collection.ID)
+	rows, err := h.options.Repository.ListRevisions(r.Context(), collection.ID.String())
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Revision.CreatedAt == rows[j].Revision.CreatedAt {
-			return rows[i].Revision.ID > rows[j].Revision.ID
+			return rows[i].PublicID > rows[j].PublicID
 		}
 		return rows[i].Revision.CreatedAt > rows[j].Revision.CreatedAt
 	})
@@ -95,14 +101,14 @@ func (h *Handler) ListManagedDataRevisions(w stdhttp.ResponseWriter, r *stdhttp.
 		if row.Revision.Status != manageddata.RevisionStatusReady {
 			continue
 		}
-		item, mapErr := revisionSummary(row, collection.ID)
+		item, mapErr := revisionSummary(row, collection.ID.String())
 		if mapErr != nil {
 			h.writeError(w, r, mapErr)
 			return
 		}
 		items = append(items, item)
 	}
-	page, next, err := pageSlice(items, params.Limit, params.PageToken, "revisions\x00"+collection.ID, func(item apigenapi.ManagedDataRevisionSummaryResponse) string {
+	page, next, err := pageSlice(items, params.Limit, params.PageToken, "revisions\x00"+collection.ID.String(), func(item apigenapi.ManagedDataRevisionSummaryResponse) string {
 		return item.CreatedAt + "\x00" + item.Id
 	})
 	if err != nil {
@@ -121,12 +127,12 @@ func (h *Handler) GetManagedDataRevision(w stdhttp.ResponseWriter, r *stdhttp.Re
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	metadata, err := h.options.Repository.RevisionByID(r.Context(), collection.ID, revisionID)
+	metadata, err := h.options.Repository.RevisionByID(r.Context(), collection.ID.String(), revisionID)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	response, err := revisionResponse(metadata, collection.ID)
+	response, err := revisionResponse(metadata, collection.ID.String())
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -141,6 +147,9 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	}
 	if !validScope(project, connection) || !validIdempotencyKey(headers.IdempotencyKey) {
 		h.writeError(w, r, ErrInvalid)
+		return
+	}
+	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
 		return
 	}
 	var body apigenapi.ManagedDataUploadSessionCreateRequest
@@ -204,7 +213,7 @@ func (h *Handler) ListManagedDataUploadSessions(w stdhttp.ResponseWriter, r *std
 	if !ok {
 		return
 	}
-	rows, err := h.options.Repository.ListUploadSessions(r.Context(), collection.ID)
+	rows, err := h.options.Repository.ListUploadSessions(r.Context(), collection.ID.String())
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -215,19 +224,19 @@ func (h *Handler) ListManagedDataUploadSessions(w stdhttp.ResponseWriter, r *std
 		}
 		return rows[i].CreatedAt > rows[j].CreatedAt
 	})
-	page, next, err := pageSlice(rows, params.Limit, params.PageToken, "upload-sessions\x00"+collection.ID, func(item manageddata.UploadSession) string { return item.CreatedAt + "\x00" + item.ID })
+	page, next, err := pageSlice(rows, params.Limit, params.PageToken, "upload-sessions\x00"+collection.ID.String(), func(item manageddata.UploadSession) string { return item.CreatedAt + "\x00" + item.ID.String() })
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
 	items := make([]apigenapi.ManagedDataUploadSessionResponse, 0, len(page))
 	for _, row := range page {
-		result, recoverErr := h.options.Uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: row.ID})
+		result, recoverErr := h.options.Uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: row.ID.String()})
 		if recoverErr != nil {
 			h.writeError(w, r, recoverErr)
 			return
 		}
-		item, mapErr := uploadResponse(result, project, connection, row.ID)
+		item, mapErr := uploadResponse(result, project, connection, row.ID.String())
 		if mapErr != nil {
 			h.writeError(w, r, mapErr)
 			return
@@ -244,6 +253,9 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	}
 	if !validUploadScope(project, connection, uploadSession) || !validIdempotencyKey(headers.IdempotencyKey) {
 		h.writeError(w, r, ErrInvalid)
+		return
+	}
+	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
 		return
 	}
 	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession())
@@ -291,11 +303,14 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
+	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceEdit) {
+		return
+	}
 	actor, ok := h.commandAuditActorForOperation(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession())
 	if !ok {
 		return
 	}
-	request := control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession}
+	request := control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession, Actor: actor}
 	var result control.UploadResult
 	var err error
 	if h.options.BeginFinalize != nil {
@@ -400,7 +415,7 @@ func (h *Handler) SignManagedDataS3MultipartPart(w stdhttp.ResponseWriter, r *st
 		h.writeError(w, r, ErrInvalid)
 		return
 	}
-	if _, ok := h.recoverUpload(w, r, project, connection, uploadSession); !ok {
+	if _, ok := h.recoverUploadWithCapability(w, r, project, connection, uploadSession, access.CapabilityResourceEdit); !ok {
 		return
 	}
 	if _, ok := h.actor(w, r); !ok {
@@ -528,12 +543,15 @@ func (h *Handler) collection(w stdhttp.ResponseWriter, r *stdhttp.Request, proje
 		h.writeError(w, r, ErrInvalid)
 		return manageddata.Collection{}, false
 	}
+	if !h.authorizeConnection(w, r, project, connection, access.CapabilityResourceRead) {
+		return manageddata.Collection{}, false
+	}
 	collection, err := h.options.Repository.CollectionByProjectConnection(r.Context(), project, connection)
 	if err != nil {
 		h.writeError(w, r, err)
 		return manageddata.Collection{}, false
 	}
-	if collection.ProjectID != project || collection.ConnectionName != connection || collection.Status != manageddata.CollectionStatusActive {
+	if collection.ProjectID.String() != project || collection.ConnectionID.String() != connection || collection.Status != manageddata.CollectionStatusActive {
 		h.writeError(w, r, ErrNotFound)
 		return manageddata.Collection{}, false
 	}
@@ -541,7 +559,7 @@ func (h *Handler) collection(w stdhttp.ResponseWriter, r *stdhttp.Request, proje
 }
 
 func (h *Handler) recoverUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string) (control.UploadResult, bool) {
-	result, err := h.recoverUploadResult(r, project, connection, uploadSession)
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.CapabilityResourceRead)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrUnavailable):
@@ -555,7 +573,7 @@ func (h *Handler) recoverUpload(w stdhttp.ResponseWriter, r *stdhttp.Request, pr
 }
 
 func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID, project, connection, uploadSession string) (control.UploadResult, bool) {
-	result, err := h.recoverUploadResult(r, project, connection, uploadSession)
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, access.CapabilityResourceEdit)
 	if err != nil {
 		h.writeCommandError(w, r, operationID, err)
 		return control.UploadResult{}, false
@@ -563,12 +581,24 @@ func (h *Handler) recoverUploadCommand(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	return result, true
 }
 
-func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, uploadSession string) (control.UploadResult, error) {
+func (h *Handler) recoverUploadWithCapability(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection, uploadSession string, capability access.Capability) (control.UploadResult, bool) {
+	result, err := h.recoverUploadResult(r, project, connection, uploadSession, capability)
+	if err != nil {
+		h.writeError(w, r, err)
+		return control.UploadResult{}, false
+	}
+	return result, true
+}
+
+func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, uploadSession string, capability access.Capability) (control.UploadResult, error) {
 	if h.options.Uploads == nil {
 		return control.UploadResult{}, ErrUnavailable
 	}
 	if !validUploadScope(project, connection, uploadSession) {
 		return control.UploadResult{}, ErrInvalid
+	}
+	if err := h.authorizeConnectionContext(r, project, connection, capability); err != nil {
+		return control.UploadResult{}, err
 	}
 	result, err := h.options.Uploads.RecoverUpload(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession})
 	if err != nil {
@@ -578,6 +608,44 @@ func (h *Handler) recoverUploadResult(r *stdhttp.Request, project, connection, u
 		return control.UploadResult{}, ErrNotFound
 	}
 	return result, nil
+}
+
+func (h *Handler) authorizeConnection(w stdhttp.ResponseWriter, r *stdhttp.Request, project, connection string, capability access.Capability) bool {
+	if err := h.authorizeConnectionContext(r, project, connection, capability); err != nil {
+		h.writeError(w, r, err)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) authorizeConnectionContext(r *stdhttp.Request, project, connection string, capability access.Capability) error {
+	// Route parameters are still validated for development principals. The
+	// bypass skips only the mutable authorization snapshot; it never admits an
+	// arbitrary project/connection selector or malformed resource identity.
+	if !validScope(project, connection) {
+		return ErrInvalid
+	}
+	if h.options.CurrentPrincipal == nil {
+		return ErrUnavailable
+	}
+	principal, ok := h.options.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return ErrUnauthorized
+	}
+	if principal.DevBypass {
+		return nil
+	}
+	if h.options.AuthorizeConnection == nil {
+		return ErrUnavailable
+	}
+	allowed, err := h.options.AuthorizeConnection(r.Context(), strings.TrimSpace(principal.ID), project, connection, capability)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrForbidden
+	}
+	return nil
 }
 
 func (h *Handler) actor(w stdhttp.ResponseWriter, r *stdhttp.Request) (string, bool) {
@@ -695,6 +763,10 @@ func (h *Handler) writePublicError(w stdhttp.ResponseWriter, r *stdhttp.Request,
 
 func statusForError(err error) int {
 	switch {
+	case errors.Is(err, ErrUnauthorized):
+		return stdhttp.StatusUnauthorized
+	case errors.Is(err, ErrForbidden):
+		return stdhttp.StatusForbidden
 	case errors.Is(err, ErrTooLarge):
 		return stdhttp.StatusRequestEntityTooLarge
 	case errors.Is(err, ErrInvalid), errors.Is(err, control.ErrInvalid):
@@ -714,9 +786,10 @@ func statusForError(err error) int {
 
 func revisionSummary(metadata RevisionMetadata, collectionID string) (apigenapi.ManagedDataRevisionSummaryResponse, error) {
 	revision := metadata.Revision
+	publicID := metadata.PublicID
 	fileCount, err := checkedInt32(revision.FileCount)
-	if err != nil || revision.CollectionID != collectionID || revision.Status != manageddata.RevisionStatusReady || !revisionPattern.MatchString(revision.ID) || !validResourceID(metadata.UploadSessionID, 160) || revision.CreatedAt == "" {
-		if revision.CollectionID != collectionID {
+	if err != nil || revision.CollectionID.String() != collectionID || revision.Status != manageddata.RevisionStatusReady || !revisionPattern.MatchString(publicID) || !validResourceID(metadata.UploadSessionID, 160) || revision.CreatedAt == "" {
+		if revision.CollectionID.String() != collectionID {
 			return apigenapi.ManagedDataRevisionSummaryResponse{}, ErrNotFound
 		}
 		return apigenapi.ManagedDataRevisionSummaryResponse{}, errors.New("invalid revision metadata")
@@ -724,7 +797,7 @@ func revisionSummary(metadata RevisionMetadata, collectionID string) (apigenapi.
 	if fileCount < 1 || revision.SizeBytes < 0 {
 		return apigenapi.ManagedDataRevisionSummaryResponse{}, errors.New("invalid revision metadata")
 	}
-	return apigenapi.ManagedDataRevisionSummaryResponse{Id: revision.ID, Status: apigenapi.ManagedDataRevisionStatusAvailable, FileCount: fileCount, Size: revision.SizeBytes, CreatedAt: revision.CreatedAt, UploadSessionId: metadata.UploadSessionID}, nil
+	return apigenapi.ManagedDataRevisionSummaryResponse{Id: publicID, Status: apigenapi.ManagedDataRevisionStatusAvailable, FileCount: fileCount, Size: revision.SizeBytes, CreatedAt: revision.CreatedAt, UploadSessionId: metadata.UploadSessionID}, nil
 }
 
 func revisionResponse(metadata RevisionMetadata, collectionID string) (apigenapi.ManagedDataRevisionResponse, error) {
@@ -993,11 +1066,16 @@ func decodePageToken(value, scope string) (string, error) {
 }
 
 func validScope(project, connection string) bool {
-	return validScopeID(project) && validScopeID(connection)
+	return validProjectResourceID(project) && validProjectResourceID(connection)
 }
 
 func validScopeID(value string) bool {
 	return scopeIDPattern.MatchString(value)
+}
+
+func validProjectResourceID(value string) bool {
+	_, err := projectgraph.NewResourceID(value)
+	return err == nil
 }
 
 func validUploadScope(project, connection, uploadSession string) bool {

@@ -22,13 +22,12 @@ func (RefreshArtifactLoader) Load(_ context.Context, artifact servingstate.Artif
 	if err := ExtractArtifact(artifact.Path, root); err != nil {
 		return refreshrun.LoadedArtifact{}, err
 	}
-	compiled, _, err := LoadCompiledWorkspaceArtifact(root)
+	compiled, _, err := LoadCompiledProjectArtifact(root)
 	if err != nil {
 		return refreshrun.LoadedArtifact{}, err
 	}
 	return refreshrun.LoadedArtifact{
-		Definition:           projectartifact.RefreshProjection(compiled.Manifest),
-		Graph:                compiled.Graph,
-		ManagedDataRevisions: compiled.ManagedDataRevisions,
+		Definition: projectartifact.RefreshProjection(compiled.Manifest),
+		Graph:      compiled.Graph,
 	}, nil
 }

@@ -39,11 +39,10 @@ func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, p
 			}
 		}
 		if adminLayoutRequest(r) {
-			privileges := access.AdminNavigationPrivileges(r)
+			permissions := access.AdminNavigationAccess(r)
 			config.AdminAccess = &appshell.AdminNavigationAccess{
-				ManagePlatform: privileges.ManagePlatform, ManageGrants: privileges.ManageGrants,
-				ManageWorkspace: privileges.ManageWorkspace, ManagePublications: privileges.ManagePublications,
-				ViewAudit: privileges.ViewAudit,
+				ManagePlatform: permissions.PlatformAdmin, ManageIdentity: permissions.ManageIdentity,
+				ViewAudit: permissions.ViewAudit,
 			}
 		}
 	}
@@ -117,12 +116,9 @@ func dashboardChatSignal(state agentmodule.ChatSignal) dashboardmodule.ChatSigna
 				}
 				converted = append(converted, dashboardmodule.AgentReferenceSignal{
 					Reference: dashboardmodule.AgentReferenceKeySignal{
-						WorkspaceID: reference.Reference.WorkspaceID, Type: reference.Reference.Type, ID: reference.Reference.ID,
+						Kind: reference.Reference.Kind, ID: reference.Reference.ID,
 					},
 					Name: reference.Name, Description: reference.Description, VisualType: reference.VisualType,
-					Workspace: dashboardmodule.AgentReferenceWorkspaceSignal{
-						ID: reference.Workspace.ID, Name: reference.Workspace.Name,
-					},
 					Hierarchy: append([]string(nil), reference.Hierarchy...),
 					Href:      reference.Href,
 					Locations: locations,

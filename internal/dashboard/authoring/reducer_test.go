@@ -9,6 +9,7 @@ import (
 
 	dashboardmodel "github.com/flidai/leapview/internal/dashboard"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func reducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
@@ -36,7 +37,7 @@ func reducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := DashboardLifecycle{WorkspaceID: "workspace-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: "sales", Revision: current.Token(), Provenance: provenance}}
+	lifecycle := DashboardLifecycle{ProjectID: "project-1", ID: "sales", OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: "sales", Revision: current.Token(), Provenance: provenance}}
 	if err := lifecycle.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +60,7 @@ func blankDraftFixture(t *testing.T) (DashboardLifecycle, Revision) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := DashboardLifecycle{WorkspaceID: "workspace-1", ID: "blank", OwnerPrincipalID: "principal-1", Slug: "blank", Title: document.Title, SemanticModel: document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: "blank", Revision: current.Token(), Provenance: provenance}}
+	lifecycle := DashboardLifecycle{ProjectID: "project-1", ID: "blank", OwnerPrincipalID: "principal-1", Slug: "blank", Title: document.Title, SemanticModel: document.SemanticModel, Visibility: VisibilityPrivate, Status: LifecycleStatusDraft, Draft: &Draft{ID: "draft-1", DashboardID: "blank", Revision: current.Token(), Provenance: provenance}}
 	if err := lifecycle.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -110,9 +111,9 @@ func TestApplyEditPayloads(t *testing.T) {
 		check func(*testing.T, DashboardLifecycle, Revision)
 	}{
 		{name: "metadata", edit: func(Revision) authoringPayload {
-			return &MetadataPatch{Title: &title, Description: stringPtr(""), Slug: stringPtr("updated-sales"), Visibility: visibilityPtr(VisibilityShared)}
+			return &MetadataPatch{Title: &title, Description: stringPtr(""), Slug: stringPtr("updated-sales"), Visibility: visibilityPtr(VisibilityOrganization)}
 		}, check: func(t *testing.T, lifecycle DashboardLifecycle, revision Revision) {
-			if lifecycle.Title != title || lifecycle.Slug != "updated-sales" || lifecycle.Visibility != VisibilityShared || revision.Document.Description != "" {
+			if lifecycle.Title != title || lifecycle.Slug != "updated-sales" || lifecycle.Visibility != VisibilityOrganization || revision.Document.Description != "" {
 				t.Fatalf("metadata not applied: lifecycle=%#v document=%#v", lifecycle, revision.Document)
 			}
 		}},
@@ -260,7 +261,8 @@ func TestApplyEditStaleHashAndPublishedLifecycle(t *testing.T) {
 	}
 	next, revision := applyReducer(t, lifecycle, current, reducerCommand(current, &MetadataPatch{Description: stringPtr("next")}))
 	next.Status = LifecycleStatusPublished
-	next.Published = &Published{Revision: current.Token(), Compilation: CompiledRevisionToken{AuthoredRevision: current.Token(), DefinitionHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", SemanticServingStateID: "state-1"}, PublishedAt: time.Date(2026, 8, 15, 12, 30, 0, 0, time.UTC), Provenance: contractProvenance()}
+	identity, _ := projectgraph.NewServingIdentity("project-1", "production", "state-1")
+	next.Published = &Published{Revision: current.Token(), Compilation: CompiledRevisionToken{AuthoredRevision: current.Token(), DefinitionHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111", SemanticIdentity: identity}, PublishedAt: time.Date(2026, 8, 15, 12, 30, 0, 0, time.UTC), Provenance: contractProvenance()}
 	next, revision = applyReducer(t, next, revision, reducerCommand(revision, &MetadataPatch{Description: stringPtr("published draft")}))
 	if next.Status != LifecycleStatusPublished || next.Published == nil || next.Draft.Revision != revision.Token() {
 		t.Fatalf("published lifecycle was not retained with new draft: %#v", next)

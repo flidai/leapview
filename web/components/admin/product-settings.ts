@@ -153,7 +153,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           <div class="settings-field"><span class="settings-label">LeapView defaults</span><span class="settings-description">Restore the default name and remove the custom logo</span></div>
           <button class="action" type="button" ?disabled=${resetDisabled} @click=${this.resetIdentity}>Reset to LeapView</button>
         </div>
-        ${!canManage ? html`<div class="notice">You have read-only access. MANAGE_PLATFORM is required to change product identity.</div>` : nothing}
+        ${!canManage ? html`<div class="notice">You have read-only access. Platform administrator access is required to change product identity.</div>` : nothing}
       </section>
       <section class="panel" aria-label="Instance details">
         <h2>Instance details</h2>

@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	nethttp "net/http"
 	"strings"
@@ -32,10 +34,16 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
 type publicPresentationContextKey struct{}
+
+// ErrDashboardAuthorizationUnavailable is returned when a dashboard list
+// cannot evaluate its resource policy. Lists must fail closed rather than
+// exposing the catalog when composition omitted the authorization callback.
+var ErrDashboardAuthorizationUnavailable = errors.New("dashboard authorization is unavailable")
 
 type PublicPresentation struct {
 	PublicID     string
@@ -65,8 +73,8 @@ type Metrics interface {
 }
 
 // resolveDashboard is the transport boundary for the capability-owned
-// resolver. Workspace composition must select a concrete resolver before an
-// HTTP dashboard lookup; no caller-controlled workspace argument is accepted.
+// resolver. Project composition must select a concrete resolver before an
+// HTTP dashboard lookup; no caller-controlled project argument is accepted.
 func resolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Resolved, error) {
 	if metrics == nil {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
@@ -75,7 +83,11 @@ func resolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Re
 	if resolver == nil {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
 	}
-	return resolver.Resolve(dashboardID)
+	identity, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
+	}
+	return resolver.Resolve(identity)
 }
 
 // ResolveDashboard exposes the shared transport adapter to dashboard module
@@ -103,10 +115,11 @@ type SharedCommandPrepare func(
 // repository or runtime internals.
 type AuthoringApplication interface {
 	Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error)
-	Execute(context.Context, string, authoring.Command) (authoringservice.Result, error)
+	Execute(context.Context, projectgraph.ResourceID, authoring.Command) (authoringservice.Result, error)
 	ExecuteIntent(context.Context, application.IntentRequest) (authoringservice.Result, error)
 	Preview(context.Context, preview.PreviewRequest) (preview.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
+	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
 type SessionKeyFactory func(
@@ -114,11 +127,15 @@ type SessionKeyFactory func(
 	report dashboarddefinition.Definition,
 	clientID string,
 	streamInstanceID string,
-) dashboardsession.Key
+) (dashboardsession.Key, error)
 
 type Handler struct {
-	Metrics                 Metrics
-	MetricsForWorkspace     func(workspaceID string) (Metrics, bool)
+	Metrics Metrics
+	// ProjectID is the stable graph project resource selected by app
+	// composition. It is deliberately not taken from a route segment. When
+	// ResolveProjectID is configured, the lease-bound resolver is authoritative.
+	ProjectID               projectgraph.ResourceID
+	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
 	AnalyticalContext       func(context.Context) context.Context
 	Broker                  SignalBroker
 	Coordinators            *dashboardstream.Registry
@@ -130,7 +147,7 @@ type Handler struct {
 	CurrentPrincipalID      func(r *nethttp.Request) string
 	CurrentUsagePrincipal   func(r *nethttp.Request) (string, bool)
 	RecordDashboardView     func(context.Context, usage.View) error
-	AuthorizeListObject     func(ctx context.Context, principalID string, object access.ObjectRef) (bool, error)
+	AuthorizeListResource   func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error)
 	CSRFToken               func(r *nethttp.Request) string
 	Layout                  func(r *nethttp.Request) webpage.Provider
 	Presentation            reportui.Presentation
@@ -152,6 +169,56 @@ type Handler struct {
 	Authoring               AuthoringApplication
 }
 
+func (h Handler) projectIDForRequest(ctx context.Context) (projectgraph.ResourceID, error) {
+	if h.ResolveProjectID != nil {
+		projectID, err := h.ResolveProjectID(ctx)
+		if err != nil {
+			return "", err
+		}
+		if err := projectID.Validate(); err != nil {
+			return "", err
+		}
+		return projectID, nil
+	}
+	if h.ProjectID == "" {
+		if routeProject := strings.TrimSpace(chi.URLParamFromCtx(ctx, "project")); routeProject != "" {
+			projectID, err := projectgraph.NewResourceID(routeProject)
+			if err != nil {
+				return "", err
+			}
+			return projectID, nil
+		}
+	}
+	if err := h.ProjectID.Validate(); err != nil {
+		return "", err
+	}
+	return h.ProjectID, nil
+}
+
+func commandDashboardID(r *nethttp.Request, signals dashboard.Signals) (string, bool) {
+	routeID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
+	if routeID == "" {
+		return "", false
+	}
+	if queryID := strings.TrimSpace(r.URL.Query().Get("dashboard")); queryID != "" && queryID != routeID {
+		return "", false
+	}
+	if signalID := strings.TrimSpace(signals.Runtime.DashboardID); signalID != "" && signalID != routeID {
+		return "", false
+	}
+	return routeID, true
+}
+
+func commandModelMatches(r *nethttp.Request, signals dashboard.Signals, modelID string) bool {
+	if requested := strings.TrimSpace(r.URL.Query().Get("model")); requested != "" && requested != modelID {
+		return false
+	}
+	if requested := strings.TrimSpace(signals.Runtime.ModelID); requested != "" && requested != modelID {
+		return false
+	}
+	return true
+}
+
 func (h Handler) scopedStreamID(streamID string) string {
 	namespace := strings.TrimSpace(h.StreamNamespace)
 	if namespace == "" {
@@ -160,7 +227,7 @@ func (h Handler) scopedStreamID(streamID string) string {
 	return namespace + ":" + streamID
 }
 
-func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) dashboardsession.Key {
+func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
 	if h.SessionKey != nil {
 		return h.SessionKey(r, definition, clientID, streamInstanceID)
 	}
@@ -170,23 +237,21 @@ func (h Handler) dashboardSessionKey(r *nethttp.Request, definition dashboarddef
 			principalOrClient = principalID + ":" + clientID
 		}
 	}
+	projectID, err := h.projectIDForRequest(r.Context())
+	if err != nil {
+		return dashboardsession.Key{}, err
+	}
+	dashboardID, err := projectgraph.NewResourceID(definition.ID)
+	if err != nil {
+		return dashboardsession.Key{}, err
+	}
 	return dashboardsession.Key{
-		WorkspaceOrPublication: requestWorkspaceID(h, r),
-		PrincipalOrClient:      principalOrClient,
-		DashboardID:            definition.ID,
-		ServingStateID:         definition.DefaultFilterState().DefaultsRevision,
-		StreamInstanceID:       streamInstanceID,
-	}
-}
-
-func requestWorkspaceID(h Handler, r *nethttp.Request) string {
-	if workspaceID := chi.URLParam(r, "workspace"); workspaceID != "" {
-		return workspaceID
-	}
-	if workspaceID := r.URL.Query().Get("workspace"); workspaceID != "" {
-		return workspaceID
-	}
-	return ""
+		ProjectID:         projectID,
+		PrincipalOrClient: principalOrClient,
+		DashboardID:       dashboardID,
+		ServingStateID:    definition.DefaultFilterState().DefaultsRevision,
+		StreamInstanceID:  streamInstanceID,
+	}, nil
 }
 
 func (h Handler) analyticalContext(ctx context.Context) context.Context {
@@ -203,14 +268,21 @@ func (h Handler) analyticalStreamContext(ctx context.Context, streamID string) c
 	return dataquery.WithMetadata(ctx, metadata)
 }
 
-func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID, workspaceID string, rows []api.DashboardSummary) ([]api.DashboardSummary, error) {
-	if h.AuthorizeListObject == nil {
-		return rows, nil
+func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID string, rows []api.DashboardSummary) ([]api.DashboardSummary, error) {
+	if h.AuthorizeListResource == nil {
+		return nil, ErrDashboardAuthorizationUnavailable
 	}
 	out := make([]api.DashboardSummary, 0, len(rows))
 	for _, row := range rows {
-		object := access.ItemObjectWithParent(access.SecurableDashboard, workspaceID, row.ID, access.WorkspaceObject(workspaceID))
-		allowed, err := h.AuthorizeListObject(ctx, principalID, object)
+		resourceID, err := projectgraph.NewResourceID(strings.TrimSpace(row.ID))
+		if err != nil {
+			return nil, fmt.Errorf("invalid dashboard resource ID %q: %w", row.ID, err)
+		}
+		resource, err := access.NewResourceRef(resourceID, projectgraph.KindDashboard)
+		if err != nil {
+			return nil, err
+		}
+		allowed, err := h.AuthorizeListResource(ctx, principalID, resource, access.CapabilityResourceRead)
 		if err != nil {
 			return nil, err
 		}
@@ -221,23 +293,21 @@ func (h Handler) filterAuthorizedDashboards(ctx context.Context, principalID, wo
 	return out, nil
 }
 
-func DashboardObjectRefs(r *nethttp.Request, workspaceID string) []access.ObjectRef {
-	objects := []access.ObjectRef{}
+func DashboardObjectRefs(r *nethttp.Request, _ projectgraph.ResourceID) []access.ResourceRef {
+	objects := []access.ResourceRef{}
 	if dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard")); dashboardID != "" {
-		objects = append(objects, access.ItemObjectWithParent(access.SecurableDashboard, workspaceID, dashboardID, access.WorkspaceObject(workspaceID)))
-	}
-	if strings.TrimSpace(workspaceID) != "" {
-		objects = append(objects, access.WorkspaceObject(workspaceID))
+		resourceID, err := projectgraph.NewResourceID(dashboardID)
+		if err != nil {
+			return nil
+		}
+		if resource, err := access.NewResourceRef(resourceID, projectgraph.KindDashboard); err == nil {
+			objects = append(objects, resource)
+		}
 	}
 	return objects
 }
 
 func (h Handler) Dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
-	workspaceID := chi.URLParam(r, "workspace")
-	if strings.TrimSpace(workspaceID) == "" {
-		nethttp.NotFound(w, r)
-		return
-	}
 	metrics, ok := h.metricsForRequest(r)
 	if !ok {
 		nethttp.NotFound(w, r)
@@ -249,7 +319,7 @@ func (h Handler) Dashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.NotFound(w, r)
 		return
 	}
-	base := "/workspaces/" + workspaceID
+	base := ""
 	if h.RouteScope.BasePath != "" {
 		base = strings.TrimSuffix(h.RouteScope.BasePath, "/")
 	}
@@ -301,19 +371,6 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 	}
 }
 
-func (h Handler) metricsForRequest(r *nethttp.Request) (Metrics, bool) {
-	workspaceID := chi.URLParam(r, "workspace")
-	if strings.TrimSpace(workspaceID) == "" {
-		workspaceID = r.URL.Query().Get("workspace")
-	}
-	if strings.TrimSpace(workspaceID) == "" {
-		return nil, false
-	}
-	if h.MetricsForWorkspace != nil {
-		return h.MetricsForWorkspace(workspaceID)
-	}
-	if h.Metrics == nil {
-		return nil, false
-	}
-	return h.Metrics, h.Metrics.Catalog().Workspace.ID == workspaceID
+func (h Handler) metricsForRequest(_ *nethttp.Request) (Metrics, bool) {
+	return h.Metrics, h.Metrics != nil
 }

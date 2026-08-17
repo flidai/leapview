@@ -46,30 +46,29 @@ func TestCompileRowFilterRepresentations(t *testing.T) {
 }
 
 func TestCompileColumnMask(t *testing.T) {
-	compiled, err := Compile("policy-mask", TypeColumnMask, `{"field":"ratings.email","columns":["ratings.phone"],"mask":"redacted"}`)
+	compiled, err := Compile("policy-mask", TypeColumnMask, `{"field":"ratings.email","columns":["ratings.phone"],"mask":"redact"}`)
 	require.NoError(t, err)
 	require.Equal(t, TypeColumnMask, compiled.Type)
 	require.Nil(t, compiled.RowFilter)
 	require.Equal(t, &ColumnMask{
 		Fields: []string{"ratings.phone", "ratings.email"}, Mask: MaskRedact,
 	}, compiled.ColumnMask)
-	require.True(t, compiled.Matches(TypeColumnMask, `{"field":"ratings.email","columns":["ratings.phone"],"mask":"redacted"}`))
+	require.True(t, compiled.Matches(TypeColumnMask, `{"field":"ratings.email","columns":["ratings.phone"],"mask":"redact"}`))
 	require.False(t, compiled.Matches(TypeColumnMask, `{"field":"ratings.email","mask":"zero"}`))
 }
 
-func TestCompileNormalizesNestedExecutableFilters(t *testing.T) {
-	compiled, err := Compile("normalized", TypeRowFilter, `{"filters":[
-		{"field":" ratings.country ","fact":" ratings ","operator":" equals ","values":["DK"]},
-		{"spatial":{"kind":" radius ","latitudeField":" ratings.latitude ","longitudeField":" ratings.longitude ","fact":" ratings ","center":{"longitude":12.5,"latitude":55.7},"radiusMeters":1000}}
-	]}`)
-	require.NoError(t, err)
-	require.Equal(t, []Filter{
-		{Field: "ratings.country", Fact: "ratings", Operator: "equals", Values: []any{"DK"}},
-		{Spatial: &SpatialFilter{
-			Kind: "radius", LatitudeField: "ratings.latitude", LongitudeField: "ratings.longitude", Fact: "ratings",
-			Center: SpatialPoint{Longitude: 12.5, Latitude: 55.7}, RadiusMeters: 1000,
-		}},
-	}, compiled.RowFilter.Filters)
+func TestCompileRejectsNonCanonicalNestedIdentityLiterals(t *testing.T) {
+	for name, expression := range map[string]string{
+		"field":    `{"field":" ratings.country ","operator":"equals","value":"DK"}`,
+		"fact":     `{"filters":[{"field":"ratings.country","fact":" ratings ","operator":"equals","values":["DK"]}]}`,
+		"operator": `{"field":"ratings.country","operator":" equals ","value":"DK"}`,
+		"spatial":  `{"filters":[{"spatial":{"kind":"radius","latitudeField":" ratings.latitude ","longitudeField":"ratings.longitude","center":{"longitude":12.5,"latitude":55.7},"radiusMeters":1000}}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Compile("noncanonical", TypeRowFilter, expression)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestCompileRejectsUnsafePolicyExpressions(t *testing.T) {

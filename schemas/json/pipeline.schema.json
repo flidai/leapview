@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "#APIVersion": {
+      "const": "leapview.dev/v1"
+    },
+    "#Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/%23ResourceID"
+        },
+        "name": {
+          "$ref": "#/$defs/%23ResourceName"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/%23Provenance"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "#Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "#ResourceID": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "#ResourceName": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "$ref": "#/$defs/%23APIVersion"
+    },
+    "kind": {
+      "const": "Pipeline"
+    },
+    "metadata": {
+      "$ref": "#/$defs/%23Metadata"
+    },
+    "spec": {
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "additionalProperties": false,
+          "properties": {
+            "schedule": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "cron": {
+                    "not": {
+                      "const": ""
+                    },
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "not": {
+                      "const": ""
+                    },
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "cron"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "semanticModel": {
+          "$ref": "#/$defs/%23ResourceID"
+        }
+      },
+      "required": [
+        "semanticModel"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "type": "object"
+}

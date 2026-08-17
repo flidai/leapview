@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:sample.orders
   name: sample.orders
-  title: Evaluation orders
+  displayName: Evaluation orders
 spec:
   connection: sample
   path: orders.csv

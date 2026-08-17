@@ -18,7 +18,7 @@ runner_ip="${DEMO_RUNNER_IP:?Set DEMO_RUNNER_IP to the deployment runner IPv4 ad
 project_path="$repo_root/dashboards/leapview.yaml"
 data_link="$repo_root/.data/olist"
 fingerprint_file="$repo_root/deploy/demo/ssh-host-key.sha256"
-project_id="leapview-showcase"
+project_id="project:leapview-showcase"
 candidate_key="hosted-demo"
 temporary_directory="$(mktemp -d)"
 firewall_changed=false
@@ -180,11 +180,11 @@ exchange_workload_token() {
 publisher_token="$(exchange_workload_token \
   "$publisher_client_id" \
   "$publisher_client_secret" \
-  'AUTHOR_PROJECT PUBLISH_RELEASE INGEST_DATA')"
+  'RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH')"
 release_token="$(exchange_workload_token \
   "$release_client_id" \
   "$release_client_secret" \
-  'VIEW_ITEM APPROVE_DEPLOYMENT ACTIVATE_DEPLOYMENT MANAGE_PUBLICATIONS')"
+  'PROJECT_ADMIN')"
 unset publisher_client_secret release_client_secret
 
 docker pull "$demo_image"
@@ -279,15 +279,13 @@ if [[ "$status" != "active" ]]; then
   exit 1
 fi
 
-project_workspaces="$("$leapview" api call listProjectWorkspaces \
+"$leapview" api call getProject \
   --target "$demo_target" \
   --token "$release_token" \
-  --path "project=$project_id")"
-jq -e '
-  any(.evidence.workspaces[]?; .workspaceId == "visuals")
+  --path "project=$project_id" >/dev/null
+
+jq -e --arg project "$project_id" '
+  .projectId == $project and .evidence.projectId == $project
 ' <<<"$deployment" >/dev/null
-jq -e '
-  any(.items[]?; .id == "visuals")
-' <<<"$project_workspaces" >/dev/null
 curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
-printf 'deployed %s and the canonical Olist showcase to %s\n' "$demo_image" "$demo_target"
+printf 'deployed %s and the canonical project showcase to %s\n' "$demo_image" "$demo_target"

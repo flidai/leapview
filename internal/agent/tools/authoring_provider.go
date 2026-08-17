@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
@@ -14,6 +16,7 @@ import (
 	previewservice "github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -42,69 +45,52 @@ type DashboardAuthoring interface {
 	Get(context.Context, catalog.GetRequest) (catalog.Dashboard, error)
 	Draft(context.Context, authoringapplication.DraftRequest) (authoringapplication.DraftRead, error)
 	Create(context.Context, authoringservice.CreateRequest) (authoringservice.Result, error)
-	Execute(context.Context, string, dashboardauthoring.Command) (authoringservice.Result, error)
+	Execute(context.Context, projectgraph.ResourceID, dashboardauthoring.Command) (authoringservice.Result, error)
 	ExecuteIntent(context.Context, authoringapplication.IntentRequest) (authoringservice.Result, error)
 	Fork(context.Context, sourceadapter.ForkRequest) (authoringservice.Result, error)
 	Preview(context.Context, previewservice.PreviewRequest) (previewservice.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
-// DashboardAuthoringDraftExporter is the optional draft-aware export
-// capability implemented by the composed application. Keeping it optional
-// preserves compatibility for focused provider fakes and older adapters;
-// workspace exports use it whenever available, while project exports always
-// use ExportYAML against the active serving artifact.
-type DashboardAuthoringDraftExporter interface {
-	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
-}
-
-// DashboardAuthoringAuthorize performs a transport-level privilege check in
-// addition to the application's object authorizer. It is optional so focused
-// provider tests can use a small fake application; production always wires it.
-type DashboardAuthoringAuthorize func(context.Context, Scope, string, dashboardauthoring.AuthorizationAction) (agentcore.ToolResult, bool)
-
 type DashboardAuthoringProvider struct {
 	Application DashboardAuthoring
-	Authorize   DashboardAuthoringAuthorize
+	// ProjectID is retained for compositions that have a statically bound
+	// runtime. ResolveProjectID is authoritative when configured and resolves
+	// the exact active serving project for each operation.
+	ProjectID        projectgraph.ResourceID
+	ResolveProjectID func(context.Context) (projectgraph.ResourceID, error)
+	Resolve          ResourceResolver
 }
 
 type dashboardAuthoringListInput struct {
-	Workspace string `json:"workspace"`
 }
 
 type dashboardAuthoringGetInput struct {
-	Workspace string `json:"workspace"`
-	Dashboard string `json:"dashboard"`
+	DashboardID string `json:"dashboardId"`
 }
 
 type dashboardAuthoringCreateInput struct {
-	Workspace     string `json:"workspace"`
 	Title         string `json:"title"`
-	SemanticModel string `json:"semanticModel"`
+	SemanticModel string `json:"semanticModelId"`
 	DashboardID   string `json:"dashboardId,omitempty"`
 	Slug          string `json:"slug,omitempty"`
 }
 
 // dashboardAuthoringCommandInput embeds the closed domain command so the
-// JSON contract has one explicit top-level workspace and no model-controlled
-// actor or provenance fields.
+// JSON contract has no model-controlled actor or provenance fields.
 type dashboardAuthoringCommandInput struct {
-	Workspace string `json:"workspace"`
 	dashboardauthoring.Command
 }
 
 type dashboardAuthoringForkInput struct {
 	SourceKind      sourceadapter.SourceKind       `json:"sourceKind"`
-	SourceWorkspace string                         `json:"sourceWorkspace"`
-	SourceDashboard dashboardauthoring.DashboardID `json:"sourceDashboard"`
-	TargetWorkspace string                         `json:"targetWorkspace,omitempty"`
+	SourceDashboard dashboardauthoring.DashboardID `json:"sourceDashboardId"`
 	Title           string                         `json:"title,omitempty"`
 	Slug            string                         `json:"slug,omitempty"`
 }
 
 type dashboardAuthoringPreviewInput struct {
-	Workspace        string                           `json:"workspace"`
-	Dashboard        dashboardauthoring.DashboardID   `json:"dashboard"`
+	DashboardID      dashboardauthoring.DashboardID   `json:"dashboardId"`
 	DraftID          dashboardauthoring.DraftID       `json:"draftId"`
 	ExpectedRevision dashboardauthoring.RevisionToken `json:"expectedRevision"`
 	Page             string                           `json:"page"`
@@ -112,7 +98,6 @@ type dashboardAuthoringPreviewInput struct {
 }
 
 type dashboardAuthoringVisibilityInput struct {
-	Workspace        string                           `json:"workspace"`
 	DashboardID      dashboardauthoring.DashboardID   `json:"dashboardId"`
 	DraftID          dashboardauthoring.DraftID       `json:"draftId"`
 	ExpectedRevision dashboardauthoring.RevisionToken `json:"expectedRevision"`
@@ -120,7 +105,6 @@ type dashboardAuthoringVisibilityInput struct {
 }
 
 type dashboardAuthoringAddPageInput struct {
-	Workspace        string                           `json:"workspace"`
 	DashboardID      dashboardauthoring.DashboardID   `json:"dashboardId"`
 	DraftID          dashboardauthoring.DraftID       `json:"draftId"`
 	ExpectedRevision dashboardauthoring.RevisionToken `json:"expectedRevision"`
@@ -129,7 +113,6 @@ type dashboardAuthoringAddPageInput struct {
 }
 
 type dashboardAuthoringAddVisualInput struct {
-	Workspace        string                           `json:"workspace"`
 	DashboardID      dashboardauthoring.DashboardID   `json:"dashboardId"`
 	DraftID          dashboardauthoring.DraftID       `json:"draftId"`
 	ExpectedRevision dashboardauthoring.RevisionToken `json:"expectedRevision"`
@@ -141,7 +124,6 @@ type dashboardAuthoringAddVisualInput struct {
 }
 
 type dashboardAuthoringAssignFieldInput struct {
-	Workspace        string                           `json:"workspace"`
 	DashboardID      dashboardauthoring.DashboardID   `json:"dashboardId"`
 	DraftID          dashboardauthoring.DraftID       `json:"draftId"`
 	ExpectedRevision dashboardauthoring.RevisionToken `json:"expectedRevision"`
@@ -152,9 +134,8 @@ type dashboardAuthoringAssignFieldInput struct {
 }
 
 type dashboardAuthoringExportInput struct {
-	SourceKind sourceadapter.SourceKind       `json:"sourceKind"`
-	Workspace  string                         `json:"workspace"`
-	Dashboard  dashboardauthoring.DashboardID `json:"dashboard"`
+	SourceKind  sourceadapter.SourceKind       `json:"sourceKind"`
+	DashboardID dashboardauthoring.DashboardID `json:"dashboardId"`
 }
 
 func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
@@ -174,19 +155,24 @@ func (p DashboardAuthoringProvider) contractDefinitions(scope Scope) []agentcore
 
 func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDefinition {
 	return []agentcore.ToolDefinition{
-		p.definition(ListDashboardsToolName, "List the authorized dashboard catalog for one workspace.", "read", agentcontracts.DashboardAuthoringListInputSchemaJSON, agentcontracts.DashboardAuthoringListResultSchemaJSON, []string{"dashboard", "authoring", "catalog"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(ListDashboardsToolName, "List the authorized project dashboard catalog.", "read", agentcontracts.DashboardAuthoringListInputSchemaJSON, agentcontracts.DashboardAuthoringListResultSchemaJSON, []string{"dashboard", "authoring", "catalog"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringListInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
 			}
-			workspace, result, ok := p.prepare(ctx, scope, input.Workspace, dashboardauthoring.AuthorizationActionView)
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionView)
 			if !ok {
 				return result
 			}
-			value, err := p.Application.List(ctx, catalog.ListRequest{WorkspaceID: workspace, ActorID: scope.PrincipalID})
+			value, err := p.Application.List(ctx, catalog.ListRequest{ProjectID: project, ActorID: scope.PrincipalID})
 			if err != nil {
 				return authoringToolError(err)
 			}
+			filtered, result, ok := p.filterAuthorizedDashboards(ctx, scope, value)
+			if !ok {
+				return result
+			}
+			value = filtered
 			return agentcore.ToolResult{Content: value}
 		}),
 		p.definition(GetDashboardToolName, "Get one authorized dashboard's governed metadata.", "read", agentcontracts.DashboardAuthoringGetInputSchemaJSON, agentcontracts.DashboardAuthoringGetResultSchemaJSON, []string{"dashboard", "authoring", "catalog"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
@@ -194,12 +180,16 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
 			}
-			workspace, result, ok := p.prepare(ctx, scope, input.Workspace, dashboardauthoring.AuthorizationActionView)
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionView)
 			if !ok {
 				return result
 			}
-			id := dashboardauthoring.DashboardID(strings.TrimSpace(input.Dashboard))
-			value, err := p.Application.Get(ctx, catalog.GetRequest{WorkspaceID: workspace, ActorID: scope.PrincipalID, DashboardID: id})
+			id := dashboardauthoring.DashboardID(strings.TrimSpace(input.DashboardID))
+			resolved, result, ok := p.resolveTarget(ctx, scope, string(id), projectgraph.KindDashboard, access.CapabilityResourceRead)
+			if !ok {
+				return result
+			}
+			value, err := p.Application.Get(ctx, catalog.GetRequest{ProjectID: project, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(resolved.String())})
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -210,11 +200,15 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
 			}
-			workspace, result, ok := p.prepare(ctx, scope, input.Workspace, dashboardauthoring.AuthorizationActionEdit)
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionEdit)
 			if !ok {
 				return result
 			}
-			value, err := p.Application.Draft(ctx, authoringapplication.DraftRequest{WorkspaceID: workspace, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(strings.TrimSpace(input.Dashboard))})
+			resolved, result, ok := p.resolveTarget(ctx, scope, input.DashboardID, projectgraph.KindDashboard, access.CapabilityResourceEdit)
+			if !ok {
+				return result
+			}
+			value, err := p.Application.Draft(ctx, authoringapplication.DraftRequest{ProjectID: project, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(resolved.String())})
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -226,7 +220,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				return ToolError("invalid_arguments", err.Error())
 			}
 			command := dashboardauthoring.Command{DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, SetVisibility: &dashboardauthoring.SetVisibilityPayload{Visibility: input.Visibility}}
-			return p.executeIntent(ctx, scope, call, input.Workspace, command)
+			return p.executeIntent(ctx, scope, call, command)
 		}),
 		p.definition(AddDashboardPageToolName, "Add one dashboard page to a private draft using an exact expected revision.", "write", agentcontracts.DashboardAuthoringAddPageInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "intent"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringAddPageInput
@@ -234,7 +228,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				return ToolError("invalid_arguments", err.Error())
 			}
 			command := dashboardauthoring.Command{DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, AddPage: &dashboardauthoring.AddPagePayload{PageID: input.PageID, Title: input.Title}}
-			return p.executeIntent(ctx, scope, call, input.Workspace, command)
+			return p.executeIntent(ctx, scope, call, command)
 		}),
 		p.definition(AddDashboardVisualToolName, "Add a governed dashboard visual to a private draft using an exact expected revision.", "write", agentcontracts.DashboardAuthoringAddVisualInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "intent"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringAddVisualInput
@@ -242,7 +236,7 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				return ToolError("invalid_arguments", err.Error())
 			}
 			command := dashboardauthoring.Command{DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, AddVisual: &dashboardauthoring.AddVisualPayload{PageID: input.PageID, VisualID: input.VisualID, ComponentID: input.ComponentID, Type: input.Type, Title: input.Title}}
-			return p.executeIntent(ctx, scope, call, input.Workspace, command)
+			return p.executeIntent(ctx, scope, call, command)
 		}),
 		p.definition(AssignDashboardFieldToolName, "Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision.", "write", agentcontracts.DashboardAuthoringAssignFieldInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "intent"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringAssignFieldInput
@@ -250,18 +244,22 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				return ToolError("invalid_arguments", err.Error())
 			}
 			command := dashboardauthoring.Command{DashboardID: input.DashboardID, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, AssignField: &dashboardauthoring.AssignFieldPayload{PageID: input.PageID, VisualID: input.VisualID, FieldID: input.FieldID, Role: input.Role}}
-			return p.executeIntent(ctx, scope, call, input.Workspace, command)
+			return p.executeIntent(ctx, scope, call, command)
 		}),
 		p.definition(CreateDashboardDraftToolName, "Create a private dashboard draft owned by the authenticated principal. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringCreateInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "create"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringCreateInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
 			}
-			workspace, result, ok := p.prepare(ctx, scope, input.Workspace, dashboardauthoring.AuthorizationActionEdit)
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionEdit)
 			if !ok {
 				return result
 			}
-			value, err := p.Application.Create(ctx, authoringservice.CreateRequest{WorkspaceID: workspace, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(strings.TrimSpace(input.DashboardID)), Title: input.Title, Slug: input.Slug, SemanticModel: input.SemanticModel, Visibility: dashboardauthoring.VisibilityPrivate, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
+			semanticModel, result, ok := p.resolveTarget(ctx, scope, input.SemanticModel, projectgraph.KindSemanticModel, access.CapabilityResourceUse)
+			if !ok {
+				return result
+			}
+			value, err := p.Application.Create(ctx, authoringservice.CreateRequest{ProjectID: project, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(strings.TrimSpace(input.DashboardID)), Title: input.Title, Slug: input.Slug, SemanticModel: semanticModel, Visibility: dashboardauthoring.VisibilityPrivate, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -275,29 +273,37 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if !isLifecycleCommand(input.Command) {
 				return ToolError("invalid_arguments", "execute_dashboard_command accepts only publish or archive commands")
 			}
-			workspace, result, ok := p.prepare(ctx, scope, input.Workspace, authoringActionForCommand(input.Command))
+			project, result, ok := p.prepare(ctx, scope, authoringActionForCommand(input.Command))
 			if !ok {
 				return result
 			}
+			resolved, result, ok := p.resolveTarget(ctx, scope, string(input.Command.DashboardID), projectgraph.KindDashboard, capabilityForAuthoringAction(authoringActionForCommand(input.Command)))
+			if !ok {
+				return result
+			}
+			input.Command.DashboardID = dashboardauthoring.DashboardID(resolved.String())
 			input.Command.ID = dashboardauthoring.CommandID(strings.TrimSpace(call.ID))
 			input.Command.Provenance = dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID}
-			value, err := p.Application.Execute(ctx, workspace, input.Command)
+			value, err := p.Application.Execute(ctx, project, input.Command)
 			if err != nil {
 				return authoringToolError(err)
 			}
 			return agentcore.ToolResult{Content: value}
 		}),
-		p.definition(ForkDashboardToolName, "Fork an authorized workspace or retained project dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft; reusing that identity with a different payload is rejected.", "write", agentcontracts.DashboardAuthoringForkInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "fork"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+		p.definition(ForkDashboardToolName, "Fork an authorized project or instance dashboard source into a private draft. Agent retries that reuse the same invocation identity and payload replay the original draft.", "write", agentcontracts.DashboardAuthoringForkInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "fork"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringForkInput
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
 			}
-			workspace, result, ok := p.prepare(ctx, scope, input.TargetWorkspaceOrSource(), dashboardauthoring.AuthorizationActionEdit)
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionEdit)
 			if !ok {
 				return result
 			}
-			_ = workspace // target is normalized by the application/source adapter.
-			value, err := p.Application.Fork(ctx, sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, WorkspaceID: strings.TrimSpace(input.SourceWorkspace), DashboardID: input.SourceDashboard}, TargetWorkspaceID: strings.TrimSpace(input.TargetWorkspace), ActorID: scope.PrincipalID, Title: input.Title, Slug: input.Slug, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
+			resolved, result, ok := p.resolveTarget(ctx, scope, string(input.SourceDashboard), projectgraph.KindDashboard, access.CapabilityResourceRead)
+			if !ok {
+				return result
+			}
+			value, err := p.Application.Fork(ctx, sourceadapter.ForkRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, ProjectID: project, DashboardID: dashboardauthoring.DashboardID(resolved.String())}, TargetProjectID: project, ActorID: scope.PrincipalID, Title: input.Title, Slug: input.Slug, Origin: dashboardauthoring.OriginAgent, ConversationID: scope.ConversationID, ToolCallID: call.ID, IdempotencyKey: call.ID})
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -308,11 +314,15 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
 			}
-			workspace, result, ok := p.prepare(ctx, scope, input.Workspace, dashboardauthoring.AuthorizationActionEdit)
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionEdit)
 			if !ok {
 				return result
 			}
-			value, err := p.Application.Preview(ctx, previewservice.PreviewRequest{WorkspaceID: workspace, ActorID: scope.PrincipalID, DashboardID: input.Dashboard, DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, PageID: input.Page, Filters: input.Filters})
+			resolved, result, ok := p.resolveTarget(ctx, scope, string(input.DashboardID), projectgraph.KindDashboard, access.CapabilityResourceEdit)
+			if !ok {
+				return result
+			}
+			value, err := p.Application.Preview(ctx, previewservice.PreviewRequest{ProjectID: project, ActorID: scope.PrincipalID, DashboardID: dashboardauthoring.DashboardID(resolved.String()), DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, PageID: input.Page, Filters: input.Filters})
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -323,24 +333,18 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
 				return ToolError("invalid_arguments", err.Error())
 			}
-			workspace, result, ok := p.prepare(ctx, scope, input.Workspace, dashboardauthoring.AuthorizationActionView)
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionView)
 			if !ok {
 				return result
 			}
-			request := sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, WorkspaceID: workspace, DashboardID: input.Dashboard}, ActorID: scope.PrincipalID}
+			resolved, result, ok := p.resolveTarget(ctx, scope, string(input.DashboardID), projectgraph.KindDashboard, access.CapabilityResourceRead)
+			if !ok {
+				return result
+			}
+			request := sourceadapter.ExportRequest{Source: sourceadapter.SourceRef{Kind: input.SourceKind, ProjectID: project, DashboardID: dashboardauthoring.DashboardID(resolved.String())}, ActorID: scope.PrincipalID}
 			var value []byte
 			var err error
-			if input.SourceKind == sourceadapter.SourceWorkspace {
-				if exporter, ok := p.Application.(DashboardAuthoringDraftExporter); ok {
-					value, err = exporter.ExportDraftYAML(ctx, request)
-				} else {
-					// Compatibility for older application adapters. Production
-					// composition implements the draft-aware capability.
-					value, err = p.Application.ExportYAML(ctx, request)
-				}
-			} else {
-				value, err = p.Application.ExportYAML(ctx, request)
-			}
+			value, err = p.Application.ExportYAML(ctx, request)
 			if err != nil {
 				return authoringToolError(err)
 			}
@@ -349,42 +353,100 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 	}
 }
 
+func (p DashboardAuthoringProvider) filterAuthorizedDashboards(ctx context.Context, scope Scope, value catalog.ListResult) (catalog.ListResult, agentcore.ToolResult, bool) {
+	if p.Resolve == nil {
+		return catalog.ListResult{}, ToolError("catalog_unavailable", "authorized project catalog is not configured"), false
+	}
+	filtered := make([]catalog.Dashboard, 0, len(value.Items))
+	for _, dashboard := range value.Items {
+		id, err := p.Resolve(ctx, scope, dashboard.ID, projectgraph.KindDashboard, access.CapabilityResourceRead)
+		if err != nil || id != dashboard.ID {
+			continue
+		}
+		filtered = append(filtered, dashboard)
+	}
+	value.Items = filtered
+	value.Count = len(filtered)
+	value.InstanceCount, value.ProjectCount = 0, 0
+	for _, dashboard := range filtered {
+		if dashboard.Source == catalog.SourceInstance {
+			value.InstanceCount++
+		} else if dashboard.Source == catalog.SourceProject {
+			value.ProjectCount++
+		}
+	}
+	return value, agentcore.ToolResult{}, true
+}
+
 func (p DashboardAuthoringProvider) definition(name, description, effect, input, output string, tags []string, run func(context.Context, agentcore.ToolCall) agentcore.ToolResult) agentcore.ToolDefinition {
 	return agentcore.ToolDefinition{Name: name, Description: description, InputSchema: json.RawMessage(input), OutputSchema: json.RawMessage(output), Effect: effect, Tags: tags, Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
 		return run(ctx, call), nil
 	})}
 }
 
-func (p DashboardAuthoringProvider) prepare(ctx context.Context, scope Scope, requested string, action dashboardauthoring.AuthorizationAction) (string, agentcore.ToolResult, bool) {
-	workspace := strings.TrimSpace(requested)
-	if workspace == "" {
-		return "", ToolError("invalid_arguments", "workspace is required"), false
+func (p DashboardAuthoringProvider) prepare(ctx context.Context, scope Scope, action dashboardauthoring.AuthorizationAction) (projectgraph.ResourceID, agentcore.ToolResult, bool) {
+	_ = action
+	project := p.ProjectID
+	var err error
+	if p.ResolveProjectID != nil {
+		project, err = p.ResolveProjectID(ctx)
 	}
-	if scope.Credential.WorkspaceID != "" && scope.Credential.WorkspaceID != workspace {
-		return "", ToolError("access_denied", "credential is restricted to another workspace"), false
+	if err == nil {
+		err = project.Validate()
 	}
-	if scope.WorkspaceID != "" && scope.WorkspaceID != workspace {
-		return "", ToolError("access_denied", "workspace is outside the authenticated agent scope"), false
+	if err != nil {
+		return "", ToolError("catalog_unavailable", "trusted project identity is not configured"), false
 	}
 	if strings.TrimSpace(scope.PrincipalID) == "" {
 		return "", ToolError("authentication_required", "agent authoring tools require an authenticated principal"), false
 	}
-	if p.Authorize != nil {
-		if result, ok := p.Authorize(ctx, scope, workspace, action); !ok {
-			return "", result, false
-		}
-	}
-	return workspace, agentcore.ToolResult{}, true
+	return project, agentcore.ToolResult{}, true
 }
 
-func (p DashboardAuthoringProvider) executeIntent(ctx context.Context, scope Scope, call agentcore.ToolCall, requested string, command dashboardauthoring.Command) agentcore.ToolResult {
-	workspace, result, ok := p.prepare(ctx, scope, requested, dashboardauthoring.AuthorizationActionEdit)
+func (p DashboardAuthoringProvider) resolveTarget(ctx context.Context, scope Scope, raw string, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, agentcore.ToolResult, bool) {
+	id, err := projectgraph.NewResourceID(strings.TrimSpace(raw))
+	if err != nil {
+		return "", ToolError("invalid_arguments", fmt.Sprintf("invalid %s resource ID: %v", kind, err)), false
+	}
+	if p.Resolve == nil {
+		return "", ToolError("catalog_unavailable", "authorized project catalog is not configured"), false
+	}
+	resolved, err := p.Resolve(ctx, scope, id, kind, capability)
+	if err != nil {
+		return "", ToolError("catalog_not_found", "resource is unknown or unauthorized"), false
+	}
+	if _, err := projectgraph.NewResourceID(resolved.String()); err != nil {
+		return "", ToolError("catalog_unavailable", "catalog returned an invalid resource ID"), false
+	}
+	return resolved, agentcore.ToolResult{}, true
+}
+
+func capabilityForAuthoringAction(action dashboardauthoring.AuthorizationAction) access.Capability {
+	switch action {
+	case dashboardauthoring.AuthorizationActionPublish:
+		return access.CapabilityResourcePublish
+	case dashboardauthoring.AuthorizationActionArchive:
+		return access.CapabilityResourceManage
+	case dashboardauthoring.AuthorizationActionEdit:
+		return access.CapabilityResourceEdit
+	default:
+		return access.CapabilityResourceRead
+	}
+}
+
+func (p DashboardAuthoringProvider) executeIntent(ctx context.Context, scope Scope, call agentcore.ToolCall, command dashboardauthoring.Command) agentcore.ToolResult {
+	project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionEdit)
 	if !ok {
 		return result
 	}
+	resolved, result, ok := p.resolveTarget(ctx, scope, string(command.DashboardID), projectgraph.KindDashboard, access.CapabilityResourceEdit)
+	if !ok {
+		return result
+	}
+	command.DashboardID = dashboardauthoring.DashboardID(resolved.String())
 	command.ID = dashboardauthoring.CommandID(strings.TrimSpace(call.ID))
 	command.Provenance = dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID}
-	value, err := p.Application.ExecuteIntent(ctx, authoringapplication.IntentRequest{WorkspaceID: workspace, ActorID: scope.PrincipalID, Command: command})
+	value, err := p.Application.ExecuteIntent(ctx, authoringapplication.IntentRequest{ProjectID: project, ActorID: scope.PrincipalID, Command: command})
 	if err != nil {
 		return authoringToolError(err)
 	}
@@ -432,13 +494,6 @@ func authoringToolError(err error) agentcore.ToolResult {
 	diagnostics := configschema.Diagnostics(err)
 	content := map[string]any{"error": map[string]any{"code": code, "message": err.Error(), "diagnostics": diagnostics}}
 	return agentcore.ToolResult{IsError: true, Content: content}
-}
-
-func (input dashboardAuthoringForkInput) TargetWorkspaceOrSource() string {
-	if value := strings.TrimSpace(input.TargetWorkspace); value != "" {
-		return value
-	}
-	return strings.TrimSpace(input.SourceWorkspace)
 }
 
 var _ DashboardAuthoring = (*authoringapplication.Application)(nil)

@@ -4,6 +4,7 @@ import {
 	Activity,
 	ArrowLeft,
 	Bot,
+	Boxes,
 	ChartNoAxesCombined,
 	Code2,
 	Database,
@@ -24,6 +25,7 @@ import {
 	Users,
 	UsersRound,
 	User,
+	Waypoints,
   Workflow,
   X,
   type IconNode,
@@ -61,7 +63,6 @@ type SidebarConfig = {
   areas?: SidebarArea[]
   productLogoUrl?: string
   productName?: string
-  workspaceTitle?: string
   dashboardTitle?: string
   pageTitle?: string
   modelTitle?: string
@@ -114,6 +115,8 @@ type IconName =
   | 'history'
   | 'insights'
   | 'model'
+  | 'boxes'
+  | 'waypoints'
   | 'data'
   | 'cache'
   | 'settings'
@@ -136,12 +139,11 @@ const defaultConfig: SidebarConfig = {
   area: 'insights',
   areas: [
     { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-    { id: 'develop', label: 'Develop', href: '/workspaces', icon: 'code' },
+    { id: 'develop', label: 'Develop', href: '/sources', icon: 'code' },
   ],
   userSettingsHref: '/admin/profile',
-  workspaceTitle: 'LeapView Workspace',
   groups: [
-    { label: 'Workspace', items: [{ id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' }] },
+    { label: 'Insights', items: [{ id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' }, { id: 'data-explorer', label: 'Data Explorer', href: '/explore', icon: 'database' }] },
   ],
 }
 
@@ -340,6 +342,10 @@ class LeapViewSidebar extends LitElement {
 			box-shadow: none;
 			color: var(--lv-fg-default);
 			font-weight: var(--base-text-weight-medium);
+    }
+
+    .collapsed-area-switch {
+      display: none;
     }
 
     .area-icon {
@@ -822,6 +828,26 @@ class LeapViewSidebar extends LitElement {
       display: none;
     }
 
+    :host([data-collapsed]) .collapsed-area-switch {
+      display: grid;
+      width: var(--base-size-36);
+      min-height: var(--base-size-36);
+      place-items: center;
+      justify-self: center;
+      border: var(--lv-border-transparent);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-muted);
+      text-decoration: none;
+    }
+
+    :host([data-collapsed]) .collapsed-area-switch:hover,
+    :host([data-collapsed]) .collapsed-area-switch:focus-visible {
+      background: var(--control-bgColor-hover);
+      color: var(--lv-fg-default);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
     :host([data-collapsed]) .area-item {
       width: var(--base-size-36);
       min-height: var(--base-size-36);
@@ -1130,7 +1156,8 @@ class LeapViewSidebar extends LitElement {
     if (changedProperties.has('config')) this.syncSidebarWidth()
   }
 
-  protected updated(): void {
+  protected updated(changedProperties: PropertyValues<this>): void {
+    if (changedProperties.has('config')) this.rememberCurrentArea()
     this.toggleAttribute('data-admin', Boolean(this.config.admin))
     if (this.config.area) this.setAttribute('data-area', this.config.area)
     else this.removeAttribute('data-area')
@@ -1197,7 +1224,7 @@ class LeapViewSidebar extends LitElement {
     const productLogoUrl = this.config.productLogoUrl?.trim()
     const hasCustomIdentity = productName !== leapViewBrandName || Boolean(productLogoUrl)
     return html`
-      <aside aria-label="${productName} workspace" ?data-mobile-open=${this.mobileOpen}>
+      <aside aria-label="${productName} navigation" ?data-mobile-open=${this.mobileOpen}>
         <span
           class="resize-handle"
           role="separator"
@@ -1249,6 +1276,7 @@ class LeapViewSidebar extends LitElement {
             `}
           </div>
           ${this.config.admin ? null : this.renderAreaSwitcher()}
+          ${this.config.admin ? null : this.renderCollapsedAreaSwitch()}
           ${this.config.admin ? this.renderSearch() : null}
         </header>
 
@@ -1463,6 +1491,26 @@ class LeapViewSidebar extends LitElement {
     `
   }
 
+  private renderCollapsedAreaSwitch() {
+    const areas = Array.isArray(this.config.areas) ? this.config.areas : []
+    if (areas.length < 2) return null
+    const destination = areas.find((area) => area.id !== this.config.area)
+    if (!destination) return null
+    const href = this.areaHref(destination, false)
+    const label = `Switch to ${destination.label}`
+    return html`
+      <a
+        class="collapsed-area-switch"
+        href=${href}
+        aria-label=${label}
+        title=${label}
+        @click=${(event: MouseEvent) => this.followInternalLink(event, href)}
+      >
+        <span class="area-icon" aria-hidden="true">${icon(destination.icon)}</span>
+      </a>
+    `
+  }
+
   private renderUserCard() {
     const userName = this.config.userName?.trim() || 'Local user'
     const userAvatarUrl = this.liveUserAvatarUrl ?? this.config.userAvatarUrl?.trim()
@@ -1478,7 +1526,7 @@ class LeapViewSidebar extends LitElement {
         <lv-user-avatar .name=${userName} .imageUrl=${userAvatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
         <span class="user-text">
           <strong class="user-name">${userName}</strong>
-          <span class="user-role">${this.config.userRole ?? 'Local workspace'}</span>
+          <span class="user-role">${this.config.userRole ?? 'Local user'}</span>
         </span>
         <span class="user-settings-icon" aria-hidden="true">${icon('settings')}</span>
       </a>
@@ -1582,6 +1630,7 @@ class LeapViewSidebar extends LitElement {
 function icon(name: string) {
   const icons: Record<IconName, IconNode> = {
     catalog: Layers,
+    boxes: Boxes,
     dashboard: LayoutDashboard,
     chat: MessagesSquare,
     bot: Bot,
@@ -1593,6 +1642,7 @@ function icon(name: string) {
     data: Plug,
     cache: TableProperties,
     code: Code2,
+    waypoints: Waypoints,
     settings: Settings,
     system: Monitor,
     activity: Activity,

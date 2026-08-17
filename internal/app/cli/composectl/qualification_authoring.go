@@ -17,6 +17,7 @@ import (
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/app/api/clienttransport"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	platformgen "github.com/flidai/leapview/internal/platform/http/api/gen"
 )
 
 const qualificationBrowserImage = "mcr.microsoft.com/playwright:v1.61.1-noble"
@@ -33,7 +34,6 @@ type qualificationAuthoringOptions struct {
 	Project         string
 	ProjectID       string
 	Environment     string
-	WorkspaceID     string
 }
 
 type qualificationCredentials struct {
@@ -71,17 +71,21 @@ func (credentials qualificationCredentials) recoveryControlToken() (string, erro
 	return token, nil
 }
 
-func qualificationWorkloadPrivileges() []string {
+func qualificationWorkloadCapabilities() []string {
 	return []string{
-		"USE_WORKSPACE",
-		"VIEW_ITEM",
-		"QUERY_DATA",
-		"REFRESH_DATA",
+		"RESOURCE_USE",
+		"RESOURCE_READ",
+		"RESOURCE_EDIT",
+		"RESOURCE_PUBLISH",
 	}
 }
 
-func qualificationProjectDataPrivileges() []string {
-	return []string{"VIEW_DATA"}
+func qualificationProjectDataCapabilities() []string {
+	return []string{"RESOURCE_READ"}
+}
+
+func qualificationReviewerCapabilities() []string {
+	return []string{"PROJECT_ADMIN"}
 }
 
 type qualificationAuthoringReport struct {
@@ -291,7 +295,7 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	var administratorToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueAdministratorToken", map[string]any{
-		"privileges": []string{"MANAGE_GRANTS"},
+		"capabilities": []string{"PLATFORM_ADMIN", "PROJECT_ADMIN"},
 	}, &administratorToken, nil); err != nil {
 		return report, err
 	}
@@ -326,34 +330,28 @@ func (c *Controller) runQualificationAuthoring(
 	if reviewer.Principal.Id == "" || reviewer.TemporaryPassword == "" {
 		return report, fmt.Errorf("reviewer creation returned incomplete credentials")
 	}
-	for _, privilege := range []string{
-		"VIEW_ITEM",
-		"APPROVE_DEPLOYMENT",
-		"ACTIVATE_DEPLOYMENT",
-	} {
-		objectType := "project_environment"
-		objectID := options.Environment
+	for _, capability := range qualificationReviewerCapabilities() {
 		_, err := administratorAPI.CreateGrant(
 			ctx,
 			accessgen.GenCreateGrantClientRequest{
-				Workspace: options.ProjectID,
+				Project: options.ProjectID,
 				Headers: accessgen.GenCreateGrantClientHeaders{
 					IdempotencyKey: "authoring-reviewer-" +
-						strings.ToLower(privilege) + "-" + runSuffix,
+						strings.ToLower(capability) + "-" + runSuffix,
 				},
 				Body: accessgen.GenSchemaGrantRequest{
-					ObjectType:  &objectType,
-					ObjectId:    &objectID,
-					Privilege:   privilege,
-					SubjectId:   reviewer.Principal.Id,
-					SubjectType: "principal",
+					Capability:   platformgen.Capability(capability),
+					ResourceId:   options.ProjectID,
+					ResourceKind: platformgen.ResourceKindProject,
+					SubjectId:    reviewer.Principal.Id,
+					SubjectType:  "principal",
 				},
 			},
 		)
 		if err != nil {
 			return report, fmt.Errorf(
 				"grant qualification reviewer %s: %w",
-				privilege,
+				capability,
 				mapQualificationCreateGrantFailure(err),
 			)
 		}
@@ -367,11 +365,7 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	var reviewerToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueReviewerToken", map[string]any{
-		"privileges": []string{
-			"VIEW_ITEM",
-			"APPROVE_DEPLOYMENT",
-			"ACTIVATE_DEPLOYMENT",
-		},
+		"capabilities": qualificationReviewerCapabilities(),
 	}, &reviewerToken, nil); err != nil {
 		return report, err
 	}
@@ -490,8 +484,7 @@ func (c *Controller) runQualificationAuthoring(
 		options.Target,
 		administratorToken.AccessToken,
 		"qualification-workload",
-		options.WorkspaceID,
-		qualificationWorkloadPrivileges(),
+		qualificationWorkloadCapabilities(),
 		"qualification-workload-"+runSuffix,
 	)
 	if err != nil {
@@ -503,8 +496,7 @@ func (c *Controller) runQualificationAuthoring(
 		options.Target,
 		administratorToken.AccessToken,
 		"qualification-project-data",
-		"",
-		qualificationProjectDataPrivileges(),
+		qualificationProjectDataCapabilities(),
 		"qualification-project-data-"+runSuffix,
 	)
 	if err != nil {
@@ -557,16 +549,16 @@ func (c *Controller) createQualificationAPIToken(
 	target string,
 	authorizationToken string,
 	name string,
-	workspaceID string,
-	privileges []string,
+	capabilityNames []string,
 	idempotencyKey string,
 ) (string, error) {
 	expiresAt := c.now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
-	body := accessgen.GenSchemaAPITokenCreateRequest{
-		Name: name, Privileges: &privileges, ExpiresAt: &expiresAt,
+	capabilities := make([]platformgen.Capability, 0, len(capabilityNames))
+	for _, name := range capabilityNames {
+		capabilities = append(capabilities, platformgen.Capability(name))
 	}
-	if workspaceID != "" {
-		body.WorkspaceId = &workspaceID
+	body := accessgen.GenSchemaAPITokenCreateRequest{
+		Name: name, Capabilities: &capabilities, ExpiresAt: &expiresAt,
 	}
 	response, err := accessgen.NewGenClient(qualificationGeneratedTransport(
 		target,
@@ -598,16 +590,13 @@ func normalizeQualificationAuthoringOptions(options qualificationAuthoringOption
 		options.Target = "https://localhost"
 	}
 	if options.Project == "" {
-		options.Project = "/workspace/evaluation/project/leapview.yaml"
+		options.Project = "/app/evaluation/project/leapview.yaml"
 	}
 	if options.ProjectID == "" {
-		options.ProjectID = "leapview-evaluation"
+		options.ProjectID = "project:leapview-evaluation"
 	}
 	if options.Environment == "" {
 		options.Environment = "evaluation"
-	}
-	if options.WorkspaceID == "" {
-		options.WorkspaceID = "evaluation"
 	}
 	return options
 }
@@ -624,7 +613,6 @@ func validateQualificationAuthoringOptions(options qualificationAuthoringOptions
 		"project":            options.Project,
 		"project ID":         options.ProjectID,
 		"environment":        options.Environment,
-		"workspace ID":       options.WorkspaceID,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("qualification authoring %s is required", label)
@@ -771,7 +759,7 @@ func approveAndActivateQualificationPublication(
 		CandidateRevision: response.Evidence.CandidateRevision,
 		TargetID:          response.Evidence.TargetId,
 		PrincipalID:       response.CreatedBy,
-		ArtifactDigest:    response.Evidence.ArtifactDigest,
+		ArtifactDigest:    response.Evidence.ArtifactContentDigest,
 		ReleaseDigest:     response.Evidence.ReleaseDigest,
 		Status:            string(response.Status),
 	}, nil

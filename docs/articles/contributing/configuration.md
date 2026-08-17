@@ -4,7 +4,7 @@ Configuration changes must update parsing, validation, discovery, compilation, s
 
 ## Decide ownership and identity
 
-Before implementation, define whether the resource is project-global or workspace-owned, how it is discovered, its stable `kind` and `metadata.name`, which resources it may reference, and whether it becomes a securable object or contributes to deployment/serving state.
+Before implementation, define how the project-wide resource is discovered, its stable `kind` and `metadata.id`/`metadata.name`, which graph resources it may reference, and whether it becomes a securable object or contributes to deployment/serving state.
 
 Prefer extending an existing resource when the new fields share ownership and lifecycle. Create a new kind when it has independent identity, permissions, discovery, or deployment behavior.
 
@@ -16,12 +16,12 @@ Field descriptions should explain semantics and failure boundaries, not repeat t
 
 ## Implement typed loading and validation
 
-Add typed resource representation in the owning project/workspace package. Register include discovery and decoding. Validate:
+Add typed resource representation in the owning project package. Register include discovery and decoding. Validate:
 
 - duplicate IDs and conflicting discovery;
-- project/workspace ownership;
+- project graph ownership;
 - references to known resources;
-- permitted cross-scope dependencies;
+- permitted graph dependencies;
 - identifier and enum rules;
 - semantic constraints that schema shape alone cannot express;
 - deterministic diagnostics with source location/context.
@@ -30,7 +30,7 @@ Create valid, minimal, representative, and invalid fixtures. Test unknown fields
 
 ## Compile and activate
 
-Extend project compilation so the resource becomes the intended artifact metadata, access snapshot, runtime definition, or operational state. Test candidate validation and atomic activation. A failed new resource must not partially update active workspaces.
+Extend project compilation so the resource becomes the intended artifact metadata, access snapshot, runtime definition, or operational state. Test candidate validation and atomic activation. A failed new resource must not partially update active project serving state.
 
 If it creates a securable object, register its parent hierarchy and test authorization does not synthesize missing objects during reads. If it affects data, include it in digest/refresh/lineage behavior as appropriate.
 
@@ -49,7 +49,7 @@ Confirm the generated page contains the correct title, JSON Schema link, example
 
 ## Update users of the contract
 
-If the resource is exposed through API, CLI, workspace UI, search, lineage, agent tools, or audit, update the owning source contracts and generated surfaces. Add a complete example under `dashboards/` so CI continually validates the feature in a real project graph.
+If the resource is exposed through API, CLI, project UI, search, lineage, agent tools, or audit, update the owning source contracts and generated surfaces. Add a complete example under `dashboards/` so CI continually validates the feature in a real project graph.
 
 Write a task-oriented guide when users need design or operations advice beyond the field reference.
 

@@ -16,7 +16,8 @@ import (
 func testAdmitter(controller workload.Admitter) Admitter {
 	return AdmitterFunc(func(ctx context.Context, request AdmissionRequest) (AdmissionLease, error) {
 		return controller.Acquire(ctx, workload.Request{
-			Class: workload.Class(request.Class), WorkspaceID: request.WorkspaceID, Operation: request.Operation,
+			Class: workload.Class(request.Class), PrincipalID: request.PrincipalID, GroupIDs: request.GroupIDs,
+			EstimatedMemoryBytes: request.EstimatedMemoryBytes, Operation: request.Operation,
 		})
 	})
 }

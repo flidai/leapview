@@ -13,13 +13,11 @@ namespace LeapViewUISignals;
 
 /** Route surfaces supported by the shared UI signal transport. */
 enum RouteKind {
+	catalog: "catalog",
   dashboard: "dashboard",
   dashboardBuilder: "dashboard_builder",
-  catalog: "catalog",
   pipelines: "pipelines",
   chat: "chat",
-  workspace: "workspace",
-  workspaceAsset: "workspace_asset",
   connections: "connections",
   connectionAsset: "connection_asset",
   data: "data",
@@ -48,7 +46,7 @@ model DashboardBuilderEnvelope {
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "builder", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard_builder" })
 model DashboardBuilderSignal {
-  `workspaceId`: string;
+  `projectId`: string;
   `dashboardId`: string;
   `draftId`: string;
   `revision`: DashboardBuilderRevisionSignal;
@@ -85,19 +83,12 @@ model DashboardBuilderSourceEvidenceSignal {
   `kind`: string;
 }
 
-model DashboardBuilderWorkspaceSourceEvidence extends DashboardBuilderSourceEvidenceSignal {
-  `kind`: "workspace";
-  `workspaceId`: string;
-  `dashboardId`: string;
-  `revision`: DashboardBuilderRevisionSignal;
-}
-
 model DashboardBuilderProjectSourceEvidence extends DashboardBuilderSourceEvidenceSignal {
   `kind`: "project";
-  `workspaceId`: string;
+  `projectId`: string;
   `dashboardId`: string;
   `path`?: string;
-  `servingStateId`: string;
+  `generationId`: string;
 }
 
 model DashboardBuilderSemanticModelSignal {
@@ -225,7 +216,7 @@ model AdminMetricSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminPublicationSignal {
-  `workspaceId`: string;
+  `projectId`: string;
   `name`: string;
   `dashboard`: string;
   `defaultPage`: string;
@@ -245,7 +236,7 @@ model AdminPublicationSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminPublicationCommand {
-  `workspaceId`: string;
+  `projectId`: string;
   `publication`: string;
   `action`: string;
 }
@@ -334,7 +325,7 @@ model AdminQueryDetailSignal {
   `statusLabel`?: string;
   `surface`?: string;
   `target`?: string;
-  `workspaceId`?: string;
+  `projectId`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
@@ -362,7 +353,7 @@ model AdminQueryEventSignal {
   `status`: string;
   `surface`: string;
   `target`: string;
-  `workspaceId`: string;
+  `projectId`: string;
 }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "command"] })
@@ -387,7 +378,7 @@ model AdminQueryHistoryFilters {
   `surfaces`?: string[];
   `target`?: string;
   `to`?: string;
-  `workspaces`?: string[];
+  `projects`?: string[];
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
@@ -481,13 +472,6 @@ model CatalogDashboardSignal {
   `semanticModel`?: string;
   `tags`?: string[];
   `title`: string;
-  `workspace`: string;
-  `workspaceId`: string;
-}
-
-model CatalogWorkspaceFilterSignal {
-  `id`: string;
-  `title`: string;
 }
 
 @apigen.contract(#{ kind: "ui-envelope", tags: #["catalog", "envelope"] })
@@ -512,10 +496,9 @@ model CatalogPageSignal {
 	`listFilter`?: string;
 	`listQuery`?: string;
 	`title`: string;
-	`workspaceFilters`: CatalogWorkspaceFilterSignal[];
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "signal"] })
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
 model PipelineMetricSignal {
   `detail`?: string;
@@ -524,7 +507,7 @@ model PipelineMetricSignal {
   `value`: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "signal"] })
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
 model PipelineListItemSignal {
   `assetId`: string;
@@ -541,26 +524,18 @@ model PipelineListItemSignal {
   `semanticModel`: string;
   `status`: string;
   `title`: string;
-  `workspace`: string;
-  `workspaceId`: string;
 }
 
-model PipelineWorkspaceFilterSignal {
-  `id`: string;
-  `title`: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "command"] })
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "pipelines" })
 model PipelineCommandSignal {
   `action`: string;
   `assetId`: string;
   `pipelineId`: string;
   `runId`: string;
-  `workspaceId`: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "signal"] })
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
 model PipelineCommandStatusSignal {
   `error`: string;
@@ -568,7 +543,7 @@ model PipelineCommandStatusSignal {
   `message`: string;
 }
 
-@apigen.contract(#{ kind: "ui-envelope", tags: #["workspace", "pipelines", "envelope"] })
+@apigen.contract(#{ kind: "ui-envelope", tags: #["project", "pipelines", "envelope"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "pipelines" })
 model PipelinePageEnvelope {
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
@@ -585,7 +560,7 @@ model PipelinePageEnvelope {
   `status`: DashboardStatus;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "pipelines", "signal"] })
+@apigen.contract(#{ kind: "ui-signal", tags: #["project", "pipelines", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "pipelines" })
 model PipelinePageSignal {
   `activeTab`: string;
@@ -596,7 +571,6 @@ model PipelinePageSignal {
   `pipelines`: PipelineListItemSignal[];
   `runsTable`: RecordTableSignal;
   `title`: string;
-  `workspaceFilters`: PipelineWorkspaceFilterSignal[];
 }
 
 model ChatArtifactSignal {
@@ -606,14 +580,8 @@ model ChatArtifactSignal {
 }
 
 model AgentReferenceKeySignal {
-  `workspaceId`: string;
-  `type`: string;
-  `id`: string;
-}
-
-model AgentReferenceWorkspaceSignal {
-  `id`: string;
-  `name`: string;
+	`kind`: string;
+	`id`: string;
 }
 
 model AgentReferenceLocationSignal {
@@ -629,7 +597,6 @@ model AgentReferenceSignal {
   `name`: string;
   `description`?: string;
 	`visualType`?: string;
-  `workspace`: AgentReferenceWorkspaceSignal;
 	`hierarchy`: string[];
   `href`: string;
   `locations`: AgentReferenceLocationSignal[];
@@ -648,7 +615,6 @@ model AgentReferenceSearchSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
 model AgentContextSignal {
   `surface`: string;
-  `workspaceId`: string;
   `dashboardId`: string;
   `dashboardTitle`: string;
   `pageId`: string;
@@ -779,7 +745,6 @@ model ConnectionsPageSignal {
   `kind`: RouteKind;
   `query`?: string;
   `title`: string;
-  `workspaceId`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["connections", "signal"] })
@@ -1364,7 +1329,6 @@ model DataExplorerCommand {
   `sort`: DataPreviewSortSignal;
   `start`: int64;
   `visibleColumns`?: string[];
-  `workspaceId`?: string;
 }
 
 model DataExploreAgentContextSignal {
@@ -1390,7 +1354,6 @@ model DataExploreCommand {
   `resetVersion`: int64;
   `sort`: DataExploreSortSignal[];
   `time`?: DataExploreTimeSignal;
-  `workspaceId`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1490,8 +1453,7 @@ model DataExplorerObjectSignal {
   `source`?: string;
   `table`?: string;
   `title`: string;
-  `workspaceId`: string;
-  `workspaceTitle`?: string;
+  `resourceId`: string;
 }
 
 @apigen.contract(#{ kind: "ui-envelope", tags: #["data", "envelope"] })
@@ -1523,11 +1485,9 @@ model DataExplorerPageSignal {
   `description`?: string;
   `kind`: RouteKind;
   `selectedObject`?: string;
-  `selectedWorkspaceId`?: string;
-  `tabs`: WorkspaceTabSignal[];
+  `tabs`: ResourceTabSignal[];
   `title`: string;
-  `workspaceId`?: string;
-  `workspaces`: DataExplorerWorkspaceSignal[];
+  `context`: DataExplorerContextSignal;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1539,18 +1499,18 @@ model DataExplorerSignal {
   `preview`: DataPreviewSignal;
   `selectedKey`?: string;
   `selectedObject`?: DataExplorerObjectSignal;
-  `selectedWorkspaceId`?: string;
   `warnings`?: string[];
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
-model DataExplorerWorkspaceSignal {
+model DataExplorerContextSignal {
   `active`: boolean;
-  `href`: string;
-  `id`: string;
+  `environment`: string;
+  `generationId`: string;
   `objectCount`: int64;
-  `title`: string;
+  `projectId`: string;
+  `projectTitle`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1791,11 +1751,11 @@ model RouteRuntimeSignal {
   `pageId`?: string;
   `streamInstanceId`?: string;
   `servingStateId`?: string;
-  `workspaceId`?: string;
+  `projectId`?: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model SemanticModelGraphEdgeSignal {
   `cardinality`: string;
   `id`: string;
@@ -1806,8 +1766,8 @@ model SemanticModelGraphEdgeSignal {
   `targetField`: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model SemanticModelGraphFieldSignal {
   `join`?: boolean;
   `label`?: string;
@@ -1817,8 +1777,8 @@ model SemanticModelGraphFieldSignal {
   `type`?: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model SemanticModelGraphNodeSignal {
   `badges`?: string[];
   `description`?: string;
@@ -1828,8 +1788,8 @@ model SemanticModelGraphNodeSignal {
   `title`: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model SemanticModelGraphSignal {
   `edges`: SemanticModelGraphEdgeSignal[];
   `facts`?: string[];
@@ -1911,7 +1871,6 @@ model SidebarSignal {
   `userName`?: string;
   `userRole`?: string;
   `userSettingsHref`: string;
-  `workspaceTitle`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["shared", "signal"] })
@@ -1939,76 +1898,9 @@ model SubSidebarSignal {
   `storageKey`: string;
 }
 
-model WorkspaceAccessCommand {
-  `bindingId`: string;
-  `email`: string;
-  `principalId`: string;
-  `privilege`: string;
-  `role`: string;
-  `subjectId`: string;
-  `subjectType`: string;
-  `subjects`: WorkspaceAccessSubject[];
-}
-
-model WorkspaceAccessSubject {
-  `subjectId`: string;
-  `subjectType`: string;
-}
-
-model WorkspaceAccessCandidate {
-  `detail`: string;
-  `label`: string;
-  `subjectId`: string;
-  `subjectType`: string;
-}
-
-model WorkspaceAccessSearchStatus {
-  `error`: string;
-  `loading`: boolean;
-}
-
-model WorkspaceAccessResponse {
-  `bindings`: unknown[];
-  `candidates`: WorkspaceAccessCandidate[];
-  `canManage`: boolean;
-  `mode`?: string;
-  `objectId`?: string;
-  `objectTitle`?: string;
-  `objectType`?: string;
-  `roles`: unknown[];
-  `search`: string;
-  `searchStatus`: WorkspaceAccessSearchStatus;
-  `status`: WorkspaceAccessStatus;
-  `workspace`: unknown;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceAccessSignal {
-  `bindings`: unknown[];
-  `candidates`: WorkspaceAccessCandidate[];
-  `canManage`: boolean;
-  `command`: WorkspaceAccessCommand;
-  `mode`?: string;
-  `objectId`?: string;
-  `objectTitle`?: string;
-  `objectType`?: string;
-  `roles`: unknown[];
-  `search`: string;
-  `searchStatus`: WorkspaceAccessSearchStatus;
-  `status`: WorkspaceAccessStatus;
-  `workspace`: unknown;
-}
-
-model WorkspaceAccessStatus {
-  `error`: string;
-  `loading`: boolean;
-  `message`: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceActionSignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceActionSignal {
   `command`?: string;
   `disabled`?: boolean;
   `href`?: string;
@@ -2016,81 +1908,79 @@ model WorkspaceActionSignal {
   `label`: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceAssetDetailsSignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceAssetDetailsSignal {
   `overview`: DefinitionFactSignal[];
-  `sections`: WorkspaceDetailSectionSignal[];
+  `sections`: ResourceDetailSectionSignal[];
   `semanticModelGraph`?: SemanticModelGraphSignal;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceAssetLineageSignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceAssetLineageSignal {
   `count`: int64;
   `graph`: AssetLineageGraphSignal;
   `usedByTable`: RecordTableSignal;
   `usesTable`: RecordTableSignal;
 }
 
-model WorkspaceAssetListSignal {
+model ResourceAssetListSignal {
   `activeType`?: string;
-  `assets`: WorkspaceAssetSummarySignal[];
+  `assets`: ResourceAssetSummarySignal[];
   `empty`: string;
   `query`?: string;
   `searchHref`: string;
-  `tabs`: WorkspaceTabSignal[];
-  `workspaceId`?: string;
+  `tabs`: ResourceTabSignal[];
 }
 
-@apigen.contract(#{ kind: "ui-envelope", tags: #["workspace", "envelope"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "workspace" })
-model WorkspaceAssetPageEnvelope {
+@apigen.contract(#{ kind: "ui-envelope", tags: #["resource", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "resource" })
+model ResourceAssetPageEnvelope {
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
   `chrome`: ChromeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "connectionAdmin" })
   `connectionAdmin`?: ConnectionAdministrationSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
-  `page`: WorkspaceAssetPageSignal;
+  `page`: ResourceAssetPageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
   `runtime`: RouteRuntimeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceAssetPageSignal {
-  `actions`?: WorkspaceActionSignal[];
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceAssetPageSignal {
+  `actions`?: ResourceActionSignal[];
   `activeSection`: string;
-  `asset`: WorkspaceAssetSummarySignal;
+  `asset`: ResourceAssetSummarySignal;
   `assetId`: string;
-  `breadcrumbs`: WorkspaceBreadcrumbSignal[];
+  `breadcrumbs`: ResourceBreadcrumbSignal[];
   `connectionLifecycle`?: ConnectionLifecycleSignal;
-  `details`?: WorkspaceAssetDetailsSignal;
-  `drawerParent`?: WorkspaceAssetPageSignal;
+  `details`?: ResourceAssetDetailsSignal;
+  `drawerParent`?: ResourceAssetPageSignal;
   `environment`?: string;
   `kind`: RouteKind;
-  `lineage`?: WorkspaceAssetLineageSignal;
-  `refresh`?: WorkspaceAssetRefreshSignal;
-  `tabs`: WorkspaceTabSignal[];
+  `lineage`?: ResourceAssetLineageSignal;
+  `refresh`?: ResourceAssetRefreshSignal;
+  `tabs`: ResourceTabSignal[];
   `title`: string;
-  `versions`?: WorkspaceAssetVersionsSignal;
-  `workspaceId`: string;
+  `versions`?: ResourceAssetVersionsSignal;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceAssetRefreshSignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceAssetRefreshSignal {
   `lastSuccessful`: string;
   `running`: boolean;
   `runsTable`?: RecordTableSignal;
   `status`: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceAssetSummarySignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceAssetSummarySignal {
   `description`?: string;
   `detailHref`: string;
   `id`: string;
@@ -2103,31 +1993,31 @@ model WorkspaceAssetSummarySignal {
   `typeLabel`: string;
 }
 
-model WorkspaceAssetVersionsSignal {
+model ResourceAssetVersionsSignal {
   `currentContentHash`: string;
   `table`: RecordTableSignal;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceBreadcrumbSignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceBreadcrumbSignal {
   `current`?: boolean;
   `href`?: string;
   `label`: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceCatalogItemSignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceCatalogItemSignal {
   `description`: string;
   `href`: string;
   `id`: string;
   `title`: string;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceDetailSectionSignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceDetailSectionSignal {
   `code`?: string;
   `facts`?: DefinitionFactSignal[];
   `lang`?: string;
@@ -2135,38 +2025,34 @@ model WorkspaceDetailSectionSignal {
   `title`: string;
 }
 
-@apigen.contract(#{ kind: "ui-envelope", tags: #["workspace", "envelope"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "workspace" })
-model WorkspacePageEnvelope {
+@apigen.contract(#{ kind: "ui-envelope", tags: #["resource", "envelope"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "resource" })
+model ResourcePageEnvelope {
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
   `chrome`: ChromeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
-  `page`: WorkspacePageSignal;
+  `page`: ResourcePageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
   `runtime`: RouteRuntimeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
-  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "workspaceAccess" })
-  `workspaceAccess`?: WorkspaceAccessSignal;
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspacePageSignal {
-	`assetList`?: WorkspaceAssetListSignal;
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourcePageSignal {
+	`assetList`?: ResourceAssetListSignal;
 	`description`?: string;
 	`environment`?: string;
 	`kind`: RouteKind;
 	`listFilter`?: string;
 	`listQuery`?: string;
 	`title`: string;
-  `workspaceId`?: string;
-  `workspaces`?: WorkspaceCatalogItemSignal[];
 }
 
-@apigen.contract(#{ kind: "ui-signal", tags: #["workspace", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "workspace" })
-model WorkspaceTabSignal {
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceTabSignal {
   `active`: boolean;
   `count`?: int64;
   `href`: string;

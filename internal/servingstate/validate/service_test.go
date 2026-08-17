@@ -6,13 +6,14 @@ import (
 	"reflect"
 	"testing"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 func TestServiceValidatesPromotesAndSaves(t *testing.T) {
 	ctx := context.Background()
 	repo := &fakeRepo{
-		deployment: servingstate.State{ID: "dep_1", WorkspaceID: "test", Status: servingstate.StatusPending},
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Status: servingstate.StatusPending},
 	}
 	artifacts := &fakeArtifacts{}
 	validator := &fakeValidator{
@@ -39,7 +40,6 @@ func TestServiceResumesAlreadyValidatedCandidateWithoutReprocessingArtifact(t *t
 	repo := &fakeRepo{
 		deployment: servingstate.State{
 			ID:            "dep_1",
-			WorkspaceID:   "test",
 			ProjectID:     "project",
 			ProjectDigest: "sha256:project",
 			Status:        servingstate.StatusValidated,
@@ -65,7 +65,7 @@ func TestServiceResumesAlreadyValidatedCandidateWithoutReprocessingArtifact(t *t
 func TestServiceMarksFailedWhenValidationFails(t *testing.T) {
 	ctx := context.Background()
 	repo := &fakeRepo{
-		deployment: servingstate.State{ID: "dep_1", WorkspaceID: "test", Status: servingstate.StatusPending},
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Status: servingstate.StatusPending},
 	}
 	validator := &fakeValidator{err: errors.New("bad bundle")}
 	service := NewService(repo, &fakeArtifacts{}, validator)
@@ -84,7 +84,7 @@ func TestServiceMarksFailedWhenValidationFails(t *testing.T) {
 func TestServiceRunsHookAfterArtifactValidationBeforePromotion(t *testing.T) {
 	events := []string{}
 	repo := &fakeRepo{
-		deployment: servingstate.State{ID: "dep_1", WorkspaceID: "test", Environment: "prod", Status: servingstate.StatusPending},
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Environment: "prod", Status: servingstate.StatusPending},
 		events:     &events,
 	}
 	artifacts := &fakeArtifacts{events: &events}
@@ -107,10 +107,41 @@ func TestServiceRunsHookAfterArtifactValidationBeforePromotion(t *testing.T) {
 	}
 }
 
+func TestServiceSuppliesManagedDataRevisionsToValidationHooks(t *testing.T) {
+	repo := &fakeRepo{
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Environment: "prod", Status: servingstate.StatusPending},
+	}
+	validator := &fakeValidator{
+		validation: servingstate.Validation{Digest: "digest", ManifestJSON: `{}`, RootDir: "/tmp/extracted"},
+	}
+	hook := &fakeHook{}
+	service := NewService(repo, &fakeArtifacts{}, validator, hook)
+	revisions := map[string]string{"connection:orders": "sha256:revision"}
+
+	if _, err := service.ValidateWithManagedDataRevisions(t.Context(), "dep_1", revisions); err != nil {
+		t.Fatalf("ValidateWithManagedDataRevisions() error = %v", err)
+	}
+	if !reflect.DeepEqual(hook.validation.ManagedDataRevisions, revisions) {
+		t.Fatalf("managed data revisions = %#v, want %#v", hook.validation.ManagedDataRevisions, revisions)
+	}
+	revisions["connection:orders"] = "sha256:mutated"
+	if got := hook.validation.ManagedDataRevisions["connection:orders"]; got != "sha256:revision" {
+		t.Fatalf("hook revision changed with caller map: got %q", got)
+	}
+}
+
+func TestServiceRejectsMissingManagedDataRevisions(t *testing.T) {
+	service := NewService(&fakeRepo{}, &fakeArtifacts{}, &fakeValidator{})
+
+	if _, err := service.ValidateWithManagedDataRevisions(t.Context(), "dep_1", nil); err == nil {
+		t.Fatal("ValidateWithManagedDataRevisions() error = nil, want missing revisions error")
+	}
+}
+
 func TestServiceMarksFailedAndDoesNotPromoteWhenHookFails(t *testing.T) {
 	hookErr := errors.New("managed data current revision is unavailable")
 	repo := &fakeRepo{
-		deployment: servingstate.State{ID: "dep_1", WorkspaceID: "test", Environment: "prod", Status: servingstate.StatusPending},
+		deployment: servingstate.State{ID: "dep_1", ProjectID: "project", Environment: "prod", Status: servingstate.StatusPending},
 	}
 	artifacts := &fakeArtifacts{}
 	validator := &fakeValidator{validation: servingstate.Validation{RootDir: "/tmp/extracted"}}
@@ -188,7 +219,7 @@ type fakeValidator struct {
 	events      *[]string
 }
 
-func (v *fakeValidator) ValidateArtifact(_ string, _ servingstate.WorkspaceID, environment servingstate.Environment, _ servingstate.ID) (servingstate.Validation, error) {
+func (v *fakeValidator) ValidateArtifact(_ string, _ projectgraph.ResourceID, environment servingstate.Environment, _ servingstate.ID) (servingstate.Validation, error) {
 	v.environment = environment
 	if v.err != nil {
 		return servingstate.Validation{}, v.err

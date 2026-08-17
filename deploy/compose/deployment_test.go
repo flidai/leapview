@@ -168,7 +168,7 @@ func TestFiveMinuteEvaluationContract(t *testing.T) {
 	if !strings.Contains(dockerfile, "COPY evaluation ./evaluation") {
 		t.Fatal("runtime image does not include the self-contained evaluation project and data")
 	}
-	dashboard := read(t, filepath.Join(root, "evaluation", "project", "workspaces", "evaluation", "dashboards", "sales-overview.yaml"))
+	dashboard := read(t, filepath.Join(root, "evaluation", "project", "dashboards", "sales-overview.yaml"))
 	for _, required := range []string{
 		"kind: static",
 		"value: {kind: string, value: SP}",
@@ -428,7 +428,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(client, "LEAPVIEW_API_TOKEN") {
 		t.Error("authoring must use browser-approved login")
 	}
-	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "ApproveDeployment", "ActivateDeployment", "dbus-run-session", "MANAGE_GRANTS", "project_environment", "VIEW_ITEM", "APPROVE_DEPLOYMENT", "ACTIVATE_DEPLOYMENT"} {
+	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "ApproveDeployment", "ActivateDeployment", "dbus-run-session", "PLATFORM_ADMIN", "PROJECT_ADMIN", "capabilities"} {
 		if !strings.Contains(authoring, required) {
 			t.Errorf("typed authoring controller missing %q", required)
 		}

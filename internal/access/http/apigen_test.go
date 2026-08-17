@@ -11,7 +11,6 @@ import (
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
 
-var _ accessgen.GenOperationDispatcher = (*APIGenDispatcher)(nil)
 var _ accessgen.GenTransportErrorResponder = APIGenTransportErrorResponder{}
 
 func TestAPIGenDispatcherPreservesGeneratedIfMatchHeader(t *testing.T) {

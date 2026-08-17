@@ -138,7 +138,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .metrics {
       display: grid;
-      max-width: var(--lv-workspace-detail-max-width);
+          max-width: var(--lv-page-content-max-width);
       grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
       gap: var(--base-size-12);
     }
@@ -191,7 +191,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .warnings {
       display: grid;
-      max-width: var(--lv-workspace-detail-max-width);
+          max-width: var(--lv-page-content-max-width);
       gap: var(--base-size-8);
     }
 
@@ -320,7 +320,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .local-user-panel {
       display: grid;
-      max-width: var(--lv-workspace-detail-max-width);
+          max-width: var(--lv-page-content-max-width);
       gap: var(--base-size-12);
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
@@ -648,7 +648,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const mainClass = [
       'main',
-      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'workspaces-admin' || page.active === 'storage' || page.active === 'storage-detail' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'storage' || page.active === 'storage-detail' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
     ].filter(Boolean).join(' ')
     return html`
@@ -686,7 +686,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
               ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} .actions=${[{ id: 'create-group', label: 'Create group', emphasis: 'primary' }]} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found." export-filename="groups.csv" @lv-entity-list-action=${this.handleEntityListAction}></lv-entity-list>`
             : isPersonalSettings(page.active) ? html`<lv-personal-settings></lv-personal-settings>`
               : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
-                : page.active === 'workspaces-admin' ? html`<lv-workspace-registry></lv-workspace-registry>`
+                : page.active === 'projects-admin' ? html`<lv-project-registry></lv-project-registry>`
                   : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
                       : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map((section) => renderSection(section))}
@@ -830,7 +830,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     return html`
       <section class="publication-list" aria-label="Dashboard publications">
         ${publications.map((publication) => {
-          const key = `${publication.workspaceId}/${publication.name}`
+          const key = `${publication.projectId}/${publication.name}`
           const busy = this.publicationBusy === key
           return html`
             <article class="publication-card">
@@ -839,7 +839,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
                 <span class="publication-status">${publication.status}</span>
               </div>
               <div class="publication-details">
-                <span>Workspace <code>${publication.workspaceId}</code></span>
+                <span>Project <code>${publication.projectId}</code></span>
                 <span>Dashboard <code>${publication.dashboard}${publication.defaultPage ? ` / ${publication.defaultPage}` : ''}</code></span>
                 <span>Generation <code>${publication.generation || '-'}</code></span>
                 <span>Allowed origins <code>${publication.origins.length ? publication.origins.join(', ') : 'Direct view only'}</code></span>
@@ -883,13 +883,13 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   }
 
   private mutatePublication(publication: AdminPublicationSignal, action: 'suspend' | 'resume' | 'rotate'): void {
-    const key = `${publication.workspaceId}/${publication.name}`
+    const key = `${publication.projectId}/${publication.name}`
     this.publicationBusy = key
     this.publicationMessage = ''
     this.dispatchEvent(new CustomEvent('lv-publication-command', {
       bubbles: true,
       composed: true,
-      detail: { workspaceId: publication.workspaceId, publication: publication.name, action },
+      detail: { projectId: publication.projectId, publication: publication.name, action },
     }))
   }
 
@@ -1022,7 +1022,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
           <section class="query-detail-section" aria-label="Query target">
             <h2>Query target</h2>
             <div class="query-detail-facts">
-              ${queryDetailFact('Workspace', event.workspaceId)}
+              ${queryDetailFact('Project', event.projectId)}
               ${queryDetailFact('Principal', event.principalId)}
               ${queryDetailFact('Source type', event.surface)}
               ${queryDetailFact('Model', event.modelId)}

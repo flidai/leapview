@@ -6,25 +6,30 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
+// CandidateConnectionRequirement and CandidateAuthoredConnection are
+// project-level connection evidence. They are intentionally not nested in a
+// partial target collection.
 type CandidateConnectionRequirement struct {
-	LogicalConnectionID string
-	ConnectorKind       string
+	ConnectionID  projectgraph.ResourceID
+	ConnectorKind string
 }
 
 type CandidateAuthoredConnection struct {
-	LogicalConnectionID string
-	ConnectorKind       string
+	ConnectionID  projectgraph.ResourceID
+	ConnectorKind string
 }
 
 type CandidateRestriction struct {
 	ID             string
-	WorkspaceID    string
-	ObjectID       string
+	ObjectID       projectgraph.ResourceID
+	ObjectKind     projectgraph.Kind
+	Subject        *access.SubjectRef
 	PolicyType     string
 	ExpressionJSON string
 }
@@ -38,19 +43,19 @@ const (
 
 type CandidateConnectionEvidence struct {
 	BindingID          string
-	LogicalConnection  string
+	ConnectionID       projectgraph.ResourceID
 	ConnectorKind      string
 	Revision           int64
 	ProviderVersion    string
 	EndpointConfigHash string
 }
 
+// CandidateConnectionRequest is one project-generation connection lease.
 type CandidateConnectionRequest struct {
 	CandidateID         string
 	Actor               string
 	TargetID            string
-	WorkspaceID         string
-	Environment         string
+	Identity            projectgraph.ServingIdentity
 	Requirements        []CandidateConnectionRequirement
 	AuthoredConnections []CandidateAuthoredConnection
 }
@@ -65,10 +70,7 @@ type CandidateConnectionLeaser interface {
 }
 
 type CandidateRuntimeHost interface {
-	PrepareAndRegisterCandidateSet(
-		context.Context,
-		[]runtimehost.CandidatePreparation,
-	) error
+	PrepareAndRegisterCandidateSet(context.Context, []runtimehost.CandidatePreparation) error
 }
 
 type CandidateRuntimeServiceConfig struct {
@@ -83,9 +85,10 @@ type CandidateRuntimeService struct {
 	runtimeVersion string
 }
 
-type CandidateWorkspaceRuntime struct {
-	WorkspaceID            string
-	ServingStateID         string
+// CandidateGenerationRuntime is the sole candidate preparation handoff. It
+// represents one immutable generation artifact and its project-wide evidence.
+type CandidateGenerationRuntime struct {
+	Identity               projectgraph.ServingIdentity
 	ArtifactDigest         string
 	DataRevision           string
 	DataMode               CandidateDataMode
@@ -98,286 +101,219 @@ type CandidateWorkspaceRuntime struct {
 type CandidateRuntimeRequest struct {
 	Candidate                Candidate
 	AuthorizationFingerprint string
-	Workspaces               []CandidateWorkspaceRuntime
-}
-
-type CandidateWorkspaceRuntimeReceipt struct {
-	WorkspaceID string
-	Bindings    []CandidateConnectionEvidence
+	Generation               CandidateGenerationRuntime
 }
 
 type CandidateRuntimeReceipt struct {
 	RuntimeVersion string
-	Workspaces     []CandidateWorkspaceRuntimeReceipt
+	Bindings       []CandidateConnectionEvidence
 }
 
-func NewCandidateRuntimeService(
-	config CandidateRuntimeServiceConfig,
-) (*CandidateRuntimeService, error) {
-	config.RuntimeVersion = strings.TrimSpace(config.RuntimeVersion)
-	if config.Connections == nil || config.Runtime == nil || config.RuntimeVersion == "" {
-		return nil, fmt.Errorf(
-			"%w: connection leaser, runtime host, and runtime version are required",
-			ErrCandidateInvalid,
-		)
+func NewCandidateRuntimeService(config CandidateRuntimeServiceConfig) (*CandidateRuntimeService, error) {
+	if config.RuntimeVersion != strings.TrimSpace(config.RuntimeVersion) || config.Connections == nil || config.Runtime == nil || config.RuntimeVersion == "" {
+		return nil, fmt.Errorf("%w: connection leaser, runtime host, and runtime version are required", ErrCandidateInvalid)
 	}
-	return &CandidateRuntimeService{
-		connections: config.Connections, runtime: config.Runtime,
-		runtimeVersion: config.RuntimeVersion,
-	}, nil
+	return &CandidateRuntimeService{connections: config.Connections, runtime: config.Runtime, runtimeVersion: config.RuntimeVersion}, nil
 }
 
-func (service *CandidateRuntimeService) Prepare(
-	ctx context.Context,
-	request CandidateRuntimeRequest,
-) (CandidateRuntimeReceipt, error) {
+func (service *CandidateRuntimeService) Prepare(ctx context.Context, request CandidateRuntimeRequest) (CandidateRuntimeReceipt, error) {
 	if service == nil {
 		return CandidateRuntimeReceipt{}, ErrCandidateUnavailable
 	}
-	request.AuthorizationFingerprint = strings.TrimSpace(
-		request.AuthorizationFingerprint,
-	)
-	candidate := request.Candidate
-	if candidate.Status != CandidatePreparing ||
-		candidate.ID == "" || candidate.OwnerID == "" || candidate.TargetID == "" ||
-		candidate.Environment == "" || candidate.ExpiresAt.IsZero() ||
-		request.AuthorizationFingerprint == "" || len(request.Workspaces) == 0 {
+	rawAuthorization := request.AuthorizationFingerprint
+	if rawAuthorization != strings.TrimSpace(rawAuthorization) {
 		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
-	workspaces := append([]CandidateWorkspaceRuntime(nil), request.Workspaces...)
-	for index := range workspaces {
-		workspaces[index].WorkspaceID = strings.TrimSpace(workspaces[index].WorkspaceID)
-		workspaces[index].ServingStateID = strings.TrimSpace(workspaces[index].ServingStateID)
-		workspaces[index].ArtifactDigest = strings.TrimSpace(workspaces[index].ArtifactDigest)
-		workspaces[index].DataRevision = strings.TrimSpace(workspaces[index].DataRevision)
-		var err error
-		workspaces[index].ManagedDataConnections, err = normalizeCandidateManagedConnections(
-			workspaces[index].ManagedDataConnections,
-		)
-		if err != nil {
-			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
-		}
-		workspaces[index].AuthoredConnections, err = normalizeCandidateAuthoredConnections(
-			workspaces[index].AuthoredConnections,
-		)
-		if err != nil {
-			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
-		}
-		if workspaces[index].WorkspaceID == "" || workspaces[index].ServingStateID == "" ||
-			workspaces[index].ArtifactDigest == "" || workspaces[index].DataRevision == "" {
-			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
-		}
-		switch workspaces[index].DataMode {
-		case CandidateDataReuseSnapshot:
-			if len(workspaces[index].AuthoredConnections) != 0 {
-				return CandidateRuntimeReceipt{}, ErrCandidateInvalid
-			}
-		case CandidateDataRefreshSources:
-			if len(workspaces[index].Connections) == 0 &&
-				len(workspaces[index].ManagedDataConnections) == 0 &&
-				len(workspaces[index].AuthoredConnections) == 0 {
-				return CandidateRuntimeReceipt{}, ErrCandidateInvalid
-			}
-		default:
-			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
-		}
+	candidate := request.Candidate
+	generation := request.Generation
+	if candidate.Status != CandidatePreparing || candidate.ID == "" || candidate.OwnerID == "" || candidate.TargetID == "" || candidate.Scope.Validate() != nil || candidate.Scope.Environment == "" || candidate.ExpiresAt.IsZero() || request.AuthorizationFingerprint == "" {
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
-	sort.Slice(workspaces, func(i, j int) bool {
-		return workspaces[i].WorkspaceID < workspaces[j].WorkspaceID
+	rawArtifact, rawDataRevision := generation.ArtifactDigest, generation.DataRevision
+	if rawArtifact != strings.TrimSpace(rawArtifact) || rawDataRevision != strings.TrimSpace(rawDataRevision) {
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+	}
+	if generation.Identity.Validate() != nil || generation.ArtifactDigest == "" || generation.DataRevision == "" || platformdigest.ValidateSHA256Identity(generation.ArtifactDigest) != nil {
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+	}
+	var err error
+	generation.ManagedDataConnections, err = normalizeCandidateManagedConnections(generation.ManagedDataConnections)
+	if err != nil {
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+	}
+	generation.AuthoredConnections, err = normalizeCandidateAuthoredConnections(generation.AuthoredConnections)
+	if err != nil {
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+	}
+	generation.Restrictions, err = normalizeCandidateRestrictions(generation.Restrictions)
+	if err != nil {
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+	}
+	switch generation.DataMode {
+	case CandidateDataReuseSnapshot:
+		if len(generation.AuthoredConnections) != 0 {
+			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+		}
+	case CandidateDataRefreshSources:
+		if len(generation.Connections) == 0 && len(generation.ManagedDataConnections) == 0 && len(generation.AuthoredConnections) == 0 {
+			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+		}
+	default:
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+	}
+	if generation.Identity.ProjectID != candidate.Scope.ProjectID || generation.Identity.Environment != candidate.Scope.Environment {
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+	}
+	projectID := generation.Identity.ProjectID
+	leases, err := service.connections.Acquire(ctx, CandidateConnectionRequest{
+		CandidateID: candidate.ID, Actor: candidate.OwnerID, TargetID: candidate.TargetID,
+		Identity:            generation.Identity,
+		Requirements:        append([]CandidateConnectionRequirement(nil), generation.Connections...),
+		AuthoredConnections: append([]CandidateAuthoredConnection(nil), generation.AuthoredConnections...),
 	})
-	for index := 1; index < len(workspaces); index++ {
-		if workspaces[index-1].WorkspaceID == workspaces[index].WorkspaceID {
-			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
-		}
+	if err != nil || leases == nil {
+		return CandidateRuntimeReceipt{}, fmt.Errorf("%w: target connections unavailable", ErrCandidateUnavailable)
 	}
-	inputs := make([]runtimehost.CandidatePreparation, 0, len(workspaces))
-	receipt := CandidateRuntimeReceipt{
-		RuntimeVersion: service.runtimeVersion,
-		Workspaces: make(
-			[]CandidateWorkspaceRuntimeReceipt,
-			0,
-			len(workspaces),
-		),
+	bindings, err := candidateBindingVersions(leases.Evidence())
+	if err != nil {
+		_ = leases.Close()
+		return CandidateRuntimeReceipt{}, err
 	}
-	owned := make([]CandidateConnectionLeases, 0, len(workspaces))
-	releaseOwned := func() {
-		for index := len(owned) - 1; index >= 0; index-- {
-			_ = owned[index].Close()
-		}
-		owned = nil
-	}
-	for _, workspace := range workspaces {
-		leases, err := service.connections.Acquire(ctx, CandidateConnectionRequest{
-			CandidateID: candidate.ID,
-			Actor:       candidate.OwnerID, TargetID: candidate.TargetID,
-			WorkspaceID: workspace.WorkspaceID, Environment: candidate.Environment,
-			Requirements: append(
-				[]CandidateConnectionRequirement(nil),
-				workspace.Connections...,
-			),
-			AuthoredConnections: append(
-				[]CandidateAuthoredConnection(nil),
-				workspace.AuthoredConnections...,
-			),
-		})
-		if err != nil || leases == nil {
-			releaseOwned()
-			return CandidateRuntimeReceipt{}, fmt.Errorf(
-				"%w: target connections unavailable for workspace %q",
-				ErrCandidateUnavailable,
-				workspace.WorkspaceID,
-			)
-		}
-		owned = append(owned, leases)
-		bindings, err := candidateBindingVersions(leases.Evidence())
-		if err != nil {
-			releaseOwned()
-			return CandidateRuntimeReceipt{}, err
-		}
-		receipt.Workspaces = append(
-			receipt.Workspaces,
-			CandidateWorkspaceRuntimeReceipt{
-				WorkspaceID: workspace.WorkspaceID,
-				Bindings:    candidateConnectionEvidence(bindings),
+	preparation := runtimehost.CandidatePreparation{
+		Registration: runtimehost.CandidateRegistration{
+			CandidateID: candidate.ID, OwnerID: candidate.OwnerID, ProjectID: projectID, ExpiresAt: candidate.ExpiresAt,
+			Compatibility: runtimehost.CandidateCompatibility{
+				ArtifactDigest: generation.ArtifactDigest, DataRevision: generation.DataRevision,
+				DataMode: runtimehost.CandidateDataMode(generation.DataMode), RuntimeVersion: service.runtimeVersion,
+				AuthorizationFingerprint: request.AuthorizationFingerprint, Bindings: bindings,
+				ManagedDataConnections: append([]string(nil), generation.ManagedDataConnections...),
+				AuthoredConnections:    candidateAuthoredConnections(generation.AuthoredConnections),
+				Restrictions:           candidateRestrictions(generation.Restrictions),
 			},
-		)
-		inputs = append(inputs, runtimehost.CandidatePreparation{
-			Registration: runtimehost.CandidateRegistration{
-				CandidateID: candidate.ID, OwnerID: candidate.OwnerID,
-				WorkspaceID: servingstate.WorkspaceID(workspace.WorkspaceID),
-				ExpiresAt:   candidate.ExpiresAt,
-				Compatibility: runtimehost.CandidateCompatibility{
-					ArtifactDigest:           workspace.ArtifactDigest,
-					DataRevision:             workspace.DataRevision,
-					DataMode:                 runtimehost.CandidateDataMode(workspace.DataMode),
-					RuntimeVersion:           service.runtimeVersion,
-					AuthorizationFingerprint: request.AuthorizationFingerprint,
-					Bindings:                 bindings,
-					ManagedDataConnections: append(
-						[]string(nil),
-						workspace.ManagedDataConnections...,
-					),
-					AuthoredConnections: candidateAuthoredConnections(
-						workspace.AuthoredConnections,
-					),
-					Restrictions: candidateRestrictions(workspace.Restrictions),
-				},
-			},
-			ServingStateID: workspace.ServingStateID,
-			Lifetime:       leases,
-		})
+		},
+		Identity: generation.Identity,
+		Lifetime: leases,
 	}
-	if err := service.runtime.PrepareAndRegisterCandidateSet(ctx, inputs); err != nil {
-		// Runtime Host accepts ownership of every lifetime supplied to the set,
-		// including failure paths.
-		owned = nil
-		return CandidateRuntimeReceipt{}, fmt.Errorf(
-			"%w: candidate runtime preparation failed: %v",
-			ErrCandidateUnavailable,
-			err,
-		)
+	if err := service.runtime.PrepareAndRegisterCandidateSet(ctx, []runtimehost.CandidatePreparation{preparation}); err != nil {
+		return CandidateRuntimeReceipt{}, fmt.Errorf("%w: candidate runtime preparation failed: %v", ErrCandidateUnavailable, err)
 	}
-	owned = nil
-	return receipt, nil
+	return CandidateRuntimeReceipt{RuntimeVersion: service.runtimeVersion, Bindings: candidateConnectionEvidence(bindings)}, nil
 }
 
 func normalizeCandidateManagedConnections(values []string) ([]string, error) {
 	values = append([]string(nil), values...)
-	for index := range values {
-		values[index] = strings.TrimSpace(values[index])
+	for i := range values {
+		if values[i] != strings.TrimSpace(values[i]) {
+			return nil, ErrCandidateInvalid
+		}
 	}
 	sort.Strings(values)
-	for index, value := range values {
-		if value == "" || index > 0 && values[index-1] == value {
+	for i, value := range values {
+		if value == "" || i > 0 && values[i-1] == value {
 			return nil, ErrCandidateInvalid
 		}
 	}
 	return values, nil
 }
 
-func normalizeCandidateAuthoredConnections(
-	values []CandidateAuthoredConnection,
-) ([]CandidateAuthoredConnection, error) {
+func normalizeCandidateAuthoredConnections(values []CandidateAuthoredConnection) ([]CandidateAuthoredConnection, error) {
 	values = append([]CandidateAuthoredConnection(nil), values...)
-	for index := range values {
-		values[index].LogicalConnectionID = strings.TrimSpace(values[index].LogicalConnectionID)
-		values[index].ConnectorKind = strings.TrimSpace(values[index].ConnectorKind)
+	for i := range values {
+		rawConnection := values[i].ConnectionID.String()
+		if rawConnection != strings.TrimSpace(rawConnection) || values[i].ConnectorKind != strings.TrimSpace(values[i].ConnectorKind) {
+			return nil, ErrCandidateInvalid
+		}
+		if err := values[i].ConnectionID.Validate(); err != nil {
+			return nil, ErrCandidateInvalid
+		}
 	}
-	sort.Slice(values, func(i, j int) bool {
-		return values[i].LogicalConnectionID < values[j].LogicalConnectionID
-	})
-	for index, value := range values {
-		if value.LogicalConnectionID == "" || value.ConnectorKind == "" ||
-			index > 0 && values[index-1].LogicalConnectionID == value.LogicalConnectionID {
+	sort.Slice(values, func(i, j int) bool { return values[i].ConnectionID < values[j].ConnectionID })
+	for i, value := range values {
+		if !value.ConnectionID.Valid() || value.ConnectorKind == "" || i > 0 && values[i-1].ConnectionID == value.ConnectionID {
 			return nil, ErrCandidateInvalid
 		}
 	}
 	return values, nil
 }
 
-func candidateAuthoredConnections(
-	values []CandidateAuthoredConnection,
-) []runtimehost.CandidateAuthoredConnection {
-	result := make([]runtimehost.CandidateAuthoredConnection, len(values))
-	for index, value := range values {
-		result[index] = runtimehost.CandidateAuthoredConnection{
-			LogicalConnection: value.LogicalConnectionID,
-			ConnectorKind:     value.ConnectorKind,
+// normalizeCandidateRestrictions validates the immutable authorization
+// evidence carried by a candidate generation. Restrictions are project-wide
+// records, so the object identity/kind and optional explicit subject must be
+// checked before handing them to the runtime host; no owner-based filtering
+// is performed here.
+func normalizeCandidateRestrictions(values []CandidateRestriction) ([]CandidateRestriction, error) {
+	values = append([]CandidateRestriction(nil), values...)
+	for i := range values {
+		item := &values[i]
+		if item.ID != strings.TrimSpace(item.ID) || item.PolicyType != strings.TrimSpace(item.PolicyType) || item.ExpressionJSON != strings.TrimSpace(item.ExpressionJSON) {
+			return nil, ErrCandidateInvalid
 		}
+		if item.ID == "" || item.PolicyType == "" || item.ExpressionJSON == "" || item.ObjectID.Validate() != nil || !item.ObjectKind.Valid() {
+			return nil, ErrCandidateInvalid
+		}
+		if item.PolicyType != "row_filter" && item.PolicyType != "column_mask" {
+			return nil, ErrCandidateInvalid
+		}
+		if item.Subject != nil && item.Subject.Validate() != nil {
+			return nil, ErrCandidateInvalid
+		}
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].ID < values[j].ID })
+	for i := 1; i < len(values); i++ {
+		if values[i-1].ID == values[i].ID {
+			return nil, ErrCandidateInvalid
+		}
+	}
+	return values, nil
+}
+
+func candidateAuthoredConnections(values []CandidateAuthoredConnection) []runtimehost.CandidateAuthoredConnection {
+	result := make([]runtimehost.CandidateAuthoredConnection, len(values))
+	for i, value := range values {
+		result[i] = runtimehost.CandidateAuthoredConnection{LogicalConnection: value.ConnectionID.String(), ConnectorKind: value.ConnectorKind}
 	}
 	return result
 }
 
-func candidateConnectionEvidence(
-	values []runtimehost.CandidateBindingVersion,
-) []CandidateConnectionEvidence {
+func candidateConnectionEvidence(values []runtimehost.CandidateBindingVersion) []CandidateConnectionEvidence {
 	result := make([]CandidateConnectionEvidence, len(values))
-	for index, value := range values {
-		result[index] = CandidateConnectionEvidence{
-			BindingID: value.BindingID, LogicalConnection: value.LogicalConnection,
-			ConnectorKind: value.ConnectorKind, Revision: value.Revision,
-			ProviderVersion: value.ProviderVersion, EndpointConfigHash: value.EndpointConfigHash,
+	for i, value := range values {
+		connectionID, err := projectgraph.NewResourceID(value.LogicalConnection)
+		if err != nil {
+			continue
 		}
+		result[i] = CandidateConnectionEvidence{BindingID: value.BindingID, ConnectionID: connectionID, ConnectorKind: value.ConnectorKind, Revision: value.Revision, ProviderVersion: value.ProviderVersion, EndpointConfigHash: value.EndpointConfigHash}
 	}
 	return result
 }
 
 func candidateRestrictions(values []CandidateRestriction) []runtimehost.CandidateRestriction {
 	result := make([]runtimehost.CandidateRestriction, len(values))
-	for index, value := range values {
-		result[index] = runtimehost.CandidateRestriction{
-			ID: value.ID, WorkspaceID: value.WorkspaceID, ObjectID: value.ObjectID,
-			PolicyType: value.PolicyType, ExpressionJSON: value.ExpressionJSON,
-		}
+	for i, value := range values {
+		result[i] = runtimehost.CandidateRestriction{ID: value.ID, ObjectID: value.ObjectID, ObjectKind: value.ObjectKind, Subject: value.Subject, PolicyType: value.PolicyType, ExpressionJSON: value.ExpressionJSON}
 	}
 	return result
 }
 
-func candidateBindingVersions(
-	evidence []CandidateConnectionEvidence,
-) ([]runtimehost.CandidateBindingVersion, error) {
+func candidateBindingVersions(evidence []CandidateConnectionEvidence) ([]runtimehost.CandidateBindingVersion, error) {
 	evidence = append([]CandidateConnectionEvidence(nil), evidence...)
-	sort.Slice(evidence, func(i, j int) bool {
-		return evidence[i].BindingID < evidence[j].BindingID
-	})
-	result := make([]runtimehost.CandidateBindingVersion, 0, len(evidence))
-	for index, item := range evidence {
-		item.BindingID = strings.TrimSpace(item.BindingID)
-		item.LogicalConnection = strings.TrimSpace(item.LogicalConnection)
-		item.ConnectorKind = strings.TrimSpace(item.ConnectorKind)
-		item.ProviderVersion = strings.TrimSpace(item.ProviderVersion)
-		item.EndpointConfigHash = strings.TrimSpace(item.EndpointConfigHash)
-		if item.BindingID == "" || item.LogicalConnection == "" || item.ConnectorKind == "" ||
-			item.Revision < 1 || item.ProviderVersion == "" || item.EndpointConfigHash == "" ||
-			platformdigest.ValidateSHA256Identity(item.EndpointConfigHash) != nil ||
-			index > 0 && evidence[index-1].BindingID == item.BindingID {
+	for i := range evidence {
+		item := &evidence[i]
+		rawConnection := item.ConnectionID.String()
+		if item.BindingID != strings.TrimSpace(item.BindingID) || item.ConnectorKind != strings.TrimSpace(item.ConnectorKind) || item.ProviderVersion != strings.TrimSpace(item.ProviderVersion) || item.EndpointConfigHash != strings.TrimSpace(item.EndpointConfigHash) || rawConnection != strings.TrimSpace(rawConnection) {
 			return nil, ErrCandidateInvalid
 		}
-		result = append(result, runtimehost.CandidateBindingVersion{
-			BindingID: item.BindingID, LogicalConnection: item.LogicalConnection,
-			ConnectorKind: item.ConnectorKind, Revision: item.Revision,
-			ProviderVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash,
-		})
+		if item.BindingID == "" || item.ConnectorKind == "" || item.ProviderVersion == "" || item.Revision < 1 || platformdigest.ValidateSHA256Identity(item.EndpointConfigHash) != nil || item.ConnectionID.Validate() != nil {
+			return nil, ErrCandidateInvalid
+		}
+	}
+	sort.Slice(evidence, func(i, j int) bool { return evidence[i].BindingID < evidence[j].BindingID })
+	result := make([]runtimehost.CandidateBindingVersion, 0, len(evidence))
+	for i, item := range evidence {
+		if i > 0 && evidence[i-1].BindingID == item.BindingID {
+			return nil, ErrCandidateInvalid
+		}
+		result = append(result, runtimehost.CandidateBindingVersion{BindingID: item.BindingID, LogicalConnection: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ProviderVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash})
 	}
 	return result, nil
 }

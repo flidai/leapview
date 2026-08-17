@@ -1,13 +1,13 @@
 # Materialization and refresh
 
-A refresh rebuilds workspace analytical tables from the sources and revisions selected by the active deployment. It creates replacement analytical state and activates it only after the complete candidate succeeds.
+A refresh rebuilds project analytical tables from the sources and revisions selected by the active deployment. It creates replacement analytical state and activates it only after the complete candidate succeeds.
 
 ## What a refresh uses
 
 At refresh start, LeapView resolves:
 
-- the target workspace, instance environment, and active deployment;
-- workspace source permissions;
+- the target project, instance environment, and active deployment;
+- project-resource source permissions;
 - active managed-data revision pointers and external connection settings;
 - model-table dependency order and transformation SQL;
 - the current DuckLake catalog and serving-state boundary.
@@ -23,14 +23,14 @@ The expected lifecycle is:
 3. Execute model-table transformations into isolated replacement state.
 4. Validate schemas and required analytical metadata.
 5. Commit the candidate as a DuckLake snapshot.
-6. Atomically move the workspace serving pointer for the instance environment to the new state.
+6. Atomically move the project serving pointer for the instance environment to the new state.
 7. Mark the old state as draining and reconcile it later when no query lease protects it.
 
 Queries that began against the previous active snapshot continue using that snapshot for their request. New queries resolve the new pointer after activation. Users never intentionally see a half-refreshed combination of model tables.
 
 ## Start and observe work
 
-Use the workspace asset refresh surface or the generated [Refresh Runs API](/docs/api/refresh-runs) according to the caller. Track the returned run identity and generation rather than assuming every transient loading state will be observed.
+Use the project asset refresh surface or the generated [Refresh Runs API](/docs/api/refresh-runs) according to the caller. Track the returned run identity and generation rather than assuming every transient loading state will be observed.
 
 Refresh state should distinguish queued, running, succeeded, failed, and cancelled or superseded outcomes. Inspect the latest relevant run when a user starts several refreshes quickly; an older run may be cancelled so it cannot overwrite newer state.
 

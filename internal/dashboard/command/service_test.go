@@ -13,6 +13,7 @@ import (
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/testing/dashboardfixture"
 )
 
@@ -128,16 +129,16 @@ func (m fakeMetrics) Resolver() dashboardresolver.Resolver {
 
 type fakeDashboardResolver struct{ metrics fakeMetrics }
 
-func (r fakeDashboardResolver) Resolve(dashboardID string) (dashboardresolver.Resolved, error) {
-	definition, model, ok := r.metrics.dashboardDefinition(dashboardID)
+func (r fakeDashboardResolver) Resolve(dashboardID projectgraph.ResourceID) (dashboardresolver.Resolved, error) {
+	definition, model, ok := r.metrics.dashboardDefinition(dashboardID.String())
 	if !ok {
 		return dashboardresolver.Resolved{}, dashboardresolver.ErrNotFound
 	}
-	return dashboardresolver.Resolved{Definition: definition, Model: model, Source: dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, WorkspaceID: "workspace"}}, nil
+	return dashboardresolver.Resolved{Definition: definition, Model: model, Source: dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject}}, nil
 }
 
 func testDashboardDefinition() dashboarddefinition.Definition {
-	resolved, err := (fakeMetrics{}).Resolver().Resolve("dash")
+	resolved, err := (fakeMetrics{}).Resolver().Resolve(projectgraph.ResourceID("dash"))
 	if err != nil {
 		panic(err)
 	}

@@ -23,6 +23,7 @@ type CandidatePublishRequest struct {
 	ExpectedRevision int64  `json:"expectedRevision"`
 	ProvenanceDigest string `json:"provenanceDigest"`
 	TargetID         string `json:"targetId"`
+	Bootstrap        bool   `json:"bootstrap,omitempty"`
 }
 
 type CandidateSourceArtifact struct {
@@ -106,17 +107,19 @@ type ApprovalResponse struct {
 }
 
 type PublishEvidenceResponse struct {
-	ReleaseDigest     string                     `json:"releaseDigest"`
-	ArtifactDigest    string                     `json:"artifactDigest"`
-	PlanDigest        string                     `json:"planDigest"`
-	CandidateID       string                     `json:"candidateId"`
-	CandidateRevision int64                      `json:"candidateRevision"`
-	TargetID          string                     `json:"targetId"`
-	BaseGeneration    string                     `json:"baseGeneration"`
-	RuntimeVersion    string                     `json:"runtimeVersion"`
-	PolicyDigest      string                     `json:"policyDigest"`
-	SourceRevision    *CandidateSourceRevision   `json:"sourceRevision,omitempty"`
-	Workspaces        []WorkspacePublishEvidence `json:"workspaces"`
+	ReleaseDigest            string                   `json:"releaseDigest"`
+	ArtifactContentDigest    string                   `json:"artifactContentDigest"`
+	ArtifactProvenanceDigest string                   `json:"artifactProvenanceDigest"`
+	PlanDigest               string                   `json:"planDigest"`
+	CandidateID              string                   `json:"candidateId"`
+	CandidateRevision        int64                    `json:"candidateRevision"`
+	TargetID                 string                   `json:"targetId"`
+	Environment              string                   `json:"environment"`
+	GenerationID             string                   `json:"generationId"`
+	BaseGenerationID         *string                  `json:"baseGenerationId,omitempty"`
+	RuntimeVersion           string                   `json:"runtimeVersion"`
+	PolicyDigest             string                   `json:"policyDigest"`
+	SourceRevision           *CandidateSourceRevision `json:"sourceRevision,omitempty"`
 }
 
 type ManagedDataPinEvidence struct {
@@ -126,40 +129,16 @@ type ManagedDataPinEvidence struct {
 
 type BindingEvidence struct {
 	BindingID          string `json:"bindingId"`
-	LogicalConnection  string `json:"logicalConnection"`
+	ConnectionID       string `json:"connectionId"`
 	ConnectorKind      string `json:"connectorKind"`
 	Revision           int64  `json:"revision"`
 	ValidatedVersion   string `json:"validatedVersion"`
 	EndpointConfigHash string `json:"endpointConfigHash"`
 }
 
-type WorkspacePublishEvidence struct {
-	WorkspaceID     string                   `json:"workspaceId"`
-	ServingStateID  string                   `json:"servingStateId"`
-	ArtifactDigest  string                   `json:"artifactDigest"`
-	DataRevision    string                   `json:"dataRevision"`
-	DataMode        string                   `json:"dataMode"`
-	ManagedDataPins []ManagedDataPinEvidence `json:"managedDataPins"`
-	Bindings        []BindingEvidence        `json:"bindings"`
-}
-
 type Status string
 
 const StatusQueued Status = "queued"
-
-type TargetResponse struct {
-	Error               *string `json:"error,omitempty"`
-	PriorServingStateID *string `json:"priorServingStateId,omitempty"`
-	ServingStateID      *string `json:"servingStateId,omitempty"`
-	Status              string  `json:"status"`
-	WorkspaceID         string  `json:"workspaceId"`
-}
-
-type ConnectionResponse struct {
-	ConnectionID    string  `json:"connectionId"`
-	PriorRevisionID *string `json:"priorRevisionId,omitempty"`
-	RevisionID      string  `json:"revisionId"`
-}
 
 type VerificationResponse struct {
 	Digest     string `json:"digest"`
@@ -167,12 +146,14 @@ type VerificationResponse struct {
 }
 
 type Response struct {
-	Connections         []ConnectionResponse    `json:"connections"`
 	CreatedAt           string                  `json:"createdAt"`
 	CreatedBy           string                  `json:"createdBy"`
 	ActivationPrincipal *string                 `json:"activationPrincipal,omitempty"`
 	Verification        *VerificationResponse   `json:"verification,omitempty"`
 	Environment         string                  `json:"environment"`
+	GenerationID        string                  `json:"generationId"`
+	ArtifactDigest      string                  `json:"artifactDigest"`
+	PriorGenerationID   *string                 `json:"priorGenerationId,omitempty"`
 	RequestDigest       string                  `json:"requestDigest"`
 	Evidence            PublishEvidenceResponse `json:"evidence"`
 	Error               *string                 `json:"error,omitempty"`
@@ -183,7 +164,6 @@ type Response struct {
 	ReleaseID           string                  `json:"releaseId"`
 	StartedAt           *string                 `json:"startedAt,omitempty"`
 	Status              Status                  `json:"status"`
-	Targets             []TargetResponse        `json:"targets"`
 }
 
 type ListResponse struct {

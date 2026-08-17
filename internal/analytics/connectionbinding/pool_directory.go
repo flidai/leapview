@@ -34,7 +34,7 @@ type PoolDirectory struct {
 	build          PoolManagerBuilder
 	refreshTimeout time.Duration
 	refreshGate    chan struct{}
-	pools          map[string]*boundedAdministrationPool
+	pools          map[BindingID]*boundedAdministrationPool
 	closed         bool
 }
 
@@ -48,7 +48,7 @@ func NewPoolDirectory(config PoolDirectoryConfig) (*PoolDirectory, error) {
 	return &PoolDirectory{
 		build: config.Build, refreshTimeout: config.RefreshTimeout,
 		refreshGate: make(chan struct{}, config.MaxConcurrent),
-		pools:       map[string]*boundedAdministrationPool{},
+		pools:       map[BindingID]*boundedAdministrationPool{},
 	}, nil
 }
 

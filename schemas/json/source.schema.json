@@ -7,41 +7,66 @@
       "additionalProperties": true,
       "type": "object"
     },
-    "#Identifier": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-      "type": "string"
-    },
     "#Metadata": {
       "additionalProperties": false,
       "properties": {
         "description": {
           "type": "string"
         },
-        "name": {
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
           "$ref": "#/$defs/%23ResourceID"
+        },
+        "name": {
+          "$ref": "#/$defs/%23ResourceName"
         },
         "owner": {
           "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/%23Provenance"
         },
         "tags": {
           "items": {
             "type": "string"
           },
           "type": "array"
-        },
-        "title": {
-          "type": "string"
-        },
-        "workspace": {
-          "$ref": "#/$defs/%23ResourceID"
         }
       },
       "required": [
+        "id",
         "name"
       ],
       "type": "object"
     },
+    "#Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "#ResourceID": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "#ResourceName": {
       "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
       "type": "string"
     },
@@ -49,7 +74,7 @@
       "additionalProperties": false,
       "properties": {
         "connection": {
-          "$ref": "#/$defs/%23Identifier"
+          "$ref": "#/$defs/%23ResourceID"
         },
         "description": {
           "type": "string"
@@ -96,6 +121,9 @@
           "type": "string"
         }
       },
+      "required": [
+        "connection"
+      ],
       "type": "object"
     }
   },

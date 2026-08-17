@@ -9,14 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	platformdb "github.com/flidai/leapview/internal/servingstate/internal/db"
-	servingstatevalidation "github.com/flidai/leapview/internal/servingstate/validation"
 )
 
 type Repository struct {
@@ -24,17 +23,117 @@ type Repository struct {
 	q  *platformdb.Queries
 }
 
+// ActiveServingStateGraph exposes the immutable asset projection stored with
+// the exact active serving generation. The project/environment arguments are
+// resolved by the runtime host before this read; no browser-provided project
+// selector is accepted here.
+func (r *Repository) ActiveServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string) (servingstate.AssetGraph, bool, error) {
+	state, _, err := r.ActiveArtifact(ctx, projectID, servingstate.Environment(environment))
+	if err != nil {
+		if errors.Is(err, servingstate.ErrNotFound) {
+			return servingstate.AssetGraph{}, false, nil
+		}
+		return servingstate.AssetGraph{}, false, err
+	}
+	assets, err := r.q.ListAssetsByServingState(ctx, string(state.ID))
+	if err != nil {
+		return servingstate.AssetGraph{}, false, err
+	}
+	edges, err := r.q.ListAssetEdgesByServingState(ctx, string(state.ID))
+	if err != nil {
+		return servingstate.AssetGraph{}, false, err
+	}
+	graph := servingstate.AssetGraph{
+		Assets: make([]servingstate.Asset, 0, len(assets)),
+		Edges:  make([]servingstate.AssetEdge, 0, len(edges)),
+	}
+	for _, asset := range assets {
+		id, err := projectgraph.NewResourceID(asset.LogicalAssetID)
+		if err != nil {
+			return servingstate.AssetGraph{}, false, fmt.Errorf("active asset %q id: %w", asset.LogicalAssetID, err)
+		}
+		parent := projectgraph.ResourceID(asset.ParentLogicalAssetID)
+		// The serving graph stores canonical graph kinds. The browser projection
+		// keeps its existing presentation buckets for model and pipeline assets,
+		// while retaining the opaque canonical IDs unchanged.
+		typ := asset.AssetType
+		switch typ {
+		case "model":
+			typ = "model_table"
+		case "pipeline":
+			typ = "refresh_pipeline"
+		}
+		graph.Assets = append(graph.Assets, servingstate.Asset{
+			ID: id, SnapshotID: asset.SnapshotID,
+			ProjectID: projectID, ServingStateID: state.ID, Type: typ,
+			Key: asset.AssetKey, ParentID: parent, Title: asset.Title, Description: asset.Description,
+			SourceFile: asset.SourceFile, PayloadSchema: asset.PayloadSchema, PayloadJSON: asset.PayloadJson,
+			ContentHash: asset.ContentHash,
+		})
+	}
+	for _, edge := range edges {
+		from, err := projectgraph.NewResourceID(edge.FromLogicalAssetID)
+		if err != nil {
+			return servingstate.AssetGraph{}, false, fmt.Errorf("active asset edge source %q: %w", edge.FromLogicalAssetID, err)
+		}
+		to, err := projectgraph.NewResourceID(edge.ToLogicalAssetID)
+		if err != nil {
+			return servingstate.AssetGraph{}, false, fmt.Errorf("active asset edge target %q: %w", edge.ToLogicalAssetID, err)
+		}
+		graph.Edges = append(graph.Edges, servingstate.AssetEdge{
+			ID: edge.ID, ProjectID: projectID, ServingStateID: state.ID,
+			FromAssetID: from, ToAssetID: to, Type: edge.EdgeType,
+		})
+	}
+	return graph, true, nil
+}
+
 func NewRepository(sqlDB *sql.DB) *Repository {
 	return &Repository{db: sqlDB, q: platformdb.New(sqlDB)}
 }
 
+func requiredEnvironment(value string) (string, error) {
+	if value == "" || value != strings.TrimSpace(value) {
+		return "", fmt.Errorf("environment is required")
+	}
+	environment := servingstate.Environment(value)
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return "", err
+	}
+	return string(environment), nil
+}
+
+func requiredServingStateID(value servingstate.ID) (string, error) {
+	raw := string(value)
+	if raw == "" || raw != strings.TrimSpace(raw) {
+		return "", fmt.Errorf("serving state id must be canonical")
+	}
+	return raw, nil
+}
+
 func (r *Repository) Create(ctx context.Context, input servingstate.CreateInput) (servingstate.State, error) {
+	if input.ProjectID.String() != strings.TrimSpace(input.ProjectID.String()) {
+		return servingstate.State{}, fmt.Errorf("project id must be canonical")
+	}
+	projectID, err := projectgraph.NewResourceID(input.ProjectID.String())
+	if err != nil {
+		return servingstate.State{}, fmt.Errorf("project id is required")
+	}
+	if string(input.Environment) != strings.TrimSpace(string(input.Environment)) {
+		return servingstate.State{}, fmt.Errorf("environment must be canonical")
+	}
+	environment := input.Environment
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return servingstate.State{}, err
+	}
 	id := servingstate.ID(newID("state"))
+	if _, err := projectgraph.NewServingIdentity(projectID, string(environment), string(id)); err != nil {
+		return servingstate.State{}, err
+	}
 	if err := r.q.CreateServingState(ctx, platformdb.CreateServingStateParams{
 		ID:          string(id),
-		WorkspaceID: string(input.WorkspaceID),
-		ProjectID:   strings.TrimSpace(input.ProjectID),
-		Environment: string(servingstate.NormalizeEnvironment(input.Environment)),
+		ProjectID:   projectID.String(),
+		Environment: string(environment),
 		Status:      string(servingstate.StatusPending),
 		Source:      string(servingstate.NormalizeSource(input.Source)),
 		CreatedBy:   input.CreatedBy,
@@ -45,21 +144,28 @@ func (r *Repository) Create(ctx context.Context, input servingstate.CreateInput)
 }
 
 func (r *Repository) ByID(ctx context.Context, id servingstate.ID) (servingstate.State, error) {
+	if id == "" || string(id) != strings.TrimSpace(string(id)) {
+		return servingstate.State{}, servingstate.ErrNotFound
+	}
 	row, err := r.q.GetServingState(ctx, string(id))
 	if err != nil {
 		return servingstate.State{}, mapNotFound(err)
 	}
-	return mapServingState(row), nil
+	return mapServingState(row)
 }
 
 func (r *Repository) MarkFailed(ctx context.Context, servingStateID servingstate.ID, cause error) error {
 	if cause == nil {
 		return nil
 	}
+	id, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return err
+	}
 	return r.q.UpdateServingStateStatus(ctx, platformdb.UpdateServingStateStatusParams{
 		Status: string(servingstate.StatusFailed),
 		Error:  cause.Error(),
-		ID:     string(servingStateID),
+		ID:     id,
 	})
 }
 
@@ -67,34 +173,52 @@ func (r *Repository) RecordDuckLakeSnapshot(ctx context.Context, servingStateID 
 	if snapshotID <= 0 {
 		return fmt.Errorf("ducklake snapshot id must be positive")
 	}
+	id, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return err
+	}
 	return r.q.UpdateServingStateDuckLakeSnapshot(ctx, platformdb.UpdateServingStateDuckLakeSnapshotParams{
 		DucklakeSnapshotID: snapshotID,
-		ID:                 string(servingStateID),
+		ID:                 id,
 	})
 }
 
 func (r *Repository) ReferencedDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
+	environment, err := requiredEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
 	return r.q.ListReferencedDuckLakeSnapshots(ctx, environment)
 }
 
 func (r *Repository) ActiveDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
+	environment, err := requiredEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
 	return r.q.ListActiveDuckLakeSnapshots(ctx, environment)
 }
 
 func (r *Repository) LeasedDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
+	environment, err := requiredEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
 	return r.q.ListLeasedDuckLakeSnapshots(ctx, environment)
 }
 
 func (r *Repository) ForeignEnvironmentDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
+	environment, err := requiredEnvironment(environment)
+	if err != nil {
+		return nil, err
+	}
 	return r.q.ListForeignEnvironmentDuckLakeSnapshots(ctx, environment)
 }
 
 func (r *Repository) CreateQuerySnapshotLease(ctx context.Context, input servingstate.SnapshotLeaseInput) (string, error) {
-	if input.WorkspaceID == "" {
-		return "", fmt.Errorf("workspace id is required")
-	}
-	if input.ServingStateID == "" {
-		return "", fmt.Errorf("serving state id is required")
+	servingStateID, err := requiredServingStateID(input.ServingStateID)
+	if err != nil {
+		return "", err
 	}
 	if input.DuckLakeSnapshotID <= 0 {
 		return "", fmt.Errorf("ducklake snapshot id must be positive")
@@ -106,9 +230,7 @@ func (r *Repository) CreateQuerySnapshotLease(ctx context.Context, input serving
 	id := newID("lease")
 	if err := r.q.CreateQuerySnapshotLease(ctx, platformdb.CreateQuerySnapshotLeaseParams{
 		ID:                 id,
-		WorkspaceID:        string(input.WorkspaceID),
-		Environment:        string(servingstate.NormalizeEnvironment(input.Environment)),
-		ServingStateID:     string(input.ServingStateID),
+		ServingStateID:     servingStateID,
 		DucklakeSnapshotID: input.DuckLakeSnapshotID,
 		OwnerID:            input.OwnerID,
 		ExpiresAt:          sqliteTimestamp(expiresAt),
@@ -119,16 +241,14 @@ func (r *Repository) CreateQuerySnapshotLease(ctx context.Context, input serving
 }
 
 func (r *Repository) ReleaseQuerySnapshotLease(ctx context.Context, id string) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
+	if id == "" || id != strings.TrimSpace(id) {
 		return nil
 	}
 	return r.q.ReleaseQuerySnapshotLease(ctx, id)
 }
 
 func (r *Repository) ExtendQuerySnapshotLease(ctx context.Context, id string, expiresAt time.Time) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
+	if id == "" || id != strings.TrimSpace(id) {
 		return nil
 	}
 	if expiresAt.IsZero() {
@@ -148,22 +268,47 @@ func (r *Repository) ExtendQuerySnapshotLease(ctx context.Context, id string, ex
 }
 
 func (r *Repository) ReleaseExpiredQuerySnapshotLeases(ctx context.Context, environment string) error {
+	var err error
+	environment, err = requiredEnvironment(environment)
+	if err != nil {
+		return err
+	}
 	return r.q.ReleaseExpiredQuerySnapshotLeases(ctx, environment)
 }
 
 func (r *Repository) ExpireInactiveServingStates(ctx context.Context, environment string) error {
+	var err error
+	environment, err = requiredEnvironment(environment)
+	if err != nil {
+		return err
+	}
 	return r.q.ExpireInactiveServingStates(ctx, environment)
 }
 
 func (r *Repository) ScheduleExpiredServingStateDeletion(ctx context.Context, environment string) error {
+	var err error
+	environment, err = requiredEnvironment(environment)
+	if err != nil {
+		return err
+	}
 	return r.q.ScheduleExpiredServingStateDeletion(ctx, environment)
 }
 
 func (r *Repository) MarkDeleteScheduledServingStatesDeleted(ctx context.Context, environment string) error {
+	var err error
+	environment, err = requiredEnvironment(environment)
+	if err != nil {
+		return err
+	}
 	return r.q.MarkDeleteScheduledServingStatesDeleted(ctx, environment)
 }
 
 func (r *Repository) ReconcileRetention(ctx context.Context, environment string, now time.Time) error {
+	var err error
+	environment, err = requiredEnvironment(environment)
+	if err != nil {
+		return err
+	}
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -174,19 +319,26 @@ func (r *Repository) ReconcileRetention(ctx context.Context, environment string,
 }
 
 func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingstate.ID, validation servingstate.Validation, artifact servingstate.Artifact) (servingstate.State, error) {
-	validation.ProjectID = strings.TrimSpace(validation.ProjectID)
-	if validation.ProjectID == "" {
+	servingStateIDRaw, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return servingstate.State{}, err
+	}
+	projectLiteral := validation.ProjectID.String()
+	if projectLiteral != strings.TrimSpace(projectLiteral) {
+		return servingstate.State{}, fmt.Errorf("validated serving state project id must be canonical")
+	}
+	projectID, err := projectgraph.NewResourceID(projectLiteral)
+	if err != nil {
 		return servingstate.State{}, fmt.Errorf("validated serving state requires project id")
 	}
 	if err := digest.ValidateSHA256Identity(validation.ProjectDigest); err != nil {
 		return servingstate.State{}, fmt.Errorf("validated serving state requires project digest: %w", err)
 	}
-	if len(validation.ProjectWorkspaces) == 0 || !sort.StringsAreSorted(validation.ProjectWorkspaces) {
-		return servingstate.State{}, fmt.Errorf("validated serving state requires sorted project workspaces")
+	if err := digest.ValidateSHA256Identity(validation.Digest); err != nil {
+		return servingstate.State{}, fmt.Errorf("validated serving state requires artifact digest: %w", err)
 	}
-	projectWorkspacesJSON, err := json.Marshal(validation.ProjectWorkspaces)
-	if err != nil {
-		return servingstate.State{}, err
+	if artifact.SizeBytes < 0 {
+		return servingstate.State{}, fmt.Errorf("validated serving state artifact size cannot be negative")
 	}
 	accessPolicyJSON, err := json.Marshal(validation.AccessPolicy)
 	if err != nil {
@@ -222,88 +374,99 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	artifact.ServingStateID = servingStateID
-	current, err := q.GetServingState(ctx, string(servingStateID))
+	current, err := q.GetServingState(ctx, servingStateIDRaw)
 	if err != nil {
 		return servingstate.State{}, mapNotFound(err)
 	}
-	if artifact.WorkspaceID != servingstate.WorkspaceID(current.WorkspaceID) {
-		return servingstate.State{}, fmt.Errorf("artifact workspace = %q, want %q", artifact.WorkspaceID, current.WorkspaceID)
+	if current.ProjectID != projectID.String() {
+		return servingstate.State{}, fmt.Errorf("artifact project = %q, want %q", projectID, current.ProjectID)
 	}
-	if current.ProjectID != "" && current.ProjectID != validation.ProjectID {
-		return servingstate.State{}, fmt.Errorf("artifact project = %q, want %q", validation.ProjectID, current.ProjectID)
+	identity, err := projectgraph.NewServingIdentity(projectID, current.Environment, servingStateIDRaw)
+	if err != nil {
+		return servingstate.State{}, err
 	}
-	if !containsExact(validation.ProjectWorkspaces, current.WorkspaceID) {
-		return servingstate.State{}, fmt.Errorf("project workspaces omit candidate workspace %q", current.WorkspaceID)
+	if _, err := projectgraph.NewArtifactEnvelope(identity, validation.Graph); err != nil {
+		return servingstate.State{}, err
 	}
-	if servingstate.NormalizeEnvironment(artifact.Environment) != servingstate.Environment(current.Environment) {
-		return servingstate.State{}, fmt.Errorf("artifact environment = %q, want %q", servingstate.NormalizeEnvironment(artifact.Environment), current.Environment)
+	if validation.Graph.ProjectID() != projectID {
+		return servingstate.State{}, fmt.Errorf("validated graph project = %q, want %q", validation.Graph.ProjectID(), projectID)
+	}
+	if artifact.Digest != validation.Digest {
+		return servingstate.State{}, fmt.Errorf("artifact digest = %q, want %q", artifact.Digest, validation.Digest)
+	}
+	if artifact.ManifestJSON != validation.ManifestJSON {
+		return servingstate.State{}, fmt.Errorf("artifact manifest does not match validated manifest")
+	}
+	if artifact.ID == "" || artifact.ID != strings.TrimSpace(artifact.ID) || artifact.ServingStateID != servingStateID {
+		return servingstate.State{}, fmt.Errorf("artifact identity does not match serving state %s", servingStateID)
+	}
+	if artifact.Format == "" || artifact.Format != strings.TrimSpace(artifact.Format) || artifact.Path == "" || artifact.Path != strings.TrimSpace(artifact.Path) {
+		return servingstate.State{}, fmt.Errorf("validated serving state artifact format and path are required")
 	}
 	switch servingstate.Status(current.Status) {
 	case servingstate.StatusPending:
 	case servingstate.StatusValidated:
 		existingArtifact, existingErr := q.GetArtifactByServingState(ctx, current.ID)
-		if existingErr == nil && current.ProjectID == validation.ProjectID && current.ProjectDigest == validation.ProjectDigest && current.ProjectWorkspacesJson == string(projectWorkspacesJSON) && current.AccessPolicyJson == string(accessPolicyJSON) && current.DashboardPublicationsJson == string(canonicalPublicationsJSON) && current.DashboardAppearancesJson == string(canonicalAppearancesJSON) && current.Digest == validation.Digest && current.ManifestJson == validation.ManifestJSON && sameArtifact(existingArtifact, artifact) {
-			return mapServingState(current), nil
+		if existingErr == nil && current.ProjectID == projectID.String() && current.ProjectDigest == validation.ProjectDigest && current.AccessPolicyJson == string(accessPolicyJSON) && current.DashboardPublicationsJson == string(canonicalPublicationsJSON) && current.DashboardAppearancesJson == string(canonicalAppearancesJSON) && current.Digest == validation.Digest && current.ManifestJson == validation.ManifestJSON && sameArtifact(existingArtifact, artifact) {
+			return mapServingState(current)
 		}
 		return servingstate.State{}, fmt.Errorf("validated serving state %s is immutable", servingStateID)
 	default:
 		return servingstate.State{}, fmt.Errorf("serving state %s has status %q, want pending", servingStateID, current.Status)
 	}
-	if err := servingstatevalidation.ValidateAssetGraph(validation.Graph, current.WorkspaceID, string(servingStateID)); err != nil {
+	if err := validation.Graph.Validate(); err != nil {
 		return servingstate.State{}, err
 	}
 	if err := q.InsertServingStateArtifact(ctx, mapArtifactParams(artifact)); err != nil {
 		return servingstate.State{}, err
 	}
-	if err := q.ClearAssetEdgesForServingState(ctx, string(servingStateID)); err != nil {
+	if err := q.ClearAssetEdgesForServingState(ctx, servingStateIDRaw); err != nil {
 		return servingstate.State{}, err
 	}
-	if err := q.ClearAssetsForServingState(ctx, string(servingStateID)); err != nil {
+	if err := q.ClearAssetsForServingState(ctx, servingStateIDRaw); err != nil {
 		return servingstate.State{}, err
 	}
-	for _, asset := range validation.Graph.Assets {
+	for _, resource := range validation.Graph.Resources() {
+		payload, err := json.Marshal(resource)
+		if err != nil {
+			return servingstate.State{}, fmt.Errorf("encode resource %s: %w", resource.ID, err)
+		}
 		if err := q.InsertAsset(ctx, platformdb.InsertAssetParams{
-			SnapshotID:           string(asset.SnapshotID),
-			LogicalAssetID:       string(asset.ID),
-			WorkspaceID:          string(asset.WorkspaceID),
-			ServingStateID:       string(asset.ServingStateID),
-			AssetType:            string(asset.Type),
-			AssetKey:             asset.Key,
-			ParentLogicalAssetID: string(asset.ParentID),
-			Title:                asset.Title,
-			Description:          asset.Description,
-			SourceFile:           asset.SourceFile,
-			PayloadSchema:        asset.PayloadSchema,
-			PayloadJson:          asset.PayloadJSON,
-			ContentHash:          asset.ContentHash,
+			SnapshotID:     assetSnapshotID(servingStateIDRaw, resource.ID.String()),
+			LogicalAssetID: resource.ID.String(),
+			ServingStateID: servingStateIDRaw,
+			AssetType:      string(resource.Kind),
+			AssetKey:       resource.Name,
+			Title:          resource.Metadata.DisplayName,
+			Description:    resource.Metadata.Description,
+			SourceFile:     resource.Provenance.Path,
+			PayloadSchema:  "project.graph.v1",
+			PayloadJson:    string(payload),
+			ContentHash:    contentDigest(payload),
 		}); err != nil {
 			return servingstate.State{}, err
 		}
 	}
-	for _, edge := range validation.Graph.Edges {
+	for _, edge := range validation.Graph.Edges() {
 		if err := q.InsertAssetEdge(ctx, platformdb.InsertAssetEdgeParams{
-			ID:                 string(edge.ID),
-			WorkspaceID:        string(edge.WorkspaceID),
-			ServingStateID:     string(edge.ServingStateID),
-			FromLogicalAssetID: string(edge.FromAssetID),
-			ToLogicalAssetID:   string(edge.ToAssetID),
-			EdgeType:           string(edge.Type),
+			ID:                 edgeID(servingStateIDRaw, edge.From.String(), edge.To.String(), edge.Relation),
+			ServingStateID:     servingStateIDRaw,
+			FromLogicalAssetID: edge.From.String(),
+			ToLogicalAssetID:   edge.To.String(),
+			EdgeType:           edge.Relation,
 		}); err != nil {
 			return servingstate.State{}, err
 		}
 	}
 	if err := q.UpdateServingStateValidated(ctx, platformdb.UpdateServingStateValidatedParams{
 		Status:                    string(servingstate.StatusValidated),
-		ProjectID:                 validation.ProjectID,
 		ProjectDigest:             validation.ProjectDigest,
-		ProjectWorkspacesJson:     string(projectWorkspacesJSON),
 		AccessPolicyJson:          string(accessPolicyJSON),
 		DashboardPublicationsJson: string(canonicalPublicationsJSON),
 		DashboardAppearancesJson:  string(canonicalAppearancesJSON),
 		Digest:                    validation.Digest,
 		ManifestJson:              validation.ManifestJSON,
-		ID:                        string(servingStateID),
+		ID:                        servingStateIDRaw,
 	}); err != nil {
 		return servingstate.State{}, err
 	}
@@ -314,33 +477,55 @@ func (r *Repository) SaveValidated(ctx context.Context, servingStateID servingst
 }
 
 func sameArtifact(existing platformdb.ServingStateArtifact, candidate servingstate.Artifact) bool {
-	return existing.ServingStateID == string(candidate.ServingStateID) &&
-		existing.WorkspaceID == string(candidate.WorkspaceID) &&
-		existing.Environment == string(servingstate.NormalizeEnvironment(candidate.Environment)) &&
+	return existing.ID == candidate.ID && existing.ServingStateID == string(candidate.ServingStateID) &&
 		existing.Digest == candidate.Digest && existing.Format == candidate.Format &&
 		existing.Path == candidate.Path && existing.ManifestJson == candidate.ManifestJSON &&
 		existing.SizeBytes == candidate.SizeBytes
 }
 
-func (r *Repository) Activate(ctx context.Context, workspaceID servingstate.WorkspaceID, environment servingstate.Environment, servingStateID servingstate.ID) (servingstate.State, error) {
-	return r.activate(ctx, workspaceID, environment, servingStateID)
+func (r *Repository) Activate(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment, servingStateID, expectedActiveID servingstate.ID) (servingstate.State, error) {
+	return r.activate(ctx, projectID, environment, servingStateID, expectedActiveID)
 }
 
-func (r *Repository) activate(ctx context.Context, workspaceID servingstate.WorkspaceID, environment servingstate.Environment, servingStateID servingstate.ID) (servingstate.State, error) {
-	environment = servingstate.NormalizeEnvironment(environment)
+func (r *Repository) activate(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment, servingStateID, expectedActiveID servingstate.ID) (servingstate.State, error) {
+	projectLiteral := projectID.String()
+	if projectLiteral != strings.TrimSpace(projectLiteral) {
+		return servingstate.State{}, fmt.Errorf("project id must be canonical")
+	}
+	canonicalProjectID, err := projectgraph.NewResourceID(projectLiteral)
+	if err != nil {
+		return servingstate.State{}, fmt.Errorf("project id is required")
+	}
+	if string(environment) != strings.TrimSpace(string(environment)) {
+		return servingstate.State{}, fmt.Errorf("environment must be canonical")
+	}
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return servingstate.State{}, err
+	}
+	servingStateIDRaw, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return servingstate.State{}, err
+	}
+	expectedActiveIDRaw, err := requiredServingStateID(expectedActiveID)
+	if err != nil && expectedActiveID != "" {
+		return servingstate.State{}, err
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return servingstate.State{}, err
 	}
 	defer tx.Rollback()
 	q := r.q.WithTx(tx)
-	row, err := q.GetServingState(ctx, string(servingStateID))
+	row, err := q.GetServingState(ctx, servingStateIDRaw)
 	if err != nil {
 		return servingstate.State{}, mapNotFound(err)
 	}
-	current := mapServingState(row)
-	if current.WorkspaceID != workspaceID {
-		return servingstate.State{}, fmt.Errorf("serving state %s is not in workspace %s", servingStateID, workspaceID)
+	current, err := mapServingState(row)
+	if err != nil {
+		return servingstate.State{}, err
+	}
+	if current.ProjectID != canonicalProjectID {
+		return servingstate.State{}, fmt.Errorf("serving state %s project = %q, want %q", servingStateID, current.ProjectID, canonicalProjectID)
 	}
 	if current.Environment != environment {
 		return servingstate.State{}, fmt.Errorf("serving state %s environment = %q, want %q", servingStateID, current.Environment, environment)
@@ -348,21 +533,30 @@ func (r *Repository) activate(ctx context.Context, workspaceID servingstate.Work
 	if !current.CanActivate() {
 		return servingstate.State{}, fmt.Errorf("serving state %s has status %q, want validated", servingStateID, current.Status)
 	}
+	var updated int64
+	if expectedActiveIDRaw == "" {
+		updated, err = q.InsertActiveServingState(ctx, platformdb.InsertActiveServingStateParams{
+			ProjectID: canonicalProjectID.String(), Environment: string(environment), GenerationID: string(servingStateID),
+		})
+	} else {
+		updated, err = q.CompareAndSwapActiveServingState(ctx, platformdb.CompareAndSwapActiveServingStateParams{
+			GenerationID: servingStateIDRaw, ProjectID: canonicalProjectID.String(), Environment: string(environment), ExpectedGenerationID: expectedActiveIDRaw,
+		})
+	}
+	if err != nil {
+		return servingstate.State{}, err
+	}
+	if updated != 1 {
+		return servingstate.State{}, servingstate.ErrActivationConflict
+	}
 	if err := q.MarkOtherServingStatesDraining(ctx, platformdb.MarkOtherServingStatesDrainingParams{
-		WorkspaceID: string(workspaceID),
+		ProjectID:   canonicalProjectID.String(),
 		Environment: string(environment),
-		ID:          string(servingStateID),
+		ID:          servingStateIDRaw,
 	}); err != nil {
 		return servingstate.State{}, err
 	}
-	if err := q.MarkServingStateActive(ctx, string(servingStateID)); err != nil {
-		return servingstate.State{}, err
-	}
-	if err := q.SetActiveServingState(ctx, platformdb.SetActiveServingStateParams{
-		WorkspaceID:    string(workspaceID),
-		Environment:    string(environment),
-		ServingStateID: string(servingStateID),
-	}); err != nil {
+	if err := q.MarkServingStateActive(ctx, servingStateIDRaw); err != nil {
 		return servingstate.State{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -371,8 +565,22 @@ func (r *Repository) activate(ctx context.Context, workspaceID servingstate.Work
 	return r.ByID(ctx, servingStateID)
 }
 
-func (r *Repository) ActiveArtifact(ctx context.Context, workspaceID servingstate.WorkspaceID, environment servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
-	row, err := r.q.GetActiveServingState(ctx, platformdb.GetActiveServingStateParams{WorkspaceID: string(workspaceID), Environment: string(servingstate.NormalizeEnvironment(environment))})
+func (r *Repository) ActiveArtifact(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+	projectLiteral := projectID.String()
+	if projectLiteral != strings.TrimSpace(projectLiteral) {
+		return servingstate.State{}, servingstate.Artifact{}, fmt.Errorf("project id must be canonical")
+	}
+	canonicalProjectID, err := projectgraph.NewResourceID(projectLiteral)
+	if err != nil {
+		return servingstate.State{}, servingstate.Artifact{}, fmt.Errorf("project id is required")
+	}
+	if string(environment) != strings.TrimSpace(string(environment)) {
+		return servingstate.State{}, servingstate.Artifact{}, fmt.Errorf("environment must be canonical")
+	}
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return servingstate.State{}, servingstate.Artifact{}, err
+	}
+	row, err := r.q.GetActiveServingState(ctx, platformdb.GetActiveServingStateParams{ProjectID: canonicalProjectID.String(), Environment: string(environment)})
 	if err != nil {
 		return servingstate.State{}, servingstate.Artifact{}, mapNotFound(err)
 	}
@@ -380,7 +588,11 @@ func (r *Repository) ActiveArtifact(ctx context.Context, workspaceID servingstat
 	if err != nil {
 		return servingstate.State{}, servingstate.Artifact{}, mapNotFound(err)
 	}
-	return mapServingState(row), mapArtifact(artifact), nil
+	state, err := mapServingState(row)
+	if err != nil {
+		return servingstate.State{}, servingstate.Artifact{}, err
+	}
+	return state, mapArtifact(artifact), nil
 }
 
 func (r *Repository) ListActiveScopes(ctx context.Context) ([]servingstate.ActiveScope, error) {
@@ -390,32 +602,48 @@ func (r *Repository) ListActiveScopes(ctx context.Context) ([]servingstate.Activ
 	}
 	out := make([]servingstate.ActiveScope, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, servingstate.ActiveScope{WorkspaceID: servingstate.WorkspaceID(row.WorkspaceID), Environment: servingstate.Environment(row.Environment)})
+		projectID, err := projectgraph.NewResourceID(row.ProjectID)
+		if err != nil {
+			return nil, fmt.Errorf("active serving scope project id: %w", err)
+		}
+		environment := servingstate.Environment(row.Environment)
+		if err := servingstate.ValidateEnvironment(environment); err != nil {
+			return nil, fmt.Errorf("active serving scope environment: %w", err)
+		}
+		out = append(out, servingstate.ActiveScope{ProjectID: projectID, Environment: environment})
 	}
 	return out, nil
 }
 
 func (r *Repository) ArtifactByServingState(ctx context.Context, servingStateID servingstate.ID) (servingstate.Artifact, error) {
-	artifact, err := r.q.GetArtifactByServingState(ctx, string(servingStateID))
+	id, err := requiredServingStateID(servingStateID)
+	if err != nil {
+		return servingstate.Artifact{}, err
+	}
+	artifact, err := r.q.GetArtifactByServingState(ctx, id)
 	if err != nil {
 		return servingstate.Artifact{}, mapNotFound(err)
 	}
 	return mapArtifact(artifact), nil
 }
 
-func mapServingState(row platformdb.ServingState) servingstate.State {
-	var projectWorkspaces []string
-	_ = json.Unmarshal([]byte(row.ProjectWorkspacesJson), &projectWorkspaces)
+func mapServingState(row platformdb.ServingState) (servingstate.State, error) {
+	projectID, err := projectgraph.NewResourceID(row.ProjectID)
+	if err != nil {
+		return servingstate.State{}, fmt.Errorf("serving state %q has invalid project id: %w", row.ID, err)
+	}
+	environment := servingstate.Environment(row.Environment)
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return servingstate.State{}, fmt.Errorf("serving state %q has invalid environment: %w", row.ID, err)
+	}
 	out := servingstate.State{
 		ID:                        servingstate.ID(row.ID),
-		WorkspaceID:               servingstate.WorkspaceID(row.WorkspaceID),
-		ProjectID:                 row.ProjectID,
+		ProjectID:                 projectID,
 		ProjectDigest:             row.ProjectDigest,
-		ProjectWorkspaces:         projectWorkspaces,
 		AccessPolicyJSON:          row.AccessPolicyJson,
 		DashboardPublicationsJSON: row.DashboardPublicationsJson,
 		DashboardAppearancesJSON:  row.DashboardAppearancesJson,
-		Environment:               servingstate.Environment(row.Environment),
+		Environment:               environment,
 		Status:                    servingstate.Status(row.Status),
 		Source:                    servingstate.NormalizeSource(servingstate.Source(row.Source)),
 		Digest:                    row.Digest,
@@ -431,24 +659,13 @@ func mapServingState(row platformdb.ServingState) servingstate.State {
 	if row.SupersededAt.Valid {
 		out.SupersededAt = row.SupersededAt.String
 	}
-	return out
-}
-
-func containsExact(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return out, nil
 }
 
 func mapArtifact(row platformdb.ServingStateArtifact) servingstate.Artifact {
 	return servingstate.Artifact{
 		ID:             row.ID,
 		ServingStateID: servingstate.ID(row.ServingStateID),
-		WorkspaceID:    servingstate.WorkspaceID(row.WorkspaceID),
-		Environment:    servingstate.Environment(row.Environment),
 		Digest:         row.Digest,
 		Format:         row.Format,
 		Path:           row.Path,
@@ -462,8 +679,6 @@ func mapArtifactParams(artifact servingstate.Artifact) platformdb.InsertServingS
 	return platformdb.InsertServingStateArtifactParams{
 		ID:             artifact.ID,
 		ServingStateID: string(artifact.ServingStateID),
-		WorkspaceID:    string(artifact.WorkspaceID),
-		Environment:    string(servingstate.NormalizeEnvironment(artifact.Environment)),
 		Digest:         artifact.Digest,
 		Format:         artifact.Format,
 		Path:           artifact.Path,
@@ -497,8 +712,21 @@ func newSecret() string {
 }
 
 func stableID(value string) string {
-	sum := sha256.Sum256([]byte(strings.ToLower(value)))
+	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])[:32]
+}
+
+func contentDigest(value []byte) string {
+	sum := sha256.Sum256(value)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func assetSnapshotID(servingStateID, assetID string) string {
+	return "asset_" + stableID(servingStateID+"|"+assetID)
+}
+
+func edgeID(servingStateID, from, to, relation string) string {
+	return "edge_" + stableID(servingStateID+"|"+from+"|"+to+"|"+relation)
 }
 
 func formatSQLiteTime(value time.Time) string {

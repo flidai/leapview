@@ -155,13 +155,6 @@ type RunLeaseVerifier interface {
 	VerifyRunLease(context.Context, string, string, jobs.Fence) error
 }
 
-// PreparingRunReconciler repairs runs left in the pre-activation state after
-// a process/client failure. Implementations should make this operation
-// idempotent and safe to call at startup.
-type PreparingRunReconciler interface {
-	ReconcilePreparingRuns(context.Context) error
-}
-
 type RunFinish struct {
 	PrincipalID    string
 	ConversationID string

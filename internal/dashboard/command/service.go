@@ -10,6 +10,7 @@ import (
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Metrics interface {
@@ -21,7 +22,11 @@ func resolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Re
 	if metrics == nil || metrics.Resolver() == nil {
 		return dashboardresolver.Resolved{}, false
 	}
-	resolved, err := metrics.Resolver().Resolve(dashboardID)
+	resourceID, err := projectgraph.NewResourceID(dashboardID)
+	if err != nil {
+		return dashboardresolver.Resolved{}, false
+	}
+	resolved, err := metrics.Resolver().Resolve(resourceID)
 	return resolved, err == nil
 }
 

@@ -1,6 +1,6 @@
 # Create a dashboard
 
-A dashboard chooses one workspace semantic model and composes reusable filters, visual queries, tabular queries, and report pages. Build the smallest useful page first, verify its query behavior, and add interactions only after the standalone results are correct.
+A dashboard chooses one project semantic model and composes reusable filters, visual queries, tabular queries, and report pages. Build the smallest useful page first, verify its query behavior, and add interactions only after the standalone results are correct.
 
 > [!TIP]
 > Use this guide for the authoring workflow and representative configuration. Use [Dashboard configuration](/docs/config/dashboard) and [Visual types](/docs/visuals/overview) when you need the complete accepted field contract.
@@ -21,15 +21,15 @@ Use this sequence:
 
 ### Create the resource
 
-Create `dashboards/workspaces/sales/dashboards/executive-sales.yaml`:
+Create `dashboards/dashboards/executive-sales.yaml`:
 
 ```yaml
 apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
-  workspace: sales
+  id: dashboard:executive-sales
   name: executive-sales
-  title: Executive Sales
+  displayName: Executive Sales
   description: Revenue and order trends for sales leadership.
   tags: [sales, revenue]
 spec:
@@ -97,7 +97,7 @@ Define filters against semantic fields and place filter-card components on the p
 
 ### Discover and validate
 
-Ensure the workspace manifest includes dashboard files, then run:
+Ensure the project manifest includes dashboard files, then run:
 
 ```sh
 leapview validate --project dashboards/leapview.yaml
@@ -110,7 +110,7 @@ Validation checks contract shape and references. The plan shows the resource-lev
 
 Confirm that:
 
-- the dashboard appears in the intended workspace;
+- the dashboard appears in the intended project resource catalog;
 - titles, descriptions, and tags support discovery;
 - chart and KPI results match direct semantic queries;
 - filters change every intended component and no unintended component;

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,22 +12,22 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/agent/ui"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestChatReferenceSearchUsesGlobalScopeAndEchoesRequestIdentity(t *testing.T) {
 	results := make([]ui.AgentReferenceSignal, 30)
 	for index := range results {
 		results[index] = ui.AgentReferenceSignal{
-			Reference: ui.AgentReferenceKeySignal{WorkspaceID: "sales", Type: "field", ID: "field-" + string(rune('a'+index))},
-			Name:      "Field", Workspace: ui.AgentReferenceWorkspaceSignal{ID: "sales", Name: "Sales"},
+			Reference: ui.AgentReferenceKeySignal{Kind: "model", ID: "model-" + string(rune('a'+index))},
+			Name:      "Field",
 			Locations: []ui.AgentReferenceLocationSignal{}, Context: []string{},
 		}
 	}
-	searchedContext := agent.TurnContext{Surface: "invalid"}
 	searchedLimit := 0
 	handler := NewHandler(Options{
 		SearchReferences: func(_ *http.Request, context agent.TurnContext, _ string, limit int) ([]ui.AgentReferenceSignal, error) {
-			searchedContext = context
+			_ = context
 			searchedLimit = limit
 			return results, nil
 		},
@@ -48,16 +49,13 @@ func TestChatReferenceSearchUsesGlobalScopeAndEchoesRequestIdentity(t *testing.T
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
-	if searchedContext.WorkspaceID != "" {
-		t.Fatalf("searched workspace = %q, want global scope", searchedContext.WorkspaceID)
-	}
 	if searchedLimit != maxChatReferenceSearchResults {
 		t.Fatalf("searched limit = %d, want %d", searchedLimit, maxChatReferenceSearchResults)
 	}
-	if got := strings.Count(response.Body.String(), `"type":"field"`); got != 24 {
+	if got := strings.Count(response.Body.String(), `"kind":"model"`); got != 24 {
 		t.Fatalf("result count = %d, want 24:\n%s", got, response.Body.String())
 	}
-	for _, want := range []string{`"query":"field"`, `"requestId":7`, `"workspaceId":"sales"`} {
+	for _, want := range []string{`"query":"field"`, `"requestId":7`, `"kind":"model"`} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Fatalf("search response missing %s:\n%s", want, response.Body.String())
 		}
@@ -84,5 +82,22 @@ func TestChatSignalPatchKeepsEmbeddedArtifactsSeparateFromDashboardVisuals(t *te
 	standalone := chatSignalPatch(state, false)
 	if _, ok := standalone["visuals"]; !ok {
 		t.Fatalf("standalone patch = %#v, want visuals", standalone)
+	}
+}
+
+func TestChatScopeUsesActiveProjectResolver(t *testing.T) {
+	handler := NewHandler(Options{
+		ActiveProjectID: "project:stale",
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return projectgraph.ResourceID("project:activated"), nil
+		},
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "principal"}, true
+		},
+	})
+
+	scope := handler.Scope(httptest.NewRequest(http.MethodGet, "/", nil))
+	if scope.ProjectID != "project:activated" {
+		t.Fatalf("scope project = %q, want project:activated", scope.ProjectID)
 	}
 }

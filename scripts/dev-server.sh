@@ -209,7 +209,7 @@ wait_ready() {
   local interval="${LEAPVIEW_DEV_READY_INTERVAL:-0.2}"
 
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    if curl -fsS "http://localhost:$port/workspaces" >/dev/null 2>&1; then
+    if curl -fsS "http://localhost:$port/healthz" >/dev/null 2>&1; then
       return 0
     fi
     if ! is_alive "$pid"; then
@@ -253,37 +253,56 @@ mcp_smoke() {
     return 1
   }
 
-  local catalog
-  catalog="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}')" || return 1
-  jq -e '(.error == null) and (.result.isError != true) and (.result.structuredContent.count > 0)' <<<"$catalog" >/dev/null || {
-    echo "Development MCP smoke check found no accessible workspaces" >&2
-    return 1
-  }
+  local attempts="${LEAPVIEW_DEV_MCP_ATTEMPTS:-20}"
+  local interval="${LEAPVIEW_DEV_MCP_INTERVAL:-0.5}"
+  local catalog measure query_arguments
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    catalog="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}')" || return 1
+    if jq -e '(.error == null) and (.result.isError != true) and (.result.structuredContent.count > 0)' <<<"$catalog" >/dev/null; then
+      break
+    fi
+    if (( attempt == attempts )); then
+      echo "Development MCP smoke check found no accessible project resources after ${attempts} attempts" >&2
+      printf '%s\n' "$catalog" >&2
+      return 1
+    fi
+    sleep "$interval"
+  done
 
-  local measure
-  measure="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-measure","method":"tools/call","params":{"name":"catalog_search","arguments":{"query":"measure","types":["measure"],"limit":1}}}')" || return 1
-  local query_arguments
-  query_arguments="$(jq -ce '
-    .result.structuredContent.items[0] as $item |
-    ($item.hierarchy[] | select(.ref.type == "semantic_model") | .ref.id) as $model |
-    {workspace: $item.ref.workspaceId, model: $model, measures: [{field: $item.ref.id}], limit: 1}
-  ' <<<"$measure")" || {
-    echo "Development MCP smoke check could not resolve a semantic measure" >&2
-    return 1
-  }
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    measure="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-semantic-model","method":"tools/call","params":{"name":"catalog_search","arguments":{"query":"sales","kinds":["semantic_model"],"limit":1}}}')" || return 1
+    query_arguments="$(jq -ce '
+      .result.structuredContent.items[0] as $item |
+      {model: $item.ref.id, measures: [{field: "revenue"}], limit: 1}
+    ' <<<"$measure" 2>/dev/null || true)"
+    if [[ -n "$query_arguments" ]]; then
+      break
+    fi
+    if (( attempt == attempts )); then
+      echo "Development MCP smoke check could not resolve a semantic measure after ${attempts} attempts" >&2
+      printf '%s\n' "$measure" >&2
+      return 1
+    fi
+    sleep "$interval"
+  done
 
   local query_body query
   query_body="$(jq -cn --argjson arguments "$query_arguments" '{jsonrpc:"2.0", id:"dev-query", method:"tools/call", params:{name:"query_semantic_model", arguments:$arguments}}')"
-  query="$(mcp_call "$port" "$query_body")" || return 1
-  jq -e '
-    (.error == null) and (.result.isError != true) and
-    (.result.structuredContent.queryId | type == "string" and length > 0) and
-    (.result.structuredContent.rows | type == "array")
-  ' <<<"$query" >/dev/null || {
-    echo "Development MCP smoke check semantic query failed" >&2
-    return 1
-  }
-  echo "Agent MCP smoke check passed"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    query="$(mcp_call "$port" "$query_body")" || return 1
+    if jq -e '
+      (.error == null) and (.result.isError != true) and
+      (.result.structuredContent.queryId | type == "string" and length > 0) and
+      (.result.structuredContent.rows | type == "array")
+    ' <<<"$query" >/dev/null; then
+      echo "Agent MCP smoke check passed"
+      return 0
+    fi
+    sleep "$interval"
+  done
+  echo "Development MCP smoke check semantic query failed after ${attempts} attempts" >&2
+  printf '%s\n' "$query" >&2
+  return 1
 }
 
 canonical_source_root() {
@@ -344,7 +363,7 @@ publish_running() {
 		echo "Dev server port file missing. Run task dev first." >&2
 		return 1
 	}
-	curl -fsS "http://localhost:${port}/workspaces" >/dev/null || {
+  curl -fsS "http://localhost:${port}/" >/dev/null || {
 		echo "Dev server is not running on http://localhost:${port}. Run task dev first." >&2
 		return 1
 	}

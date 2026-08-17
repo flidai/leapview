@@ -14,6 +14,7 @@ import (
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type QueryService struct {
@@ -24,7 +25,7 @@ type QueryService struct {
 type SnapshotService struct {
 	mu             *sync.RWMutex
 	reports        *ReportService
-	runtimes       map[string]*modelRuntime
+	runtimes       map[projectgraph.ResourceID]*modelRuntime
 	filters        *FilterService
 	visualizations *VisualizationDataService
 }

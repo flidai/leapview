@@ -25,24 +25,24 @@ func NewAPIGenDispatcher(handler APIGenHandler) *APIGenDispatcher {
 	return &APIGenDispatcher{handler: handler}
 }
 
-func (d *APIGenDispatcher) ListRefreshRuns(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string, _ refreshgen.GenListRefreshRunsParams) {
-	d.handler.ListRefreshRuns(w, r, workspace)
+func (d *APIGenDispatcher) ListRefreshRuns(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, _ refreshgen.GenListRefreshRunsParams) {
+	d.handler.ListRefreshRuns(w, r, project)
 }
 
-func (d *APIGenDispatcher) CreateRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace string, _ refreshgen.GenCreateRefreshRunHeaders) {
-	d.handler.CreateRefreshRun(w, r, workspace)
+func (d *APIGenDispatcher) CreateRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, _ refreshgen.GenCreateRefreshRunHeaders) {
+	d.handler.CreateRefreshRun(w, r, project)
 }
 
-func (d *APIGenDispatcher) GetRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, run string) {
-	d.handler.GetRefreshRun(w, r, workspace, run)
+func (d *APIGenDispatcher) GetRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, project, run string) {
+	d.handler.GetRefreshRun(w, r, project, run)
 }
 
-func (d *APIGenDispatcher) CancelRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, run string, _ refreshgen.GenCancelRefreshRunHeaders) {
-	d.handler.CancelRefreshRun(w, r, workspace, run)
+func (d *APIGenDispatcher) CancelRefreshRun(w stdhttp.ResponseWriter, r *stdhttp.Request, project, run string, _ refreshgen.GenCancelRefreshRunHeaders) {
+	d.handler.CancelRefreshRun(w, r, project, run)
 }
 
-func (d *APIGenDispatcher) ListRefreshRunEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, workspace, run string, params refreshgen.GenListRefreshRunEventsParams, _ refreshgen.GenListRefreshRunEventsHeaders) {
-	d.handler.ListRefreshRunEvents(w, r, workspace, run, params.Limit, params.PageToken)
+func (d *APIGenDispatcher) ListRefreshRunEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, project, run string, params refreshgen.GenListRefreshRunEventsParams, _ refreshgen.GenListRefreshRunEventsHeaders) {
+	d.handler.ListRefreshRunEvents(w, r, project, run, params.Limit, params.PageToken)
 }
 
 type APIGenTransportErrorResponder struct {

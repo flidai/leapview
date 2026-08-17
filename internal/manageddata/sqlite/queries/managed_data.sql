@@ -1,7 +1,7 @@
 -- Managed-data collections, uploads, multipart state, and revisions.
 
 -- name: CreateManagedDataCollection :exec
-INSERT INTO managed_data_collections (id, project_id, connection_name, name, description, created_by)
+INSERT INTO managed_data_collections (id, project_id, connection_id, name, description, created_by)
 VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: GetManagedDataCollection :one
@@ -9,16 +9,16 @@ SELECT * FROM managed_data_collections WHERE id = ?;
 
 -- name: GetManagedDataCollectionByProjectConnection :one
 SELECT * FROM managed_data_collections
-WHERE project_id = ? AND connection_name = ?;
+WHERE project_id = ? AND connection_id = ?;
 
 -- name: ListActiveManagedDataCollections :many
 SELECT * FROM managed_data_collections
 WHERE status = 'active'
-ORDER BY project_id, connection_name, id;
+ORDER BY project_id, connection_id, id;
 
 -- name: ListAllManagedDataCollections :many
 SELECT * FROM managed_data_collections
-ORDER BY project_id, connection_name, id;
+ORDER BY project_id, connection_id, id;
 
 -- name: ArchiveManagedDataCollection :execresult
 UPDATE managed_data_collections
@@ -280,21 +280,29 @@ ORDER BY logical_path;
 SELECT * FROM managed_data_environment_pointers
 WHERE collection_id = ? AND environment = ?;
 
--- name: DeleteManagedDataServingStateBindings :exec
-DELETE FROM managed_data_serving_state_bindings
-WHERE serving_state_id = ?;
-
--- name: CreateManagedDataServingStateBinding :exec
-INSERT INTO managed_data_serving_state_bindings (
-  serving_state_id, collection_id, revision_id, environment
+-- name: InstallManagedDataServingStateBindingSet :execrows
+INSERT INTO managed_data_serving_state_binding_sets (
+  project_id, environment, generation_id, binding_digest, binding_count
 )
-VALUES (?, ?, ?, ?)
-ON CONFLICT(serving_state_id, collection_id) DO UPDATE SET
-  revision_id = excluded.revision_id,
-  environment = excluded.environment,
-  bound_at = CURRENT_TIMESTAMP;
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(project_id, environment, generation_id) DO NOTHING;
+
+-- name: GetManagedDataServingStateBindingSet :one
+SELECT * FROM managed_data_serving_state_binding_sets
+WHERE project_id = ? AND environment = ? AND generation_id = ?;
+
+-- name: InstallManagedDataServingStateBinding :exec
+INSERT INTO managed_data_serving_state_bindings (
+  project_id, environment, generation_id, collection_id, revision_id
+)
+VALUES (?, ?, ?, ?, ?)
+;
 
 -- name: ListManagedDataServingStateBindings :many
 SELECT * FROM managed_data_serving_state_bindings
-WHERE serving_state_id = ?
+WHERE project_id = ? AND environment = ? AND generation_id = ?
 ORDER BY collection_id;
+
+-- name: GetManagedDataServingStateBinding :one
+SELECT * FROM managed_data_serving_state_bindings
+WHERE project_id = ? AND environment = ? AND generation_id = ? AND collection_id = ?;

@@ -50,7 +50,7 @@ func TestLiveQuackSourceMaterialization(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(controller.Close)
 	workloadLease, err := controller.Acquire(t.Context(), workload.Request{
-		Class: workload.Refresh, WorkspaceID: "operations", Operation: "quack-live-materialize",
+		Class: workload.Refresh, Operation: "quack-live-materialize",
 	})
 	require.NoError(t, err)
 	t.Cleanup(workloadLease.Release)

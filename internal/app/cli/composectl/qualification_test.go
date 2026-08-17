@@ -175,24 +175,22 @@ func TestQualificationRecoveryControlTokenNeverFallsBackToPublisher(t *testing.T
 	}
 }
 
-func TestQualificationWorkloadPrivilegesAreReadAndExecuteOnly(t *testing.T) {
-	privileges := qualificationWorkloadPrivileges()
+func TestQualificationWorkloadCapabilitiesAreReadAndExecuteOnly(t *testing.T) {
+	privileges := qualificationWorkloadCapabilities()
 	for _, required := range []string{
-		"USE_WORKSPACE",
-		"VIEW_ITEM",
-		"QUERY_DATA",
-		"REFRESH_DATA",
+		"RESOURCE_USE",
+		"RESOURCE_READ",
+		"RESOURCE_EDIT",
+		"RESOURCE_PUBLISH",
 	} {
 		if !slices.Contains(privileges, required) {
 			t.Errorf("workload privileges omit %s: %v", required, privileges)
 		}
 	}
 	for _, forbidden := range []string{
-		"VIEW_DATA",
-		"INGEST_DATA",
-		"AUTHOR_PROJECT",
-		"PUBLISH_RELEASE",
-		"REQUEST_DEPLOYMENT",
+		"PROJECT_ADMIN",
+		"RESOURCE_MANAGE",
+		"RESOURCE_SHARE",
 	} {
 		if slices.Contains(privileges, forbidden) {
 			t.Errorf("workload privileges unexpectedly include %s: %v", forbidden, privileges)
@@ -200,9 +198,9 @@ func TestQualificationWorkloadPrivilegesAreReadAndExecuteOnly(t *testing.T) {
 	}
 }
 
-func TestQualificationProjectDataPrivilegesAreReadOnly(t *testing.T) {
-	if got, want := qualificationProjectDataPrivileges(), []string{"VIEW_DATA"}; !slices.Equal(got, want) {
-		t.Fatalf("project-data privileges = %v, want %v", got, want)
+func TestQualificationProjectDataCapabilitiesAreReadOnly(t *testing.T) {
+	if got, want := qualificationProjectDataCapabilities(), []string{"RESOURCE_READ"}; !slices.Equal(got, want) {
+		t.Fatalf("project-data capabilities = %v, want %v", got, want)
 	}
 }
 

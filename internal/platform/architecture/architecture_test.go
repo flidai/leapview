@@ -27,7 +27,7 @@ type goFile struct {
 }
 
 var targetCapabilities = map[string]struct{}{
-	"project": {}, "workspace": {}, "access": {}, "manageddata": {}, "analytics": {},
+	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
 	"refresh": {}, "runtimehost": {}, "workload": {}, "platform": {},
 }
@@ -36,7 +36,7 @@ var approvedInternalRoots = map[string]struct{}{
 	"app": {}, "platform": {},
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
-	"runtimehost": {}, "servingstate": {}, "workload": {}, "workspace": {},
+	"runtimehost": {}, "servingstate": {}, "workload": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -140,7 +140,7 @@ func TestAgentGeneratedAPIIsCapabilityOwned(t *testing.T) {
 }
 
 func TestCapabilityCLIIsAnAdapterOwnedByItsCapability(t *testing.T) {
-	for _, capability := range []string{"access", "admin", "agent", "dashboard", "manageddata", "project", "workspace"} {
+	for _, capability := range []string{"access", "admin", "agent", "dashboard", "manageddata", "project"} {
 		rule, ok := ClassifyPackage("internal/" + capability + "/cli")
 		if !ok {
 			t.Fatalf("%s CLI package is not classified", capability)
@@ -197,11 +197,6 @@ func TestEnterpriseAuthoringForbiddenImportsAreRejected(t *testing.T) {
 		{
 			name:   "dashboard cannot import deployment",
 			source: "internal/dashboard/runtime",
-			target: "internal/deployment",
-		},
-		{
-			name:   "workspace cannot import deployment",
-			source: "internal/workspace",
 			target: "internal/deployment",
 		},
 		{
@@ -299,8 +294,8 @@ func TestEnterpriseAuthoringStateRemainsCapabilityOwned(t *testing.T) {
 
 func TestEnterpriseAuthoringCapabilityDirectionIsExplicit(t *testing.T) {
 	required := map[string][]string{
-		"project":     {"access", "analytics", "dashboard", "refresh", "servingstate", "workspace"},
-		"release":     {"access", "project", "servingstate", "workspace"},
+		"project":     {"access", "analytics", "dashboard", "refresh", "servingstate"},
+		"release":     {"access", "project", "servingstate"},
 		"deployment":  {"access", "manageddata", "project", "release", "runtimehost", "servingstate"},
 		"runtimehost": {"manageddata", "servingstate"},
 	}
@@ -394,7 +389,6 @@ func TestCapabilityCLIsUseGeneratedTypedClients(t *testing.T) {
 	clientImports := map[string]string{
 		"internal/agent/cli":     modulePath + "/internal/agent/api/gen",
 		"internal/dashboard/cli": modulePath + "/internal/dashboard/api/gen",
-		"internal/workspace/cli": modulePath + "/internal/workspace/api/gen",
 	}
 	seen := map[string]bool{}
 	for _, file := range productionGoFiles(t) {
@@ -511,7 +505,6 @@ func TestCapabilityAPIPackagesOptIntoTypedClientGeneration(t *testing.T) {
 		"LeapViewAPI.Access", "LeapViewAPI.Agent", "LeapViewAPI.Analytics",
 		"LeapViewAPI.Dashboard", "LeapViewAPI.Deployment", "LeapViewAPI.ManagedData",
 		"LeapViewAPI.Project", "LeapViewAPI.Refresh", "LeapViewAPI.Release",
-		"LeapViewAPI.Workspace",
 	}
 	for _, namespace := range namespaces {
 		start := strings.Index(manifest, "        "+namespace+":")
@@ -716,16 +709,6 @@ func TestReleaseGeneratedAPIIsCapabilityOwned(t *testing.T) {
 	}
 }
 
-func TestWorkspaceGeneratedAPIIsCapabilityOwned(t *testing.T) {
-	rule, ok := ClassifyPackage("internal/workspace/api/gen")
-	if !ok {
-		t.Fatal("Workspace generated API package is not classified")
-	}
-	if rule.Capability != "workspace" || rule.Layer != LayerAdapter {
-		t.Fatalf("Workspace generated API classification = %#v, want workspace adapter", rule)
-	}
-}
-
 func TestManagedDataGeneratedAPIIsCapabilityOwned(t *testing.T) {
 	rule, ok := ClassifyPackage("internal/manageddata/api/gen")
 	if !ok {
@@ -755,15 +738,6 @@ func TestApplicationOwnsProductConfigurationContract(t *testing.T) {
 		t.Fatal("platform retains the product configuration contract")
 	}
 
-}
-
-func TestProductionCodeDoesNotDefineDefaultWorkspace(t *testing.T) {
-	for _, file := range productionGoFiles(t) {
-		body := strings.ToLower(file.body)
-		if strings.Contains(body, "defaultworkspace") || strings.Contains(body, "default workspace") {
-			t.Errorf("%s retains forbidden default-workspace semantics", file.path)
-		}
-	}
 }
 
 func TestPlatformProductionCodeDoesNotOwnApplicationEnvironment(t *testing.T) {
@@ -826,7 +800,7 @@ func TestPlatformObservabilityContainsOnlyGenericMechanisms(t *testing.T) {
 		if file.pkgDir != "internal/platform/observability" {
 			continue
 		}
-		for _, productTerm := range []string{"Dashboard", "Workspace", "Workload", "Analytics", "ServingState"} {
+		for _, productTerm := range []string{"Dashboard", "Workload", "Analytics", "ServingState"} {
 			if strings.Contains(file.body, productTerm) {
 				t.Errorf("%s contains product-owned observability term %q", file.path, productTerm)
 			}
@@ -882,7 +856,7 @@ func TestRefreshOwnsDurableRunState(t *testing.T) {
 
 func TestCapabilityModuleSurfacesExist(t *testing.T) {
 	root := repoRoot(t)
-	for _, capability := range []string{"access", "analytics", "workspace", "manageddata", "release", "deployment", "refresh", "dashboard", "agent", "runtimehost", "servingstate", "workload", "admin"} {
+	for _, capability := range []string{"access", "analytics", "manageddata", "release", "deployment", "refresh", "dashboard", "agent", "runtimehost", "servingstate", "workload", "admin"} {
 		dir := "internal/" + capability + "/module"
 		if !packageDirExists(root, dir) {
 			t.Errorf("capability composition package %s does not exist", dir)
@@ -1049,9 +1023,9 @@ func TestCapabilityBrowserRoutesAreModuleOwned(t *testing.T) {
 	}
 	constants := stringConstants(parsed)
 	capabilityPrefixes := []string{
-		"/admin", "/auth/", "/chats", "/connections", "/data", "/embed/dashboards",
+		"/admin", "/auth/", "/chats", "/connections", "/sources", "/embed/dashboards",
 		"/login", "/mcp", "/oauth/", "/public/dashboards", "/scim", "/upload-protocols/tus",
-		"/workspaces", "/.well-known/oauth",
+		"/.well-known/oauth",
 	}
 	ast.Inspect(parsed, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
@@ -1083,7 +1057,6 @@ func TestCapabilityBrowserRoutesAreModuleOwned(t *testing.T) {
 		"agent":       {"MountAuthenticated", "MountMCP"},
 		"dashboard":   {"MountPublicDocuments", "MountPublicCommands", "MountPublicStream", "MountAuthenticated"},
 		"manageddata": {"MountTus"},
-		"workspace":   {"MountAuthenticated"},
 	} {
 		moduleBody, readErr := os.ReadFile(filepath.Join(root, "internal", module, "module", "routes.go"))
 		require.NoError(t, readErr)
@@ -1247,7 +1220,7 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 		"internal/refresh/internal/db",
 		"internal/release/internal/db",
 		"internal/servingstate/internal/db",
-		"internal/workspace/internal/db",
+		"internal/project/internal/db",
 	} {
 		fragment := "package: \"db\"\n        out: \"" + output + "\""
 		if !strings.Contains(config, fragment) {
@@ -1265,7 +1238,6 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 		"internal/refresh/sqlite/refreshdb",
 		"internal/release/sqlite/releasedb",
 		"internal/servingstate/sqlite/servingdb",
-		"internal/workspace/sqlite/workspacedb",
 	} {
 		if strings.Contains(config, legacy) {
 			t.Errorf("sqlc retains public capability output %s", legacy)
@@ -1586,10 +1558,9 @@ func TestCapabilityModulesRequireDeclaredPublicContractEdges(t *testing.T) {
 
 func TestApplicationImportsProductCapabilitiesOnlyThroughModules(t *testing.T) {
 	// Project is intentionally compile-time-first and has no synthetic runtime
-	// module. Its generated HTTP adapter is therefore a valid composition edge.
-	compositionAdapters := map[string]bool{
-		"internal/project/http": true,
-	}
+	// module. Its generated HTTP adapter and the closed set of process-level
+	// contract ports are valid composition edges; arbitrary capability packages
+	// remain rejected below.
 	for _, file := range productionGoFiles(t) {
 		if file.pkgDir != "internal/app" {
 			continue
@@ -1603,7 +1574,7 @@ func TestApplicationImportsProductCapabilitiesOnlyThroughModules(t *testing.T) {
 			if !ok || target.Capability == "platform" || target.Capability == "composition" {
 				continue
 			}
-			if target.Layer != LayerModule && !compositionAdapters[packagePath] {
+			if target.Layer != LayerModule && packagePath != "internal/project/http" && !IsCompositionContractImport(packagePath) {
 				t.Errorf("%s imports product package %s instead of its module surface", file.path, packagePath)
 			}
 		}
@@ -1613,7 +1584,6 @@ func TestApplicationImportsProductCapabilitiesOnlyThroughModules(t *testing.T) {
 func TestDashboardCatalogHasOnlyExplicitProjectionConsumers(t *testing.T) {
 	allowed := map[string]bool{
 		"internal/project/artifact/artifact.go": true,
-		"internal/workspace/module/module.go":   true,
 	}
 	for _, file := range productionGoFiles(t) {
 		if file.pkgDir == "internal/dashboard" || strings.HasPrefix(file.pkgDir, "internal/dashboard/") {
@@ -1631,77 +1601,6 @@ func TestDashboardCatalogHasOnlyExplicitProjectionConsumers(t *testing.T) {
 	}
 }
 
-func TestAgentOwnsChatUI(t *testing.T) {
-	const sharedUI = modulePath + "/internal/workspace/ui"
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/agent" && !strings.HasPrefix(file.pkgDir, "internal/agent/") {
-			continue
-		}
-		for _, imported := range file.imports {
-			if imported != sharedUI && !strings.HasPrefix(imported, sharedUI+"/") {
-				continue
-			}
-			t.Errorf("%s imports workspace-owned UI instead of the agent-owned UI contract", file.path)
-		}
-	}
-}
-
-func TestRefreshDoesNotImportWorkspaceUI(t *testing.T) {
-	const sharedUI = modulePath + "/internal/workspace/ui"
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/refresh" && !strings.HasPrefix(file.pkgDir, "internal/refresh/") {
-			continue
-		}
-		for _, imported := range file.imports {
-			if imported == sharedUI || strings.HasPrefix(imported, sharedUI+"/") {
-				t.Errorf("%s imports workspace-owned UI instead of a refresh-owned presentation contract", file.path)
-			}
-		}
-	}
-}
-
-func TestDashboardDatastarOwnsItsSignalProjection(t *testing.T) {
-	const sharedSignals = modulePath + "/internal/workspace/ui/signals"
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/dashboard/datastar" {
-			continue
-		}
-		for _, imported := range file.imports {
-			if imported == sharedSignals {
-				t.Errorf("%s imports workspace-owned signals instead of a dashboard-owned projection", file.path)
-			}
-		}
-	}
-}
-
-func TestDashboardDoesNotImportWorkspaceUI(t *testing.T) {
-	const workspaceUI = modulePath + "/internal/workspace/ui"
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/dashboard" && !strings.HasPrefix(file.pkgDir, "internal/dashboard/") {
-			continue
-		}
-		for _, imported := range file.imports {
-			if imported == workspaceUI || strings.HasPrefix(imported, workspaceUI+"/") {
-				t.Errorf("%s imports workspace-owned UI", file.path)
-			}
-		}
-	}
-}
-
-func TestAdminDoesNotImportWorkspaceUI(t *testing.T) {
-	const workspaceUI = modulePath + "/internal/workspace/ui"
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/admin" && !strings.HasPrefix(file.pkgDir, "internal/admin/") {
-			continue
-		}
-		for _, imported := range file.imports {
-			if imported == workspaceUI || strings.HasPrefix(imported, workspaceUI+"/") {
-				t.Errorf("%s imports workspace-owned UI", file.path)
-			}
-		}
-	}
-}
-
 func TestApplicationOwnsGlobalShellComposition(t *testing.T) {
 	root := repoRoot(t)
 	if !packageDirExists(root, "internal/app/shell") {
@@ -1714,7 +1613,6 @@ func TestApplicationOwnsGlobalShellComposition(t *testing.T) {
 		for _, productNavigation := range []string{
 			`ID: "dashboards", Label: "Dashboards"`,
 			`ID: "chat", Label: "Chats"`,
-			`ID: "workspaces", Label: "Workspaces"`,
 			`ID: "admin", Label: "Admin"`,
 		} {
 			if strings.Contains(file.body, productNavigation) {
@@ -1726,7 +1624,7 @@ func TestApplicationOwnsGlobalShellComposition(t *testing.T) {
 
 func TestCapabilityRenderersUsePlatformPageMechanism(t *testing.T) {
 	const platformPage = modulePath + "/internal/platform/web/page"
-	for _, capability := range []string{"access", "admin", "agent", "dashboard", "workspace"} {
+	for _, capability := range []string{"access", "admin", "agent", "dashboard"} {
 		found := false
 		for _, file := range productionGoFiles(t) {
 			if file.pkgDir != "internal/"+capability+"/ui" {
@@ -1745,51 +1643,6 @@ func TestCapabilityRenderersUsePlatformPageMechanism(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("internal/%s/ui does not consume the platform page mechanism", capability)
-		}
-	}
-}
-
-func TestWorkspaceUIContainsNoCapabilityCompatibilitySurface(t *testing.T) {
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/workspace/ui" && !strings.HasPrefix(file.pkgDir, "internal/workspace/ui/") {
-			continue
-		}
-		for _, imported := range file.imports {
-			if imported == modulePath+"/internal/admin" ||
-				strings.HasPrefix(imported, modulePath+"/internal/admin/") ||
-				imported == modulePath+"/internal/agent" ||
-				strings.HasPrefix(imported, modulePath+"/internal/agent/") {
-				t.Errorf("%s retains another capability's UI compatibility surface through %s", file.path, imported)
-			}
-		}
-	}
-}
-
-func TestCapabilitiesDoNotImportWorkspaceSignalContracts(t *testing.T) {
-	const sharedSignals = modulePath + "/internal/workspace/ui/signals"
-	for _, file := range productionGoFiles(t) {
-		owner, ok := ClassifyPackage(file.pkgDir)
-		if !ok || owner.Capability == "workspace" || owner.Capability == "composition" || owner.Capability == "ui" {
-			continue
-		}
-		for _, imported := range file.imports {
-			if imported == sharedSignals || strings.HasPrefix(imported, sharedSignals+"/") {
-				t.Errorf("%s imports workspace-owned signal contracts", file.path)
-			}
-		}
-	}
-}
-
-func TestAdminStorageDoesNotImportWorkspaceUI(t *testing.T) {
-	const sharedUI = modulePath + "/internal/workspace/ui"
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/admin/storage" {
-			continue
-		}
-		for _, imported := range file.imports {
-			if imported == sharedUI || strings.HasPrefix(imported, sharedUI+"/") {
-				t.Errorf("%s imports workspace-owned UI instead of admin storage models", file.path)
-			}
 		}
 	}
 }
@@ -1902,7 +1755,6 @@ func TestRequestRuntimeDoesNotRetainConstructionDependencies(t *testing.T) {
 					for _, name := range field.Names {
 						switch name.Name {
 						case "adminDatabase", "servingStateRepo", "managedDataResolver",
-							"workspaceRepo", "workspacePersistence", "workspaceAssetCatalog",
 							"accessRepo", "reloader", "duckLakeCatalogPath", "duckLakeDataPath",
 							"jobLeaseTimeout", "deploymentConfig":
 							t.Errorf("%s runtimeRouter retains construction dependency %s", file.path, name.Name)
@@ -2037,7 +1889,7 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 		"internal/deployment/sqlite":            true,
 		"internal/manageddata/sqlite":           true,
 		"internal/servingstate/sqlite":          true,
-		"internal/workspace/sqlite":             true,
+		"internal/project/sqlite":               true,
 	}
 	generatedOnlyFiles := map[string]bool{
 		"internal/access/sqlite/api_symmetry.go":             true,
@@ -2169,7 +2021,7 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 		"internal/refresh/sqlite/schedulequeries/refresh_pipeline.sql",
 		"internal/release/sqlite/queries/release.sql",
 		"internal/servingstate/sqlite/queries/serving_state.sql",
-		"internal/workspace/sqlite/queries/workspace.sql",
+		"internal/project/sqlite/queries/project.sql",
 	} {
 		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(domain)))
 		if err != nil {
@@ -2213,9 +2065,6 @@ func TestRequiredCapabilityAdaptersExist(t *testing.T) {
 		"internal/dashboard/http",
 		"internal/manageddata/cli",
 		"internal/project/cli",
-		"internal/workspace/datastar",
-		"internal/workspace/cli",
-		"internal/workspace/http",
 	} {
 		if !packageDirExists(root, dir) {
 			t.Fatalf("required capability adapter package %s does not exist", dir)
@@ -2303,12 +2152,10 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"COPY --from=sourcegen /src/internal/project/api/gen ./internal/project/api/gen",
 		"COPY --from=sourcegen /src/internal/refresh/api/gen ./internal/refresh/api/gen",
 		"COPY --from=sourcegen /src/internal/release/api/gen ./internal/release/api/gen",
-		"COPY --from=sourcegen /src/internal/workspace/api/gen ./internal/workspace/api/gen",
 		"COPY --from=sourcegen /src/internal/access/ui/signals/models.gen.go ./internal/access/ui/signals/models.gen.go",
 		"COPY --from=sourcegen /src/internal/admin/ui/signals/models.gen.go ./internal/admin/ui/signals/models.gen.go",
 		"COPY --from=sourcegen /src/internal/agent/ui/signals/models.gen.go ./internal/agent/ui/signals/models.gen.go",
 		"COPY --from=sourcegen /src/internal/dashboard/ui/signals/models.gen.go ./internal/dashboard/ui/signals/models.gen.go",
-		"COPY --from=sourcegen /src/internal/workspace/ui/signals/models.gen.go ./internal/workspace/ui/signals/models.gen.go",
 		"COPY --from=sourcegen /src/docs ./docs",
 		"CGO_ENABLED=1 go build",
 		"FROM debian:bookworm-slim@sha256:",
@@ -2341,7 +2188,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 	ignoreText := string(ignored)
 	for _, want := range []string{
 		".data", ".leapview", "node_modules", "**/.tmp", "api/gen", "internal/access/api/gen", "internal/agent/api/gen", "internal/analytics/api/gen", "internal/dashboard/api/gen", "internal/deployment/api/gen", "internal/manageddata/api/gen",
-		"internal/app/api/aggregate", "internal/app/api/gen", "internal/platform/http/api/gen", "internal/project/api/gen", "internal/refresh/api/gen", "internal/release/api/gen", "internal/workspace/api/gen", "static/chunks",
+		"internal/app/api/aggregate", "internal/app/api/gen", "internal/platform/http/api/gen", "internal/project/api/gen", "internal/refresh/api/gen", "internal/release/api/gen", "static/chunks",
 	} {
 		if !strings.Contains(ignoreText, want) {
 			t.Fatalf(".dockerignore missing generated or runtime path %q", want)
@@ -2960,7 +2807,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"ci:test:frontend:core:",
 		"ci:test:frontend:reports:",
 		"ci:test:frontend:chat:",
-		"ci:test:frontend:workspace:",
+		"ci:test:frontend:data:",
 		"ci:test:frontend:site:",
 		"test:go:",
 		"task --parallel test:go:packages test:go:app:shards",
@@ -3599,7 +3446,7 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db",
 			"COPY --from=sourcegen /src/internal/release/internal/db ./internal/release/internal/db",
 			"COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db",
-			"COPY --from=sourcegen /src/internal/workspace/internal/db ./internal/workspace/internal/db",
+			"COPY --from=sourcegen /src/internal/project/internal/db ./internal/project/internal/db",
 			"COPY --from=sourcegen /src/internal/platform/http/cursorsigning/sqlite/cursordb ./internal/platform/http/cursorsigning/sqlite/cursordb",
 			"COPY --from=sourcegen /src/internal/platform/http/idempotency/sqlite/idempotencydb ./internal/platform/http/idempotency/sqlite/idempotencydb",
 			"COPY --from=sourcegen /src/internal/platform/jobs/sqlite/jobdb ./internal/platform/jobs/sqlite/jobdb",
@@ -3767,9 +3614,9 @@ func generatedCheckCommand(taskfile string) string {
 func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 	root := repoRoot(t)
 	queryContracts := map[string][]string{
-		filepath.Join("internal", "access", "sqlite", "queries", "access.sql"): {
-			"-- name: DeleteRoleGrantTemplates :exec",
-			"-- name: InsertRoleGrantTemplate :exec",
+		filepath.Join("internal", "access", "sqlite", "queries", "authorization.sql"): {
+			"-- name: InsertAuthorizationRoleBinding :exec",
+			"-- name: InsertAuthorizationGrant :exec",
 		},
 		filepath.Join("internal", "platform", "db", "queries", "platform.sql"): {
 			"-- name: InsertPlatformSettingIfMissing :exec",
@@ -3792,9 +3639,6 @@ func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 
 	handwrittenSQL := map[string][]string{
 		filepath.Join("internal", "platform", "store.go"): {
-			"DELETE FROM role_grant_templates",
-			"INSERT INTO role_grant_templates",
-			"INSERT INTO securable_objects",
 			"INSERT INTO platform_settings",
 		},
 		filepath.Join("internal", "manageddata", "maintenance", "sqlite", "source.go"): {
@@ -3928,7 +3772,7 @@ func TestProductionUIDoesNotDependOnCDNScripts(t *testing.T) {
 	root := repoRoot(t)
 	forbiddenHosts := []string{"cdn.jsdelivr.net", "unpkg.com", "esm.sh", "skypack.dev"}
 
-	for _, dir := range []string{"internal/workspace/ui", "internal/dashboard/ui", "internal/app"} {
+	for _, dir := range []string{"internal/dashboard/ui", "internal/app"} {
 		err := filepath.WalkDir(filepath.Join(root, filepath.FromSlash(dir)), func(path string, entry os.DirEntry, err error) error {
 			if err != nil {
 				return err

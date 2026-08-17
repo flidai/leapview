@@ -12,16 +12,19 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesshttp "github.com/flidai/leapview/internal/access/http"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type fakeAuthoringOAuth struct {
 	accesshttp.AuthoringAuthentication
+	beginCalls    int
 	beganScope    access.AuthoringScope
 	exchangedCode string
 	exchangeErr   error
 	refreshToken  string
 	refreshErr    error
 	workloadInput access.WorkloadIdentityInput
+	workloadCalls int
 	workloadErr   error
 	revokedToken  string
 	revokeErr     error
@@ -32,6 +35,7 @@ func (service *fakeAuthoringOAuth) InstanceID() string {
 }
 
 func (service *fakeAuthoringOAuth) BeginDeviceAuthorization(_ context.Context, scope access.AuthoringScope) (access.DeviceAuthorizationResponse, error) {
+	service.beginCalls++
 	service.beganScope = scope
 	return access.DeviceAuthorizationResponse{
 		DeviceCode:              "device-secret",
@@ -63,6 +67,7 @@ func (service *fakeAuthoringOAuth) Refresh(_ context.Context, token string) (acc
 }
 
 func (service *fakeAuthoringOAuth) ExchangeWorkloadIdentity(_ context.Context, input access.WorkloadIdentityInput) (access.AuthoringTokenSet, error) {
+	service.workloadCalls++
 	service.workloadInput = input
 	if service.workloadErr != nil {
 		return access.AuthoringTokenSet{}, service.workloadErr
@@ -92,9 +97,9 @@ func fakeAuthoringTokenSet() access.AuthoringTokenSet {
 			Kind:     access.AuthoringSessionHumanCLI,
 			ClientID: access.AuthoringCLIClientID,
 			Scope: access.AuthoringScope{
-				TargetID:   "lvinst_prod",
-				ProjectID:  "analytics",
-				Privileges: []access.Privilege{access.PrivilegeDeploy},
+				TargetID:     "lvinst_prod",
+				ProjectID:    "analytics",
+				Capabilities: []access.Capability{access.CapabilityResourcePublish},
 			},
 		},
 	}
@@ -102,11 +107,11 @@ func fakeAuthoringTokenSet() access.AuthoringTokenSet {
 
 func TestAuthoringDeviceAuthorizationUsesRFC8628WireFormat(t *testing.T) {
 	service := &fakeAuthoringOAuth{}
-	module := &Module{handler: accesshttp.Handler{AuthoringAuth: service}}
+	module := authoringOAuthTestModule(service)
 	form := url.Values{
 		"client_id":  {access.AuthoringCLIClientID},
 		"project_id": {"analytics"},
-		"scope":      {string(access.PrivilegeDeploy)},
+		"scope":      {string(access.CapabilityResourcePublish)},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/oauth/device/code", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -134,9 +139,38 @@ func TestAuthoringDeviceAuthorizationUsesRFC8628WireFormat(t *testing.T) {
 	}
 	if service.beganScope.TargetID != "lvinst_prod" ||
 		service.beganScope.ProjectID != "analytics" ||
-		len(service.beganScope.Privileges) != 1 ||
-		service.beganScope.Privileges[0] != access.PrivilegeDeploy {
+		len(service.beganScope.Capabilities) != 1 ||
+		service.beganScope.Capabilities[0] != access.CapabilityResourcePublish {
 		t.Fatalf("scope=%+v", service.beganScope)
+	}
+}
+
+func TestAuthoringDeviceAuthorizationBindsToActiveProjectBeforePersistence(t *testing.T) {
+	for _, projectID := range []string{"analytics", "foreign", ""} {
+		t.Run(projectID, func(t *testing.T) {
+			service := &fakeAuthoringOAuth{}
+			module := authoringOAuthTestModule(service)
+			form := url.Values{
+				"client_id":  {access.AuthoringCLIClientID},
+				"project_id": {projectID},
+				"scope":      {string(access.CapabilityResourcePublish)},
+			}
+			request := httptest.NewRequest(http.MethodPost, "/oauth/device/code", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			recorder := httptest.NewRecorder()
+
+			module.AuthoringDeviceAuthorization(recorder, request)
+
+			if projectID == "analytics" {
+				if recorder.Code != http.StatusOK || service.beginCalls != 1 {
+					t.Fatalf("status=%d begin_calls=%d body=%s", recorder.Code, service.beginCalls, recorder.Body.String())
+				}
+				return
+			}
+			if recorder.Code != http.StatusBadRequest || service.beginCalls != 0 {
+				t.Fatalf("status=%d begin_calls=%d body=%s", recorder.Code, service.beginCalls, recorder.Body.String())
+			}
+		})
 	}
 }
 
@@ -322,7 +356,7 @@ func TestAuthoringOAuthClientCredentialsIssuesExactScopeWorkloadToken(t *testing
 		"client_id":        {"sp-ci"},
 		"client_secret":    {"service-secret"},
 		"project_id":       {"analytics"},
-		"scope":            {"DEPLOY ACTIVATE_DEPLOYMENT"},
+		"scope":            {"RESOURCE_PUBLISH RESOURCE_USE"},
 		"lifetime_seconds": {"600"},
 	}
 	request := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
@@ -330,7 +364,7 @@ func TestAuthoringOAuthClientCredentialsIssuesExactScopeWorkloadToken(t *testing
 	service := &fakeAuthoringOAuth{}
 	recorder := httptest.NewRecorder()
 
-	(&Module{handler: accesshttp.Handler{AuthoringAuth: service}}).AuthoringOAuthToken(recorder, request)
+	authoringOAuthTestModule(service).AuthoringOAuthToken(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
@@ -350,6 +384,47 @@ func TestAuthoringOAuthClientCredentialsIssuesExactScopeWorkloadToken(t *testing
 		response["session_kind"] != string(access.AuthoringSessionWorkload) ||
 		response["refresh_token"] != nil {
 		t.Fatalf("response=%v", response)
+	}
+}
+
+func TestAuthoringOAuthWorkloadBindsToActiveProjectBeforePersistence(t *testing.T) {
+	for _, projectID := range []string{"analytics", "foreign", ""} {
+		t.Run(projectID, func(t *testing.T) {
+			service := &fakeAuthoringOAuth{}
+			module := authoringOAuthTestModule(service)
+			form := url.Values{
+				"grant_type":       {"client_credentials"},
+				"client_id":        {"sp-ci"},
+				"client_secret":    {"service-secret"},
+				"project_id":       {projectID},
+				"scope":            {"RESOURCE_PUBLISH"},
+				"lifetime_seconds": {"600"},
+			}
+			request := httptest.NewRequest(http.MethodPost, "/oauth/token", strings.NewReader(form.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			recorder := httptest.NewRecorder()
+
+			module.AuthoringOAuthToken(recorder, request)
+
+			if projectID == "analytics" {
+				if recorder.Code != http.StatusOK || service.workloadCalls != 1 {
+					t.Fatalf("status=%d workload_calls=%d body=%s", recorder.Code, service.workloadCalls, recorder.Body.String())
+				}
+				return
+			}
+			if recorder.Code != http.StatusBadRequest || service.workloadCalls != 0 {
+				t.Fatalf("status=%d workload_calls=%d body=%s", recorder.Code, service.workloadCalls, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func authoringOAuthTestModule(service *fakeAuthoringOAuth) *Module {
+	return &Module{
+		handler: accesshttp.Handler{AuthoringAuth: service},
+		currentProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return projectgraph.ResourceID("analytics"), nil
+		},
 	}
 }
 

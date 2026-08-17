@@ -1,7 +1,7 @@
 // Package catalog contains the governed dashboard authoring read model.
 //
 // Catalog reads deliberately compose the project dashboard projection from one
-// active runtime lease with the workspace authoring repository.  Neither source
+// active runtime lease with the project authoring repository.  Neither source
 // is allowed to shadow the other, and authorization happens before a source is
 // exposed to a caller.
 package catalog
@@ -18,7 +18,8 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
-	"github.com/flidai/leapview/internal/runtimehost"
+	"github.com/flidai/leapview/internal/project/graph"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 var (
@@ -26,16 +27,16 @@ var (
 	// is not authorized to view it.  These cases intentionally share one error
 	// so a caller cannot probe dashboard existence or lifecycle status.
 	ErrNotFound = errors.New("dashboard not found")
-	// ErrAmbiguous indicates that both project and workspace authoring sources
-	// own an authorized dashboard with the same workspace-scoped ID.
+	// ErrAmbiguous indicates that both project and project authoring sources
+	// own an authorized dashboard with the same project-scoped ID.
 	ErrAmbiguous = errors.New("dashboard identity collision")
 )
 
 type SourceKind string
 
 const (
-	SourceProject   SourceKind = "project"
-	SourceWorkspace SourceKind = "workspace"
+	SourceInstance SourceKind = "instance"
+	SourceProject  SourceKind = "project"
 )
 
 // RevisionEvidence identifies an immutable authored revision without exposing
@@ -48,53 +49,53 @@ type RevisionEvidence struct {
 }
 
 // PublicationEvidence records the lifecycle publication pointer and compiler
-// evidence. It is present only for published workspace dashboards.
+// evidence. It is present only for published project dashboards.
 type PublicationEvidence struct {
-	Revision               RevisionEvidence `json:"revision"`
-	DefinitionHash         string           `json:"definitionHash,omitempty"`
-	SemanticServingStateID string           `json:"semanticServingStateId,omitempty"`
-	PublishedAt            time.Time        `json:"publishedAt,omitempty"`
+	Revision         RevisionEvidence      `json:"revision"`
+	DefinitionHash   string                `json:"definitionHash,omitempty"`
+	SemanticIdentity graph.ServingIdentity `json:"semanticIdentity"`
+	PublishedAt      time.Time             `json:"publishedAt,omitempty"`
 }
 
 // Dashboard is the governed, source-neutral dashboard identity projection.
-// ID remains the workspace-scoped authoring/runtime ID. StableID includes the
-// source kind so consumers can safely cache project and workspace identities
+// ID remains the project-scoped authoring/runtime ID. StableID includes the
+// source kind so consumers can safely cache project and project identities
 // independently even though a collision is rejected by this service.
 type Dashboard struct {
-	ID             string                    `json:"id"`
-	StableID       string                    `json:"stableId"`
-	WorkspaceID    string                    `json:"workspaceId"`
-	Title          string                    `json:"title"`
-	Description    string                    `json:"description,omitempty"`
-	SemanticModel  string                    `json:"semanticModel"`
-	Source         SourceKind                `json:"source"`
-	Origin         authoring.Origin          `json:"origin"`
-	Status         authoring.LifecycleStatus `json:"status"`
-	Visibility     authoring.Visibility      `json:"visibility"`
-	Owner          string                    `json:"owner,omitempty"`
-	Tags           []string                  `json:"tags,omitempty"`
-	ServingStateID string                    `json:"servingStateId,omitempty"`
-	Revision       *RevisionEvidence         `json:"revision,omitempty"`
-	Publication    *PublicationEvidence      `json:"publication,omitempty"`
-	SourcePath     string                    `json:"sourcePath,omitempty"`
+	ID              graph.ResourceID          `json:"id"`
+	StableID        string                    `json:"stableId"`
+	ProjectID       graph.ResourceID          `json:"projectId"`
+	Title           string                    `json:"title"`
+	Description     string                    `json:"description,omitempty"`
+	SemanticModel   graph.ResourceID          `json:"semanticModel"`
+	Source          SourceKind                `json:"source"`
+	Origin          authoring.Origin          `json:"origin"`
+	Status          authoring.LifecycleStatus `json:"status"`
+	Visibility      authoring.Visibility      `json:"visibility"`
+	Owner           string                    `json:"owner,omitempty"`
+	Tags            []string                  `json:"tags,omitempty"`
+	ServingIdentity graph.ServingIdentity     `json:"servingIdentity,omitempty"`
+	Revision        *RevisionEvidence         `json:"revision,omitempty"`
+	Publication     *PublicationEvidence      `json:"publication,omitempty"`
+	SourcePath      string                    `json:"sourcePath,omitempty"`
 }
 
 // ListResult is deterministic and contains counts after authorization
 // filtering. Counts never include unauthorized or archived dashboards.
 type ListResult struct {
-	Items          []Dashboard `json:"items"`
-	Count          int         `json:"count"`
-	ProjectCount   int         `json:"projectCount"`
-	WorkspaceCount int         `json:"workspaceCount"`
+	Items         []Dashboard `json:"items"`
+	Count         int         `json:"count"`
+	InstanceCount int         `json:"instanceCount"`
+	ProjectCount  int         `json:"projectCount"`
 }
 
 type ListRequest struct {
-	WorkspaceID string
-	ActorID     string
+	ProjectID graph.ResourceID
+	ActorID   string
 }
 
 type GetRequest struct {
-	WorkspaceID string
+	ProjectID   graph.ResourceID
 	ActorID     string
 	DashboardID authoring.DashboardID
 }
@@ -114,13 +115,13 @@ type AuthoredDashboardSources interface {
 }
 
 type Options struct {
-	Provider   runtimehost.Provider
+	Provider   projectruntime.Provider
 	Repository authoring.Repository
 	Authorizer authoringservice.Authorizer
 }
 
 type Service struct {
-	provider   runtimehost.Provider
+	provider   projectruntime.Provider
 	repository authoring.Repository
 	authorizer authoringservice.Authorizer
 }
@@ -140,9 +141,9 @@ func NewService(options Options) (*Service, error) {
 
 // List returns only non-archived dashboards for which the actor has exact
 // dashboard VIEW authorization. A provider lease is acquired once and held
-// while all project and workspace candidates are composed.
+// while all project and project candidates are composed.
 func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, error) {
-	workspaceID, actorID, err := normalizeRequest(request.WorkspaceID, request.ActorID)
+	projectID, actorID, err := normalizeRequest(request.ProjectID, request.ActorID)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -152,15 +153,22 @@ func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, er
 	}
 	defer lease.Release()
 
-	project, err := projectCandidates(runtime, workspaceID, strings.TrimSpace(string(lease.ServingStateID())))
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return ListResult{}, fmt.Errorf("dashboard catalog serving identity does not match project: %w", err)
+	}
+	if identity.ProjectID != projectID {
+		return ListResult{}, fmt.Errorf("dashboard catalog serving identity project %q does not match %q", identity.ProjectID, projectID)
+	}
+	project, err := projectCandidates(runtime, identity)
 	if err != nil {
 		return ListResult{}, err
 	}
-	workspace, err := s.workspaceCandidates(ctx, workspaceID)
+	instance, err := s.instanceCandidates(ctx, projectID)
 	if err != nil {
 		return ListResult{}, err
 	}
-	visible, err := s.authorizeCandidates(ctx, actorID, project, workspace)
+	visible, err := s.authorizeCandidates(ctx, actorID, project, instance)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -170,7 +178,7 @@ func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, er
 	if err := enrichProjectItems(runtime, visible); err != nil {
 		return ListResult{}, err
 	}
-	if err := s.enrichWorkspaceItems(ctx, workspaceID, visible); err != nil {
+	if err := s.enrichInstanceItems(ctx, projectID, visible); err != nil {
 		return ListResult{}, err
 	}
 	if err := validateDashboards(visible); err != nil {
@@ -182,7 +190,7 @@ func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, er
 		if item.Source == SourceProject {
 			result.ProjectCount++
 		} else {
-			result.WorkspaceCount++
+			result.InstanceCount++
 		}
 	}
 	return result, nil
@@ -191,11 +199,11 @@ func (s *Service) List(ctx context.Context, request ListRequest) (ListResult, er
 // Get returns one governed dashboard. Unauthorized and absent dashboards are
 // indistinguishable; backend and runtime failures are preserved.
 func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error) {
-	workspaceID, actorID, err := normalizeRequest(request.WorkspaceID, request.ActorID)
+	projectID, actorID, err := normalizeRequest(request.ProjectID, request.ActorID)
 	if err != nil {
 		return Dashboard{}, err
 	}
-	if err := request.DashboardID.Validate(); err != nil {
+	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
 		return Dashboard{}, fmt.Errorf("%w: invalid dashboard id", ErrNotFound)
 	}
 	id := request.DashboardID.String()
@@ -205,11 +213,18 @@ func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error
 	}
 	defer lease.Release()
 
-	project, err := projectCandidate(runtime, workspaceID, id, strings.TrimSpace(string(lease.ServingStateID())))
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return Dashboard{}, fmt.Errorf("dashboard catalog serving identity does not match project: %w", err)
+	}
+	if identity.ProjectID != projectID {
+		return Dashboard{}, fmt.Errorf("dashboard catalog serving identity project %q does not match %q", identity.ProjectID, projectID)
+	}
+	project, err := projectCandidate(runtime, identity, id)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return Dashboard{}, err
 	}
-	workspace, err := s.workspaceCandidate(ctx, workspaceID, request.DashboardID)
+	instance, err := s.instanceCandidate(ctx, projectID, request.DashboardID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return Dashboard{}, err
 	}
@@ -217,8 +232,8 @@ func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error
 	if project != nil {
 		candidates = append(candidates, *project)
 	}
-	if workspace != nil {
-		candidates = append(candidates, *workspace)
+	if instance != nil {
+		candidates = append(candidates, *instance)
 	}
 	visible, err := s.authorizeCandidates(ctx, actorID, candidates)
 	if err != nil {
@@ -235,7 +250,7 @@ func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error
 			return Dashboard{}, err
 		}
 	} else {
-		if err := s.enrichWorkspaceItem(ctx, workspaceID, &visible[0]); err != nil {
+		if err := s.enrichInstanceItem(ctx, projectID, &visible[0]); err != nil {
 			return Dashboard{}, err
 		}
 	}
@@ -245,7 +260,7 @@ func (s *Service) Get(ctx context.Context, request GetRequest) (Dashboard, error
 	return visible[0], nil
 }
 
-func (s *Service) acquire(ctx context.Context) (runtimehost.Lease, runtimehost.Runtime, error) {
+func (s *Service) acquire(ctx context.Context) (projectruntime.Lease, projectruntime.Runtime, error) {
 	if s == nil || s.provider == nil {
 		return nil, nil, fmt.Errorf("dashboard catalog runtime provider is required")
 	}
@@ -262,56 +277,56 @@ func (s *Service) acquire(ctx context.Context) (runtimehost.Lease, runtimehost.R
 	return lease, lease.Runtime(), nil
 }
 
-func normalizeRequest(workspaceID, actorID string) (string, string, error) {
-	workspaceID, actorID = strings.TrimSpace(workspaceID), strings.TrimSpace(actorID)
-	if workspaceID == "" || actorID == "" {
-		return "", "", fmt.Errorf("workspace and actor are required")
+func normalizeRequest(projectID graph.ResourceID, actorID string) (graph.ResourceID, string, error) {
+	actorID = strings.TrimSpace(actorID)
+	if err := projectID.Validate(); err != nil || actorID == "" {
+		return "", "", fmt.Errorf("project and actor are required")
 	}
-	return workspaceID, actorID, nil
+	return projectID, actorID, nil
 }
 
-func projectCandidates(runtime runtimehost.Runtime, workspaceID, servingStateID string) ([]Dashboard, error) {
+func projectCandidates(runtime projectruntime.Runtime, identity graph.ServingIdentity) ([]Dashboard, error) {
+	if err := identity.Validate(); err != nil {
+		return nil, fmt.Errorf("active runtime serving identity is invalid: %w", err)
+	}
 	port, ok := runtime.(RuntimeCatalog)
 	if !ok {
 		return nil, fmt.Errorf("active runtime does not provide dashboard catalog")
 	}
 	catalog := port.Catalog()
-	if strings.TrimSpace(catalog.Workspace.ID) != "" && strings.TrimSpace(catalog.Workspace.ID) != workspaceID {
-		return nil, fmt.Errorf("active runtime workspace %q does not match %q", catalog.Workspace.ID, workspaceID)
-	}
 	items := make([]Dashboard, 0, len(catalog.Dashboards))
 	for _, dashboard := range catalog.Dashboards {
-		id := strings.TrimSpace(dashboard.ID)
-		if id == "" {
-			return nil, fmt.Errorf("active runtime contains dashboard with empty id")
+		id, err := graph.NewResourceID(strings.TrimSpace(dashboard.ID.String()))
+		if err != nil {
+			return nil, fmt.Errorf("active runtime contains invalid dashboard id: %w", err)
 		}
 		item := Dashboard{
-			ID: id, WorkspaceID: workspaceID, Title: dashboard.Title, Description: dashboard.Description,
+			ID: id, ProjectID: identity.ProjectID, Title: dashboard.Title, Description: dashboard.Description,
 			SemanticModel: dashboard.SemanticModel, Source: SourceProject, Origin: authoring.OriginFile,
-			Status: authoring.LifecycleStatusPublished, Visibility: authoring.VisibilityShared,
-			Tags:           append([]string(nil), dashboard.Tags...),
-			ServingStateID: servingStateID,
-			StableID:       stableID(SourceProject, workspaceID, id),
+			Status: authoring.LifecycleStatusPublished, Visibility: authoring.VisibilityOrganization,
+			Tags:            append([]string(nil), dashboard.Tags...),
+			ServingIdentity: identity,
+			StableID:        stableID(SourceProject, identity.ProjectID, id.String()),
 		}
 		items = append(items, item)
 	}
 	return items, nil
 }
 
-func projectCandidate(runtime runtimehost.Runtime, workspaceID, id, servingStateID string) (*Dashboard, error) {
-	items, err := projectCandidates(runtime, workspaceID, servingStateID)
+func projectCandidate(runtime projectruntime.Runtime, identity graph.ServingIdentity, id string) (*Dashboard, error) {
+	items, err := projectCandidates(runtime, identity)
 	if err != nil {
 		return nil, err
 	}
 	for index := range items {
-		if items[index].ID == id {
+		if items[index].ID.String() == id {
 			return &items[index], nil
 		}
 	}
 	return nil, ErrNotFound
 }
 
-func enrichProjectItems(runtime runtimehost.Runtime, items []Dashboard) error {
+func enrichProjectItems(runtime projectruntime.Runtime, items []Dashboard) error {
 	for index := range items {
 		if items[index].Source != SourceProject {
 			continue
@@ -323,7 +338,7 @@ func enrichProjectItems(runtime runtimehost.Runtime, items []Dashboard) error {
 	return nil
 }
 
-func enrichProjectItem(runtime runtimehost.Runtime, item *Dashboard) error {
+func enrichProjectItem(runtime projectruntime.Runtime, item *Dashboard) error {
 	if item == nil || item.Source != SourceProject {
 		return fmt.Errorf("project dashboard metadata is incomplete")
 	}
@@ -331,20 +346,20 @@ func enrichProjectItem(runtime runtimehost.Runtime, item *Dashboard) error {
 	if !ok {
 		return nil
 	}
-	source, ok := sources.AuthoredDashboardSource(item.ID)
+	source, ok := sources.AuthoredDashboardSource(item.ID.String())
 	if !ok {
 		return nil
 	}
-	if strings.TrimSpace(source.Document.ID) != item.ID {
+	if source.Document.ID != item.ID {
 		return fmt.Errorf("project dashboard source %q document id = %q", item.ID, source.Document.ID)
 	}
-	if strings.TrimSpace(source.Metadata.Name) != item.ID {
+	if strings.TrimSpace(source.Metadata.Name) != item.ID.String() {
 		return fmt.Errorf("project dashboard source %q metadata name = %q", item.ID, source.Metadata.Name)
 	}
-	if strings.TrimSpace(source.Metadata.Workspace) != item.WorkspaceID {
-		return fmt.Errorf("project dashboard source %q workspace = %q, want %q", item.ID, source.Metadata.Workspace, item.WorkspaceID)
+	if source.Metadata.Project != item.ProjectID {
+		return fmt.Errorf("project dashboard source %q project = %q, want %q", item.ID, source.Metadata.Project, item.ProjectID)
 	}
-	if strings.TrimSpace(source.Document.SemanticModel) != "" && strings.TrimSpace(source.Document.SemanticModel) != item.SemanticModel {
+	if source.Document.SemanticModel != "" && source.Document.SemanticModel != item.SemanticModel {
 		return fmt.Errorf("project dashboard source %q semantic model = %q, want %q", item.ID, source.Document.SemanticModel, item.SemanticModel)
 	}
 	if item.Title == "" {
@@ -360,14 +375,14 @@ func enrichProjectItem(runtime runtimehost.Runtime, item *Dashboard) error {
 	return nil
 }
 
-func (s *Service) workspaceCandidates(ctx context.Context, workspaceID string) ([]Dashboard, error) {
-	lifecycles, err := s.repository.List(ctx, workspaceID)
+func (s *Service) instanceCandidates(ctx context.Context, projectID graph.ResourceID) ([]Dashboard, error) {
+	lifecycles, err := s.repository.List(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 	items := make([]Dashboard, 0, len(lifecycles))
 	for _, lifecycle := range lifecycles {
-		item, ok, err := workspaceItemBase(workspaceID, lifecycle)
+		item, ok, err := instanceItemBase(projectID, lifecycle)
 		if err != nil {
 			return nil, err
 		}
@@ -378,15 +393,15 @@ func (s *Service) workspaceCandidates(ctx context.Context, workspaceID string) (
 	return items, nil
 }
 
-func (s *Service) workspaceCandidate(ctx context.Context, workspaceID string, id authoring.DashboardID) (*Dashboard, error) {
-	lifecycle, err := s.repository.Get(ctx, workspaceID, id)
+func (s *Service) instanceCandidate(ctx context.Context, projectID graph.ResourceID, id authoring.DashboardID) (*Dashboard, error) {
+	lifecycle, err := s.repository.Get(ctx, projectID, id)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	item, ok, err := workspaceItemBase(workspaceID, lifecycle)
+	item, ok, err := instanceItemBase(projectID, lifecycle)
 	if err != nil {
 		return nil, err
 	}
@@ -396,9 +411,9 @@ func (s *Service) workspaceCandidate(ctx context.Context, workspaceID string, id
 	return &item, nil
 }
 
-func workspaceItemBase(workspaceID string, lifecycle authoring.DashboardLifecycle) (Dashboard, bool, error) {
-	if strings.TrimSpace(lifecycle.WorkspaceID) != workspaceID {
-		return Dashboard{}, false, fmt.Errorf("dashboard %q belongs to workspace %q, want %q", lifecycle.ID, lifecycle.WorkspaceID, workspaceID)
+func instanceItemBase(projectID graph.ResourceID, lifecycle authoring.DashboardLifecycle) (Dashboard, bool, error) {
+	if lifecycle.ProjectID != projectID {
+		return Dashboard{}, false, fmt.Errorf("dashboard %q belongs to project %q, want %q", lifecycle.ID, lifecycle.ProjectID, projectID)
 	}
 	if lifecycle.Status == authoring.LifecycleStatusArchived {
 		return Dashboard{}, false, nil
@@ -411,11 +426,11 @@ func workspaceItemBase(workspaceID string, lifecycle authoring.DashboardLifecycl
 		return Dashboard{}, false, err
 	}
 	item := Dashboard{
-		ID: lifecycle.ID.String(), WorkspaceID: workspaceID, Title: lifecycle.Title,
+		ID: lifecycle.ID, ProjectID: projectID, Title: lifecycle.Title,
 		SemanticModel: lifecycle.SemanticModel,
-		Source:        SourceWorkspace, Origin: provenance.Origin, Status: lifecycle.Status,
+		Source:        SourceInstance, Origin: provenance.Origin, Status: lifecycle.Status,
 		Visibility: lifecycle.Visibility, Owner: lifecycle.OwnerPrincipalID,
-		StableID: stableID(SourceWorkspace, workspaceID, lifecycle.ID.String()),
+		StableID: stableID(SourceInstance, projectID, lifecycle.ID.String()),
 		Revision: &RevisionEvidence{ID: revisionToken.RevisionID.String(), Number: revisionToken.Number, ContentHash: revisionToken.ContentHash},
 	}
 	if lifecycle.Status == authoring.LifecycleStatusPublished && lifecycle.Published != nil {
@@ -423,33 +438,33 @@ func workspaceItemBase(workspaceID string, lifecycle authoring.DashboardLifecycl
 		publishedToken := lifecycle.Published.Revision
 		item.Publication = &PublicationEvidence{
 			Revision: RevisionEvidence{ID: publishedToken.RevisionID.String(), Number: publishedToken.Number, ContentHash: publishedToken.ContentHash}, DefinitionHash: compiled.DefinitionHash,
-			SemanticServingStateID: compiled.SemanticServingStateID, PublishedAt: lifecycle.Published.PublishedAt,
+			SemanticIdentity: compiled.SemanticIdentity, PublishedAt: lifecycle.Published.PublishedAt,
 		}
 	}
 	return item, true, nil
 }
 
-func (s *Service) enrichWorkspaceItems(ctx context.Context, workspaceID string, items []Dashboard) error {
+func (s *Service) enrichInstanceItems(ctx context.Context, projectID graph.ResourceID, items []Dashboard) error {
 	for index := range items {
-		if items[index].Source != SourceWorkspace {
+		if items[index].Source != SourceInstance {
 			continue
 		}
-		if err := s.enrichWorkspaceItem(ctx, workspaceID, &items[index]); err != nil {
+		if err := s.enrichInstanceItem(ctx, projectID, &items[index]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) enrichWorkspaceItem(ctx context.Context, workspaceID string, item *Dashboard) error {
-	if item == nil || item.Source != SourceWorkspace || item.Revision == nil {
-		return fmt.Errorf("workspace dashboard metadata is incomplete")
+func (s *Service) enrichInstanceItem(ctx context.Context, projectID graph.ResourceID, item *Dashboard) error {
+	if item == nil || item.Source != SourceInstance || item.Revision == nil {
+		return fmt.Errorf("project dashboard metadata is incomplete")
 	}
-	revision, err := s.repository.GetRevision(ctx, workspaceID, authoring.DashboardID(item.ID), authoring.RevisionID(item.Revision.ID))
+	revision, err := s.repository.GetRevision(ctx, projectID, authoring.DashboardID(item.ID), authoring.RevisionID(item.Revision.ID))
 	if err != nil {
 		return err
 	}
-	if revision.DashboardID.String() != item.ID || revision.Token().RevisionID.String() != item.Revision.ID || revision.Token().Number != item.Revision.Number || revision.Token().ContentHash != item.Revision.ContentHash {
+	if revision.DashboardID != item.ID || revision.Token().RevisionID.String() != item.Revision.ID || revision.Token().Number != item.Revision.Number || revision.Token().ContentHash != item.Revision.ContentHash {
 		return fmt.Errorf("dashboard %q lifecycle revision pointer does not match retained revision", item.ID)
 	}
 	item.Description = revision.Document.Description
@@ -475,7 +490,7 @@ func (s *Service) authorizeCandidates(ctx context.Context, actorID string, group
 	for _, group := range groups {
 		for _, item := range group {
 			err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
-				ActorID: actorID, WorkspaceID: item.WorkspaceID, DashboardID: authoring.DashboardID(item.ID),
+				ActorID: actorID, ProjectID: item.ProjectID, DashboardID: authoring.DashboardID(item.ID),
 				OwnerPrincipalID: item.Owner, SemanticModel: item.SemanticModel,
 				Action: authoring.AuthorizationActionView,
 			})
@@ -502,17 +517,25 @@ func validateDashboards(items []Dashboard) error {
 }
 
 func validateDashboard(item Dashboard) error {
-	if strings.TrimSpace(item.WorkspaceID) == "" || strings.TrimSpace(item.ID) == "" {
+	if item.ProjectID == "" || item.ID == "" {
 		return fmt.Errorf("dashboard identity is incomplete")
 	}
-	if err := authoring.DashboardID(item.ID).Validate(); err != nil {
+	if err := authoring.ValidateDashboardID(authoring.DashboardID(item.ID)); err != nil {
 		return err
 	}
-	if strings.TrimSpace(item.Title) == "" || strings.TrimSpace(item.SemanticModel) == "" {
+	if strings.TrimSpace(item.Title) == "" || item.SemanticModel == "" {
 		return fmt.Errorf("dashboard %q metadata is incomplete", item.ID)
 	}
-	if item.Source != SourceProject && item.Source != SourceWorkspace {
+	if item.Source != SourceProject && item.Source != SourceInstance {
 		return fmt.Errorf("dashboard %q has invalid source %q", item.ID, item.Source)
+	}
+	if item.Source == SourceProject {
+		if err := item.ServingIdentity.Validate(); err != nil {
+			return fmt.Errorf("dashboard %q has invalid serving identity: %w", item.ID, err)
+		}
+		if item.ServingIdentity.ProjectID != item.ProjectID {
+			return fmt.Errorf("dashboard %q serving identity project %q does not match project %q", item.ID, item.ServingIdentity.ProjectID, item.ProjectID)
+		}
 	}
 	if !item.Origin.Valid() {
 		return fmt.Errorf("dashboard %q has invalid provenance origin %q", item.ID, item.Origin)
@@ -524,10 +547,10 @@ func validateDashboard(item Dashboard) error {
 }
 
 func rejectCollisions(items []Dashboard) error {
-	seen := make(map[string]SourceKind, len(items))
+	seen := make(map[graph.ResourceID]SourceKind, len(items))
 	for _, item := range items {
 		if source, ok := seen[item.ID]; ok && source != item.Source {
-			return fmt.Errorf("%w: workspace %q dashboard %q is owned by project and workspace sources", ErrAmbiguous, item.WorkspaceID, item.ID)
+			return fmt.Errorf("%w: project %q dashboard %q is owned by project and project sources", ErrAmbiguous, item.ProjectID, item.ID)
 		}
 		seen[item.ID] = item.Source
 	}
@@ -547,6 +570,6 @@ func sortDashboards(items []Dashboard) {
 	})
 }
 
-func stableID(source SourceKind, workspaceID, dashboardID string) string {
-	return string(source) + ":" + workspaceID + ":" + dashboardID
+func stableID(source SourceKind, projectID graph.ResourceID, dashboardID string) string {
+	return string(source) + ":" + projectID.String() + ":" + dashboardID
 }

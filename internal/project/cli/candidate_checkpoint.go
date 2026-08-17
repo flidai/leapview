@@ -112,12 +112,6 @@ func (store *CandidateCheckpointStore) LoadCandidate(
 		origin,
 		candidateKey,
 	)]
-	if !ok && candidateKey == "default" {
-		checkpoint, ok = document.Candidates[legacyCandidateCheckpointKey(
-			absolute,
-			origin,
-		)]
-	}
 	if !ok {
 		return CandidateCheckpoint{}, ErrCandidateCheckpointNotFound
 	}
@@ -246,11 +240,6 @@ func candidateCheckpointKey(projectPath, targetOrigin, candidateKey string) stri
 		projectPath + "\x00" + targetOrigin + "\x00" +
 			normalizeCheckpointCandidateKey(candidateKey),
 	))
-	return hex.EncodeToString(sum[:])
-}
-
-func legacyCandidateCheckpointKey(projectPath, targetOrigin string) string {
-	sum := sha256.Sum256([]byte(projectPath + "\x00" + targetOrigin))
 	return hex.EncodeToString(sum[:])
 }
 

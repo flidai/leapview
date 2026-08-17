@@ -7,10 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -27,112 +28,36 @@ const (
 
 type CatalogType = agentcontracts.CatalogType
 
-const (
-	CatalogTypeWorkspace     = agentcontracts.CatalogTypeWorkspace
-	CatalogTypeDashboard     = agentcontracts.CatalogTypeDashboard
-	CatalogTypePage          = agentcontracts.CatalogTypePage
-	CatalogTypeVisual        = agentcontracts.CatalogTypeVisual
-	CatalogTypeFilter        = agentcontracts.CatalogTypeFilter
-	CatalogTypeSemanticModel = agentcontracts.CatalogTypeSemanticModel
-	CatalogTypeSemanticTable = agentcontracts.CatalogTypeSemanticTable
-	CatalogTypeField         = agentcontracts.CatalogTypeField
-	CatalogTypeMeasure       = agentcontracts.CatalogTypeMeasure
-)
-
-var catalogTypes = map[CatalogType]struct{}{
-	CatalogTypeWorkspace:     {},
-	CatalogTypeDashboard:     {},
-	CatalogTypePage:          {},
-	CatalogTypeVisual:        {},
-	CatalogTypeFilter:        {},
-	CatalogTypeSemanticModel: {},
-	CatalogTypeSemanticTable: {},
-	CatalogTypeField:         {},
-	CatalogTypeMeasure:       {},
-}
-
-var catalogChildren = map[CatalogType]map[CatalogType]struct{}{
-	CatalogTypeWorkspace: {
-		CatalogTypeDashboard:     {},
-		CatalogTypeSemanticModel: {},
-	},
-	CatalogTypeDashboard: {
-		CatalogTypePage: {},
-	},
-	CatalogTypePage: {
-		CatalogTypeVisual: {},
-		CatalogTypeFilter: {},
-	},
-	CatalogTypeSemanticModel: {
-		CatalogTypeSemanticTable: {},
-		CatalogTypeField:         {},
-		CatalogTypeMeasure:       {},
-	},
-	CatalogTypeSemanticTable: {
-		CatalogTypeField: {},
-	},
-}
-
 type CatalogRef = agentcontracts.CatalogRef
 
-type CatalogLocation struct {
-	DashboardID   string `json:"dashboardId"`
-	DashboardName string `json:"dashboardName,omitempty"`
-	PageID        string `json:"pageId"`
-	PageName      string `json:"pageName,omitempty"`
-	Href          string `json:"href,omitempty"`
-}
-
-type CatalogLocationSelection struct {
-	DashboardID string `json:"dashboardId"`
-	PageID      string `json:"pageId"`
-}
-
-type CatalogHierarchyItem struct {
-	Ref  CatalogRef `json:"ref"`
-	Name string     `json:"name"`
-}
-
-type CatalogWorkspace struct {
-	Ref  CatalogRef `json:"ref"`
-	Name string     `json:"name"`
-}
-
 type CatalogItem struct {
-	Ref          CatalogRef             `json:"ref"`
-	Name         string                 `json:"name"`
-	Description  string                 `json:"description,omitempty"`
-	Workspace    CatalogWorkspace       `json:"workspace"`
-	Hierarchy    []CatalogHierarchyItem `json:"hierarchy"`
-	Locations    []CatalogLocation      `json:"locations,omitempty"`
-	Href         string                 `json:"href,omitempty"`
-	Capabilities []string               `json:"capabilities"`
-}
-
-type CatalogSearchContext struct {
-	DashboardID string `json:"dashboardId,omitempty"`
-	PageID      string `json:"pageId,omitempty"`
+	Ref         CatalogRef `json:"ref"`
+	Name        string     `json:"name"`
+	DisplayName string     `json:"displayName,omitempty"`
+	Description string     `json:"description,omitempty"`
+	Domain      string     `json:"domain,omitempty"`
+	Owner       string     `json:"owner,omitempty"`
+	Tags        []string   `json:"tags,omitempty"`
 }
 
 type CatalogSearchRequest struct {
-	Query        string                `json:"query"`
-	Types        []CatalogType         `json:"types,omitempty"`
-	WorkspaceIDs []string              `json:"workspaceIds,omitempty"`
-	Context      *CatalogSearchContext `json:"context,omitempty"`
-	Cursor       string                `json:"cursor,omitempty"`
-	Limit        int                   `json:"limit,omitempty"`
+	Query  string        `json:"query"`
+	Kinds  []CatalogType `json:"kinds,omitempty"`
+	Domain string        `json:"domain,omitempty"`
+	Cursor string        `json:"cursor,omitempty"`
+	Limit  int           `json:"limit,omitempty"`
 }
 
 type CatalogListRequest struct {
 	Parent     *CatalogRef   `json:"parent,omitempty"`
-	ChildTypes []CatalogType `json:"childTypes,omitempty"`
+	ChildKinds []CatalogType `json:"childKinds,omitempty"`
+	Domain     string        `json:"domain,omitempty"`
 	Cursor     string        `json:"cursor,omitempty"`
 	Limit      int           `json:"limit,omitempty"`
 }
 
 type CatalogGetRequest struct {
-	Ref      CatalogRef                `json:"ref"`
-	Location *CatalogLocationSelection `json:"location,omitempty"`
+	Ref CatalogRef `json:"ref"`
 }
 
 type CatalogPage struct {
@@ -147,6 +72,13 @@ type CatalogGetResult struct {
 	Details map[string]any `json:"details"`
 }
 
+// ResourceResolver resolves an exact graph resource through the authorized
+// active-generation catalog before an authoring or query tool executes.
+type ResourceResolver func(context.Context, Scope, projectgraph.ResourceID, projectgraph.Kind, access.Capability) (projectgraph.ResourceID, error)
+
+// Catalog is the sole model-facing catalog port. Implementations must resolve
+// against the immutable active serving-generation snapshot and an
+// authorization subject set for Scope.PrincipalID.
 type Catalog interface {
 	Search(context.Context, Scope, CatalogSearchRequest) (CatalogPage, error)
 	List(context.Context, Scope, CatalogListRequest) (CatalogPage, error)
@@ -165,19 +97,14 @@ func (e *CatalogError) Error() string {
 	return e.Message
 }
 
-type CatalogProvider struct {
-	Catalog Catalog
-}
+type CatalogProvider struct{ Catalog Catalog }
 
 func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 	return []agentcore.ToolDefinition{
 		{
-			Name:         CatalogSearchToolName,
-			Description:  "Search the complete authorized LeapView BI catalog across workspaces. Use this when you know words from a resource name or description but not its exact location.",
-			InputSchema:  json.RawMessage(agentcontracts.CatalogSearchInputSchemaJSON),
-			OutputSchema: json.RawMessage(agentcontracts.CatalogPageSchemaJSON),
-			Effect:       "read",
-			Tags:         []string{"catalog", "search"},
+			Name: CatalogSearchToolName, Description: "Search authorized project resources by stable ID, name, description, or domain metadata.",
+			InputSchema: json.RawMessage(agentcontracts.CatalogSearchInputSchemaJSON), OutputSchema: json.RawMessage(agentcontracts.CatalogPageSchemaJSON),
+			Effect: "read", Tags: []string{"catalog", "search"},
 			Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
 				var request CatalogSearchRequest
 				if err := decodeCatalogArguments(call.Arguments, &request); err != nil {
@@ -193,7 +120,7 @@ func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 				if err := validateCatalogLimit(request.Limit, MaxCatalogSearchLimit); err != nil {
 					return ToolError("invalid_arguments", err.Error()), nil
 				}
-				if err := validateCatalogTypes(request.Types); err != nil {
+				if err := validateCatalogKinds(request.Kinds); err != nil {
 					return ToolError("invalid_arguments", err.Error()), nil
 				}
 				if p.Catalog == nil {
@@ -207,12 +134,9 @@ func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 			}),
 		},
 		{
-			Name:         CatalogListToolName,
-			Description:  "Browse one deterministic level of the authorized LeapView catalog hierarchy. Omit parent to list workspaces, then pass returned refs to continue browsing.",
-			InputSchema:  json.RawMessage(agentcontracts.CatalogListInputSchemaJSON),
-			OutputSchema: json.RawMessage(agentcontracts.CatalogPageSchemaJSON),
-			Effect:       "read",
-			Tags:         []string{"catalog", "browse"},
+			Name: CatalogListToolName, Description: "Browse authorized project resources. Returned refs are exact stable IDs for subsequent calls.",
+			InputSchema: json.RawMessage(agentcontracts.CatalogListInputSchemaJSON), OutputSchema: json.RawMessage(agentcontracts.CatalogPageSchemaJSON),
+			Effect: "read", Tags: []string{"catalog", "browse"},
 			Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
 				var request CatalogListRequest
 				if err := decodeCatalogArguments(call.Arguments, &request); err != nil {
@@ -224,19 +148,14 @@ func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 				if err := validateCatalogLimit(request.Limit, MaxCatalogListLimit); err != nil {
 					return ToolError("invalid_arguments", err.Error()), nil
 				}
-				request.ChildTypes = normalizedCatalogTypes(request.ChildTypes)
-				if request.Parent == nil {
-					if len(request.ChildTypes) > 0 && (len(request.ChildTypes) != 1 || request.ChildTypes[0] != CatalogTypeWorkspace) {
-						return ToolError("invalid_arguments", "root can only list workspace children"), nil
-					}
-				} else {
-					*request.Parent = normalizedCatalogRef(*request.Parent)
+				request.ChildKinds = normalizedCatalogKinds(request.ChildKinds)
+				if request.Parent != nil {
 					if err := validateCatalogRef(*request.Parent); err != nil {
 						return ToolError("invalid_arguments", err.Error()), nil
 					}
-					if err := validateCatalogChildTypes(request.Parent.Type, request.ChildTypes); err != nil {
-						return ToolError("invalid_arguments", err.Error()), nil
-					}
+				}
+				if err := validateCatalogKinds(request.ChildKinds); err != nil {
+					return ToolError("invalid_arguments", err.Error()), nil
 				}
 				if p.Catalog == nil {
 					return ToolError("catalog_unavailable", "catalog service is not configured"), nil
@@ -249,27 +168,16 @@ func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 			}),
 		},
 		{
-			Name:         CatalogGetToolName,
-			Description:  "Get the compact definition and type-specific metadata for one exact catalog ref. A dashboard/page location is required when a visual or filter is shared.",
-			InputSchema:  json.RawMessage(agentcontracts.CatalogGetInputSchemaJSON),
-			OutputSchema: json.RawMessage(agentcontracts.CatalogGetResultSchemaJSON),
-			Effect:       "read",
-			Tags:         []string{"catalog", "describe"},
+			Name: CatalogGetToolName, Description: "Resolve one exact authorized project resource ID and return its compact metadata.",
+			InputSchema: json.RawMessage(agentcontracts.CatalogGetInputSchemaJSON), OutputSchema: json.RawMessage(agentcontracts.CatalogGetResultSchemaJSON),
+			Effect: "read", Tags: []string{"catalog", "describe"},
 			Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
 				var request CatalogGetRequest
 				if err := decodeCatalogArguments(call.Arguments, &request); err != nil {
 					return ToolError("invalid_arguments", err.Error()), nil
 				}
-				request.Ref = normalizedCatalogRef(request.Ref)
 				if err := validateCatalogRef(request.Ref); err != nil {
 					return ToolError("invalid_arguments", err.Error()), nil
-				}
-				if request.Location != nil {
-					request.Location.DashboardID = strings.TrimSpace(request.Location.DashboardID)
-					request.Location.PageID = strings.TrimSpace(request.Location.PageID)
-					if request.Location.DashboardID == "" || request.Location.PageID == "" {
-						return ToolError("invalid_arguments", "location requires dashboardId and pageId"), nil
-					}
 				}
 				if p.Catalog == nil {
 					return ToolError("catalog_unavailable", "catalog service is not configured"), nil
@@ -315,62 +223,33 @@ func validateCatalogLimit(limit, maximum int) error {
 	return nil
 }
 
-func validateCatalogTypes(types []CatalogType) error {
-	for _, typ := range types {
-		if _, ok := catalogTypes[typ]; !ok {
-			return fmt.Errorf("unsupported catalog type %q", typ)
+func validateCatalogKinds(kinds []CatalogType) error {
+	for _, kind := range kinds {
+		if _, err := projectgraph.ParseKind(string(kind)); err != nil {
+			return fmt.Errorf("unsupported catalog kind %q", kind)
 		}
 	}
 	return nil
 }
 
 func validateCatalogRef(ref CatalogRef) error {
-	if ref.WorkspaceID == "" {
-		return fmt.Errorf("ref.workspaceId is required")
+	if _, err := projectgraph.NewResourceID(strings.TrimSpace(ref.ID)); err != nil {
+		return fmt.Errorf("ref.id is invalid: %v", err)
 	}
-	if _, ok := catalogTypes[ref.Type]; !ok {
-		return fmt.Errorf("unsupported catalog type %q", ref.Type)
-	}
-	if ref.ID == "" {
-		return fmt.Errorf("ref.id is required")
-	}
-	if ref.Type == CatalogTypeWorkspace && ref.ID != ref.WorkspaceID {
-		return fmt.Errorf("workspace ref id must equal workspaceId")
-	}
-	return nil
+	return validateCatalogKinds([]CatalogType{ref.Kind})
 }
 
-func normalizedCatalogRef(ref CatalogRef) CatalogRef {
-	ref.WorkspaceID = strings.TrimSpace(ref.WorkspaceID)
-	ref.ID = strings.TrimSpace(ref.ID)
-	return ref
-}
-
-func normalizedCatalogTypes(types []CatalogType) []CatalogType {
+func normalizedCatalogKinds(kinds []CatalogType) []CatalogType {
 	seen := map[CatalogType]struct{}{}
-	out := make([]CatalogType, 0, len(types))
-	for _, typ := range types {
-		if _, duplicate := seen[typ]; duplicate {
+	out := make([]CatalogType, 0, len(kinds))
+	for _, kind := range kinds {
+		if _, ok := seen[kind]; ok {
 			continue
 		}
-		seen[typ] = struct{}{}
-		out = append(out, typ)
+		seen[kind] = struct{}{}
+		out = append(out, kind)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
-}
-
-func validateCatalogChildTypes(parent CatalogType, children []CatalogType) error {
-	allowed, ok := catalogChildren[parent]
-	if !ok {
-		return fmt.Errorf("catalog type %q cannot have children", parent)
-	}
-	for _, child := range children {
-		if _, ok := allowed[child]; !ok {
-			return fmt.Errorf("catalog type %q cannot list child type %q", parent, child)
-		}
-	}
-	return nil
 }
 
 func catalogToolError(fallback string, err error) agentcore.ToolResult {

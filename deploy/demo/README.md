@@ -48,10 +48,10 @@ project environment, plus managing the public dashboard publications declared
 by the canonical showcase.
 
 Target capability discovery requires an authenticated credential but no
-pre-existing workspace grant. This is essential on the first deployment,
-because the project's workspaces do not exist until its exact candidate is
+pre-existing project grant. This is essential on the first deployment,
+because the project graph is not active until its exact candidate is
 activated. The subsequent authoring, ingestion, publication, approval, and
-activation calls remain protected by their project-environment grants.
+activation calls remain protected by the canonical project grants.
 
 ## Human access
 
@@ -66,8 +66,8 @@ demo login:
 - `DEMO_VIEWER_PASSWORD`
 
 The shared principal is `demo@leapview.dev`. The project grants it only
-`USE_WORKSPACE`, `VIEW_ITEM`, and `QUERY_DATA` on the `sales`, `operations`, and
-`visuals` workspaces. Do not bind it to the built-in `viewer` role: that role
+`RESOURCE_USE` and `RESOURCE_READ` on the canonical project and dashboard
+resource IDs. Do not bind it to the built-in `viewer` role: that role
 also enables the agent and shared conversation history. The shared login must
 never receive administration, authoring, preview, refresh, deployment, token,
 or connection privileges.

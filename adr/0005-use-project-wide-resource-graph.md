@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-08-15
 
-Implementation: pending
+Implementation: complete
 
 Deciders: LeapView maintainers
 

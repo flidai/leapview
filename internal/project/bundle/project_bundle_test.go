@@ -7,802 +7,393 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	workspacecompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
-	"github.com/flidai/leapview/internal/workspace"
-	"github.com/stretchr/testify/require"
 )
 
-const olistManagedDataRevision = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-func olistManagedDataRevisions() map[string]string {
-	return map[string]string{"olist": olistManagedDataRevision}
-}
-
-func TestPackProjectValidatesSelectedWorkspace(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", ProjectFile)
-	var bundle bytes.Buffer
-	servingStateID := string("dep_ops")
-	manifest, _, err := PackProject(projectPath, PackProjectOptions{WorkspaceID: "operations", ServingStateID: servingStateID, ManagedDataRevisions: olistManagedDataRevisions()}, &bundle)
+func bundleProject(t *testing.T) projectartifact.Project {
+	t.Helper()
+	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project:demo", Kind: projectgraph.KindProject, Name: "demo", Provenance: projectgraph.Provenance{Path: "leapview.yaml"}},
+		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse", Provenance: projectgraph.Provenance{Path: "connections/warehouse.yaml"}},
+		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders", Provenance: projectgraph.Provenance{Path: "sources/orders.yaml"}},
+		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model", Provenance: projectgraph.Provenance{Path: "models/orders.yaml"}},
+	}, []projectgraph.Edge{{From: "source:orders", To: "connection:warehouse"}, {From: "model:orders", To: "source:orders"}})
 	if err != nil {
-		t.Fatalf("PackProject() error = %v", err)
-	}
-	if manifest.CatalogPath != ProjectFile {
-		t.Fatalf("CatalogPath = %q, want %q", manifest.CatalogPath, ProjectFile)
-	}
-	if manifest.WorkspaceID != "operations" {
-		t.Fatalf("WorkspaceID = %q, want operations", manifest.WorkspaceID)
-	}
-
-	path := filepath.Join(t.TempDir(), "artifact.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	validation, err := ValidateArtifact(path, string("operations"), servingStateID)
+	project, err := projectartifact.NewProject(graphValue, manifest.Project{
+		ID:   "project:demo",
+		Name: "demo",
+		Connections: map[string]semanticmodel.Connection{
+			"connection:warehouse": {Kind: "managed"},
+		},
+		Sources: map[string]semanticmodel.Source{
+			"source:orders": {Connection: "connection:warehouse"},
+		},
+		Models: map[string]semanticmodel.Table{
+			"model:orders": {Source: "source:orders"},
+		},
+		ResourceFiles: map[string]string{"project:demo": "leapview.yaml", "connection:warehouse": "connections/warehouse.yaml", "source:orders": "sources/orders.yaml", "model:orders": "models/orders.yaml"},
+	})
 	if err != nil {
-		t.Fatalf("ValidateArtifact() error = %v", err)
+		t.Fatal(err)
 	}
-	if len(validation.Graph.Assets) == 0 {
-		t.Fatal("validated graph has no assets")
-	}
-	for _, asset := range validation.Graph.Assets {
-		if asset.WorkspaceID != "operations" {
-			t.Fatalf("asset workspace = %q, want operations: %#v", asset.WorkspaceID, asset)
-		}
-	}
-	root := t.TempDir()
-	if err := ExtractArtifact(path, root); err != nil {
-		t.Fatalf("ExtractArtifact() error = %v", err)
-	}
-	compiled, _, err := LoadCompiledWorkspaceArtifact(root)
+	return project
+}
+
+func bundlePlan(project projectartifact.Project) Plan {
+	return Plan{Project: project.ProjectID().String(), Connections: []string{"connection:warehouse"}, Sources: []string{"source:orders"}, Models: []string{"model:orders"}}
+}
+
+func TestPackCompiledProjectUsesSingleDeterministicCompiledPath(t *testing.T) {
+	project := bundleProject(t)
+	var first, second bytes.Buffer
+	manifestA, digestA, err := PackCompiledProject(project, bundlePlan(project), &first)
 	if err != nil {
-		t.Fatalf("LoadCompiledWorkspaceArtifact() error = %v", err)
+		t.Fatal(err)
 	}
-	if compiled.ProjectID != "leapview-showcase" {
-		t.Fatalf("ProjectID = %q, want leapview-showcase", compiled.ProjectID)
+	manifestB, digestB, err := PackCompiledProject(project, bundlePlan(project), &second)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if compiled.ProjectDigest == "" {
-		t.Fatal("ProjectDigest is empty")
+	if !bytes.Equal(first.Bytes(), second.Bytes()) || digestA != digestB {
+		t.Fatal("identical project bundles are not deterministic")
 	}
-	wantWorkspaces := []string{"operations", "sales", "visuals"}
-	if !reflect.DeepEqual(compiled.ProjectWorkspaces, wantWorkspaces) {
-		t.Fatalf("ProjectWorkspaces = %#v, want %#v", compiled.ProjectWorkspaces, wantWorkspaces)
+	if !strings.HasPrefix(digestA, "sha256:") {
+		t.Fatalf("packed bundle digest = %q, want canonical sha256 identity", digestA)
 	}
-	if validation.ProjectDigest != compiled.ProjectDigest || !reflect.DeepEqual(validation.ProjectWorkspaces, wantWorkspaces) {
-		t.Fatalf("validation project identity = (%q, %#v), want (%q, %#v)", validation.ProjectDigest, validation.ProjectWorkspaces, compiled.ProjectDigest, wantWorkspaces)
+	if manifestA.CompiledPath != CompiledProjectFile || manifestB.CompiledPath != CompiledProjectFile {
+		t.Fatalf("compiled paths = %q, %q, want %q", manifestA.CompiledPath, manifestB.CompiledPath, CompiledProjectFile)
 	}
-	if !reflect.DeepEqual(validation.AccessPolicy, compiled.Manifest.Access) {
-		t.Fatalf("validation access policy does not match compiled artifact")
+	if strings.Contains(string(first.Bytes()), "workspaceId") || strings.Contains(string(first.Bytes()), "environment") {
+		t.Fatal("bundle retained serving/workspace selectors")
 	}
-	if compiled.Validation.Status != "passed" || compiled.Validation.SchemaVersion != "leapview.dev/v1" {
-		t.Fatalf("compiled validation = %#v, want passed leapview.dev/v1", compiled.Validation)
+	path := filepath.Join(t.TempDir(), "project.tar.gz")
+	if err := os.WriteFile(path, first.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if compiled.Validation.GraphHash == "" || compiled.Validation.GraphHash != graphHash(compiled.Graph) {
-		t.Fatalf("compiled validation graph hash = %q, want %q", compiled.Validation.GraphHash, graphHash(compiled.Graph))
+	validation, err := ValidateArtifact(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validation.Digest != digestA {
+		t.Fatalf("validated bundle digest = %q, packed = %q", validation.Digest, digestA)
+	}
+	if validation.ProjectID != project.ProjectID().String() || validation.ProjectDigest != project.Digest() {
+		t.Fatalf("validation identity = (%q, %q), want (%q, %q)", validation.ProjectID, validation.ProjectDigest, project.ProjectID(), project.Digest())
+	}
+	if !strings.HasPrefix(validation.Digest, "sha256:") {
+		t.Fatalf("bundle digest = %q, want canonical sha256 identity", validation.Digest)
 	}
 }
 
-func TestPackCompiledProjectCreatesTargetPlansFromTheSameImmutableArtifact(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", ProjectFile)
-	projectArtifact, err := workspacecompiler.CompileProjectArtifact(projectPath)
-	require.NoError(t, err)
-	sourceDigest := "sha256:" + strings.Repeat("1", 64)
-	targets := []struct {
-		environment    string
-		servingStateID string
-		revision       string
-	}{
-		{environment: "dev", servingStateID: "state_dev", revision: "sha256:" + strings.Repeat("a", 64)},
-		{environment: "prod", servingStateID: "state_prod", revision: "sha256:" + strings.Repeat("b", 64)},
+func TestPackProjectPreservesAuthoredSourcesDeterministically(t *testing.T) {
+	project := bundleProject(t)
+	root := t.TempDir()
+	projectPath := filepath.Join(root, ProjectFile)
+	if err := os.WriteFile(projectPath, []byte("apiVersion: leapview.dev/v1\nkind: Project\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	var bundleDigests []string
-	for _, target := range targets {
-		var output bytes.Buffer
-		manifest, bundleDigest, err := PackCompiledProject(
-			projectArtifact,
-			sourceDigest,
-			PackProjectOptions{
-				WorkspaceID: "operations",
-				Environment: target.environment, ServingStateID: target.servingStateID,
-				ManagedDataRevisions: map[string]string{"olist": target.revision},
-			},
-			&output,
-		)
-		if err != nil {
-			t.Fatalf("PackCompiledProject(%s) error = %v", target.environment, err)
-		}
-		if manifest.CatalogPath != ProjectArtifactFile || manifest.ProjectDigest != sourceDigest {
-			t.Fatalf("manifest = %#v", manifest)
-		}
-		path := filepath.Join(t.TempDir(), "artifact.tar.gz")
-		if err := os.WriteFile(path, output.Bytes(), 0o600); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "sources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "connections"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "models"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sources", "orders.yaml"), []byte("kind: Source\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte("kind: Connection\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("kind: Model\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	manifestValue, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project)}, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifestValue.CatalogPath != ProjectFile || len(manifestValue.Files) != 4 {
+		t.Fatalf("manifest = %#v", manifestValue)
+	}
+	path := filepath.Join(t.TempDir(), "project.tar.gz")
+	if err := os.WriteFile(path, output.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validation, err := ValidateArtifact(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(validation.RootDir, ProjectFile)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPackProjectIncludesOnlyManifestAndGraphProvenanceFiles(t *testing.T) {
+	project := bundleProject(t)
+	root := t.TempDir()
+	projectPath := filepath.Join(root, ProjectFile)
+	files := map[string]string{
+		ProjectFile:                  "apiVersion: leapview.dev/v1\nkind: Project\n",
+		"connections/warehouse.yaml": "kind: Connection\n",
+		"sources/orders.yaml":        "kind: Source\n",
+		"models/orders.yaml":         "kind: Model\n",
+		"unrelated/other.yaml":       "must not be bundled\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		validation, err := ValidateArtifactWithOptions(
-			path,
-			"operations",
-			target.servingStateID,
-			ValidateOptions{Environment: target.environment},
-		)
-		if err != nil {
-			t.Fatalf("ValidateArtifactWithOptions(%s) error = %v", target.environment, err)
-		}
-		if validation.ProjectDigest != sourceDigest {
-			t.Fatalf("validated project digest = %q, want %q", validation.ProjectDigest, sourceDigest)
-		}
-		root := t.TempDir()
-		if err := ExtractArtifact(path, root); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		retained, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ProjectArtifactFile)))
-		require.NoError(t, err)
-		if !bytes.Equal(retained, projectArtifact.Canonical()) {
-			t.Fatal("target plan mutated the immutable project artifact")
-		}
-		bundleDigests = append(bundleDigests, bundleDigest)
 	}
-	if bundleDigests[0] == bundleDigests[1] {
-		t.Fatalf("target-specific plans share bundle digest %q", bundleDigests[0])
+	var output bytes.Buffer
+	manifestValue, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project)}, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifestValue.Files) != 4 {
+		t.Fatalf("manifest files = %#v, want project + three provenance files", manifestValue.Files)
+	}
+	for _, file := range manifestValue.Files {
+		if file.Path == "unrelated/other.yaml" {
+			t.Fatal("bundle recursively included unrelated YAML")
+		}
 	}
 }
 
-func TestPackProjectEmbedsCanonicalManagedDataRevisionPins(t *testing.T) {
-	projectPath := writeManagedBundleProject(t)
-	digest := "sha256:" + strings.Repeat("a", 64)
-	var bundle bytes.Buffer
-	_, _, err := PackProject(projectPath, PackProjectOptions{
-		WorkspaceID:          "sales",
-		ServingStateID:       "dep_sales",
-		ManagedDataRevisions: map[string]string{"orders": digest},
-	}, &bundle)
-	if err != nil {
-		t.Fatalf("PackProject() error = %v", err)
+func TestPackProjectRequiresExactSuppliedSourceSet(t *testing.T) {
+	project := bundleProject(t)
+	root := t.TempDir()
+	projectPath := filepath.Join(root, ProjectFile)
+	expected := map[string][]byte{
+		ProjectFile:                  []byte("project\n"),
+		"connections/warehouse.yaml": []byte("connection\n"),
+		"sources/orders.yaml":        []byte("source\n"),
+		"models/orders.yaml":         []byte("model\n"),
 	}
-	path := filepath.Join(t.TempDir(), "artifact.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o600); err != nil {
+	if _, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project), SourceFiles: expected}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("PackProject() exact source set error = %v", err)
+	}
+	for name, files := range map[string]map[string][]byte{
+		"missing": {
+			ProjectFile:           expected[ProjectFile],
+			"sources/orders.yaml": expected["sources/orders.yaml"],
+		},
+		"extra": {
+			ProjectFile:                  expected[ProjectFile],
+			"connections/warehouse.yaml": expected["connections/warehouse.yaml"],
+			"sources/orders.yaml":        expected["sources/orders.yaml"],
+			"models/orders.yaml":         expected["models/orders.yaml"],
+			"unrelated.yaml":             []byte("extra\n"),
+		},
+	} {
+		if _, _, err := PackProject(projectPath, PackProjectOptions{Project: project, Plan: bundlePlan(project), SourceFiles: files}, &bytes.Buffer{}); err == nil {
+			t.Fatalf("PackProject() %s source set error = nil", name)
+		}
+	}
+}
+
+func TestPackProjectRejectsProjectOutsideSourceRoot(t *testing.T) {
+	project := bundleProject(t)
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), ProjectFile)
+	if _, _, err := PackProject(outside, PackProjectOptions{Project: project, Plan: bundlePlan(project), SourceRoot: root, SourceFiles: map[string][]byte{
+		ProjectFile:           []byte("project\n"),
+		"sources/orders.yaml": []byte("source\n"),
+		"models/orders.yaml":  []byte("model\n"),
+	}}, &bytes.Buffer{}); err == nil {
+		t.Fatal("PackProject() outside source root error = nil")
+	}
+}
+
+func TestPackCompiledProjectRequiresExactPlanResourceLists(t *testing.T) {
+	project := bundleProject(t)
+	plan := bundlePlan(project)
+	plan.Models = nil
+	if _, _, err := PackCompiledProject(project, plan, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "models") {
+		t.Fatalf("PackCompiledProject() plan error = %v", err)
+	}
+}
+
+func TestLoadCompiledProjectRejectsUnknownVersionAndIdentity(t *testing.T) {
+	project := bundleProject(t)
+	var output bytes.Buffer
+	if _, _, err := PackCompiledProject(project, bundlePlan(project), &output); err != nil {
 		t.Fatal(err)
 	}
+	path := filepath.Join(t.TempDir(), "project.tar.gz")
+	if err := os.WriteFile(path, output.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutateBundle(t, path, func(compiled *CompiledProjectArtifact, _ *Manifest) {
+		compiled.Version = compiledProjectVersion + 1
+	})
 	root := t.TempDir()
 	if err := ExtractArtifact(path, root); err != nil {
 		t.Fatal(err)
 	}
-	compiled, _, err := LoadCompiledWorkspaceArtifact(root)
-	require.NoError(t, err)
-	if got := compiled.ManagedDataRevisions["orders"]; got != digest {
-		t.Fatalf("managedDataRevisions[orders] = %q, want %q", got, digest)
+	if _, _, err := LoadCompiledProjectArtifact(root); err == nil || !strings.Contains(err.Error(), "version") {
+		t.Fatalf("version error = %v", err)
+	}
+
+	var output2 bytes.Buffer
+	if _, _, err := PackCompiledProject(project, bundlePlan(project), &output2); err != nil {
+		t.Fatal(err)
+	}
+	path2 := filepath.Join(t.TempDir(), "project.tar.gz")
+	if err := os.WriteFile(path2, output2.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutateBundle(t, path2, func(compiled *CompiledProjectArtifact, _ *Manifest) {
+		compiled.ProjectID = "project:other"
+	})
+	root2 := t.TempDir()
+	if err := ExtractArtifact(path2, root2); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompiledProjectArtifact(root2); err == nil || !strings.Contains(err.Error(), "identity") {
+		t.Fatalf("identity error = %v", err)
 	}
 }
 
-func TestPackProjectRequiresExactManagedDataRevisionPins(t *testing.T) {
-	projectPath := writeManagedBundleProject(t)
-	digest := "sha256:" + strings.Repeat("a", 64)
-	tests := []struct {
-		name string
-		pins map[string]string
-	}{
-		{name: "missing", pins: map[string]string{}},
-		{name: "extra", pins: map[string]string{"orders": digest, "other": digest}},
-		{name: "whitespace key", pins: map[string]string{"orders ": digest}},
-		{name: "internal revision id", pins: map[string]string{"orders": "revision_1"}},
-		{name: "uppercase digest", pins: map[string]string{"orders": "sha256:" + strings.Repeat("A", 64)}},
+func TestLoadCompiledProjectRejectsTamperedManifestDigestEvenWhenRehashed(t *testing.T) {
+	project := bundleProject(t)
+	var output bytes.Buffer
+	if _, _, err := PackCompiledProject(project, bundlePlan(project), &output); err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var bundle bytes.Buffer
-			_, _, err := PackProject(projectPath, PackProjectOptions{
-				WorkspaceID:          "sales",
-				ServingStateID:       "dep_sales",
-				ManagedDataRevisions: test.pins,
-			}, &bundle)
-			if err == nil {
-				t.Fatal("PackProject() error = nil, want pin validation error")
-			}
-		})
+	path := filepath.Join(t.TempDir(), "project.tar.gz")
+	if err := os.WriteFile(path, output.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutateBundle(t, path, func(compiled *CompiledProjectArtifact, manifestValue *Manifest) {
+		compiled.Manifest.Name = "tampered"
+		compiled.ProjectDigest = "sha256:" + strings.Repeat("f", 64)
+		manifestValue.ProjectDigest = compiled.ProjectDigest
+	})
+	root := t.TempDir()
+	if err := ExtractArtifact(path, root); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompiledProjectArtifact(root); err == nil || !strings.Contains(err.Error(), "reconstructed manifest digest") {
+		t.Fatalf("tampered manifest error = %v", err)
 	}
 }
 
-func TestValidateCompiledWorkspaceArtifactRejectsConflictingManagedConnectionDefinitions(t *testing.T) {
-	digest := "sha256:" + strings.Repeat("a", 64)
-	compiled := CompiledWorkspaceArtifact{
-		Version:   compiledWorkspaceArtifactVersion,
-		ProjectID: "project-a",
-		Manifest: &manifest.Workspace{Models: map[string]*semanticmodel.Model{
-			"first":  {Connections: map[string]semanticmodel.Connection{"orders": {Kind: "managed"}}},
-			"second": {Connections: map[string]semanticmodel.Connection{"orders": {Kind: "managed", Description: "different"}}},
-		}},
-		ManagedDataRevisions: map[string]string{"orders": digest},
+func mutateBundle(t *testing.T, path string, mutate func(*CompiledProjectArtifact, *Manifest)) {
+	t.Helper()
+	root := t.TempDir()
+	if err := ExtractArtifact(path, root); err != nil {
+		t.Fatal(err)
 	}
-	compiled.Validation = CompiledArtifactValidation{Status: "passed", SchemaVersion: projectAPIVersion, GraphHash: graphHash(compiled.Graph)}
-	if err := ValidateCompiledWorkspaceArtifact(compiled); err == nil {
-		t.Fatal("ValidateCompiledWorkspaceArtifact() error = nil, want conflicting connection rejection")
+	data, err := os.ReadFile(filepath.Join(root, CompiledProjectFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compiled CompiledProjectArtifact
+	if err := json.Unmarshal(data, &compiled); err != nil {
+		t.Fatal(err)
+	}
+	manifestValue, err := readManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate(&compiled, &manifestValue)
+	data, err = json.MarshalIndent(compiled, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, CompiledProjectFile), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifestValue.CompiledSHA256 = digestBytes(data)
+	manifestData, err := json.MarshalIndent(manifestValue, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "manifest.json"), manifestData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeExtractedRoot(root, file); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestExtractArtifactRejectsSymlinkEscape(t *testing.T) {
-	artifactPath := writeTestBundle(t, map[string]string{"link/escape.txt": "owned"})
+	artifactPath := testTar(t, map[string]string{"link/escape.txt": "owned"})
 	dest := t.TempDir()
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(dest, "link")); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-
-	err := ExtractArtifact(artifactPath, dest)
-
-	if err == nil {
+	if err := ExtractArtifact(artifactPath, dest); err == nil {
 		t.Fatal("ExtractArtifact() error = nil, want symlink escape rejection")
 	}
-	if _, statErr := os.Stat(filepath.Join(outside, "escape.txt")); !os.IsNotExist(statErr) {
-		t.Fatalf("outside file stat err = %v, want not exist", statErr)
+}
+
+func TestExtractArtifactRejectsDuplicateEntries(t *testing.T) {
+	artifactPath := testTarEntries(t, [][2]string{{"manifest.json", "first"}, {"manifest.json", "second"}})
+	if err := ExtractArtifact(artifactPath, t.TempDir()); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("ExtractArtifact() duplicate error = %v", err)
 	}
 }
 
-func TestValidateArtifactRejectsUnlistedBundleFile(t *testing.T) {
-	path := packedProjectArtifact(t, "sales", "dev", "dep_extra")
-	addUnlistedArtifactFileForTest(t, path, "unexpected/extra.yaml", "owned")
-
-	_, err := ValidateArtifact(path, string("sales"), string("dep_extra"))
-	if err == nil {
-		t.Fatal("ValidateArtifact() error = nil, want unlisted file rejection")
-	}
-	if !strings.Contains(err.Error(), "not listed in manifest") {
-		t.Fatalf("ValidateArtifact() error = %v, want unlisted manifest file error", err)
-	}
-}
-
-func TestValidateArtifactIsDataLocationIndependent(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", ProjectFile)
-	var bundle bytes.Buffer
-	servingStateID := string("dep_discovered")
-	if _, _, err := PackProject(projectPath, PackProjectOptions{WorkspaceID: "sales", ServingStateID: servingStateID, ManagedDataRevisions: olistManagedDataRevisions()}, &bundle); err != nil {
-		t.Fatalf("PackProject() error = %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "artifact.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	validation, err := ValidateArtifact(path, "sales", servingStateID)
-	if err != nil {
-		t.Fatalf("ValidateArtifact() error = %v", err)
-	}
-	if len(validation.Graph.Assets) == 0 {
-		t.Fatal("validated graph has no assets")
-	}
-}
-
-func TestValidateArtifactRetargetsPortableCompiledGraph(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", ProjectFile)
-	var bundle bytes.Buffer
-	if _, _, err := PackProject(projectPath, PackProjectOptions{WorkspaceID: "operations", ServingStateID: "dep_ops", ManagedDataRevisions: olistManagedDataRevisions()}, &bundle); err != nil {
-		t.Fatalf("PackProject() error = %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "artifact.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	validation, err := ValidateArtifact(path, string("operations"), string("dep_other"))
-	if err != nil {
-		t.Fatalf("ValidateArtifact() error = %v", err)
-	}
-	for _, asset := range validation.Graph.Assets {
-		if asset.ServingStateID != "dep_other" {
-			t.Fatalf("asset serving state = %q, want dep_other", asset.ServingStateID)
-		}
-	}
-}
-
-func TestValidateArtifactRejectsMissingOrMismatchedEnvironment(t *testing.T) {
-	tests := []struct {
-		name        string
-		environment string
-		mutate      func(*CompiledWorkspaceArtifact, *Manifest)
-	}{
-		{
-			name:        "missing compiled environment",
-			environment: "dev",
-			mutate: func(compiled *CompiledWorkspaceArtifact, manifest *Manifest) {
-				compiled.Environment = ""
-			},
-		},
-		{
-			name:        "missing manifest environment",
-			environment: "dev",
-			mutate: func(compiled *CompiledWorkspaceArtifact, manifest *Manifest) {
-				manifest.Environment = ""
-			},
-		},
-		{
-			name:        "manifest compiled mismatch",
-			environment: "dev",
-			mutate: func(compiled *CompiledWorkspaceArtifact, manifest *Manifest) {
-				compiled.Environment = "prod"
-				manifest.Environment = "dev"
-			},
-		},
-		{
-			name:        "target mismatch",
-			environment: "prod",
-			mutate: func(compiled *CompiledWorkspaceArtifact, manifest *Manifest) {
-				compiled.Environment = "dev"
-				manifest.Environment = "dev"
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := packedProjectArtifact(t, "sales", "dev", "dep_env")
-			mutateArtifactForTest(t, path, tt.mutate)
-
-			_, err := ValidateArtifactWithOptions(path, "sales", "dep_env", ValidateOptions{Environment: tt.environment})
-			if err == nil {
-				t.Fatal("ValidateArtifactWithOptions() error = nil, want environment mismatch")
-			}
-		})
-	}
-}
-
-func digestCompiledForTest(t *testing.T, compiled CompiledWorkspaceArtifact) string {
+func testTar(t *testing.T, files map[string]string) string {
 	t.Helper()
-	raw, err := json.MarshalIndent(compiled, "", "  ")
-	require.NoError(t, err)
-	return digestBytes(raw)
+	entries := make([][2]string, 0, len(files))
+	for name, body := range files {
+		entries = append(entries, [2]string{name, body})
+	}
+	return testTarEntries(t, entries)
 }
 
-func packedProjectArtifact(t *testing.T, workspaceID string, environment string, servingStateID string) string {
+func testTarEntries(t *testing.T, entries [][2]string) string {
 	t.Helper()
-	projectPath := filepath.Join("..", "..", "..", "dashboards", ProjectFile)
-	var bundle bytes.Buffer
-	if _, _, err := PackProject(projectPath, PackProjectOptions{WorkspaceID: workspaceID, Environment: environment, ServingStateID: servingStateID, ManagedDataRevisions: olistManagedDataRevisions()}, &bundle); err != nil {
-		t.Fatalf("PackProject() error = %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "artifact.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func mutateArtifactForTest(t *testing.T, path string, mutate func(*CompiledWorkspaceArtifact, *Manifest)) {
-	t.Helper()
-	root := t.TempDir()
-	if err := ExtractArtifact(path, root); err != nil {
-		t.Fatalf("ExtractArtifact() error = %v", err)
-	}
-	compiled, manifest, err := LoadCompiledWorkspaceArtifact(root)
-	if err != nil {
-		t.Fatalf("LoadCompiledWorkspaceArtifact() error = %v", err)
-	}
-	mutate(&compiled, &manifest)
-	compiledRel, err := safeBundlePath(manifest.CompiledPath)
-	require.NoError(t, err)
-	compiledBytes, err := json.MarshalIndent(compiled, "", "  ")
-	require.NoError(t, err)
-	if err := os.WriteFile(filepath.Join(root, compiledRel), compiledBytes, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
-	require.NoError(t, err)
-	if err := os.WriteFile(filepath.Join(root, "manifest.json"), manifestBytes, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".leapview-test-artifact-*.tar.gz")
-	require.NoError(t, err)
-	tmpPath := tmp.Name()
-	if err := writeExtractedRoot(root, tmp); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		t.Fatal(err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		t.Fatal(err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		t.Fatal(err)
-	}
-}
-
-func addUnlistedArtifactFileForTest(t *testing.T, path, name, content string) {
-	t.Helper()
-	root := t.TempDir()
-	if err := ExtractArtifact(path, root); err != nil {
-		t.Fatalf("ExtractArtifact() error = %v", err)
-	}
-	target := filepath.Join(root, filepath.FromSlash(name))
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".leapview-test-artifact-*.tar.gz")
-	require.NoError(t, err)
-	tmpPath := tmp.Name()
-	if err := writeExtractedRoot(root, tmp); err != nil {
-		tmp.Close()
-		os.Remove(tmpPath)
-		t.Fatal(err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
-		t.Fatal(err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		t.Fatal(err)
-	}
-}
-
-func TestPackProjectRejectsUnknownWorkspace(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", ProjectFile)
-	var bundle bytes.Buffer
-	_, _, err := PackProject(projectPath, PackProjectOptions{WorkspaceID: "missing", ServingStateID: "dep_missing"}, &bundle)
-	if err == nil {
-		t.Fatal("PackProject() error = nil, want unknown workspace error")
-	}
-}
-
-func TestPackProjectStoresActiveDeploymentPlanDiff(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", ProjectFile)
-	active, err := workspacecompiler.CompileProject(projectPath, workspacecompiler.Options{ServingStateID: workspace.ServingStateID("dep_active")})
-	if err != nil {
-		t.Fatalf("CompileProject() error = %v", err)
-	}
-	activeWorkspace, ok := active.Workspace("operations")
-	if !ok {
-		t.Fatal("compiled project has no operations workspace")
-	}
-	activeGraph := activeWorkspace.Metadata().Graph
-	for index := range activeGraph.Assets {
-		if activeGraph.Assets[index].ID == "model_table:operations.orders" {
-			var payload map[string]any
-			if err := json.Unmarshal([]byte(activeGraph.Assets[index].PayloadJSON), &payload); err != nil {
-				t.Fatalf("unmarshal model table payload: %v", err)
-			}
-			payload["SQL"] = "SELECT *, 'changed' AS changed FROM source.\"olist.orders\""
-			payloadBytes, err := json.Marshal(payload)
-			if err != nil {
-				t.Fatalf("marshal model table payload: %v", err)
-			}
-			activeGraph.Assets[index].PayloadJSON = string(payloadBytes)
-		}
-	}
-	activeGraph.Assets = append(activeGraph.Assets, workspace.Asset{
-		ID:             "dashboard:operations.removed",
-		WorkspaceID:    "operations",
-		ServingStateID: "dep_active",
-		Type:           workspace.AssetTypeDashboard,
-		Key:            "operations.removed",
-		PayloadSchema:  workspace.PayloadSchemaForAssetType(workspace.AssetTypeDashboard),
-		ContentHash:    "removed",
-	})
-
-	var bundle bytes.Buffer
-	if _, _, err := PackProject(projectPath, PackProjectOptions{WorkspaceID: "operations", ServingStateID: "dep_ops", ActiveGraph: activeGraph, ManagedDataRevisions: olistManagedDataRevisions()}, &bundle); err != nil {
-		t.Fatalf("PackProject() error = %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "artifact.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	if err := ExtractArtifact(path, root); err != nil {
-		t.Fatalf("ExtractArtifact() error = %v", err)
-	}
-	compiled, _, err := LoadCompiledWorkspaceArtifact(root)
-	if err != nil {
-		t.Fatalf("LoadCompiledWorkspaceArtifact() error = %v", err)
-	}
-	if compiled.Plan.Summary.Changed != 1 || compiled.Plan.Summary.Removed != 1 {
-		t.Fatalf("plan summary = %#v, want one changed and one removed", compiled.Plan.Summary)
-	}
-}
-
-func TestPackProjectRejectsAuthoredConnectionCredentialReferences(t *testing.T) {
-	t.Setenv("LEAPVIEW_TEST_CRM_URL", "postgres://secret-host/sales")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "ambient-secret-must-not-be-serialized")
-	projectPath := writeBundleProjectFixture(t, map[string]string{
-		"leapview.yaml": `
-apiVersion: leapview.dev/v1
-kind: Project
-metadata:
-  name: test
-spec:
-  connections:
-    include:
-      - connections/*.yaml
-  sources:
-    include:
-      - sources/*.yaml
-  workspaces:
-    include:
-      - workspaces/*/workspace.yaml
-`,
-		"connections/crm.yaml": `
-apiVersion: leapview.dev/v1
-kind: Connection
-metadata:
-  name: crm
-spec:
-  kind: postgres
-  credentials:
-    provider: env
-    secret: LEAPVIEW_TEST_CRM_URL
-`,
-		"connections/lake.yaml": `
-apiVersion: leapview.dev/v1
-kind: Connection
-metadata:
-  name: lake
-spec:
-  kind: s3
-  scope: s3://company-analytics/sales/
-  credentials:
-    provider: ambient
-    region: eu-west-1
-`,
-		"sources/crm.orders.yaml": `
-apiVersion: leapview.dev/v1
-kind: Source
-metadata:
-  name: crm.orders
-spec:
-  connection: crm
-  object: public.orders
-  fields:
-    order_id:
-      type: string
-`,
-		"sources/lake.events.yaml": `
-apiVersion: leapview.dev/v1
-kind: Source
-metadata:
-  name: lake.events
-spec:
-  connection: lake
-  path: s3://company-analytics/sales/events/*.parquet
-  format: parquet
-  fields:
-    event_id:
-      type: string
-`,
-		"workspaces/sales/workspace.yaml": `
-apiVersion: leapview.dev/v1
-kind: Workspace
-metadata:
-  name: sales
-spec:
-  uses:
-    sources:
-      - crm.orders
-      - lake.events
-  models:
-    include:
-      - models/*.yaml
-  semanticModels:
-    include:
-      - semantic-models/*.yaml
-  dashboards:
-    include:
-      - dashboards/*.yaml
-  access:
-    include: []
-`,
-		"workspaces/sales/models/orders.yaml": `
-apiVersion: leapview.dev/v1
-kind: ModelTable
-metadata:
-  workspace: sales
-  name: orders
-spec:
-  primaryKey: order_id
-  sources:
-    - crm.orders
-  fields:
-    order_id:
-      label: ID
-  transform:
-    sql: |
-      SELECT order_id FROM source."crm.orders"
-`,
-		"workspaces/sales/semantic-models/sales.yaml": `
-apiVersion: leapview.dev/v1
-kind: SemanticModel
-metadata:
-  workspace: sales
-  name: sales
-spec:
-  tables:
-    - orders
-  measures:
-    order_count:
-      fact: orders
-      aggregation: count
-      empty: zero
-`,
-		"workspaces/sales/dashboards/sales.yaml": `
-apiVersion: leapview.dev/v1
-kind: Dashboard
-metadata:
-  workspace: sales
-  name: sales
-  title: Sales
-spec:
-  semanticModel: sales
-  visuals:
-    total:
-      type: kpi
-      query:
-        measures:
-          order_count:
-  pages:
-    - id: overview
-      title: Overview
-      components:
-        - id: total
-          kind: visual
-          visual: total
-          placement:
-            col: 1
-            row: 1
-            col_span: 3
-            row_span: 2
-`,
-	})
-
-	var bundle bytes.Buffer
-	_, _, err := PackProject(projectPath, PackProjectOptions{WorkspaceID: "sales", ServingStateID: "dep_sales"}, &bundle)
-	if err == nil || !strings.Contains(err.Error(), "target-owned") {
-		t.Fatalf("PackProject() error = %v, want target-owned credential rejection", err)
-	}
-}
-
-func TestReadCompiledWorkspaceArtifactRejectsStaleContractVersion(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, CompiledProjectFile)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	stale := CompiledWorkspaceArtifact{Version: compiledWorkspaceArtifactVersion - 1}
-	data, err := json.Marshal(stale)
-	require.NoError(t, err)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = readCompiledWorkspaceArtifact(root, Manifest{CompiledPath: CompiledProjectFile})
-	if err == nil || !strings.Contains(err.Error(), "redeploy the workspace") {
-		t.Fatalf("stale artifact error = %v, want explicit redeployment requirement", err)
-	}
-}
-
-func writeBundleProjectFixture(t *testing.T, files map[string]string) string {
-	t.Helper()
-	dir := t.TempDir()
-	for name, content := range files {
-		path := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return filepath.Join(dir, ProjectFile)
-}
-
-func writeManagedBundleProject(t *testing.T) string {
-	t.Helper()
-	return writeBundleProjectFixture(t, map[string]string{
-		"leapview.yaml": `
-apiVersion: leapview.dev/v1
-kind: Project
-metadata:
-  name: project-a
-spec:
-  connections:
-    include: [connections/*.yaml]
-  sources:
-    include: [sources/*.yaml]
-  workspaces:
-    include: [workspaces/*/workspace.yaml]
-`,
-		"connections/orders.yaml": `
-apiVersion: leapview.dev/v1
-kind: Connection
-metadata:
-  name: orders
-spec:
-  kind: managed
-  credentials:
-    provider: none
-`,
-		"sources/orders.orders.yaml": `
-apiVersion: leapview.dev/v1
-kind: Source
-metadata:
-  name: orders.orders
-spec:
-  connection: orders
-  path: orders.csv
-  format: csv
-  fields:
-    order_id:
-      type: string
-`,
-		"workspaces/sales/workspace.yaml": `
-apiVersion: leapview.dev/v1
-kind: Workspace
-metadata:
-  name: sales
-spec:
-  uses:
-    sources: [orders.orders]
-  models:
-    include: [models/*.yaml]
-  semanticModels:
-    include: [semantic-models/*.yaml]
-  dashboards:
-    include: []
-  access:
-    include: []
-`,
-		"workspaces/sales/models/orders.yaml": `
-apiVersion: leapview.dev/v1
-kind: ModelTable
-metadata:
-  workspace: sales
-  name: orders
-spec:
-  source: orders.orders
-  primaryKey: order_id
-  fields:
-    order_id:
-      label: Order ID
-`,
-		"workspaces/sales/semantic-models/sales.yaml": `
-apiVersion: leapview.dev/v1
-kind: SemanticModel
-metadata:
-  workspace: sales
-  name: sales
-spec:
-  tables: [orders]
-  measures: {}
-`,
-	})
-}
-
-func writeTestBundle(t *testing.T, files map[string]string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "artifact.tar.gz")
+	path := filepath.Join(t.TempDir(), "test.tar.gz")
 	file, err := os.Create(path)
 	if err != nil {
-		t.Fatalf("create test bundle: %v", err)
+		t.Fatal(err)
 	}
 	gz := gzip.NewWriter(file)
-	tw := tar.NewWriter(gz)
-	for name, content := range files {
-		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
-			t.Fatalf("write tar header: %v", err)
+	tarWriter := tar.NewWriter(gz)
+	for _, entry := range entries {
+		name, body := entry[0], entry[1]
+		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
 		}
-		if _, err := tw.Write([]byte(content)); err != nil {
-			t.Fatalf("write tar content: %v", err)
+		if _, err := tarWriter.Write([]byte(body)); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if err := tw.Close(); err != nil {
-		t.Fatalf("close tar writer: %v", err)
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if err := gz.Close(); err != nil {
-		t.Fatalf("close gzip writer: %v", err)
+		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {
-		t.Fatalf("close test bundle: %v", err)
+		t.Fatal(err)
 	}
 	return path
 }

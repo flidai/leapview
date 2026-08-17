@@ -17,10 +17,10 @@ func (d *Dashboard) ValidateDraftStructure() error {
 	if d == nil {
 		return fmt.Errorf("dashboard draft is nil")
 	}
-	if strings.TrimSpace(d.ID) == "" || strings.TrimSpace(d.Title) == "" {
+	if !d.ID.Valid() || strings.TrimSpace(d.Title) == "" {
 		return fmt.Errorf("dashboard draft requires id and title")
 	}
-	if strings.TrimSpace(d.SemanticModel) == "" {
+	if strings.TrimSpace(d.SemanticModel.String()) == "" {
 		return fmt.Errorf("dashboard draft %q requires semantic_model", d.ID)
 	}
 	if len(d.Pages) == 0 {

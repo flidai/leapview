@@ -149,7 +149,11 @@ func TestTerminalCleanupIsBoundedAndDoesNotStarveLaterSessions(t *testing.T) {
 		if beginErr != nil {
 			t.Fatal(beginErr)
 		}
-		if abortErr := repo.AbortUploadSession(ctx, upload.ID); abortErr != nil {
+		uploadID, parseErr := manageddata.ParseUploadID(upload.ID)
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		if abortErr := repo.AbortUploadSession(ctx, uploadID); abortErr != nil {
 			t.Fatal(abortErr)
 		}
 	}

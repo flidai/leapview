@@ -15,7 +15,7 @@ func TestManagedDataMigrationCreatesProjectDeploymentsWithoutLegacyRollouts(t *t
 	}
 	defer store.Close()
 
-	for _, table := range []string{"project_deployments", "project_deployment_targets", "project_deployment_connections", "managed_data_environment_pointers"} {
+	for _, table := range []string{"project_deployments", "managed_data_environment_pointers", "managed_data_serving_state_bindings", "managed_data_serving_state_binding_sets"} {
 		assertTableCount(t, ctx, store, table, 1)
 	}
 	for _, table := range []string{"managed_data_rollouts", "managed_data_rollout_targets"} {

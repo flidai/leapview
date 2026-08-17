@@ -6,6 +6,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type ConnectionAdministrationPermission = connectionbinding.AdministrationPermission
@@ -19,7 +20,7 @@ type ConnectionBindingScope = connectionbinding.BindingScope
 type ConnectionBindingEvidence = connectionbinding.BindingEvidence
 type ConnectionRequirement = connectionbinding.Requirement
 type ConnectionResolver = analyticsruntime.ConnectionResolver
-type LogicalConnectionID = connectionbinding.LogicalConnectionID
+type ConnectionID = projectgraph.ResourceID
 type RuntimeBindingRequest = connectionbinding.RuntimeBindingRequest
 type RuntimeBindingLeases = connectionbinding.RuntimeBindingLeases
 type RuntimeBindingLeaser = connectionbinding.RuntimeBindingLeaser
@@ -33,10 +34,6 @@ const (
 
 var ErrConnectionAdministrationUnavailable = connectionbinding.ErrProviderUnavailable
 var ErrConnectionBindingUnauthorized = connectionbinding.ErrUnauthorizedBinding
-
-func ParseLogicalConnectionID(value string) (LogicalConnectionID, error) {
-	return connectionbinding.ParseLogicalConnectionID(value)
-}
 
 type ConnectionDependencyInspector interface {
 	Dependents(context.Context, ConnectionTargetBinding) ([]ConnectionBindingDependency, error)

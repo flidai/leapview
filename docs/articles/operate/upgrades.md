@@ -102,7 +102,7 @@ Check more than readiness:
 
 - browser assets and route shell load without cache/version mismatch;
 - local or external authentication completes and sessions persist correctly;
-- expected workspaces, grants, and active deployments are present;
+- expected project resources, access declarations, and active deployments are present;
 - one semantic model can be described and queried;
 - one representative dashboard and interaction works;
 - a refresh can complete and activate;

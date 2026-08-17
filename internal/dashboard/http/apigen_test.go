@@ -11,17 +11,17 @@ import (
 var _ dashboardgen.GenOperationDispatcher = (*APIGenDispatcher)(nil)
 var _ dashboardgen.GenTransportErrorResponder = APIGenTransportErrorResponder{}
 
-func TestAPIGenDispatcherForwardsWorkspaceScopedOperations(t *testing.T) {
+func TestAPIGenDispatcherForwardsProjectAndModelOperations(t *testing.T) {
 	handler := &recordingAPIGenHandler{}
 	dispatcher := NewAPIGenDispatcher(handler)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(stdhttp.MethodPost, "/", nil)
 
-	dispatcher.QuerySemanticModel(recorder, request, "sales", "orders", dashboardgen.GenQuerySemanticModelHeaders{})
+	dispatcher.QuerySemanticModel(recorder, request, "orders", dashboardgen.GenQuerySemanticModelHeaders{})
 	dispatcher.RotateDashboardPublication(recorder, request, "operations", "public-board", dashboardgen.GenRotateDashboardPublicationHeaders{})
 
-	if got, want := handler.queryWorkspace, "sales"; got != want {
-		t.Fatalf("query workspace = %q, want %q", got, want)
+	if got, want := handler.queryModel, "orders"; got != want {
+		t.Fatalf("query model = %q, want %q", got, want)
 	}
 	if gotWorkspace, gotPublication := handler.publicationWorkspace, handler.publicationName; gotWorkspace != "operations" || gotPublication != "public-board" {
 		t.Fatalf("publication scope = %q/%q, want operations/public-board", gotWorkspace, gotPublication)
@@ -30,15 +30,15 @@ func TestAPIGenDispatcherForwardsWorkspaceScopedOperations(t *testing.T) {
 
 type recordingAPIGenHandler struct {
 	APIGenHandler
-	queryWorkspace       string
+	queryModel           string
 	publicationWorkspace string
 	publicationName      string
 }
 
-func (h *recordingAPIGenHandler) QuerySemanticModel(_ stdhttp.ResponseWriter, _ *stdhttp.Request, workspace string) {
-	h.queryWorkspace = workspace
+func (h *recordingAPIGenHandler) QuerySemanticModel(_ stdhttp.ResponseWriter, _ *stdhttp.Request, model string, _ dashboardgen.GenQuerySemanticModelHeaders) {
+	h.queryModel = model
 }
 
-func (h *recordingAPIGenHandler) RotateDashboardPublication(_ stdhttp.ResponseWriter, _ *stdhttp.Request, workspace, publication string) {
-	h.publicationWorkspace, h.publicationName = workspace, publication
+func (h *recordingAPIGenHandler) RotateDashboardPublication(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project, publication string, _ dashboardgen.GenRotateDashboardPublicationHeaders) {
+	h.publicationWorkspace, h.publicationName = project, publication
 }

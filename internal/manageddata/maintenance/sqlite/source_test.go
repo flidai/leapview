@@ -15,6 +15,7 @@ import (
 	managedsqlite "github.com/flidai/leapview/internal/manageddata/sqlite"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	"github.com/flidai/leapview/internal/platform"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestSnapshotRetainsReadyRevisionsAndNonterminalUploads(t *testing.T) {
@@ -248,10 +249,10 @@ func testDatabase(t *testing.T) (*sql.DB, *managedsqlite.Repository) {
 func createCollection(t *testing.T, repo *managedsqlite.Repository) manageddata.Collection {
 	t.Helper()
 	collection, err := repo.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
-		ID:             "collection-orders",
-		ProjectID:      "project-orders",
-		ConnectionName: "orders",
-		Name:           "Orders",
+		ID:           "collection-orders",
+		ProjectID:    "project-orders",
+		ConnectionID: "orders",
+		Name:         "Orders",
 	})
 	if err != nil {
 		t.Fatalf("create collection: %v", err)
@@ -259,10 +260,10 @@ func createCollection(t *testing.T, repo *managedsqlite.Repository) manageddata.
 	return collection
 }
 
-func createUpload(t *testing.T, repo *managedsqlite.Repository, collectionID, suffix string, value manageddata.Manifest) manageddata.UploadSession {
+func createUpload(t *testing.T, repo *managedsqlite.Repository, collectionID projectgraph.ResourceID, suffix string, value manageddata.Manifest) manageddata.UploadSession {
 	t.Helper()
 	upload, err := repo.CreateUploadSession(t.Context(), manageddata.CreateUploadSessionInput{
-		ID:             "upload-" + suffix,
+		ID:             manageddata.UploadID("upload-" + suffix),
 		CollectionID:   collectionID,
 		Manifest:       value,
 		StorageBackend: "local",

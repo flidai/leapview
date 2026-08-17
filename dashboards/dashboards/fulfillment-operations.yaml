@@ -1,0 +1,172 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:fulfillment-operations
+  name: fulfillment-operations
+  displayName: Fulfillment Operations
+  description: Delivery speed, order status, reviews, and geography overview.
+  tags: [operations, fulfillment]
+spec:
+  appearance:
+    icon: package-check
+    color: orange
+  semanticModel: operations
+  filters:
+    state:
+      label: State
+      field: state
+      predicates:
+        - kind: set
+          operators: [in, not_in]
+      options:
+        kind: distinct
+        limit: 50
+    status:
+      label: Status
+      field: status
+      predicates:
+        - kind: set
+          operators: [in, not_in]
+      options:
+        kind: distinct
+        limit: 20
+    delivery_bucket:
+      label: Delivery speed
+      field: delivery_bucket
+      predicates:
+        - kind: set
+          operators: [in, not_in]
+      options:
+        kind: distinct
+        limit: 20
+  filter_bindings:
+    state:
+      filter: state
+      default: {kind: unfiltered}
+      selection: {mode: multiple, max_selected_values: 50}
+      url: {param: state, encoding: typed_v1}
+      pane: {visible: true, order: 10}
+    status:
+      filter: status
+      default: {kind: unfiltered}
+      selection: {mode: multiple, max_selected_values: 20}
+      url: {param: status, encoding: typed_v1}
+      pane: {visible: true, order: 20}
+    delivery_bucket:
+      filter: delivery_bucket
+      default: {kind: unfiltered}
+      selection: {mode: multiple, max_selected_values: 20}
+      url: {param: delivery, encoding: typed_v1}
+      pane: {visible: true, order: 30}
+  filter_application: {mode: immediate}
+  visuals:
+    total_orders:
+      type: kpi
+      query:
+        measures:
+          order_count:
+      presentation:
+        note: Filtered order count
+        tone: ink
+    delivery_days:
+      type: kpi
+      query:
+        measures:
+          delivery_days:
+      presentation:
+        note: Average days
+        tone: warning
+    review_score:
+      type: kpi
+      query:
+        measures:
+          review_score:
+      presentation:
+        note: Average score
+        tone: danger
+    orders_by_status:
+      title: Orders by status
+      type: donut
+      query:
+        dimensions:
+          status: operations_orders.status
+        measures:
+          order_count:
+        sort:
+          - field: value
+            direction: desc
+        limit: 10
+    delivery_speed:
+      title: Delivery speed
+      type: bar
+      query:
+        dimensions:
+          delivery_bucket: operations_orders.delivery_bucket
+        measures:
+          order_count:
+        sort:
+          - field: delivery_bucket
+            direction: asc
+    review_by_status:
+      title: Review score by status
+      type: bar
+      query:
+        dimensions:
+          status: operations_orders.status
+        measures:
+          review_score:
+        sort:
+          - field: value
+            direction: desc
+        limit: 10
+  pages:
+    - id: overview
+      title: Overview
+      canvas:
+        width: 1366
+        height: 900
+      grid:
+        columns: 12
+        row_height: 48
+        gap: 16
+        padding: 16
+      components:
+        - id: state-filter
+          kind: slicer
+          binding: {scope: report, id: state}
+          presentation: {style: dropdown, search: true}
+          placement: {col: 1, row: 1, col_span: 4, row_span: 2}
+        - id: status-filter
+          kind: slicer
+          binding: {scope: report, id: status}
+          presentation: {style: dropdown, search: true}
+          placement: {col: 5, row: 1, col_span: 4, row_span: 2}
+        - id: delivery-filter
+          kind: slicer
+          binding: {scope: report, id: delivery_bucket}
+          presentation: {style: dropdown, search: true}
+          placement: {col: 9, row: 1, col_span: 4, row_span: 2}
+        - id: total-orders
+          kind: visual
+          visual: total_orders
+          placement: {col: 1, row: 4, col_span: 4, row_span: 3}
+        - id: delivery-days
+          kind: visual
+          visual: delivery_days
+          placement: {col: 5, row: 4, col_span: 4, row_span: 3}
+        - id: review-score
+          kind: visual
+          visual: review_score
+          placement: {col: 9, row: 4, col_span: 4, row_span: 3}
+        - id: status
+          kind: visual
+          visual: orders_by_status
+          placement: {col: 1, row: 8, col_span: 4, row_span: 6}
+        - id: delivery-speed
+          kind: visual
+          visual: delivery_speed
+          placement: {col: 5, row: 8, col_span: 4, row_span: 6}
+        - id: reviews
+          kind: visual
+          visual: review_by_status
+          placement: {col: 9, row: 8, col_span: 4, row_span: 6}

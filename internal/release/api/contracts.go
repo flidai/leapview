@@ -1,3 +1,6 @@
+// Package api contains the stable HTTP contract for project-generation
+// releases. A release identifies one immutable serving generation; it does
+// not embed partial graph manifests or target collections.
 package api
 
 type PageInfo struct {
@@ -9,10 +12,10 @@ type PageParams struct {
 	PageToken *string
 }
 
-type WorkspaceManifest struct {
-	ArtifactDigest string  `json:"artifactDigest"`
-	ServingStateID *string `json:"servingStateId,omitempty"`
-	Workspace      string  `json:"workspace"`
+type ServingIdentity struct {
+	ProjectID    string `json:"projectId"`
+	Environment  string `json:"environment"`
+	GenerationID string `json:"generationId"`
 }
 
 type ConnectionPin struct {
@@ -20,17 +23,12 @@ type ConnectionPin struct {
 	RevisionID string `json:"revisionId"`
 }
 
-type ProjectArtifactWorkspace struct {
-	WorkspaceID    string `json:"workspaceId"`
-	ArtifactDigest string `json:"artifactDigest"`
-}
-
 type ProjectArtifactProvenance struct {
-	SourceDigest    string                     `json:"sourceDigest"`
-	ProjectDigest   string                     `json:"projectDigest"`
-	CompilerVersion string                     `json:"compilerVersion"`
-	SchemaVersion   int32                      `json:"schemaVersion"`
-	Workspaces      []ProjectArtifactWorkspace `json:"workspaces"`
+	SourceDigest    string `json:"sourceDigest"`
+	ProjectDigest   string `json:"projectDigest"`
+	ContentDigest   string `json:"contentDigest"`
+	CompilerVersion string `json:"compilerVersion"`
+	SchemaVersion   int32  `json:"schemaVersion"`
 }
 
 type CandidateProvenance struct {
@@ -53,64 +51,71 @@ type ManagedDataPin struct {
 
 type BindingEvidence struct {
 	BindingID          string `json:"bindingId"`
-	LogicalConnection  string `json:"logicalConnection"`
+	ConnectionID       string `json:"connectionId"`
 	ConnectorKind      string `json:"connectorKind"`
 	Revision           int64  `json:"revision"`
 	ValidatedVersion   string `json:"validatedVersion"`
 	EndpointConfigHash string `json:"endpointConfigHash"`
 }
 
-type TargetWorkspacePlan struct {
-	WorkspaceID     string            `json:"workspaceId"`
-	ServingStateID  string            `json:"servingStateId"`
-	ArtifactDigest  string            `json:"artifactDigest"`
-	DataRevision    string            `json:"dataRevision"`
-	DataMode        string            `json:"dataMode"`
-	ManagedDataPins []ManagedDataPin  `json:"managedDataPins"`
-	Bindings        []BindingEvidence `json:"bindings"`
+type AuthoredConnectionEvidence struct {
+	ConnectionID  string `json:"connectionId"`
+	ConnectorKind string `json:"connectorKind"`
+	DisplayName   string `json:"displayName,omitempty"`
 }
 
-type TargetPlanProvenance struct {
-	TargetID       string                `json:"targetId"`
-	Environment    string                `json:"environment"`
-	BaseGeneration string                `json:"baseGeneration"`
-	RuntimeVersion string                `json:"runtimeVersion"`
-	PolicyDigest   string                `json:"policyDigest"`
-	Workspaces     []TargetWorkspacePlan `json:"workspaces"`
+type GenerationPlanProvenance struct {
+	Identity            ServingIdentity              `json:"identity"`
+	BaseIdentity        *ServingIdentity             `json:"baseIdentity,omitempty"`
+	TargetID            string                       `json:"targetId"`
+	RuntimeVersion      string                       `json:"runtimeVersion"`
+	PolicyDigest        string                       `json:"policyDigest"`
+	DataRevision        string                       `json:"dataRevision"`
+	DataMode            string                       `json:"dataMode"`
+	ManagedDataPins     []ManagedDataPin             `json:"managedDataPins"`
+	Bindings            []BindingEvidence            `json:"bindings"`
+	AuthoredConnections []AuthoredConnectionEvidence `json:"authoredConnections"`
 }
 
 type Provenance struct {
-	Version        int32                     `json:"version"`
-	Artifact       ProjectArtifactProvenance `json:"artifact"`
-	Candidate      CandidateProvenance       `json:"candidate"`
-	SourceRevision *SourceRevisionProvenance `json:"sourceRevision,omitempty"`
-	Plan           TargetPlanProvenance      `json:"plan"`
-	ArtifactDigest string                    `json:"artifactDigest"`
-	PlanDigest     string                    `json:"planDigest"`
-	Digest         string                    `json:"digest"`
+	Version                  int32                     `json:"version"`
+	Artifact                 ProjectArtifactProvenance `json:"artifact"`
+	Candidate                CandidateProvenance       `json:"candidate"`
+	SourceRevision           *SourceRevisionProvenance `json:"sourceRevision,omitempty"`
+	Plan                     GenerationPlanProvenance  `json:"plan"`
+	ArtifactProvenanceDigest string                    `json:"artifactProvenanceDigest"`
+	PlanDigest               string                    `json:"planDigest"`
+	Digest                   string                    `json:"digest"`
 }
 
 type CreateRequest struct {
-	Connections   []ConnectionPin     `json:"connections"`
-	ProjectDigest string              `json:"projectDigest"`
-	Provenance    *Provenance         `json:"provenance,omitempty"`
-	Workspaces    []WorkspaceManifest `json:"workspaces"`
+	Environment    string          `json:"environment"`
+	GenerationID   string          `json:"generationId"`
+	ArtifactDigest string          `json:"artifactDigest"`
+	Connections    []ConnectionPin `json:"connections"`
+	ProjectDigest  string          `json:"projectDigest"`
+	RequestDigest  string          `json:"requestDigest,omitempty"`
+	Provenance     *Provenance     `json:"provenance,omitempty"`
 }
 
 type Status string
 
 type Response struct {
-	Connections   []ConnectionPin     `json:"connections"`
-	CreatedAt     string              `json:"createdAt"`
-	CreatedBy     string              `json:"createdBy"`
-	Error         *string             `json:"error,omitempty"`
-	FinalizedAt   *string             `json:"finalizedAt,omitempty"`
-	ID            string              `json:"id"`
-	ProjectDigest string              `json:"projectDigest"`
-	ProjectID     string              `json:"projectId"`
-	Provenance    *Provenance         `json:"provenance,omitempty"`
-	Status        Status              `json:"status"`
-	Workspaces    []WorkspaceManifest `json:"workspaces"`
+	ArtifactDigest string          `json:"artifactDigest"`
+	ArtifactSize   int64           `json:"artifactSizeBytes"`
+	ActualDigest   string          `json:"actualDigest,omitempty"`
+	Environment    string          `json:"environment"`
+	GenerationID   string          `json:"generationId"`
+	Connections    []ConnectionPin `json:"connections"`
+	CreatedAt      string          `json:"createdAt"`
+	CreatedBy      string          `json:"createdBy"`
+	Error          *string         `json:"error,omitempty"`
+	FinalizedAt    *string         `json:"finalizedAt,omitempty"`
+	ID             string          `json:"id"`
+	ProjectDigest  string          `json:"projectDigest"`
+	ProjectID      string          `json:"projectId"`
+	Provenance     *Provenance     `json:"provenance,omitempty"`
+	Status         Status          `json:"status"`
 }
 
 type ListResponse struct {
@@ -119,10 +124,11 @@ type ListResponse struct {
 }
 
 type ArtifactResponse struct {
-	Digest      string `json:"digest"`
-	ReleaseID   string `json:"releaseId"`
-	SizeBytes   int64  `json:"sizeBytes"`
-	WorkspaceID string `json:"workspaceId"`
+	ActualDigest string `json:"actualDigest"`
+	Digest       string `json:"digest"`
+	GenerationID string `json:"generationId"`
+	ReleaseID    string `json:"releaseId"`
+	SizeBytes    int64  `json:"sizeBytes"`
 }
 
 type ManagedConnectionResponse struct {

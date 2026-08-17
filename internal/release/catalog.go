@@ -4,14 +4,11 @@ import (
 	"context"
 
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type ProjectRecord struct {
 	ID, CreatedAt, UpdatedAt, LatestReleaseID, ActiveDeploymentID string
-}
-
-type WorkspaceRecord struct {
-	ID, Title, Description, ActiveServingStateID string
 }
 
 type ConnectionRecord struct {
@@ -19,15 +16,13 @@ type ConnectionRecord struct {
 }
 
 type CatalogRepository interface {
-	ListProjects(context.Context) ([]ProjectRecord, error)
 	GetProject(context.Context, string) (ProjectRecord, error)
-	ListProjectWorkspaces(context.Context, string, string) ([]WorkspaceRecord, error)
 	ListConnections(context.Context, string, string) ([]ConnectionRecord, error)
 	GetConnection(context.Context, string, string, string) (ConnectionRecord, error)
 }
 
 type DeploymentLinkage interface {
-	Get(context.Context, string, string) (Release, error)
+	Get(context.Context, projectgraph.ResourceID, string) (Release, error)
 	LinkDeployment(context.Context, string, string, string, string) error
 	LinkDeploymentTx(context.Context, transaction.Transaction, string, string, string, string) error
 	DeploymentRelease(context.Context, string, string) (string, string, error)

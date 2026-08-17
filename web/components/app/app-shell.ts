@@ -6,7 +6,6 @@ import '../navigation/sidebar'
 
 const emptyChrome: ChromeSignal = {
   sidebar: {
-    workspaceTitle: '',
     productName: 'LeapView',
     active: '',
     dashboardId: '',

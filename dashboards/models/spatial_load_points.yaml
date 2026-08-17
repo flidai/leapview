@@ -1,0 +1,60 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:spatial_load_points
+  name: spatial_load_points
+  displayName: Million-point spatial load fixture
+  description: Deterministic synthetic locations used to verify governed viewport aggregation at production scale.
+spec:
+  description: Exactly one million stable observations derived from the real Olist geolocation source without adding a repository data artifact.
+  primaryKey: point_id
+  sources:
+  - olist.geolocation
+  fields:
+    point_id:
+      label: Point ID
+      description: Stable identity for one generated location.
+      type: string
+    city:
+      label: City
+      description: Metropolitan area used as the center of the generated location cloud.
+      type: string
+    state:
+      label: State
+      description: Brazilian state containing the generated location.
+      type: string
+    latitude:
+      label: Latitude
+      description: Deterministic latitude near the metropolitan center.
+      type: number
+    longitude:
+      label: Longitude
+      description: Deterministic longitude near the metropolitan center.
+      type: number
+  transform:
+    sql: |
+      WITH normalized AS (
+        SELECT
+          printf('%05d', try_cast(geolocation_zip_code_prefix AS INTEGER)) AS zip_prefix,
+          lower(trim(geolocation_city)) AS city,
+          upper(trim(geolocation_state)) AS state,
+          try_cast(geolocation_lat AS DOUBLE) AS latitude,
+          try_cast(geolocation_lng AS DOUBLE) AS longitude
+        FROM source."olist.geolocation"
+      ), numbered AS (
+        SELECT
+          row_number() OVER (ORDER BY zip_prefix, city, state, latitude, longitude) AS point_number,
+          city,
+          state,
+          CASE WHEN latitude BETWEEN -34 AND 6 THEN latitude ELSE -15.7939 END AS latitude,
+          CASE WHEN longitude BETWEEN -74 AND -34 THEN longitude ELSE -47.8828 END AS longitude
+        FROM normalized
+      )
+      SELECT
+        printf('olist-geo-%07d', point_number) AS point_id,
+        city,
+        state,
+        -33.5 + ((point_number - 1) % 1000) * 0.037 AS latitude,
+        -73.5 + floor((point_number - 1) / 1000) * 0.039 AS longitude
+      FROM numbered
+      WHERE point_number <= 1000000

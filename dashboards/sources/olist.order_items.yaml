@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:olist.order_items
   name: olist.order_items
-  title: Order Items
+  displayName: Order Items
 spec:
   connection: olist
   path: olist_order_items_dataset.csv

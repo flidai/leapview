@@ -10,9 +10,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 )
+
+type setupRequiredMetrics struct {
+	integrationMetrics
+}
+
+func (m setupRequiredMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {
+	for _, target := range request.Targets {
+		publish(consumer.Result{Target: target, Err: setupRequiredDataError{}})
+	}
+	return ctx.Err()
+}
+
+type setupRequiredDataError struct{}
+
+func (setupRequiredDataError) Error() string       { return "source data is missing" }
+func (setupRequiredDataError) SetupRequired() bool { return true }
 
 func TestUpdatesStreamsRealRuntimeSignals(t *testing.T) {
 	h := newHarness(t)
@@ -37,9 +54,9 @@ func TestUpdatesStreamsRealRuntimeSignals(t *testing.T) {
 				requireFirstStatusLoading(t, patches)
 				requireStatusLoading(t, patches, true)
 				requireStatusLoading(t, patches, false)
-				requireFilterValues(t, patches, "state", "SP")
-				requireVisual(t, patches, "total_orders")
-				requireTable(t, patches, "orders_table")
+				requireFilterValues(t, patches, "overview", "state", "SP")
+				requireVisual(t, patches, "orders")
+				requireTable(t, patches, "order_rows")
 				requireNoTopLevelSignal(t, patches, "kpis")
 			},
 		},
@@ -54,7 +71,9 @@ func TestUpdatesStreamsRealRuntimeSignals(t *testing.T) {
 }
 
 func TestUpdatesStreamsSetupRequiredPatchForMissingData(t *testing.T) {
-	h := newHarness(t, withOlistFixture(func(t *testing.T, dir string) {}))
+	h := newHarness(t, withMetricsWrapper(func(metrics integrationMetrics) integrationMetrics {
+		return setupRequiredMetrics{integrationMetrics: metrics}
+	}))
 
 	patches := h.getUpdatesSignals(t, "executive-sales", "overview", map[string]any{})
 
@@ -69,7 +88,7 @@ func TestUpdatesIgnoresMalformedDatastarSignals(t *testing.T) {
 	h := newHarness(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
-	req := httptest.NewRequestWithContext(ctx, http.MethodGet, h.workspaceUpdatesPath()+"?route=dashboard&workspace="+h.requiredWorkspaceID()+"&dashboard=executive-sales&page=overview&datastar=%7Bnot-json", nil)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, h.updatesPath()+"?route=dashboard&dashboard=executive-sales&page=overview&datastar=%7Bnot-json", nil)
 	rec := httptest.NewRecorder()
 
 	h.handler.ServeHTTP(rec, req)
@@ -80,7 +99,7 @@ func TestUpdatesIgnoresMalformedDatastarSignals(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
 		t.Fatalf("content type = %q, want text/event-stream", got)
 	}
-	requireVisual(t, ssetest.PatchSignals(t, rec.Body.String()), "total_orders")
+	requireVisual(t, ssetest.PatchSignals(t, rec.Body.String()), "orders")
 }
 
 func requireFirstStatusLoading(t *testing.T, patches []map[string]any) {
@@ -110,9 +129,9 @@ func requireStatusError(t *testing.T, patches []map[string]any, setupRequired bo
 	})
 }
 
-func requireFilterValues(t *testing.T, patches []map[string]any, filterID string, want ...string) {
+func requireFilterValues(t *testing.T, patches []map[string]any, pageID, filterID string, want ...string) {
 	t.Helper()
-	bindingKey := dashboardfilter.BindingKey("executive-sales", dashboardfilter.ScopeReport, "", filterID)
+	bindingKey := dashboardfilter.BindingKey("executive-sales", dashboardfilter.ScopePage, pageID, filterID)
 	requirePatch(t, patches, func(patch map[string]any) bool {
 		expression := mapAt(patch, "filterState", "appliedControls", bindingKey, "expression")
 		values, ok := expression["values"].([]any)

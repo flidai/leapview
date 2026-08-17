@@ -12,7 +12,7 @@ import (
 func TestCandidateSourceBlobAuditRecorderPersistsAccessAudit(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	principal := testPrincipal(t, ctx, store, "author@example.com", "Author", "owner")
+	principal := testPrincipal(t, ctx, store, "author@example.com", "Author")
 	accessModule, err := accessmodule.Build(ctx, accessmodule.Config{
 		Database: store.SQLDB(),
 		Auth:     accessmodule.AuthConfig{Disabled: true},
@@ -23,9 +23,9 @@ func TestCandidateSourceBlobAuditRecorderPersistsAccessAudit(t *testing.T) {
 	record := candidateSourceBlobAuditRecorder(accessModule)
 
 	err = record(ctx, deploymentmodule.CandidateSourceBlobAuditEvent{
-		PrincipalID: principal.ID, ProjectID: "finance",
+		PrincipalID: principal.ID, ProjectID: "project:finance",
 		Digest: "sha256:test", Action: "candidate.source_blob_uploaded",
-		Privilege: "AUTHOR_PROJECT", Status: "success",
+		Capability: access.CapabilityResourceEdit, Status: "success",
 		RequestID: "req-source-blob", CorrelationID: "corr-source-blob",
 		MetadataJSON: `{"operationId":"uploadProjectCandidateSourceBlob","surface":"api"}`,
 	})
@@ -42,8 +42,8 @@ func TestCandidateSourceBlobAuditRecorderPersistsAccessAudit(t *testing.T) {
 		t.Fatalf("candidate source blob audits = %d, want 1", len(events))
 	}
 	event := events[0]
-	if event.WorkspaceID != "" || event.PrincipalID != principal.ID || event.TargetType != "project" ||
-		event.TargetID != "finance" || event.Privilege != access.PrivilegeAuthorProject ||
+	if event.ResourceKind != "project" || event.PrincipalID != principal.ID ||
+		event.ResourceID != "project:finance" || event.Capability != access.CapabilityResourceEdit ||
 		event.Status != "success" || event.RequestID != "req-source-blob" ||
 		event.CorrelationID != "corr-source-blob" {
 		t.Fatalf("persisted candidate source blob audit = %#v", event)

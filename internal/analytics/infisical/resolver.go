@@ -177,7 +177,7 @@ func (resolver *Resolver) resolveWithToken(
 	endpoint.Path = "/api/v4/secrets/" + reference.SecretKey
 	endpoint.RawPath = "/api/v4/secrets/" + url.PathEscape(reference.SecretKey)
 	query := endpoint.Query()
-	query.Set("projectId", reference.ProjectID)
+	query.Set("projectId", reference.ProjectID.String())
 	query.Set("environment", reference.Environment)
 	query.Set("secretPath", reference.SecretPath)
 	query.Set("type", "shared")
@@ -254,7 +254,7 @@ func parseProviderVersion(value string) (string, int64, error) {
 
 func (resolver *Resolver) authorized(reference connectionbinding.CredentialReference) bool {
 	for _, scope := range resolver.allowedScopes {
-		if reference.ProjectID != scope.ProjectID || reference.Environment != scope.Environment {
+		if reference.ProjectID.String() != scope.ProjectID || reference.Environment != scope.Environment {
 			continue
 		}
 		if scope.SecretPathPrefix == "/" || reference.SecretPath == scope.SecretPathPrefix ||

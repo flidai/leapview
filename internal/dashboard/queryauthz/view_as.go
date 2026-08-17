@@ -9,15 +9,16 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // ViewAsCapability is installed by a trusted preview handler. It identifies
-// both the authenticated actor and the effective subject; neither identity is
-// accepted from the authored query payload.
+// both authenticated actor and effective subject; neither is accepted from a
+// query payload.
 type ViewAsCapability struct {
 	ActorPrincipalID   string
 	SubjectPrincipalID string
-	WorkspaceID        string
+	ProjectID          projectgraph.ResourceID
 }
 
 type viewAsCapabilityKey struct{}
@@ -31,23 +32,17 @@ func viewAsCapabilityFromContext(ctx context.Context) (ViewAsCapability, bool) {
 	return capability, ok
 }
 
-func (m Metrics) authorizeViewAs(
-	ctx context.Context,
-	actor Principal,
-	request dataquery.Query,
-	capability ViewAsCapability,
-) (dataquery.Query, error) {
+func (m Metrics) authorizeViewAs(ctx context.Context, actor Principal, request dataquery.Query, capability ViewAsCapability) (dataquery.Query, error) {
 	actorID := strings.TrimSpace(capability.ActorPrincipalID)
 	subjectID := strings.TrimSpace(capability.SubjectPrincipalID)
-	workspaceID := strings.TrimSpace(capability.WorkspaceID)
 	deny := func(cause error) (dataquery.Query, error) {
-		denied := DeniedError{PrincipalID: actor.ID, Privilege: access.PrivilegeTestDataPolicy}
-		if auditErr := m.recordViewAsAudit(ctx, request, actor.ID, subjectID, "denied", cause); auditErr != nil {
+		denied := DeniedError{PrincipalID: actor.ID, Capability: access.CapabilityProjectAdmin}
+		if auditErr := m.recordViewAsAudit(ctx, request, actor.ID, subjectID, capability.ProjectID, "denied", cause); auditErr != nil {
 			return request, errors.Join(denied, auditErr)
 		}
 		return request, denied
 	}
-	if actorID == "" || subjectID == "" || workspaceID == "" {
+	if actorID == "" || subjectID == "" || capability.ProjectID == "" {
 		return deny(errors.New("view-as capability is incomplete"))
 	}
 	if actor.ID == "" || actor.ID != actorID {
@@ -56,62 +51,65 @@ func (m Metrics) authorizeViewAs(
 	if subjectID == actorID {
 		return deny(errors.New("view-as subject must differ from the authenticated principal"))
 	}
-	if request.WorkspaceID != workspaceID {
-		return deny(fmt.Errorf("view-as workspace %q does not match query workspace %q", workspaceID, request.WorkspaceID))
+	if request.ProjectID != capability.ProjectID {
+		return deny(fmt.Errorf("view-as project %q does not match query project %q", capability.ProjectID, request.ProjectID))
 	}
-	if credential, ok := m.currentCredential(ctx); ok &&
-		!m.allowsToken(credential.Token, workspaceID, access.PrivilegeTestDataPolicy) {
-		return deny(errors.New("view-as credential lacks TEST_DATA_POLICY"))
-	}
-	decision, err := m.repo.Authorize(
-		ctx,
-		actorID,
-		access.PrivilegeTestDataPolicy,
-		access.WorkspaceObject(workspaceID),
-	)
+	snapshot, err := m.authorizationSnapshot(ctx, capability.ProjectID)
 	if err != nil {
-		if auditErr := m.recordViewAsAudit(ctx, request, actorID, subjectID, "error", err); auditErr != nil {
-			return request, errors.Join(err, auditErr)
-		}
 		return request, err
 	}
-	if !decision.Allowed {
-		return deny(errors.New("actor lacks TEST_DATA_POLICY"))
+	projectRef, err := access.NewResourceRef(capability.ProjectID, projectgraph.KindProject)
+	if err != nil {
+		return deny(err)
 	}
-	if err := m.recordViewAsAudit(ctx, request, actorID, subjectID, "authorized", nil); err != nil {
+	if credential, ok := m.currentCredential(ctx); ok {
+		allowed, err := m.capabilityAllowed(ctx, snapshot, actorID, credential.Token, access.CapabilityProjectAdmin)
+		if err != nil || !allowed {
+			if err == nil {
+				err = errors.New("view-as credential lacks PROJECT_ADMIN")
+			}
+			return deny(err)
+		}
+	}
+	subjects, err := m.subjects(ctx, actorID)
+	if err != nil {
+		return deny(err)
+	}
+	allowed := false
+	for _, subject := range subjects {
+		ok, allowErr := snapshot.Allows(subject, projectRef, access.CapabilityProjectAdmin)
+		if allowErr != nil {
+			return deny(allowErr)
+		}
+		allowed = allowed || ok
+	}
+	if !allowed {
+		return deny(errors.New("actor lacks PROJECT_ADMIN"))
+	}
+	if err := m.recordViewAsAudit(ctx, request, actor.ID, subjectID, capability.ProjectID, "authorized", nil); err != nil {
 		return request, err
 	}
 	request.PrincipalID = subjectID
 	return request, nil
 }
 
-func (m Metrics) recordViewAsAudit(
-	ctx context.Context,
-	request dataquery.Query,
-	actorID string,
-	subjectID string,
-	status string,
-	cause error,
-) error {
-	metadata := map[string]any{
-		"candidateId": request.CandidateID,
-		"operation":   request.Operation,
-		"surface":     request.Surface,
-	}
+func (m Metrics) recordViewAsAudit(ctx context.Context, request dataquery.Query, actorID, subjectID string, projectID projectgraph.ResourceID, status string, cause error) error {
+	metadata := map[string]any{"subjectPrincipalId": subjectID, "operation": request.Operation, "surface": request.Surface}
 	if cause != nil {
 		metadata["error"] = cause.Error()
 	}
 	bytes, _ := json.Marshal(metadata)
-	return access.PersistAuditEvent(ctx, m.repo, access.AuditEventInput{
-		WorkspaceID:   request.WorkspaceID,
-		PrincipalID:   actorID,
-		Action:        "data_policy.view_as",
-		TargetType:    "principal",
-		TargetID:      subjectID,
-		Privilege:     access.PrivilegeTestDataPolicy,
-		Status:        status,
-		RequestID:     request.RequestID,
-		CorrelationID: request.CorrelationID,
-		MetadataJSON:  string(bytes),
+	snapshot, err := m.authorizationSnapshot(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	resource, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	if err != nil {
+		return err
+	}
+	return m.persistCanonicalAudit(ctx, snapshot, access.CanonicalAuditEvent{
+		Identity: snapshot.Identity(), PrincipalID: actorID, Action: "data_policy.view_as", Resource: resource,
+		Capability: access.CapabilityProjectAdmin, Status: status, RequestID: request.RequestID,
+		CorrelationID: request.CorrelationID, MetadataJSON: string(bytes),
 	})
 }

@@ -1,8 +1,9 @@
 apiVersion: leapview.dev/v1
 kind: Source
 metadata:
+  id: source:olist.payments
   name: olist.payments
-  title: Payments
+  displayName: Payments
 spec:
   connection: olist
   path: olist_order_payments_dataset.csv

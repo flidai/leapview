@@ -48,7 +48,7 @@ docker run --detach --name leapview-evaluate --init \
 The evaluator generates private runtime secrets, creates a forced-change local
 administrator, stages the small synthetic dataset shipped in the image,
 creates a private candidate, and publishes those exact bytes into one
-disposable workspace. It prints no secret to the container log. Wait for the
+disposable project. It prints no secret to the container log. Wait for the
 health check, then consume the credentials once:
 
 ```sh
@@ -64,7 +64,7 @@ query planning, DuckDB execution, filters, and table rendering.
 
 The `127.0.0.1` publish address is part of the security boundary. Evaluation
 mode intentionally uses local HTTP and generated local secrets; do not expose
-it on a LAN or the internet and do not treat the synthetic workspace as
+it on a LAN or the internet and do not treat the synthetic project as
 production seeding.
 
 ### Persistence, diagnostics, and cleanup
@@ -278,7 +278,7 @@ release version. LeapView uses the release commit timestamp as `buildTime` so
 the identity remains reproducible.
 
 After startup, compare the same identity through the authenticated
-capabilities endpoint using a token authorized to use a workspace:
+capabilities endpoint using a token authorized to use the project:
 
 ```sh
 curl --fail --silent --show-error \

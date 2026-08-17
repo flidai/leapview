@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestDashboardPublicationCommandsAuditExactlyOnceAndPreserveBestEffortResult(t *testing.T) {
@@ -22,25 +23,15 @@ func TestDashboardPublicationCommandsAuditExactlyOnceAndPreserveBestEffortResult
 		name        string
 		operationID string
 		action      publication.Action
-		invoke      func(*Module, http.ResponseWriter, *http.Request)
 	}{
 		{
 			name: "suspend", operationID: dashboardgen.GenOperationSuspendDashboardPublication, action: publication.ActionSuspend,
-			invoke: func(module *Module, w http.ResponseWriter, r *http.Request) {
-				module.SuspendDashboardPublication(w, r, "sales", "executive")
-			},
 		},
 		{
 			name: "resume", operationID: dashboardgen.GenOperationResumeDashboardPublication, action: publication.ActionResume,
-			invoke: func(module *Module, w http.ResponseWriter, r *http.Request) {
-				module.ResumeDashboardPublication(w, r, "sales", "executive")
-			},
 		},
 		{
 			name: "rotate", operationID: dashboardgen.GenOperationRotateDashboardPublication, action: publication.ActionRotate,
-			invoke: func(module *Module, w http.ResponseWriter, r *http.Request) {
-				module.RotateDashboardPublication(w, r, "sales", "executive")
-			},
 		},
 	}
 
@@ -53,7 +44,7 @@ func TestDashboardPublicationCommandsAuditExactlyOnceAndPreserveBestEffortResult
 			t.Run(name, func(t *testing.T) {
 				var logs bytes.Buffer
 				repository := &publicationCommandRepository{row: publication.Publication{
-					ID: "publication-a", WorkspaceID: "sales", Name: "executive", ProjectID: "analytics", Dashboard: "executive",
+					ID: "publication-a", ProjectID: "project_1", Name: "executive", Dashboard: "executive",
 					PublicID: "public-a", Configured: true, ServingStateID: "state-a",
 				}}
 				attempts := 0
@@ -75,25 +66,21 @@ func TestDashboardPublicationCommandsAuditExactlyOnceAndPreserveBestEffortResult
 					recordPublicationCommandAudit: recorder,
 					logger:                        slog.New(slog.NewJSONHandler(&logs, nil)),
 				}
-				request := httptest.NewRequest(http.MethodPost, "/", nil)
-				request.Header.Set("X-Request-ID", "request-a")
-				request.Header.Set("X-Correlation-ID", "correlation-a")
-				request.Header.Set("X-LeapView-Invocation-Surface", "cli")
-				response := httptest.NewRecorder()
-				operation.invoke(module, response, request)
-
-				wantStatus, wantPersisted := http.StatusOK, 1
+				row, mutationErr := module.MutatePublicationWithInvocation(context.Background(), "project_1", "executive", "principal-a", operation.action, publication.CommandInvocation{
+					Surface: "cli", IdempotencyKey: "request-a", RequestID: "request-a", CorrelationID: "correlation-a",
+				})
+				wantPersisted := 1
 				if auditFailure {
 					wantPersisted = 0
 				}
-				if response.Code != wantStatus || repository.calls != 1 || repository.action != operation.action || attempts != 1 || len(persisted) != wantPersisted {
-					t.Fatalf("status=%d mutation=%d/%s audit attempts=%d persisted=%d body=%s", response.Code, repository.calls, repository.action, attempts, len(persisted), response.Body.String())
+				if mutationErr != nil || row.ID != "publication-a" || repository.calls != 1 || repository.action != operation.action || attempts != 1 || len(persisted) != wantPersisted {
+					t.Fatalf("mutation=%#v err=%v calls=%d/%s audit attempts=%d persisted=%d", row, mutationErr, repository.calls, repository.action, attempts, len(persisted))
 				}
 				if !auditFailure {
 					generated, _ := dashboardgen.GetAPIGenOperationContract(operation.operationID)
 					event := persisted[0]
-					if event.Action != generated.Command.Audit.SuccessAction || event.Privilege != access.Privilege(generated.Command.Privilege) ||
-						event.WorkspaceID != "sales" || event.PrincipalID != "principal-a" || event.TargetType != "dashboard_publication" || event.TargetID != "publication-a" ||
+					if event.Action != generated.Command.Audit.SuccessAction || event.Capability != access.CapabilityResourcePublish ||
+						event.ResourceKind != "project" || event.ResourceID != "project_1" || event.PrincipalID != "principal-a" ||
 						event.Status != "success" || event.RequestID != "request-a" || event.CorrelationID != "correlation-a" {
 						t.Fatalf("audit event = %#v", event)
 					}
@@ -107,11 +94,11 @@ func TestDashboardPublicationCommandsAuditExactlyOnceAndPreserveBestEffortResult
 }
 
 func TestDashboardPublicationCommandsRejectMissingAuditSinkBeforeMutation(t *testing.T) {
-	repository := &publicationCommandRepository{row: publication.Publication{ID: "publication-a"}}
+	repository := &publicationCommandRepository{row: publication.Publication{ID: "publication-a", ProjectID: "project_1"}}
 	module := &Module{publicationService: publication.NewService(repository, nil)}
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/", nil)
-	module.SuspendDashboardPublication(response, request, "sales", "executive")
+	module.SuspendDashboardPublication(response, request, "project_1", "executive")
 	if response.Code != http.StatusServiceUnavailable || repository.calls != 0 {
 		t.Fatalf("status=%d mutations=%d body=%s", response.Code, repository.calls, response.Body.String())
 	}
@@ -119,7 +106,7 @@ func TestDashboardPublicationCommandsRejectMissingAuditSinkBeforeMutation(t *tes
 
 func TestDashboardPublicationUIInvocationUsesGeneratedExposureAndRequestIdentity(t *testing.T) {
 	repository := &publicationCommandRepository{row: publication.Publication{
-		ID: "publication-ui", WorkspaceID: "sales", Name: "executive", Configured: true,
+		ID: "publication-ui", ProjectID: "project_1", Name: "executive", Configured: true,
 	}}
 	var persisted []access.AuditEventInput
 	recorder, err := buildPublicationCommandAuditRecorder(func(_ context.Context, input access.AuditEventInput) error {
@@ -131,7 +118,7 @@ func TestDashboardPublicationUIInvocationUsesGeneratedExposureAndRequestIdentity
 	}
 	module := &Module{publicationService: publication.NewService(repository, nil), recordPublicationCommandAudit: recorder}
 
-	_, err = module.MutatePublicationWithInvocation(context.Background(), "sales", "executive", "principal-ui", publication.ActionSuspend, publication.CommandInvocation{
+	_, err = module.MutatePublicationWithInvocation(context.Background(), "project_1", "executive", "principal-ui", publication.ActionSuspend, publication.CommandInvocation{
 		Surface:        string(apigencommand.SurfaceUI),
 		IdempotencyKey: "ui-request-1", RequestID: "ui-request-1", CorrelationID: "ui-correlation-1",
 	})
@@ -142,7 +129,7 @@ func TestDashboardPublicationUIInvocationUsesGeneratedExposureAndRequestIdentity
 		t.Fatalf("ui audit identity = %#v", persisted[0])
 	}
 
-	_, err = module.MutatePublicationWithInvocation(context.Background(), "sales", "executive", "principal-ui", publication.ActionSuspend, publication.CommandInvocation{
+	_, err = module.MutatePublicationWithInvocation(context.Background(), "project_1", "executive", "principal-ui", publication.ActionSuspend, publication.CommandInvocation{
 		Surface: string(apigencommand.SurfaceUI),
 	})
 	if !errors.Is(err, apigencommand.ErrIdempotencyRequired) || repository.calls != 1 {
@@ -172,19 +159,19 @@ func (r *publicationCommandRepository) GetByPublicID(context.Context, string) (p
 	return r.row, nil
 }
 
-func (r *publicationCommandRepository) Suspend(context.Context, string, string, string) (publication.Publication, error) {
+func (r *publicationCommandRepository) Suspend(context.Context, projectgraph.ResourceID, string, string) (publication.Publication, error) {
 	r.calls++
 	r.action = publication.ActionSuspend
 	return r.row, nil
 }
 
-func (r *publicationCommandRepository) Resume(context.Context, string, string, string) (publication.Publication, error) {
+func (r *publicationCommandRepository) Resume(context.Context, projectgraph.ResourceID, string, string) (publication.Publication, error) {
 	r.calls++
 	r.action = publication.ActionResume
 	return r.row, nil
 }
 
-func (r *publicationCommandRepository) Rotate(context.Context, string, string, string) (publication.Publication, error) {
+func (r *publicationCommandRepository) Rotate(context.Context, projectgraph.ResourceID, string, string) (publication.Publication, error) {
 	r.calls++
 	r.action = publication.ActionRotate
 	return r.row, nil

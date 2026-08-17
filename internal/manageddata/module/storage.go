@@ -16,6 +16,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/apiadapter"
 	"github.com/flidai/leapview/internal/manageddata/binding"
@@ -33,6 +34,7 @@ import (
 	managedtus "github.com/flidai/leapview/internal/manageddata/storage/tus"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -45,6 +47,7 @@ type managedDataStorage struct {
 	blobs        storage.BlobStore
 	inventory    storage.BlobInventory
 	transport    control.Transport
+	tusEngine    storage.ResumableUploadEngine
 	materializer manageddata.RevisionMaterializer
 	runtimeCache *runtimeview.Cache
 	tus          http.Handler
@@ -55,22 +58,25 @@ type managedDataStorage struct {
 // Its exported methods are deliberately named ports instead of exposing the
 // internal storage bundle.
 type Module struct {
-	handler           *manageddatahttp.Handler
-	uploads           *control.Service
-	finalizer         manageddatahttp.UploadCoordinator
-	multipart         s3multipart.Coordinator
-	multipartService  *s3multipart.Service
-	materializer      manageddata.RevisionMaterializer
-	tus               http.Handler
-	maintenance       Maintenance
-	maintenanceWorker *maintenanceWorker
-	jobs              JobStore
-	workflow          jobs.WorkflowRecorder
-	eventMu           sync.Mutex
-	bindings          *binding.Binder
-	runtimeResolver   *manageddataresolver.Resolver
-	metadata          DeploymentMetadata
-	finalizeExecution apigencommand.AsyncExecutionContract
+	handler             *manageddatahttp.Handler
+	uploads             *control.Service
+	finalizer           manageddatahttp.UploadCoordinator
+	multipart           s3multipart.Coordinator
+	multipartService    *s3multipart.Service
+	materializer        manageddata.RevisionMaterializer
+	tus                 http.Handler
+	maintenance         Maintenance
+	maintenanceWorker   *maintenanceWorker
+	jobs                JobStore
+	workflow            jobs.WorkflowRecorder
+	eventMu             sync.Mutex
+	bindings            *binding.Binder
+	runtimeResolver     *manageddataresolver.Resolver
+	metadata            DeploymentMetadata
+	finalizeExecution   apigencommand.AsyncExecutionContract
+	currentPrincipal    func(*http.Request) (Principal, bool)
+	authorizeConnection manageddatahttp.ConnectionAuthorizer
+	resolveTusTarget    func(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
 }
 
 type repository interface {
@@ -89,21 +95,28 @@ type JobStore interface {
 }
 
 type Principal struct {
-	ID string
+	ID        string
+	DevBypass bool
 }
 
+// ConnectionAuthorizer is the module-owned authorization port. The HTTP
+// adapter receives a converted copy at construction time, keeping transport
+// types out of the module configuration contract.
+type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
+
 type Config struct {
-	Database         *sql.DB
-	Disabled         bool
-	Product          ProductConfig
-	Worker           MaintenanceWorkerConfig
-	MaxJSONBodyBytes int64
-	Environment      string
-	CurrentPrincipal func(*http.Request) (Principal, bool)
-	Jobs             JobStore
-	Workflow         jobs.WorkflowRecorder
-	ServingStates    ServingStateReader
-	RecordAudit      func(context.Context, CommandAuditEvent) error
+	Database            *sql.DB
+	Disabled            bool
+	Product             ProductConfig
+	Worker              MaintenanceWorkerConfig
+	MaxJSONBodyBytes    int64
+	Environment         string
+	CurrentPrincipal    func(*http.Request) (Principal, bool)
+	AuthorizeConnection ConnectionAuthorizer
+	Jobs                JobStore
+	Workflow            jobs.WorkflowRecorder
+	ServingStates       ServingStateReader
+	RecordAudit         func(context.Context, CommandAuditEvent) error
 }
 
 type ProductConfig struct {
@@ -146,13 +159,14 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 			return manageddatahttp.Principal{}, false
 		}
 		principal, ok := cfg.CurrentPrincipal(r)
-		return manageddatahttp.Principal{ID: principal.ID}, ok
+		return manageddatahttp.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 	}
 	if cfg.Disabled {
-		module := &Module{jobs: cfg.Jobs, maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}
+		module := &Module{jobs: cfg.Jobs, currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection), maintenanceWorker: newMaintenanceWorker(nil, cfg.Worker), finalizeExecution: finalizeExecution}
 		module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 			CurrentPrincipal: currentPrincipal, MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
-			Environment: cfg.Environment, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
+			Environment: cfg.Environment, AuthorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection),
+			RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 		})
 		return module, nil
 	}
@@ -212,11 +226,13 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 			collector: collector, runtime: runtimeCollector,
 		},
 		jobs: cfg.Jobs, workflow: cfg.Workflow, bindings: bindings, runtimeResolver: runtimeResolver,
+		currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection),
 		metadata: metadataReader{repository: repository}, finalizeExecution: finalizeExecution,
 	}
+	module.resolveTusTarget = newTusTargetResolver(services.tusEngine, repository)
 	module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 		Repository: apiRepository, Uploads: uploads, Multipart: multipart,
-		CurrentPrincipal: currentPrincipal, Environment: cfg.Environment,
+		CurrentPrincipal: currentPrincipal, AuthorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection), Environment: cfg.Environment,
 		BeginFinalize: module.beginFinalize, RecordUploadCreated: module.recordUploadCreated,
 		AbortUpload: module.abortUpload, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
 	})
@@ -235,8 +251,8 @@ func (m *Module) Materializer() manageddata.RevisionMaterializer { return m.mate
 
 type BindingValidation interface {
 	AfterArtifactValidation(context.Context, servingstate.State, servingstate.Validation) error
-	ValidateServingStatePins(context.Context, string, string, map[string]string) error
-	ResolveCandidatePins(context.Context, string, []string, string) (map[string]string, error)
+	ValidateServingStatePins(context.Context, projectgraph.ServingIdentity, map[projectgraph.ResourceID]string) error
+	ResolveCandidatePins(context.Context, projectgraph.ResourceID, []projectgraph.ResourceID, string) (map[projectgraph.ResourceID]string, error)
 }
 
 func (m *Module) BindingValidation() BindingValidation {
@@ -247,7 +263,7 @@ func (m *Module) BindingValidation() BindingValidation {
 }
 
 type RuntimeResolver interface {
-	ResolveManagedData(context.Context, servingstate.ID) (manageddataresolver.Resolution, error)
+	ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error)
 }
 
 func (m *Module) RuntimeResolution() RuntimeResolver {
@@ -265,24 +281,24 @@ func (m *Module) RuntimeResolution() RuntimeResolver {
 // having no managed-data roots, so callers never need nil checks.
 type disabledRuntimeResolver struct{}
 
-func (disabledRuntimeResolver) ResolveManagedData(context.Context, servingstate.ID) (manageddataresolver.Resolution, error) {
-	return manageddataresolver.Resolution{Roots: map[string]string{}}, nil
+func (disabledRuntimeResolver) ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error) {
+	return manageddataresolver.Resolution{Roots: map[projectgraph.ResourceID]string{}}, nil
 }
 
 type DeploymentMetadata interface {
-	CollectionByID(context.Context, string) (manageddata.Collection, error)
-	RevisionByID(context.Context, string) (manageddata.Revision, error)
+	CollectionByID(context.Context, projectgraph.ResourceID) (manageddata.Collection, error)
+	RevisionByID(context.Context, manageddata.RevisionID) (manageddata.Revision, error)
 }
 
 type metadataReader struct {
 	repository repository
 }
 
-func (r metadataReader) CollectionByID(ctx context.Context, id string) (manageddata.Collection, error) {
+func (r metadataReader) CollectionByID(ctx context.Context, id projectgraph.ResourceID) (manageddata.Collection, error) {
 	return r.repository.CollectionByID(ctx, id)
 }
 
-func (r metadataReader) RevisionByID(ctx context.Context, id string) (manageddata.Revision, error) {
+func (r metadataReader) RevisionByID(ctx context.Context, id manageddata.RevisionID) (manageddata.Revision, error) {
 	return r.repository.RevisionByID(ctx, id)
 }
 
@@ -341,6 +357,12 @@ func (m *Module) HTTP() *manageddatahttp.Handler {
 	return m.handler
 }
 
+func (m *Module) SetAuthorizeConnection(authorizer ConnectionAuthorizer) {
+	if m != nil && m.handler != nil {
+		m.handler.SetAuthorizeConnection(manageddatahttp.ConnectionAuthorizer(authorizer))
+	}
+}
+
 func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataStorage, error) {
 	root, err := filepath.Abs(strings.TrimSpace(cfg.Dir))
 	if err != nil || strings.TrimSpace(cfg.Dir) == "" {
@@ -373,7 +395,7 @@ func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataS
 		if err != nil {
 			return managedDataStorage{}, err
 		}
-		result.blobs, result.transport, result.materializer, result.tus = blobs, transport, blobs, capacityProtectedTus(handler, capacity)
+		result.blobs, result.transport, result.tusEngine, result.materializer, result.tus = blobs, transport, engine, blobs, capacityProtectedTus(handler, capacity)
 	case "s3":
 		store, err := newManagedDataS3Store(ctx, cfg)
 		if err != nil {

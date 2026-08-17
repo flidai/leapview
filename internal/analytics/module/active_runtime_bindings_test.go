@@ -8,6 +8,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,12 +17,12 @@ func TestActiveRuntimeResolverUsesReleasePinnedCredentialVersion(t *testing.T) {
 	evidence := binding.Evidence()
 	versioned := &activeVersionedResolver{values: map[string]string{"token": "pinned-token"}}
 	module := activeTestModule(binding, versioned, ActiveRuntimeBindingEvidence{
-		BindingID: evidence.BindingID, LogicalConnection: evidence.LogicalConnection.String(),
+		BindingID: evidence.BindingID, ConnectionID: evidence.ConnectionID,
 		ConnectorKind: evidence.ConnectorKind, Revision: evidence.BindingRevision,
 		ValidatedVersion: "secret-quack:v7", EndpointConfigHash: evidence.EndpointConfigHash,
 	})
 	resolver := &activeRuntimeConnectionResolver{
-		module: module, servingStateID: "state_sales", workspaceID: "sales", environment: "prod",
+		module: module, servingStateID: "state_sales", projectID: "sales", environment: "prod",
 	}
 
 	resolved, err := resolver.Resolve(context.Background(), "quack", semanticmodel.Connection{Kind: "quack"})
@@ -36,12 +37,12 @@ func TestActiveRuntimeResolverRejectsBindingConfigurationChangedAfterValidation(
 	evidence := binding.Evidence()
 	versioned := &activeVersionedResolver{values: map[string]string{"token": "must-not-be-read"}}
 	module := activeTestModule(binding, versioned, ActiveRuntimeBindingEvidence{
-		BindingID: evidence.BindingID, LogicalConnection: evidence.LogicalConnection.String(),
+		BindingID: evidence.BindingID, ConnectionID: evidence.ConnectionID,
 		ConnectorKind: evidence.ConnectorKind, Revision: evidence.BindingRevision,
 		ValidatedVersion: "secret-quack:v7", EndpointConfigHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	})
 	resolver := &activeRuntimeConnectionResolver{
-		module: module, servingStateID: "state_sales", workspaceID: "sales", environment: "prod",
+		module: module, servingStateID: "state_sales", projectID: "sales", environment: "prod",
 	}
 
 	_, err := resolver.Resolve(context.Background(), "quack", semanticmodel.Connection{Kind: "quack"})
@@ -56,12 +57,12 @@ func TestActiveRuntimeResolverKeepsReleaseVersionWhenBindingRotatesAfterPromotio
 	binding.ValidatedVersion = "secret-quack:v8"
 	versioned := &activeVersionedResolver{values: map[string]string{"token": "release-v7-token"}}
 	module := activeTestModule(binding, versioned, ActiveRuntimeBindingEvidence{
-		BindingID: evidence.BindingID, LogicalConnection: evidence.LogicalConnection.String(),
+		BindingID: evidence.BindingID, ConnectionID: evidence.ConnectionID,
 		ConnectorKind: evidence.ConnectorKind, Revision: evidence.BindingRevision,
 		ValidatedVersion: "secret-quack:v7", EndpointConfigHash: evidence.EndpointConfigHash,
 	})
 	resolver := &activeRuntimeConnectionResolver{
-		module: module, servingStateID: "state_sales", workspaceID: "sales", environment: "prod",
+		module: module, servingStateID: "state_sales", projectID: "sales", environment: "prod",
 	}
 
 	resolved, err := resolver.Resolve(context.Background(), "quack", semanticmodel.Connection{Kind: "quack"})
@@ -75,7 +76,7 @@ func TestActiveRuntimeResolverFailsClosedWhenReleaseBindingEvidenceIsMissing(t *
 	module := activeTestModule(binding, &activeVersionedResolver{}, ActiveRuntimeBindingEvidence{})
 	module.activeRuntimeBindingEvidence = activeEvidenceSource{}
 	resolver := &activeRuntimeConnectionResolver{
-		module: module, servingStateID: "state_sales", workspaceID: "sales", environment: "prod",
+		module: module, servingStateID: "state_sales", projectID: "sales", environment: "prod",
 	}
 
 	_, err := resolver.Resolve(context.Background(), "quack", semanticmodel.Connection{Kind: "quack"})
@@ -86,7 +87,7 @@ func TestActiveRuntimeResolverLeavesCredentialFreeAuthoredConnectionUnbound(t *t
 	source := &activeFlakyEvidenceSource{}
 	module := &Module{activeRuntimeBindingEvidence: source}
 	resolver := &activeRuntimeConnectionResolver{
-		module: module, servingStateID: "state_sales", workspaceID: "sales", environment: "prod",
+		module: module, servingStateID: "state_sales", projectID: "sales", environment: "prod",
 	}
 	logical := semanticmodel.Connection{Kind: "http", Scope: "https://example.test/public/"}
 
@@ -100,14 +101,14 @@ func TestActiveRuntimeResolverRetriesTransientBindingEvidenceFailure(t *testing.
 	binding := activeTestBinding(t)
 	evidence := binding.Evidence()
 	source := &activeFlakyEvidenceSource{values: []ActiveRuntimeBindingEvidence{{
-		BindingID: evidence.BindingID, LogicalConnection: evidence.LogicalConnection.String(),
+		BindingID: evidence.BindingID, ConnectionID: evidence.ConnectionID,
 		ConnectorKind: evidence.ConnectorKind, Revision: evidence.BindingRevision,
 		ValidatedVersion: "secret-quack:v7", EndpointConfigHash: evidence.EndpointConfigHash,
 	}}}
 	module := activeTestModule(binding, &activeVersionedResolver{values: map[string]string{"token": "pinned-token"}}, ActiveRuntimeBindingEvidence{})
 	module.activeRuntimeBindingEvidence = source
 	resolver := &activeRuntimeConnectionResolver{
-		module: module, servingStateID: "state_sales", workspaceID: "sales", environment: "prod",
+		module: module, servingStateID: "state_sales", projectID: "sales", environment: "prod",
 	}
 
 	_, err := resolver.Resolve(context.Background(), "quack", semanticmodel.Connection{Kind: "quack"})
@@ -121,9 +122,9 @@ func TestActiveRuntimeResolverRetriesTransientBindingEvidenceFailure(t *testing.
 func activeTestBinding(t *testing.T) connectionbinding.TargetBinding {
 	t.Helper()
 	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
-		ID: "binding_quack", TargetID: "production", LogicalConnectionID: "quack",
+		ID: "binding_quack", TargetID: "production", ConnectionID: "quack",
 		ConnectorKind: "quack", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
-		Scope:    connectionbinding.BindingScope{WorkspaceID: "sales", Environment: "prod"},
+		Scope:    connectionbinding.BindingScope{ProjectID: "sales", Environment: "prod"},
 		Endpoint: connectionbinding.EndpointConfig{Host: "quack.example.com", Port: 443, TLSMode: "require"},
 		CredentialReference: connectionbinding.CredentialReference{
 			ProjectID: "infisical-project", Environment: "prod", SecretPath: "/leapview", SecretKey: "quack",
@@ -176,10 +177,10 @@ type activeBindingCatalog struct {
 func (catalog activeBindingCatalog) Create(context.Context, connectionbinding.TargetBinding) error {
 	return nil
 }
-func (catalog activeBindingCatalog) Binding(context.Context, connectionbinding.BindingScope, string, connectionbinding.LogicalConnectionID) (connectionbinding.TargetBinding, error) {
+func (catalog activeBindingCatalog) Binding(context.Context, connectionbinding.BindingScope, connectionbinding.TargetID, projectgraph.ResourceID) (connectionbinding.TargetBinding, error) {
 	return catalog.binding, nil
 }
-func (catalog activeBindingCatalog) List(context.Context, connectionbinding.BindingScope, string) ([]connectionbinding.TargetBinding, error) {
+func (catalog activeBindingCatalog) List(context.Context, connectionbinding.BindingScope, connectionbinding.TargetID) ([]connectionbinding.TargetBinding, error) {
 	return []connectionbinding.TargetBinding{catalog.binding}, nil
 }
 func (catalog activeBindingCatalog) Save(context.Context, connectionbinding.TargetBinding, int64) (connectionbinding.TargetBinding, error) {

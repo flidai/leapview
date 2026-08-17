@@ -1,0 +1,14 @@
+apiVersion: leapview.dev/v1
+kind: Grant
+metadata:
+  id: grant:sales-demo-view-items
+  name: sales-demo-view-items
+spec:
+  object:
+    kind: dashboard
+    id: dashboard:executive-sales
+  subject:
+    kind: principal
+    principalId: email_2a7d2952c0d423cf3ea7b39428fb9420
+    displayName: LeapView Demo
+  capability: RESOURCE_READ

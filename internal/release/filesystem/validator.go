@@ -1,13 +1,12 @@
 package filesystem
 
 import (
-	"encoding/json"
+	"fmt"
 	"os"
 
-	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	servingstatevalidation "github.com/flidai/leapview/internal/servingstate/validation"
 )
 
 type Validator struct{}
@@ -16,40 +15,26 @@ type ValidateOptions struct {
 	Environment servingstate.Environment
 }
 
-func (v Validator) ValidateArtifact(path string, workspaceID servingstate.WorkspaceID, environment servingstate.Environment, servingStateID servingstate.ID) (servingstate.Validation, error) {
-	return ValidateArtifactWithOptions(path, workspaceID, servingStateID, ValidateOptions{Environment: environment})
+func (v Validator) ValidateArtifact(path string, projectID projectgraph.ResourceID, environment servingstate.Environment, servingStateID servingstate.ID) (servingstate.Validation, error) {
+	return ValidateArtifactWithOptions(path, projectID, servingStateID, ValidateOptions{Environment: environment})
 }
 
-func ValidateArtifactWithOptions(path string, workspaceID servingstate.WorkspaceID, servingStateID servingstate.ID, options ValidateOptions) (servingstate.Validation, error) {
-	validation, err := projectbundle.ValidateArtifactWithOptions(path, string(workspaceID), string(servingStateID), projectbundle.ValidateOptions{
-		Environment: string(options.Environment),
-	})
+func ValidateArtifactWithOptions(path string, projectID projectgraph.ResourceID, servingStateID servingstate.ID, options ValidateOptions) (servingstate.Validation, error) {
+	identity, err := projectgraph.NewServingIdentity(projectID, string(options.Environment), string(servingStateID))
 	if err != nil {
 		return servingstate.Validation{}, err
 	}
-	accessJSON, err := json.Marshal(validation.AccessPolicy)
+	validation, err := projectbundle.ValidateArtifact(path)
 	if err != nil {
 		return servingstate.Validation{}, err
 	}
-	accessPolicy, err := accesssnapshot.Decode(accessJSON)
-	if err != nil {
-		return servingstate.Validation{}, err
-	}
-	graphJSON, err := json.Marshal(validation.Graph)
-	if err != nil {
-		return servingstate.Validation{}, err
-	}
-	graph, err := servingstatevalidation.DecodeAssetGraph(graphJSON)
-	if err != nil {
-		return servingstate.Validation{}, err
+	if validation.ProjectID != identity.ProjectID.String() {
+		return servingstate.Validation{}, fmt.Errorf("artifact project %q does not match serving project %q", validation.ProjectID, identity.ProjectID)
 	}
 	return servingstate.Validation{
 		Digest: validation.Digest, ManifestJSON: validation.ManifestJSON, RootDir: validation.RootDir,
-		ProjectID: validation.ProjectID, ProjectDigest: validation.ProjectDigest,
-		ProjectWorkspaces: append([]string(nil), validation.ProjectWorkspaces...),
-		AccessPolicy:      accessPolicy, DashboardPublicationsJSON: validation.DashboardPublicationsJSON,
-		DashboardAppearancesJSON: validation.DashboardAppearancesJSON,
-		ManagedDataRevisions:     cloneStringMap(validation.ManagedDataRevisions), Graph: graph,
+		ProjectID: identity.ProjectID, ProjectDigest: validation.ProjectDigest,
+		AccessPolicy: validation.Manifest.Access, Graph: validation.Graph,
 	}, nil
 }
 
@@ -58,12 +43,4 @@ func (Validator) Cleanup(validation servingstate.Validation) error {
 		return nil
 	}
 	return os.RemoveAll(validation.RootDir)
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
 }

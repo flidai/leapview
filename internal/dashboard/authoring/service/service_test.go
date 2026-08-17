@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
 type fakeAuthorizer struct {
@@ -38,7 +39,7 @@ type fakeCompiler struct {
 	invalidDefinition bool
 }
 
-func (c *fakeCompiler) Compile(_ context.Context, _ string, _ string, document authoring.Dashboard) (service.Compilation, error) {
+func (c *fakeCompiler) Compile(_ context.Context, projectID graph.ResourceID, _ graph.ResourceID, document authoring.Dashboard) (service.Compilation, error) {
 	c.calls++
 	if c.err != nil {
 		return service.Compilation{}, c.err
@@ -51,7 +52,8 @@ func (c *fakeCompiler) Compile(_ context.Context, _ string, _ string, document a
 	if state == "" {
 		state = "state-1"
 	}
-	return service.Compilation{Definition: dashboarddefinition.Definition{ID: id, SemanticModel: semantic, Title: document.Title, Pages: document.Pages, Visualizations: map[string]visualizationdefinition.Definition{}}, SemanticServingStateID: state}, nil
+	identity, _ := graph.NewServingIdentity(projectID, "production", state)
+	return service.Compilation{Definition: dashboarddefinition.Definition{ID: id.String(), SemanticModel: semantic.String(), Title: document.Title, Pages: document.Pages, Visualizations: map[string]visualizationdefinition.Definition{}}, SemanticIdentity: identity}, nil
 }
 
 type fakeRepository struct {
@@ -82,23 +84,23 @@ func (r *fakeRepository) Create(_ context.Context, input authoring.CreateInput) 
 	r.revisions[input.Revision.ID] = input.Revision
 	return r.lifecycle, nil
 }
-func (r *fakeRepository) Get(_ context.Context, _ string, _ authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) Get(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID) (authoring.DashboardLifecycle, error) {
 	return r.lifecycle, nil
 }
-func (r *fakeRepository) List(context.Context, string) ([]authoring.DashboardLifecycle, error) {
+func (r *fakeRepository) List(context.Context, graph.ResourceID) ([]authoring.DashboardLifecycle, error) {
 	return []authoring.DashboardLifecycle{r.lifecycle}, nil
 }
-func (r *fakeRepository) CountBySemanticModel(context.Context, string) ([]authoring.SemanticModelUsage, error) {
+func (r *fakeRepository) CountBySemanticModel(context.Context, graph.ResourceID) ([]authoring.SemanticModelUsage, error) {
 	return nil, nil
 }
-func (r *fakeRepository) GetRevision(_ context.Context, _ string, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
+func (r *fakeRepository) GetRevision(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
 	revision, ok := r.revisions[id]
 	if !ok {
 		return authoring.Revision{}, authoring.ErrNotFound
 	}
 	return revision, nil
 }
-func (r *fakeRepository) LookupCommandResult(_ context.Context, _ string, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
+func (r *fakeRepository) LookupCommandResult(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
 	result, ok := r.commands[evidence.ID]
 	if !ok {
 		return authoring.CommandResult{}, false, nil
@@ -107,6 +109,9 @@ func (r *fakeRepository) LookupCommandResult(_ context.Context, _ string, _ auth
 		return authoring.CommandResult{}, false, authoring.ErrCommandReuse
 	}
 	return authoring.CommandResult{Revision: result.token}, true, nil
+}
+func (r *fakeRepository) LookupCreateOperation(context.Context, authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
+	return authoring.CreateOperationResult{}, false, nil
 }
 func (r *fakeRepository) AppendDraft(_ context.Context, input authoring.AppendDraftInput) (authoring.Revision, error) {
 	if r.lifecycle.Draft == nil || r.lifecycle.Draft.Revision != input.ExpectedDraftRevision {
@@ -147,7 +152,7 @@ func (r *fakeRepository) Archive(_ context.Context, input authoring.ArchiveInput
 	return r.lifecycle, nil
 }
 
-func (r *fakeRepository) GetPublishedCompilation(context.Context, string, authoring.DashboardID) (authoring.CompiledRevision, error) {
+func (r *fakeRepository) GetPublishedCompilation(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
 	return authoring.CompiledRevision{}, authoring.ErrNotFound
 }
 
@@ -184,7 +189,7 @@ func newService(t *testing.T, repository authoring.Repository, auth *fakeAuthori
 
 func create(t *testing.T, svc *service.Service) service.Result {
 	t.Helper()
-	result, err := svc.Create(t.Context(), service.CreateRequest{WorkspaceID: "workspace", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI})
+	result, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-helper"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,14 +212,14 @@ func TestCreateEditReplayPublishArchiveAndFailures(t *testing.T) {
 		t.Fatalf("default page = %#v", page)
 	}
 	first := editCommand(created, "edit-1", "Orders v2")
-	edited, err := svc.Execute(t.Context(), "workspace", first)
+	edited, err := svc.Execute(t.Context(), "project", first)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if edited.Revision.Number != 2 || edited.Lifecycle.Title != "Orders v2" {
 		t.Fatalf("edited = %#v", edited)
 	}
-	replayed, err := svc.Execute(t.Context(), "workspace", first)
+	replayed, err := svc.Execute(t.Context(), "project", first)
 	if err != nil || replayed.Revision != edited.Revision {
 		t.Fatalf("replayed = %#v, err = %v", replayed, err)
 	}
@@ -222,35 +227,35 @@ func TestCreateEditReplayPublishArchiveAndFailures(t *testing.T) {
 		t.Fatalf("edit/replay invoked strict compiler %d times", compiler.calls)
 	}
 	second := editCommand(edited, "edit-2", "Orders v3")
-	later, err := svc.Execute(t.Context(), "workspace", second)
+	later, err := svc.Execute(t.Context(), "project", second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err = svc.Execute(t.Context(), "workspace", first)
+	replayed, err = svc.Execute(t.Context(), "project", first)
 	if err != nil || replayed.Revision != edited.Revision || replayed.Lifecycle.Draft.Revision != later.Revision {
 		t.Fatalf("replay after later edit = %#v, err = %v", replayed, err)
 	}
 	changed := first
 	changed.Metadata.Title = stringPtr("different")
-	if _, err := svc.Execute(t.Context(), "workspace", changed); !errors.Is(err, authoring.ErrCommandReuse) {
+	if _, err := svc.Execute(t.Context(), "project", changed); !errors.Is(err, authoring.ErrCommandReuse) {
 		t.Fatalf("command reuse error = %v", err)
 	}
 
 	compiler.err = errors.New("strict compile failed")
 	publish := authoring.Command{ID: "publish-1", DashboardID: later.Lifecycle.ID, DraftID: later.Lifecycle.Draft.ID, ExpectedRevision: later.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Publish: &authoring.PublishPayload{}}
-	if _, err := svc.Execute(t.Context(), "workspace", publish); err == nil || repository.publishCalls != 0 {
+	if _, err := svc.Execute(t.Context(), "project", publish); err == nil || repository.publishCalls != 0 {
 		t.Fatalf("compile failure err=%v publishCalls=%d", err, repository.publishCalls)
 	}
 	compiler.err = nil
-	published, err := svc.Execute(t.Context(), "workspace", publish)
+	published, err := svc.Execute(t.Context(), "project", publish)
 	if err != nil || published.Lifecycle.Status != authoring.LifecycleStatusPublished || repository.publishCalls != 1 {
 		t.Fatalf("published = %#v, err = %v", published, err)
 	}
-	if repository.lastPublish.Compilation.Definition.ID != string(later.Lifecycle.ID) || repository.lastPublish.Compilation.SemanticServingStateID != "state-1" || repository.lastPublish.Published.Compilation != repository.lastPublish.Compilation.Token() {
+	if repository.lastPublish.Compilation.Definition.ID != string(later.Lifecycle.ID) || repository.lastPublish.Compilation.SemanticIdentity.GenerationID != "state-1" || repository.lastPublish.Published.Compilation != repository.lastPublish.Compilation.Token() {
 		t.Fatalf("compiled publication input = %#v", repository.lastPublish)
 	}
 	archive := authoring.Command{ID: "archive-1", DashboardID: later.Lifecycle.ID, ExpectedRevision: published.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Archive: &authoring.ArchivePayload{}}
-	archived, err := svc.Execute(t.Context(), "workspace", archive)
+	archived, err := svc.Execute(t.Context(), "project", archive)
 	if err != nil || archived.Lifecycle.Status != authoring.LifecycleStatusArchived || repository.archiveCalls != 1 {
 		t.Fatalf("archived = %#v, err = %v", archived, err)
 	}
@@ -265,7 +270,7 @@ func TestCreateEditReplayPublishArchiveAndFailures(t *testing.T) {
 func TestCreateAuthorizationDenialAndStaleConflict(t *testing.T) {
 	repository, auth, compiler := newFakeRepository(), &fakeAuthorizer{err: errors.New("denied")}, &fakeCompiler{}
 	svc := newService(t, repository, auth, compiler)
-	if _, err := svc.Create(t.Context(), service.CreateRequest{WorkspaceID: "workspace", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales"}); err == nil || repository.lifecycle.ID != "" {
+	if _, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "sales", IdempotencyKey: "create-validation"}); err == nil || repository.lifecycle.ID != "" {
 		t.Fatalf("denied create err=%v lifecycle=%#v", err, repository.lifecycle)
 	}
 	repository, auth, compiler = newFakeRepository(), &fakeAuthorizer{}, &fakeCompiler{}
@@ -273,7 +278,7 @@ func TestCreateAuthorizationDenialAndStaleConflict(t *testing.T) {
 	created := create(t, svc)
 	stale := editCommand(created, "edit-stale", "stale")
 	stale.ExpectedRevision.Number++
-	if _, err := svc.Execute(t.Context(), "workspace", stale); !errors.Is(err, authoring.ErrStaleRevision) {
+	if _, err := svc.Execute(t.Context(), "project", stale); !errors.Is(err, authoring.ErrStaleRevision) {
 		t.Fatalf("stale edit error = %v", err)
 	}
 }
@@ -284,7 +289,7 @@ func TestPublishRejectsInvalidCompilerResultBeforeRepository(t *testing.T) {
 	created := create(t, svc)
 	command := authoring.Command{ID: "publish-invalid", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID, ExpectedRevision: created.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Publish: &authoring.PublishPayload{}}
 	compiler.invalidDefinition = true
-	if _, err := svc.Execute(t.Context(), "workspace", command); err == nil || repository.publishCalls != 0 {
+	if _, err := svc.Execute(t.Context(), "project", command); err == nil || repository.publishCalls != 0 {
 		t.Fatalf("invalid compiler result err=%v publishCalls=%d", err, repository.publishCalls)
 	}
 }

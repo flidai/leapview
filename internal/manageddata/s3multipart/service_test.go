@@ -31,7 +31,7 @@ func TestCoordinatorCreateSignCompleteIsStrictAndRetrySafe(t *testing.T) {
 	})
 	provider := &fakeMultipartStore{}
 	service := newTestService(t, repo, provider)
-	create := CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "large.csv", IdempotencyKey: "create-1"}
+	create := CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "large.csv", IdempotencyKey: "create-1"}
 
 	upload, err := service.Create(ctx, create)
 	if err != nil {
@@ -50,30 +50,30 @@ func TestCoordinatorCreateSignCompleteIsStrictAndRetrySafe(t *testing.T) {
 	}
 
 	if _, err := service.SignPart(ctx, SignPartRequest{
-		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID,
+		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(),
 		MultipartUploadID: upload.ID, PartNumber: 1, Size: minPart, SHA256: strings.Repeat("c", 64),
 	}); err != nil {
 		t.Fatalf("sign first part: %v", err)
 	}
 	signed, err := service.SignPart(ctx, SignPartRequest{
-		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID,
+		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(),
 		MultipartUploadID: upload.ID, PartNumber: 2, Size: 3,
 	})
 	if err != nil {
 		t.Fatalf("sign final part: %v", err)
 	}
-	if signed.UploadSessionID != session.ID || signed.MultipartUploadID != upload.ID || signed.URL == "" || signed.ExpiresAt != "2026-07-14T10:15:00Z" || len(signed.Headers) != 1 {
+	if signed.UploadSessionID != session.ID.String() || signed.MultipartUploadID != upload.ID || signed.URL == "" || signed.ExpiresAt != "2026-07-14T10:15:00Z" || len(signed.Headers) != 1 {
 		t.Fatalf("signed part = %#v", signed)
 	}
 	if _, err := service.SignPart(ctx, SignPartRequest{
-		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID,
+		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(),
 		MultipartUploadID: upload.ID, PartNumber: 2, Size: 4,
 	}); !errors.Is(err, control.ErrConflict) {
 		t.Fatalf("conflicting sign error = %v, want conflict", err)
 	}
 
 	complete := CompleteRequest{
-		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID,
+		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(),
 		MultipartUploadID: upload.ID, IdempotencyKey: "complete-1",
 		Parts: []CompletedPart{{PartNumber: 2, ETag: "etag-2"}, {PartNumber: 1, ETag: "etag-1", SHA256: strings.Repeat("c", 64)}},
 	}
@@ -95,27 +95,27 @@ func TestCoordinatorRejectsWrongScopeManifestAndMultipartShape(t *testing.T) {
 	service := newTestService(t, repo, &fakeMultipartStore{})
 
 	for _, request := range []CreateRequest{
-		{Project: "project-b", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "key"},
-		{Project: " project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "key"},
-		{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "missing.csv", IdempotencyKey: "key"},
+		{Project: "project-b", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "key"},
+		{Project: " project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "key"},
+		{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "missing.csv", IdempotencyKey: "key"},
 	} {
 		if _, err := service.Create(ctx, request); err == nil {
 			t.Fatalf("Create(%#v) unexpectedly succeeded", request)
 		}
 	}
 
-	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "create"})
+	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "create"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, MultipartUploadID: upload.ID, PartNumber: 1, Size: minPart + 2}); !errors.Is(err, control.ErrInvalid) {
+	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, PartNumber: 1, Size: minPart + 2}); !errors.Is(err, control.ErrInvalid) {
 		t.Fatalf("oversized part error = %v, want invalid", err)
 	}
-	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
+	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = service.Complete(ctx, CompleteRequest{
-		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID,
+		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(),
 		MultipartUploadID: upload.ID, IdempotencyKey: "complete", Parts: []CompletedPart{{PartNumber: 1, ETag: "etag"}},
 	})
 	if !errors.Is(err, control.ErrInvalid) {
@@ -127,21 +127,21 @@ func TestCoordinatorSanitizesIntegrityFailureAndRecoversProviderUpload(t *testin
 	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
 	provider := &fakeMultipartStore{completeErr: fmt.Errorf("raw backend secret: %w", storage.ErrIntegrity)}
 	service := newTestService(t, repo, provider)
-	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "create"})
+	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "create"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
+	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
 		t.Fatal(err)
 	}
 	_, err = service.Complete(ctx, CompleteRequest{
-		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID,
+		Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(),
 		MultipartUploadID: upload.ID, IdempotencyKey: "complete", Parts: []CompletedPart{{PartNumber: 1, ETag: "etag"}},
 	})
 	if !errors.Is(err, control.ErrIntegrity) || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("completion error = %v", err)
 	}
-	stored, err := repo.S3MultipartUploadByID(ctx, upload.ID)
+	stored, err := repo.S3MultipartUploadByID(ctx, manageddata.MultipartUploadID(upload.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestCoordinatorRecoversOpenMultipartAfterParentAbort(t *testing.T) {
 	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
 	provider := &fakeMultipartStore{}
 	service := newTestService(t, repo, provider)
-	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "create"})
+	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "create"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestCoordinatorRecoversOpenMultipartAfterParentAbort(t *testing.T) {
 	if err != nil || recovery.Aborted != 1 || provider.abortCalls != 1 {
 		t.Fatalf("recovery = %#v, abort calls = %d, err = %v", recovery, provider.abortCalls, err)
 	}
-	stored, err := repo.S3MultipartUploadByID(ctx, upload.ID)
+	stored, err := repo.S3MultipartUploadByID(ctx, manageddata.MultipartUploadID(upload.ID))
 	if err != nil || stored.Status != manageddata.S3MultipartStatusAborted {
 		t.Fatalf("stored upload = %#v, err = %v", stored, err)
 	}
@@ -240,7 +240,7 @@ func TestCoordinatorCreationInitFailureIsRetryableAndDoesNotMultiplyProviderUplo
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "create-init-retry"}
+	request := CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "create-init-retry"}
 	if _, err := first.Create(ctx, request); err == nil {
 		t.Fatal("Create unexpectedly succeeded")
 	}
@@ -260,11 +260,11 @@ func TestCoordinatorProviderCreateFailureLeavesRetryableIntent(t *testing.T) {
 	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
 	provider := &fakeMultipartStore{createErr: errors.New("provider create unavailable")}
 	service := newTestService(t, repo, provider)
-	request := CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "create-provider-retry"}
+	request := CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "create-provider-retry"}
 	if _, err := service.Create(ctx, request); err == nil || !errors.Is(err, control.ErrBackend) {
 		t.Fatalf("provider create error=%v", err)
 	}
-	intentID := "multipart_" + identityHash("create", session.ID, request.IdempotencyKey)
+	intentID := manageddata.MultipartUploadID("multipart_" + identityHash("create", session.ID.String(), request.IdempotencyKey))
 	stored, err := repo.S3MultipartUploadByID(ctx, intentID)
 	if err != nil || stored.Status != manageddata.S3MultipartStatusCreating {
 		t.Fatalf("stored intent=%#v err=%v", stored, err)
@@ -282,19 +282,19 @@ func TestCoordinatorProviderCompletionFailureIsVisibleAndRetryable(t *testing.T)
 	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
 	provider := &fakeMultipartStore{}
 	service := newTestService(t, repo, provider)
-	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "complete-provider-retry"})
+	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "complete-provider-retry"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
+	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
 		t.Fatal(err)
 	}
-	request := CompleteRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, MultipartUploadID: upload.ID, IdempotencyKey: "complete-provider-retry", Parts: []CompletedPart{{PartNumber: 1, ETag: "etag"}}}
+	request := CompleteRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, IdempotencyKey: "complete-provider-retry", Parts: []CompletedPart{{PartNumber: 1, ETag: "etag"}}}
 	provider.completeErr = errors.New("provider completion unavailable")
 	if _, err := service.Complete(ctx, request); err == nil || !errors.Is(err, control.ErrBackend) {
 		t.Fatalf("provider completion error=%v", err)
 	}
-	stored, err := repo.S3MultipartUploadByID(ctx, upload.ID)
+	stored, err := repo.S3MultipartUploadByID(ctx, manageddata.MultipartUploadID(upload.ID))
 	if err != nil || stored.Status != manageddata.S3MultipartStatusCompleting {
 		t.Fatalf("stored completion intent=%#v err=%v", stored, err)
 	}
@@ -308,11 +308,11 @@ func TestCoordinatorCompletionProviderSuccessBeforeSQLFailureConvergesOnRecovery
 	ctx, repo, session := coordinatorFixture(t, []manageddata.File{{Path: "data.csv", Size: 1, SHA256: strings.Repeat("a", 64)}})
 	provider := &fakeMultipartStore{}
 	service := newTestService(t, repo, provider)
-	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, Path: "data.csv", IdempotencyKey: "create-complete-retry"})
+	upload, err := service.Create(ctx, CreateRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), Path: "data.csv", IdempotencyKey: "create-complete-retry"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
+	if _, err := service.SignPart(ctx, SignPartRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, PartNumber: 1, Size: 1}); err != nil {
 		t.Fatal(err)
 	}
 	failing := &failingMultipartRepository{Repository: repo, finishErr: errors.New("finish sqlite failed")}
@@ -320,11 +320,11 @@ func TestCoordinatorCompletionProviderSuccessBeforeSQLFailureConvergesOnRecovery
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = first.Complete(ctx, CompleteRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID, MultipartUploadID: upload.ID, IdempotencyKey: "finish-retry", Parts: []CompletedPart{{PartNumber: 1, ETag: "etag"}}})
+	_, err = first.Complete(ctx, CompleteRequest{Project: "project-a", Connection: "warehouse", UploadSessionID: session.ID.String(), MultipartUploadID: upload.ID, IdempotencyKey: "finish-retry", Parts: []CompletedPart{{PartNumber: 1, ETag: "etag"}}})
 	if err == nil || provider.completeCalls != 1 {
 		t.Fatalf("completion error=%v calls=%d", err, provider.completeCalls)
 	}
-	stored, err := repo.S3MultipartUploadByID(ctx, upload.ID)
+	stored, err := repo.S3MultipartUploadByID(ctx, manageddata.MultipartUploadID(upload.ID))
 	if err != nil || stored.Status != manageddata.S3MultipartStatusCompleting {
 		t.Fatalf("stored after SQL failure=%#v err=%v", stored, err)
 	}
@@ -404,7 +404,7 @@ func (r *failingMultipartRepository) InitializeS3MultipartUpload(ctx context.Con
 	return r.Repository.InitializeS3MultipartUpload(ctx, input)
 }
 
-func (r *failingMultipartRepository) FinishS3MultipartCompletion(ctx context.Context, id string) (manageddata.S3MultipartUpload, error) {
+func (r *failingMultipartRepository) FinishS3MultipartCompletion(ctx context.Context, id manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error) {
 	if r.finishErr != nil {
 		err := r.finishErr
 		r.finishErr = nil
@@ -479,7 +479,7 @@ func coordinatorFixture(t *testing.T, files []manageddata.File) (context.Context
 		t.Fatal(err)
 	}
 	repo := sqlite.NewRepository(database)
-	collection, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "collection-a", ProjectID: "project-a", ConnectionName: "warehouse", Name: "Warehouse"})
+	collection, err := repo.CreateCollection(ctx, manageddata.CreateCollectionInput{ID: "collection-a", ProjectID: "project-a", ConnectionID: "warehouse", Name: "Warehouse"})
 	if err != nil {
 		t.Fatal(err)
 	}

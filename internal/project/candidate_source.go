@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -35,13 +37,13 @@ type CandidateSynchronizationRequest struct {
 }
 
 type CandidateSourceScope struct {
-	ProjectID    string
+	ProjectID    projectgraph.ResourceID
 	OwnerID      string
 	CandidateKey string
 }
 
 type CandidateSourceSnapshot struct {
-	ProjectID           string
+	ProjectID           projectgraph.ResourceID
 	ArtifactDigest      string
 	ProjectPath         string
 	ProjectDigest       string

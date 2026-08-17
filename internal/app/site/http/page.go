@@ -477,7 +477,7 @@ func siteWorkflowArtifact() g.Node {
 	const semanticModel = `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata:
-  workspace: sales
+  id: semantic-model:sales
   name: sales
 spec:
   measures:

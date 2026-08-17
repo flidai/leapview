@@ -89,23 +89,21 @@ model DashboardVisualQueryResult {
 }
 
 enum CatalogType {
-  workspace: "workspace",
-  dashboard: "dashboard",
-  page: "page",
-  visual: "visual",
-  filter: "filter",
+  project: "project",
+  connection: "connection",
+  sourceResource: "source",
+  modelResource: "model",
   semanticModel: "semantic_model",
-  semanticTable: "semantic_table",
-  field: "field",
-  measure: "measure",
+  pipeline: "pipeline",
+  dashboard: "dashboard",
 }
 
 model CatalogRef {
   @minLength(1)
-  workspaceId: string;
-  type: CatalogType;
-  @minLength(1)
+  @maxLength(256)
+  @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
   id: string;
+  kind: CatalogType;
 }
 
 enum QueryVisualType {
@@ -291,11 +289,9 @@ model QueryVisualCalculation {
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["semantic-model", "visual", "query"] })
 model QueryVisualInput {
+  @doc("Stable semantic_model resource ID returned by catalog_search/catalog_get.")
   @minLength(1)
-  workspace: string;
-  @doc("Semantic model ID.")
-  @minLength(1)
-  `model`: string;
+  semanticModelId: string;
   @doc("Semantic dataset/table ID.")
   @minLength(1)
   dataset: string;
@@ -338,7 +334,7 @@ model QueryVisualInput {
 }
 
 model QueryVisualFieldUsage {
-  ref: CatalogRef;
+  fieldId: string;
   role: "dimension" | "series" | "measure" | "table_field" | "table_row";
   `alias`?: string;
   label: string;
@@ -350,9 +346,9 @@ model QueryVisualFieldUsage {
 model QueryVisualFilterUsage {
   operator: "equals" | "in" | "contains" | "not_contains" | "starts_with" | "greater_than_or_equal" | "less_than" | "is_null" | "is_not_null";
   @doc("Filtered semantic field.")
-  ref: CatalogRef;
+  fieldId: string;
   @doc("Fact table selected to resolve a conformed dimension.")
-  resolvedFactRef?: CatalogRef;
+  resolvedFactId?: string;
   @doc("Comparison values. Omitted for unary operators.")
   values?: string[];
   @doc("Zero-based nested group path. Omitted for a root-level filter.")
@@ -374,8 +370,8 @@ model QueryVisualResult {
   type: string;
   id: string;
   title: string;
-  modelRef: CatalogRef;
-  datasetRef: CatalogRef;
+  semanticModelRef: CatalogRef;
+  datasetId: string;
   fields: QueryVisualFieldUsage[];
   filters: QueryVisualFilterUsage[];
   completeness: QueryVisualCompleteness;
@@ -385,56 +381,22 @@ model QueryVisualResult {
   signal: string;
 }
 
-model CatalogLocation {
-  @minLength(1)
-  dashboardId: string;
-  dashboardName?: string;
-  @minLength(1)
-  pageId: string;
-  pageName?: string;
-  href?: string;
-}
-
-model CatalogLocationSelection {
-  @minLength(1)
-  dashboardId: string;
-  @minLength(1)
-  pageId: string;
-}
-
-model CatalogHierarchyItem {
-  ref: CatalogRef;
-  name: string;
-}
-
-model CatalogWorkspace {
-  ref: CatalogRef;
-  name: string;
-}
-
 model CatalogItem {
   ref: CatalogRef;
   name: string;
+  displayName?: string;
   description?: string;
-  workspace: CatalogWorkspace;
-  hierarchy: CatalogHierarchyItem[];
-  locations?: CatalogLocation[];
-  href?: string;
-  capabilities: ("catalog_get" | "catalog_list" | "query_semantic_model" | "query_dashboard_visual" | "query_visual")[];
-}
-
-model CatalogSearchContext {
-  dashboardId?: string;
-  pageId?: string;
+  domain?: string;
+  owner?: string;
+  tags?: string[];
 }
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["catalog", "search"] })
 model CatalogSearchInput {
   @minLength(1)
   query: string;
-  types?: CatalogType[];
-  workspaceIds?: string[];
-  context?: CatalogSearchContext;
+  kinds?: CatalogType[];
+  domain?: string;
   cursor?: string;
   @minValue(1)
   @maxValue(25)
@@ -444,7 +406,8 @@ model CatalogSearchInput {
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["catalog", "browse"] })
 model CatalogListInput {
   parent?: CatalogRef;
-  childTypes?: CatalogType[];
+  childKinds?: CatalogType[];
+  domain?: string;
   cursor?: string;
   @minValue(1)
   @maxValue(50)
@@ -454,7 +417,6 @@ model CatalogListInput {
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["catalog", "describe"] })
 model CatalogGetInput {
   ref: CatalogRef;
-  location?: CatalogLocationSelection;
 }
 
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["catalog"] })
@@ -484,143 +446,9 @@ model CatalogColumn {
   format?: string;
 }
 
-model CatalogPageComponent {
-  id: string;
-  kind: string;
-  ref?: string;
-  title?: string;
-  description?: string;
-  placement?: CatalogPlacement;
-  x?: float64;
-  y?: float64;
-  width?: float64;
-  height?: float64;
-  visualId?: string;
-  filterId?: string;
-}
-
-model CatalogRelationship {
-  id: string;
-  description: string;
-  fromFieldRef: CatalogRef;
-  toFieldRef: CatalogRef;
-  cardinality: string;
-  active: boolean;
-}
-
-model CatalogFieldBinding {
-  semanticTableRef: CatalogRef;
-  fieldRef: CatalogRef;
-  relationshipPath: string[];
-}
-
-model CatalogMeasureInput {
-  fieldRef?: CatalogRef;
-  expression?: string;
-}
-
-model CatalogMeasureFilter {
-  fieldRef: CatalogRef;
-  operator: string;
-  values: unknown[];
-}
-
-@discriminator("type")
 model CatalogDetails {
-  type: string;
-}
-
-model CatalogWorkspaceDetails extends CatalogDetails {
-  type: "workspace";
-  activeServingStateId: string;
-}
-
-model CatalogDashboardDetails extends CatalogDetails {
-  type: "dashboard";
-  semanticModelRef: CatalogRef;
-  pageCount: int32;
-  visualCount: int32;
-  filterCount: int32;
-}
-
-model CatalogPageDetails extends CatalogDetails {
-  type: "page";
-  components: CatalogPageComponent[];
-}
-
-model CatalogVisualDetails extends CatalogDetails {
-  type: "visual";
-  visualType: string;
-  shape: string;
-  renderer: string;
-  query: Record<unknown>;
-  columns: CatalogColumn[];
-  placement: CatalogPlacement;
-}
-
-model CatalogFilterDetails extends CatalogDetails {
-  type: "filter";
-  field: string;
-  configuration: Record<unknown>;
-  placement: CatalogPlacement;
-}
-
-model CatalogSemanticModelDetails extends CatalogDetails {
-  type: "semantic_model";
-  semanticTableCount: int32;
-  fieldCount: int32;
-  conformedDimensionCount: int32;
-  atomicMeasureCount: int32;
-  metricCount: int32;
-  factCount: int32;
-  relationshipCount: int32;
-  relationships: CatalogRelationship[];
-  dashboardCount: int32;
-  dashboardUsage: CatalogRef[];
-}
-
-model CatalogSemanticTableDetails extends CatalogDetails {
-  type: "semantic_table";
-  source: string;
-  sources: string[];
-  grain: string;
-  primaryKey: string;
-  keys: string[];
-  roles: ("fact" | "dimension")[];
-  fieldCount: int32;
-  measureCount: int32;
-}
-
-model CatalogFieldDetails extends CatalogDetails {
-  type: "field";
-  kind: string;
-  table?: string;
-  label: string;
-  dataType: string;
-  grain?: string;
-  timeGrains?: string[];
-  expression?: string;
-  sourceField?: string;
-  nullable?: boolean;
-  primaryKey?: boolean;
-  bindings?: CatalogFieldBinding[];
-}
-
-model CatalogMeasureDetails extends CatalogDetails {
-  type: "measure";
-  kind: string;
-  table?: string;
-  label: string;
-  aggregation?: string;
-  factRef?: CatalogRef;
-  input?: CatalogMeasureInput;
-  filters?: CatalogMeasureFilter[];
-  empty?: string;
-  expression?: string;
-  dependencyRefs: CatalogRef[];
-  unit: string;
-  format: string;
-  hidden: boolean;
+  kind: CatalogType;
+  metadata: Record<unknown>;
 }
 
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["catalog", "describe"] })
@@ -705,8 +533,6 @@ model DashboardAuthoringRevisionToken {
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "catalog"] })
 model DashboardAuthoringListInput {
-  @minLength(1)
-  workspace: string;
 }
 
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "catalog"] })
@@ -714,15 +540,12 @@ model DashboardAuthoringListResult {
   items: Record<unknown>[];
   count: int32;
   projectCount: int32;
-  workspaceCount: int32;
 }
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "catalog"] })
 model DashboardAuthoringGetInput {
   @minLength(1)
-  workspace: string;
-  @minLength(1)
-  dashboard: string;
+  dashboardId: string;
 }
 
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "catalog"] })
@@ -733,9 +556,7 @@ model DashboardAuthoringGetResult {
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "draft"] })
 model DashboardAuthoringDraftGetInput {
   @minLength(1)
-  workspace: string;
-  @minLength(1)
-  dashboard: string;
+  dashboardId: string;
 }
 
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "draft"] })
@@ -747,11 +568,9 @@ model DashboardAuthoringDraftGetResult {
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "create"] })
 model DashboardAuthoringCreateInput {
   @minLength(1)
-  workspace: string;
-  @minLength(1)
   title: string;
   @minLength(1)
-  semanticModel: string;
+  semanticModelId: string;
   @minLength(1)
   dashboardId?: string;
   @minLength(1)
@@ -770,8 +589,6 @@ model AuthoringArchive {}
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })
 model DashboardAuthoringSetVisibilityInput {
   @minLength(1)
-  workspace: string;
-  @minLength(1)
   dashboardId: string;
   @minLength(1)
   draftId: string;
@@ -781,8 +598,6 @@ model DashboardAuthoringSetVisibilityInput {
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })
 model DashboardAuthoringAddPageInput {
-  @minLength(1)
-  workspace: string;
   @minLength(1)
   dashboardId: string;
   @minLength(1)
@@ -794,8 +609,6 @@ model DashboardAuthoringAddPageInput {
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })
 model DashboardAuthoringAddVisualInput {
-  @minLength(1)
-  workspace: string;
   @minLength(1)
   dashboardId: string;
   @minLength(1)
@@ -813,8 +626,6 @@ model DashboardAuthoringAddVisualInput {
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })
 model DashboardAuthoringAssignFieldInput {
   @minLength(1)
-  workspace: string;
-  @minLength(1)
   dashboardId: string;
   @minLength(1)
   draftId: string;
@@ -831,8 +642,6 @@ model DashboardAuthoringAssignFieldInput {
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "command"] })
 model DashboardAuthoringCommandInput {
   @minLength(1)
-  workspace: string;
-  @minLength(1)
   dashboardId: string;
   @minLength(1)
   draftId: string;
@@ -845,13 +654,9 @@ model DashboardAuthoringCommandInput {
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "fork"] })
 model DashboardAuthoringForkInput {
-  sourceKind: "workspace" | "project";
+  sourceKind: "project" | "instance";
   @minLength(1)
-  sourceWorkspace: string;
-  @minLength(1)
-  sourceDashboard: string;
-  @minLength(1)
-  targetWorkspace?: string;
+  sourceDashboardId: string;
   @minLength(1)
   title?: string;
   @minLength(1)
@@ -861,9 +666,7 @@ model DashboardAuthoringForkInput {
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "preview"] })
 model DashboardAuthoringPreviewInput {
   @minLength(1)
-  workspace: string;
-  @minLength(1)
-  dashboard: string;
+  dashboardId: string;
   @minLength(1)
   draftId: string;
   expectedRevision: DashboardAuthoringRevisionToken;
@@ -882,11 +685,9 @@ model DashboardAuthoringPreviewResult {
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "export"] })
 model DashboardAuthoringExportInput {
-  sourceKind: "workspace" | "project";
+  sourceKind: "project" | "instance";
   @minLength(1)
-  workspace: string;
-  @minLength(1)
-  dashboard: string;
+  dashboardId: string;
 }
 
 @apigen.contract(#{ kind: "agent-tool-output", tags: #["dashboard", "authoring", "export"] })

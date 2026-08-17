@@ -1,41 +1,15 @@
 package module
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
+	"github.com/flidai/leapview/internal/access"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectapi "github.com/flidai/leapview/internal/project/api"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
 )
-
-func (m *Module) ListProjects(w http.ResponseWriter, r *http.Request, limit *int32, pageToken *string) {
-	if m == nil || m.catalog == nil {
-		apitransport.WriteJSON(w, http.StatusOK, projectapi.ProjectListResponse{Items: []projectapi.ProjectResponse{}, Page: projectapi.PageInfo{}})
-		return
-	}
-	rows, err := m.catalog.ListProjects(r.Context())
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PROJECT_LIST_FAILED", "Projects could not be loaded", nil)
-		return
-	}
-	items := make([]projectapi.ProjectResponse, 0, len(rows))
-	for _, row := range rows {
-		item := projectapi.ProjectResponse{ID: row.ID, Title: row.ID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
-		if row.LatestReleaseID != "" {
-			item.LatestReleaseID = &row.LatestReleaseID
-		}
-		if row.ActiveDeploymentID != "" {
-			item.ActiveDeploymentID = &row.ActiveDeploymentID
-		}
-		items = append(items, item)
-	}
-	page, next, err := apitransport.KeysetPage(items, limit, pageToken, func(item projectapi.ProjectResponse) string { return item.ID })
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_CURSOR", err.Error(), nil)
-		return
-	}
-	apitransport.WriteJSON(w, http.StatusOK, projectapi.ProjectListResponse{Items: page, Page: projectapi.PageInfo{NextCursor: next}})
-}
 
 func (m *Module) GetProject(w http.ResponseWriter, r *http.Request, projectID string) {
 	if m == nil || m.catalog == nil {
@@ -57,38 +31,18 @@ func (m *Module) GetProject(w http.ResponseWriter, r *http.Request, projectID st
 	apitransport.WriteJSON(w, http.StatusOK, item)
 }
 
-func (m *Module) ListProjectWorkspaces(w http.ResponseWriter, r *http.Request, projectID string, limit *int32, pageToken *string) {
-	if m == nil || m.catalog == nil {
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project not found", nil)
-		return
-	}
-	rows, err := m.catalog.ListProjectWorkspaces(r.Context(), projectID, m.environment)
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PROJECT_WORKSPACES_FAILED", "Project workspaces could not be loaded", nil)
-		return
-	}
-	items := make([]projectapi.ProjectWorkspaceResponse, 0, len(rows))
-	for _, row := range rows {
-		item := projectapi.ProjectWorkspaceResponse{ID: row.ID, Title: row.Title}
-		if row.Description != "" {
-			item.Description = &row.Description
-		}
-		if row.ActiveServingStateID != "" {
-			item.ActiveServingStateID = &row.ActiveServingStateID
-		}
-		items = append(items, item)
-	}
-	page, next, err := apitransport.KeysetPage(items, limit, pageToken, func(item projectapi.ProjectWorkspaceResponse) string { return item.ID })
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_CURSOR", err.Error(), nil)
-		return
-	}
-	apitransport.WriteJSON(w, http.StatusOK, projectapi.ProjectWorkspaceListResponse{Items: page, Page: projectapi.PageInfo{NextCursor: next}})
-}
-
 func (m *Module) ListManagedConnections(w http.ResponseWriter, r *http.Request, projectID string, limit *int32, pageToken *string) {
 	if m == nil || m.catalog == nil {
 		apitransport.WriteJSON(w, http.StatusOK, releaseapi.ManagedConnectionListResponse{Items: []releaseapi.ManagedConnectionResponse{}, Page: releaseapi.PageInfo{}})
+		return
+	}
+	principal, ok := m.currentPrincipal(r)
+	if !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
+	if m.api.AuthorizeConnection == nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
 		return
 	}
 	rows, err := m.catalog.ListConnections(r.Context(), projectID, m.environment)
@@ -98,6 +52,14 @@ func (m *Module) ListManagedConnections(w http.ResponseWriter, r *http.Request, 
 	}
 	items := make([]releaseapi.ManagedConnectionResponse, 0, len(rows))
 	for _, row := range rows {
+		allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, row.ID, access.CapabilityResourceRead)
+		if err != nil {
+			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
+			return
+		}
+		if !allowed {
+			continue
+		}
 		item := releaseapi.ManagedConnectionResponse{ID: row.ID, ProjectID: projectID, Title: row.Title}
 		if row.Description != "" {
 			item.Description = &row.Description
@@ -120,6 +82,20 @@ func (m *Module) GetManagedConnection(w http.ResponseWriter, r *http.Request, pr
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "CONNECTION_NOT_FOUND", "Connection not found", nil)
 		return
 	}
+	principal, ok := m.currentPrincipal(r)
+	if !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+		return
+	}
+	allowed, err := m.authorizeConnection(r.Context(), principal.ID, projectID, connectionID, access.CapabilityResourceRead)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "CONNECTION_AUTHORIZATION_FAILED", "Connection authorization could not be evaluated", nil)
+		return
+	}
+	if !allowed {
+		apitransport.WriteProblem(w, r, http.StatusForbidden, "FORBIDDEN", "Connection access is forbidden", nil)
+		return
+	}
 	row, err := m.catalog.GetConnection(r.Context(), projectID, connectionID, m.environment)
 	if err != nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "CONNECTION_NOT_FOUND", "Connection not found", nil)
@@ -133,6 +109,13 @@ func (m *Module) GetManagedConnection(w http.ResponseWriter, r *http.Request, pr
 		item.ActiveRevisionID = &row.ActiveRevisionID
 	}
 	apitransport.WriteJSON(w, http.StatusOK, item)
+}
+
+func (m *Module) authorizeConnection(ctx context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
+	if m == nil || m.api.AuthorizeConnection == nil {
+		return false, errors.New("connection authorization is unavailable")
+	}
+	return m.api.AuthorizeConnection(ctx, principalID, projectID, connectionID, capability)
 }
 
 func (m *Module) ProjectCursorSnapshot(r *http.Request, projectID string) string {

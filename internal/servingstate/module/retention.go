@@ -46,7 +46,7 @@ func (r *Retention) run(ctx context.Context, dryRun bool, additional []int64) er
 	}
 	if _, _, admitted := workload.Current(ctx); !admitted && r.config.Admission != nil {
 		lease, err := r.config.Admission.Acquire(ctx, workload.Request{
-			Class: workload.Maintenance, Operation: "storage.retention",
+			Class: workload.Maintenance, PrincipalID: "system:storage-retention", Operation: "storage.retention", EstimatedMemoryBytes: 128 << 20,
 		})
 		if err != nil {
 			return nil

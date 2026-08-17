@@ -10,7 +10,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/set_dashboard_visibilit
 
 | Property | Value |
 | --- | --- |
-| Required privilege | `EDIT_ITEM` |
+| Authorization | `RESOURCE_EDIT` |
 | Effect | `write` |
 | Operation | `manual` |
 | Tags | `dashboard`, `authoring`, `intent` |
@@ -57,18 +57,13 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/set_dashboard_visibilit
         "shared"
       ],
       "type": "string"
-    },
-    "workspace": {
-      "minLength": 1,
-      "type": "string"
     }
   },
   "required": [
     "dashboardId",
     "draftId",
     "expectedRevision",
-    "visibility",
-    "workspace"
+    "visibility"
   ],
   "type": "object"
 }

@@ -8,7 +8,7 @@ import '../shared/entity-list'
 import './dashboard-icon-picker'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 
-type ActiveAppearance = { id: string; workspaceId: string; dashboardId: string; title: string; left: number; top: number }
+type ActiveAppearance = { id: string; dashboardId: string; title: string; left: number; top: number }
 type AppearanceValue = { icon: string; color: string }
 
 class LeapViewCatalogPage extends DatastarLit(LitElement) {
@@ -94,7 +94,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             const appearance = this.appearanceOverrides[dashboard.id] ?? { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
             return ({
             id: dashboard.id,
-            workspaceId: dashboard.workspaceId,
             dashboardId: dashboard.dashboardId,
             title: dashboard.title,
             description: dashboard.description || dashboard.semanticModel || 'Dashboard',
@@ -110,7 +109,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconButtonLabel: `Customize ${dashboard.title}`,
             iconTreatment: 'framed' as const,
             columns: {
-              workspace: dashboard.workspace,
               popularity: dashboard.popularity ? capitalize(dashboard.popularity) : '—',
               lastRefreshed: formatLastRefreshed(dashboard.lastRefreshedAt),
             },
@@ -124,13 +122,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           })})}
           .columns=${[
             { id: 'name', label: 'Dashboard', width: '48%' },
-            { id: 'workspace', label: 'Workspace', width: '22%' },
             { id: 'popularity', label: 'Popularity', width: '12%', render: 'badges' as const },
             { id: 'lastRefreshed', label: 'Last refreshed', width: '18%' },
-          ]}
-          .filters=${[
-            { id: 'all', label: 'All workspaces' },
-            ...page.workspaceFilters.map((workspace) => ({ id: workspace.id, label: workspace.title })),
           ]}
           initial-query=${page.listQuery ?? ''}
           active-filter=${page.listFilter ?? 'all'}
@@ -159,15 +152,15 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     return { icon: dashboard?.appearanceIcon ?? 'layout-dashboard', color: dashboard?.appearanceColor ?? 'purple' }
   }
 
-  private openAppearancePicker = (event: CustomEvent<{ item: { id: string; title: string; workspaceId?: string; dashboardId?: string }; anchor: HTMLElement }>) => {
+  private openAppearancePicker = (event: CustomEvent<{ item: { id: string; title: string; dashboardId?: string }; anchor: HTMLElement }>) => {
     const { item, anchor } = event.detail
-    if (!item.workspaceId || !item.dashboardId) return
+    if (!item.dashboardId) return
     const bounds = anchor.getBoundingClientRect()
     const width = Math.min(360, window.innerWidth - 32)
     const left = Math.max(16, Math.min(bounds.left, window.innerWidth - width - 16))
     const estimatedHeight = 390
     const top = Math.max(16, Math.min(bounds.bottom + 8, window.innerHeight - estimatedHeight - 16))
-    this.activeAppearance = { id: item.id, workspaceId: item.workspaceId, dashboardId: item.dashboardId, title: item.title, left, top }
+    this.activeAppearance = { id: item.id, dashboardId: item.dashboardId, title: item.title, left, top }
   }
 
   private closeAppearancePicker = () => { this.activeAppearance = null }
@@ -187,7 +180,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     this.dispatchEvent(new CustomEvent('lv-dashboard-appearance-change', {
       bubbles: true,
       composed: true,
-      detail: { workspaceId: active.workspaceId, dashboardId: active.dashboardId, ...detail },
+      detail: { dashboardId: active.dashboardId, ...detail },
     }))
   }
 

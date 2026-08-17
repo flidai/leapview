@@ -6,15 +6,14 @@ namespace LeapViewAPI.Analytics;
 
 model QueryEventResponse {
   id: string;
-  workspaceId: string;
+  projectId: ResourceId;
   principalId?: string;
   surface: string;
   operation: string;
   queryKind: string;
-  modelId: string;
-  target: string;
-  objectType: string;
-  objectId: string;
+  modelId: ResourceId;
+  resourceKind: AuditTargetKind;
+  resourceId: ResourceId;
   requestId: string;
   correlationId: string;
   status: string;
@@ -36,8 +35,9 @@ model QueryEventListResponse {
 alias ListQueryEventsOK = OkJson<QueryEventListResponse>;
 
 @tag("Audit")
-@summary("List workspace query audit events")
-@route("/workspaces/{workspace}/query-events")
+@summary("List project query audit events")
+@route("/projects/{project}/query-events")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "VIEW_AUDIT" })
-op listQueryEvents(@path workspace: string, @query principal?: string, @query surface?: string, @query operation?: string, @query kind?: string, @query modelId?: string, @query target?: string, @query status?: string, @query search?: string, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListQueryEventsOK | CommonErrors;
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
+op listQueryEvents(@path project: ResourceId, @query principal?: string, @query surface?: string, @query operation?: string, @query kind?: string, @query modelId?: ResourceId, @query resourceKind?: AuditTargetKind, @query resourceId?: ResourceId, @query status?: string, @query search?: string, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListQueryEventsOK | CommonErrors;

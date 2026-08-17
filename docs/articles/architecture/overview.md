@@ -17,7 +17,7 @@ platform
 ```
 
 - `app` owns process composition, global routing, CLI and process entrypoints, the public site, tooling, and global cleanup.
-- Capability modules own product language and behavior: `access`, `admin`, `agent`, `analytics`, `dashboard`, `deployment`, `manageddata`, `project`, `refresh`, `release`, `runtimehost`, `servingstate`, `workload`, and `workspace`.
+- Capability modules own product language and behavior: `access`, `admin`, `agent`, `analytics`, `dashboard`, `deployment`, `manageddata`, `project`, `refresh`, `release`, `runtimehost`, `servingstate`, and `workload`.
 - `platform` owns capability-agnostic mechanisms such as HTTP, database and transaction primitives, filesystems, jobs, locking, observability, security, testing, and generic web transport.
 
 All capability modules are peers. Some—especially `access`, `analytics`, `project`, `workload`, `runtimehost`, and `servingstate`—support several product experiences or workflows. That makes them horizontal product capabilities, not platform code or unrestricted shared dependencies. Modules collaborate only through explicit contracts and declared dependency edges.
@@ -45,7 +45,7 @@ Avoid introducing a second path around capability use cases. Browser, CLI-backed
 
 ## Configuration and deployment
 
-Project and workspace YAML is loaded and validated as a graph. A project discovers global connections and sources plus workspace manifests. Each workspace discovers its model, semantic-model, dashboard, access, and agent resources.
+Project YAML is loaded and validated as one graph. The project manifest discovers connections, sources, models, semantic models, pipelines, dashboards, access, and publications from flat include lists.
 
 Project deployment compiles validated candidates into immutable artifacts and serving metadata, then changes the instance's serving pointers to accepted state. Runtime requests read the active deployment rather than mutable repository files. Managed-data revision pins move with the project candidate.
 
@@ -59,13 +59,13 @@ The active pointer is a LeapView concern; snapshot and file ownership are DuckLa
 
 ## Query execution
 
-Dashboard and headless handlers resolve a workspace, active deployment, semantic model, principal, data policies, filters, selections, sorting, and limits. The semantic query layer turns governed field/measure requests into bounded DuckDB work.
+Dashboard and headless handlers resolve the project resource, active deployment, semantic model, principal, data policies, filters, selections, sorting, and limits. The semantic query layer turns governed field/measure requests into bounded DuckDB work.
 
-Hierarchical workload admission separates interactive reads from refresh writes with bounded, workspace-fair queues and deadlines. Node-wide DuckDB, logical-result, and cache limits keep aggregate analytical work within the supported process envelope. Query cancellation and refresh generations prevent obsolete work from replacing newer state.
+Hierarchical workload admission separates interactive reads from refresh writes with bounded project-fair queues and deadlines. Node-wide DuckDB, logical-result, and cache limits keep aggregate analytical work within the supported process envelope. Query cancellation and refresh generations prevent obsolete work from replacing newer state.
 
 ## Browser architecture
 
-Go uses gomponents to render page shells and initial signal contracts. Datastar transports server-owned state and commands. Lit custom elements render application chrome, workspace/catalog pages, dashboards, filters, charts, tables, administration, data, and chat/agent surfaces.
+Go uses gomponents to render page shells and initial signal contracts. Datastar transports server-owned state and commands. Lit custom elements render application chrome, project/catalog pages, dashboards, filters, charts, tables, administration, data, and chat/agent surfaces.
 
 Components bind to typed signal paths. They can keep ephemeral presentation state, but authoritative filters, selections, refresh state, permissions, and query results return from the server.
 

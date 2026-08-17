@@ -14,7 +14,9 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/Yacobolo/toolbelt/pagestream"
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
@@ -25,10 +27,10 @@ import (
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
-	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -38,22 +40,23 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
-	workspacemodule "github.com/flidai/leapview/internal/workspace/module"
 	"github.com/go-chi/chi/v5"
 )
 
 type QueryMetrics = dashboardmodule.Metrics
-type workspaceMetrics = dashboardmodule.WorkspaceMetrics
 
 type capabilityRoutes struct {
 	accessModule       *accessmodule.Module
-	workspaceModule    *workspacemodule.Module
 	managedDataModule  *manageddatamodule.Module
 	deploymentModule   *deploymentmodule.Module
 	dashboardModule    *dashboardmodule.Module
@@ -65,6 +68,8 @@ type capabilityRoutes struct {
 	adminModule        *adminmodule.Module
 	product            *adminmodule.ProductService
 	dashboardTelemetry dashboardmodule.Telemetry
+	projectCatalog     *projectcatalog.Service
+	projectBrowser     *projecthttp.BrowserHandler
 }
 
 type runtimeServices struct {
@@ -78,8 +83,43 @@ type runtimeServices struct {
 	platformHealth        platformHealth
 	storageRetention      *servingstatemodule.Retention
 	queryAuditProvider    adminmodule.QueryAuditReaderProvider
-	candidateMetrics      func(runtimehostmodule.Provider, string) QueryMetrics
+	candidateMetrics      func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
 	runtimeHostModule     *runtimehostmodule.Module
+	projectID             projectgraph.ResourceID
+	projectIDResolver     func(context.Context) (projectgraph.ResourceID, error)
+}
+
+// resolveProjectID returns the exact project bound to the active serving
+// lease. A fresh installation has no project until its first activation, so
+// every project-dependent surface must resolve this at operation time rather
+// than retaining runtime.projectID from startup composition.
+func (r *runtimeServices) resolveProjectID(ctx context.Context) (projectgraph.ResourceID, error) {
+	if r == nil {
+		return "", errors.New("runtime services are unavailable")
+	}
+	if r.projectIDResolver != nil {
+		projectID, err := r.projectIDResolver(ctx)
+		if err != nil {
+			return "", err
+		}
+		if err := projectID.Validate(); err != nil {
+			return "", fmt.Errorf("active project identity is invalid: %w", err)
+		}
+		return projectID, nil
+	}
+	if r.runtimeHostModule == nil {
+		return "", errors.New("active runtime host is unavailable")
+	}
+	lease, err := r.runtimeHostModule.Acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer lease.Release()
+	identity := lease.Identity()
+	if err := identity.Validate(); err != nil {
+		return "", fmt.Errorf("active runtime serving identity is invalid: %w", err)
+	}
+	return identity.ProjectID, nil
 }
 
 type platformServices struct {
@@ -98,38 +138,38 @@ type platformServices struct {
 }
 
 type httpPolicy struct {
-	defaultEnvironment string
-	scimBearerToken    string
-	metricsBearerToken string
-	allowedHosts       []string
-	rateLimits         apihttpmiddleware.RateLimitConfig
-	securityHeaders    apihttpmiddleware.SecurityHeadersConfig
-	requestBodyLimit   apihttpmiddleware.RequestBodyLimitConfig
-	requestLogging     bool
-	managedDataTus     http.Handler
-	desktopDiscovery   http.Handler
+	defaultEnvironment   string
+	scimBearerToken      string
+	metricsBearerToken   string
+	allowedHosts         []string
+	rateLimits           apihttpmiddleware.RateLimitConfig
+	securityHeaders      apihttpmiddleware.SecurityHeadersConfig
+	requestBodyLimit     apihttpmiddleware.RequestBodyLimitConfig
+	requestLogging       bool
+	managedDataTus       http.Handler
+	managedDataBootstrap accessmodule.APIGenBootstrapAuthorizer
+	desktopDiscovery     http.Handler
 }
 
 type persistenceInputs struct {
-	agentSettings         agentmodule.Settings
-	adminDatabase         *sql.DB
-	servingStateRepo      servingStateRepository
-	workspaceReadModel    workspacemodule.ReadModel
-	workspaceDirectory    workspacemodule.Directory
-	workspaceAssetCatalog workspacemodule.AssetCatalogReader
-	accessRepo            accessmodule.Repository
-	product               *adminmodule.ProductService
-	productStatus         adminmodule.ProductStatus
+	agentSettings    agentmodule.Settings
+	adminDatabase    *sql.DB
+	servingStateRepo servingStateRepository
+	accessRepo       access.Repository
+	product          *adminmodule.ProductService
+	productStatus    adminmodule.ProductStatus
 }
 
 type workflowInputs struct {
-	managedDataValidation refreshmodule.CandidateValidationHook
-	managedDataResolver   runtimehostmodule.ManagedDataResolver
-	refreshPipelineClock  refreshmodule.Clock
-	agent                 *agentmodule.Service
-	agentConfig           agentmodule.ModelConfig
-	reloader              runtimeReloader
-	deploymentConfig      deploymentmodule.Config
+	managedDataValidation   refreshmodule.CandidateValidationHook
+	managedDataResolver     runtimehostmodule.ManagedDataResolver
+	refreshPipelineClock    refreshmodule.Clock
+	refreshMaterializer     refreshrun.Materializer
+	enableRefreshDispatcher bool
+	agent                   *agentmodule.Service
+	agentConfig             agentmodule.ModelConfig
+	reloader                runtimeReloader
+	deploymentConfig        deploymentmodule.Config
 }
 
 type storageInputs struct {
@@ -175,15 +215,12 @@ func newCompositionSurfaces(
 }
 
 type dataAssemblyInputs struct {
-	Database           *sql.DB
-	PlatformHealth     platformHealth
-	AdminDatabase      *sql.DB
-	ServingStateRepo   servingStateRepository
-	StorageRetention   *servingstatemodule.Retention
-	WorkspaceReadModel workspacemodule.ReadModel
-	WorkspaceDirectory workspacemodule.Directory
-	AssetCatalog       workspacemodule.AssetCatalogReader
-	AccessRepo         accessmodule.Repository
+	Database         *sql.DB
+	PlatformHealth   platformHealth
+	AdminDatabase    *sql.DB
+	ServingStateRepo servingStateRepository
+	StorageRetention *servingstatemodule.Retention
+	AccessRepo       access.Repository
 }
 
 type capabilityAssemblyInputs struct {
@@ -197,22 +234,30 @@ type capabilityAssemblyInputs struct {
 	DashboardAssets   dashboardmodule.Assets
 	Product           *adminmodule.ProductService
 	ProductStatus     adminmodule.ProductStatus
+	ProjectCatalog    *projectcatalog.Service
+	ProjectGraph      projecthttp.GraphReader
 }
 
 type workflowAssemblyInputs struct {
-	AgentSettings         agentmodule.Settings
-	ManagedDataValidation refreshmodule.CandidateValidationHook
-	ManagedDataResolver   runtimehostmodule.ManagedDataResolver
-	AgentConfig           agentmodule.ModelConfig
-	Auth                  *accessmodule.Auth
-	Reloader              runtimeReloader
-	Workload              workloadControl
-	DeploymentConfig      deploymentmodule.Config
-	RefreshPipelineClock  refreshmodule.Clock
-	QueryAudit            *analyticsmodule.QueryAuditSurface
+	AgentSettings           agentmodule.Settings
+	ManagedDataValidation   refreshmodule.CandidateValidationHook
+	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
+	AgentConfig             agentmodule.ModelConfig
+	Auth                    *accessmodule.Auth
+	Reloader                runtimeReloader
+	Workload                workloadControl
+	DeploymentConfig        deploymentmodule.Config
+	RefreshPipelineClock    refreshmodule.Clock
+	RefreshMaterializer     refreshrun.Materializer
+	EnableRefreshDispatcher bool
+	QueryAudit              *analyticsmodule.QueryAuditSurface
 }
 
 type runtimeAssemblyInputs struct {
+	RuntimeHost             *runtimehostmodule.Module
+	ProjectID               projectgraph.ResourceID
+	ProjectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
+	ServingSnapshotResolver func(context.Context) (string, error)
 	InstanceID              string
 	DuckDBDir               string
 	DuckLakeCatalogPath     string
@@ -295,21 +340,38 @@ func buildApplicationSurfaces(
 	if metrics != nil {
 		metrics = dashboardmodule.WithAdmission(metrics, controller)
 	}
-	dataAccessRepo := data.AccessRepo
-	workspaceReadModel := data.WorkspaceReadModel
-	var dataAuthorization accessmodule.DataAuthorizationService = dataAccessRepo
-	if capabilities.AccessModule != nil {
-		dataAuthorization = capabilities.AccessModule.DataAuthorizationService()
+	var authorizationSnapshot func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
+	if runtimeConfig.RuntimeHost != nil {
+		authorizationSnapshot = func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+			lease, err := runtimeConfig.RuntimeHost.Acquire(ctx)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, err
+			}
+			defer lease.Release()
+			authorizedLease, ok := lease.(interface {
+				AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+			})
+			if !ok {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+			}
+			snapshot := authorizedLease.AuthorizationSnapshot()
+			if err := snapshot.ValidateBound(); err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, err
+			}
+			return snapshot, nil
+		}
 	}
-	if metrics != nil && dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
+	canonicalAuditRecorder, _ := data.AccessRepo.(access.CanonicalAuditRecorder)
+	if metrics != nil && authorizationSnapshot != nil && capabilities.AccessModule != nil {
 		metrics = dashboardmodule.WithQueryAuthorization(metrics, dashboardmodule.QueryAuthorizationConfig{
-			Repository: dataAuthorization,
+			SnapshotFromContext: authorizationSnapshot,
+			SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
 			PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 				principal, ok := accessmodule.PrincipalFromContext(ctx)
 				return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: principal.DevBypass || workflow.Auth == nil}, ok
 			},
 			CredentialFromContext: accessmodule.APICredentialFromContext,
-			TokenAllows:           accessmodule.TokenAllows,
+			AuditRecorder:         canonicalAuditRecorder,
 		})
 	}
 	var queryAuditProvider adminmodule.QueryAuditReaderProvider
@@ -334,27 +396,31 @@ func buildApplicationSurfaces(
 	}
 	servingStateRepo := data.ServingStateRepo
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
+	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
 	moduleWorkflow := workflowInputs{}
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
+	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
+	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	runtime.queryAuditProvider = queryAuditProvider
-	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, workspaceID string) QueryMetrics {
-		if provider == nil || strings.TrimSpace(workspaceID) == "" {
+	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, projectID projectgraph.ResourceID) QueryMetrics {
+		if provider == nil || projectID == "" {
 			return nil
 		}
-		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, WorkspaceID: workspaceID})
+		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: projectID})
 		candidate = dashboardmodule.WithAdmission(candidate, controller)
-		if dataAuthorization != nil && (data.AccessRepo != nil || workflow.Auth != nil || capabilities.AccessModule != nil) {
+		if authorizationSnapshot != nil && capabilities.AccessModule != nil {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
-				Repository: dataAuthorization,
+				SnapshotFromContext: authorizationSnapshot,
+				SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
 					return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: principal.DevBypass || workflow.Auth == nil}, ok
 				},
 				CredentialFromContext: accessmodule.APICredentialFromContext,
-				TokenAllows:           accessmodule.TokenAllows,
+				AuditRecorder:         canonicalAuditRecorder,
 			})
 		}
 		if queryAuditRecorder != nil {
@@ -369,6 +435,8 @@ func buildApplicationSurfaces(
 		moduleWorkflow.refreshPipelineClock = refreshmodule.NewRealClock()
 	}
 	runtime.workloads = controller
+	runtime.projectID = runtimeConfig.ProjectID
+	runtime.projectIDResolver = runtimeConfig.ProjectIDResolver
 	runtime.persistenceConfigured = data.Database != nil
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
@@ -419,9 +487,6 @@ func buildApplicationSurfaces(
 	runtime.analyticsModule = capabilities.AnalyticsModule
 	routes.dashboardAssets = capabilities.DashboardAssets
 	routes.dashboardAuthoring = capabilities.Authoring
-	persistence.workspaceReadModel = workspaceReadModel
-	persistence.workspaceDirectory = data.WorkspaceDirectory
-	persistence.workspaceAssetCatalog = data.AssetCatalog
 	routes.releaseModule = capabilities.ReleaseModule
 	persistence.accessRepo = data.AccessRepo
 	moduleWorkflow.agent = capabilities.Agent
@@ -452,6 +517,62 @@ func buildApplicationSurfaces(
 	}
 	policy.requestLogging = httpConfig.RequestLogging
 	routes.managedDataModule = capabilities.ManagedDataModule
+	routes.projectCatalog = capabilities.ProjectCatalog
+	routes.projectBrowser = &projecthttp.BrowserHandler{
+		Graph: capabilities.ProjectGraph, SemanticModelReader: metrics, Catalog: capabilities.ProjectCatalog,
+		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
+		Layout: func(r *http.Request) webpage.Provider {
+			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
+		},
+		CSRFToken: func(r *http.Request) string { return routes.accessModule.CSRFToken(r) },
+		CurrentUser: func(r *http.Request) (projecthttp.Principal, bool) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			return projecthttp.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
+		},
+		Authenticate: routes.accessModule.Authenticate,
+	}
+	if runtime.runtimeHostModule != nil && routes.accessModule != nil {
+		authorizationSnapshot := func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+			lease, err := runtime.runtimeHostModule.Acquire(ctx)
+			if err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, err
+			}
+			defer lease.Release()
+			authorizedLease, ok := lease.(interface {
+				AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+			})
+			if !ok {
+				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+			}
+			snapshot := authorizedLease.AuthorizationSnapshot()
+			if err := snapshot.ValidateBound(); err != nil {
+				return accesssnapshot.AuthorizationSnapshot{}, err
+			}
+			return snapshot, nil
+		}
+		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
+		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection, func(ctx context.Context) (bool, error) {
+			return hasActiveBootstrapServingState(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, policy.defaultEnvironment)
+		})
+		routes.accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
+			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
+			if err != nil {
+				return nil, err
+			}
+			snapshot, err := authorizationSnapshot(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return snapshot.EffectiveCapabilities(subjects)
+		})
+		routes.accessModule.SetCurrentProjectID(runtime.resolveProjectID)
+		if routes.managedDataModule != nil {
+			routes.managedDataModule.SetAuthorizeConnection(manageddatamodule.ConnectionAuthorizer(authorizeConnection))
+		}
+		if routes.releaseModule != nil {
+			routes.releaseModule.SetAuthorizeConnection(snapshotAuthorizeConnection)
+		}
+	}
 	moduleWorkflow.deploymentConfig = workflow.DeploymentConfig
 	policy.managedDataTus = httpConfig.ManagedDataTus
 	storage.jobLeaseTimeout = httpConfig.JobLeaseTimeout
@@ -467,7 +588,7 @@ func buildApplicationSurfaces(
 	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
 	}
-	if err := configureModules(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
+	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
 	}
 	if platform.asyncJobs != nil {
@@ -491,7 +612,7 @@ func buildApplicationSurfaces(
 	return routes, runtime, platform, policy, nil
 }
 
-func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, database *sql.DB, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs) error {
+func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, database *sql.DB, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs) error {
 	if routes == nil || runtime == nil || platform == nil || policy == nil {
 		return errors.New("runtime router is required")
 	}
@@ -503,12 +624,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
-					if persistence.workspaceDirectory == nil {
-						return errors.New("workspace directory is required")
+					projectID, err := runtime.resolveProjectID(ctx)
+					if err != nil {
+						return err
 					}
-					return persistence.workspaceDirectory.Ensure(ctx, workspacemodule.EnsureInput{
-						ID: workspacemodule.WorkspaceID(scope.WorkspaceID), Title: scope.WorkspaceID,
-					})
+					return validateCanonicalConnectionBindingScope(scope, projectID, runtimeConfig.DefaultEnvironment)
 				},
 				Authorize: func(
 					ctx context.Context,
@@ -516,22 +636,24 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					permission analyticsmodule.ConnectionAdministrationPermission,
 					binding analyticsmodule.ConnectionTargetBinding,
 				) error {
-					var privilege accessmodule.Privilege
+					var capability access.Capability
 					switch permission {
 					case analyticsmodule.PermissionManageConnectionMetadata:
-						privilege = accessmodule.PrivilegeManageConnectionMetadata
+						capability = access.CapabilityResourceManage
 					case analyticsmodule.PermissionTestConnection:
-						privilege = accessmodule.PrivilegeTestConnection
+						capability = access.CapabilityResourceUse
 					case analyticsmodule.PermissionViewConnectionHealth:
-						privilege = accessmodule.PrivilegeViewConnectionHealth
+						capability = access.CapabilityResourceRead
 					default:
 						return analyticsmodule.ErrConnectionBindingUnauthorized
 					}
-					allowed, err := routes.accessModule.AuthorizeObject(
-						ctx,
-						principalID,
-						privilege,
-						accessmodule.WorkspaceObject(binding.Scope.WorkspaceID),
+					resource, err := access.NewResourceRef(binding.ConnectionID, projectgraph.KindConnection)
+					if err != nil {
+						return err
+					}
+					allowed, err := authorizeProjectResources(
+						ctx, routes.accessModule, runtime.runtimeHostModule, principalID,
+						binding.Scope.ProjectID, []access.ResourceRef{resource}, capability,
 					)
 					if err != nil {
 						return err
@@ -544,10 +666,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Dependencies: connectionBindingDependenciesWithoutConsumers{},
 				Now:          time.Now,
 				Audit: connectionRotationAuditRecorder{
-					record: routes.accessModule.RecordAudit,
+					record: accessAuditRecorder(routes.accessModule),
 				},
 				AdministrationAudit: connectionAdministrationAuditRecorder{
-					record: routes.accessModule.RecordAudit,
+					record: accessAuditRecorder(routes.accessModule),
 				},
 			},
 		)
@@ -559,12 +681,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
-			WorkspaceID: func(value string) string {
-				return value
+			ProjectID: func(value string) projectgraph.ResourceID {
+				return projectgraph.ResourceID(value)
 			},
 		},
 		Connections: analyticsmodule.ConnectionBindingAPIGenConfig{
 			Administration: connectionAdministration,
+			Environment:    runtimeConfig.DefaultEnvironment,
 			CurrentPrincipal: func(r *http.Request) (string, bool) {
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				return principal.ID, ok
@@ -576,168 +699,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		var err error
 		routes.accessModule, err = accessmodule.Build(ctx, accessmodule.Config{
 			Database: database, ExistingAuth: platform.auth,
-			InstanceID: storage.instanceID, PublicURL: storage.publicURL,
-			Presentation: webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
-			Assets:       platform.assets,
-			WorkspaceIDs: func(ctx context.Context) ([]string, error) {
-				if persistence.workspaceDirectory != nil {
-					return persistence.workspaceDirectory.WorkspaceIDs(ctx)
-				}
-				repository, err := workspaceReadModel(persistence)
-				if err != nil || repository == nil {
-					return nil, err
-				}
-				rows, err := repository.List(ctx)
-				if err != nil {
-					return nil, err
-				}
-				ids := make([]string, 0, len(rows))
-				for _, row := range rows {
-					ids = append(ids, string(row.ID))
-				}
-				return ids, nil
-			},
+			InstanceID:       storage.instanceID,
+			PublicURL:        storage.publicURL,
+			CurrentProjectID: runtime.resolveProjectID,
+			Presentation:     webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
+			Assets:           platform.assets,
 		})
 		if err != nil {
 			return fmt.Errorf("build access module: %w", err)
 		}
-	}
-	if routes.workspaceModule == nil {
-		refreshDeps := &workspaceRefreshDependencies{
-			access:                routes.accessModule,
-			dashboards:            func() *dashboardmodule.Module { return routes.dashboardModule },
-			refresh:               func() *refreshmodule.Module { return routes.refreshModule },
-			workspaces:            func() *workspacemodule.Module { return routes.workspaceModule },
-			broker:                runtime.broker,
-			persistenceConfigured: runtime.persistenceConfigured, defaultEnvironment: policy.defaultEnvironment,
-		}
-		refreshSupport := workspaceRefreshSupport(refreshDeps)
-		accessUICommands := routes.accessModule.UICommandBindings()
-		accessCommandPrivileges, privilegeErr := routes.accessModule.WorkspaceCommandPrivileges()
-		if privilegeErr != nil {
-			return fmt.Errorf("resolve generated access command privileges: %w", privilegeErr)
-		}
-		var err error
-		agentUICommands := routes.agentModule.UICommandBindings()
-		connectionUICommands := runtime.analyticsModule.ConnectionUICommandBindings()
-		connectionWorkspaceID := ""
-		if runtime.metrics != nil {
-			connectionWorkspaceID = runtime.metrics.Catalog().Workspace.ID
-		}
-		routes.workspaceModule, err = workspacemodule.Build(ctx, workspacemodule.Config{
-			Database:            database,
-			Logger:              platform.logger,
-			Directory:           persistence.workspaceDirectory,
-			ReadModel:           persistence.workspaceReadModel,
-			AccessService:       routes.accessModule.WorkspaceAccessService(),
-			RoleBindingCommands: routes.accessModule.RoleBindingCommands(),
-			GrantCommands:       routes.accessModule.GrantCommands(),
-			CommandPrivileges:   accessCommandPrivileges,
-			AccessCommands: workspacemodule.AccessCommandBindings{
-				CreateRoleBinding: accessUICommands.CreateRoleBinding,
-				UpdateRoleBinding: accessUICommands.UpdateRoleBinding,
-				DeleteRoleBinding: accessUICommands.DeleteRoleBinding,
-				CreateGrant:       accessUICommands.CreateGrant,
-				DeleteGrant:       accessUICommands.DeleteGrant,
-			},
-			ConnectionAdministration: connectionAdministration,
-			ConnectionAuthorize: func(ctx context.Context, principalID string, privilege accessmodule.Privilege, workspaceID string) (bool, error) {
-				return routes.accessModule.AuthorizeObject(ctx, principalID, privilege, accessmodule.WorkspaceObject(workspaceID))
-			},
-			ConnectionCommands: workspacemodule.ConnectionCommandBindings{
-				Create: connectionUICommands.Create, Update: connectionUICommands.Update,
-				Test: connectionUICommands.Test, Refresh: connectionUICommands.Refresh,
-				Enable: connectionUICommands.Enable, Disable: connectionUICommands.Disable,
-			},
-			ConnectionTargetID:    storage.instanceID,
-			ConnectionWorkspaceID: connectionWorkspaceID,
-			AssetCatalog:          persistence.workspaceAssetCatalog,
-			WorkspaceID: func(value string) string {
-				return value
-			},
-			Environment: func(r *http.Request) string {
-				return string(requestServingEnvironment(policy.defaultEnvironment, r))
-			},
-			MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-				return metricsForWorkspace(runtime.metrics, workspaceID)
-			},
-			RootMetrics: runtime.metrics,
-			AgentBootstrap: func(r *http.Request, workspaceID string) workspacemodule.DataExplorerAgentBootstrap {
-				state := routes.agentModule.DashboardBootstrap(r, workspaceID)
-				return workspacemodule.DataExplorerAgentBootstrap{Agent: state.Agent, Visuals: state.Visuals}
-			},
-			AgentCommands: workspacemodule.DataExplorerAgentCommandBindings{
-				CreateConversation: agentUICommands.CreateConversation,
-				CreateRun:          agentUICommands.CreateRun,
-			},
-			CurrentPrincipal: func(r *http.Request) (workspacemodule.Principal, bool) {
-				principal, ok := routes.accessModule.CurrentPrincipal(r)
-				return workspacemodule.Principal{
-					ID: principal.ID, Email: principal.Email,
-					DisplayName: principal.DisplayName, DevBypass: principal.DevBypass,
-				}, ok
-			},
-			AuthConfigured:     platform.auth != nil,
-			RuntimeEnvironment: policy.defaultEnvironment,
-			RefreshState:       workspaceRefreshStateBridge{support: refreshSupport},
-			RefreshCapacity: func(context.Context) (workspacemodule.PipelineMonitorCapacity, error) {
-				stats := workloadController(&runtime.workloads).Stats()
-				refreshStats := stats.Classes[workloadmodule.RefreshClass]
-				return workspacemodule.PipelineMonitorCapacity{
-					Running: refreshStats.Running, Queued: refreshStats.Queued, MaximumRunning: refreshStats.Policy.MaximumRunning,
-				}, nil
-			},
-			RefreshRunner: workspacemodule.AssetRefreshFuncs{
-				Run: func(ctx context.Context, input workspacemodule.AssetRefreshInput) error {
-					return refreshSupport.RefreshAsset(ctx, input.Request, input.WorkspaceID, input.Asset, input.Assets, input.Edges)
-				},
-				Retry: func(ctx context.Context, input workspacemodule.AssetRefreshInput, retryOf string) error {
-					return refreshSupport.RetryAsset(ctx, input.Request, input.WorkspaceID, input.Asset, input.Assets, input.Edges, retryOf)
-				},
-				Cancel: func(ctx context.Context, input workspacemodule.PipelineRunCancelInput) error {
-					return refreshSupport.CancelRefreshRun(ctx, input.Request, input.WorkspaceID, input.PipelineID, input.RunID)
-				},
-			},
-			Broker:           runtime.broker,
-			CSRFToken:        routes.accessModule.CSRFToken,
-			CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
-			Layout: func(r *http.Request) webpage.Provider {
-				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
-			},
-			CurrentCredential: func(r *http.Request) (accessmodule.APICredential, bool) {
-				return accessmodule.APICredentialFromContext(r.Context())
-			},
-			AuthorizeObject: routes.accessModule.AuthorizeObject,
-			DashboardPopularity: func(ctx context.Context, dashboardCount int) (map[string]workspacemodule.PopularityLevel, error) {
-				if routes.dashboardModule == nil {
-					return nil, nil
-				}
-				levels, err := routes.dashboardModule.Popularity(ctx, dashboardCount)
-				if err != nil {
-					return nil, err
-				}
-				popularity := make(map[string]workspacemodule.PopularityLevel, len(levels))
-				for dashboardID, level := range levels {
-					popularity[dashboardID] = workspacemodule.PopularityLevel(level)
-				}
-				return popularity, nil
-			},
-			DashboardRefreshedAt: func(ctx context.Context, workspaceID, environment, modelID string) (string, bool, error) {
-				if routes.refreshModule == nil {
-					return "", false, nil
-				}
-				version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, environment, modelID)
-				if err != nil || !ok {
-					return "", ok, err
-				}
-				return version.RefreshedAt.UTC().Format(time.RFC3339), true, nil
-			},
-			RecordAudit: routes.accessModule.RecordAudit,
-		})
-		if err != nil {
-			return fmt.Errorf("build workspace module: %w", err)
-		}
-		persistence.workspaceAssetCatalog = nil
 	}
 	if routes.deploymentModule == nil {
 		config := moduleWorkflow.deploymentConfig
@@ -750,10 +720,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return deploymentmodule.Principal{ID: principal.ID}, ok
 		}
 		config.CandidateAudit = func(ctx context.Context, event deploymentmodule.CandidateEvent) error {
-			return routes.accessModule.RecordAudit(ctx, accessmodule.AuditEventInput{
+			return recordAccessAudit(ctx, routes.accessModule, access.AuditEventInput{
 				PrincipalID: event.PrincipalID,
-				Action:      event.Action, TargetType: "project_candidate", TargetID: event.CandidateID,
-				Privilege: accessmodule.PrivilegeDeploy, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
+				Action:      event.Action, ResourceKind: "project", ResourceID: event.ProjectID.String(),
+				Capability: access.CapabilityProjectAdmin, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
 			})
 		}
 		config.CandidateSourceBlobAudit = candidateSourceBlobAuditRecorder(routes.accessModule)
@@ -769,7 +739,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		config.API = deploymentmodule.APIConfig{Releases: routes.releaseModule.DeploymentLinkage(), Jobs: platform.asyncJobs, Workflow: platform.jobModule, Committer: platform.jobModule}
 		config.PublicationAuthorization = deploymentmodule.PublicationAuthorizationConfig{
-			States: persistence.servingStateRepo, AuthorizeObject: routes.accessModule.AuthorizeObject,
+			States: persistence.servingStateRepo, AuthorizeResource: func(ctx context.Context, actor string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, actor, projectID, []access.ResourceRef{resource}, capability)
+			},
 			Bypass: func(actor string) bool {
 				return (platform.auth == nil || platform.auth.DevBypass()) && actor == accessmodule.LocalDeveloperPrincipal().ID
 			},
@@ -786,13 +758,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
 			Database:    database,
 			Authoring:   routes.dashboardAuthoring,
-			RecordAudit: routes.accessModule.RecordAudit,
+			RecordAudit: accessAuditRecorder(routes.accessModule),
 			HTTP: dashboardmodule.HTTPConfig{
-				Metrics: runtime.metrics,
-				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, workspaceID)
-				},
-				Admission: workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
+				Metrics:          runtime.metrics,
+				ProjectID:        runtime.projectID,
+				ResolveProjectID: runtime.resolveProjectID,
+				Admission:        workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
@@ -801,15 +772,19 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 					return principal.ID
 				},
+				AuthorizeListResource: func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error) {
+					projectID, err := runtime.resolveProjectID(ctx)
+					if err != nil {
+						return false, err
+					}
+					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
+				},
 				CurrentUsagePrincipal: func(r *http.Request) (string, bool) {
 					principal, ok := routes.accessModule.CurrentPrincipal(r)
 					if !ok || !principal.IsHuman() {
 						return "", false
 					}
 					return principal.ID, true
-				},
-				AuthorizeListObject: func(ctx context.Context, principalID string, object accessmodule.ObjectRef) (bool, error) {
-					return authorizeListObject(routes.accessModule, platform.auth != nil, ctx, principalID, object)
 				},
 				CSRFToken: routes.accessModule.CSRFToken,
 				Layout: func(r *http.Request) webpage.Provider {
@@ -818,21 +793,21 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Environment: func(r *http.Request) string {
 					return string(requestServingEnvironment(policy.defaultEnvironment, r))
 				},
-				DataRefreshedAt: func(ctx context.Context, workspaceID, environment, modelID string) string {
+				DataRefreshedAt: func(ctx context.Context, projectID, environment, modelID string) string {
 					if routes.refreshModule == nil {
 						return ""
 					}
-					version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, environment, modelID)
+					version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, environment, modelID)
 					if err != nil || !ok {
 						return ""
 					}
 					return version.RefreshedAt.Format(time.RFC3339)
 				},
-				QueryFreshness: func(ctx context.Context, workspaceID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
+				QueryFreshness: func(ctx context.Context, projectID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
 					if routes.refreshModule == nil {
 						return dashboardmodule.QueryFreshness{}, false
 					}
-					version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, policy.defaultEnvironment, modelID)
+					version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
 					if err != nil || !ok {
 						return dashboardmodule.QueryFreshness{}, false
 					}
@@ -848,8 +823,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 						Status:                  status,
 					}, true
 				},
-				AgentBootstrap: func(r *http.Request, workspaceID string) dashboardmodule.AgentBootstrap {
-					return dashboardAgentBootstrap(routes.agentModule.DashboardBootstrap(r, workspaceID))
+				AgentBootstrap: func(r *http.Request, _ string) dashboardmodule.AgentBootstrap {
+					if routes.agentModule == nil {
+						return dashboardmodule.AgentBootstrap{}
+					}
+					return dashboardAgentBootstrap(routes.agentModule.DashboardBootstrap(r))
 				},
 				AgentCommands: dashboardmodule.AgentCommandBindings{
 					CreateConversation: agentUICommands.CreateConversation,
@@ -859,10 +837,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Assets:       platform.assets,
 			},
 			Semantic: dashboardmodule.SemanticConfig{
-				Metrics: runtime.metrics,
-				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, workspaceID)
-				},
+				Metrics:          runtime.metrics,
+				ResolveProjectID: runtime.resolveProjectID,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
 					if !ok {
@@ -870,14 +846,14 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 					return principal.ID
 				},
-				AuthorizeListObject: func(ctx context.Context, principalID string, object accessmodule.ObjectRef) (bool, error) {
-					return authorizeListObject(routes.accessModule, platform.auth != nil, ctx, principalID, object)
+				AuthorizeListResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 				},
-				QueryFreshness: func(ctx context.Context, workspaceID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
+				QueryFreshness: func(ctx context.Context, projectID, modelID, servingSnapshot string) (dashboardmodule.QueryFreshness, bool) {
 					if routes.refreshModule == nil {
 						return dashboardmodule.QueryFreshness{}, false
 					}
-					version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, policy.defaultEnvironment, modelID)
+					version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
 					if err != nil || !ok {
 						return dashboardmodule.QueryFreshness{}, false
 					}
@@ -909,13 +885,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return principal.ID
 			},
-			RuntimeMetrics: runtime.metrics,
-			ServingSnapshot: func(ctx context.Context, requestedWorkspaceID string) (string, error) {
-				if routes.workspaceModule == nil {
-					return "", nil
-				}
-				return routes.workspaceModule.ActiveServingStateID(ctx, requestedWorkspaceID)
-			},
+			RuntimeMetrics:  runtime.metrics,
+			ServingSnapshot: runtimeConfig.ServingSnapshotResolver,
 		})
 		if err != nil {
 			return fmt.Errorf("build dashboard module: %w", err)
@@ -933,54 +904,58 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			BuildVersion:       platform.buildIdentity.Version,
 			APIGenOperations:   agentAPIGenOperations(),
 			DashboardAuthoring: routes.dashboardAuthoring,
-			RunWorkloadClass:   string(workloadmodule.BackgroundClass), GlobalWorkspaceID: workloadmodule.GlobalWorkspace,
-			Search: routes.workspaceModule,
-			Environment: func(r *http.Request) string {
-				return string(requestServingEnvironment(policy.defaultEnvironment, r))
+			ResolveResource: func(ctx context.Context, scope agentmodule.Scope, id projectgraph.ResourceID, kind projectgraph.Kind, capability access.Capability) (projectgraph.ResourceID, error) {
+				if routes.projectCatalog == nil {
+					return "", projectcatalog.ErrUnavailable
+				}
+				resolved, err := routes.projectCatalog.Resolve(ctx, scope.PrincipalID, projectcatalog.Ref{ID: id, Kind: kind}, capability, scope.DevAuthBypass)
+				if err != nil {
+					return "", err
+				}
+				return resolved.Ref.ID, nil
 			},
-			DashboardMetrics: func(workspaceID string) (QueryMetrics, bool) {
-				return metricsForWorkspace(runtime.metrics, workspaceID)
+			RunWorkloadClass: string(workloadmodule.BackgroundClass), ProjectID: runtime.projectID,
+			ResolveProjectID: runtime.resolveProjectID,
+			DashboardMetrics: func(projectID string) (QueryMetrics, bool) {
+				requested, err := projectgraph.NewResourceID(projectID)
+				active, activeErr := runtime.resolveProjectID(context.Background())
+				if err != nil || activeErr != nil || requested != active || runtime.metrics == nil {
+					return nil, false
+				}
+				return runtime.metrics, true
 			},
-			AuthorizeAnyObject:       routes.accessModule.AuthorizeAnyObject,
-			SkipContextAuthorization: platform.auth == nil,
-			RecordAudit:              routes.accessModule.RecordAudit,
-			Documentation:            documentation,
-			Catalog: agentmodule.BuildCatalog(agentmodule.CatalogConfig{
-				Search: routes.workspaceModule, Environment: policy.defaultEnvironment,
-				Workspaces: persistence.workspaceReadModel, RootMetrics: runtime.metrics,
-				MetricsForWorkspace: func(workspaceID string) (QueryMetrics, bool) {
-					return metricsForWorkspace(runtime.metrics, workspaceID)
-				},
-				AuthorizeAnyObject: routes.accessModule.AuthorizeAnyObject,
-				RecordAudit:        routes.accessModule.RecordAudit,
-				SkipAuthorization:  platform.auth == nil,
-				SignCursor:         cursorsigning.Sign,
-				VerifyCursor:       cursorsigning.Verify,
-			}),
-			QueryMetadata: func(ctx context.Context, workspaceID, modelID string) agentmodule.VisualQueryMetadata {
-				metadata := agentmodule.VisualQueryMetadata{ServingSnapshot: "unversioned"}
-				if routes.workspaceModule != nil {
-					if snapshot, err := routes.workspaceModule.ActiveServingStateID(ctx, workspaceID); err == nil && snapshot != "" {
-						metadata.ServingSnapshot = snapshot
+			RecordAudit:   accessAuditRecorder(routes.accessModule),
+			Documentation: documentation,
+			Catalog:       agentmodule.BuildCatalog(agentmodule.CatalogConfig{ProjectCatalog: routes.projectCatalog}),
+			QueryMetadata: func(ctx context.Context, projectID, modelID string) agentmodule.VisualQueryMetadata {
+				if runtime.runtimeHostModule == nil {
+					return agentmodule.VisualQueryMetadata{}
+				}
+				lease, err := runtime.runtimeHostModule.Acquire(ctx)
+				if err != nil || lease == nil {
+					return agentmodule.VisualQueryMetadata{}
+				}
+				identity := lease.Identity()
+				metadata := agentmodule.VisualQueryMetadata{ServingSnapshot: strings.TrimSpace(identity.GenerationID)}
+				lease.Release()
+				if metadata.ServingSnapshot == "" || identity.ProjectID.String() != strings.TrimSpace(projectID) {
+					return agentmodule.VisualQueryMetadata{}
+				}
+				if routes.refreshModule != nil {
+					version, ok, err := routes.refreshModule.DataVersion(ctx, projectID, policy.defaultEnvironment, modelID)
+					if err == nil && ok {
+						status := "stale"
+						if strings.TrimSpace(version.ServingStateID) == metadata.ServingSnapshot {
+							status = "current"
+						}
+						metadata.Freshness = &agentmodule.QueryFreshness{
+							LastSuccessfulRefreshAt: version.RefreshedAt.UTC().Format(time.RFC3339),
+							SnapshotID:              strconv.FormatInt(version.SnapshotID, 10),
+							ServingStateID:          version.ServingStateID,
+							Source:                  version.Source,
+							Status:                  status,
+						}
 					}
-				}
-				if routes.refreshModule == nil {
-					return metadata
-				}
-				version, ok, err := routes.refreshModule.DataVersion(ctx, workspaceID, policy.defaultEnvironment, modelID)
-				if err != nil || !ok {
-					return metadata
-				}
-				status := "stale"
-				if version.ServingStateID == metadata.ServingSnapshot {
-					status = "current"
-				}
-				metadata.Freshness = &agentmodule.QueryFreshness{
-					LastSuccessfulRefreshAt: version.RefreshedAt.UTC().Format(time.RFC3339),
-					SnapshotID:              strconv.FormatInt(version.SnapshotID, 10),
-					ServingStateID:          version.ServingStateID,
-					Source:                  version.Source,
-					Status:                  status,
 				}
 				return metadata
 			},
@@ -992,15 +967,27 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if !ok {
 					return agentmodule.Scope{}, false
 				}
-				scope := agentmodule.Scope{
-					PrincipalID: identity.PrincipalID, DevAuthBypass: identity.DevBypass,
-					Credential: agentmodule.CredentialScope{
-						WorkspaceID: identity.Credential.Token.WorkspaceID,
-						Restricted:  identity.Restricted,
-					},
+				projectID, err := runtime.resolveProjectID(r.Context())
+				if err != nil {
+					return agentmodule.Scope{}, false
 				}
-				for _, privilege := range identity.Credential.Token.Privileges {
-					scope.Credential.Privileges = append(scope.Credential.Privileges, string(privilege))
+				scope := agentmodule.Scope{
+					ProjectID: projectID.String(), PrincipalID: identity.PrincipalID, DevAuthBypass: identity.DevBypass,
+				}
+				if identity.Credential.Authoring != nil {
+					scope.Credential.ProjectID = identity.Credential.Authoring.Scope.ProjectID.String()
+					scope.Credential.Restricted = true
+					for _, capability := range identity.Credential.Authoring.Scope.Capabilities {
+						scope.Credential.Capabilities = append(scope.Credential.Capabilities, string(capability))
+					}
+				} else if identity.Credential.Token.ID != "" {
+					scope.Credential.Restricted = true
+					if identity.Credential.Token.Capabilities != nil {
+						scope.Credential.Capabilities = make([]string, 0, len(identity.Credential.Token.Capabilities))
+						for _, capability := range identity.Credential.Token.Capabilities {
+							scope.Credential.Capabilities = append(scope.Credential.Capabilities, string(capability))
+						}
+					}
 				}
 				return scope, true
 			},
@@ -1010,11 +997,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
 				ctx := accessmodule.WithPrincipal(request.Context(), principal)
-				if scope.Credential.Restricted || scope.Credential.WorkspaceID != "" || len(scope.Credential.Privileges) > 0 {
-					ctx = accessmodule.WithAPICredential(ctx, accessmodule.AgentAPICredential(
-						scope.PrincipalID, scope.Credential.WorkspaceID, scope.Credential.Privileges,
-					))
-				}
 				request = request.WithContext(ctx)
 				if apiDispatcher == nil {
 					return false
@@ -1040,9 +1022,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if routes.releaseModule != nil && routes.releaseModule.DispatchAPIGenOperation(operationID, platform.logger, writer, request) {
 					return true
 				}
-				if routes.workspaceModule != nil && routes.workspaceModule.DispatchAPIGenOperation(operationID, platform.logger, writer, request) {
-					return true
-				}
 				if routes.managedDataModule != nil && routes.managedDataModule.DispatchAPIGenOperation(operationID, routes.releaseModule, platform.logger, writer, request) {
 					return true
 				}
@@ -1057,15 +1036,25 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
 				ctx = accessmodule.WithPrincipal(ctx, principal)
-				if scope.Credential.Restricted || scope.Credential.WorkspaceID != "" || len(scope.Credential.Privileges) > 0 {
-					ctx = accessmodule.WithAPICredential(ctx, accessmodule.AgentAPICredential(
-						scope.PrincipalID, scope.Credential.WorkspaceID, scope.Credential.Privileges,
-					))
+				if projectID, err := projectgraph.NewResourceID(scope.ProjectID); err == nil {
+					ctx = analyticsmodule.WithAgentQueryMetadata(ctx, projectID, scope.PrincipalID)
 				}
 				return ctx
 			},
 			HTTP: agentmodule.HTTPConfig{
 				Settings: persistence.agentSettings, Broker: runtime.broker,
+				PlatformAdmin: func(ctx context.Context, principalID string) (bool, error) {
+					capabilities, err := routes.accessModule.CurrentEffectiveCapabilities(ctx, principalID)
+					if err != nil {
+						return false, err
+					}
+					for _, capability := range capabilities {
+						if capability == access.CapabilityProjectAdmin {
+							return true, nil
+						}
+					}
+					return false, nil
+				},
 				CSRFToken:        routes.accessModule.CSRFToken,
 				CurrentRoleLabel: routes.accessModule.CurrentRoleLabel,
 				Layout: func(r *http.Request) webpage.Provider {
@@ -1078,9 +1067,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal, ok := platform.auth.Principal(r)
 					return agentmodule.Principal{ID: principal.ID, DevAuthBypass: principal.DevBypass}, ok
 				},
-				CurrentCredential: func(r *http.Request) (accessmodule.APICredential, bool) {
+				CurrentCredential: func(r *http.Request) (access.APICredential, bool) {
 					if platform.auth == nil {
-						return accessmodule.APICredential{}, false
+						return access.APICredential{}, false
 					}
 					return platform.auth.APICredential(r)
 				},
@@ -1107,7 +1096,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}, ok
 		}
 		settingsAccess := routes.accessModule.SettingsAdministration()
-		workspaceSettings := routes.workspaceModule.SettingsAdministration()
 		localPasswordEnabled := routes.accessModule.Auth() != nil && routes.accessModule.Auth().LocalAuthEnabled()
 		productCommands, commandErr := apigencommand.NewExecutor(apiaggregate.GetAPIGenCommandRuntimeContract, nil)
 		if commandErr != nil {
@@ -1122,19 +1110,19 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			QueryAuditReader: runtime.queryAuditProvider,
 			CSRFToken:        routes.accessModule.CSRFToken,
 			CurrentPrincipal: currentAdminPrincipal,
-			CurrentCredential: func(r *http.Request) (accessmodule.APICredential, bool) {
+			CurrentCredential: func(r *http.Request) (access.APICredential, bool) {
 				if platform.auth == nil {
-					return accessmodule.APICredential{}, false
+					return access.APICredential{}, false
 				}
 				return platform.auth.APICredential(r)
 			},
-			AuthorizeAnyWorkspace: routes.accessModule.AuthorizeAnyWorkspace,
-			Publications:          routes.dashboardModule,
-			AgentConfigCommand:    routes.agentModule.UICommandBindings().UpdateConfig,
-			PublicationCommands:   routes.dashboardModule.PublicationCommandBindings(),
-			AuthConfigured:        platform.auth != nil,
-			LocalPasswordEnabled:  localPasswordEnabled,
-			AccessConfigured:      accessReader != nil,
+			CurrentEffectiveCapabilities: routes.accessModule.CurrentEffectiveCapabilities,
+			Publications:                 routes.dashboardModule,
+			AgentConfigCommand:           routes.agentModule.UICommandBindings().UpdateConfig,
+			PublicationCommands:          routes.dashboardModule.PublicationCommandBindings(),
+			AuthConfigured:               platform.auth != nil,
+			LocalPasswordEnabled:         localPasswordEnabled,
+			AccessConfigured:             accessReader != nil,
 			Storage: adminmodule.StorageConfig{
 				CatalogPath: storage.duckLakeCatalogPath, DataPath: storage.duckLakeDataPath,
 				Environment: policy.defaultEnvironment, ControlPlane: persistence.adminDatabase,
@@ -1148,14 +1136,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			Broker:  runtime.broker,
 			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
-			ProductUICommands:   productUICommandContract(),
-			SettingsAccess:      settingsAccess,
-			PersonalAvatar:      routes.accessModule.PersonalAvatar(),
-			AuthoringSessions:   routes.accessModule.AuthoringSessions(),
-			CurrentSession:      routes.accessModule.CurrentSessionID,
-			WorkspaceSettings:   workspaceSettings,
-			WorkspaceAccess:     settingsAccess,
-			SettingsEnvironment: policy.defaultEnvironment,
+			ProductUICommands: productUICommandContract(),
+			SettingsAccess:    settingsAccess,
+			PersonalAvatar:    routes.accessModule.PersonalAvatar(),
+			AuthoringSessions: routes.accessModule.AuthoringSessions(),
+			CurrentSession:    routes.accessModule.CurrentSessionID,
 		})
 		if err != nil {
 			return fmt.Errorf("build admin module: %w", err)
@@ -1171,19 +1156,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return manageddatamodule.Principal{}, false
 				}
 				principal, ok := platform.auth.Principal(r)
-				return manageddatamodule.Principal{ID: principal.ID}, ok
+				return manageddatamodule.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 			},
 		})
 		if err != nil {
 			return fmt.Errorf("build managed data module: %w", err)
 		}
-	}
-	objects, err := routes.workspaceModule.SecurableObjects(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve workspace securables: %w", err)
-	}
-	if err := routes.accessModule.RegisterSecurables(ctx, objects); err != nil {
-		return fmt.Errorf("register workspace securables: %w", err)
 	}
 	apiDispatcher = &apiGenDispatcher{
 		managedDataModule:  routes.managedDataModule,
@@ -1192,22 +1170,65 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		defaultEnvironment: policy.defaultEnvironment, managedDataTus: policy.managedDataTus,
 		instanceID: storage.instanceID, canonicalOrigin: storage.publicURL, buildIdentity: platform.buildIdentity,
 	}
-	apiGenAuthorizer, err := routes.accessModule.APIGenAuthorizer(accessAPIGenOperationContracts(), accessmodule.APIGenObjectResolvers{
-		Dashboard:      dashboardmodule.DashboardObjectRefs,
-		SemanticModel:  dashboardmodule.SemanticDatasetObjectRefs,
-		WorkspaceAsset: workspacemodule.AssetObjectRefs,
-		ProjectEnvironment: func(
-			r *http.Request,
-			_ string,
-		) []accessmodule.ObjectRef {
-			return []accessmodule.ObjectRef{accessmodule.ProjectEnvironmentObject(
-				chi.URLParam(r, "project"),
-				policy.defaultEnvironment,
-			)}
+	apiGenAuthorizer, err := routes.accessModule.APIGenAuthorizer(runtime.runtimeHostModule, accessAPIGenOperationContracts(), accessmodule.APIGenResourceResolvers{
+		Dashboard: func(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
+			id, err := projectgraph.NewResourceID(chi.URLParam(r, "dashboard"))
+			if err != nil {
+				return nil
+			}
+			resource, err := access.NewResourceRef(id, projectgraph.KindDashboard)
+			if err != nil {
+				return nil
+			}
+			return []access.ResourceRef{resource}
+		},
+		SemanticModel: func(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
+			id, err := projectgraph.NewResourceID(chi.URLParam(r, "model"))
+			if err != nil {
+				return nil
+			}
+			resource, err := access.NewResourceRef(id, projectgraph.KindSemanticModel)
+			if err != nil {
+				return nil
+			}
+			return []access.ResourceRef{resource}
+		},
+		Connection: func(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
+			id, err := projectgraph.NewResourceID(chi.URLParam(r, "connection"))
+			if err != nil {
+				return nil
+			}
+			resource, err := access.NewResourceRef(id, projectgraph.KindConnection)
+			if err != nil {
+				return nil
+			}
+			return []access.ResourceRef{resource}
+		},
+		Project: func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
+			requested, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+			if err != nil || requested != active {
+				return nil
+			}
+			resource, err := access.NewResourceRef(active, projectgraph.KindProject)
+			if err != nil {
+				return nil
+			}
+			return []access.ResourceRef{resource}
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("build APIGen authorizer: %w", err)
+	}
+	if bootstrapPolicies := moduleWorkflow.deploymentConfig.BootstrapPolicies; bootstrapPolicies != nil {
+		claimReader, ok := bootstrapPolicies.(deploymentmodule.ProjectClaimReader)
+		if !ok {
+			return fmt.Errorf("bootstrap policy store does not expose the durable project claim")
+		}
+		bootstrapAuthorizer := func(ctx context.Context, _ *http.Request, operationID string, projectID projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
+			return bootstrapAPIGenDecision(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, claimReader, policy.defaultEnvironment, operationID, projectID)
+		}
+		apiGenAuthorizer.SetBootstrapAuthorizer(bootstrapAuthorizer)
+		policy.managedDataBootstrap = bootstrapAuthorizer
 	}
 	if err := apigencommand.ValidateDependencies(apiaggregate.GetAPIGenCommandRuntimeContracts(), map[apigencommand.Dependency]bool{
 		apigencommand.DependencyAuthorization: apiGenAuthorizer != nil,
@@ -1271,12 +1292,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if err != nil {
 		return fmt.Errorf("build Release APIGen transport: %w", err)
 	}
-	workspaceAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
-		return routes.workspaceModule.DispatchAPIGenOperation(operationID, platform.logger, w, r)
-	}, apiaggregate.GetAPIGenCommandRuntimeContract)
-	if err != nil {
-		return fmt.Errorf("build Workspace APIGen transport: %w", err)
-	}
 	managedDataAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return routes.managedDataModule.DispatchAPIGenOperation(operationID, routes.releaseModule, platform.logger, w, r)
 	}, apiaggregate.GetAPIGenCommandRuntimeContract)
@@ -1293,7 +1308,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		Access: accessAPIHandler, Agent: agentAPIHandler, Analytics: analyticsAPIHandler,
 		Dashboard: dashboardAPIHandler, Deployment: deploymentAPIHandler, LeapViewAPI: appAPIHandler,
 		ManagedData: managedDataAPIHandler, Project: projectAPIHandler,
-		Refresh: refreshAPIHandler, Release: releaseAPIHandler, Workspace: workspaceAPIHandler,
+		Refresh: refreshAPIHandler, Release: releaseAPIHandler,
 	}
 	configurePageStream(routes, runtime, platform, policy)
 	platform.health = newHealth(healthConfig{
@@ -1326,8 +1341,40 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return routes.dashboardAssets.Verify(ctx)
 			},
 		},
-		ActiveWorkspaces:        routes.workspaceModule.ActiveRuntimeWorkspaces,
-		RuntimeReady:            routes.dashboardModule.RuntimeReady,
+		ActiveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			if runtime.runtimeHostModule == nil {
+				return "", errors.New("runtime host is missing")
+			}
+			projectID := runtime.runtimeHostModule.ProjectID()
+			if err := projectID.Validate(); err != nil {
+				return "", err
+			}
+			return projectID, nil
+		},
+		RuntimeReady: func(ctx context.Context) error {
+			if runtime.runtimeHostModule == nil {
+				return errors.New("runtime host is missing")
+			}
+			// ProjectID is configured at process startup, so it does not by
+			// itself prove that this exact project/environment has an active
+			// serving generation. Check the repository-backed scope first and
+			// only acquire a lease once one exists.
+			if _, _, err := runtime.runtimeHostModule.ActiveArtifact(ctx); err != nil {
+				if errors.Is(err, servingstate.ErrNotFound) {
+					return errNoActiveDeployment
+				}
+				return err
+			}
+			lease, err := runtime.runtimeHostModule.Acquire(ctx)
+			if err != nil {
+				return err
+			}
+			if lease == nil {
+				return errors.New("runtime host returned a nil lease")
+			}
+			lease.Release()
+			return nil
+		},
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})
 	platform.workers = platformlifecycle.New(
@@ -1339,6 +1386,26 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		platformlifecycle.Component{Start: routes.dashboardModule.Start, Stop: routes.dashboardModule.Stop},
 		platformlifecycle.Component{Start: platform.jobModule.Start, Stop: platform.jobModule.Stop},
 	)
+	return nil
+}
+
+func validateCanonicalConnectionBindingScope(
+	scope analyticsmodule.ConnectionBindingScope,
+	activeProjectID projectgraph.ResourceID,
+	configuredEnvironment string,
+) error {
+	if err := scope.ProjectID.Validate(); err != nil {
+		return err
+	}
+	if scope.ProjectID != activeProjectID {
+		return fmt.Errorf("connection binding project %q is not the active project %q", scope.ProjectID, activeProjectID)
+	}
+	if scope.Environment == "" || scope.Environment != strings.TrimSpace(scope.Environment) {
+		return errors.New("connection binding environment is required")
+	}
+	if scope.Environment != configuredEnvironment {
+		return fmt.Errorf("connection binding environment %q is not the configured environment %q", scope.Environment, configuredEnvironment)
+	}
 	return nil
 }
 
@@ -1358,33 +1425,104 @@ func writeProductCommandFailure(ctx context.Context, w http.ResponseWriter, r *h
 	})
 }
 
-func workspaceReadModel(persistence persistenceInputs) (workspacemodule.ReadModel, error) {
-	return persistence.workspaceReadModel, nil
-}
-
-func authorizeListObject(access *accessmodule.Module, authenticationRequired bool, ctx context.Context, principalID string, object accessmodule.ObjectRef) (bool, error) {
-	if !authenticationRequired {
+func hasActiveBootstrapServingState(
+	ctx context.Context,
+	_ *runtimehostmodule.Module,
+	states servingStateRepository,
+	environment string,
+) (bool, error) {
+	if states == nil {
+		return false, errors.New("serving-state repository is unavailable")
+	}
+	scopes, err := states.ListActiveScopes(ctx)
+	if err != nil {
+		return false, fmt.Errorf("read active serving scopes: %w", err)
+	}
+	env := servingstatemodule.Environment(strings.TrimSpace(environment))
+	activeCount := 0
+	for _, scope := range scopes {
+		if scope.Environment != env {
+			continue
+		}
+		if err := scope.ProjectID.Validate(); err != nil {
+			return false, fmt.Errorf("active serving project identity is invalid: %w", err)
+		}
+		activeCount++
+		if activeCount > 1 {
+			return false, fmt.Errorf("active serving scopes contain multiple projects for environment %q", env)
+		}
+	}
+	if activeCount > 0 {
 		return true, nil
 	}
-	if strings.TrimSpace(principalID) == "" {
-		return false, nil
-	}
-	return access.AuthorizeObject(ctx, principalID, accessmodule.PrivilegeViewItem, object)
+	// ListActiveScopes is the authoritative durable check. A runtime host may
+	// still be warming up (or be nil in a fresh process) while the store has no
+	// active generation; consulting its cached artifact here would make an
+	// otherwise valid first activation fail spuriously.
+	return false, nil
 }
 
-func metricsForWorkspace(metrics QueryMetrics, workspaceID string) (QueryMetrics, bool) {
-	if workspaceID == "" {
-		return nil, false
+// bootstrapAPIGenDecision is deliberately a read-only seam. It distinguishes
+// a typed empty active-generation pointer from a serving-state store failure,
+// then evaluates only the durable singleton claim and the explicit candidate
+// or managed-data operation allowlist. Credential role/capability evidence is
+// enforced by the APIGen wrapper and by deployment's arm/worker revalidator,
+// never here.
+func bootstrapAPIGenDecision(
+	ctx context.Context,
+	runtimeHost *runtimehostmodule.Module,
+	states servingStateRepository,
+	claims deploymentmodule.ProjectClaimReader,
+	environment, operationID string,
+	projectID projectgraph.ResourceID,
+) (accessmodule.APIGenBootstrapDecision, error) {
+	active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment)
+	if err != nil {
+		return accessmodule.APIGenBootstrapDecision{}, err
 	}
-	if provider, ok := metrics.(workspaceMetrics); ok {
-		return provider.MetricsForWorkspace(workspaceID)
+	if active {
+		return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
 	}
-	if metrics == nil {
-		return nil, false
+	if err := projectID.Validate(); err != nil || projectID.String() != strings.TrimSpace(projectID.String()) {
+		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
 	}
-	catalog := metrics.Catalog()
-	if catalog.Workspace.ID == "" || catalog.Workspace.ID == workspaceID {
-		return metrics, true
+	if claims == nil {
+		return accessmodule.APIGenBootstrapDecision{}, errors.New("project claim repository is unavailable")
 	}
-	return nil, false
+	claim, err := claims.GetProjectClaim(ctx)
+	if errors.Is(err, deployment.ErrProjectClaimNotFound) {
+		return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowedWithoutClaim(operationID)}, nil
+	}
+	if err != nil {
+		return accessmodule.APIGenBootstrapDecision{}, fmt.Errorf("read bootstrap project claim: %w", err)
+	}
+	if claim.ProjectID != projectID || claim.Environment != servingstatemodule.Environment(strings.TrimSpace(environment)) {
+		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
+	}
+	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowed(operationID)}, nil
+}
+
+func bootstrapOperationAllowed(operationID string) bool {
+	switch operationID {
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization",
+		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		return true
+	case "managedDataTusTransport":
+		return true
+	default:
+		return false
+	}
+}
+
+func bootstrapOperationAllowedWithoutClaim(operationID string) bool {
+	switch operationID {
+	case "startProjectCandidate", "planProjectCandidateSynchronization",
+		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"managedDataTusTransport":
+		return true
+	default:
+		return false
+	}
 }

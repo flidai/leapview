@@ -7,8 +7,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/project"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -17,29 +19,33 @@ var (
 )
 
 type CandidateConnectionRequirement struct {
-	LogicalConnectionID string
-	ConnectorKind       string
+	ConnectionID  projectgraph.ResourceID
+	ConnectorKind string
 }
 
 type CandidateAuthoredConnection struct {
-	LogicalConnectionID string
-	ConnectorKind       string
+	ConnectionID  projectgraph.ResourceID
+	ConnectorKind string
 }
 
 type CandidateRestriction struct {
 	ID             string
-	WorkspaceID    string
-	ObjectID       string
+	ObjectID       projectgraph.ResourceID
+	ObjectKind     projectgraph.Kind
+	Subject        *access.SubjectRef
 	PolicyType     string
 	ExpressionJSON string
 }
 
-type CandidateArtifactWorkspace struct {
-	WorkspaceID         string
-	ServingStateID      string
+// CandidateGenerationArtifact contains the one project-generation artifact
+// prepared for a candidate. A candidate never carries a partial target
+// collection: the serving identity and generation artifact are the unit of
+// preparation and publication.
+type CandidateGenerationArtifact struct {
+	Identity            projectgraph.ServingIdentity
 	ArtifactDigest      string
 	DataRevision        string
-	DataMode            string
+	DataMode            GenerationDataMode
 	ManagedDataPins     []ManagedDataPin
 	Connections         []CandidateConnectionRequirement
 	AuthoredConnections []CandidateAuthoredConnection
@@ -48,9 +54,8 @@ type CandidateArtifactWorkspace struct {
 
 type CandidateArtifactRequest struct {
 	CandidateID    string
-	ProjectID      string
+	Scope          projectgraph.CandidateScope
 	OwnerID        string
-	Environment    string
 	ArtifactDigest string
 	Source         project.CandidateSourceSnapshot
 }
@@ -58,31 +63,30 @@ type CandidateArtifactRequest struct {
 type CandidateArtifactSet struct {
 	Artifact                 ProjectArtifactProvenance
 	AuthorizationFingerprint string
-	Workspaces               []CandidateArtifactWorkspace
+	Generation               CandidateGenerationArtifact
 }
 
 type CandidateArtifactPreparer interface {
 	PrepareCandidateArtifacts(context.Context, CandidateArtifactRequest) (CandidateArtifactSet, error)
 	RetainCandidateProvenance(
 		context.Context,
-		string,
+		projectgraph.ResourceID,
 		Provenance,
 	) (Provenance, error)
 	CandidateProvenance(
 		context.Context,
-		string,
+		projectgraph.ResourceID,
 		string,
 		int64,
 	) (Provenance, error)
 }
 
 type PublishCandidateInput struct {
-	ProjectID         string
+	Scope             projectgraph.CandidateScope
 	CandidateID       string
 	CandidateRevision int64
 	ProvenanceDigest  string
 	TargetID          string
-	Environment       string
 	IdempotencyKey    string
 	CreatedBy         string
 }
@@ -94,22 +98,12 @@ func (s *Service) PublishCandidate(
 	ctx context.Context,
 	input PublishCandidateInput,
 ) (Release, error) {
-	input.ProjectID = strings.TrimSpace(input.ProjectID)
-	input.CandidateID = strings.TrimSpace(input.CandidateID)
-	input.ProvenanceDigest = strings.TrimSpace(input.ProvenanceDigest)
-	input.TargetID = strings.TrimSpace(input.TargetID)
-	input.Environment = strings.TrimSpace(input.Environment)
-	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
-	input.CreatedBy = strings.TrimSpace(input.CreatedBy)
-	if s == nil || input.ProjectID == "" || input.CandidateID == "" ||
-		input.CandidateRevision < 1 || input.ProvenanceDigest == "" ||
-		input.TargetID == "" || input.Environment == "" ||
-		input.IdempotencyKey == "" || input.CreatedBy == "" {
+	if s == nil || input.Scope.Validate() != nil || input.CandidateID != strings.TrimSpace(input.CandidateID) || input.ProvenanceDigest != strings.TrimSpace(input.ProvenanceDigest) || input.TargetID != strings.TrimSpace(input.TargetID) || input.IdempotencyKey != strings.TrimSpace(input.IdempotencyKey) || input.CreatedBy != strings.TrimSpace(input.CreatedBy) || input.CandidateID == "" || input.CandidateRevision < 1 || input.ProvenanceDigest == "" || input.TargetID == "" || input.IdempotencyKey == "" || input.CreatedBy == "" {
 		return Release{}, ErrInvalid
 	}
 	provenance, err := s.CandidateProvenance(
 		ctx,
-		input.ProjectID,
+		input.Scope.ProjectID,
 		input.CandidateID,
 		input.CandidateRevision,
 	)
@@ -122,41 +116,21 @@ func (s *Service) PublishCandidate(
 		}
 		return Release{}, err
 	}
-	if provenance.Digest != input.ProvenanceDigest ||
-		provenance.Candidate.ID != input.CandidateID ||
-		provenance.Candidate.Revision != input.CandidateRevision ||
-		provenance.Candidate.OwnerID != input.CreatedBy ||
-		provenance.Plan.TargetID != input.TargetID ||
-		provenance.Plan.Environment != input.Environment {
+	if provenance.Digest != input.ProvenanceDigest || provenance.Candidate.ID != input.CandidateID || provenance.Candidate.Revision != input.CandidateRevision || provenance.Candidate.OwnerID != input.CreatedBy || provenance.Plan.TargetID != input.TargetID || provenance.Plan.Identity.ProjectID != input.Scope.ProjectID || provenance.Plan.Identity.Environment != input.Scope.Environment {
 		return Release{}, fmt.Errorf(
 			"%w: candidate publication evidence drifted",
 			ErrConflict,
 		)
 	}
-	workspaces := make(
-		[]WorkspaceManifest,
-		len(provenance.Plan.Workspaces),
-	)
 	pins := make(map[string]string)
-	for index, workspace := range provenance.Plan.Workspaces {
-		workspaces[index] = WorkspaceManifest{
-			WorkspaceID: workspace.WorkspaceID,
-			ArtifactDigest: strings.TrimPrefix(
-				workspace.ArtifactDigest,
-				"sha256:",
-			),
-			ServingStateID: workspace.ServingStateID,
+	for _, pin := range provenance.Plan.ManagedDataPins {
+		if current, exists := pins[pin.ConnectionID]; exists && current != pin.RevisionID {
+			return Release{}, fmt.Errorf(
+				"%w: candidate managed-data pins disagree",
+				ErrConflict,
+			)
 		}
-		for _, pin := range workspace.ManagedDataPins {
-			if current, exists := pins[pin.ConnectionID]; exists &&
-				current != pin.RevisionID {
-				return Release{}, fmt.Errorf(
-					"%w: candidate managed-data pins disagree",
-					ErrConflict,
-				)
-			}
-			pins[pin.ConnectionID] = pin.RevisionID
-		}
+		pins[pin.ConnectionID] = pin.RevisionID
 	}
 	connectionIDs := make([]string, 0, len(pins))
 	for connectionID := range pins {
@@ -171,13 +145,13 @@ func (s *Service) PublishCandidate(
 		}
 	}
 	created, err := s.Create(ctx, CreateInput{
-		ProjectID:      input.ProjectID,
-		ProjectDigest:  provenance.Artifact.SourceDigest,
-		IdempotencyKey: input.IdempotencyKey,
-		CreatedBy:      input.CreatedBy,
-		Workspaces:     workspaces,
-		Connections:    connections,
-		Provenance:     &provenance,
+		ServingIdentity: provenance.Plan.Identity,
+		ProjectDigest:   provenance.Artifact.ProjectDigest,
+		ArtifactDigest:  provenance.Artifact.ContentDigest,
+		IdempotencyKey:  input.IdempotencyKey,
+		CreatedBy:       input.CreatedBy,
+		Connections:     connections,
+		Provenance:      &provenance,
 	})
 	if err != nil {
 		return Release{}, err
@@ -196,21 +170,12 @@ func (s *Service) PublishCandidate(
 		return Release{}, fmt.Errorf("%w: %s", ErrConflict, created.Error)
 	}
 	if created.Status == StatusDraft {
-		for _, artifact := range created.Artifacts {
-			if artifact.UploadedAt != "" {
-				continue
-			}
-			if err := s.releases.RecordArtifact(ctx, Artifact{
-				ReleaseID: created.ID, WorkspaceID: artifact.WorkspaceID,
-				ExpectedDigest: artifact.ExpectedDigest,
-				ServingStateID: artifact.ServingStateID,
-			}); err != nil {
-				return Release{}, err
-			}
+		if err := s.releases.RecordArtifact(ctx, Artifact{ReleaseID: created.ID, ServingIdentity: created.ServingIdentity, ExpectedDigest: created.ArtifactDigest, ActualDigest: created.ArtifactDigest}); err != nil {
+			return Release{}, err
 		}
 		created, err = s.BeginFinalization(
 			ctx,
-			input.ProjectID,
+			input.Scope.ProjectID.String(),
 			created.ID,
 			jobs.WorkflowIntent{},
 		)
@@ -225,5 +190,5 @@ func (s *Service) PublishCandidate(
 			created.Status,
 		)
 	}
-	return s.ValidateFinalization(ctx, input.ProjectID, created.ID)
+	return s.ValidateFinalization(ctx, input.Scope.ProjectID.String(), created.ID)
 }
