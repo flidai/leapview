@@ -34,6 +34,20 @@ func WithQueryAudit(metrics queryruntime.Metrics, recorder queryaudit.Recorder, 
 	return auditedMetrics{Metrics: metrics, recorder: recorder, principalID: principalID}
 }
 
+// Planner preserves the activation-owned semantic planner through the query
+// audit decorator. Audit instrumentation must not hide planner availability
+// from semantic API consumers.
+func (m auditedMetrics) Planner(modelID string) (consumer.Planner, bool) {
+	provider, ok := m.Metrics.(interface {
+		Planner(string) (consumer.Planner, bool)
+	})
+	if !ok {
+		return nil, false
+	}
+	planner, available := provider.Planner(modelID)
+	return planner, available && planner != nil
+}
+
 func (m auditedMetrics) MetricsForProject(projectID projectgraph.ResourceID) (queryruntime.Metrics, bool) {
 	if err := projectID.Validate(); err != nil {
 		return nil, false

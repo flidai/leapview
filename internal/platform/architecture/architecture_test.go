@@ -2436,10 +2436,10 @@ func TestBuildSourceGenerationContract(t *testing.T) {
 		"go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate",
 		"go run ./internal/app/tools/configgen",
 		"go run ./internal/app/tools/layoutcontractgen",
-		"typespec-compile -manifest api/apigen.yaml -target leapview-v1",
-		"typespec-compile -manifest api/apigen.yaml -target ui-signals",
-		"typespec-compile -manifest api/apigen.yaml -target visualization-ir",
-		"all -manifest api/apigen.yaml -target visualization-ir",
+		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target leapview-v1",
+		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target ui-signals",
+		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target visualization-ir",
+		"go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target visualization-ir",
 		"schema export --format json-schema --out schemas/json",
 	}
 	previous := -1

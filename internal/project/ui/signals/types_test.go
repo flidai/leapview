@@ -191,14 +191,15 @@ func testSemanticModel() *semanticmodel.Model {
 		Name:  "test",
 		Title: "Test",
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{
-				"order_id": {Type: "string"},
-				"status":   {Type: "string"},
-				"state":    {Type: "string"},
-				"category": {Type: "string"},
+			"orders": {Source: "orders", ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{
+				"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
+				"status":   {Type: "string", Datatype: semanticmodel.DataTypeString},
+				"state":    {Type: "string", Datatype: semanticmodel.DataTypeString},
+				"category": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
 		},
-		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics:  map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}},
 	}
 }
 

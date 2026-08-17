@@ -416,9 +416,34 @@ func (p *expressionParser) parseUnary() (expressionNode, error) {
 		if err != nil {
 			return nil, err
 		}
+		if op == '+' {
+			if _, numeric := node.(expressionNumber); numeric {
+				return nil, fmt.Errorf("numeric literal leading plus is not canonical")
+			}
+			return expressionUnary{op: op, node: node}, nil
+		}
+		if isZeroExpressionNumber(node) {
+			return nil, fmt.Errorf("numeric literal %q must not be negative zero", expressionNumberValue(node))
+		}
 		return expressionUnary{op: op, node: node}, nil
 	}
 	return p.parsePrimary()
+}
+
+func isZeroExpressionNumber(node expressionNode) bool {
+	literal, ok := node.(expressionNumber)
+	if !ok {
+		return false
+	}
+	number, err := semanticnumeric.Parse(string(literal))
+	return err == nil && number.IsZero()
+}
+
+func expressionNumberValue(node expressionNode) string {
+	if literal, ok := node.(expressionNumber); ok {
+		return string(literal)
+	}
+	return "0"
 }
 
 func (p *expressionParser) parsePrimary() (expressionNode, error) {
@@ -498,16 +523,8 @@ func (p *expressionParser) parseNumber() (expressionNode, error) {
 	if p.pos < len(p.input) && (p.input[p.pos] == 'e' || p.input[p.pos] == 'E') {
 		return nil, fmt.Errorf("exponent notation is not supported in authored numeric literals")
 	}
-	if strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
-		return nil, fmt.Errorf("numeric literal %q must use canonical fixed-point notation", value)
-	}
-	if strings.Contains(value, ".") {
-		parts := strings.Split(value, ".")
-		if len(parts[0]) > 1 && strings.HasPrefix(parts[0], "0") {
-			return nil, fmt.Errorf("numeric literal %q must not have leading zeroes", value)
-		}
-	} else if len(value) > 1 && strings.HasPrefix(value, "0") {
-		return nil, fmt.Errorf("numeric literal %q must not have leading zeroes", value)
+	if err := semanticnumeric.ValidateCanonicalFixedPoint(value); err != nil {
+		return nil, err
 	}
 	if _, err := semanticnumeric.Parse(value); err != nil {
 		return nil, fmt.Errorf("invalid number %q", value)

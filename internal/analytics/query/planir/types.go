@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/flidai/leapview/internal/analytics/semanticnumeric"
 )
 
 // Kind is the closed set of operations in the initial plan IR.  Keeping the
@@ -151,13 +153,12 @@ type Literal struct {
 	Bool       bool        `json:"bool,omitempty"`
 }
 
-// Decimal literals use canonical fixed-point tokens at the PlanIR boundary.
-// Float literals may use exponent notation because they are intentionally
-// approximate; integer and Decimal tokens never reinterpret an exponent as a
-// scale in a renderer.
+// Decimal literals use the shared canonical fixed-point token validator at the
+// PlanIR boundary. Float literals may use exponent notation because they are
+// intentionally approximate; integer and Decimal tokens never reinterpret an
+// exponent as a scale in a renderer.
 var (
 	integerNumber = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)$`)
-	decimalNumber = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
 	floatNumber   = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
 )
 
@@ -170,7 +171,7 @@ func (l Literal) valid() bool {
 		case NumberInteger:
 			return integerNumber.MatchString(l.NumberText)
 		case NumberDecimal:
-			return decimalNumber.MatchString(l.NumberText)
+			return semanticnumeric.ValidateCanonicalFixedPoint(l.NumberText) == nil
 		case NumberFloat:
 			return floatNumber.MatchString(l.NumberText)
 		default:

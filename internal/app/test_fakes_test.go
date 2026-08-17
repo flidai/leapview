@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
@@ -72,6 +73,17 @@ func (fakeMetrics) ModelIDForDashboard(dashboardID string) string {
 		return "test"
 	}
 	return ""
+}
+
+func (fakeMetrics) Planner(modelID string) (consumer.Planner, bool) {
+	if modelID != "test" {
+		return nil, false
+	}
+	planner, err := semanticquery.NewCompiledPlanner(testSemanticModel())
+	if err != nil {
+		return nil, false
+	}
+	return planner, true
 }
 
 func (fakeMetrics) QueryCompiledFilterOptions(_ context.Context, _ string, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
@@ -223,7 +235,7 @@ func (fakeMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.
 }
 
 func testSemanticModel() *semanticmodel.Model {
-	return &semanticmodel.Model{Name: "test", Title: "Test Model", Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "string"}, "status": {Type: "string"}, "revenue": {Type: "number"}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}}}
+	return &semanticmodel.Model{Name: "test", Title: "Test Model", Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "status": {Type: "string", Datatype: semanticmodel.DataTypeString}, "revenue": {Type: "number", Datatype: semanticmodel.DataTypeFloat}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}}}
 }
 
 func (fakeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {

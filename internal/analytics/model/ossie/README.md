@@ -12,7 +12,7 @@ be present in the caller's project Model map. The adapter never turns a source
 string into a connection, source, transform, or materialization.
 
 Ossie's core document does not have native fields for governed filters,
-fact-relative dimension bindings and paths, time grain allowlists, empty-value
+metric-origin-relative dimension bindings and paths, time grain allowlists, empty-value
 policies, typed derived/ratio metrics, units/formats, or LeapView relationship
 entity endpoints. `Export` retains those result-affecting semantics in one
 structured, versioned `LEAPVIEW` custom extension. Import rejects unknown

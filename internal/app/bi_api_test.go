@@ -385,7 +385,7 @@ func TestBIAPISemanticDatasetSurface(t *testing.T) {
 			method: http.MethodPost,
 			path:   "/api/v1/semantic-models/test/query/explain",
 			body:   `{"metrics":[{"field":"order_count"}]}`,
-			want:   []string{`"mode":"single_fact"`, `"datasets":["orders"]`, `"physicalDependencies"`},
+			want:   []string{`"mode":"single_dataset"`, `"datasets":["orders"]`, `"physicalDependencies"`},
 		},
 		{
 			method: http.MethodGet,

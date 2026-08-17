@@ -41,7 +41,7 @@ data types, AI context, and extensions improve several parts of LeapView's
 authoring vocabulary. MetricFlow adds useful execution concepts such as named
 entities, explicit metric time, fanout-safe join planning, and typed metric
 behavior. Both specifications must generalize across runtimes, however, and do
-not encode all of LeapView's conformed-dimension, multi-fact, empty-value,
+not encode all of LeapView's conformed-dimension, multi-dataset, empty-value,
 authorization, and safe-planning invariants.
 
 LeapView is not publicly released. The authoring contract can change directly
@@ -59,7 +59,7 @@ interchange support makes the existing shape expensive to change.
 - Align portable concepts with Apache Ossie and executable concepts with proven
   MetricFlow patterns where doing so does not weaken LeapView's guarantees.
 - Preserve LeapView's typed aggregations, conformed dimensions, explicit paths,
-  empty-value behavior, and multi-fact pre-aggregation rather than recovering
+  empty-value behavior, and multi-dataset pre-aggregation rather than recovering
   those semantics from arbitrary aggregate SQL.
 - Ensure AI descriptions improve discovery but can never change governed query
   results.
@@ -358,7 +358,9 @@ Decimal literals must retain their canonical base-10 token until semantic type
 resolution. A decoder may preserve that token directly or accept a quoted
 canonical decimal string; it must reject a Decimal literal that has already
 been materialized as a binary floating-point value. Lossless integer literals
-remain valid Decimal inputs.
+remain valid Decimal inputs. Canonical fixed-point notation rejects exponent
+notation, a leading plus, redundant leading zeroes, and negative zero before
+semantic type resolution.
 
 Governed Decimal quotients (`safe_divide`, ratio metrics, and derived division)
 use one fixed result contract across evaluators and renderers: DECIMAL(38,18)
@@ -400,14 +402,14 @@ Time densification, fiscal calendar resources, cumulative windows, and
 period-offset execution are deferred capabilities. Empty aggregation policy and
 the future creation of missing time buckets remain distinct concepts.
 
-### Conformed dimensions remain fact-relative
+### Conformed dimensions remain metric-origin-relative
 
 Semantic dimensions remain named concepts with one validated binding per
 participating metric origin. A binding resolves a physical field relative to a
 semantic dataset and may declare an explicit safe relationship path. This
-fact-relative binding model is retained because neither embedded dataset fields
+metric-origin-relative binding model is retained because neither embedded dataset fields
 nor implicit entity matching can safely represent conformed dimensions across
-multiple facts.
+multiple datasets.
 
 ### Multi-root queries aggregate before stitching
 
@@ -415,14 +417,14 @@ A query may combine metrics rooted in different datasets only through semantic
 dimensions with valid bindings for every participating root. The planner
 aggregates each root independently to the requested conformed dimension grain,
 then combines the aggregate results with a null-safe full-outer stitch. It must
-never join fact rows to one another.
+never join root rows from separate datasets to one another.
 
 A metric, dimension, filter, or calculation whose meaning cannot be resolved
 consistently for every participating root makes the query invalid. This is a
 normative execution contract, not optional planner optimization. LeapView
 retains it in v1 because the existing planner already implements and tests the
 behavior; runtimes that cannot honor it must reject the query rather than emit a
-single-root approximation or a fanout-prone fact join.
+single-root approximation or a fanout-prone cross-dataset row join.
 
 ### AI context is descriptive and non-executable
 
@@ -592,10 +594,10 @@ unsafe SQL or AI instructions in the meantime.
   authorization, planner, or runtime packages. Removing AI context from a
   fixture produces identical compiled plans and authorization artifacts.
 - Planner tests cover root-row preservation, joined filters, single- and
-  multi-fact aggregation, conformed dimensions, explicit selection among
+  multi-dataset aggregation, conformed dimensions, explicit selection among
   multiple valid paths, rejection of ambiguous implicit paths, empty results,
   filtered metrics, ratios, and null-safe pre-aggregate stitching without
-  joining fact rows.
+  joining root rows from separate datasets.
 - Deployment validation prepares or explains representative plans for every
   relationship path and metric dependency graph against discovered schemas.
 - Pinned Ossie fixtures validate against the official versioned schema. Native

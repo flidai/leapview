@@ -34,7 +34,7 @@ func TestExpressionRejectsAggregateSQLAndBareIdentifiers(t *testing.T) {
 }
 
 func TestExpressionRejectsExponentAndNonCanonicalNumberLiterals(t *testing.T) {
-	for _, input := range []string{"1e-3", "1.2e3", ".5", "1.", "01"} {
+	for _, input := range []string{"1e-3", "1.2e3", ".5", "1.", "01", "+1", "-0", "-0.0"} {
 		t.Run(input, func(t *testing.T) {
 			_, err := ParseExpression(input)
 			if err == nil {
@@ -44,6 +44,30 @@ func TestExpressionRejectsExponentAndNonCanonicalNumberLiterals(t *testing.T) {
 				t.Fatalf("ParseExpression(%q) error = %v, want exponent rejection", input, err)
 			}
 		})
+	}
+}
+
+func TestExpressionAcceptsCanonicalFixedPointNumberLiterals(t *testing.T) {
+	for _, input := range []string{"0", "0.0", "1", "1.0", "-1", "-1.0"} {
+		t.Run(input, func(t *testing.T) {
+			if _, err := ParseExpression(input); err != nil {
+				t.Fatalf("ParseExpression(%q) failed: %v", input, err)
+			}
+		})
+	}
+}
+
+func TestExpressionPreservesUnaryPlusForNonLiteralOperands(t *testing.T) {
+	expression, err := ParseExpression("+${amount}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql, err := expression.SQL(func(ref string) (string, error) { return "m_" + ref, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sql != "(+m_amount)" {
+		t.Fatalf("SQL = %q, want unary plus preserved", sql)
 	}
 }
 

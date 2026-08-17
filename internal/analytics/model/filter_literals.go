@@ -83,6 +83,19 @@ func coerceDecimal(value any) (json.Number, error) {
 		return "", fmt.Errorf("value %v is binary floating point; Decimal literals must use a precision-safe string or integer", value)
 	case string, json.Number,
 		int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		var token string
+		var lexical bool
+		switch typed := value.(type) {
+		case string:
+			token, lexical = typed, true
+		case json.Number:
+			token, lexical = string(typed), true
+		}
+		if lexical {
+			if err := semanticnumeric.ValidateCanonicalFixedPoint(token); err != nil {
+				return "", fmt.Errorf("value %v is not decimal: %w", value, err)
+			}
+		}
 		number, err := semanticnumeric.FromValue(value)
 		if err != nil {
 			return "", fmt.Errorf("value %v is not decimal: %w", value, err)

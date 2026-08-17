@@ -16,6 +16,75 @@ import (
 // traverse the same established string boundary.
 type Decimal = string
 
+// ValidateCanonicalFixedPoint validates the lexical contract shared by
+// authored expressions, PlanIR Decimal literals, and structured Decimal
+// filter values. The semantic numeric parser intentionally accepts a wider
+// set of decimal spellings for runtime values; this boundary is stricter so
+// equivalent authored values have one deterministic representation.
+//
+// Canonical fixed-point values have an optional leading minus, at least one
+// digit on either side of a decimal point when present, no exponent or
+// leading plus, and no redundant integer leading zeroes. Negative zero is
+// rejected even when it carries a fractional scale.
+func ValidateCanonicalFixedPoint(token string) error {
+	if token == "" {
+		return fmt.Errorf("numeric literal is empty")
+	}
+
+	start := 0
+	negative := false
+	switch token[0] {
+	case '-':
+		negative = true
+		start = 1
+	case '+':
+		return fmt.Errorf("numeric literal %q must not use a leading plus", token)
+	}
+	if start == len(token) {
+		return fmt.Errorf("numeric literal %q has no digits", token)
+	}
+
+	dot := -1
+	digitCount := 0
+	for index := start; index < len(token); index++ {
+		char := token[index]
+		switch {
+		case char >= '0' && char <= '9':
+			digitCount++
+		case char == '.' && dot < 0:
+			dot = index
+		default:
+			return fmt.Errorf("numeric literal %q must use canonical fixed-point notation", token)
+		}
+	}
+	if digitCount == 0 || (dot == start || dot == len(token)-1) {
+		return fmt.Errorf("numeric literal %q must use canonical fixed-point notation", token)
+	}
+
+	integerEnd := len(token)
+	if dot >= 0 {
+		integerEnd = dot
+	}
+	integerDigits := token[start:integerEnd]
+	if len(integerDigits) > 1 && integerDigits[0] == '0' {
+		return fmt.Errorf("numeric literal %q must not have leading zeroes", token)
+	}
+
+	if negative {
+		zero := true
+		for index := start; index < len(token); index++ {
+			if token[index] != '0' && token[index] != '.' {
+				zero = false
+				break
+			}
+		}
+		if zero {
+			return fmt.Errorf("numeric literal %q must not be negative zero", token)
+		}
+	}
+	return nil
+}
+
 // exactKind tracks whether an exact value originated from an integer or a
 // Decimal operand. The distinction is part of the evaluator's transport
 // contract: an exact operation with a Decimal operand must remain a Decimal

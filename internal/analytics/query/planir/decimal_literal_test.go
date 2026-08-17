@@ -3,7 +3,7 @@ package planir
 import "testing"
 
 func TestDecimalLiteralRejectsExponentNotation(t *testing.T) {
-	for _, token := range []string{"1e-3", "1.2e3", "999999999999999999999999999999999999999e-1"} {
+	for _, token := range []string{"1e-3", "1.2e3", "999999999999999999999999999999999999999e-1", "01", "+1", "-0", "-0.0"} {
 		t.Run(token, func(t *testing.T) {
 			decimal := Literal{Kind: LiteralNumber, NumberKind: NumberDecimal, NumberText: token}
 			if decimal.valid() {
@@ -12,6 +12,21 @@ func TestDecimalLiteralRejectsExponentNotation(t *testing.T) {
 			args := []any{}
 			if _, err := bindLiteral(decimal, &args); err == nil {
 				t.Fatalf("exponent literal %q was accepted", token)
+			}
+		})
+	}
+}
+
+func TestDecimalLiteralAcceptsCanonicalFixedPointForms(t *testing.T) {
+	for _, token := range []string{"0", "0.0", "1", "1.0", "-1", "-1.0", "9007199254740993.125"} {
+		t.Run(token, func(t *testing.T) {
+			decimal := Literal{Kind: LiteralNumber, NumberKind: NumberDecimal, NumberText: token}
+			if !decimal.valid() {
+				t.Fatalf("canonical Decimal literal %q failed PlanIR validation", token)
+			}
+			args := []any{}
+			if _, err := bindLiteral(decimal, &args); err != nil {
+				t.Fatalf("canonical Decimal literal %q failed binding: %v", token, err)
 			}
 		})
 	}

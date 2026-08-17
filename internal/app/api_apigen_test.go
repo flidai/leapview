@@ -83,14 +83,19 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 			t.Fatalf("Taskfile.yml does not enforce generated-model ordering %q", want)
 		}
 	}
-	for _, want := range []string{
-		"github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile",
-		"github.com/Yacobolo/toolbelt/apigen/cmd/apigen all",
-		"go -C pkg/apigen test ./...",
-	} {
-		if !strings.Contains(taskText, want) {
-			t.Fatalf("Taskfile.yml missing generation command %q", want)
+	assertAPIGenCommands := func(label, text string, targets []string) {
+		for _, target := range targets {
+			for _, command := range []string{"typespec-compile", "all"} {
+				want := "go -C pkg/apigen run ./cmd/apigen " + command + " -manifest ../../api/apigen.yaml -target " + target
+				if !strings.Contains(text, want) {
+					t.Fatalf("%s missing nested APIGen command %q", label, want)
+				}
+			}
 		}
+	}
+	assertAPIGenCommands("Taskfile.yml", taskText, []string{"leapview-v1", "agent-tool-contracts", "desktop-discovery-contracts", "ui-signals", "visualization-ir"})
+	if !strings.Contains(taskText, "go -C pkg/apigen test ./...") {
+		t.Fatal("Taskfile.yml missing APIGen module test command")
 	}
 	for _, forbidden := range []string{"cue-compile", "apigen@v0.2.0", "apigen@v0.3.0", "apigen@v0.3.2", "apigen@v0.3.3", "apigen@v0.4.0", "apigen@v0.5.0", "apigen@v0.5.1", "apigen@v0.5.2", "apigen@v0.5.3", "apigen@v0.6.0", "apigen@v0.6.1", "apigen@v0.6.2", "apigen@v0.6.3", "apigen@v0.6.4", "apigen@v0.6.5", "apigen@v0.7.0", "apigen@v0.7.1", "apigen@v0.7.2", "apigen@v0.7.3", "apigenpostprocess"} {
 		if strings.Contains(taskText, forbidden) {
@@ -101,9 +106,7 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read container source-generation script: %v", err)
 	}
-	if want := "APIGEN=github.com/Yacobolo/toolbelt/apigen/cmd/apigen"; !strings.Contains(string(buildSources), want) {
-		t.Fatalf("container source-generation script missing APIGen pin %q", want)
-	}
+	assertAPIGenCommands("container source-generation script", string(buildSources), []string{"leapview-v1", "ui-signals", "desktop-discovery-contracts", "visualization-ir"})
 	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
 		t.Fatalf("read go.mod: %v", err)
@@ -113,14 +116,6 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "pkg", "apigen", "UPSTREAM.md")); err != nil {
 		t.Fatalf("vendored APIGen provenance is missing: %v", err)
-	}
-	for _, want := range []string{
-		"typespec-compile -manifest api/apigen.yaml -target desktop-discovery-contracts",
-		"all -manifest api/apigen.yaml -target desktop-discovery-contracts",
-	} {
-		if !strings.Contains(string(buildSources), want) {
-			t.Fatalf("container source-generation script missing desktop discovery generation command %q", want)
-		}
 	}
 	if want := "go run ./internal/app/tools/layoutcontractgen"; !strings.Contains(string(buildSources), want) {
 		t.Fatalf("container source-generation script missing layout contract generation %q", want)
@@ -702,8 +697,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	}
 	taskText := string(taskfile)
 	for _, want := range []string{
-		"typespec-compile -manifest api/apigen.yaml -target ui-signals",
-		"all -manifest api/apigen.yaml -target ui-signals",
+		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target ui-signals",
+		"go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target ui-signals",
 		"go run ./internal/app/tools/signalcontracts",
 	} {
 		if !strings.Contains(taskText, want) {
