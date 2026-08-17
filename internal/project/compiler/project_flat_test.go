@@ -687,12 +687,12 @@ spec:
 kind: SemanticModel
 metadata: {id: semantic:operations, name: operations}
 spec:
-  datasets: {orders: {model: orders_model}}
+  datasets: {order_rows: {model: orders_model}}
   dimensions:
     shared_id:
       datatype: String
-      bindings: {orders: {field: orders.id}}
-  metrics: {row_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}
+      bindings: {order_rows: {field: order_rows.id}}
+  metrics: {row_count: {type: aggregate, dataset: order_rows, aggregation: count, input: {field: order_rows.id}, empty: zero}}
 `,
 	})
 	project, err := LoadProject(projectPath)
@@ -714,6 +714,20 @@ spec:
 		if model == nil || model.Dimensions["shared_id"].Name != "shared_id" {
 			t.Fatalf("semantic model %s lost shared dimension: %#v", id, model)
 		}
+	}
+	assertFieldOwner := func(modelID, dataset, want string) {
+		t.Helper()
+		model := project.Manifest.SemanticModels[modelID]
+		field := model.Tables[dataset].Dimensions["id"]
+		if field.Table != dataset || field.Field != want {
+			t.Fatalf("semantic model %s dataset %s field owner = %#v, want %s", modelID, dataset, field, want)
+		}
+	}
+	assertFieldOwner("semantic:sales", "orders", "orders.id")
+	assertFieldOwner("semantic:operations", "order_rows", "order_rows.id")
+	canonical := project.Manifest.Models["model:orders"].Dimensions["id"]
+	if canonical.Table != "orders_model" || canonical.Field != "orders_model.id" {
+		t.Fatalf("canonical Model field was mutated by semantic aliases: %#v", canonical)
 	}
 }
 

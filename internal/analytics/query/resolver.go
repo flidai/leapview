@@ -195,14 +195,9 @@ func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field
 		resolvedDimensions[item.Field] = dimension
 		resolvedDimensions[dimension.Field] = dimension
 	}
-	for _, field := range filterRefs(filters) {
-		dimension, path, err := p.resolveViewFilterDimension(fact, field)
-		if err != nil {
-			return nil, err
-		}
-		resolvedDimensions[field] = dimension
-		resolvedDimensions[dimension.Field] = dimension
-		paths[dimension.Field] = path
+	view := &queryView{Fact: fact, Dimensions: resolvedDimensions, Metrics: resolvedMetrics, Paths: paths}
+	if err := p.exposeViewFilters(view, filters); err != nil {
+		return nil, err
 	}
 	if timeField != "" {
 		dimension, err := p.Model.ResolveDimension(timeField)
@@ -215,12 +210,7 @@ func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field
 		resolvedDimensions[timeField] = dimension
 		resolvedDimensions[dimension.Field] = dimension
 	}
-	return &queryView{
-		Fact:       fact,
-		Dimensions: resolvedDimensions,
-		Metrics:    resolvedMetrics,
-		Paths:      paths,
-	}, nil
+	return view, nil
 }
 
 func validateSingleFactFilterScope(fact string, filters []Filter) error {
@@ -240,11 +230,65 @@ func validateSingleFactFilterScope(fact string, filters []Filter) error {
 	return nil
 }
 
-func (p *Planner) resolveViewFilterDimension(fact, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
+func (p *Planner) exposeViewFilters(view *queryView, filters []Filter) error {
+	var expose func(Filter) error
+	expose = func(filter Filter) error {
+		refs := []struct {
+			field string
+			path  []string
+		}{}
+		if filter.Field != "" {
+			refs = append(refs, struct {
+				field string
+				path  []string
+			}{field: filter.Field, path: filter.Path})
+		}
+		if filter.Spatial != nil {
+			refs = append(refs,
+				struct {
+					field string
+					path  []string
+				}{field: filter.Spatial.LatitudeField},
+				struct {
+					field string
+					path  []string
+				}{field: filter.Spatial.LongitudeField},
+			)
+		}
+		for _, ref := range refs {
+			dimension, path, err := p.resolveViewFilterDimension(view.Fact, ref.field, ref.path)
+			if err != nil {
+				return err
+			}
+			view.Dimensions[ref.field] = dimension
+			view.Dimensions[dimension.Field] = dimension
+			view.Paths[dimension.Field] = path
+		}
+		for _, group := range filter.Groups {
+			for _, child := range group.Filters {
+				if err := expose(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	for _, filter := range filters {
+		if err := expose(filter); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Planner) resolveViewFilterDimension(fact, ref string, explicitPath []string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
 	if semanticDimension, ok := p.Model.Dimensions[ref]; ok {
 		binding, ok := semanticDimension.Bindings[fact]
 		if !ok {
 			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for fact %q", ref, fact)
+		}
+		if len(explicitPath) > 0 {
+			binding.Path = append([]string(nil), explicitPath...)
 		}
 		dimension, err := p.Model.ResolveDimension(binding.Field)
 		if err != nil {
@@ -257,7 +301,12 @@ func (p *Planner) resolveViewFilterDimension(fact, ref string) (semanticmodel.Me
 	if err != nil {
 		return semanticmodel.MetricDimension{}, nil, err
 	}
-	path, err := p.relationshipPath(fact, dimension.Table)
+	var path []semanticmodel.Relationship
+	if len(explicitPath) > 0 {
+		path, err = p.Model.ResolveBindingPath(fact, semanticmodel.DimensionBinding{Field: ref, Path: append([]string(nil), explicitPath...)})
+	} else {
+		path, err = p.relationshipPath(fact, dimension.Table)
+	}
 	return dimension, path, err
 }
 

@@ -313,6 +313,33 @@ func TestPlannerRowAndRawQueriesStaySingleFact(t *testing.T) {
 	}
 }
 
+func TestPlannerRawValuesApplyNamedMetricPopulation(t *testing.T) {
+	model := testModel()
+	model.Filters = map[string]semanticmodel.SemanticFilterSpec{
+		"danish_customers": {Field: "customers.state", Operator: "equals", Value: "DK", Path: []string{"orders_customers"}},
+	}
+	revenue := model.Metrics["revenue"]
+	revenue.Where = []string{"danish_customers"}
+	model.Metrics["revenue"] = revenue
+
+	plan, err := NewPlanner(model).PlanRawValues(RawValueRequest{Table: "orders", Metric: Field{Field: "revenue"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"LEFT JOIN model.customers",
+		"t1.customer_id IS NOT NULL",
+		"t1.state = ?",
+	} {
+		if !strings.Contains(plan.SQL, want) {
+			t.Fatalf("raw metric population SQL missing %q:\n%s", want, plan.SQL)
+		}
+	}
+	if len(plan.Args) != 1 || plan.Args[0] != "DK" {
+		t.Fatalf("raw metric population args = %#v, want [DK]", plan.Args)
+	}
+}
+
 func TestPlannerExecutesTimezoneAndSundayWeekSemantics(t *testing.T) {
 	model := testModel()
 	model.Dimensions["local_week"] = semanticmodel.SemanticDimension{

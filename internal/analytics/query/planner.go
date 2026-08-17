@@ -135,12 +135,21 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	if masks.matchesMetric(metricField, metric) {
 		return Plan{}, fmt.Errorf("metric %q depends on a masked field", metricField)
 	}
+	metricFilters := scopeMetricWhereFilters(metric.WhereFilters, view.Fact)
+	if err := p.exposeViewFilters(view, metricFilters); err != nil {
+		return Plan{}, err
+	}
 	fieldSet = append(fieldSet, aggregateMetricPhysicalFields(metric)...)
 	filterFields, err := filterFieldSet(view, request.Filters)
 	if err != nil {
 		return Plan{}, err
 	}
 	fieldSet = append(fieldSet, filterFields...)
+	metricFilterFields, err := filterFieldSet(view, metricFilters)
+	if err != nil {
+		return Plan{}, err
+	}
+	fieldSet = append(fieldSet, metricFilterFields...)
 	aliases, err := p.aliases(view, fieldSet)
 	if err != nil {
 		return Plan{}, err
@@ -189,6 +198,21 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	whereParts, args, err := p.whereParts(view, aliases, request.Filters)
 	if err != nil {
 		return Plan{}, err
+	}
+	pathAliases := pathAliasSet{BaseTable: view.Fact, ByPath: map[string]tableAlias{}}
+	for _, alias := range aliases {
+		pathAliases.ByPath[relationshipPathSignature(alias.Path)] = alias
+	}
+	filterResolution := aggregateResolution{Facts: []string{view.Fact}}
+	for _, filter := range metricFilters {
+		part, partArgs, err := p.factFilterPart(filter, filterResolution, view.Fact, pathAliases)
+		if err != nil {
+			return Plan{}, err
+		}
+		if part != "" {
+			whereParts = append(whereParts, part)
+			args = append(args, partArgs...)
+		}
 	}
 	for _, field := range dimensionFields {
 		if where := dimensionWhereExpr(view.Dimensions[field], aliases); where != "" {

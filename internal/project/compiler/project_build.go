@@ -698,6 +698,57 @@ func copyConnections(in map[string]semanticmodel.Connection) map[string]semantic
 func copyTables(in map[string]semanticmodel.Table) map[string]semanticmodel.Table {
 	out := make(map[string]semanticmodel.Table, len(in))
 	for key, value := range in {
+		value.AIContext = copyAIContext(value.AIContext)
+		value.Sources = append([]string(nil), value.Sources...)
+		value.SourceReads = copyStringSliceMap(value.SourceReads)
+		value.SourceDependencies = append([]string(nil), value.SourceDependencies...)
+		value.ModelDependencies = append([]string(nil), value.ModelDependencies...)
+		value.Columns = copyModelColumns(value.Columns)
+		for name, column := range value.Columns {
+			column.AIContext = copyAIContext(column.AIContext)
+			value.Columns[name] = column
+		}
+		value.Dimensions = copyMetricDimensions(value.Dimensions)
+		for name, dimension := range value.Dimensions {
+			dimension.AIContext = copyAIContext(dimension.AIContext)
+			value.Dimensions[name] = dimension
+		}
+		entities := make(map[string]semanticmodel.ModelEntitySpec, len(value.Entities))
+		for name, entity := range value.Entities {
+			entity.Fields = append([]string(nil), entity.Fields...)
+			entity.AIContext = copyAIContext(entity.AIContext)
+			entities[name] = entity
+		}
+		value.Entities = entities
+		value.Schema.Columns = append([]semanticmodel.ColumnSchema(nil), value.Schema.Columns...)
+		for index := range value.Schema.Columns {
+			if value.Schema.Columns[index].Nullable != nil {
+				nullable := *value.Schema.Columns[index].Nullable
+				value.Schema.Columns[index].Nullable = &nullable
+			}
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func copyAIContext(in *semanticmodel.AIContext) *semanticmodel.AIContext {
+	if in == nil {
+		return nil
+	}
+	return &semanticmodel.AIContext{
+		Instructions: in.Instructions,
+		Synonyms:     append([]string(nil), in.Synonyms...),
+		Examples:     append([]string(nil), in.Examples...),
+	}
+}
+
+func copyMetricDimensions(in map[string]semanticmodel.MetricDimension) map[string]semanticmodel.MetricDimension {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]semanticmodel.MetricDimension, len(in))
+	for key, value := range in {
 		out[key] = value
 	}
 	return out

@@ -240,6 +240,112 @@ semantic_model:
 	}
 }
 
+func TestCountExportPreservesDatasetRowSemantics(t *testing.T) {
+	models := strictnessProjectModels()
+	native := &semanticmodel.Model{
+		Name:     "sales",
+		Tables:   map[string]semanticmodel.Table{"orders": models["orders"]},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics: map[string]semanticmodel.Metric{
+			"row_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"},
+		},
+	}
+	wire, err := Export(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wire), `"expression": "COUNT(*)"`) {
+		t.Fatalf("count export did not preserve row-count semantics: %s", wire)
+	}
+	got, err := Import(wire, models)
+	if err != nil {
+		t.Fatalf("import exported count: %v", err)
+	}
+	if got.Metrics["row_count"].Aggregation != "count" {
+		t.Fatalf("round-tripped count metric = %#v", got.Metrics["row_count"])
+	}
+}
+
+func TestCountExportRoundTripsNonGrainBookkeepingInput(t *testing.T) {
+	models := strictnessProjectModels()
+	native := &semanticmodel.Model{
+		Name:     "sales",
+		Tables:   map[string]semanticmodel.Table{"orders": models["orders"]},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics: map[string]semanticmodel.Metric{
+			"row_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.event_date"}, Empty: "zero"},
+		},
+	}
+	wire, err := Export(native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Import(wire, models)
+	if err != nil {
+		t.Fatalf("import exported count with non-grain input: %v", err)
+	}
+	if input := got.Metrics["row_count"].Input; input == nil || input.Field != "orders.event_date" {
+		t.Fatalf("round-tripped count input = %#v", input)
+	}
+}
+
+func TestCoreCountStarImportInfersSingleDataset(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}]
+    metrics:
+      - name: row_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(*)}]}
+`)
+	got, err := Import(doc, strictnessProjectModels())
+	if err != nil {
+		t.Fatal(err)
+	}
+	metric := got.Metrics["row_count"]
+	if metric.Aggregation != "count" || metric.Dataset != "orders" || metric.Input == nil || metric.Input.Field != "orders.order_id" {
+		t.Fatalf("core COUNT(*) metric = %#v", metric)
+	}
+}
+
+func TestExtensionMetricsMergeWithCompatibleCoreMetrics(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}]
+    metrics:
+      - name: row_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(orders.order_id)}]}
+    custom_extensions:
+      - vendor_name: LEAPVIEW
+        data: '{"version":"leapview.dev/ossie-extension/v1","metrics":{"distinct_orders":{"type":"aggregate","dataset":"orders","aggregation":"count_distinct","input":{"field":"orders.order_id"},"empty":"zero"}}}'
+`)
+	got, err := Import(doc, strictnessProjectModels())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Metrics) != 2 || got.Metrics["row_count"].Aggregation != "count" || got.Metrics["distinct_orders"].Aggregation != "count_distinct" {
+		t.Fatalf("core and extension metrics were not merged: %#v", got.Metrics)
+	}
+}
+
+func TestExtensionRejectsPortableMetricContradiction(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}]
+    metrics:
+      - name: row_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(orders.order_id)}]}
+    custom_extensions:
+      - vendor_name: LEAPVIEW
+        data: '{"version":"leapview.dev/ossie-extension/v1","metrics":{"row_count":{"type":"aggregate","dataset":"orders","aggregation":"count_distinct","input":{"field":"orders.order_id"},"empty":"zero"}}}'
+`)
+	if _, err := Import(doc, strictnessProjectModels()); err == nil || !strings.Contains(err.Error(), "disagrees with Ossie core") {
+		t.Fatalf("portable metric contradiction error = %v", err)
+	}
+}
+
 func TestImportRejectsUnsafeRelationshipsAndMetricPopulation(t *testing.T) {
 	models := map[string]semanticmodel.Table{
 		"orders": {

@@ -324,7 +324,7 @@ func Import(data []byte, projectModels map[string]semanticmodel.Table) (*semanti
 	}
 
 	for _, metric := range source.Metrics {
-		converted, err := importCoreMetric(metric)
+		converted, err := importCoreMetric(metric, result)
 		if err != nil {
 			if extension == nil {
 				return nil, err
@@ -506,7 +506,7 @@ func importRelationship(result *semanticmodel.Model, value Relationship) error {
 	return nil
 }
 
-func importCoreMetric(value Metric) (semanticmodel.Metric, error) {
+func importCoreMetric(value Metric, model *semanticmodel.Model) (semanticmodel.Metric, error) {
 	if value.Name == "" || len(value.Expression.Dialects) == 0 {
 		return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q requires an expression", value.Name)
 	}
@@ -521,6 +521,26 @@ func importCoreMetric(value Metric) (semanticmodel.Metric, error) {
 	}
 	if expression.Dialect != "ANSI_SQL" {
 		return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q has unsupported executable dialect %q", value.Name, expression.Dialect)
+	}
+	if regexp.MustCompile(`(?i)^\s*COUNT\s*\(\s*\*\s*\)\s*$`).MatchString(expression.Expression) {
+		datasetNames := sortedKeys(model.Datasets)
+		if len(datasetNames) != 1 {
+			return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q COUNT(*) requires exactly one dataset or a LeapView extension", value.Name)
+		}
+		dataset := datasetNames[0]
+		table := model.Tables[dataset]
+		inputFields := table.GrainFields()
+		if len(inputFields) == 0 {
+			inputFields = sortedKeys(table.Dimensions)
+		}
+		if len(inputFields) == 0 {
+			return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q COUNT(*) dataset %q has no Model field for the native input contract", value.Name, dataset)
+		}
+		return semanticmodel.Metric{
+			Type: "aggregate", Dataset: dataset, Aggregation: "count",
+			Input: &semanticmodel.MetricInput{Field: dataset + "." + inputFields[0]}, Empty: "zero",
+			Label: value.Name, Description: value.Description, AIContext: fromAIContext(value.AIContext),
+		}, nil
 	}
 	call := regexp.MustCompile(`(?i)^\s*(SUM|AVG|MIN|MAX|COUNT|COUNT_DISTINCT)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$`).FindStringSubmatch(expression.Expression)
 	if len(call) == 0 {
@@ -688,8 +708,12 @@ func applyExtension(result *semanticmodel.Model, extension *extensionPayload, pr
 		result.Filters = extension.Filters
 	}
 	if extension.Metrics != nil {
-		result.Metrics = extension.Metrics
 		for name, metric := range extension.Metrics {
+			if core, ok := result.Metrics[name]; ok {
+				if err := validatePortableMetricAgreement(name, core, metric); err != nil {
+					return err
+				}
+			}
 			metric.Name = name
 			result.Metrics[name] = metric
 		}
@@ -710,6 +734,32 @@ func applyExtension(result *semanticmodel.Model, extension *extensionPayload, pr
 		result.Relationships = append(result.Relationships, r)
 	}
 	sort.Slice(result.Relationships, func(i, j int) bool { return result.Relationships[i].ID < result.Relationships[j].ID })
+	return nil
+}
+
+func validatePortableMetricAgreement(name string, core, extension semanticmodel.Metric) error {
+	if core.Type != extension.Type {
+		return fmt.Errorf("LeapView extension metric %q type %q disagrees with Ossie core type %q", name, extension.Type, core.Type)
+	}
+	if core.Type != "aggregate" {
+		return nil
+	}
+	if core.Aggregation == "count" && extension.Aggregation == "count" {
+		if core.Dataset != extension.Dataset {
+			return fmt.Errorf("LeapView extension metric %q executable definition disagrees with Ossie core", name)
+		}
+		return nil
+	}
+	coreInput, extensionInput := "", ""
+	if core.Input != nil {
+		coreInput = core.Input.Field
+	}
+	if extension.Input != nil {
+		extensionInput = extension.Input.Field
+	}
+	if core.Dataset != extension.Dataset || core.Aggregation != extension.Aggregation || coreInput != extensionInput {
+		return fmt.Errorf("LeapView extension metric %q executable definition disagrees with Ossie core", name)
+	}
 	return nil
 }
 
@@ -1164,6 +1214,9 @@ func metricExpression(metric semanticmodel.Metric) (string, error) {
 			return "", fmt.Errorf("aggregate metric has no input")
 		}
 		aggregation := strings.ToUpper(metric.Aggregation)
+		if aggregation == "COUNT" {
+			return "COUNT(*)", nil
+		}
 		if aggregation == "COUNT_DISTINCT" {
 			aggregation = "COUNT(DISTINCT"
 			return aggregation + " " + metric.Input.Field + ")", nil
