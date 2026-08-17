@@ -70,7 +70,7 @@ test('project asset list renders current resource signals and filter event', asy
 })
 
 test('fixed project areas keep canonical asset links', async () => {
-  for (const [rootName, expectedHref] of [['data', '/data/source:orders/details'], ['models', '/models/model:orders/details'], ['semantic-models', '/semantic-models/semantic:orders/details']] as const) {
+  for (const [rootName, expectedHref] of [['sources', '/sources/source:orders/details'], ['models', '/models/model:orders/details'], ['semantic-models', '/semantic-models/semantic:orders/details']] as const) {
     const page = await browser.newPage()
     try {
       await page.goto(`${baseURL}/?root=${rootName}`)
@@ -149,7 +149,7 @@ function testDocument(rootName: string): string {
   } : rootName === 'semantic-models' ? {
     kind: 'data', title: 'Semantic models', assetList: { activeType: 'semantic_model', assets: [{ id: 'semantic:orders', key: 'semantic_model:orders', title: 'orders', type: 'semantic_model', typeLabel: 'Semantic model', detailHref: '/semantic-models/semantic:orders/details', openHref: '/semantic-models/semantic:orders/details' }], empty: 'No semantic models.', searchHref: '/semantic-models', tabs: [] },
   } : {
-    kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', type: 'source', typeLabel: 'Source', detailHref: '/data/source:orders/details', openHref: '/data/source:orders/details' }], empty: 'No assets.', searchHref: '/data', tabs: [] },
+    kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
   const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'detail' || rootName === 'semantic-detail' ? 'lv-project-asset-page' : 'lv-project-page'
   return `<!doctype html><html><body><main data-signals="${escapeHTML(JSON.stringify({ page, connectionAdmin: { command: {}, status: { loading: false, error: '', message: '' } } }))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`

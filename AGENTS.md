@@ -18,7 +18,7 @@ LeapView is a dashboards-as-code BI monolith. Go owns configuration compilation,
 
 ## Runtime Flow
 
-1. `GET /` opens Insights; `GET /explore` opens Data Explorer; Develop uses `/data`, `/models`, `/semantic-models`, `/pipelines`, and `/connections`.
+1. `GET /` opens Insights; `GET /explore` opens Data Explorer; Develop uses `/sources`, `/models`, `/semantic-models`, `/pipelines`, and `/connections`.
 2. Dashboard routes are `GET /dashboards/{dashboard}` and `/dashboards/{dashboard}/pages/{page}`. The server-bound project is never selected in browser routes.
 3. Each page opens the canonical `GET /updates?...` Datastar SSE stream from `data-init`.
 4. Browser components emit small domain events. Gomponents attributes translate them into CSRF-protected Datastar commands.

@@ -16,7 +16,7 @@ describe("parseDesktopDeepLink", () => {
     for (const path of [
       "/",
       "/explore",
-      "/data",
+      "/sources",
       "/models",
       "/semantic-models",
       "/pipelines",
@@ -63,6 +63,7 @@ describe("parseDesktopDeepLink", () => {
       "leapview-desktop://open?origin=https%3A%2F%2Fuser%3Asecret%40analytics.company.com&path=%2Fexplore",
       "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com%2Fpath&path=%2Fexplore",
       "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fadmin",
+      "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdata",
       "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fprojects%2Fsales",
       "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%2Frevenue%3Ffilter%3Dsecret",
       "leapview-desktop://open?origin=https%3A%2F%2Fanalytics.company.com&path=%2Fdashboards%2F..%2Fadmin",

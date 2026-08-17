@@ -15,7 +15,7 @@ func ConnectionsHref(query string) string {
 }
 
 func ProjectAssetSectionHref(assetID, section string) string {
-	return "/data/" + url.PathEscape(assetID) + "/" + url.PathEscape(section)
+	return "/sources/" + url.PathEscape(assetID) + "/" + url.PathEscape(section)
 }
 
 func ConnectionAssetSectionHref(assetID, section string) string {

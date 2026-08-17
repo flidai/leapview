@@ -589,7 +589,7 @@ test('sidebar active nav item uses a full-row highlight without selector rail', 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
       const root = sidebar.shadowRoot
-      const active = root.querySelector('a[href="/data"]') as HTMLElement
+      const active = root.querySelector('a[href="/sources"]') as HTMLElement
       const icon = active.querySelector('.nav-icon') as HTMLElement
       const style = getComputedStyle(active)
       const iconStyle = getComputedStyle(icon)
@@ -608,9 +608,9 @@ test('sidebar active nav item uses a full-row highlight without selector rail', 
       }
     })
 
-    expect(state.text).toBe('Data')
-    expect(state.label).toBe('Data')
-    expect(state.title).toBe('Data')
+    expect(state.text).toBe('Sources')
+    expect(state.label).toBe('Sources')
+    expect(state.title).toBe('Sources')
     expect(state.current).toBe('page')
     expect(state.background).toBe('rgb(239, 242, 245)')
     expect(state.controlHoverBackground).toBe('#eff2f5')
@@ -772,7 +772,7 @@ test('sidebar switches between Insights and Develop and remembers the last area 
       { label: 'Insights', current: 'false', href: '/' },
       { label: 'Develop', current: 'page', href: '/sidebar-active-nav' },
     ])
-    expect(developState.items).toEqual(['Data', 'Models', 'Semantic models', 'Pipelines', 'Connections'])
+    expect(developState.items).toEqual(['Sources', 'Models', 'Semantic models', 'Pipelines', 'Connections'])
     expect(developState.visibleGroupLabels).toEqual([])
     expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
@@ -849,7 +849,7 @@ test('insights and develop navigation expose the stable route contract without s
     const developState = await navigationState()
     expect(developState.insights).toEqual([])
     expect(developState.develop).toEqual([
-      { label: 'Data', href: '/data', icon: expect.any(String) },
+      { label: 'Sources', href: '/sources', icon: expect.any(String) },
       { label: 'Models', href: '/models', icon: expect.any(String) },
       { label: 'Semantic models', href: '/semantic-models', icon: expect.any(String) },
       { label: 'Pipelines', href: '/pipelines', icon: expect.any(String) },
@@ -1077,7 +1077,7 @@ function signalShellDocument(): string {
         area: 'insights',
         areas: [
           { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-          { id: 'develop', label: 'Develop', href: '/data', icon: 'code' },
+          { id: 'develop', label: 'Develop', href: '/sources', icon: 'code' },
         ],
         dashboardId: '',
         dashboardTitle: '',
@@ -1119,12 +1119,12 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
   const chromeConfig = compact || history || nav || admin ? {
     sidebar: {
       productName: 'LeapView',
-      active: admin ? 'principals' : history ? 'chat' : 'data',
+      active: admin ? 'principals' : history ? 'chat' : 'sources',
       admin,
       area: admin ? undefined : history ? 'insights' : 'develop',
       areas: admin ? undefined : [
         { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-        { id: 'develop', label: 'Develop', href: '/data', icon: 'code' },
+        { id: 'develop', label: 'Develop', href: '/sources', icon: 'code' },
       ],
       dashboardId: '',
       dashboardTitle: '',
@@ -1195,7 +1195,7 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
       }] : nav ? [{
         label: 'Develop',
         items: [
-          { id: 'data', label: 'Data', href: '/data', icon: 'database' },
+          { id: 'sources', label: 'Sources', href: '/sources', icon: 'database' },
           { id: 'models', label: 'Models', href: '/models', icon: 'boxes' },
           { id: 'semantic-models', label: 'Semantic models', href: '/semantic-models', icon: 'waypoints' },
           { id: 'pipelines', label: 'Pipelines', href: '/pipelines', icon: 'workflow' },

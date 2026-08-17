@@ -12,6 +12,7 @@ import (
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectview "github.com/flidai/leapview/internal/project"
@@ -34,21 +35,36 @@ type CatalogAuthorizer interface {
 	Resolve(context.Context, string, projectcatalog.Ref, access.Capability, bool) (projectcatalog.Result, error)
 }
 
+// SemanticModelReader resolves a compiled model from the active serving
+// generation. It is intentionally smaller than the dashboard/query runtime
+// contract so the project browser only depends on the detail read port it
+// needs.
+type SemanticModelReader interface {
+	SemanticModel(string) (*semanticmodel.Model, bool)
+}
+
+// ErrSemanticModelUnavailable indicates that the active generation could not
+// provide the compiled definition required to render semantic-model detail.
+// A graph metadata payload is not a valid substitute because it would render
+// misleading zero-valued tables, measures, and relationships.
+var ErrSemanticModelUnavailable = errors.New("active semantic model definition is unavailable")
+
 type Principal struct {
 	ID        string
 	DevBypass bool
 }
 
 type BrowserHandler struct {
-	Graph            GraphReader
-	Catalog          CatalogAuthorizer
-	ResolveProjectID func(context.Context) (projectgraph.ResourceID, error)
-	Environment      string
-	Trace            *pagestream.TraceStore
-	Layout           func(*stdhttp.Request) webpage.Provider
-	CSRFToken        func(*stdhttp.Request) string
-	CurrentUser      func(*stdhttp.Request) (Principal, bool)
-	Authenticate     func(stdhttp.Handler) stdhttp.Handler
+	Graph               GraphReader
+	SemanticModelReader SemanticModelReader
+	Catalog             CatalogAuthorizer
+	ResolveProjectID    func(context.Context) (projectgraph.ResourceID, error)
+	Environment         string
+	Trace               *pagestream.TraceStore
+	Layout              func(*stdhttp.Request) webpage.Provider
+	CSRFToken           func(*stdhttp.Request) string
+	CurrentUser         func(*stdhttp.Request) (Principal, bool)
+	Authenticate        func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -65,8 +81,8 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	}
 	r.Get("/", wrap(h.Insights))
 	r.Get("/explore", wrap(h.Explore))
-	r.Get("/data", wrap(h.Data))
-	r.Get("/data/{asset}/{section}", wrap(h.DataAsset))
+	r.Get("/sources", wrap(h.Sources))
+	r.Get("/sources/{asset}/{section}", wrap(h.SourceAsset))
 	r.Get("/models", wrap(h.Models))
 	r.Get("/models/{asset}/{section}", wrap(h.ModelAsset))
 	r.Get("/semantic-models", wrap(h.SemanticModels))
@@ -76,7 +92,7 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/connections", wrap(h.Connections))
 	r.Get("/connections/{asset}/{section}", wrap(h.ConnectionAsset))
 	r.Post("/catalog/search", wrap(h.CatalogSearch))
-	r.Post("/data/search", wrap(h.DataSearch))
+	r.Post("/sources/search", wrap(h.SourcesSearch))
 	r.Post("/connections/search", wrap(h.ConnectionsSearch))
 	r.Post("/models/search", wrap(h.ModelsSearch))
 	r.Post("/semantic-models/search", wrap(h.SemanticModelsSearch))
@@ -111,8 +127,8 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	writeDocument(w, projectui.DataExplorerPage(catalog, page, explorer, h.csrf(r), h.layout(r)))
 }
 
-func (h *BrowserHandler) Data(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.projectAssets(w, r, "data", string(projectview.AssetTypeSource))
+func (h *BrowserHandler) Sources(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.projectAssets(w, r, "sources", string(projectview.AssetTypeSource))
 }
 
 func (h *BrowserHandler) Models(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -123,7 +139,7 @@ func (h *BrowserHandler) SemanticModels(w stdhttp.ResponseWriter, r *stdhttp.Req
 	h.projectAssets(w, r, "semantic-models", string(projectview.AssetTypeSemanticModel))
 }
 
-func (h *BrowserHandler) DataAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+func (h *BrowserHandler) SourceAsset(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	h.assetDocument(w, r, projectgraph.KindSource)
 }
 
@@ -154,6 +170,12 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	asset, found := projectview.AssetByID(assets, chi.URLParam(r, "asset"))
 	if !found {
 		stdhttp.NotFound(w, r)
+		return
+	}
+	var err error
+	asset, err = h.semanticModelAssetReadModel(asset)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
 	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
@@ -206,7 +228,7 @@ func (h *BrowserHandler) Connections(w stdhttp.ResponseWriter, r *stdhttp.Reques
 	writeDocument(w, projectui.ConnectionsPage(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), "", h.layout(r)))
 }
 
-func (h *BrowserHandler) DataSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+func (h *BrowserHandler) SourcesSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	h.projectAreaSearch(w, r, string(projectview.AssetTypeSource))
 }
 
@@ -298,7 +320,7 @@ func (h *BrowserHandler) projectBootstrap(w stdhttp.ResponseWriter, r *stdhttp.R
 	}
 	area := strings.TrimSpace(r.URL.Query().Get("area"))
 	if area == "" {
-		area = "data"
+		area = "sources"
 	}
 	activeType := projectAreaType(area)
 	assets = projectview.FilterProjectLandingAssets(assets, activeType, r.URL.Query().Get("q"))
@@ -339,11 +361,49 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 		stdhttp.NotFound(w, r)
 		return nil, false
 	}
+	var err error
+	asset, err = h.semanticModelAssetReadModel(asset)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return nil, false
+	}
 	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
 	if r.URL.Query().Get("surface") == "asset" {
 		return projectui.ProjectAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, r.URL.Query().Get("section"), h.Environment, "", projectui.AssetRefreshState{}, projectui.AssetVersionsState{}, h.layout(r)), true
 	}
 	return projectui.ConnectionAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, r.URL.Query().Get("section"), h.Environment, "", projectui.AssetVersionsState{}), true
+}
+
+// semanticModelAssetReadModel enriches only the selected asset. Lists and
+// lineage continue to use the immutable graph projection, while details and
+// their SSE bootstrap read the complete compiled semantic model for the
+// active generation.
+func (h *BrowserHandler) semanticModelAssetReadModel(asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
+	if asset.Type != string(projectview.AssetTypeSemanticModel) {
+		return asset, nil
+	}
+	if h == nil || h.SemanticModelReader == nil {
+		return projectview.DevelopAssetView{}, ErrSemanticModelUnavailable
+	}
+	model, ok := h.SemanticModelReader.SemanticModel(asset.ID)
+	if !ok || model == nil {
+		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrSemanticModelUnavailable, asset.ID)
+	}
+	payload := projectview.SemanticModelAssetPayload(model)
+	if len(payload) == 0 {
+		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrSemanticModelUnavailable, asset.ID)
+	}
+	// Preserve graph identity/metadata keys while replacing the resource's
+	// generic payload fields with the typed detail projection.
+	merged := make(map[string]any, len(asset.Payload)+len(payload))
+	for key, value := range asset.Payload {
+		merged[key] = value
+	}
+	for key, value := range payload {
+		merged[key] = value
+	}
+	asset.Payload = merged
+	return asset, nil
 }
 
 // ProtectStream applies the same authenticated subject resolution used by the

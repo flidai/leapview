@@ -13,7 +13,7 @@ const routes: RouteExpectation[] = [
   { path: '/', root: 'lv-catalog-page', shell: true },
   { path: dashboardPath, root: 'lv-dashboard-page', shell: true },
   { path: '/explore', root: 'lv-data-explorer', shell: true },
-  { path: '/data', root: 'lv-project-page', shell: true },
+  { path: '/sources', root: 'lv-project-page', shell: true },
   { path: '/models', root: 'lv-project-page', shell: true },
   { path: '/semantic-models', root: 'lv-project-page', shell: true },
   { path: '/pipelines', root: 'lv-pipelines-page', shell: true },
@@ -47,8 +47,8 @@ async function verifySidebarCollapseToggle(): Promise<void> {
   const messages = collectBlockingConsoleMessages(page)
 
   try {
-    const response = await page.goto(new URL('/data', baseURL).toString(), { waitUntil: 'domcontentloaded' })
-    if (!response?.ok()) throw new Error(`/data: status ${response?.status() ?? 'unknown'}`)
+    const response = await page.goto(new URL('/sources', baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`/sources: status ${response?.status() ?? 'unknown'}`)
     await page.waitForSelector('lv-app-shell')
     const sidebar = page.locator('lv-app-shell').locator('lv-sidebar')
     await expect(sidebar.locator('button.collapse-button')).toHaveAttribute('aria-label', 'Collapse navigation')

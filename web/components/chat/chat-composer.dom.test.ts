@@ -294,7 +294,7 @@ test('composer distinguishes matching reference IDs from different kinds', async
       const references = ['field', 'measure'].map((kind) => ({
 		reference: { kind, id: 'orders.revenue' },
 		name: `Revenue ${kind}`,
-		href: `/data?field=${kind}`,
+		href: `/explore?field=${kind}`,
 		locations: [],
 		context: [],
       }))
@@ -346,7 +346,7 @@ test('mention picker opens immediately, renders compact rows, and scrolls with k
 		reference: { kind: index % 2 === 0 ? 'visual' : 'measure', id: `result-${index}` },
 		name: `Result ${index + 1}`,
         description: `Compact description ${index + 1}`,
-		href: `/data?result=${index}`, locations: [], context: [],
+		href: `/explore?result=${index}`, locations: [], context: [],
       }))
       await element.updateComplete
       await element.updateComplete

@@ -90,7 +90,7 @@ silently changes durable state.
 Browser pages use unscoped product routes such as:
 
 ```text
-/data
+/sources
 /connections
 /dashboards/{dashboard}
 /dashboards/{dashboard}/pages/{page}

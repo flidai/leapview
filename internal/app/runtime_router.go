@@ -519,7 +519,7 @@ func buildApplicationSurfaces(
 	routes.managedDataModule = capabilities.ManagedDataModule
 	routes.projectCatalog = capabilities.ProjectCatalog
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, Catalog: capabilities.ProjectCatalog,
+		Graph: capabilities.ProjectGraph, SemanticModelReader: metrics, Catalog: capabilities.ProjectCatalog,
 		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)

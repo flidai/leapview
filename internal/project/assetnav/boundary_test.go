@@ -47,7 +47,7 @@ func TestCanonicalAssetSectionHrefUsesResourceAreas(t *testing.T) {
 		section string
 		want    string
 	}{
-		{name: "source", asset: project.DevelopAssetView{ID: "source:orders", Type: string(project.AssetTypeSource)}, section: "details", want: "/data/source:orders/details"},
+		{name: "source", asset: project.DevelopAssetView{ID: "source:orders", Type: string(project.AssetTypeSource)}, section: "details", want: "/sources/source:orders/details"},
 		{name: "model", asset: project.DevelopAssetView{ID: "model_table:orders", Type: string(project.AssetTypeModelTable)}, section: "details", want: "/models/model_table:orders/details"},
 		{name: "semantic model", asset: project.DevelopAssetView{ID: "semantic_model:sales", Type: string(project.AssetTypeSemanticModel)}, section: "lineage", want: "/semantic-models/semantic_model:sales/lineage"},
 		{name: "pipeline", asset: project.DevelopAssetView{ID: "refresh_pipeline:daily", Type: string(project.AssetTypeRefreshPipeline)}, section: "refreshes", want: "/pipelines/refresh_pipeline:daily/refreshes"},
@@ -63,10 +63,10 @@ func TestCanonicalAssetSectionHrefUsesResourceAreas(t *testing.T) {
 	}
 }
 
-func TestCanonicalSourceHrefStaysInDataArea(t *testing.T) {
+func TestCanonicalSourceHrefStaysInSourcesArea(t *testing.T) {
 	asset := project.DevelopAssetView{ID: "source:orders", Type: string(project.AssetTypeSource)}
-	if got := CanonicalAssetSectionHref(asset, "details"); got != "/data/source:orders/details" {
-		t.Fatalf("href = %q, want /data/source:orders/details", got)
+	if got := CanonicalAssetSectionHref(asset, "details"); got != "/sources/source:orders/details" {
+		t.Fatalf("href = %q, want /sources/source:orders/details", got)
 	}
 }
 

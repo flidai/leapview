@@ -49,7 +49,7 @@ func TestProviderOwnsInsightsNavigationAndAgentHistory(t *testing.T) {
 
 func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 	provider := Provider(Config{Presentation: webpage.Presentation{ProductName: "LeapView"}})
-	for _, active := range []string{"data", "models", "semantic-models", "connections", "pipelines"} {
+	for _, active := range []string{"sources", "models", "semantic-models", "connections", "pipelines"} {
 		t.Run(active, func(t *testing.T) {
 			layout := provider(webpage.Context{Active: active})
 			chrome := layout.Signal.(Chrome)
@@ -65,7 +65,7 @@ func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 				got = append(got, item.ID)
 				gotIcons = append(gotIcons, item.Icon)
 			}
-			want := []string{"data", "models", "semantic-models", "pipelines", "connections"}
+			want := []string{"sources", "models", "semantic-models", "pipelines", "connections"}
 			wantIcons := []string{"database", "boxes", "waypoints", "workflow", "data"}
 			if len(got) != len(want) {
 				t.Fatalf("develop navigation = %v, want %v", got, want)

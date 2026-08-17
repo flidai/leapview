@@ -154,13 +154,13 @@ func Provider(config Config) webpage.Provider {
 func productAreas() []Area {
 	return []Area{
 		{ID: "insights", Label: "Insights", Href: "/", Icon: "insights"},
-		{ID: "develop", Label: "Develop", Href: "/data", Icon: "code"},
+		{ID: "develop", Label: "Develop", Href: "/sources", Icon: "code"},
 	}
 }
 
 func areaForActive(active string) string {
 	switch strings.TrimSpace(active) {
-	case "data", "models", "semantic-models", "connections", "pipelines", "develop":
+	case "sources", "models", "semantic-models", "connections", "pipelines", "develop":
 		return "develop"
 	case "data-explorer", "explore":
 		return "insights"
@@ -188,7 +188,7 @@ func insightsNavigation() []Item {
 
 func developNavigation() []Item {
 	return []Item{
-		{ID: "data", Label: "Data", Href: "/data", Icon: "database"},
+		{ID: "sources", Label: "Sources", Href: "/sources", Icon: "database"},
 		{ID: "models", Label: "Models", Href: "/models", Icon: "boxes"},
 		{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "waypoints"},
 		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"},

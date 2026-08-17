@@ -1023,7 +1023,7 @@ func TestCapabilityBrowserRoutesAreModuleOwned(t *testing.T) {
 	}
 	constants := stringConstants(parsed)
 	capabilityPrefixes := []string{
-		"/admin", "/auth/", "/chats", "/connections", "/data", "/embed/dashboards",
+		"/admin", "/auth/", "/chats", "/connections", "/sources", "/embed/dashboards",
 		"/login", "/mcp", "/oauth/", "/public/dashboards", "/scim", "/upload-protocols/tus",
 		"/.well-known/oauth",
 	}

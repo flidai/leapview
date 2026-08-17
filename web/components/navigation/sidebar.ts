@@ -139,7 +139,7 @@ const defaultConfig: SidebarConfig = {
   area: 'insights',
   areas: [
     { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-    { id: 'develop', label: 'Develop', href: '/data', icon: 'code' },
+    { id: 'develop', label: 'Develop', href: '/sources', icon: 'code' },
   ],
   userSettingsHref: '/admin/profile',
   groups: [
