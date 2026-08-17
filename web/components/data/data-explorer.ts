@@ -1731,11 +1731,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.optimisticExplore = null
     this.closeFilter()
     const currentExplore = this.dataExplorer?.explore?.command ?? emptyExplorer.explore.command
+    const tableID = objectTableID(object)
+    const localDimensions = localPreviewDimensions(object, this.dataExplorer?.explore?.fields ?? [])
+    const semanticActive = this.dataExplorer?.command?.mode === 'explore'
     const explore: DataExploreCommand = {
       ...currentExplore,
       modelId: object.modelId ?? '',
-      datasetId: objectTableID(object),
-      dimensions: [],
+      datasetId: tableID,
+      dimensions: localDimensions,
       measures: [],
       filters: [],
       sort: [],
@@ -1744,7 +1747,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       columnWidths: {},
     }
     this.emitCommand({
-      mode: 'browse',
+      mode: semanticActive ? 'explore' : 'browse',
       explore,
       objectKey: object.key,
       offset: 0,
@@ -1833,6 +1836,18 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     this.dispatchEvent(new CustomEvent('lv-data-explorer-command', { bubbles: true, composed: true, detail: next }))
   }
+}
+
+function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
+  const tableID = objectTableID(object)
+  const localFields = fields.filter((field) => field.kind !== 'measure' && field.modelTable === tableID)
+  const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
+  const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${tableID}.${column.key}`)
+  const seen = new Set(ordered)
+  for (const field of localFields) {
+    if (!seen.has(field.id)) ordered.push(field.id)
+  }
+  return ordered
 }
 
 function objectTableID(object: DataExplorerObjectSignal): string {
