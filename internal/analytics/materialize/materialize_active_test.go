@@ -18,10 +18,10 @@ func TestActiveRefreshExecutesPlannedTablesInDependencyOrder(t *testing.T) {
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				PrimaryKey: "order_id",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 			},
 			"order_summary": {
-				PrimaryKey:        "status",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"status": {Type: "primary", Fields: []string{"status"}}}, GrainEntity: "status",
 				ModelDependencies: []string{"orders"},
 			},
 		},
@@ -56,8 +56,8 @@ func TestActiveRefreshPropagatesPlannerFailureAndStopsLaterTables(t *testing.T) 
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":        {PrimaryKey: "order_id"},
-			"order_summary": {PrimaryKey: "status", ModelDependencies: []string{"orders"}},
+			"orders":        {Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id"},
+			"order_summary": {Entities: map[string]semanticmodel.ModelEntitySpec{"status": {Type: "primary", Fields: []string{"status"}}}, GrainEntity: "status", ModelDependencies: []string{"orders"}},
 		},
 	}
 	planner := &activeMaterializePlanner{
@@ -88,7 +88,7 @@ func TestActiveRefreshWrapsExecutionFailureWithTableIdentity(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders": {PrimaryKey: "order_id"},
+			"orders": {Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id"},
 		},
 	}
 	planner := &activeMaterializePlanner{plans: map[string]analyticsmaterialize.ModelTablePlan{
@@ -112,9 +112,9 @@ func TestActiveModelTableDependencyOrderIncludesTransitiveDependencies(t *testin
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":        {PrimaryKey: "order_id"},
-			"order_summary": {PrimaryKey: "status", ModelDependencies: []string{"orders"}},
-			"daily_summary": {PrimaryKey: "day", ModelDependencies: []string{"order_summary"}},
+			"orders":        {Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id"},
+			"order_summary": {Entities: map[string]semanticmodel.ModelEntitySpec{"status": {Type: "primary", Fields: []string{"status"}}}, GrainEntity: "status", ModelDependencies: []string{"orders"}},
+			"daily_summary": {Entities: map[string]semanticmodel.ModelEntitySpec{"day": {Type: "primary", Fields: []string{"day"}}}, GrainEntity: "day", ModelDependencies: []string{"order_summary"}},
 		},
 	}
 
@@ -147,7 +147,7 @@ func TestActiveModelTableDependencyOrderRejectsCyclesAndUnknownDependencies(t *t
 func TestActiveModelTablesNamedValidatesInputsBeforePlanning(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name:   "sales",
-		Tables: map[string]semanticmodel.Table{"orders": {PrimaryKey: "order_id"}},
+		Tables: map[string]semanticmodel.Table{"orders": {Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id"}},
 	}
 	planner := &activeMaterializePlanner{plans: map[string]analyticsmaterialize.ModelTablePlan{
 		"orders": {SQL: "CREATE TABLE model.orders AS SELECT 1"},

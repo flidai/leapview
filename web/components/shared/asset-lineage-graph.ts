@@ -577,7 +577,7 @@ const nodePalette: Record<string, [string, string, string]> = {
   dashboard: ['var(--lv-asset-dashboard-bg)', 'var(--lv-asset-dashboard-accent)', 'var(--lv-asset-dashboard-border)'],
   field: ['var(--lv-asset-dimension-bg)', 'var(--lv-asset-dimension-accent)', 'var(--lv-asset-dimension-border)'],
   filter: ['var(--lv-asset-filter-bg)', 'var(--lv-asset-filter-accent)', 'var(--lv-asset-filter-border)'],
-  measure: ['var(--lv-asset-measure-bg)', 'var(--lv-asset-measure-accent)', 'var(--lv-asset-measure-border)'],
+  metric: ['var(--lv-asset-metric-bg)', 'var(--lv-asset-metric-accent)', 'var(--lv-asset-metric-border)'],
   model_table: ['var(--lv-asset-model-table-bg)', 'var(--lv-asset-model-table-accent)', 'var(--lv-asset-model-table-border)'],
   page: ['var(--lv-asset-page-bg)', 'var(--lv-asset-page-accent)', 'var(--lv-asset-page-border)'],
   page_item: ['var(--lv-asset-page-bg)', 'var(--lv-asset-page-accent)', 'var(--lv-asset-page-border)'],

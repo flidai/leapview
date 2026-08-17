@@ -19,20 +19,20 @@ visuals:
     type: kpi
     description: Shows revenue, its filter-aligned baseline, and monthly trend.
     query:
-      measures:
+      metrics:
         revenue: null
     datasets:
       comparison:
-        measures:
+        metrics:
           value:
-            measure: revenue_baseline
+            metric: revenue_baseline
         limit: 1
       trend:
         dimensions:
           period: orders.purchase_month
-        measures:
+        metrics:
           value:
-            measure: revenue
+            metric: revenue
         sort:
           - field: period
             direction: asc
@@ -68,15 +68,15 @@ visuals:
     type: kpi
     description: Shows revenue with an explicitly configured monthly trend.
     query:
-      measures:
+      metrics:
         revenue: null
     datasets:
       trend:
         dimensions:
           period: orders.purchase_month
-        measures:
+        metrics:
           value:
-            measure: revenue
+            metric: revenue
         sort:
           - field: period
             direction: asc
@@ -101,7 +101,7 @@ visuals:
     type: kpi
     description: Shows the filtered count of distinct orders.
     query:
-      measures:
+      metrics:
         order_count: null
     kpi:
       mode: compact
@@ -124,13 +124,13 @@ visuals:
     type: kpi
     description: Demonstrates an increase that is explicitly unfavorable.
     query:
-      measures:
+      metrics:
         revenue: null
     datasets:
       comparison:
-        measures:
+        metrics:
           value:
-            measure: revenue_baseline
+            metric: revenue_baseline
         limit: 1
     kpi:
       comparison:
@@ -154,13 +154,13 @@ visuals:
     type: kpi
     description: Shows revenue against a filter-aligned target.
     query:
-      measures:
+      metrics:
         revenue: null
     datasets:
       goal:
-        measures:
+        metrics:
           value:
-            measure: revenue_target
+            metric: revenue_target
         limit: 1
     kpi:
       mode: bullet
@@ -194,13 +194,13 @@ visuals:
     type: kpi
     description: Demonstrates explicit out-of-range status.
     query:
-      measures:
+      metrics:
         revenue: null
     datasets:
       goal:
-        measures:
+        metrics:
           value:
-            measure: revenue_target
+            metric: revenue_target
         limit: 1
     kpi:
       mode: progress
@@ -227,7 +227,7 @@ visuals:
     type: kpi
     description: Shows a current value classified by explicit operating ranges.
     query:
-      measures:
+      metrics:
         revenue: null
     kpi:
       mode: compact
@@ -258,25 +258,25 @@ visuals:
     type: kpi
     description: Exercises every explicit KPI feature in one responsive contract.
     query:
-      measures:
+      metrics:
         revenue: null
     datasets:
       comparison:
-        measures:
+        metrics:
           value:
-            measure: revenue_baseline
+            metric: revenue_baseline
         limit: 1
       goal:
-        measures:
+        metrics:
           value:
-            measure: revenue_target
+            metric: revenue_target
         limit: 1
       trend:
         dimensions:
           period: orders.purchase_month
-        measures:
+        metrics:
           value:
-            measure: revenue
+            metric: revenue
         sort:
           - field: period
             direction: asc
@@ -326,13 +326,13 @@ visuals:
     type: kpi
     description: Demonstrates an explicitly unavailable comparison.
     query:
-      measures:
+      metrics:
         revenue: null
     datasets:
       comparison:
-        measures:
+        metrics:
           value:
-            measure: missing_revenue
+            metric: missing_revenue
         limit: 1
     kpi:
       comparison:

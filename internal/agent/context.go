@@ -57,7 +57,7 @@ func (c *TurnContext) UnmarshalJSON(data []byte) error {
 
 type DataExploration struct {
 	Dimensions []string                `json:"dimensions"`
-	Measures   []string                `json:"measures"`
+	Metrics    []string                `json:"metrics"`
 	Filters    []DataExplorationFilter `json:"filters"`
 	Sort       []DataExplorationSort   `json:"sort"`
 	Time       *DataExplorationTime    `json:"time,omitempty"`
@@ -68,7 +68,7 @@ type DataExplorationFilter struct {
 	Field    string   `json:"field"`
 	Operator string   `json:"operator"`
 	Values   []string `json:"values"`
-	Fact     string   `json:"fact,omitempty"`
+	Dataset  string   `json:"dataset,omitempty"`
 }
 
 type DataExplorationSort struct {
@@ -197,7 +197,7 @@ func turnContextItems(context *TurnContext) []agentcore.ContextItem {
 
 func normalizeDataExploration(value DataExploration) *DataExploration {
 	value.Dimensions = normalizedStrings(value.Dimensions, 64)
-	value.Measures = normalizedStrings(value.Measures, 64)
+	value.Metrics = normalizedStrings(value.Metrics, 64)
 	if value.Limit <= 0 {
 		value.Limit = 100
 	} else if value.Limit > 1000 {
@@ -207,7 +207,7 @@ func normalizeDataExploration(value DataExploration) *DataExploration {
 	for _, filter := range value.Filters {
 		filter.Field = strings.TrimSpace(filter.Field)
 		filter.Operator = strings.ToLower(strings.TrimSpace(filter.Operator))
-		filter.Fact = strings.TrimSpace(filter.Fact)
+		filter.Dataset = strings.TrimSpace(filter.Dataset)
 		filter.Values = normalizedStrings(filter.Values, 100)
 		if filter.Field != "" && filter.Operator != "" && len(filters) < 32 {
 			filters = append(filters, filter)

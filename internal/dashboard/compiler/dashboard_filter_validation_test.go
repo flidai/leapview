@@ -16,14 +16,12 @@ func TestValidateDashboardPreservesFactOnLocalFilterForMultiFactTarget(t *testin
 			"ratings": {Dimensions: map[string]semanticmodel.MetricDimension{
 				"rating_bucket": {Type: "number"},
 			}},
-			"tags": {},
-		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"rating_count": {Fact: "ratings", Aggregation: "count", Empty: "zero"},
-			"tag_count":    {Fact: "tags", Aggregation: "count", Empty: "zero"},
+			"tags": {Dimensions: map[string]semanticmodel.MetricDimension{"tag_id": {Type: "string"}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{
-			"tags_per_rating": {Expression: "safe_divide(${tag_count}, ${rating_count})"},
+			"rating_count":    {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "ratings.rating_bucket"}, Empty: "zero"},
+			"tag_count":       {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "tags.tag_id"}, Empty: "zero"},
+			"tags_per_rating": {Type: "ratio", Numerator: "tag_count", Denominator: "rating_count"},
 		},
 	}
 	dashboardDefinition := &dashboardauthoring.Dashboard{
@@ -40,7 +38,7 @@ func TestValidateDashboardPreservesFactOnLocalFilterForMultiFactTarget(t *testin
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
 			"target": {
 				Type:  "kpi",
-				Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "tags_per_rating"}}},
+				Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "tags_per_rating"}}},
 			},
 		}),
 		Pages: []dashboard.Page{{ID: "overview", Title: "Overview"}},

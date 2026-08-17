@@ -13,7 +13,7 @@ function envelope(dataRevision: number, specRevision = 'sha256:spec', rendererID
     spec: {
       kind: 'kpi',
       title: 'Revenue',
-      datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' }] }],
+      datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' }] }],
       dataBudget: { maxRows: 1, requiredCompleteness: 'complete' },
       accessibility: { title: 'Revenue', description: 'Current revenue' },
       interactions: [],

@@ -348,7 +348,7 @@ func visualExampleSort(example visualExample, envelope visualizationir.Visualiza
 	if fieldMatches(example.Chart.Query.Series) {
 		return columnIndex("series"), authored.Direction == "desc"
 	}
-	for _, field := range example.Chart.Query.Measures {
+	for _, field := range example.Chart.Query.Metrics {
 		if fieldMatches(field) || authored.Field == "value" {
 			return columnIndex("value"), authored.Direction == "desc"
 		}
@@ -584,10 +584,10 @@ func buildVisualDocumentReference(examples []visualExample) (visualDocumentRefer
 	if len(examples) > 0 && examples[0].Tabular != nil {
 		return visualDocumentReference{
 			Kind: "visual", Renderer: "tabular", Shapes: []string{examples[0].Type},
-			QueryFields: []string{"table", "fields", "rows", "columns", "measures"},
+			QueryFields: []string{"table", "fields", "rows", "columns", "metrics"},
 			Fields: []visualdocs.FieldReference{
 				{Path: "type", Type: "string", AllowedValues: []string{"table", "matrix", "pivot"}, Description: "Selects the tabular visual behavior."},
-				{Path: "query", Type: "tabular query", Description: "Selects record fields or grouped row, column, and measure fields."},
+				{Path: "query", Type: "tabular query", Description: "Selects record fields or grouped row, column, and metric fields."},
 				{Path: "cardinality", Type: "string", AllowedValues: []string{"bounded", "exact"}, Description: "Controls whether the visual resolves an exact row count."},
 			},
 			Accessibility: "Tabular visuals expose semantic headers and virtualized rows while preserving keyboard navigation.",
@@ -655,8 +655,8 @@ func collectQueryFields(query dashboardauthoring.VisualQuery, fields map[string]
 	if !query.Series.IsZero() {
 		fields["series"] = struct{}{}
 	}
-	if len(query.Measures) > 0 {
-		fields["measures"] = struct{}{}
+	if len(query.Metrics) > 0 {
+		fields["metrics"] = struct{}{}
 	}
 	if query.Time.Field != "" {
 		fields["time"] = struct{}{}
@@ -681,7 +681,7 @@ func visualKeyFields(previous *dashboardauthoring.Visual, visual dashboardauthor
 		{"table", func(query dashboardauthoring.VisualQuery) any { return query.Table }},
 		{"dimensions", func(query dashboardauthoring.VisualQuery) any { return query.Dimensions }},
 		{"series", func(query dashboardauthoring.VisualQuery) any { return query.Series }},
-		{"measures", func(query dashboardauthoring.VisualQuery) any { return query.Measures }},
+		{"metrics", func(query dashboardauthoring.VisualQuery) any { return query.Metrics }},
 		{"time", func(query dashboardauthoring.VisualQuery) any { return query.Time }},
 	}
 	for _, check := range queryChecks {

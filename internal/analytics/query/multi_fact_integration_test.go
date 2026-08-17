@@ -29,7 +29,7 @@ func TestRolePlayingDimensionPathsExecuteWithIndependentAliases(t *testing.T) {
 
 	plan, err := NewPlanner(rolePlayingDateModel()).Plan(Request{
 		Dimensions: []Field{{Field: "order_date"}, {Field: "ship_date"}},
-		Measures:   []Field{{Field: "order_count"}},
+		Metrics:    []Field{{Field: "order_count"}},
 		Sort:       []Sort{{Field: "order_date", Direction: "asc"}, {Field: "ship_date", Direction: "asc"}},
 	})
 	if err != nil {
@@ -89,7 +89,7 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 
 	model := executableMultiFactModel()
 	planner := NewPlanner(model)
-	scalar, err := planner.Plan(Request{Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "click_count"}, {Field: "tags_per_order"}}})
+	scalar, err := planner.Plan(Request{Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "click_count"}, {Field: "tags_per_order"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +103,8 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 	}
 
 	conformed, err := planner.Plan(Request{
-		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "click_count"}, {Field: "tags_per_order"}},
-		Filters:  []Filter{{Field: "segment", Operator: "equals", Values: []any{"consumer"}}},
+		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "click_count"}, {Field: "tags_per_order"}},
+		Filters: []Filter{{Field: "segment", Operator: "equals", Values: []any{"consumer"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +117,8 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 	}
 
 	local, err := planner.Plan(Request{
-		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "tags_per_order"}},
-		Filters:  []Filter{{Field: "orders.segment", Fact: "orders", Operator: "equals", Values: []any{"business"}}},
+		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "tags_per_order"}},
+		Filters: []Filter{{Field: "orders.segment", Fact: "orders", Operator: "equals", Values: []any{"business"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 	}
 
 	multiSelect, err := planner.Plan(Request{
-		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "click_count"}},
+		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "click_count"}},
 		Filters: []Filter{{Groups: []FilterGroup{
 			{Filters: []Filter{{Field: "customer", Operator: "equals", Values: []any{"a"}}}},
 			{Filters: []Filter{{Field: "customer", Operator: "equals", Values: []any{"c"}}}},
@@ -149,7 +149,7 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 
 	grouped, err := planner.Plan(Request{
 		Dimensions: []Field{{Field: "customer", Alias: "customer"}, {Field: "segment", Alias: "segment"}},
-		Measures:   []Field{{Field: "order_count", Alias: "orders"}, {Field: "tag_count", Alias: "tags"}, {Field: "click_count", Alias: "clicks"}},
+		Metrics:    []Field{{Field: "order_count", Alias: "orders"}, {Field: "tag_count", Alias: "tags"}, {Field: "click_count", Alias: "clicks"}},
 		Sort:       []Sort{{Field: "customer", Direction: "asc"}},
 	})
 	if err != nil {
@@ -193,13 +193,13 @@ func executableMultiFactModel() *semanticmodel.Model {
 		Name: "executable",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"}, "amount": {Expr: "amount", Type: "number"},
+				"order_id": {Expr: "order_id", Type: "string"}, "customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"}, "amount": {Expr: "amount", Type: "number"},
 			}},
 			"tags": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"}, "tag": {Expr: "tag", Type: "string"},
+				"tag_id": {Expr: "tag_id", Type: "string"}, "customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"}, "tag": {Expr: "tag", Type: "string"},
 			}},
 			"clicks": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"},
+				"click_id": {Expr: "click_id", Type: "string"}, "customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"},
 			}},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
@@ -210,13 +210,11 @@ func executableMultiFactModel() *semanticmodel.Model {
 				"orders": {Field: "orders.segment"}, "tags": {Field: "tags.segment"}, "clicks": {Field: "clicks.segment"},
 			}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero"},
-			"revenue":     {Fact: "orders", Aggregation: "sum", Input: semanticmodel.MeasureInput{Field: "orders.amount"}, Empty: "zero"},
-			"tag_count":   {Fact: "tags", Aggregation: "count", Empty: "zero"},
-			"click_count": {Fact: "clicks", Aggregation: "count", Empty: "zero"},
-		},
 		Metrics: map[string]semanticmodel.Metric{
+			"order_count":    {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"},
+			"revenue":        {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.amount"}, Empty: "zero"},
+			"tag_count":      {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "tags.tag_id"}, Empty: "zero"},
+			"click_count":    {Type: "aggregate", Dataset: "clicks", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "clicks.click_id"}, Empty: "zero"},
 			"tags_per_order": {Expression: "safe_divide(${tag_count}, ${order_count})"},
 		},
 	}

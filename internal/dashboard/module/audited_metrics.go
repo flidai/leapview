@@ -232,7 +232,7 @@ func queryShapeJSON(request dataquery.Query) string {
 		Kind          dataquery.Kind     `json:"kind"`
 		Target        string             `json:"target,omitempty"`
 		Fields        []dataquery.Field  `json:"fields,omitempty"`
-		Measures      []dataquery.Field  `json:"measures,omitempty"`
+		Metrics       []dataquery.Field  `json:"metrics,omitempty"`
 		Value         dataquery.Field    `json:"value,omitempty"`
 		Time          dataquery.Time     `json:"time,omitempty"`
 		Filters       []dataquery.Filter `json:"filters,omitempty"`
@@ -244,7 +244,7 @@ func queryShapeJSON(request dataquery.Query) string {
 	}{
 		request.ProjectID.String(), request.Surface, request.Operation, request.RequestID, request.ObjectType,
 		request.ObjectID, request.CorrelationID, request.ModelID, request.Kind, request.Target, request.Fields,
-		request.Measures, request.Value, request.Time, request.Filters, request.Sort, request.Offset, request.Limit,
+		request.Metrics, request.Value, request.Time, request.Filters, request.Sort, request.Offset, request.Limit,
 		request.BinCount, request.IncludeTotal,
 	})
 	if err != nil {

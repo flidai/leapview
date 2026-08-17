@@ -370,7 +370,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         kind: 'data', title: 'Data Explorer', description: 'Inspect or explore data.', tabs: [],
       }
       const exploreCommand = {
-        modelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], measures: ['revenue'],
+        modelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: ['revenue'],
         filters: [], sort: [{ field: 'revenue', direction: 'desc' }], limit: 100, requestSeq: 1, resetVersion: 1, columnWidths: {},
       }
       const selectedObject = {
@@ -409,7 +409,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
             { id: 'customers.customer_id', label: 'Customer ID', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'customers.state', label: 'State', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'items.sku', label: 'SKU', kind: 'dimension', modelTable: 'items', type: 'string', compatible: false, compatibilityReason: 'Not available from Orders because no grain-preserving relationship path reaches Items.', selected: false },
-            { id: 'revenue', label: 'Revenue', kind: 'measure', modelTable: 'orders', type: 'sum', compatible: true, selected: true },
+            { id: 'revenue', label: 'Revenue', kind: 'metric', modelTable: 'orders', type: 'sum', compatible: true, selected: true },
           ],
           result: {
             columns: [{ key: 'status', label: 'Status' }, { key: 'revenue', label: 'Revenue', type: 'decimal' }],
@@ -470,7 +470,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       const unavailableField = { disabled: skuField.disabled, text: skuField.textContent?.replace(/\s+/g, ' ').trim(), title: skuField.title }
 
       const customerCommand = {
-        ...exploreCommand, datasetId: 'customers', dimensions: ['customers.state'], measures: [], sort: [], requestSeq: 100, resetVersion: 100,
+        ...exploreCommand, datasetId: 'customers', dimensions: ['customers.state'], metrics: [], sort: [], requestSeq: 100, resetVersion: 100,
       }
       const customerExplorer = {
         ...dataExplorer,

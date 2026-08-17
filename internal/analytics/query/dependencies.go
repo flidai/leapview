@@ -39,29 +39,31 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 				paths[fact+":"+signature] = struct{}{}
 			}
 			for _, relationship := range path {
-				physical[relationship.From] = struct{}{}
-				physical[relationship.To] = struct{}{}
+				for _, field := range relationshipPhysicalFields(relationship) {
+					physical[field] = struct{}{}
+				}
 			}
 		}
 	}
-	for name, measure := range resolved.Measures {
+	for name, metric := range resolved.Aggregates {
 		logical[name] = struct{}{}
-		for _, field := range measurePhysicalFields(measure) {
+		for _, field := range aggregateMetricPhysicalFields(metric) {
 			physical[field] = struct{}{}
 			resolvedField, err := model.ResolveDimension(field)
 			if err != nil {
 				return Dependencies{}, err
 			}
-			path, err := model.SafeRelationshipPath(measure.Fact, resolvedField.Table)
+			path, err := model.SafeRelationshipPath(metric.Fact, resolvedField.Table)
 			if err != nil {
 				return Dependencies{}, err
 			}
 			if signature := relationshipPathSignature(path); signature != "" {
-				paths[measure.Fact+":"+signature] = struct{}{}
+				paths[metric.Fact+":"+signature] = struct{}{}
 			}
 			for _, relationship := range path {
-				physical[relationship.From] = struct{}{}
-				physical[relationship.To] = struct{}{}
+				for _, field := range relationshipPhysicalFields(relationship) {
+					physical[field] = struct{}{}
+				}
 			}
 		}
 	}
@@ -83,8 +85,9 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 				paths[fact+":"+signature] = struct{}{}
 			}
 			for _, relationship := range path {
-				physical[relationship.From] = struct{}{}
-				physical[relationship.To] = struct{}{}
+				for _, field := range relationshipPhysicalFields(relationship) {
+					physical[field] = struct{}{}
+				}
 			}
 		}
 	}
@@ -98,6 +101,20 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 		PhysicalFields:     sortedSet(physical),
 		RelationshipPaths:  sortedSet(paths),
 	}, nil
+}
+
+func relationshipPhysicalFields(relationship semanticmodel.Relationship) []string {
+	fields := []string{}
+	for _, from := range []bool{true, false} {
+		dataset, tuple, err := semanticmodel.RelationshipEndpoint(relationship, from)
+		if err != nil {
+			continue
+		}
+		for _, field := range tuple {
+			fields = append(fields, dataset+"."+field)
+		}
+	}
+	return fields
 }
 
 func sortedSet(values map[string]struct{}) []string {

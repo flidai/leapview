@@ -182,7 +182,7 @@ func (m namedProjectMetrics) dashboardDefinition(dashboardID string) (dashboardd
 		return dashboarddefinition.Definition{}, nil, false
 	}
 	authored := dashboardauthoring.Dashboard{ID: graph.ResourceID(m.dashboardID), Title: m.title, SemanticModel: "test", Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-		"summary": {Type: "kpi", Title: "Summary", Query: dashboardauthoring.VisualQuery{Measures: fieldRefs("order_count")}},
+		"summary": {Type: "kpi", Title: "Summary", Query: dashboardauthoring.VisualQuery{Metrics: fieldRefs("order_count")}},
 	}), Pages: m.Pages(dashboardID)}
 	model := testSemanticModel()
 	return dashboardfixture.Compile(authored, model), model, true
@@ -211,10 +211,10 @@ func (fakeMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.
 		},
 		FilterApplication: dashboardfilter.ApplicationPolicy{Mode: dashboardfilter.ApplicationImmediate},
 		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders":       {Title: "Orders", Type: "donut", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
-			"ops_pipeline": {Title: "Ops Pipeline", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
+			"orders":       {Title: "Orders", Type: "donut", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
+			"ops_pipeline": {Title: "Ops Pipeline", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
 		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"order_rows": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.revenue"}}, DefaultSort: dashboard.TableSort{Key: "order_id", Direction: "desc"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "measure", Format: "decimal"}}},
+			"order_rows": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.revenue"}}, DefaultSort: dashboard.TableSort{Key: "order_id", Direction: "desc"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "metric", Format: "decimal"}}},
 		})),
 		Pages: fakeMetrics{}.Pages("executive-sales"),
 	}
@@ -223,7 +223,7 @@ func (fakeMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.
 }
 
 func testSemanticModel() *semanticmodel.Model {
-	return &semanticmodel.Model{Name: "test", Title: "Test Model", Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", PrimaryKey: "order_id", Grain: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Expr: "order_id", Type: "string"}, "status": {Expr: "status", Type: "string"}, "revenue": {Expr: "revenue", Type: "number"}}}}, Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}}}
+	return &semanticmodel.Model{Name: "test", Title: "Test Model", Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Expr: "order_id", Type: "string"}, "status": {Expr: "status", Type: "string"}, "revenue": {Expr: "revenue", Type: "number"}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}}}
 }
 
 func (fakeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
@@ -363,7 +363,7 @@ func (fakeMetrics) queryWindow(_ context.Context, _ string, _ string, _ dashboar
 		sort = dashboard.TableSort{Key: "order_id", Direction: "desc"}
 	}
 	return dashboard.Table{
-		Title: "Orders", Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "measure", Format: "decimal"}},
+		Title: "Orders", Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "metric", Format: "decimal"}},
 		Cardinality: dashboard.ExactCardinality(len(rows)), AvailableRows: len(rows), RowCap: dashboard.TableInteractiveRowCap, ChunkSize: dashboard.TableChunkSize,
 		ResetVersion: request.ResetVersion, Sort: sort,
 		Blocks: map[string]dashboard.TableBlock{blockID: {Start: start, RequestSeq: request.RequestSeq, ResetVersion: request.ResetVersion, Sort: sort, Rows: rows[start:end]}},

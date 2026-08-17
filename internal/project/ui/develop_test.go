@@ -14,22 +14,25 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
-func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph(t *testing.T) {
+func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGraph(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				PrimaryKey: "order_id",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}},
 			},
-			"customers": {PrimaryKey: "customer_id"},
+			"customers": {Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count_distinct", Label: "Orders", Input: semanticmodel.MeasureInput{Field: "orders.order_id"}},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Dataset: "orders", Aggregation: "count_distinct", Label: "Orders", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
 		},
-		Relationships: []semanticmodel.Relationship{{
-			ID: "orders_customer", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one",
-		}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "customers": {Model: "customers"},
+		},
+		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
+			"orders_customer": {From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Fields: []string{"customer_id"}}, To: semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Fields: []string{"customer_id"}}},
+		},
 	}
 	asset := projectview.DevelopAssetView{
 		ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales",
@@ -38,9 +41,9 @@ func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph
 	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
 	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
 	if len(details.Sections) != 3 {
-		t.Fatalf("detail sections = %d, want tables/measures/relationships", len(details.Sections))
+		t.Fatalf("detail sections = %d, want datasets/metrics/relationships", len(details.Sections))
 	}
-	for _, want := range []string{"Model tables (2)", "Measures (1)", "Relationships (1)"} {
+	for _, want := range []string{"Datasets (2)", "Metrics (1)", "Relationships (1)"} {
 		found := false
 		for _, section := range details.Sections {
 			if section.Title == want {
@@ -55,16 +58,16 @@ func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph
 	if details.SemanticModelGraph == nil || len(details.SemanticModelGraph.Nodes) != 2 || len(details.SemanticModelGraph.Edges) != 1 {
 		t.Fatalf("semantic graph = %#v, want two nodes and one edge", details.SemanticModelGraph)
 	}
-	measureTable := semanticMeasuresTable(project.ID, asset, []projectview.DevelopAssetView{asset}, asset.Payload)
-	if len(measureTable.Rows) != 1 {
-		t.Fatalf("measure rows = %#v, want one row", measureTable.Rows)
+	metricTable := semanticMetricsTable(project.ID, asset, []projectview.DevelopAssetView{asset}, asset.Payload)
+	if len(metricTable.Rows) != 1 {
+		t.Fatalf("metric rows = %#v, want one row", metricTable.Rows)
 	}
-	measureRow := measureTable.Rows[0]
-	if measureRow["table"] != "orders" || measureRow["input"] != "orders.order_id" {
-		t.Fatalf("measure row = %#v, want canonical fact and input", measureRow)
+	metricRow := metricTable.Rows[0]
+	if metricRow["dataset"] != "orders" || metricRow["input"] != "orders.order_id" {
+		t.Fatalf("metric row = %#v, want canonical dataset and input", metricRow)
 	}
-	if aggregation := measureRow["aggregation"].(recordTableBadge).Label; aggregation != "count_distinct" {
-		t.Fatalf("measure aggregation = %#v, want count_distinct", aggregation)
+	if aggregation := metricRow["aggregation"].(recordTableBadge).Label; aggregation != "count_distinct" {
+		t.Fatalf("metric aggregation = %#v, want count_distinct", aggregation)
 	}
 
 	bootstrap := ProjectAssetBootstrapSignalsForEnvironment(catalog.Catalog{}, project, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetRefreshState{}, AssetVersionsState{})
@@ -72,7 +75,7 @@ func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Model tables (2)", "Measures (1)", "Relationships (1)"} {
+	for _, want := range []string{"Datasets (2)", "Metrics (1)", "Relationships (1)"} {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("bootstrap JSON = %s, missing %q", encoded, want)
 		}

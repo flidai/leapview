@@ -63,6 +63,14 @@ func (r *governedDataRuntime) Distribution(ctx context.Context, request reportde
 	return r.service.Distribution(ctx, request, sort, limit)
 }
 
+func (r *governedDataRuntime) VerifySemantic(ctx context.Context) error {
+	verifier, ok := r.DataRuntime.(DataRuntimeSemanticVerifier)
+	if !ok {
+		return fmt.Errorf("dashboard data runtime does not support semantic verification")
+	}
+	return verifier.VerifySemantic(ctx)
+}
+
 func (r *governedDataRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	bound, err := r.bindProject(request)
 	if err != nil {
@@ -108,17 +116,17 @@ func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, reques
 				audit.Fields = append(audit.Fields, field)
 			}
 		}
-		for _, measure := range boundRequests[i].Query.Measures {
-			key := measure.Field + "\x00" + measure.Alias
+		for _, metric := range boundRequests[i].Query.Metrics {
+			key := metric.Field + "\x00" + metric.Alias
 			if !measureSet[key] {
 				measureSet[key] = true
-				audit.Measures = append(audit.Measures, measure)
+				audit.Metrics = append(audit.Metrics, metric)
 			}
 		}
 	}
-	// The first request's fields/measures were appended again above.
+	// The first request's fields/metrics were appended again above.
 	audit.Fields = dedupeDataQueryFields(audit.Fields)
-	audit.Measures = dedupeDataQueryFields(audit.Measures)
+	audit.Metrics = dedupeDataQueryFields(audit.Metrics)
 	sort.Strings(ids)
 	audit.ObjectType = "dashboard_refresh_bundle"
 	audit.ObjectID = strings.Join(ids, ",")

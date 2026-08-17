@@ -337,8 +337,8 @@ func assignField(document *Dashboard, payload AssignFieldPayload) error {
 	ref := FieldRef{Field: strings.TrimSpace(payload.FieldID), Alias: fieldAlias(payload.FieldID)}
 	if visual.Chart != nil {
 		switch payload.Role {
-		case FieldRoleMeasure:
-			visual.Chart.Query.Measures = appendUniqueFieldRef(visual.Chart.Query.Measures, ref)
+		case FieldRoleMetric:
+			visual.Chart.Query.Metrics = appendUniqueFieldRef(visual.Chart.Query.Metrics, ref)
 		case FieldRoleDimension, FieldRoleDetail:
 			visual.Chart.Query.Dimensions = appendUniqueFieldRef(visual.Chart.Query.Dimensions, ref)
 		}
@@ -352,8 +352,8 @@ func assignField(document *Dashboard, payload AssignFieldPayload) error {
 			visual.Tabular.Query.Table = strings.TrimSpace(payload.ResolvedTable)
 		}
 		switch payload.Role {
-		case FieldRoleMeasure:
-			visual.Tabular.Query.Measures = appendUniqueFieldRef(visual.Tabular.Query.Measures, ref)
+		case FieldRoleMetric:
+			visual.Tabular.Query.Metrics = appendUniqueFieldRef(visual.Tabular.Query.Metrics, ref)
 		case FieldRoleDimension:
 			visual.Tabular.Query.Columns = appendUniqueFieldRef(visual.Tabular.Query.Columns, ref)
 		case FieldRoleDetail:

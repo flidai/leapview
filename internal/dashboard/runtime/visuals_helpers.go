@@ -26,7 +26,7 @@ type visualPlan struct {
 	Table      string
 	Dimensions []visualizationdefinition.FieldBinding
 	Series     *visualizationdefinition.FieldBinding
-	Measures   []visualizationdefinition.FieldBinding
+	Metrics    []visualizationdefinition.FieldBinding
 	Time       *visualizationdefinition.TimeBinding
 	Sort       []visualizationdefinition.Sort
 	Limit      int
@@ -40,13 +40,13 @@ func newVisualPlan(definition visualizationdefinition.Definition) (visualPlan, e
 		if query == nil {
 			return visualPlan{}, fmt.Errorf("visualization %q has no aggregate binding", definition.ID)
 		}
-		plan.Table, plan.Dimensions, plan.Series, plan.Measures, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Measures, query.Time, query.Sort, int(query.Limit)
+		plan.Table, plan.Dimensions, plan.Series, plan.Metrics, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Metrics, query.Time, query.Sort, int(query.Limit)
 	case visualizationdefinition.QuerySpatial:
 		query := definition.Query.Spatial
 		if query == nil {
 			return visualPlan{}, fmt.Errorf("visualization %q has no spatial binding", definition.ID)
 		}
-		plan.Table, plan.Dimensions, plan.Series, plan.Measures, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Measures, query.Time, query.Sort, int(query.Limit)
+		plan.Table, plan.Dimensions, plan.Series, plan.Metrics, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Metrics, query.Time, query.Sort, int(query.Limit)
 	default:
 		return visualPlan{}, fmt.Errorf("visualization %q query kind %q is not a chart query", definition.ID, definition.Query.Kind)
 	}
@@ -151,27 +151,34 @@ func visualSorts(visual visualPlan) []reportdef.QuerySort {
 	return sorts
 }
 
-func measureLabel(name string, measure semanticmodel.MetricMeasure) string {
-	if strings.TrimSpace(measure.Label) != "" {
-		return measure.Label
+type metricMetadata struct {
+	Name        string
+	Field       string
+	Label       string
+	Description string
+	Unit        string
+	Format      string
+	Hidden      bool
+}
+
+func metricLabel(name string, metric metricMetadata) string {
+	if strings.TrimSpace(metric.Label) != "" {
+		return metric.Label
 	}
 	return name
 }
 
-func aggregateMemberMetadata(model *semanticmodel.Model, name string) semanticmodel.MetricMeasure {
+func aggregateMemberMetadata(model *semanticmodel.Model, name string) metricMetadata {
 	if model == nil {
-		return semanticmodel.MetricMeasure{Name: name, Field: name}
+		return metricMetadata{Name: name, Field: name}
 	}
-	if measure, err := model.ResolveMeasure(name); err == nil {
-		return measure
-	}
-	if metric, ok := model.Metrics[name]; ok {
-		return semanticmodel.MetricMeasure{
-			Name: name, Field: name, Label: metric.Label, Description: metric.Description,
+	if metric, err := model.ResolveMetric(name); err == nil {
+		return metricMetadata{
+			Name: metric.Name, Field: name, Label: metric.Label, Description: metric.Description,
 			Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden,
 		}
 	}
-	return semanticmodel.MetricMeasure{Name: name, Field: name}
+	return metricMetadata{Name: name, Field: name}
 }
 
 func optionInt(options map[string]any, key string, fallback, minValue, maxValue int) int {

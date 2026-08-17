@@ -15,7 +15,7 @@ func TestEnvelopeFromFramesOrdersAndValidatesContextDatasets(t *testing.T) {
 		Datasets: []ir.VisualizationDatasetSchema{
 			{ID: "primary", Fields: []ir.VisualizationField{
 				{ID: "label", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Label: "Month"},
-				{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Label: "Revenue"},
+				{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Label: "Revenue"},
 			}},
 			{ID: "context", Fields: []ir.VisualizationField{
 				{ID: "region", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Label: "Region"},
@@ -42,7 +42,7 @@ func TestEnvelopeFromFramesOrdersAndValidatesContextDatasets(t *testing.T) {
 		Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, ModelID: "sales", DatasetID: "primary",
 		Aggregate: &visualizationdefinition.AggregateQueryBinding{
 			Dimensions: []visualizationdefinition.FieldBinding{{FieldID: "month", Alias: "label"}},
-			Measures:   []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100,
+			Metrics:    []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100,
 		},
 	}
 	context := visualizationdefinition.QueryBinding{

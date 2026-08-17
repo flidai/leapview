@@ -10,7 +10,7 @@ func TestValidateGeographicVisualUsesClosedAliasBoundLayers(t *testing.T) {
 		Type: "map",
 		Query: VisualQuery{
 			Dimensions: []FieldRef{{Field: "orders.state", Alias: "state"}, {Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
-			Measures:   []FieldRef{{Field: "revenue", Alias: "revenue"}},
+			Metrics:    []FieldRef{{Field: "revenue", Alias: "revenue"}},
 		},
 		Geo: VisualGeo{Layers: []VisualGeoLayer{
 			{ID: "states", Kind: "choropleth", GeometryAsset: "brazil_states", Join: "state", Value: "revenue", Tooltip: []string{"state", "revenue"}, Color: VisualGeoColorScale{Kind: "sequential", Palette: "blue"}},
@@ -56,8 +56,8 @@ func TestValidateGeographicPointSelectionUsesStableQueryAliases(t *testing.T) {
 				{Field: "orders.latitude", Alias: "latitude"},
 				{Field: "orders.longitude", Alias: "longitude"},
 			},
-			Time:     QueryTime{Field: "orders.created_at", Grain: "day", Alias: "created_day"},
-			Measures: []FieldRef{{Field: "revenue", Alias: "revenue"}},
+			Time:    QueryTime{Field: "orders.created_at", Grain: "day", Alias: "created_day"},
+			Metrics: []FieldRef{{Field: "revenue", Alias: "revenue"}},
 		},
 		Geo: VisualGeo{Layers: []VisualGeoLayer{{ID: "customers", Kind: "point", Latitude: "latitude", Longitude: "longitude", Value: "revenue"}}},
 		Interaction: Interaction{PointSelection: SelectionInteraction{Mappings: []SelectionMapping{
@@ -75,7 +75,7 @@ func TestValidateGeographicPointSelectionUsesStableQueryAliases(t *testing.T) {
 		want   string
 	}{
 		{name: "unknown value alias", mutate: func(visual *Visual) { visual.Interaction.PointSelection.Mappings[0].Value = "missing" }, want: `references unknown value query alias "missing"`},
-		{name: "measure identity", mutate: func(visual *Visual) { visual.Interaction.PointSelection.Mappings[0].Value = "revenue" }, want: `value query alias "revenue" must reference a dimension or time field`},
+		{name: "metric identity", mutate: func(visual *Visual) { visual.Interaction.PointSelection.Mappings[0].Value = "revenue" }, want: `value query alias "revenue" must reference a dimension or time field`},
 		{name: "unknown label alias", mutate: func(visual *Visual) { visual.Interaction.PointSelection.Mappings[0].Label = "missing" }, want: `references unknown label query alias "missing"`},
 		{name: "heat only", mutate: func(visual *Visual) {
 			visual.Geo.Layers = []VisualGeoLayer{{ID: "heat", Kind: "heat", Latitude: "latitude", Longitude: "longitude", Value: "revenue"}}

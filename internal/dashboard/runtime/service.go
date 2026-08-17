@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,10 @@ type DataRuntimeSnapshot interface {
 
 type DataRuntimeReadConcurrency interface {
 	ReadConcurrency() int
+}
+
+type DataRuntimeSemanticVerifier interface {
+	VerifySemantic(context.Context) error
 }
 
 type setupRequiredError interface {
@@ -255,8 +260,16 @@ func (m *Service) Verify(ctx context.Context) error {
 		return err
 	}
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	runtimes := make(map[projectgraph.ResourceID]*modelRuntime, len(m.runtimes))
+	modelIDs := make([]projectgraph.ResourceID, 0, len(m.runtimes))
 	for modelID, runtime := range m.runtimes {
+		modelIDs = append(modelIDs, modelID)
+		runtimes[modelID] = runtime
+	}
+	m.mu.RUnlock()
+	sort.Slice(modelIDs, func(i, j int) bool { return modelIDs[i] < modelIDs[j] })
+	for _, modelID := range modelIDs {
+		runtime := runtimes[modelID]
 		if runtime == nil || !runtime.ready || runtime.data == nil {
 			if runtime != nil && runtime.missing != nil {
 				return fmt.Errorf(
@@ -266,6 +279,13 @@ func (m *Service) Verify(ctx context.Context) error {
 				)
 			}
 			return fmt.Errorf("semantic model %q is unavailable", modelID)
+		}
+		verifier, ok := runtime.data.(DataRuntimeSemanticVerifier)
+		if !ok {
+			return fmt.Errorf("semantic model %q does not support semantic verification", modelID)
+		}
+		if err := verifier.VerifySemantic(ctx); err != nil {
+			return fmt.Errorf("semantic model %q verification failed: %w", modelID, err)
 		}
 	}
 	return nil

@@ -94,9 +94,22 @@ ORDER BY schema_name, table_name, column_index`, databaseName)
 		model.Sources[name] = source
 	}
 	for name, table := range model.Tables {
-		columns := sortedColumns(tableColumns[name])
+		physicalName, err := physicalTableName(model, name)
+		if err != nil {
+			return fmt.Errorf("resolving physical table for semantic dataset %q: %w", name, err)
+		}
+		columns := sortedColumns(tableColumns[physicalName])
+		if len(columns) == 0 {
+			// Keep a previously discovered or authored schema when the physical
+			// relation is not visible in this session (for example, a staged
+			// refresh before the commit becomes readable).
+			columns = sortedColumns(table.Schema.Columns)
+		}
+		// Authored grain/identity claims are semantic contracts, not physical
+		// discovery facts. Runtime verification proves them against data; do not
+		// mark discovered columns as PrimaryKey merely because they were authored.
 		for index := range columns {
-			columns[index].PrimaryKey = columns[index].Name == table.PrimaryKey
+			columns[index].PrimaryKey = false
 		}
 		table.Schema = semanticmodel.TableSchema{Columns: columns}
 		model.Tables[name] = table

@@ -18,7 +18,7 @@ Date ranges, multi-selects, and text filters have different value and operator c
 
 ## Visual definitions
 
-A visual definition pairs a closed visual type with a semantic query and typed presentation. The compiler resolves it into a renderer-independent `VisualizationSpec`. For example, a chart query names stable field aliases for dimensions and measures, declares sort order, and sets a result limit. A KPI query requests a single measure or metric.
+A visual definition pairs a closed visual type with a semantic query and typed presentation. The compiler resolves it into a renderer-independent `VisualizationSpec`. For example, a chart query names stable field aliases for dimensions and metrics, declares sort order, and sets a result limit. A KPI query requests a single metric.
 
 Visual IDs are local reusable identities inside the dashboard. A page component references the visual by ID:
 
@@ -30,7 +30,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue:
       limit: 30
 ```
@@ -53,7 +53,7 @@ Design the page in reading order as well as visual order. Stable IDs, meaningful
 
 ## Interactions
 
-Selections are semantic mappings rather than arbitrary browser-only filters. A chart point or table row can emit typed field values associated with a fact and grain. The server validates those mappings and decides which targets should update.
+Selections are semantic mappings rather than arbitrary browser-only filters. A chart point or table row can emit typed field values associated with a dataset and grain. The server validates those mappings and decides which targets should update.
 
 This prevents a renderer from inventing query behavior. It also allows the same selection contract to work across renderer plugins and server refreshes. Define targets narrowly and test how a selection composes with page filters and existing selections.
 

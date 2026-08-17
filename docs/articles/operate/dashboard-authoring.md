@@ -75,7 +75,7 @@ The builder currently exposes four bounded intents:
 | **Set visibility** | Choose a visibility state | `private`, `restricted`, or `organization-visible` |
 | **Add page** | Select **Add page** (including the empty-page state) | The new page ID and optional title; the server allocates missing IDs |
 | **Add visual** | Choose a type and select **Add visual** | Target page, visual type, and optional visual/component IDs and title |
-| **Assign governed field** | Click **Add** beside a field or drag it onto a visual slot | Target page and visual, semantic field ID, and `measure`, `dimension`, or `detail` role |
+| **Assign governed field** | Click **Add** beside a field or drag it onto a visual slot | Target page and visual, semantic field ID, and `metric`, `dimension`, or `detail` role |
 
 Field assignment is validated against the active governed semantic model before the edit is appended. Formatting, filters, interactions, arbitrary YAML patches, and model edits are outside this bounded builder surface; use the project authoring guides for those changes.
 

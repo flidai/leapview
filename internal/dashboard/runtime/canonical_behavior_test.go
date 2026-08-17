@@ -29,6 +29,17 @@ type canonicalDataRuntime struct {
 	queries    *[]dataquery.Query
 }
 
+type verifyingCanonicalDataRuntime struct {
+	canonicalDataRuntime
+	verifyErr error
+	verifies  int
+}
+
+func (r *verifyingCanonicalDataRuntime) VerifySemantic(context.Context) error {
+	r.verifies++
+	return r.verifyErr
+}
+
 func (r *canonicalDataRuntime) reportRows() report.QueryRows {
 	rows := make(report.QueryRows, len(r.rows))
 	for i, row := range r.rows {
@@ -94,14 +105,14 @@ func canonicalBehaviorDefinition(t *testing.T, withTable bool) (*ProjectDefiniti
 			"status":   {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}},
 			"order_id": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero"}},
+		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}},
 	}
 	visuals := dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
 		"good": {Type: "bar", Title: "Good", Query: dashboardauthoring.VisualQuery{
-			Dimensions: []dashboardauthoring.FieldRef{{Field: "status", Alias: "label"}}, Measures: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
+			Dimensions: []dashboardauthoring.FieldRef{{Field: "status", Alias: "label"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
 		}},
 		"broken": {Type: "bar", Title: "Broken", Query: dashboardauthoring.VisualQuery{
-			Dimensions: []dashboardauthoring.FieldRef{{Field: "status", Alias: "label"}}, Measures: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
+			Dimensions: []dashboardauthoring.FieldRef{{Field: "status", Alias: "label"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
 		}},
 	})
 	if withTable {
@@ -153,6 +164,29 @@ func TestCanonicalMissingDataReturnsSetupPatch(t *testing.T) {
 	}
 	if err := service.Verify(context.Background()); err == nil {
 		t.Fatal("runtime verification accepted missing data")
+	}
+}
+
+func TestServiceVerifyRunsGovernedSemanticVerifier(t *testing.T) {
+	definition, _ := canonicalBehaviorDefinition(t, false)
+	data := &verifyingCanonicalDataRuntime{canonicalDataRuntime: canonicalDataRuntime{rows: []dataquery.Row{{"label": "A", "value": int64(1)}}}}
+	service := canonicalBehaviorRuntime(t, definition, data, nil)
+	defer service.Close()
+	if err := service.Verify(context.Background()); err != nil {
+		t.Fatalf("Service.Verify() error = %v", err)
+	}
+	if data.verifies != 1 {
+		t.Fatalf("semantic verifier calls = %d, want 1", data.verifies)
+	}
+}
+
+func TestServiceVerifyFailsClosedOnSemanticVerifierError(t *testing.T) {
+	definition, _ := canonicalBehaviorDefinition(t, false)
+	data := &verifyingCanonicalDataRuntime{canonicalDataRuntime: canonicalDataRuntime{rows: []dataquery.Row{{"label": "A", "value": int64(1)}}}, verifyErr: errors.New("representative plan failed")}
+	service := canonicalBehaviorRuntime(t, definition, data, nil)
+	defer service.Close()
+	if err := service.Verify(context.Background()); err == nil || !strings.Contains(err.Error(), "representative plan failed") {
+		t.Fatalf("Service.Verify() error = %v, want semantic verifier failure", err)
 	}
 }
 
@@ -229,7 +263,7 @@ func TestCanonicalPowerFiltersTranslateComparisonAndRangePredicates(t *testing.T
 		t.Fatalf("contains filter = %#v, err=%v", contains, err)
 	}
 	rangeFilters, err := semanticFiltersForExpression(definition, dashboardfilter.Expression{
-		Kind: dashboardfilter.ExpressionRange,
+		Kind:  dashboardfilter.ExpressionRange,
 		Lower: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "10"}, Inclusive: true},
 		Upper: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "20"}, Inclusive: false},
 	})

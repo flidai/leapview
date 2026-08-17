@@ -26,7 +26,7 @@ visuals:
       dimensions:
         division: service_teams.division
         team: service_teams.team
-      measures:
+      metrics:
         active_work_items: null
       sort:
         - field: value
@@ -48,7 +48,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -76,7 +76,7 @@ visuals:
         category: orders.category
         state: orders.state
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value

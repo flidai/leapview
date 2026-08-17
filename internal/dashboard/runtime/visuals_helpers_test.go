@@ -20,11 +20,11 @@ func TestAggregateMemberMetadataResolvesMetricPresentation(t *testing.T) {
 }
 
 func TestCategoryMultiMeasureDatumsDecodesBundledWideRows(t *testing.T) {
-	runtime := &modelRuntime{model: &semanticmodel.Model{Measures: map[string]semanticmodel.MetricMeasure{
+	runtime := &modelRuntime{model: &semanticmodel.Model{Metrics: map[string]semanticmodel.Metric{
 		"rating_count": {Label: "Ratings"},
 		"tag_count":    {Label: "Tags"},
 	}}}
-	visual := visualPlan{Measures: []visualizationdefinition.FieldBinding{{FieldID: "rating_count"}, {FieldID: "tag_count"}}}
+	visual := visualPlan{Metrics: []visualizationdefinition.FieldBinding{{FieldID: "rating_count"}, {FieldID: "tag_count"}}}
 	rows := []dashboard.Datum{{"label": "2024-01-01", "value_0": int64(8), "value_1": int64(3)}}
 	got := categoryMultiMeasureDatums(runtime, visual, rows)
 	want := []dashboard.Datum{

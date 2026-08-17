@@ -12,7 +12,7 @@ const (
 
 // PlanSpatialMetadata returns one governed row for a tiled visual revision:
 // valid-coordinate extent, exact coordinate-grain cardinality, coordinate-
-// grain measure domains, and independently evaluated whole-filter totals.
+// grain metric domains, and independently evaluated whole-filter totals.
 func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, error) {
 	if request.Latitude.Field == "" || request.Longitude.Field == "" {
 		return Plan{}, fmt.Errorf("spatial metadata requires coordinate fields")
@@ -36,15 +36,15 @@ func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, err
 		Filter{Field: request.Longitude.Field, Operator: "less_than_or_equal", Values: []any{180.0}},
 	)
 	coordinate, err := p.Plan(Request{
-		Table: request.Table, Dimensions: []Field{request.Latitude, request.Longitude}, Measures: request.Measures,
+		Table: request.Table, Dimensions: []Field{request.Latitude, request.Longitude}, Metrics: request.Metrics,
 		Filters: filters, ColumnMasks: request.ColumnMasks,
 	})
 	if err != nil {
 		return Plan{}, err
 	}
 	totals := Plan{SQL: "SELECT 1 AS __spatial_present"}
-	if len(request.Measures) > 0 {
-		totals, err = p.Plan(Request{Table: request.Table, Measures: request.Measures, Filters: filters, ColumnMasks: request.ColumnMasks})
+	if len(request.Metrics) > 0 {
+		totals, err = p.Plan(Request{Table: request.Table, Metrics: request.Metrics, Filters: filters, ColumnMasks: request.ColumnMasks})
 		if err != nil {
 			return Plan{}, err
 		}
@@ -57,8 +57,8 @@ func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, err
 		"COUNT(*) AS " + SpatialCardinalityColumn,
 	}
 	columns := []string{"__spatial_west", "__spatial_south", "__spatial_east", "__spatial_north", SpatialCardinalityColumn}
-	for _, measure := range request.Measures {
-		alias, err := outputAlias(measure)
+	for _, metric := range request.Metrics {
+		alias, err := outputAlias(metric)
 		if err != nil {
 			return Plan{}, err
 		}

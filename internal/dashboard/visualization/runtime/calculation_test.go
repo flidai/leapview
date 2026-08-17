@@ -18,7 +18,7 @@ func TestApplyVisualCalculationsEvaluatesClosedTemplatesDeterministically(t *tes
 			Fields: []ir.VisualizationField{
 				{ID: "period", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Period"},
 				{ID: "parent", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Parent"},
-				{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
+				{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
 			},
 		}},
 		Calculations: calculationList(
@@ -71,7 +71,7 @@ func TestApplyVisualCalculationsSupportsDependenciesAndRejectsCycles(t *testing.
 	base := ir.VisualizationSpecBase{
 		Kind: "cartesian",
 		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
 		}}},
 		Calculations: calculationList(
 			calculation("running", ir.VisualizationCalculationTemplateRunningTotal, "value"),
@@ -100,7 +100,7 @@ func TestApplyVisualCalculationsDoesNotMaskIncompleteFrames(t *testing.T) {
 	base := ir.VisualizationSpecBase{
 		Kind: "table",
 		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
 		}}},
 		Calculations: calculationList(calculation("share", ir.VisualizationCalculationTemplatePercentOfGrandTotal, "value")),
 	}
@@ -125,7 +125,7 @@ func TestApplyVisualCalculationsHonorsHierarchyFacetAndColumnPartitions(t *testi
 			{ID: "region", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Region"},
 			{ID: "parent", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Parent"},
 			{ID: "period", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Period"},
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
 		}}},
 		Calculations: calculationList(
 			ir.VisualizationCalculation{
@@ -169,7 +169,7 @@ func TestApplyVisualCalculationsKeepsNullOrderValuesLastAndNullSourcesNonPoisoni
 		Kind: "cartesian",
 		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
 			{ID: "period", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: true, Label: "Period"},
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
 		}}},
 		Calculations: calculationList(ir.VisualizationCalculation{
 			ID: "running", Label: "Running", Dataset: "primary", Template: ir.VisualizationCalculationTemplateRunningTotal,
@@ -261,7 +261,7 @@ func BenchmarkApplyVisualCalculationsLargeFacetedFrame(b *testing.B) {
 		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
 			{ID: "facet", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeInteger, Label: "Facet"},
 			{ID: "position", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeInteger, Label: "Position"},
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Label: "Value"},
 		}}},
 		Calculations: calculationList(
 			ir.VisualizationCalculation{

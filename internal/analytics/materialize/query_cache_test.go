@@ -203,11 +203,11 @@ func TestQueryResultCacheUsesGovernedRequestAndReturnsDeepCopies(t *testing.T) {
 
 func TestQueryResultCacheEnforcesByteBudgetAndRejectsOversizedEntries(t *testing.T) {
 	cache := newQueryResultCacheWithLimits(10, 1200, "bytes")
-	first := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "revenue"}}}
+	first := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "revenue"}}}
 	second := first
-	second.Measures = []dataquery.Field{{Field: "orders"}}
+	second.Metrics = []dataquery.Field{{Field: "orders"}}
 	large := first
-	large.Measures = []dataquery.Field{{Field: "large"}}
+	large.Metrics = []dataquery.Field{{Field: "large"}}
 
 	_, firstKey, generation, _, err := cache.lookup(first)
 	require.NoError(t, err)
@@ -852,18 +852,18 @@ func (g *bundleMaskGovernor) GovernDataQuery(_ context.Context, request dataquer
 }
 
 func bundleCacheRuntime(database Database) *Runtime {
-	return &Runtime{modelID: "sales", model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {}}, Measures: map[string]semanticmodel.MetricMeasure{
-		"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero"},
-		"event_count": {Fact: "orders", Aggregation: "count", Empty: "zero"},
+	return &Runtime{modelID: "sales", model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {}}, Metrics: map[string]semanticmodel.Metric{
+		"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
+		"event_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
 	}}, db: database, queryCache: newQueryResultCache(256, "bundle-test")}
 }
 
 func bundleCacheRequests() []dataquery.BundleRequest {
 	base := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate, ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders"}
 	first := base
-	first.Measures = []dataquery.Field{{Field: "order_count", Alias: "value"}}
+	first.Metrics = []dataquery.Field{{Field: "order_count", Alias: "value"}}
 	second := base
-	second.Measures = []dataquery.Field{{Field: "event_count", Alias: "value"}}
+	second.Metrics = []dataquery.Field{{Field: "event_count", Alias: "value"}}
 	return []dataquery.BundleRequest{{ID: "orders", Query: first}, {ID: "events", Query: second}}
 }
 

@@ -6,18 +6,37 @@ metadata:
   displayName: Tags Fact
   description: User-generated tag events from MovieLens.
 spec:
-  primaryKey: tag_id
-  grain: tag_id
   sources:
-    - movielens.tags
+  - movielens.tags
   fields:
-    tag_id: {label: Tag ID, description: Stable tag event identifier.}
-    user_id: {label: User ID, description: Anonymized MovieLens user identifier.}
-    movie_id: {label: Movie ID, description: MovieLens movie identifier.}
-    tag: {label: Tag, description: User-generated tag text.}
-    tagged_at: {label: Tagged at, description: Timestamp when the tag was applied.}
-    tag_date: {label: Tag date, description: Date when the tag was applied.}
-    tag_month: {label: Tag month, description: Calendar month when the tag was applied.}
+    tag_id:
+      datatype: String
+      label: Tag ID
+      description: Stable tag event identifier.
+    user_id:
+      datatype: Integer
+      label: User ID
+      description: Anonymized MovieLens user identifier.
+    movie_id:
+      datatype: Integer
+      label: Movie ID
+      description: MovieLens movie identifier.
+    tag:
+      datatype: String
+      label: Tag
+      description: User-generated tag text.
+    tagged_at:
+      datatype: DateTime
+      label: Tagged at
+      description: Timestamp when the tag was applied.
+    tag_date:
+      datatype: Date
+      label: Tag date
+      description: Date when the tag was applied.
+    tag_month:
+      datatype: String
+      label: Tag month
+      description: Calendar month when the tag was applied.
   transform:
     sql: |
       SELECT
@@ -41,3 +60,18 @@ spec:
         AND movieId IS NOT NULL
         AND tag IS NOT NULL
         AND timestamp IS NOT NULL
+  entities:
+    tag:
+      type: primary
+      fields:
+      - tag_id
+    movie:
+      type: foreign
+      fields:
+      - movie_id
+    user:
+      type: foreign
+      fields:
+      - user_id
+  grain:
+    entity: tag

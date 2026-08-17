@@ -58,7 +58,7 @@ func TestGovernedDataRuntimeBindsProjectIdentityAndAudit(t *testing.T) {
 	port := runtime.(DataRuntime)
 	recorder := &runtimeAuditRecorder{}
 	ctx := dataquery.WithAuditRecorder(context.Background(), recorder)
-	request := dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "order_count"}}}
+	request := dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "order_count"}}}
 	if _, err := port.ExecuteDataQuery(ctx, request); err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +85,8 @@ func TestGovernedDataRuntimeBindsEveryBundleBranch(t *testing.T) {
 	runtime := newGovernedDataRuntime("project_1", "model_1", underlying)
 	port := runtime.(dataquery.BundleExecutor)
 	requests := []dataquery.BundleRequest{
-		{ID: "one", Query: dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "one"}}}},
-		{ID: "two", Query: dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "two"}}}},
+		{ID: "one", Query: dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "one"}}}},
+		{ID: "two", Query: dataquery.Query{PrincipalID: "principal_1", ModelID: "model_1", Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "two"}}}},
 	}
 	if _, err := port.ExecuteDataQueryBundle(context.Background(), requests); err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestGovernedBundleAuditSummarizesCacheOutcomeConservatively(t *testing.T) {
 						PrincipalID: "user",
 						ModelID:     "sales",
 						Kind:        dataquery.KindSemanticAggregate,
-						Measures:    []dataquery.Field{{Field: id}},
+						Metrics:     []dataquery.Field{{Field: id}},
 					},
 				})
 			}
@@ -181,8 +181,8 @@ func TestGovernedBundleAuditDoesNotReportSucceededExecutionOnError(t *testing.T)
 	recorder := &runtimeAuditRecorder{}
 	ctx := dataquery.WithAuditRecorder(context.Background(), recorder)
 	requests := []dataquery.BundleRequest{
-		{ID: "one", Query: dataquery.Query{PrincipalID: "user", ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "one"}}}},
-		{ID: "two", Query: dataquery.Query{PrincipalID: "user", ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "two"}}}},
+		{ID: "one", Query: dataquery.Query{PrincipalID: "user", ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "one"}}}},
+		{ID: "two", Query: dataquery.Query{PrincipalID: "user", ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "two"}}}},
 	}
 	if _, err := port.ExecuteDataQueryBundle(ctx, requests); err == nil {
 		t.Fatal("bundle error = nil")

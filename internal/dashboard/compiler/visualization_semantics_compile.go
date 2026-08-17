@@ -69,7 +69,7 @@ func compiledDashboardTableColumns(visualType string, authored dashboardauthorin
 	bindings := compiledTableFields(authored)
 	if visualType != "table" {
 		bindings = append(compiledFields(authored.Query.Rows), compiledFields(authored.Query.Columns)...)
-		bindings = append(bindings, compiledFields(authored.Query.Measures)...)
+		bindings = append(bindings, compiledFields(authored.Query.Metrics)...)
 	}
 	overrides := make(map[string]dashboard.TableColumn, len(authored.Columns))
 	for _, column := range authored.Columns {
@@ -85,18 +85,24 @@ func compiledDashboardTableColumns(visualType string, authored dashboardauthorin
 				if dimension.Label != "" {
 					column.Label = dimension.Label
 				}
-			} else if measure, err := model.ResolveMeasure(binding.FieldID); err == nil {
-				column.Role, column.Align, column.Measure = "measure", "right", binding.Alias
-				if measure.Label != "" {
-					column.Label = measure.Label
+			} else if metric, ok := model.Metrics[binding.FieldID]; ok {
+				column.Role, column.Align, column.Metric = "metric", "right", binding.Alias
+				if metric.Label != "" {
+					column.Label = metric.Label
 				}
-				column.Format = compiledMeasureFormat(measure.Format)
+				column.Format = compiledMetricFormat(metric.Format)
+			} else if metric, err := model.ResolveMetric(binding.FieldID); err == nil {
+				column.Role, column.Align, column.Metric = "metric", "right", binding.Alias
+				if metric.Label != "" {
+					column.Label = metric.Label
+				}
+				column.Format = compiledMetricFormat(metric.Format)
 			}
 		}
 		if override, ok := overrides[binding.Alias]; ok {
 			column = mergeCompiledTableColumn(column, override)
 		}
-		if rules := authored.MeasureFormatting[binding.FieldID]; len(rules) > 0 {
+		if rules := authored.MetricFormatting[binding.FieldID]; len(rules) > 0 {
 			column.Formatting = append([]dashboard.TableFormattingRule(nil), rules...)
 		}
 		out = append(out, column)
@@ -126,10 +132,10 @@ func compiledPhysicalFieldFormat(model *semanticmodel.Model, fieldID, semanticTy
 	if model == nil {
 		return ""
 	}
-	for _, measureID := range sortedMapKeys(model.Measures) {
-		measure := model.Measures[measureID]
-		if measure.Input.Field == fieldID && (measure.Aggregation == "sum" || measure.Aggregation == "avg" || measure.Aggregation == "min" || measure.Aggregation == "max") {
-			return compiledMeasureFormat(measure.Format)
+	for _, measureID := range sortedMapKeys(model.Metrics) {
+		metric := model.Metrics[measureID]
+		if metric.Input != nil && metric.Input.Field == fieldID && (metric.Aggregation == "sum" || metric.Aggregation == "avg" || metric.Aggregation == "min" || metric.Aggregation == "max") {
+			return compiledMetricFormat(metric.Format)
 		}
 	}
 	return ""
@@ -148,8 +154,8 @@ func mergeCompiledTableColumn(base, override dashboard.TableColumn) dashboard.Ta
 	if override.Group != "" {
 		base.Group = override.Group
 	}
-	if override.Measure != "" {
-		base.Measure = override.Measure
+	if override.Metric != "" {
+		base.Metric = override.Metric
 	}
 	if override.ColumnValue != "" {
 		base.ColumnValue = override.ColumnValue
@@ -166,7 +172,7 @@ func mergeCompiledTableColumn(base, override dashboard.TableColumn) dashboard.Ta
 	return base
 }
 
-func compiledMeasureFormat(value string) string {
+func compiledMetricFormat(value string) string {
 	switch value {
 	case "integer", "currency":
 		return value
@@ -196,9 +202,9 @@ func applyBuiltInFieldSemantics(fields []visualizationir.VisualizationField, sha
 	} else if authored.Query.Time.Field != "" {
 		dimension = dashboardauthoring.FieldRef{Field: authored.Query.Time.Field, Alias: authored.Query.Time.Alias}
 	}
-	var measure dashboardauthoring.FieldRef
-	if len(authored.Query.Measures) > 0 {
-		measure = authored.Query.Measures[0]
+	var metric dashboardauthoring.FieldRef
+	if len(authored.Query.Metrics) > 0 {
+		metric = authored.Query.Metrics[0]
 	}
 
 	switch shape {
@@ -209,7 +215,7 @@ func applyBuiltInFieldSemantics(fields []visualizationir.VisualizationField, sha
 		if authored.Query.Time.Field != "" {
 			decorate(compiledAlias(authored.Query.Time.Field, authored.Query.Time.Alias), dashboardauthoring.FieldRef{Field: authored.Query.Time.Field, Alias: authored.Query.Time.Alias})
 		}
-		for _, binding := range authored.Query.Measures {
+		for _, binding := range authored.Query.Metrics {
 			decorate(compiledAlias(binding.Field, binding.Alias), binding)
 		}
 	case "single_value", "category_value", "category_series_value", "category_multi_measure", "category_delta", "binned_measure", "ohlc", "distribution":
@@ -227,16 +233,16 @@ func applyBuiltInFieldSemantics(fields []visualizationir.VisualizationField, sha
 	if !authored.Query.Series.IsZero() {
 		decorate("series", authored.Query.Series)
 	}
-	// A normalized multi-measure frame stores heterogeneous measures in one
-	// value column. Do not attach one measure's format or source identity to all
+	// A normalized multi-metric frame stores heterogeneous metrics in one
+	// value column. Do not attach one metric's format or source identity to all
 	// rows; row-specific formatting requires a future typed series-format map.
 	if shape != "category_multi_measure" {
 		for _, id := range []string{"value", "start", "end", "binStart", "binEnd"} {
-			decorate(id, measure)
+			decorate(id, metric)
 		}
 	}
 	if shape == "ohlc" || shape == "distribution" {
-		for index, binding := range authored.Query.Measures {
+		for index, binding := range authored.Query.Metrics {
 			alias := binding.Alias
 			if alias == "" {
 				alias = fieldAlias(binding.Field)
@@ -270,19 +276,19 @@ func applySemanticField(field *visualizationir.VisualizationField, source string
 		field.Format = compiledVisualizationFormat(compiledDimensionFormat(dimension.Type), "")
 		return
 	}
-	if measure, err := model.ResolveMeasure(source); err == nil {
-		if measure.Label != "" {
-			field.Label = measure.Label
+	if metric, err := model.ResolveMetric(source); err == nil {
+		if metric.Label != "" {
+			field.Label = metric.Label
 		}
-		field.DataType = compiledMeasureDataType(measure.Format)
-		field.Format = compiledVisualizationFormat(measure.Format, measure.Unit)
+		field.DataType = compiledMetricDataType(metric.Format)
+		field.Format = compiledVisualizationFormat(metric.Format, metric.Unit)
 		return
 	}
 	if metric, ok := model.Metrics[source]; ok {
 		if metric.Label != "" {
 			field.Label = metric.Label
 		}
-		field.DataType = compiledMeasureDataType(metric.Format)
+		field.DataType = compiledMetricDataType(metric.Format)
 		field.Format = compiledVisualizationFormat(metric.Format, metric.Unit)
 	}
 }
@@ -303,7 +309,7 @@ func compiledDimensionDataType(dimensionType string) visualizationir.Visualizati
 
 }
 
-func compiledMeasureDataType(format string) visualizationir.VisualizationDataType {
+func compiledMetricDataType(format string) visualizationir.VisualizationDataType {
 	if format == "integer" {
 		return visualizationir.VisualizationDataTypeInteger
 	}

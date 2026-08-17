@@ -97,14 +97,31 @@ func (m *Model) validate(authored bool) error {
 			return err
 		}
 		table.ModelDependencies = modelDependencies
-		if table.PrimaryKey == "" {
-			return fmt.Errorf("model table %q requires primary_key", name)
+		if table.GrainEntity == "" {
+			return fmt.Errorf("model table %q requires grain.entity", name)
 		}
-		if table.Grain == "" {
-			table.Grain = table.PrimaryKey
+		grain, ok := table.Entities[table.GrainEntity]
+		if !ok {
+			return fmt.Errorf("model table %q grain.entity %q is not declared", name, table.GrainEntity)
 		}
-		if table.Grain == "" {
-			return fmt.Errorf("model table %q requires grain", name)
+		if grain.Type != "primary" && grain.Type != "unique" {
+			return fmt.Errorf("model table %q grain.entity %q must be primary or unique", name, table.GrainEntity)
+		}
+		if len(grain.Fields) == 0 {
+			return fmt.Errorf("model table %q grain.entity %q requires fields", name, table.GrainEntity)
+		}
+		for entityName, entity := range table.Entities {
+			if err := validateSemanticIdentifier(entityName); err != nil {
+				return fmt.Errorf("model table %q entity %q is invalid: %w", name, entityName, err)
+			}
+			if len(entity.Fields) == 0 {
+				return fmt.Errorf("model table %q entity %q requires fields", name, entityName)
+			}
+			for _, field := range entity.Fields {
+				if err := validateSemanticIdentifier(field); err != nil {
+					return fmt.Errorf("model table %q entity %q field %q is invalid: %w", name, entityName, field, err)
+				}
+			}
 		}
 		for field, dimension := range table.Dimensions {
 			if err := validateSemanticIdentifier(field); err != nil {
@@ -126,14 +143,28 @@ func (m *Model) validate(authored bool) error {
 		m.Tables[name] = table
 	}
 	seenRelationships := map[string]struct{}{}
+	seenRelationshipEndpoints := map[string]string{}
 	for index, relationship := range m.Relationships {
-		if relationship.ID == "" || relationship.From == "" || relationship.To == "" {
-			return fmt.Errorf("relationship %d requires id, from, and to", index)
+		if relationship.ID == "" || (!relationshipHasEndpoint(relationship, true) || !relationshipHasEndpoint(relationship, false)) {
+			return fmt.Errorf("relationship %d requires id and structured from/to endpoints", index)
 		}
 		if _, exists := seenRelationships[relationship.ID]; exists {
 			return fmt.Errorf("duplicate relationship id %q", relationship.ID)
 		}
 		seenRelationships[relationship.ID] = struct{}{}
+		fromDataset, fromFields, fromErr := relationshipEndpoint(relationship, true)
+		toDataset, toFields, toErr := relationshipEndpoint(relationship, false)
+		if fromErr != nil || toErr != nil {
+			// validateSemanticGraph reports the endpoint-specific diagnostic after
+			// the shape checks above. Keep this pass focused on duplicate IDs and
+			// normalized endpoint tuples.
+			continue
+		}
+		endpointKey := fromDataset + "\x00" + strings.Join(fromFields, "\x00") + "\x00" + toDataset + "\x00" + strings.Join(toFields, "\x00")
+		if previous, exists := seenRelationshipEndpoints[endpointKey]; exists {
+			return fmt.Errorf("duplicate relationship definition for endpoints %q -> %q (relationships %q and %q)", fromDataset+"."+strings.Join(fromFields, ","), toDataset+"."+strings.Join(toFields, ","), previous, relationship.ID)
+		}
+		seenRelationshipEndpoints[endpointKey] = relationship.ID
 	}
 	if err := m.validateSemanticGraph(); err != nil {
 		return err
@@ -234,18 +265,22 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 		}
 		columns[name] = ModelColumn{Name: name, Field: tableName + "." + name, SourceField: name}
 	}
-	add(table.PrimaryKey)
+	for _, entity := range table.Entities {
+		for _, field := range entity.Fields {
+			add(field)
+		}
+	}
 	for field := range table.Dimensions {
 		add(field)
 	}
 	if m != nil {
-		for _, measure := range m.Measures {
-			if measure.Fact != tableName {
+		for _, metric := range m.Metrics {
+			if metric.Type != "aggregate" || metric.Dataset != tableName || metric.Input == nil {
 				continue
 			}
-			refs := []string{measure.Input.Field}
-			if measure.Input.Expression != "" {
-				if expression, err := ParseExpression(measure.Input.Expression); err == nil {
+			refs := []string{metric.Input.Field}
+			if metric.Input.Expression != "" {
+				if expression, err := ParseExpression(metric.Input.Expression); err == nil {
 					refs = append(refs, expression.References()...)
 				}
 			}
@@ -270,8 +305,12 @@ func validateRequiredModelColumns(tableName string, table Table, columns map[str
 		}
 		return nil
 	}
-	if err := require(table.PrimaryKey, "primary_key"); err != nil {
-		return err
+	for entityName, entity := range table.Entities {
+		for _, field := range entity.Fields {
+			if err := require(field, "entity "+entityName); err != nil {
+				return err
+			}
+		}
 	}
 	for field := range table.Dimensions {
 		if err := require(field, "field"); err != nil {
@@ -700,66 +739,248 @@ func sameStringSet(left []string, right []string) bool {
 }
 
 func (m *Model) validateSemanticGraph() error {
+	if err := validateRelationshipEndpointDuplicates(m.Relationships); err != nil {
+		return err
+	}
 	for _, relationship := range m.Relationships {
 		if relationship.Cardinality != "many_to_one" && relationship.Cardinality != "one_to_one" {
 			return fmt.Errorf(
 				"relationship %q has unsafe cardinality %q from %q to %q",
 				relationship.ID,
 				relationship.Cardinality,
-				relationship.From,
-				relationship.To,
+				relationshipEndpointDisplay(relationship, true),
+				relationshipEndpointDisplay(relationship, false),
 			)
 		}
-		fromTable, err := m.validateRelationshipEndpoint("from", relationship.From)
+		fromTable, fromFields, err := m.validateRelationshipEndpoint("from", relationship, true)
 		if err != nil {
 			return err
 		}
-		toTable, err := m.validateRelationshipEndpoint("to", relationship.To)
+		toTable, toFields, err := m.validateRelationshipEndpoint("to", relationship, false)
 		if err != nil {
 			return err
 		}
-		_, fromField, _ := splitSemanticField(relationship.From)
-		_, toField, _ := splitSemanticField(relationship.To)
+		if len(fromFields) != len(toFields) {
+			return fmt.Errorf("relationship %q endpoint tuple arity mismatch: from %d fields, to %d fields", relationship.ID, len(fromFields), len(toFields))
+		}
+		for index := range fromFields {
+			left := m.Tables[fromTable].Dimensions[fromFields[index]]
+			right := m.Tables[toTable].Dimensions[toFields[index]]
+			if !relationshipTypesCompatible(left, right) {
+				return fmt.Errorf("relationship %q endpoint field %q type %q is incompatible with %q type %q", relationship.ID, fromTable+"."+fromFields[index], relationshipFieldType(left), toTable+"."+toFields[index], relationshipFieldType(right))
+			}
+		}
 		if relationship.Cardinality == "one_to_one" {
-			if err := m.requireRelationshipPrimaryKey(relationship, fromTable, fromField); err != nil {
+			if err := m.requireRelationshipPrimaryKey(relationship, fromTable, fromFields); err != nil {
 				return err
 			}
 		}
-		if err := m.requireRelationshipPrimaryKey(relationship, toTable, toField); err != nil {
+		if err := m.requireRelationshipPrimaryKey(relationship, toTable, toFields); err != nil {
 			return err
 		}
+	}
+	if err := m.validateDirectionalRelationshipCycles(); err != nil {
+		return err
 	}
 	return m.validateSemanticDefinitions()
 }
 
-func (m *Model) requireRelationshipPrimaryKey(relationship Relationship, tableName, fieldName string) error {
-	primaryKey := m.Tables[tableName].PrimaryKey
-	if fieldName == primaryKey {
+func validateRelationshipEndpointDuplicates(relationships []Relationship) error {
+	ordered := append([]Relationship(nil), relationships...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
+	seen := map[string]string{}
+	for _, relationship := range ordered {
+		fromDataset, fromFields, fromErr := relationshipEndpoint(relationship, true)
+		toDataset, toFields, toErr := relationshipEndpoint(relationship, false)
+		if fromErr != nil || toErr != nil {
+			continue
+		}
+		key := fromDataset + "\x00" + strings.Join(fromFields, "\x00") + "\x00" + toDataset + "\x00" + strings.Join(toFields, "\x00")
+		if previous, exists := seen[key]; exists {
+			return fmt.Errorf("duplicate relationship definition for endpoints %q -> %q (relationships %q and %q)", fromDataset+"."+strings.Join(fromFields, ","), toDataset+"."+strings.Join(toFields, ","), previous, relationship.ID)
+		}
+		seen[key] = relationship.ID
+	}
+	return nil
+}
+
+// validateDirectionalRelationshipCycles rejects cycles in the authored
+// relationship direction (from -> to). Safe traversal deliberately has a
+// narrower rule for one-to-one reverse edges, but allowing a directional cycle
+// would make relationship ownership and deterministic path resolution
+// ambiguous. Relationships and adjacency lists are sorted so the diagnostic is
+// stable across map/slice construction order.
+func (m *Model) validateDirectionalRelationshipCycles() error {
+	type edge struct {
+		to string
+		id string
+	}
+	adjacency := map[string][]edge{}
+	vertices := map[string]struct{}{}
+	for _, relationship := range m.Relationships {
+		from, _, fromErr := relationshipEndpoint(relationship, true)
+		to, _, toErr := relationshipEndpoint(relationship, false)
+		if fromErr != nil || toErr != nil {
+			continue
+		}
+		vertices[from] = struct{}{}
+		vertices[to] = struct{}{}
+		adjacency[from] = append(adjacency[from], edge{to: to, id: relationship.ID})
+	}
+	for from := range adjacency {
+		sort.Slice(adjacency[from], func(i, j int) bool {
+			if adjacency[from][i].to != adjacency[from][j].to {
+				return adjacency[from][i].to < adjacency[from][j].to
+			}
+			return adjacency[from][i].id < adjacency[from][j].id
+		})
+	}
+	orderedVertices := make([]string, 0, len(vertices))
+	for vertex := range vertices {
+		orderedVertices = append(orderedVertices, vertex)
+	}
+	sort.Strings(orderedVertices)
+	state := map[string]uint8{}
+	stack := []string{}
+	stackIndex := map[string]int{}
+	var visit func(string) error
+	visit = func(vertex string) error {
+		state[vertex] = 1
+		stackIndex[vertex] = len(stack)
+		stack = append(stack, vertex)
+		for _, next := range adjacency[vertex] {
+			switch state[next.to] {
+			case 0:
+				if err := visit(next.to); err != nil {
+					return err
+				}
+			case 1:
+				start := stackIndex[next.to]
+				cycle := append([]string(nil), stack[start:]...)
+				cycle = append(cycle, next.to)
+				return fmt.Errorf("relationship cycle detected in directional graph: %s", strings.Join(cycle, " -> "))
+			}
+		}
+		stack = stack[:len(stack)-1]
+		delete(stackIndex, vertex)
+		state[vertex] = 2
 		return nil
 	}
+	for _, vertex := range orderedVertices {
+		if state[vertex] == 0 {
+			if err := visit(vertex); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func relationshipFieldType(field MetricDimension) string {
+	if field.Datatype != "" {
+		return string(field.Datatype)
+	}
+	return field.Type
+}
+
+func relationshipTypesCompatible(left, right MetricDimension) bool {
+	leftType, rightType := relationshipFieldType(left), relationshipFieldType(right)
+	if leftType == "" || rightType == "" || leftType == rightType {
+		return true
+	}
+	// Physical discovery collapses numeric logical types to number; retain that
+	// compatibility while rejecting text/temporal/boolean key mismatches.
+	if left.Type == "number" && right.Type == "number" {
+		return true
+	}
+	return false
+}
+
+func (m *Model) requireRelationshipPrimaryKey(relationship Relationship, tableName string, fields []string) error {
+	table := m.Tables[tableName]
+	if len(table.Entities) > 0 {
+		for _, entity := range table.Entities {
+			if entity.Type != "primary" && entity.Type != "unique" {
+				continue
+			}
+			if sameStringSet(entity.Fields, fields) {
+				return nil
+			}
+		}
+		return fmt.Errorf(
+			"relationship %q %s endpoint %q must belong to a primary or unique entity of table %q",
+			relationship.ID,
+			relationship.Cardinality,
+			tableName+"."+strings.Join(fields, ","),
+			tableName,
+		)
+	}
 	return fmt.Errorf(
-		"relationship %q %s endpoint %q must be primary key %q of table %q",
+		"relationship %q %s endpoint %q must belong to a primary or unique entity of table %q",
 		relationship.ID,
 		relationship.Cardinality,
-		tableName+"."+fieldName,
-		primaryKey,
+		tableName+"."+strings.Join(fields, ","),
 		tableName,
 	)
 }
 
-func (m *Model) validateRelationshipEndpoint(role string, endpoint string) (string, error) {
-	tableName, fieldName, err := splitSemanticField(endpoint)
+func (m *Model) validateRelationshipEndpoint(role string, relationship Relationship, from bool) (string, []string, error) {
+	tableName, fields, err := relationshipEndpoint(relationship, from)
 	if err != nil {
-		return "", fmt.Errorf("relationship %s %q: %w", role, endpoint, err)
+		return "", nil, fmt.Errorf("relationship %s %q: %w", role, relationshipEndpointDisplay(relationship, from), err)
 	}
 	table, ok := m.Tables[tableName]
 	if !ok {
-		return "", fmt.Errorf("relationship %s %q references unknown table %q", role, endpoint, tableName)
+		return "", nil, fmt.Errorf("relationship %s %q references unknown table %q", role, relationshipEndpointDisplay(relationship, from), tableName)
 	}
-	if _, ok := table.Dimensions[fieldName]; !ok {
-		return "", fmt.Errorf("relationship %s %q references unknown field %q on table %q", role, endpoint, fieldName, tableName)
+	for _, fieldName := range fields {
+		if _, ok := table.Dimensions[fieldName]; !ok {
+			return "", nil, fmt.Errorf("relationship %s %q references unknown field %q on table %q", role, relationshipEndpointDisplay(relationship, from), fieldName, tableName)
+		}
 	}
-	return tableName, nil
+	return tableName, fields, nil
+}
+
+func relationshipHasEndpoint(relationship Relationship, from bool) bool {
+	_, fields, err := relationshipEndpoint(relationship, from)
+	return err == nil && len(fields) > 0
+}
+
+func relationshipEndpoint(relationship Relationship, from bool) (string, []string, error) {
+	dataset, fields := relationship.FromDataset, relationship.FromFields
+	endpoint := relationship.From
+	if !from {
+		dataset, fields, endpoint = relationship.ToDataset, relationship.ToFields, relationship.To
+	}
+	if dataset != "" || len(fields) > 0 {
+		if dataset == "" || len(fields) == 0 {
+			return "", nil, fmt.Errorf("endpoint requires dataset and non-empty fields")
+		}
+		return dataset, append([]string(nil), fields...), nil
+	}
+	table, field, err := splitSemanticField(endpoint)
+	if err != nil {
+		return "", nil, err
+	}
+	return table, []string{field}, nil
+}
+
+func relationshipEndpointDisplay(relationship Relationship, from bool) string {
+	dataset, fields, err := relationshipEndpoint(relationship, from)
+	if err == nil {
+		return dataset + "." + strings.Join(fields, ",")
+	}
+	if from {
+		return relationship.From
+	}
+	return relationship.To
+}
+
+// RelationshipEndpoint returns the ordered physical tuple for one side of a
+// validated relationship. Canonical composite identities remain tuples all the
+// way to the query planner; callers must not select a single field.
+func RelationshipEndpoint(relationship Relationship, from bool) (string, []string, error) {
+	return relationshipEndpoint(relationship, from)
 }
 
 func relationshipID(relationship Relationship, index int) string {

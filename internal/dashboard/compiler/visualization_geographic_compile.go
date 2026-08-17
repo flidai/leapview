@@ -375,7 +375,7 @@ func geographicVisualizationFields(authored dashboardauthoring.Visual) []visuali
 	for _, mapping := range authored.Interaction.PointSelection.Mappings {
 		identity[mapping.Value] = true
 	}
-	fields := make([]visualizationir.VisualizationField, 0, len(authored.Query.Dimensions)+len(authored.Query.Measures)+1)
+	fields := make([]visualizationir.VisualizationField, 0, len(authored.Query.Dimensions)+len(authored.Query.Metrics)+1)
 	appendField := func(field dashboardauthoring.FieldRef, role visualizationir.VisualizationFieldRole, dataType visualizationir.VisualizationDataType) {
 		if field.Field == "" {
 			return
@@ -404,8 +404,8 @@ func geographicVisualizationFields(authored dashboardauthoring.Visual) []visuali
 	if authored.Query.Time.Field != "" {
 		appendField(dashboardauthoring.FieldRef{Field: authored.Query.Time.Field, Alias: authored.Query.Time.Alias}, visualizationir.VisualizationFieldRoleDimension, visualizationir.VisualizationDataTypeTemporal)
 	}
-	for _, field := range authored.Query.Measures {
-		appendField(field, visualizationir.VisualizationFieldRoleMeasure, visualizationir.VisualizationDataTypeDecimal)
+	for _, field := range authored.Query.Metrics {
+		appendField(field, visualizationir.VisualizationFieldRoleMetric, visualizationir.VisualizationDataTypeDecimal)
 	}
 	return fields
 }

@@ -272,11 +272,20 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {PrimaryKey: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
-			"customers": {PrimaryKey: "customer_id"},
+			"orders":    {Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+			"customers": {Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count"},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "customers": {Model: "customers"},
+		},
+		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
+			"orders_customer": {
+				From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Fields: []string{"customer_id"}},
+				To:   semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Fields: []string{"customer_id"}},
+			},
 		},
 		Relationships: []semanticmodel.Relationship{{ID: "orders_customer", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"}},
 	}
@@ -300,7 +309,7 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Model tables (2)", "Measures (1)", "Relationships (1)"} {
+	for _, want := range []string{"Datasets (2)", "Metrics (1)", "Relationships (1)"} {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("bootstrap = %s, missing %q", encoded, want)
 		}

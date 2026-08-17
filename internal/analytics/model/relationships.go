@@ -10,7 +10,7 @@ import (
 // one-to-one relationship is traversable in either direction. Model validation
 // proves every "one" endpoint with the table's declared primary key; reverse
 // many-to-one, one-to-many, and many-to-many paths are deliberately unavailable
-// because they can multiply measures.
+// because they can multiply metrics.
 func (m *Model) SafeRelationshipPath(base, target string) ([]Relationship, error) {
 	if base == target {
 		return nil, nil
@@ -90,11 +90,11 @@ func (m *Model) safeRelationshipPaths(base, target string) [][]Relationship {
 }
 
 func semanticSafeEdgeFrom(table string, relationship Relationship) (relationshipEdge, bool) {
-	fromTable, _, err := splitSemanticField(relationship.From)
+	fromTable, _, err := relationshipEndpoint(relationship, true)
 	if err != nil {
 		return relationshipEdge{}, false
 	}
-	toTable, _, err := splitSemanticField(relationship.To)
+	toTable, _, err := relationshipEndpoint(relationship, false)
 	if err != nil {
 		return relationshipEdge{}, false
 	}

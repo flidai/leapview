@@ -220,7 +220,7 @@ test('a superseded MapLibre mount cannot remove the winning renderer frame', () 
   expect(ownedRemoved).toBe(true)
 })
 
-test('MapLibre normalizes finite measure values without losing raw tooltip values', () => {
+test('MapLibre normalizes finite metric values without losing raw tooltip values', () => {
   const data = {
     type: 'FeatureCollection',
     features: [
@@ -268,7 +268,7 @@ test('MapLibre tooltips use compiled fields and contractual formatting without e
   expect(entries.some((entry) => entry.value.includes('governed'))).toBe(false)
 })
 
-test('MapLibre aggregate tooltips lead with the business measure and retain location count', () => {
+test('MapLibre aggregate tooltips lead with the business metric and retain location count', () => {
 	const envelope = tiledPointEnvelope()
 	const entries = mapTooltipEntries(envelope, [{
 		layer: { id: 'lv-orders' },
@@ -327,7 +327,7 @@ test('MapLibre refreshes tiled paint domains when governed metadata replaces the
 	expect(tiledLayerPaintUpdates(exact, 'lv-map-tiles').find((update) => update.id === 'lv-orders-aggregate')?.maxzoom).toBe(10)
 })
 
-test('MapLibre tiled point aggregates encode and label the authored business measure', () => {
+test('MapLibre tiled point aggregates encode and label the authored business metric', () => {
 	const envelope = tiledPointEnvelope()
 	const layer = envelope.spec.kind === 'geographic' ? envelope.spec.layers[0]! : undefined
 	if (!layer || layer.kind !== 'point') throw new Error('point layer fixture is unavailable')
@@ -578,7 +578,7 @@ function tiledPointEnvelope(): VisualizationEnvelope {
         { id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
         { id: 'latitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Latitude' },
         { id: 'longitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Longitude' },
-        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] }],
       dataBudget: { maxRows: 0, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Order locations' },
       interactions: [{ id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['detail'], mappings: [{ source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetFactID: 'orders' }] }],
@@ -591,7 +591,7 @@ function tiledPointEnvelope(): VisualizationEnvelope {
         { id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
         { id: 'latitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Latitude' },
         { id: 'longitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Longitude' },
-        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] },
       cardinality: { kind: 'exact', count: 15_000 }, extent: { west: -47, south: -24, east: -46, north: -23 },
       rawDomains: [{ field: 'revenue', minimum: 0, maximum: 500, total: 5000 }], aggregateDomains: [{ field: 'revenue', minimum: 0, maximum: 5000, total: 5000 }],
@@ -607,7 +607,7 @@ function selectableEnvelope(): VisualizationEnvelope {
     spec: {
       kind: 'geographic', title: 'States', datasets: [{ id: 'primary', fields: [
         { id: 'state', role: 'identity', dataType: 'string', nullable: false, label: 'State' },
-        { id: 'value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
         { id: 'customer_secret', role: 'dimension', dataType: 'string', nullable: true, label: 'Secret' },
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'States', description: 'States' },

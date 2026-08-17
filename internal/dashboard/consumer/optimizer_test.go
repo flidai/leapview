@@ -13,11 +13,11 @@ func TestOptimizerGroupsSemanticConsumersWithoutPresentationShapes(t *testing.T)
 	plan, err := Optimize(model, []LogicalQuery{
 		{
 			Target: Target{Kind: KindVisual, ID: "trend"},
-			Query:  dataquery.Query{Kind: dataquery.KindSemanticAggregate, Fields: []dataquery.Field{{Field: "customer", Alias: "label"}}, Measures: []dataquery.Field{{Field: "order_count", Alias: "orders"}, {Field: "tag_count", Alias: "tags"}}, Filters: scope, Limit: 500},
+			Query:  dataquery.Query{Kind: dataquery.KindSemanticAggregate, Fields: []dataquery.Field{{Field: "customer", Alias: "label"}}, Metrics: []dataquery.Field{{Field: "order_count", Alias: "orders"}, {Field: "tag_count", Alias: "tags"}}, Filters: scope, Limit: 500},
 		},
 		{
 			Target: Target{Kind: KindVisual, ID: "ratio"},
-			Query:  dataquery.Query{Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "tags_per_order", Alias: "value"}}, Filters: scope},
+			Query:  dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "tags_per_order", Alias: "value"}}, Filters: scope},
 		},
 	})
 	if err != nil {
@@ -34,8 +34,8 @@ func TestOptimizerGroupsSemanticConsumersWithoutPresentationShapes(t *testing.T)
 func TestOptimizerKeepsDifferentGovernedScopesSeparate(t *testing.T) {
 	model := optimizerTestModel()
 	plan, err := Optimize(model, []LogicalQuery{
-		{Target: Target{Kind: KindVisual, ID: "consumer"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "order_count"}}, Filters: []dataquery.Filter{{Field: "segment", Operator: "equals", Values: []any{"consumer"}}}}},
-		{Target: Target{Kind: KindVisual, ID: "business"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "order_count"}}, Filters: []dataquery.Filter{{Field: "segment", Operator: "equals", Values: []any{"business"}}}}},
+		{Target: Target{Kind: KindVisual, ID: "consumer"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "order_count"}}, Filters: []dataquery.Filter{{Field: "segment", Operator: "equals", Values: []any{"consumer"}}}}},
+		{Target: Target{Kind: KindVisual, ID: "business"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "order_count"}}, Filters: []dataquery.Filter{{Field: "segment", Operator: "equals", Values: []any{"business"}}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -47,9 +47,9 @@ func TestOptimizerKeepsDifferentGovernedScopesSeparate(t *testing.T) {
 
 func TestOptimizerBatchesScalarConsumersAcrossFacts(t *testing.T) {
 	plan, err := Optimize(optimizerTestModel(), []LogicalQuery{
-		{Target: Target{Kind: KindVisual, ID: "orders"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "order_count"}}}},
-		{Target: Target{Kind: KindVisual, ID: "tags"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "tag_count"}}}},
-		{Target: Target{Kind: KindVisual, ID: "ratio"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Measures: []dataquery.Field{{Field: "tags_per_order"}}}},
+		{Target: Target{Kind: KindVisual, ID: "orders"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "order_count"}}}},
+		{Target: Target{Kind: KindVisual, ID: "tags"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "tag_count"}}}},
+		{Target: Target{Kind: KindVisual, ID: "ratio"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "tags_per_order"}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,23 +64,23 @@ func TestOptimizerBundlesSameFactNonAdditiveScalarWithGroupedConsumers(t *testin
 		{
 			Target: Target{Kind: KindVisual, ID: "orders_by_customer"},
 			Query: dataquery.Query{
-				Kind:     dataquery.KindSemanticAggregate,
-				Fields:   []dataquery.Field{{Field: "customer", Alias: "label"}},
-				Measures: []dataquery.Field{{Field: "order_count", Alias: "value"}},
+				Kind:    dataquery.KindSemanticAggregate,
+				Fields:  []dataquery.Field{{Field: "customer", Alias: "label"}},
+				Metrics: []dataquery.Field{{Field: "order_count", Alias: "value"}},
 			},
 		},
 		{
 			Target: Target{Kind: KindVisual, ID: "unique_customers"},
 			Query: dataquery.Query{
-				Kind:     dataquery.KindSemanticAggregate,
-				Measures: []dataquery.Field{{Field: "unique_customers", Alias: "value"}},
+				Kind:    dataquery.KindSemanticAggregate,
+				Metrics: []dataquery.Field{{Field: "unique_customers", Alias: "value"}},
 			},
 		},
 		{
 			Target: Target{Kind: KindVisual, ID: "average_order_value"},
 			Query: dataquery.Query{
-				Kind:     dataquery.KindSemanticAggregate,
-				Measures: []dataquery.Field{{Field: "average_order_value", Alias: "value"}},
+				Kind:    dataquery.KindSemanticAggregate,
+				Metrics: []dataquery.Field{{Field: "average_order_value", Alias: "value"}},
 			},
 		},
 	})
@@ -97,18 +97,18 @@ func TestOptimizerBundlesGroupedConsumersAcrossFactSignatures(t *testing.T) {
 		{
 			Target: Target{Kind: KindVisual, ID: "orders_by_customer"},
 			Query: dataquery.Query{
-				Kind:     dataquery.KindSemanticAggregate,
-				Target:   "orders",
-				Fields:   []dataquery.Field{{Field: "orders.customer", Alias: "label"}},
-				Measures: []dataquery.Field{{Field: "order_count", Alias: "value"}},
+				Kind:    dataquery.KindSemanticAggregate,
+				Target:  "orders",
+				Fields:  []dataquery.Field{{Field: "orders.customer", Alias: "label"}},
+				Metrics: []dataquery.Field{{Field: "order_count", Alias: "value"}},
 			},
 		},
 		{
 			Target: Target{Kind: KindVisual, ID: "tags_per_order_by_customer"},
 			Query: dataquery.Query{
-				Kind:     dataquery.KindSemanticAggregate,
-				Fields:   []dataquery.Field{{Field: "customer", Alias: "label"}},
-				Measures: []dataquery.Field{{Field: "tags_per_order", Alias: "value"}},
+				Kind:    dataquery.KindSemanticAggregate,
+				Fields:  []dataquery.Field{{Field: "customer", Alias: "label"}},
+				Metrics: []dataquery.Field{{Field: "tags_per_order", Alias: "value"}},
 			},
 		},
 	}
@@ -143,14 +143,12 @@ func optimizerTestModel() *semanticmodel.Model {
 			"customer": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.customer_id"}, "tags": {Field: "tags.customer_id"}}},
 			"segment":  {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.segment"}, "tags": {Field: "tags.segment"}}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count":         {Fact: "orders", Aggregation: "count", Empty: "zero"},
-			"unique_customers":    {Fact: "orders", Aggregation: "count_distinct", Input: semanticmodel.MeasureInput{Field: "orders.customer_id"}, Empty: "zero"},
-			"average_order_value": {Fact: "orders", Aggregation: "avg", Input: semanticmodel.MeasureInput{Field: "orders.amount"}, Empty: "null"},
-			"tag_count":           {Fact: "tags", Aggregation: "count", Empty: "zero"},
-		},
 		Metrics: map[string]semanticmodel.Metric{
-			"tags_per_order": {Expression: "safe_divide(${tag_count}, ${order_count})"},
+			"order_count":         {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.customer"}, Empty: "zero"},
+			"unique_customers":    {Type: "aggregate", Dataset: "orders", Aggregation: "count_distinct", Input: &semanticmodel.MetricInput{Field: "orders.customer_id"}, Empty: "zero"},
+			"average_order_value": {Type: "aggregate", Dataset: "orders", Aggregation: "avg", Input: &semanticmodel.MetricInput{Field: "orders.amount"}, Empty: "null"},
+			"tag_count":           {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "tags.customer"}, Empty: "zero"},
+			"tags_per_order":      {Type: "ratio", Numerator: "tag_count", Denominator: "order_count"},
 		},
 	}
 }

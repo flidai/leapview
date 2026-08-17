@@ -40,7 +40,7 @@ func compileSecondaryQueryBindings(ctx compileContext, authored dashboardauthori
 			Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryMultiMeasure,
 			ModelID: ctx.modelID, DatasetID: datasetID,
 			Aggregate: &visualizationdefinition.AggregateQueryBinding{
-				TableID: tableID, Dimensions: compiledFields(query.Dimensions), Measures: compiledFields(query.Measures),
+				TableID: tableID, Dimensions: compiledFields(query.Dimensions), Metrics: compiledFields(query.Metrics),
 				Series: compiledOptionalField(query.Series), Time: compiledTime(query.Time), Sort: compiledSort(query.Sort), Limit: int64(limit),
 			},
 		}
@@ -62,7 +62,7 @@ func compileVisualizationQueryBinding(ctx compileContext, authored dashboardauth
 		Kind: visualizationdefinition.QueryAggregate, ResultShape: resultShape, ModelID: ctx.modelID, DatasetID: ctx.datasetID,
 		Identity: compiledVisualizationIdentity(authored),
 		Aggregate: &visualizationdefinition.AggregateQueryBinding{
-			TableID: authored.Query.Table, Dimensions: compiledFields(authored.Query.Dimensions), Measures: compiledFields(authored.Query.Measures),
+			TableID: authored.Query.Table, Dimensions: compiledFields(authored.Query.Dimensions), Metrics: compiledFields(authored.Query.Metrics),
 			Series: compiledOptionalField(authored.Query.Series), Time: compiledTime(authored.Query.Time), Sort: compiledSort(authored.Query.Sort), Limit: limit,
 		},
 	}
@@ -135,7 +135,7 @@ func compiledSpatialBinding(modelID string, authored dashboardauthoring.Visual, 
 		limit = 0
 	}
 	spatial := &visualizationdefinition.SpatialQueryBinding{
-		TableID: authored.Query.Table, Dimensions: compiledFields(authored.Query.Dimensions), Measures: compiledFields(authored.Query.Measures),
+		TableID: authored.Query.Table, Dimensions: compiledFields(authored.Query.Dimensions), Metrics: compiledFields(authored.Query.Metrics),
 		Series: compiledOptionalField(authored.Query.Series), Time: compiledTime(authored.Query.Time), Sort: compiledSort(authored.Query.Sort), Limit: limit,
 	}
 	if tiled {
@@ -270,7 +270,7 @@ func compiledVisualFrameLimit(authored dashboardauthoring.Visual, shape string) 
 	}
 	switch shape {
 	case "category_multi_measure":
-		series := len(authored.Query.Measures)
+		series := len(authored.Query.Metrics)
 		if series < 1 {
 			series = 1
 		}
@@ -315,13 +315,13 @@ func compiledTableBinding(modelID, visualType string, authored dashboardauthorin
 		binding.Kind = visualizationdefinition.QueryMatrix
 		binding.ResultShape = visualizationdefinition.ResultMatrixWindow
 		binding.Matrix = &visualizationdefinition.MatrixQueryBinding{
-			TableID: authored.Query.Table, Rows: compiledFields(authored.Query.Rows), Columns: compiledFields(authored.Query.Columns), Measures: compiledFields(authored.Query.Measures), Limit: dashboard.TableInteractiveRowCap,
+			TableID: authored.Query.Table, Rows: compiledFields(authored.Query.Rows), Columns: compiledFields(authored.Query.Columns), Metrics: compiledFields(authored.Query.Metrics), Limit: dashboard.TableInteractiveRowCap,
 		}
 	case "pivot":
 		binding.Kind = visualizationdefinition.QueryPivot
 		binding.ResultShape = visualizationdefinition.ResultPivotWindow
 		binding.Pivot = &visualizationdefinition.PivotQueryBinding{
-			TableID: authored.Query.Table, Rows: compiledFields(authored.Query.Rows), Columns: compiledFields(authored.Query.Columns), Measures: compiledFields(authored.Query.Measures), Limit: dashboard.TableInteractiveRowCap,
+			TableID: authored.Query.Table, Rows: compiledFields(authored.Query.Rows), Columns: compiledFields(authored.Query.Columns), Metrics: compiledFields(authored.Query.Metrics), Limit: dashboard.TableInteractiveRowCap,
 		}
 	default:
 		sort := []visualizationdefinition.Sort{}
@@ -364,7 +364,7 @@ func compiledVisualFields(query dashboardauthoring.VisualQuery) []visualizationd
 	if series := compiledOptionalField(query.Series); series != nil {
 		out = append(out, *series)
 	}
-	out = append(out, compiledFields(query.Measures)...)
+	out = append(out, compiledFields(query.Metrics)...)
 	return out
 }
 
@@ -405,7 +405,7 @@ func fieldAlias(field string) string {
 }
 
 func visualQueryFields(query dashboardauthoring.VisualQuery) []string {
-	fields := make([]string, 0, len(query.Dimensions)+len(query.Measures)+2)
+	fields := make([]string, 0, len(query.Dimensions)+len(query.Metrics)+2)
 	for _, value := range query.Dimensions {
 		fields = append(fields, value.Field)
 	}
@@ -415,19 +415,19 @@ func visualQueryFields(query dashboardauthoring.VisualQuery) []string {
 	if query.Time.Field != "" {
 		fields = append(fields, query.Time.Field)
 	}
-	for _, value := range query.Measures {
+	for _, value := range query.Metrics {
 		fields = append(fields, value.Field)
 	}
 	return uniqueStrings(fields)
 }
 
 func tableQueryFields(table dashboardauthoring.TableVisual) []string {
-	fields := make([]string, 0, len(table.DataColumns)+len(table.Query.Fields)+len(table.Query.Rows)+len(table.Query.Columns)+len(table.Query.Measures))
+	fields := make([]string, 0, len(table.DataColumns)+len(table.Query.Fields)+len(table.Query.Rows)+len(table.Query.Columns)+len(table.Query.Metrics))
 	for _, value := range table.DataColumns {
 		fields = append(fields, value.Field)
 	}
 	fields = append(fields, table.Query.Fields...)
-	for _, values := range [][]dashboardauthoring.FieldRef{table.Query.Rows, table.Query.Columns, table.Query.Measures} {
+	for _, values := range [][]dashboardauthoring.FieldRef{table.Query.Rows, table.Query.Columns, table.Query.Metrics} {
 		for _, value := range values {
 			fields = append(fields, value.Field)
 		}

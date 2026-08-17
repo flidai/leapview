@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic
 
-Use one categorical dimension and one measure for a part-to-whole comparison, sorting by value to keep the largest sectors easy to find.
+Use one categorical dimension and one metric for a part-to-whole comparison, sorting by value to keep the largest sectors easy to find.
 
 {{< visual id="status_pie" >}}
 
@@ -18,7 +18,7 @@ visuals:
     query:
       dimensions:
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -42,7 +42,7 @@ visuals:
     query:
       dimensions:
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -66,7 +66,7 @@ visuals:
     query:
       dimensions:
         category: orders.category
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value

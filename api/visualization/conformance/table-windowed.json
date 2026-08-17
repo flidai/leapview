@@ -2,7 +2,7 @@
   "schemaVersion": 10,
   "visualID": "orders",
   "rendererID": "tanstack",
-  "specRevision": "sha256:8e2bcc88fa8dec7ee0588bcc09cfda7b28ff97679a1e2d2c67280a189f9a7fdc",
+  "specRevision": "sha256:4292a3ea86a734f1e67ff95c4388c36ca4d74e43a2ddce853398fd1a71b4ade4",
   "spec": {
     "kind": "table",
     "title": "Orders",
@@ -21,7 +21,7 @@
           {
             "id": "total",
             "sourceRef": "orders.total",
-            "role": "measure",
+            "role": "metric",
             "dataType": "decimal",
             "nullable": false,
             "label": "Total",
@@ -73,7 +73,7 @@
   "dataRevision": 11,
   "dataState": {
     "kind": "windowed",
-    "specRevision": "sha256:8e2bcc88fa8dec7ee0588bcc09cfda7b28ff97679a1e2d2c67280a189f9a7fdc",
+    "specRevision": "sha256:4292a3ea86a734f1e67ff95c4388c36ca4d74e43a2ddce853398fd1a71b4ade4",
     "dataRevision": 11,
     "generation": 4,
     "schema": {
@@ -90,7 +90,7 @@
         {
           "id": "total",
           "sourceRef": "orders.total",
-          "role": "measure",
+          "role": "metric",
           "dataType": "decimal",
           "nullable": false,
           "label": "Total",

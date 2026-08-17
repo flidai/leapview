@@ -10,7 +10,7 @@ const envelope = {
     datasets: [{ id: 'primary', fields: [
       { id: 'customer_id', role: 'identity', dataType: 'string', nullable: false, label: 'Customer' },
       { id: 'state', role: 'identity', dataType: 'string', nullable: false, label: 'State' },
-      { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+      { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
     ] }],
     dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Customers', description: 'Customers' },
     interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['states'], mappings: [

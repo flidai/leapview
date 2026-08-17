@@ -18,7 +18,7 @@ func TestCompiledVisualCalculationAddsGovernedFieldAndVisibleBinding(t *testing.
 				Type: "line",
 				Query: dashboardauthoring.VisualQuery{
 					Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month", Alias: "month"}},
-					Measures:   []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
+					Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
 					Sort:       []dashboardauthoring.Sort{{Field: "orders.month", Direction: "asc"}},
 				},
 				Calculations: []dashboardauthoring.VisualCalculation{{
@@ -91,7 +91,7 @@ func TestCompiledVisualCalculationRejectsInvalidPlans(t *testing.T) {
 						Type: "line",
 						Query: dashboardauthoring.VisualQuery{
 							Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month", Alias: "month"}},
-							Measures:   []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
+							Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
 						},
 						Calculations: test.calculations,
 					}),

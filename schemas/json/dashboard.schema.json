@@ -869,11 +869,11 @@
     "#FilterDefinition": {
       "additionalProperties": false,
       "properties": {
+        "dataset": {
+          "$ref": "#/$defs/%23Identifier"
+        },
         "description": {
           "type": "string"
-        },
-        "fact": {
-          "$ref": "#/$defs/%23Identifier"
         },
         "field": {
           "anyOf": [
@@ -2161,41 +2161,6 @@
       ],
       "type": "object"
     },
-    "#MeasureRefs": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/%23FieldRefValue"
-          },
-          "type": "array"
-        },
-        {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "anyOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "measure": {
-                      "$ref": "#/$defs/%23Identifier"
-                    }
-                  },
-                  "required": [
-                    "measure"
-                  ],
-                  "type": "object"
-                }
-              ]
-            }
-          },
-          "type": "object"
-        }
-      ]
-    },
     "#Metadata": {
       "additionalProperties": false,
       "properties": {
@@ -2235,6 +2200,41 @@
         "name"
       ],
       "type": "object"
+    },
+    "#MetricRefs": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/%23FieldRefValue"
+          },
+          "type": "array"
+        },
+        {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "metric": {
+                      "$ref": "#/$defs/%23Identifier"
+                    }
+                  },
+                  "required": [
+                    "metric"
+                  ],
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ]
     },
     "#ObjectID": {
       "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
@@ -2944,7 +2944,7 @@
           "items": {
             "additionalProperties": false,
             "properties": {
-              "fact": {
+              "dataset": {
                 "$ref": "#/$defs/%23Identifier"
               },
               "field": {
@@ -3131,7 +3131,7 @@
     "#SpatialSelectionMapping": {
       "additionalProperties": false,
       "properties": {
-        "fact": {
+        "dataset": {
           "$ref": "#/$defs/%23Identifier"
         },
         "field": {
@@ -3200,7 +3200,7 @@
         "label": {
           "type": "string"
         },
-        "measure": {
+        "metric": {
           "type": "string"
         },
         "role": {
@@ -3268,8 +3268,8 @@
           },
           "type": "array"
         },
-        "measures": {
-          "$ref": "#/$defs/%23MeasureRefs"
+        "metrics": {
+          "$ref": "#/$defs/%23MetricRefs"
         },
         "rows": {
           "$ref": "#/$defs/%23FieldRefs"
@@ -3324,7 +3324,7 @@
           },
           "type": "object"
         },
-        "measure_formatting": {
+        "metric_formatting": {
           "additionalProperties": {
             "items": {
               "$ref": "#/$defs/%23TableFormattingRule"
@@ -3721,8 +3721,8 @@
         "limit": {
           "type": "integer"
         },
-        "measures": {
-          "$ref": "#/$defs/%23MeasureRefs"
+        "metrics": {
+          "$ref": "#/$defs/%23MetricRefs"
         },
         "series": {
           "$ref": "#/$defs/%23FieldRefObject"

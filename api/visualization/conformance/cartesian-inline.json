@@ -2,7 +2,7 @@
   "schemaVersion": 10,
   "visualID": "monthly_revenue",
   "rendererID": "echarts",
-  "specRevision": "sha256:d11b489cb402204e62e6eeab920262c77c39832d6863b3ad1c6d4d32455a44df",
+  "specRevision": "sha256:6382f1fca47722d5f278cd7cddbae43b16cfa04c907a889d7896b168a2655ff2",
   "spec": {
     "kind": "cartesian",
     "title": "Revenue",
@@ -28,7 +28,7 @@
           {
             "id": "revenue",
             "sourceRef": "orders.revenue",
-            "role": "measure",
+            "role": "metric",
             "dataType": "decimal",
             "nullable": true,
             "label": "Revenue",
@@ -80,13 +80,13 @@
   "dataRevision": 7,
   "dataState": {
     "kind": "inline",
-    "specRevision": "sha256:d11b489cb402204e62e6eeab920262c77c39832d6863b3ad1c6d4d32455a44df",
+    "specRevision": "sha256:6382f1fca47722d5f278cd7cddbae43b16cfa04c907a889d7896b168a2655ff2",
     "dataRevision": 7,
     "generation": 3,
     "datasets": [
       {
         "id": "primary",
-        "specRevision": "sha256:d11b489cb402204e62e6eeab920262c77c39832d6863b3ad1c6d4d32455a44df",
+        "specRevision": "sha256:6382f1fca47722d5f278cd7cddbae43b16cfa04c907a889d7896b168a2655ff2",
         "dataRevision": 7,
         "generation": 3,
         "columns": ["order_month", "revenue"],

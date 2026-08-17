@@ -320,7 +320,7 @@ function benchmarkSignals(): Record<string, unknown> {
         title: `Benchmark Visual ${index}`,
         interaction: { kind: 'point_selection', toggle: true, mappings: [{ field: 'orders.status', value: 'label' }] },
         dimensions: ['status'],
-        measure: 'order_count',
+        metric: 'order_count',
         data: Array.from({ length: 24 }, (_, row) => ({ label: `Bucket ${row}`, value: index * 100 + row })),
       },
     ])),

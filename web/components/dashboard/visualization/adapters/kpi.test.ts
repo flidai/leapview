@@ -15,14 +15,14 @@ function envelope(current: number | null, comparison: number | null, goal: numbe
       kind: 'kpi',
       title: 'Revenue',
       datasets: [
-        { id: 'primary', fields: [{ id: 'value', role: 'measure', dataType: 'decimal', nullable: true, label: 'Revenue', format: { kind: 'currency', currency: 'USD' } }] },
-        { id: 'comparison', fields: [{ id: 'value', role: 'measure', dataType: 'decimal', nullable: true, label: 'Prior revenue', format: { kind: 'currency', currency: 'USD' } }] },
-        { id: 'goal', fields: [{ id: 'value', role: 'measure', dataType: 'decimal', nullable: true, label: 'Target', format: { kind: 'currency', currency: 'USD' } }] },
+        { id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: true, label: 'Revenue', format: { kind: 'currency', currency: 'USD' } }] },
+        { id: 'comparison', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: true, label: 'Prior revenue', format: { kind: 'currency', currency: 'USD' } }] },
+        { id: 'goal', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: true, label: 'Target', format: { kind: 'currency', currency: 'USD' } }] },
         {
           id: 'trend',
           fields: [
             { id: 'period', role: 'dimension', dataType: 'date', nullable: false, label: 'Month' },
-            { id: 'value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+            { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
           ],
         },
       ],

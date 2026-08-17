@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -128,13 +129,8 @@ func TestSemanticQueryColumnsUseModelMetadataInsteadOfPageValues(t *testing.T) {
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {
-				Label: "Orders", Fact: "orders", Aggregation: "count", Empty: "zero",
-				Unit: "orders", Format: "integer",
-			},
-		},
 		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Label: "Orders", Dataset: "orders", Aggregation: "count", Empty: "zero", Unit: "orders", Format: "integer"},
 			"return_rate": {Label: "Return rate", Unit: "percent", Format: "percent_1"},
 		},
 	}
@@ -153,9 +149,9 @@ func TestSemanticQueryColumnsUseModelMetadataInsteadOfPageValues(t *testing.T) {
 		columns[0].FieldRef == nil || columns[0].FieldRef.ID != "commerce.orders.created_at" {
 		t.Fatalf("dimension column = %#v", columns[0])
 	}
-	if columns[1].Type != "int64" || columns[1].Nullable || columns[1].Kind != "measure" ||
+	if columns[1].Type != "int64" || columns[1].Nullable || columns[1].Kind != "metric" ||
 		columns[1].Unit != "orders" || columns[1].Format != "integer" {
-		t.Fatalf("measure column = %#v", columns[1])
+		t.Fatalf("metric column = %#v", columns[1])
 	}
 	if columns[2].Type != "decimal" || !columns[2].Nullable || columns[2].Kind != "metric" ||
 		columns[2].Unit != "percent" || columns[2].Format != "percent_1" {
@@ -334,7 +330,7 @@ func TestSemanticRelationshipDTOParsesTypedEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("semanticRelationshipDTO: %v", err)
 	}
-	if got.ID != "orders_customers" || got.FromDataset != "orders" || got.FromField != "customer_id" || got.ToDataset != "customers" || got.ToField != "customer_id" || got.Cardinality != "many_to_one" || !got.Active {
+	if got.ID != "orders_customers" || got.FromDataset != "orders" || !reflect.DeepEqual(got.FromFields, []string{"customer_id"}) || got.ToDataset != "customers" || !reflect.DeepEqual(got.ToFields, []string{"customer_id"}) || got.Cardinality != "many_to_one" || !got.Active {
 		t.Fatalf("unexpected relationship: %#v", got)
 	}
 }

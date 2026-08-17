@@ -25,9 +25,8 @@ func projectModelTable(spec projectModelTableSpec) semanticmodel.Table {
 		SourceReads: copyStringSliceMap(spec.SourceReads),
 		SQL:         spec.SQL,
 		Transform:   spec.Transform,
-		Columns:     copyModelColumns(spec.Columns),
-		PrimaryKey:  spec.PrimaryKey,
-		Grain:       spec.Grain,
+		Entities:    spec.Entities,
+		GrainEntity: spec.Grain.Entity,
 		Dimensions:  map[string]semanticmodel.MetricDimension{},
 		Description: spec.Description,
 	}
@@ -35,17 +34,19 @@ func projectModelTable(spec projectModelTableSpec) semanticmodel.Table {
 		table.Dimensions[name] = semanticmodel.MetricDimension{
 			Label:       field.Label,
 			Description: field.Description,
-			Type:        field.Type,
-			Expr:        field.Expr,
-			Expression:  field.Expression,
+			Type:        canonicalDimensionTypeName(string(field.Datatype)),
+			Datatype:    field.Datatype,
+			AIContext:   field.AIContext,
 		}
-		if field.Type != "" {
+		if field.Datatype != "" {
 			if table.Columns == nil {
 				table.Columns = map[string]semanticmodel.ModelColumn{}
 			}
 			column := table.Columns[name]
-			column.Type = field.Type
+			column.Type = canonicalDimensionTypeName(string(field.Datatype))
+			column.Datatype = field.Datatype
 			column.Description = firstNonEmpty(column.Description, field.Description)
+			column.AIContext = field.AIContext
 			table.Columns[name] = column
 		}
 	}
@@ -210,9 +211,8 @@ func projectManifest(project Project) (manifest.Project, error) {
 			alias := sourceAliases[sourceName]
 			runtimeSources[alias] = source
 		}
-		model := &semanticmodel.Model{Name: name, Title: name, Connections: copyConnections(project.Connections), Sources: runtimeSources, Tables: translatedTablesForRuntime(runtimeTables, sourceAliases)}
+		model := &semanticmodel.Model{Name: name, Title: name, AIContext: project.SemanticModelAIContexts[name], Connections: copyConnections(project.Connections), Sources: runtimeSources, Tables: translatedTablesForRuntime(runtimeTables, sourceAliases)}
 		authoredSpec := spec
-		authoredSpec.Tables = authoredNamesByID(spec.Tables, project.ModelIDs)
 		if err := applySemanticModelSpec(model, authoredSpec); err != nil {
 			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
 		}
@@ -504,29 +504,175 @@ func addSourceAlias(aliases map[string]string, keyOwners map[string]string, key,
 }
 
 func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticModelSpec) error {
-	if len(spec.Tables) == 0 {
-		return fmt.Errorf("SemanticModel %q requires tables", model.Name)
+	if len(spec.Datasets) == 0 {
+		return fmt.Errorf("SemanticModel %q requires datasets", model.Name)
 	}
+	baseTables := model.Tables
 	tables := map[string]semanticmodel.Table{}
-	for _, tableName := range spec.Tables {
-		table, ok := model.Tables[tableName]
+	for datasetName, dataset := range spec.Datasets {
+		table, ok := baseTables[dataset.Model]
 		if !ok {
-			return fmt.Errorf("SemanticModel %q references unknown ModelTable %q", model.Name, tableName)
+			return fmt.Errorf("SemanticModel %q dataset %q references unknown Model %q", model.Name, datasetName, dataset.Model)
 		}
-		tables[tableName] = table
+		tables[datasetName] = table
 	}
-	measures := map[string]semanticmodel.MetricMeasure{}
-	for name, measure := range spec.Measures {
-		measure.Field = name
-		measure.Name = name
-		measures[name] = measure
+	relationships := make([]semanticmodel.Relationship, 0, len(spec.Relationships))
+	for id, relationship := range spec.Relationships {
+		fromDataset, fromFields, err := semanticRelationshipEndpointTuple(baseTables, spec.Datasets, relationship.From)
+		if err != nil {
+			return fmt.Errorf("SemanticModel %q relationship %q from: %w", model.Name, id, err)
+		}
+		toDataset, toFields, err := semanticRelationshipEndpointTuple(baseTables, spec.Datasets, relationship.To)
+		if err != nil {
+			return fmt.Errorf("SemanticModel %q relationship %q to: %w", model.Name, id, err)
+		}
+		cardinality := "many_to_one"
+		if semanticRelationshipEndpointUnique(baseTables, spec.Datasets, relationship.From) && semanticRelationshipEndpointUnique(baseTables, spec.Datasets, relationship.To) {
+			cardinality = "one_to_one"
+		}
+		from, to := "", ""
+		if len(fromFields) == 1 {
+			from = fromDataset + "." + fromFields[0]
+		}
+		if len(toFields) == 1 {
+			to = toDataset + "." + toFields[0]
+		}
+		relationships = append(relationships, semanticmodel.Relationship{ID: id, From: from, To: to, FromDataset: fromDataset, FromFields: fromFields, ToDataset: toDataset, ToFields: toFields, Cardinality: cardinality, Description: relationship.Description, AIContext: relationship.AIContext})
+	}
+	sort.SliceStable(relationships, func(i, j int) bool { return relationships[i].ID < relationships[j].ID })
+	dimensions := map[string]semanticmodel.SemanticDimension{}
+	for name, dimension := range spec.Dimensions {
+		converted := semanticmodel.SemanticDimension{Label: dimension.Label, Description: dimension.Description, Type: canonicalDimensionTypeName(string(dimension.Datatype)), Datatype: dimension.Datatype, Bindings: dimension.Bindings, AIContext: dimension.AIContext}
+		if dimension.Time != nil {
+			converted.NativeGrain = dimension.Time.NativeGrain
+			converted.Grains = append([]string(nil), dimension.Time.Grains...)
+			converted.Calendar = dimension.Time.Calendar
+			converted.Timezone = dimension.Time.Timezone
+		}
+		dimensions[name] = converted
+	}
+	metrics := map[string]semanticmodel.Metric{}
+	for name, metric := range spec.Metrics {
+		common := semanticmodel.Metric{Label: metric.Label, Description: metric.Description, Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden, AIContext: metric.AIContext}
+		switch metric.Type {
+		case "aggregate":
+			if metric.Input == nil {
+				return fmt.Errorf("metric %q aggregate input is required", name)
+			}
+			empty := metric.Empty
+			if empty == "" {
+				empty = "null"
+				if metric.Aggregation == "count" || metric.Aggregation == "count_distinct" {
+					empty = "zero"
+				}
+			}
+			common.Type, common.Dataset, common.Aggregation, common.Input = metric.Type, metric.Dataset, metric.Aggregation, metric.Input
+			common.Where, common.Empty, common.TimeDimension = append([]string(nil), metric.Where...), empty, metric.TimeDimension
+			metrics[name] = common
+		case "derived":
+			common.Type, common.Expression = metric.Type, metric.Expression
+			metrics[name] = common
+		case "ratio":
+			common.Type, common.Numerator, common.Denominator = metric.Type, metric.Numerator, metric.Denominator
+			metrics[name] = common
+		default:
+			return fmt.Errorf("metric %q has unsupported type %q", name, metric.Type)
+		}
 	}
 	model.Tables = tables
-	model.Relationships = append([]semanticmodel.Relationship{}, spec.Relationships...)
-	model.Dimensions = spec.Dimensions
-	model.Measures = measures
-	model.Metrics = spec.Metrics
+	model.Datasets = spec.Datasets
+	model.StructuredRelationships = spec.Relationships
+	model.Relationships = relationships
+	model.Dimensions = dimensions
+	model.Metrics = metrics
+	model.Filters = spec.Filters
 	return nil
+}
+
+func semanticRelationshipEndpointUnique(tables map[string]semanticmodel.Table, datasets map[string]semanticmodel.SemanticDatasetSpec, endpoint semanticmodel.RelationshipEndpointSpec) bool {
+	dataset, ok := datasets[endpoint.Dataset]
+	if !ok {
+		return false
+	}
+	table, ok := tables[dataset.Model]
+	if !ok {
+		return false
+	}
+	if endpoint.Entity != "" {
+		entity, ok := table.Entities[endpoint.Entity]
+		return ok && (entity.Type == "primary" || entity.Type == "unique")
+	}
+	if len(endpoint.Fields) == 0 {
+		return false
+	}
+	for _, entity := range table.Entities {
+		if (entity.Type == "primary" || entity.Type == "unique") && sameOrderedFields(entity.Fields, endpoint.Fields) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameOrderedFields(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func semanticRelationshipEndpoint(tables map[string]semanticmodel.Table, datasets map[string]semanticmodel.SemanticDatasetSpec, endpoint semanticmodel.RelationshipEndpointSpec) (string, error) {
+	dataset, fields, err := semanticRelationshipEndpointTuple(tables, datasets, endpoint)
+	if err != nil {
+		return "", err
+	}
+	if len(fields) != 1 {
+		return "", fmt.Errorf("composite relationship endpoints are not executable by the current planner")
+	}
+	return dataset + "." + fields[0], nil
+}
+
+func semanticRelationshipEndpointTuple(tables map[string]semanticmodel.Table, datasets map[string]semanticmodel.SemanticDatasetSpec, endpoint semanticmodel.RelationshipEndpointSpec) (string, []string, error) {
+	dataset, ok := datasets[endpoint.Dataset]
+	if !ok {
+		return "", nil, fmt.Errorf("unknown dataset %q", endpoint.Dataset)
+	}
+	if len(endpoint.Fields) > 0 {
+		return endpoint.Dataset, append([]string(nil), endpoint.Fields...), nil
+	}
+	if endpoint.Entity == "" {
+		return "", nil, fmt.Errorf("endpoint requires entity or fields")
+	}
+	table, ok := tables[dataset.Model]
+	if !ok {
+		return "", nil, fmt.Errorf("unknown Model %q", dataset.Model)
+	}
+	entity, ok := table.Entities[endpoint.Entity]
+	if !ok {
+		return "", nil, fmt.Errorf("entity %q is not declared on Model %q", endpoint.Entity, dataset.Model)
+	}
+	return endpoint.Dataset, append([]string(nil), entity.Fields...), nil
+}
+
+func canonicalDimensionTypeName(value string) string {
+	switch value {
+	case "String":
+		return "string"
+	case "Integer", "Decimal", "Float":
+		return "number"
+	case "Boolean":
+		return "boolean"
+	case "Date":
+		return "date"
+	case "Time", "DateTime", "DateTimeTz":
+		return "timestamp"
+	default:
+		return strings.ToLower(value)
+	}
 }
 
 func firstConnectionName(connections map[string]semanticmodel.Connection) string {

@@ -6,207 +6,279 @@ metadata:
   displayName: Visuals Semantic Model
   description: Rich Olist semantic model used for visual renderer and table QA coverage.
 spec:
-  tables:
-  - orders
-  - customers
-  - zip_geolocations
-  - delivery_routes
-  - spatial_load_points
+  datasets:
+    orders:
+      model: orders
+      defaultTimeDimension: purchase_date
+    customers:
+      model: customers
+    zip_geolocations:
+      model: zip_geolocations
+    delivery_routes:
+      model: delivery_routes
+    spatial_load_points:
+      model: spatial_load_points
   relationships:
-  - id: orders_customers
-    description: Links each order to the customer who placed it.
-    from: orders.customer_id
-    to: customers.customer_id
-    cardinality: many_to_one
-  - id: delivery_routes_orders
-    description: Applies governed order and customer filters to delivery-route vertices.
-    from: delivery_routes.order_id
-    to: orders.order_id
-    cardinality: many_to_one
+    orders_customers:
+      from:
+        dataset: orders
+        entity: customer
+      to:
+        dataset: customers
+        entity: customer
+      description: Links each order to the customer who placed it.
+    delivery_routes_orders:
+      from:
+        dataset: delivery_routes
+        entity: order
+      to:
+        dataset: orders
+        entity: order
+      description: Applies governed order and customer filters to delivery-route vertices.
+  filters:
+    missing_revenue_filter:
+      field: orders.status
+      operator: equals
+      value: comparison_fixture_without_rows
   dimensions:
     purchase_timestamp:
-      type: timestamp
+      datatype: DateTime
       bindings:
-        orders: {field: orders.purchase_timestamp}
+        orders:
+          field: orders.purchase_timestamp
+      time:
+        nativeGrain: second
+        grains:
+        - second
+        - minute
+        - hour
+        - day
+        - week
+        - month
+        - quarter
+        - year
+        calendar: iso8601
     purchase_date:
-      type: date
-      grains: [day, week, month]
+      datatype: Date
       bindings:
-        orders: {field: orders.purchase_date}
+        orders:
+          field: orders.purchase_date
+      time:
+        nativeGrain: day
+        grains:
+        - day
+        - week
+        - month
+        calendar: iso8601
     state:
-      type: string
+      datatype: String
       bindings:
         orders:
           field: customers.state
-          path: [orders_customers]
+          path:
+          - orders_customers
         delivery_routes:
           field: customers.state
-          path: [delivery_routes_orders, orders_customers]
+          path:
+          - delivery_routes_orders
+          - orders_customers
     order_status:
-      type: string
+      datatype: String
       bindings:
-        orders: {field: orders.status}
+        orders:
+          field: orders.status
     category:
-      type: string
+      datatype: String
       bindings:
-        orders: {field: orders.category}
+        orders:
+          field: orders.category
     delivered:
-      type: boolean
+      datatype: Boolean
       bindings:
-        orders: {field: orders.is_delivered}
+        orders:
+          field: orders.is_delivered
     delivery_days:
-      type: number
+      datatype: Integer
       bindings:
-        orders: {field: orders.delivery_days}
+        orders:
+          field: orders.delivery_days
     revenue_amount:
-      type: number
+      datatype: Decimal
       bindings:
-        orders: {field: orders.revenue}
-  measures:
+        orders:
+          field: orders.revenue
+  metrics:
     fixture_points:
+      type: aggregate
+      dataset: spatial_load_points
+      aggregation: count
+      input:
+        field: spatial_load_points.point_id
+      empty: zero
       label: Fixture points
       description: Count of deterministic locations in the spatial load fixture.
-      fact: spatial_load_points
-      aggregation: count
-      empty: zero
-      unit: points
       format: integer
     order_count:
+      type: aggregate
+      dataset: orders
+      aggregation: count_distinct
+      input:
+        field: orders.order_id
+      empty: zero
       label: Orders
       description: Distinct order count.
-      fact: orders
-      aggregation: count_distinct
-      input: {field: orders.order_id}
-      empty: zero
-      unit: orders
       format: integer
     revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input:
+        field: orders.revenue
+      empty: zero
       label: Revenue
       description: Total payment revenue.
-      fact: orders
-      aggregation: sum
-      input: {field: orders.revenue}
-      empty: zero
       unit: R$
       format: currency
     revenue_min:
+      type: aggregate
+      dataset: orders
+      aggregation: min
+      input:
+        field: orders.revenue
+      empty: 'null'
       label: Revenue min
       description: Minimum order revenue.
-      fact: orders
-      aggregation: min
-      input: {field: orders.revenue}
-      empty: "null"
       unit: R$
       format: currency
     revenue_max:
+      type: aggregate
+      dataset: orders
+      aggregation: max
+      input:
+        field: orders.revenue
+      empty: 'null'
       label: Revenue max
       description: Maximum order revenue.
-      fact: orders
-      aggregation: max
-      input: {field: orders.revenue}
-      empty: "null"
       unit: R$
       format: currency
     missing_revenue:
-      label: Missing revenue comparison
-      description: Documentation-only comparison measure with no matching rows.
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: sum
-      input: {field: orders.revenue}
-      filters:
-      - field: orders.status
-        operator: equals
-        values: [comparison_fixture_without_rows]
-      empty: "null"
+      input:
+        field: orders.revenue
+      where:
+      - missing_revenue_filter
+      empty: 'null'
+      label: Missing revenue comparison
+      description: Documentation-only comparison metric with no matching rows.
       unit: R$
       format: currency
     review_score:
+      type: aggregate
+      dataset: orders
+      aggregation: avg
+      input:
+        field: orders.review_score
+      empty: 'null'
       label: Review
       description: Average order review score.
-      fact: orders
-      aggregation: avg
-      input: {field: orders.review_score}
-      empty: "null"
       format: decimal
     delivery_days:
+      type: aggregate
+      dataset: orders
+      aggregation: avg
+      input:
+        field: orders.delivery_days
+      empty: 'null'
       label: Delivery days
       description: Average delivery duration in days.
-      fact: orders
-      aggregation: avg
-      input: {field: orders.delivery_days}
-      empty: "null"
       format: decimal
     delivery_days_min:
+      type: aggregate
+      dataset: orders
+      aggregation: min
+      input:
+        field: orders.delivery_days
+      empty: 'null'
       label: Delivery min
       description: Minimum delivery duration in days.
-      fact: orders
-      aggregation: min
-      input: {field: orders.delivery_days}
-      empty: "null"
       format: decimal
     delivery_days_max:
+      type: aggregate
+      dataset: orders
+      aggregation: max
+      input:
+        field: orders.delivery_days
+      empty: 'null'
       label: Delivery max
       description: Maximum delivery duration in days.
-      fact: orders
-      aggregation: max
-      input: {field: orders.delivery_days}
-      empty: "null"
       format: decimal
     route_orders:
+      type: aggregate
+      dataset: delivery_routes
+      aggregation: count_distinct
+      input:
+        field: delivery_routes.order_id
+      empty: zero
       label: Route orders
       description: Distinct orders aggregated for a seller-to-customer ZIP corridor.
-      fact: delivery_routes
-      aggregation: count_distinct
-      input: {field: delivery_routes.order_id}
-      empty: zero
-      unit: orders
       format: integer
     route_revenue:
+      type: aggregate
+      dataset: delivery_routes
+      aggregation: sum
+      input:
+        field: delivery_routes.route_revenue
+      empty: zero
       label: Route revenue
       description: Seller-allocated revenue for actual order delivery routes.
-      fact: delivery_routes
-      aggregation: sum
-      input: {field: delivery_routes.route_revenue}
-      empty: zero
       unit: R$
       format: currency
-  metrics:
     aov:
+      type: ratio
+      numerator: revenue
+      denominator: order_count
       label: AOV
       description: Average order value.
-      expression: safe_divide(${revenue}, ${order_count})
       unit: R$
       format: currency
     revenue_baseline:
+      type: derived
       label: Revenue baseline
       description: Filter-aligned baseline used by KPI comparison examples.
       expression: ${revenue} * 0.9
       unit: R$
       format: currency
     revenue_target:
+      type: derived
       label: Revenue target
       description: Filter-aligned target used by KPI goal examples.
       expression: ${revenue} * 1.1
       unit: R$
       format: currency
     revenue_q1:
+      type: derived
       label: Revenue lower bound
       description: Minimum order revenue used as the lower showcase bound.
       expression: ${revenue_min}
       unit: R$
       format: currency
     revenue_q3:
+      type: derived
       label: Revenue upper bound
       description: Maximum order revenue used as the upper showcase bound.
       expression: ${revenue_max}
       unit: R$
       format: currency
     delivery_days_q1:
+      type: derived
       label: Delivery lower bound
       description: Minimum delivery duration used as the lower showcase bound.
       expression: ${delivery_days_min}
       format: decimal
     delivery_days_q3:
+      type: derived
       label: Delivery upper bound
       description: Maximum delivery duration used as the upper showcase bound.
       expression: ${delivery_days_max}

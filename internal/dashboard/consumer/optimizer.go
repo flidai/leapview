@@ -223,9 +223,9 @@ func semanticRequest(query dataquery.Query) semanticquery.Request {
 	for index, field := range query.Fields {
 		dimensions[index] = semanticquery.Field{Field: field.Field, Alias: field.Alias}
 	}
-	measures := make([]semanticquery.Field, len(query.Measures))
-	for index, field := range query.Measures {
-		measures[index] = semanticquery.Field{Field: field.Field, Alias: field.Alias}
+	metrics := make([]semanticquery.Field, len(query.Metrics))
+	for index, field := range query.Metrics {
+		metrics[index] = semanticquery.Field{Field: field.Field, Alias: field.Alias}
 	}
 	filters := make([]semanticquery.Filter, len(query.Filters))
 	for index, filter := range query.Filters {
@@ -234,7 +234,7 @@ func semanticRequest(query dataquery.Query) semanticquery.Request {
 	return semanticquery.Request{
 		Table:      query.Target,
 		Dimensions: dimensions,
-		Measures:   measures,
+		Metrics:    metrics,
 		Time:       semanticquery.Time{Field: query.Time.Field, Grain: query.Time.Grain, Alias: query.Time.Alias},
 		Filters:    filters,
 		Limit:      query.Limit,

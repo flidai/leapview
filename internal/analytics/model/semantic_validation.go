@@ -12,18 +12,31 @@ var supportedAggregations = map[string]struct{}{
 }
 
 var supportedSemanticDimensionTypes = map[string]struct{}{
-	"string": {}, "number": {}, "boolean": {}, "date": {}, "timestamp": {},
+	"string": {}, "number": {}, "boolean": {}, "date": {}, "timestamp": {}, "opaque": {},
 }
 
 var supportedTimeGrains = map[string]struct{}{
-	"day": {}, "week": {}, "month": {}, "quarter": {}, "year": {},
+	"second": {}, "minute": {}, "hour": {}, "day": {}, "week": {}, "month": {}, "quarter": {}, "year": {},
+}
+
+var timeGrainOrder = map[string]int{
+	"second": 0, "minute": 1, "hour": 2, "day": 3, "week": 4, "month": 5, "quarter": 6, "year": 7,
+}
+
+func containsTimeGrain(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) FactNames() []string {
 	seen := map[string]struct{}{}
-	for _, measure := range m.Measures {
-		if measure.Fact != "" {
-			seen[measure.Fact] = struct{}{}
+	for _, metric := range m.Metrics {
+		if metric.Type == "aggregate" && metric.Dataset != "" {
+			seen[metric.Dataset] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(seen))
@@ -34,18 +47,25 @@ func (m *Model) FactNames() []string {
 	return out
 }
 
+// ValidateSemanticGraph validates relationships, dimensions, filters, and
+// metric definitions using only the semantic graph. Unlike ValidateAuthored,
+// it does not require project sources or connection credentials and is used
+// by semantic-model import adapters before project binding is available.
+func (m *Model) ValidateSemanticGraph() error {
+	if m == nil {
+		return fmt.Errorf("semantic model is required")
+	}
+	return m.validateSemanticGraph()
+}
+
 func (m *Model) validateSemanticDefinitions() error {
-	for name, measure := range m.Measures {
+	for name, filter := range m.Filters {
 		if err := validateSemanticIdentifier(name); err != nil {
-			return fmt.Errorf("semantic model measure %q is invalid: %w", name, err)
+			return fmt.Errorf("semantic filter %q is invalid: %w", name, err)
 		}
-		measure.Name = name
-		measure.Field = name
-		measure.Label = defaultString(measure.Label, titleFromIdentifier(name))
-		if err := m.validateMeasure(name, measure); err != nil {
+		if err := m.validateSemanticFilterNode(name, filter); err != nil {
 			return err
 		}
-		m.Measures[name] = measure
 	}
 	facts := map[string]struct{}{}
 	for _, fact := range m.FactNames() {
@@ -64,12 +84,19 @@ func (m *Model) validateSemanticDefinitions() error {
 			dimension.Calendar = "gregorian"
 		}
 		if dimension.WeekStart == "" {
-			dimension.WeekStart = "monday"
+			if dimension.Calendar == "iso8601" {
+				dimension.WeekStart = "monday"
+			} else {
+				dimension.WeekStart = "sunday"
+			}
+		}
+		if dimension.Calendar == "iso8601" && dimension.WeekStart != "monday" {
+			return fmt.Errorf("semantic dimension %q iso8601 calendar requires monday week boundary", name)
 		}
 		if _, err := time.LoadLocation(dimension.Timezone); err != nil {
 			return fmt.Errorf("semantic dimension %q has invalid timezone %q", name, dimension.Timezone)
 		}
-		if dimension.Calendar != "gregorian" {
+		if dimension.Calendar != "gregorian" && dimension.Calendar != "iso8601" {
 			return fmt.Errorf("semantic dimension %q has unsupported calendar %q", name, dimension.Calendar)
 		}
 		switch dimension.WeekStart {
@@ -80,12 +107,30 @@ func (m *Model) validateSemanticDefinitions() error {
 		if _, ok := supportedSemanticDimensionTypes[dimension.Type]; !ok {
 			return fmt.Errorf("semantic dimension %q has unsupported type %q", name, dimension.Type)
 		}
+		if dimension.NativeGrain != "" {
+			if dimension.Type != "date" && dimension.Type != "timestamp" {
+				return fmt.Errorf("semantic dimension %q defines native grain for type %q", name, dimension.Type)
+			}
+			if _, ok := timeGrainOrder[dimension.NativeGrain]; !ok {
+				return fmt.Errorf("semantic dimension %q has unsupported native time grain %q", name, dimension.NativeGrain)
+			}
+		}
 		if len(dimension.Grains) > 0 && dimension.Type != "date" && dimension.Type != "timestamp" {
 			return fmt.Errorf("semantic dimension %q defines time grains for type %q", name, dimension.Type)
 		}
 		for _, grain := range dimension.Grains {
 			if _, ok := supportedTimeGrains[grain]; !ok {
 				return fmt.Errorf("semantic dimension %q has unsupported time grain %q", name, grain)
+			}
+		}
+		if dimension.NativeGrain != "" {
+			if !containsTimeGrain(dimension.Grains, dimension.NativeGrain) {
+				return fmt.Errorf("semantic dimension %q native grain %q is not declared in grains", name, dimension.NativeGrain)
+			}
+			for _, grain := range dimension.Grains {
+				if timeGrainOrder[grain] < timeGrainOrder[dimension.NativeGrain] {
+					return fmt.Errorf("semantic dimension %q grain %q is finer than native grain %q", name, grain, dimension.NativeGrain)
+				}
 			}
 		}
 		if len(dimension.Bindings) == 0 {
@@ -99,8 +144,8 @@ func (m *Model) validateSemanticDefinitions() error {
 			if err != nil {
 				return fmt.Errorf("semantic dimension %q binding for fact %q: %w", name, fact, err)
 			}
-			if physicalType := canonicalDimensionType(physical.Type); physicalType != "" && !compatibleDimensionTypes(dimension.Type, physicalType) {
-				return fmt.Errorf("semantic dimension %q type %q is incompatible with binding %q type %q", name, dimension.Type, binding.Field, physical.Type)
+			if !compatibleConformedBindingTypes(dimension, physical) {
+				return fmt.Errorf("semantic dimension %q logical datatype %q is incompatible with binding %q logical datatype %q", name, dimension.Datatype, binding.Field, physical.Datatype)
 			}
 			if _, err := m.ResolveBindingPath(fact, binding); err != nil {
 				return fmt.Errorf("semantic dimension %q binding for fact %q: %w", name, fact, err)
@@ -108,7 +153,136 @@ func (m *Model) validateSemanticDefinitions() error {
 		}
 		m.Dimensions[name] = dimension
 	}
+	for datasetName, dataset := range m.Datasets {
+		if _, ok := m.Tables[datasetName]; !ok {
+			return fmt.Errorf("semantic dataset %q has no runtime table", datasetName)
+		}
+		if dataset.DefaultTimeDimension == "" {
+			continue
+		}
+		dimension, ok := m.Dimensions[dataset.DefaultTimeDimension]
+		if !ok {
+			return fmt.Errorf("semantic dataset %q default time dimension %q is unknown", datasetName, dataset.DefaultTimeDimension)
+		}
+		if dimension.Type != "date" && dimension.Type != "timestamp" {
+			return fmt.Errorf("semantic dataset %q default time dimension %q is not temporal", datasetName, dataset.DefaultTimeDimension)
+		}
+		if _, ok := dimension.Bindings[datasetName]; !ok {
+			return fmt.Errorf("semantic dataset %q default time dimension %q has no binding", datasetName, dataset.DefaultTimeDimension)
+		}
+	}
 	return m.validateMetrics()
+}
+
+func (m *Model) validateSemanticFilterNode(name string, filter SemanticFilterSpec) error {
+	branches := 0
+	if len(filter.All) > 0 {
+		branches++
+		for _, child := range filter.All {
+			if err := m.validateSemanticFilterNode(name, child); err != nil {
+				return err
+			}
+		}
+	}
+	if len(filter.Any) > 0 {
+		branches++
+		for _, child := range filter.Any {
+			if err := m.validateSemanticFilterNode(name, child); err != nil {
+				return err
+			}
+		}
+	}
+	if filter.Not != nil {
+		branches++
+		if err := m.validateSemanticFilterNode(name, *filter.Not); err != nil {
+			return err
+		}
+	}
+	if filter.Field != "" || filter.Operator != "" {
+		branches++
+		if filter.Field == "" || filter.Operator == "" {
+			return fmt.Errorf("semantic filter %q leaf requires field and operator", name)
+		}
+		dimension, err := m.ResolveDimension(filter.Field)
+		if err != nil {
+			return fmt.Errorf("semantic filter %q: %w", name, err)
+		}
+		switch filter.Operator {
+		case "equals", "not_equals", "less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal":
+			if filter.Value == nil {
+				return fmt.Errorf("semantic filter %q operator %q requires a value", name, filter.Operator)
+			}
+		case "in", "not_in":
+			values, ok := semanticFilterValues(filter.Value)
+			if !ok || len(values) == 0 {
+				return fmt.Errorf("semantic filter %q operator %q requires a non-empty value list", name, filter.Operator)
+			}
+			for _, value := range values {
+				if _, err := CoerceSemanticLiteral(value, dimension); err != nil {
+					return fmt.Errorf("semantic filter %q: %w", name, err)
+				}
+			}
+		case "is_null", "is_not_null":
+			if filter.Value != nil {
+				return fmt.Errorf("semantic filter %q operator %q does not accept a value", name, filter.Operator)
+			}
+		default:
+			return fmt.Errorf("semantic filter %q has unsupported operator %q", name, filter.Operator)
+		}
+		if filter.Operator != "is_null" && filter.Operator != "is_not_null" && filter.Operator != "in" && filter.Operator != "not_in" {
+			if _, err := CoerceSemanticLiteral(filter.Value, dimension); err != nil {
+				return fmt.Errorf("semantic filter %q: %w", name, err)
+			}
+		}
+		for _, relationshipID := range filter.Path {
+			if _, ok := m.RelationshipByID(relationshipID); !ok {
+				return fmt.Errorf("semantic filter %q references unknown relationship path %q", name, relationshipID)
+			}
+		}
+	}
+	if branches != 1 {
+		return fmt.Errorf("semantic filter %q must contain exactly one leaf or boolean node", name)
+	}
+	return nil
+}
+
+func semanticFilterValues(value any) ([]any, bool) {
+	switch values := value.(type) {
+	case []any:
+		return values, true
+	case []string:
+		out := make([]any, len(values))
+		for index, value := range values {
+			out[index] = value
+		}
+		return out, true
+	case []int:
+		out := make([]any, len(values))
+		for index, value := range values {
+			out[index] = value
+		}
+		return out, true
+	case []int64:
+		out := make([]any, len(values))
+		for index, value := range values {
+			out[index] = value
+		}
+		return out, true
+	case []float64:
+		out := make([]any, len(values))
+		for index, value := range values {
+			out[index] = value
+		}
+		return out, true
+	case []bool:
+		out := make([]any, len(values))
+		for index, value := range values {
+			out[index] = value
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 func canonicalDimensionType(value string) string {
@@ -136,103 +310,93 @@ func compatibleDimensionTypes(canonical, physical string) bool {
 	return (canonical == "date" || canonical == "timestamp") && (physical == "date" || physical == "timestamp")
 }
 
-func (m *Model) validateMeasure(name string, measure MetricMeasure) error {
-	if _, ok := m.Tables[measure.Fact]; !ok {
-		return fmt.Errorf("semantic measure %q references unknown fact table %q", name, measure.Fact)
-	}
-	if _, ok := supportedAggregations[measure.Aggregation]; !ok {
-		return fmt.Errorf("semantic measure %q has unsupported aggregation %q", name, measure.Aggregation)
-	}
-	if measure.Empty != "zero" && measure.Empty != "null" {
-		return fmt.Errorf("semantic measure %q empty must be zero or null", name)
-	}
-	if measure.Aggregation == "count" || measure.Aggregation == "count_distinct" {
-		if measure.Empty != "zero" {
-			return fmt.Errorf("semantic measure %q aggregation %s requires empty: zero", name, measure.Aggregation)
+// compatibleConformedBindingTypes keeps the portable logical datatype exact
+// for conformed dimensions. Legacy dimensions that omit datatype continue to
+// use the existing broad category check, but once either side declares the
+// logical contract, both sides must declare the same type. In particular,
+// Date, DateTime, and DateTimeTz are not interchangeable timestamp aliases.
+func compatibleConformedBindingTypes(dimension SemanticDimension, physical MetricDimension) bool {
+	if dimension.Datatype != "" || physical.Datatype != "" {
+		if dimension.Datatype == "" || physical.Datatype == "" {
+			return false
 		}
-	}
-	hasField := strings.TrimSpace(measure.Input.Field) != ""
-	hasExpression := strings.TrimSpace(measure.Input.Expression) != ""
-	if measure.Aggregation == "count" {
-		if hasField || hasExpression {
-			return fmt.Errorf("semantic measure %q count must not define input", name)
+		if dimension.Datatype == physical.Datatype {
+			return true
 		}
-	} else if hasField == hasExpression {
-		return fmt.Errorf("semantic measure %q requires exactly one input field or expression", name)
+		return false
 	}
-	refs := []string{}
-	if hasField {
-		refs = append(refs, measure.Input.Field)
-	}
-	if hasExpression {
-		expression, err := ParseExpression(measure.Input.Expression)
-		if err != nil {
-			return fmt.Errorf("semantic measure %q input expression: %w", name, err)
-		}
-		for _, function := range expression.Functions() {
-			if function == "safe_divide" {
-				return fmt.Errorf("semantic measure %q input expression function %q is metric-only", name, function)
-			}
-		}
-		refs = append(refs, expression.References()...)
-	}
-	for _, ref := range refs {
-		dimension, err := m.ResolveDimension(ref)
-		if err != nil {
-			return fmt.Errorf("semantic measure %q input: %w", name, err)
-		}
-		if dimension.Table != measure.Fact {
-			return fmt.Errorf("semantic measure %q input field %q is not owned by fact %q", name, ref, measure.Fact)
-		}
-	}
-	for index, filter := range measure.Filters {
-		if _, err := m.ResolveDimension(filter.Field); err != nil {
-			return fmt.Errorf("semantic measure %q filter %d: %w", name, index, err)
-		}
-		if err := validateMeasureFilter(filter); err != nil {
-			return fmt.Errorf("semantic measure %q filter %d: %w", name, index, err)
-		}
-		dimension, _ := m.ResolveDimension(filter.Field)
-		if _, err := m.SafeRelationshipPath(measure.Fact, dimension.Table); err != nil {
-			return fmt.Errorf("semantic measure %q filter %d: %w", name, index, err)
-		}
-	}
-	return nil
-}
-
-func validateMeasureFilter(filter MeasureFilter) error {
-	switch filter.Operator {
-	case "equals", "in", "contains", "starts_with", "greater_than_or_equal", "less_than":
-	default:
-		return fmt.Errorf("unsupported operator %q", filter.Operator)
-	}
-	if len(filter.Values) == 0 {
-		return fmt.Errorf("filter values are required")
-	}
-	return nil
+	physicalType := canonicalDimensionType(physical.Type)
+	return physicalType == "" || compatibleDimensionTypes(dimension.Type, physicalType)
 }
 
 func (m *Model) validateMetrics() error {
-	parsed := map[string]Expression{}
+	dependencies := map[string][]string{}
 	for name, metric := range m.Metrics {
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("semantic metric %q is invalid: %w", name, err)
 		}
 		metric.Name = name
 		metric.Label = defaultString(metric.Label, titleFromIdentifier(name))
-		expression, err := ParseExpression(metric.Expression)
-		if err != nil {
-			return fmt.Errorf("semantic metric %q: %w", name, err)
-		}
-		for _, ref := range expression.References() {
-			if _, ok := m.Measures[ref]; ok {
-				continue
+		var refs []string
+		switch metric.Type {
+		case "aggregate":
+			if _, ok := m.Tables[metric.Dataset]; !ok {
+				return fmt.Errorf("semantic metric %q references unknown dataset %q", name, metric.Dataset)
 			}
+			if metric.Aggregation == "count" && metric.Input != nil && strings.TrimSpace(metric.Input.Field) != "" && strings.TrimSpace(metric.Input.Expression) != "" {
+				return fmt.Errorf("semantic metric %q count requires at most one input", name)
+			}
+			if metric.Input == nil || strings.TrimSpace(metric.Input.Field) == "" {
+				return fmt.Errorf("semantic metric %q aggregate input is required", name)
+			}
+			input, err := m.ResolveDimension(metric.Input.Field)
+			if err != nil {
+				return fmt.Errorf("semantic metric %q aggregate input: %w", name, err)
+			}
+			if input.Table != metric.Dataset {
+				return fmt.Errorf("semantic metric %q aggregate input field %q is not owned by dataset %q", name, metric.Input.Field, metric.Dataset)
+			}
+			if metric.TimeDimension != "" {
+				dimension, ok := m.Dimensions[metric.TimeDimension]
+				if !ok {
+					return fmt.Errorf("semantic metric %q time dimension %q is unknown", name, metric.TimeDimension)
+				}
+				if dimension.Type != "date" && dimension.Type != "timestamp" {
+					return fmt.Errorf("semantic metric %q time dimension %q is not temporal", name, metric.TimeDimension)
+				}
+				if _, ok := dimension.Bindings[metric.Dataset]; !ok {
+					return fmt.Errorf("semantic metric %q time dimension %q has no binding for dataset %q", name, metric.TimeDimension, metric.Dataset)
+				}
+			}
+			for _, filter := range metric.Where {
+				definition, ok := m.Filters[filter]
+				if !ok {
+					return fmt.Errorf("semantic metric %q references unknown semantic filter %q", name, filter)
+				}
+				if err := m.validateMetricFilterReachability(name, metric.Dataset, filter, definition); err != nil {
+					return err
+				}
+			}
+		case "derived":
+			expression, err := ParseExpression(metric.Expression)
+			if err != nil {
+				return fmt.Errorf("semantic metric %q: %w", name, err)
+			}
+			refs = expression.References()
+		case "ratio":
+			refs = []string{metric.Numerator, metric.Denominator}
+			if metric.Numerator == "" || metric.Denominator == "" {
+				return fmt.Errorf("semantic metric %q ratio requires numerator and denominator", name)
+			}
+		default:
+			return fmt.Errorf("semantic metric %q has unsupported type %q", name, metric.Type)
+		}
+		dependencies[name] = append([]string(nil), refs...)
+		for _, ref := range refs {
 			if _, ok := m.Metrics[ref]; !ok {
-				return fmt.Errorf("semantic metric %q references unknown measure or metric %q", name, ref)
+				return fmt.Errorf("semantic metric %q references unknown metric %q", name, ref)
 			}
 		}
-		parsed[name] = expression
 		m.Metrics[name] = metric
 	}
 	state := map[string]int{}
@@ -245,8 +409,8 @@ func (m *Model) validateMetrics() error {
 			return nil
 		}
 		state[name] = 1
-		for _, ref := range parsed[name].References() {
-			if _, ok := parsed[ref]; ok {
+		for _, ref := range dependencies[name] {
+			if _, ok := dependencies[ref]; ok {
 				if err := visit(ref); err != nil {
 					return err
 				}
@@ -255,10 +419,54 @@ func (m *Model) validateMetrics() error {
 		state[name] = 2
 		return nil
 	}
-	for name := range parsed {
+	for name := range dependencies {
 		if err := visit(name); err != nil {
 			return err
 		}
+	}
+	return m.validateMetricUnits()
+}
+
+// validateMetricFilterReachability proves every leaf in a named filter tree
+// against the aggregate metric's root dataset. A leaf path is either omitted,
+// in which case SafeRelationshipPath enforces the exactly-one-safe-route
+// rule, or explicit, in which case ResolveBindingPath requires a complete safe
+// route ending at the leaf's field table. The recursion keeps composed all/any/
+// not filters subject to the same proof.
+func (m *Model) validateMetricFilterReachability(metricName, root, filterName string, filter SemanticFilterSpec) error {
+	if len(filter.All) > 0 {
+		for index, child := range filter.All {
+			if err := m.validateMetricFilterReachability(metricName, root, fmt.Sprintf("%s.all[%d]", filterName, index), child); err != nil {
+				return err
+			}
+		}
+	}
+	if len(filter.Any) > 0 {
+		for index, child := range filter.Any {
+			if err := m.validateMetricFilterReachability(metricName, root, fmt.Sprintf("%s.any[%d]", filterName, index), child); err != nil {
+				return err
+			}
+		}
+	}
+	if filter.Not != nil {
+		if err := m.validateMetricFilterReachability(metricName, root, filterName+".not", *filter.Not); err != nil {
+			return err
+		}
+	}
+	if filter.Field == "" && filter.Operator == "" {
+		return nil
+	}
+	dimension, err := m.ResolveDimension(filter.Field)
+	if err != nil {
+		return fmt.Errorf("semantic metric %q filter %q leaf: %w", metricName, filterName, err)
+	}
+	binding := DimensionBinding{Field: filter.Field, Path: append([]string(nil), filter.Path...)}
+	if len(filter.Path) == 0 {
+		if _, err := m.SafeRelationshipPath(root, dimension.Table); err != nil {
+			return fmt.Errorf("semantic metric %q filter %q leaf: %w", metricName, filterName, err)
+		}
+	} else if _, err := m.ResolveBindingPath(root, binding); err != nil {
+		return fmt.Errorf("semantic metric %q filter %q leaf: explicit path: %w", metricName, filterName, err)
 	}
 	return nil
 }
@@ -272,14 +480,15 @@ func (m *Model) ResolveBindingPath(fact string, binding DimensionBinding) ([]Rel
 		return m.SafeRelationshipPath(fact, dimension.Table)
 	}
 	current := fact
+	visited := map[string]struct{}{fact: {}}
 	path := make([]Relationship, 0, len(binding.Path))
 	for _, id := range binding.Path {
 		relationship, ok := m.RelationshipByID(id)
 		if !ok {
 			return nil, fmt.Errorf("unknown relationship %q", id)
 		}
-		fromTable, _, _ := splitSemanticField(relationship.From)
-		toTable, _, _ := splitSemanticField(relationship.To)
+		fromTable, _, _ := relationshipEndpoint(relationship, true)
+		toTable, _, _ := relationshipEndpoint(relationship, false)
 		switch {
 		case current == fromTable:
 			current = toTable
@@ -288,6 +497,10 @@ func (m *Model) ResolveBindingPath(fact string, binding DimensionBinding) ([]Rel
 		default:
 			return nil, fmt.Errorf("relationship %q does not safely continue from %q", id, current)
 		}
+		if _, exists := visited[current]; exists {
+			return nil, fmt.Errorf("relationship path revisits dataset %q", current)
+		}
+		visited[current] = struct{}{}
 		path = append(path, relationship)
 	}
 	if current != dimension.Table {

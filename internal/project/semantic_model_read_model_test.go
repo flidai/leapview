@@ -13,36 +13,43 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		Description: "Sales model",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				PrimaryKey: "order_id",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"status": {Label: "Status", Type: "string"},
+					"status": {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
-			"customers": {PrimaryKey: "customer_id"},
+			"customers": {Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count"},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Dataset: "orders", Aggregation: "count"},
 		},
-		Relationships: []semanticmodel.Relationship{{
-			ID: "orders_customer", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one",
-		}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "customers": {Model: "customers"},
+		},
+		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
+			"orders_customer": {From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Fields: []string{"customer_id"}}, To: semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Fields: []string{"customer_id"}}},
+		},
 	}
 
 	payload := SemanticModelAssetPayload(model)
-	tables, ok := payload["Tables"].(map[string]any)
-	if !ok || len(tables) != 2 {
-		t.Fatalf("tables = %#v, want two projected tables", payload["Tables"])
+	datasets, ok := payload["Datasets"].(map[string]any)
+	if !ok || len(datasets) != 2 {
+		t.Fatalf("datasets = %#v, want two projected datasets", payload["Datasets"])
 	}
-	measures, ok := payload["Measures"].(map[string]any)
-	if !ok || len(measures) != 1 {
-		t.Fatalf("measures = %#v, want one projected measure", payload["Measures"])
+	datasetDetails, ok := payload["DatasetDetails"].(map[string]any)
+	if !ok || len(datasetDetails) != 2 {
+		t.Fatalf("dataset details = %#v, want two physical projections", payload["DatasetDetails"])
 	}
-	relationships, ok := payload["Relationships"].([]any)
+	metrics, ok := payload["Metrics"].(map[string]any)
+	if !ok || len(metrics) != 1 {
+		t.Fatalf("metrics = %#v, want one projected metric", payload["Metrics"])
+	}
+	relationships, ok := payload["StructuredRelationships"].(map[string]any)
 	if !ok || len(relationships) != 1 {
-		t.Fatalf("relationships = %#v, want one projected relationship", payload["Relationships"])
+		t.Fatalf("structured relationships = %#v, want one projected relationship", payload["StructuredRelationships"])
 	}
-	orders, ok := tables["orders"].(map[string]any)
-	if !ok || orders["PrimaryKey"] != "order_id" {
-		t.Fatalf("orders table = %#v, want primary key", tables["orders"])
+	orders, ok := datasetDetails["orders"].(map[string]any)
+	if !ok || orders["GrainEntity"] != "order_id" {
+		t.Fatalf("orders dataset = %#v, want grain entity", datasets["orders"])
 	}
 }

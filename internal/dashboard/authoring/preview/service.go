@@ -105,10 +105,10 @@ type PreviewRequest struct {
 // SemanticServingStateEvidence binds the returned draft output to the exact
 // active runtime generation and semantic model used for compilation/query.
 type SemanticServingStateEvidence struct {
-	SemanticModel      string                    `json:"semanticModel"`
-	RuntimeModel       string                    `json:"runtimeModel"`
-	Identity           graph.ServingIdentity     `json:"identity"`
-	DuckLakeSnapshotID int64                     `json:"duckLakeSnapshotId"`
+	SemanticModel      string                `json:"semanticModel"`
+	RuntimeModel       string                `json:"runtimeModel"`
+	Identity           graph.ServingIdentity `json:"identity"`
+	DuckLakeSnapshotID int64                 `json:"duckLakeSnapshotId"`
 }
 
 // Preview is the successful read-only preview result. Revision is the exact

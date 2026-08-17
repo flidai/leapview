@@ -20,7 +20,7 @@ func TestCompilePreservesInputAndIsDeterministic(t *testing.T) {
 			},
 		},
 		Visuals: dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.status", "order_count"}}},
+			"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.status"}, Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "order_count"}}}},
 		}),
 		Pages: []dashboard.Page{{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{{ID: "orders", Kind: "visual", Visual: "orders", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 4, RowSpan: 4}}}}},
 	}
@@ -34,7 +34,7 @@ func TestCompilePreservesInputAndIsDeterministic(t *testing.T) {
 			Tables: map[string]semanticmodel.Table{
 				"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string"}}},
 			},
-			Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Input: semanticmodel.MeasureInput{Field: "orders.status"}, Empty: "zero"}},
+			Metrics: map[string]semanticmodel.Metric{"order_count": {Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}},
 		},
 	}
 

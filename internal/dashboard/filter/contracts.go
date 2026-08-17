@@ -33,7 +33,7 @@ type Definition struct {
 	Label       string            `json:"label" yaml:"label"`
 	Description string            `json:"description,omitempty" yaml:"description,omitempty"`
 	Field       string            `json:"field" yaml:"field"`
-	Fact        string            `json:"fact,omitempty" yaml:"fact,omitempty"`
+	Fact        string            `json:"dataset,omitempty" yaml:"dataset,omitempty"`
 	ValueKind   ValueKind         `json:"valueKind,omitempty" yaml:"-"`
 	Time        TimeSemantics     `json:"time,omitempty" yaml:"-"`
 	Predicates  []PredicatePolicy `json:"predicates" yaml:"predicates"`

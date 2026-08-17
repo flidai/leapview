@@ -1,17 +1,30 @@
 {
   "$defs": {
+    "#AIContext": {
+      "additionalProperties": false,
+      "properties": {
+        "examples": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "synonyms": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "#APIVersion": {
       "const": "leapview.dev/v1"
     },
-    "#FieldRef": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
-      "type": "string"
-    },
-    "#Identifier": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-      "type": "string"
-    },
-    "#Measure": {
+    "#AggregateMetric": {
       "additionalProperties": false,
       "properties": {
         "aggregation": {
@@ -24,6 +37,12 @@
             "max"
           ]
         },
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "dataset": {
+          "$ref": "#/$defs/%23Identifier"
+        },
         "description": {
           "type": "string"
         },
@@ -32,39 +51,6 @@
             "zero",
             "null"
           ]
-        },
-        "fact": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "filters": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "field": {
-                "$ref": "#/$defs/%23FieldRef"
-              },
-              "operator": {
-                "enum": [
-                  "equals",
-                  "in",
-                  "contains",
-                  "starts_with",
-                  "greater_than_or_equal",
-                  "less_than"
-                ]
-              },
-              "values": {
-                "type": "array"
-              }
-            },
-            "required": [
-              "field",
-              "operator",
-              "values"
-            ],
-            "type": "object"
-          },
-          "type": "array"
         },
         "format": {
           "type": "string"
@@ -75,28 +61,490 @@
         "input": {
           "additionalProperties": false,
           "properties": {
-            "expression": {
-              "type": "string"
-            },
             "field": {
               "$ref": "#/$defs/%23FieldRef"
             }
           },
+          "required": [
+            "field"
+          ],
           "type": "object"
         },
         "label": {
           "type": "string"
+        },
+        "timeDimension": {
+          "$ref": "#/$defs/%23Identifier"
+        },
+        "type": {
+          "const": "aggregate"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "where": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/%23Identifier"
+            }
+          ],
+          "type": "array"
+        }
+      },
+      "required": [
+        "aggregation",
+        "dataset",
+        "input",
+        "type"
+      ],
+      "type": "object"
+    },
+    "#DerivedMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "description": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "type": {
+          "const": "derived"
         },
         "unit": {
           "type": "string"
         }
       },
       "required": [
-        "aggregation",
-        "empty",
-        "fact"
+        "expression",
+        "type"
       ],
       "type": "object"
+    },
+    "#DimensionBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object"
+    },
+    "#EqualsFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "equals"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/%23Literal"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#FieldRef": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
+      "type": "string"
+    },
+    "#FieldsRelationshipEndpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "$ref": "#/$defs/%23Identifier"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/%23Identifier"
+            }
+          ],
+          "type": "array"
+        }
+      },
+      "required": [
+        "dataset",
+        "fields"
+      ],
+      "type": "object"
+    },
+    "#FilterLeaf": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/%23EqualsFilter"
+        },
+        {
+          "$ref": "#/$defs/%23NotEqualsFilter"
+        },
+        {
+          "$ref": "#/$defs/%23InFilter"
+        },
+        {
+          "$ref": "#/$defs/%23NotInFilter"
+        },
+        {
+          "$ref": "#/$defs/%23LessThanFilter"
+        },
+        {
+          "$ref": "#/$defs/%23LessThanOrEqualFilter"
+        },
+        {
+          "$ref": "#/$defs/%23GreaterThanFilter"
+        },
+        {
+          "$ref": "#/$defs/%23GreaterThanOrEqualFilter"
+        },
+        {
+          "$ref": "#/$defs/%23IsNullFilter"
+        },
+        {
+          "$ref": "#/$defs/%23IsNotNullFilter"
+        }
+      ]
+    },
+    "#FilterNode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/%23FilterLeaf"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "all": {
+              "items": {
+                "$ref": "#/$defs/%23FilterNode"
+              },
+              "minItems": 1,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/%23FilterNode"
+                }
+              ],
+              "type": "array"
+            }
+          },
+          "required": [
+            "all"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "any": {
+              "items": {
+                "$ref": "#/$defs/%23FilterNode"
+              },
+              "minItems": 1,
+              "prefixItems": [
+                {
+                  "$ref": "#/$defs/%23FilterNode"
+                }
+              ],
+              "type": "array"
+            }
+          },
+          "required": [
+            "any"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/%23FilterNode"
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "#GreaterThanFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "greater_than"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/%23Literal"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#GreaterThanOrEqualFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "greater_than_or_equal"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/%23Literal"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#Identifier": {
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "type": "string"
+    },
+    "#InFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "in"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "value": {
+          "items": {
+            "$ref": "#/$defs/%23Literal"
+          },
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/%23Literal"
+            }
+          ],
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#IsNotNullFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "is_not_null"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "operator"
+      ],
+      "type": "object"
+    },
+    "#IsNullFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "is_null"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "operator"
+      ],
+      "type": "object"
+    },
+    "#LessThanFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "less_than"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/%23Literal"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#LessThanOrEqualFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "less_than_or_equal"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/%23Literal"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#Literal": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "#LogicalDataType": {
+      "enum": [
+        "String",
+        "Integer",
+        "Decimal",
+        "Float",
+        "Boolean",
+        "Date",
+        "Time",
+        "DateTime",
+        "DateTimeTz",
+        "Opaque"
+      ]
     },
     "#Metadata": {
       "additionalProperties": false,
@@ -139,35 +587,114 @@
       "type": "object"
     },
     "#Metric": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/%23AggregateMetric"
+        },
+        {
+          "$ref": "#/$defs/%23DerivedMetric"
+        },
+        {
+          "$ref": "#/$defs/%23RatioMetric"
+        }
+      ]
+    },
+    "#NamedRelationshipEndpoint": {
       "additionalProperties": false,
       "properties": {
-        "description": {
-          "type": "string"
+        "dataset": {
+          "$ref": "#/$defs/%23Identifier"
         },
-        "expression": {
-          "type": "string"
-        },
-        "format": {
-          "type": "string"
-        },
-        "hidden": {
-          "type": "boolean"
-        },
-        "label": {
-          "type": "string"
-        },
-        "unit": {
-          "type": "string"
+        "entity": {
+          "$ref": "#/$defs/%23Identifier"
         }
       },
       "required": [
-        "expression"
+        "dataset",
+        "entity"
+      ],
+      "type": "object"
+    },
+    "#NotEqualsFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "not_equals"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "value": {
+          "$ref": "#/$defs/%23Literal"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#NotInFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "field": {
+          "$ref": "#/$defs/%23FieldRef"
+        },
+        "operator": {
+          "const": "not_in"
+        },
+        "path": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "value": {
+          "items": {
+            "$ref": "#/$defs/%23Literal"
+          },
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/%23Literal"
+            }
+          ],
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "operator",
+        "value"
       ],
       "type": "object"
     },
     "#ProjectSemanticModelSpec": {
       "additionalProperties": false,
       "properties": {
+        "datasets": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "$ref": "#/$defs/%23SemanticDataset"
+            }
+          },
+          "type": "object"
+        },
         "dimensions": {
           "additionalProperties": false,
           "patternProperties": {
@@ -177,11 +704,11 @@
           },
           "type": "object"
         },
-        "measures": {
+        "filters": {
           "additionalProperties": false,
           "patternProperties": {
             "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "$ref": "#/$defs/%23Measure"
+              "$ref": "#/$defs/%23SemanticFilter"
             }
           },
           "type": "object"
@@ -196,22 +723,18 @@
           "type": "object"
         },
         "relationships": {
-          "items": {
-            "$ref": "#/$defs/%23Relationship"
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "$ref": "#/$defs/%23Relationship"
+            }
           },
-          "type": "array"
-        },
-        "tables": {
-          "items": {
-            "$ref": "#/$defs/%23ResourceID"
-          },
-          "minItems": 1,
-          "type": "array"
+          "type": "object"
         }
       },
       "required": [
-        "measures",
-        "tables"
+        "datasets",
+        "metrics"
       ],
       "type": "object"
     },
@@ -230,35 +753,75 @@
       },
       "type": "object"
     },
+    "#RatioMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "denominator": {
+          "$ref": "#/$defs/%23Identifier"
+        },
+        "description": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "numerator": {
+          "$ref": "#/$defs/%23Identifier"
+        },
+        "type": {
+          "const": "ratio"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "denominator",
+        "numerator",
+        "type"
+      ],
+      "type": "object"
+    },
     "#Relationship": {
       "additionalProperties": false,
       "properties": {
-        "cardinality": {
-          "enum": [
-            "many_to_one",
-            "one_to_one"
-          ]
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
         },
         "description": {
           "type": "string"
         },
         "from": {
-          "$ref": "#/$defs/%23FieldRef"
-        },
-        "id": {
-          "$ref": "#/$defs/%23Identifier"
+          "$ref": "#/$defs/%23RelationshipEndpoint"
         },
         "to": {
-          "$ref": "#/$defs/%23FieldRef"
+          "$ref": "#/$defs/%23RelationshipEndpoint"
         }
       },
       "required": [
-        "cardinality",
         "from",
-        "id",
         "to"
       ],
       "type": "object"
+    },
+    "#RelationshipEndpoint": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/%23NamedRelationshipEndpoint"
+        },
+        {
+          "$ref": "#/$defs/%23FieldsRelationshipEndpoint"
+        }
+      ]
     },
     "#ResourceID": {
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
@@ -268,64 +831,107 @@
       "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
       "type": "string"
     },
-    "#SemanticDimension": {
+    "#SemanticDataset": {
       "additionalProperties": false,
       "properties": {
-        "bindings": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "additionalProperties": false,
-              "properties": {
-                "field": {
-                  "$ref": "#/$defs/%23FieldRef"
-                },
-                "path": {
-                  "items": {
-                    "$ref": "#/$defs/%23Identifier"
-                  },
-                  "type": "array"
-                }
-              },
-              "required": [
-                "field"
-              ],
-              "type": "object"
-            }
-          },
-          "type": "object"
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "defaultTimeDimension": {
+          "$ref": "#/$defs/%23Identifier"
         },
         "description": {
           "type": "string"
         },
-        "grains": {
-          "items": {
-            "enum": [
-              "day",
-              "week",
-              "month",
-              "quarter",
-              "year"
-            ]
+        "displayName": {
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/%23ResourceName"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "#SemanticDimension": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "bindings": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "$ref": "#/$defs/%23DimensionBinding"
+            }
           },
-          "type": "array"
+          "type": "object"
+        },
+        "datatype": {
+          "$ref": "#/$defs/%23LogicalDataType"
+        },
+        "description": {
+          "type": "string"
         },
         "label": {
           "type": "string"
         },
-        "type": {
-          "enum": [
-            "string",
-            "number",
-            "boolean",
-            "date",
-            "timestamp"
-          ]
+        "time": {
+          "$ref": "#/$defs/%23TimeSemantics"
         }
       },
       "required": [
         "bindings",
-        "type"
+        "datatype"
+      ],
+      "type": "object"
+    },
+    "#SemanticFilter": {
+      "$ref": "#/$defs/%23FilterNode"
+    },
+    "#TimeGrain": {
+      "enum": [
+        "second",
+        "minute",
+        "hour",
+        "day",
+        "week",
+        "month",
+        "quarter",
+        "year"
+      ]
+    },
+    "#TimeSemantics": {
+      "additionalProperties": false,
+      "properties": {
+        "calendar": {
+          "type": "string"
+        },
+        "grains": {
+          "items": {
+            "$ref": "#/$defs/%23TimeGrain"
+          },
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/%23TimeGrain"
+            }
+          ],
+          "type": "array"
+        },
+        "nativeGrain": {
+          "$ref": "#/$defs/%23TimeGrain"
+        },
+        "timezone": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "grains",
+        "nativeGrain"
       ],
       "type": "object"
     }
@@ -333,6 +939,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "aiContext": {
+      "$ref": "#/$defs/%23AIContext"
+    },
     "apiVersion": {
       "$ref": "#/$defs/%23APIVersion"
     },

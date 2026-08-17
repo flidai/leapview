@@ -549,7 +549,7 @@ function assetIconNode(type: string): IconNode {
       return Ruler
     case 'filter':
       return ListFilter
-    case 'measure':
+    case 'metric':
       return Sigma
     case 'model_table':
     case 'semantic_table':
@@ -587,8 +587,8 @@ function assetPresentationToken(type: string): string {
       return 'dimension'
     case 'filter':
       return 'filter'
-    case 'measure':
-      return 'measure'
+    case 'metric':
+      return 'metric'
     case 'model_table':
     case 'semantic_table':
       return 'model-table'
@@ -1027,10 +1027,10 @@ const projectStyles = css`
     color: var(--lv-asset-filter-accent, var(--lv-fg-muted));
   }
 
-  .asset-kind-measure {
-    background: var(--lv-asset-measure-bg, var(--lv-bg-panel-muted));
-    border-color: var(--lv-asset-measure-border, var(--lv-line-muted));
-    color: var(--lv-asset-measure-accent, var(--lv-fg-muted));
+  .asset-kind-metric {
+    background: var(--lv-asset-metric-bg, var(--lv-bg-panel-muted));
+    border-color: var(--lv-asset-metric-border, var(--lv-line-muted));
+    color: var(--lv-asset-metric-accent, var(--lv-fg-muted));
   }
 
   .asset-kind-model-table {

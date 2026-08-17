@@ -7,7 +7,6 @@ metadata:
   description: Order-grain model table with deliberately grain-aligned category, revenue, review, and delivery fields.
 spec:
   description: Order-grain model table with deliberately grain-aligned category, revenue, review, and delivery fields.
-  primaryKey: order_id
   sources:
   - olist.orders
   - olist.payments
@@ -17,53 +16,53 @@ spec:
   - olist.translations
   fields:
     order_id:
+      datatype: String
       label: Order ID
       description: Stable order identifier from the Olist orders dataset.
-      type: string
     customer_id:
+      datatype: String
       label: Customer ID
       description: Customer identifier associated with the order.
-      type: string
     purchase_month:
+      datatype: String
       label: Purchase month
       description: Calendar month when the order was purchased.
-      type: string
     purchase_timestamp:
+      datatype: DateTime
       label: Purchase timestamp
       description: Timestamp when the customer placed the order.
-      type: timestamp
     purchase_date:
+      datatype: Date
       label: Purchase date
       description: Calendar date when the customer placed the order.
-      type: date
     status:
+      datatype: String
       label: Status
       description: Current order lifecycle status.
-      type: string
     category:
+      datatype: String
       label: Category
       description: English product category associated with the order.
-      type: string
     revenue:
+      datatype: Decimal
       label: Revenue
       description: Total payment revenue attributed to the order.
-      type: number
     review_score:
+      datatype: Decimal
       label: Review
       description: Average customer review score for the order.
-      type: number
     delivery_days:
+      datatype: Integer
       label: Delivery days
       description: Days between purchase and customer delivery.
-      type: integer
     is_delivered:
+      datatype: Boolean
       label: Delivered
       description: Whether the order has a customer delivery timestamp.
-      type: boolean
     delivery_bucket:
+      datatype: String
       label: Delivery speed
       description: Delivery speed bucket derived from delivery days.
-      type: string
   transform:
     sql: |
       WITH revenue AS (
@@ -112,3 +111,14 @@ spec:
       LEFT JOIN revenue ON revenue.order_id = o.order_id
       LEFT JOIN review ON review.order_id = o.order_id
       LEFT JOIN category ON category.order_id = o.order_id
+  entities:
+    order:
+      type: primary
+      fields:
+      - order_id
+    customer:
+      type: foreign
+      fields:
+      - customer_id
+  grain:
+    entity: order

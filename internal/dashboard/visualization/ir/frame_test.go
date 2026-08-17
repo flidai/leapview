@@ -107,7 +107,7 @@ func TestValidateEnvelopeAcceptsRowFreeSpatialTiledState(t *testing.T) {
 	fields := []VisualizationField{
 		{ID: "lat", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Latitude"},
 		{ID: "lon", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDecimal, Label: "Longitude"},
-		{ID: "revenue", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
+		{ID: "revenue", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
 	}
 	base := VisualizationSpecBase{Kind: "geographic", Title: "Stores", Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, DataBudget: VisualizationDataBudget{MaxRows: 0, RequiredCompleteness: VisualizationCompletenessComplete}, Accessibility: VisualizationAccessibility{Title: "Stores", Description: "Stores"}, Interactions: []VisualizationInteraction{}}
 	layerBase := VisualizationGeographicLayerBase{ID: "stores", Kind: "point", Tooltip: []VisualizationFieldRef{}, Position: VisualizationMapLayerPositionBelowLabels, Visibility: VisualizationMapVisibility{MaximumZoom: 18}}
@@ -151,7 +151,7 @@ func TestValidateEnvelopeEnforcesHierarchySemantics(t *testing.T) {
 	valid := hierarchyEnvelope(t, VisualizationHierarchyMarkTree, []VisualizationField{
 		{ID: "node", Role: VisualizationFieldRoleIdentity, DataType: VisualizationDataTypeString, Label: "Node"},
 		{ID: "parent", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Nullable: true, Label: "Parent"},
-		{ID: "value", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+		{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
 	}, [][]any{{"Americas", nil, 10.0}, {"Springfield", "Americas", 3.0}, {"Europe", nil, 5.0}, {"Springfield", "Europe", 5.0}})
 	if err := ValidateEnvelope(valid); err != nil {
 		t.Fatalf("valid hierarchy: %v", err)
@@ -166,7 +166,7 @@ func TestValidateEnvelopeEnforcesHierarchySemantics(t *testing.T) {
 			envelope := hierarchyEnvelope(t, VisualizationHierarchyMarkTree, []VisualizationField{
 				{ID: "node", Role: VisualizationFieldRoleIdentity, DataType: VisualizationDataTypeString, Label: "Node"},
 				{ID: "parent", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Nullable: true, Label: "Parent"},
-				{ID: "value", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+				{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
 			}, rows)
 			if err := ValidateEnvelope(envelope); err == nil {
 				t.Fatal("expected invalid hierarchy data to fail")
@@ -181,7 +181,7 @@ func TestValidateEnvelopeRejectsInvalidNetworkEndpoints(t *testing.T) {
 	envelope := hierarchyEnvelope(t, VisualizationHierarchyMarkGraph, []VisualizationField{
 		{ID: "source", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Source"},
 		{ID: "target", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Target"},
-		{ID: "value", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Value"},
+		{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
 	}, [][]any{{"orders", "", 3.0}})
 	if err := ValidateEnvelope(envelope); err == nil {
 		t.Fatal("expected an empty graph endpoint to fail")

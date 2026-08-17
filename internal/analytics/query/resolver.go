@@ -28,7 +28,7 @@ type tableAlias struct {
 type queryView struct {
 	Fact       string
 	Dimensions map[string]semanticmodel.MetricDimension
-	Measures   map[string]ResolvedMeasure
+	Metrics    map[string]resolvedAggregateMetric
 	Paths      map[string][]semanticmodel.Relationship
 }
 
@@ -71,23 +71,34 @@ func (p *Planner) metricExpression(name string, metric semanticmodel.Metric) (se
 			return expression, nil
 		}
 	}
-	return semanticmodel.ParseExpression(metric.Expression)
+	return semanticmodel.ParseExpression(metricExecutableExpression(metric))
 }
 
-func (p *Planner) resolvedMeasure(name string, measure semanticmodel.MetricMeasure) ResolvedMeasure {
-	resolved := resolvedMeasureFromSemantic(measure)
+func (p *Planner) resolvedAggregateMetric(name string, metric semanticmodel.Metric) (resolvedAggregateMetric, error) {
+	if metric.Type != "aggregate" {
+		return resolvedAggregateMetric{}, fmt.Errorf("metric %q is not aggregate", name)
+	}
+	if metric.Input == nil {
+		return resolvedAggregateMetric{}, fmt.Errorf("metric %q aggregate input is required", name)
+	}
+	resolved := resolvedAggregateMetricFromSemantic(metric)
 	if p.Compiled != nil {
-		if expression, ok := p.Compiled.MeasureInputExpressions[name]; ok {
+		if expression, ok := p.Compiled.AggregateInputExpressions[name]; ok {
 			resolved.InputExpression = &expression
 		}
 	}
-	return resolved
+	where, err := compileNamedSemanticFilters(p.Model, metric.Where)
+	if err != nil {
+		return resolvedAggregateMetric{}, err
+	}
+	resolved.WhereFilters = where
+	return resolved, nil
 }
 
 type AggregateAnalysis struct {
-	Facts          []string
-	AtomicMeasures []string
-	MultiFact      bool
+	Facts         []string
+	AtomicMetrics []string
+	MultiFact     bool
 }
 
 // AnalyzeAggregate exposes the normalized semantic dependencies used by
@@ -98,35 +109,35 @@ func (p *Planner) AnalyzeAggregate(request Request) (AggregateAnalysis, error) {
 	if err != nil {
 		return AggregateAnalysis{}, err
 	}
-	measures := make([]string, 0, len(resolved.Measures))
-	for name := range resolved.Measures {
-		measures = append(measures, name)
+	metrics := make([]string, 0, len(resolved.Aggregates))
+	for name := range resolved.Aggregates {
+		metrics = append(metrics, name)
 	}
-	sort.Strings(measures)
+	sort.Strings(metrics)
 	return AggregateAnalysis{
-		Facts:          append([]string{}, resolved.Facts...),
-		AtomicMeasures: measures,
-		MultiFact:      resolved.MultiFact,
+		Facts:         append([]string{}, resolved.Facts...),
+		AtomicMetrics: metrics,
+		MultiFact:     resolved.MultiFact,
 	}, nil
 }
 
 func (p *Planner) queryView(request Request) (*queryView, error) {
-	return p.semanticView(request.Table, request.Dimensions, request.Measures, request.Filters, request.Time.Field)
+	return p.semanticView(request.Table, request.Dimensions, request.Metrics, request.Filters, request.Time.Field)
 }
 
 func (p *Planner) rowView(request RowRequest) (*queryView, error) {
-	if request.Table == "" && len(request.Measures) == 0 {
-		return nil, fmt.Errorf("row query requires table when no measure is selected")
+	if request.Table == "" && len(request.Metrics) == 0 {
+		return nil, fmt.Errorf("row query requires table when no metric is selected")
 	}
-	return p.semanticView(request.Table, request.Dimensions, request.Measures, request.Filters, "")
+	return p.semanticView(request.Table, request.Dimensions, request.Metrics, request.Filters, "")
 }
 
 func (p *Planner) rawValueView(request RawValueRequest) (*queryView, error) {
-	measures := []Field{}
-	if request.Measure.Field != "" {
-		measures = append(measures, request.Measure)
+	metrics := []Field{}
+	if request.Metric.Field != "" {
+		metrics = append(metrics, request.Metric)
 	}
-	return p.semanticView(request.Table, request.Dimensions, measures, request.Filters, "")
+	return p.semanticView(request.Table, request.Dimensions, metrics, request.Filters, "")
 }
 
 func (p *Planner) countView(request CountRequest) (*queryView, error) {
@@ -136,28 +147,31 @@ func (p *Planner) countView(request CountRequest) (*queryView, error) {
 	return p.semanticView(request.Table, nil, nil, request.Filters, "")
 }
 
-func (p *Planner) semanticView(table string, dimensions []Field, measures []Field, filters []Filter, timeField string) (*queryView, error) {
+func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field, filters []Filter, timeField string) (*queryView, error) {
 	if p.Model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
 	fact := table
-	resolvedMeasures := map[string]ResolvedMeasure{}
-	for _, item := range measures {
-		if _, ok := p.Model.Metrics[item.Field]; ok {
+	resolvedMetrics := map[string]resolvedAggregateMetric{}
+	for _, item := range metrics {
+		metric, ok := p.Model.Metrics[item.Field]
+		if !ok {
+			return nil, fmt.Errorf("unknown metric %q", item.Field)
+		}
+		if metric.Type != "aggregate" {
 			return nil, fmt.Errorf("metric %q is aggregate-only", item.Field)
 		}
-		semanticMeasure, err := p.Model.ResolveMeasure(item.Field)
+		resolved, err := p.resolvedAggregateMetric(item.Field, metric)
 		if err != nil {
 			return nil, err
 		}
-		measure := p.resolvedMeasure(item.Field, semanticMeasure)
 		if fact == "" {
-			fact = measure.Fact
+			fact = resolved.Fact
 		}
-		if measure.Fact != fact {
-			return nil, fmt.Errorf("cross-fact measures are not supported")
+		if resolved.Fact != fact {
+			return nil, fmt.Errorf("cross-fact metrics are not supported")
 		}
-		resolvedMeasures[item.Field] = measure
+		resolvedMetrics[item.Field] = resolved
 	}
 	if fact == "" {
 		return nil, fmt.Errorf("query requires a fact table")
@@ -204,7 +218,7 @@ func (p *Planner) semanticView(table string, dimensions []Field, measures []Fiel
 	return &queryView{
 		Fact:       fact,
 		Dimensions: resolvedDimensions,
-		Measures:   resolvedMeasures,
+		Metrics:    resolvedMetrics,
 		Paths:      paths,
 	}, nil
 }
@@ -263,24 +277,23 @@ func filterRefs(filters []Filter) []string {
 	return fields
 }
 
-func resolvedMeasureFromSemantic(measure semanticmodel.MetricMeasure) ResolvedMeasure {
-	filters := make([]MeasureFilter, 0, len(measure.Filters))
-	for _, filter := range measure.Filters {
-		filters = append(filters, MeasureFilter{Field: filter.Field, Operator: filter.Operator, Values: append([]any{}, filter.Values...)})
+func resolvedAggregateMetricFromSemantic(metric semanticmodel.Metric) resolvedAggregateMetric {
+	inputField, inputExpr := "", ""
+	if metric.Input != nil {
+		inputField, inputExpr = metric.Input.Field, metric.Input.Expression
 	}
-	return ResolvedMeasure{
-		Field:       measure.Field,
-		Name:        measure.Name,
-		Label:       measure.Label,
-		Description: measure.Description,
-		Fact:        measure.Fact,
-		Aggregation: measure.Aggregation,
-		InputField:  measure.Input.Field,
-		InputExpr:   measure.Input.Expression,
-		Filters:     filters,
-		Empty:       measure.Empty,
-		Unit:        measure.Unit,
-		Format:      measure.Format,
+	return resolvedAggregateMetric{
+		Field:       metric.Name,
+		Name:        metric.Name,
+		Label:       metric.Label,
+		Description: metric.Description,
+		Fact:        metric.Dataset,
+		Aggregation: metric.Aggregation,
+		InputField:  inputField,
+		InputExpr:   inputExpr,
+		Empty:       metric.Empty,
+		Unit:        metric.Unit,
+		Format:      metric.Format,
 	}
 }
 
@@ -291,11 +304,11 @@ func (s *queryView) ResolveDimensionRef(ref string) (string, semanticmodel.Metri
 	return "", semanticmodel.MetricDimension{}, fmt.Errorf("field %q is not exposed", ref)
 }
 
-func (s *queryView) ResolveMeasureRef(ref string) (string, ResolvedMeasure, error) {
-	if measure, ok := s.Measures[ref]; ok {
-		return ref, measure, nil
+func (s *queryView) ResolveMetricRef(ref string) (string, resolvedAggregateMetric, error) {
+	if metric, ok := s.Metrics[ref]; ok {
+		return ref, metric, nil
 	}
-	return "", ResolvedMeasure{}, fmt.Errorf("field %q is not exposed", ref)
+	return "", resolvedAggregateMetric{}, fmt.Errorf("field %q is not exposed", ref)
 }
 
 func (p *Planner) aliases(view *queryView, fields []string) (map[string]tableAlias, error) {
@@ -344,11 +357,11 @@ func pathTables(base string, path []semanticmodel.Relationship) []tablePath {
 	current := base
 	tables := []tablePath{}
 	for index, relationship := range path {
-		fromTable, _, err := splitField(relationship.From)
+		fromTable, _, err := semanticmodel.RelationshipEndpoint(relationship, true)
 		if err != nil {
 			return tables
 		}
-		toTable, _, err := splitField(relationship.To)
+		toTable, _, err := semanticmodel.RelationshipEndpoint(relationship, false)
 		if err != nil {
 			return tables
 		}

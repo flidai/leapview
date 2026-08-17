@@ -11,13 +11,13 @@ func TestDerivedDistributionVisualsRequireRawTableTarget(t *testing.T) {
 	tests := map[string]Visual{
 		"histogram": {
 			Type:  "histogram",
-			Query: VisualQuery{Measures: []FieldRef{{Field: "delivery_days"}}},
+			Query: VisualQuery{Metrics: []FieldRef{{Field: "delivery_days"}}},
 		},
 		"boxplot": {
 			Type: "boxplot",
 			Query: VisualQuery{
 				Dimensions: []FieldRef{{Field: "orders.delivery_bucket"}},
-				Measures:   []FieldRef{{Field: "delivery_days"}},
+				Metrics:    []FieldRef{{Field: "delivery_days"}},
 			},
 		},
 	}

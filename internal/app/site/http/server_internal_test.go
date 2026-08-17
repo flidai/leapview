@@ -1311,7 +1311,7 @@ func TestSiteChartDocumentationArticleRendersConfiguration(t *testing.T) {
 		`<lv-site-visual-example example-id="revenue_line"></lv-site-visual-example>`,
 		`<lv-site-visual-example example-id="revenue_line_status"></lv-site-visual-example>`,
 		`<lv-site-visual-example example-id="revenue_line_step"></lv-site-visual-example>`,
-		`<div class="site-visual-key-fields" aria-label="Key fields" data-key-fields="[&#34;query.dimensions&#34;,&#34;query.measures&#34;,&#34;presentation.labels&#34;]">`,
+		`<div class="site-visual-key-fields" aria-label="Key fields" data-key-fields="[&#34;query.dimensions&#34;,&#34;query.metrics&#34;,&#34;presentation.labels&#34;]">`,
 		`<button type="button" class="site-visual-key-field" data-visual-key-field="presentation.step" aria-label="Highlight presentation.step in YAML"><code>presentation.step</code></button>`,
 		`<h2 id="basic">Basic</h2>`,
 		"type: line",

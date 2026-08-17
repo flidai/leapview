@@ -38,17 +38,19 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
-				Grain:      "order_id",
+				Source:   "orders",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID"},
 					"revenue":  {Label: "Revenue"},
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"revenue": {Fact: "orders", Aggregation: "sum", Input: semanticmodel.MeasureInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "sales_orders"},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"revenue": {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
 		},
 	}
 	if err := model.Validate(); err != nil {
@@ -66,11 +68,70 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 	if len(columns) != 2 {
 		t.Fatalf("model schema column count = %d, want 2: %#v", len(columns), columns)
 	}
-	if columns[0].Name != "order_id" || columns[0].PhysicalType == "" || !columns[0].PrimaryKey || columns[0].Nullable == nil {
-		t.Fatalf("model order_id column = %#v, want physical type and primary key marker", columns[0])
+	if columns[0].Name != "order_id" || columns[0].PhysicalType == "" || columns[0].Nullable == nil {
+		t.Fatalf("model order_id column = %#v, want physical type", columns[0])
 	}
 	if columns[1].Name != "revenue" || columns[1].PhysicalType == "" || columns[1].Nullable == nil {
 		t.Fatalf("model revenue column = %#v, want physical type", columns[1])
+	}
+}
+
+func TestPhysicalProjectModelDeduplicatesDatasetAliases(t *testing.T) {
+	table := semanticmodel.Table{
+		Source: "orders",
+		Entities: map[string]semanticmodel.ModelEntitySpec{
+			"order_id": {Type: "primary", Fields: []string{"order_id"}},
+		},
+		GrainEntity: "order_id",
+	}
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders":    table,
+			"purchases": table,
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders":    {Model: "sales_orders"},
+			"purchases": {Model: "sales_orders"},
+		},
+	}
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(physical.Tables); got != 1 {
+		t.Fatalf("physical table count = %d, want one shared Model table", got)
+	}
+	if _, ok := physical.Tables["sales_orders"]; !ok {
+		t.Fatalf("physical tables = %#v, want sales_orders", physical.Tables)
+	}
+	order, err := ProjectModelTableDependencyOrder(map[string]*semanticmodel.Model{"sales": model}, "orders")
+	if err != nil {
+		t.Fatalf("dependency order by semantic alias: %v", err)
+	}
+	if len(order) != 1 || order[0] != "sales_orders" {
+		t.Fatalf("dependency order = %#v, want sales_orders", order)
+	}
+}
+
+func TestPhysicalProjectModelNormalizesAliasModelDependencies(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders":  {Source: "orders", ModelDependencies: nil},
+			"summary": {Transform: semanticmodel.Transform{SQL: "SELECT * FROM orders"}, ModelDependencies: []string{"orders"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders":  {Model: "sales_orders"},
+			"summary": {Model: "sales_summary"},
+		},
+	}
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := physical.Tables["sales_summary"].ModelDependencies; len(got) != 1 || got[0] != "sales_orders" {
+		t.Fatalf("physical dependencies = %#v, want sales_orders", got)
 	}
 }
 
@@ -91,15 +152,15 @@ func TestDiscoverSchemasIgnoresAttachedDatabaseSchemas(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
+				Source:   "orders",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID"},
 					"revenue":  {Label: "Revenue"},
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{},
+		Metrics: map[string]semanticmodel.Metric{},
 	}
 	if err := model.Validate(); err != nil {
 		t.Fatal(err)
@@ -153,17 +214,16 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
-				Grain:      "order_id",
+				Source:   "orders",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID"},
 					"revenue":  {Label: "Revenue"},
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"revenue": {Fact: "orders", Aggregation: "sum", Input: semanticmodel.MeasureInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
+		Metrics: map[string]semanticmodel.Metric{
+			"revenue": {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
 		},
 	}
 	if err := model.Validate(); err != nil {
@@ -784,11 +844,11 @@ func TestSourceRelationResolvesSourcePlans(t *testing.T) {
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", PrimaryKey: "order_id", Grain: "order_id",
+				Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Expr: "order_id"}},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"orders": {Fact: "orders", Label: "Orders", Aggregation: "count", Empty: "zero"}},
+		Metrics: map[string]semanticmodel.Metric{"orders": {Type: "aggregate", Dataset: "orders", Label: "Orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"}},
 	}
 	if err := model.Validate(); err != nil {
 		t.Fatal(err)

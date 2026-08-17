@@ -22,7 +22,7 @@ func TestRelationshipCardinalityMatrixRequiresKeyedOneEndpoints(t *testing.T) {
 			relationship: Relationship{
 				ID: "orders_customers_by_region", From: "orders.region", To: "customers.region", Cardinality: "many_to_one",
 			},
-			wantErr: `relationship "orders_customers_by_region" many_to_one endpoint "customers.region" must be primary key "customer_id"`,
+			wantErr: `relationship "orders_customers_by_region" many_to_one endpoint "customers.region" must belong to a primary or unique entity`,
 		},
 		{
 			name: "one to one requires both primary keys",
@@ -35,14 +35,14 @@ func TestRelationshipCardinalityMatrixRequiresKeyedOneEndpoints(t *testing.T) {
 			relationship: Relationship{
 				ID: "customers_profiles_by_region", From: "customers.region", To: "profiles.customer_id", Cardinality: "one_to_one",
 			},
-			wantErr: `relationship "customers_profiles_by_region" one_to_one endpoint "customers.region" must be primary key "customer_id"`,
+			wantErr: `relationship "customers_profiles_by_region" one_to_one endpoint "customers.region" must belong to a primary or unique entity`,
 		},
 		{
 			name: "one to one rejects non key target",
 			relationship: Relationship{
 				ID: "customers_profiles_by_tier", From: "customers.customer_id", To: "profiles.tier", Cardinality: "one_to_one",
 			},
-			wantErr: `relationship "customers_profiles_by_tier" one_to_one endpoint "profiles.tier" must be primary key "customer_id"`,
+			wantErr: `relationship "customers_profiles_by_tier" one_to_one endpoint "profiles.tier" must belong to a primary or unique entity`,
 		},
 		{
 			name: "one to many is unsafe",
@@ -96,41 +96,83 @@ func TestSafeRelationshipPathRejectsCyclicAlternativePaths(t *testing.T) {
 	}
 }
 
+func TestCompositeRelationshipValidatesArityTypesAndUniqueTuple(t *testing.T) {
+	model := relationshipMatrixModel()
+	orders := model.Tables["orders"]
+	orders.Dimensions["line_number"] = MetricDimension{Type: "number", Datatype: DataTypeInteger}
+	orders.Entities = map[string]ModelEntitySpec{"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}}}
+	orders.GrainEntity = "order_line"
+	model.Tables["orders"] = orders
+	customers := model.Tables["customers"]
+	customers.Dimensions["line_number"] = MetricDimension{Type: "number", Datatype: DataTypeInteger}
+	customers.Entities = map[string]ModelEntitySpec{"customer_line": {Type: "unique", Fields: []string{"customer_id", "line_number"}}}
+	customers.GrainEntity = "customer_line"
+	model.Tables["customers"] = customers
+	model.Relationships = []Relationship{{
+		ID: "orders_customers", FromDataset: "orders", FromFields: []string{"order_id", "line_number"},
+		ToDataset: "customers", ToFields: []string{"customer_id", "line_number"}, Cardinality: "many_to_one",
+	}}
+	if err := model.validateSemanticGraph(); err != nil {
+		t.Fatalf("valid composite relationship rejected: %v", err)
+	}
+
+	model.Relationships[0].ToFields = []string{"customer_id"}
+	if err := model.validateSemanticGraph(); err == nil || !strings.Contains(err.Error(), "arity mismatch") {
+		t.Fatalf("arity mismatch error = %v", err)
+	}
+
+	model.Relationships[0].ToFields = []string{"customer_id", "line_number"}
+	customerTable := model.Tables["customers"]
+	customerTable.Dimensions["line_number"] = MetricDimension{Type: "string", Datatype: DataTypeString}
+	model.Tables["customers"] = customerTable
+	if err := model.validateSemanticGraph(); err == nil || !strings.Contains(err.Error(), "incompatible") {
+		t.Fatalf("type mismatch error = %v", err)
+	}
+
+	model.Tables["customers"] = customers
+	customerTable = model.Tables["customers"]
+	customerTable.Dimensions["line_number"] = MetricDimension{Type: "number", Datatype: DataTypeInteger}
+	customerTable.Entities = map[string]ModelEntitySpec{"customer": {Type: "unique", Fields: []string{"customer_id"}}}
+	model.Tables["customers"] = customerTable
+	if err := model.validateSemanticGraph(); err == nil || !strings.Contains(err.Error(), "primary or unique entity") {
+		t.Fatalf("non-unique tuple error = %v", err)
+	}
+}
+
 func relationshipMatrixModel() *Model {
 	return &Model{
 		Name: "fanout_matrix",
 		Tables: map[string]Table{
 			"orders": {
-				PrimaryKey: "order_id",
+				Entities: map[string]ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]MetricDimension{
 					"order_id": {Type: "string"}, "customer_id": {Type: "string"}, "region": {Type: "string"},
 				},
 			},
 			"customers": {
-				PrimaryKey: "customer_id",
+				Entities: map[string]ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]MetricDimension{
 					"customer_id": {Type: "string"}, "region": {Type: "string"},
 				},
 			},
 			"profiles": {
-				PrimaryKey: "customer_id",
+				Entities: map[string]ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]MetricDimension{
 					"customer_id": {Type: "string"}, "tier": {Type: "string"},
 				},
 			},
 			"accounts": {
-				PrimaryKey: "customer_id",
+				Entities: map[string]ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]MetricDimension{"customer_id": {Type: "string"}},
 			},
 			"tags": {
-				PrimaryKey: "tag_id",
+				Entities: map[string]ModelEntitySpec{"tag_id": {Type: "primary", Fields: []string{"tag_id"}}}, GrainEntity: "tag_id",
 				Dimensions: map[string]MetricDimension{
 					"tag_id": {Type: "string"}, "order_id": {Type: "string"},
 				},
 			},
 		},
 		Dimensions: map[string]SemanticDimension{},
-		Measures:   map[string]MetricMeasure{},
 		Metrics:    map[string]Metric{},
 	}
 }

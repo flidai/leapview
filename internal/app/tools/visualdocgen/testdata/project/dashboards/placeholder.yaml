@@ -10,7 +10,7 @@ spec:
     placeholder:
       type: kpi
       query:
-        measures:
+        metrics:
           order_count: null
   pages:
   - id: placeholder

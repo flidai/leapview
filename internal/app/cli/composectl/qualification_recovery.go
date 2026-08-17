@@ -626,7 +626,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	queryBody := map[string]any{
 		"dimensions": []map[string]string{{"field": "state"}},
-		"measures": []map[string]string{
+		"metrics": []map[string]string{
 			{"field": "order_count"},
 			{"field": "revenue"},
 		},

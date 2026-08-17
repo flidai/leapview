@@ -27,7 +27,7 @@ spec:
     rating_bucket:
       label: Rating
       field: rating_bucket
-      fact: ratings
+      dataset: ratings
       predicates:
         - kind: set
           operators: [in, not_in]
@@ -68,7 +68,7 @@ spec:
     rating_count:
       type: kpi
       query:
-        measures:
+        metrics:
           rating_count:
       presentation:
         note: Rating events
@@ -76,7 +76,7 @@ spec:
     average_rating:
       type: kpi
       query:
-        measures:
+        metrics:
           average_rating:
       presentation:
         note: Mean rating
@@ -84,7 +84,7 @@ spec:
     active_users:
       type: kpi
       query:
-        measures:
+        metrics:
           active_users:
       presentation:
         note: Distinct users
@@ -92,7 +92,7 @@ spec:
     rated_movies:
       type: kpi
       query:
-        measures:
+        metrics:
           rated_movies:
       presentation:
         note: Distinct movies
@@ -100,7 +100,7 @@ spec:
     tags_per_rating:
       type: kpi
       query:
-        measures:
+        metrics:
           tags_per_rating:
       presentation:
         note: Independently aggregated tags / ratings
@@ -117,7 +117,7 @@ spec:
           field: activity_date
           grain: month
           alias: activity_month
-        measures:
+        metrics:
           rating_count:
           tag_count:
         sort:
@@ -146,7 +146,7 @@ spec:
       query:
         dimensions:
           release_decade: release_decade
-        measures:
+        metrics:
           tags_per_rating:
         sort:
           - field: release_decade
@@ -177,7 +177,7 @@ spec:
       query:
         dimensions:
           rating_month: ratings.rating_month
-        measures:
+        metrics:
           rating_count:
         sort:
           - field: rating_month
@@ -189,7 +189,7 @@ spec:
       query:
         dimensions:
           rating: ratings.rating_bucket
-        measures:
+        metrics:
           rating_count:
         sort:
           - field: rating
@@ -199,7 +199,7 @@ spec:
           toggle: true
           mappings:
             - field: ratings.rating_bucket
-              fact: ratings
+              dataset: ratings
               value: label
               label: label
           targets:
@@ -220,7 +220,7 @@ spec:
       query:
         dimensions:
           title: movies.title
-        measures:
+        metrics:
           rating_count:
         sort:
           - field: value
@@ -232,7 +232,7 @@ spec:
       query:
         dimensions:
           release_decade: movies.release_decade
-        measures:
+        metrics:
           average_rating:
         sort:
           - field: release_decade

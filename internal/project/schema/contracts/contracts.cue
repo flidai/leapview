@@ -177,6 +177,7 @@ package contracts
 	apiVersion!: #APIVersion
 	kind!:       "Model"
 	metadata!:   #Metadata
+	aiContext?:  #AIContext
 	spec!:        #Model
 })
 
@@ -184,6 +185,7 @@ package contracts
 	apiVersion!: #APIVersion
 	kind!:       "SemanticModel"
 	metadata!:   #Metadata
+	aiContext?:  #AIContext
 	spec!:        #ProjectSemanticModelSpec
 })
 
@@ -240,90 +242,173 @@ package contracts
 	})
 })
 
+#LogicalDataType: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque"
+
+#TimeGrain: "second" | "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year"
+
+#AIContext: close({
+	instructions?: string
+	synonyms?: [...string]
+	examples?: [...string]
+})
+
+#ModelField: close({
+	datatype!: #LogicalDataType
+	label?: string
+	description?: string
+	aiContext?: #AIContext
+})
+
+#ModelEntity: close({
+	type!: "primary" | "unique" | "foreign" | "natural"
+	fields!: [#Identifier, ...#Identifier]
+	description?: string
+	aiContext?: #AIContext
+})
+
 #Model: close({
-	kind?:   string
 	source?: #ResourceID
 	sources?: [...#ResourceID]
 	sql?: string
 	transform?: close({
 		sql?: string
 	})
-	primaryKey!:  #Identifier
-	grain?:       #Identifier
-	fields?: close({
-		[#Identifier]: close({
-			label?:       string
-			description?: string
-			expr?:        string
-			expression?:  string
-			type?:        string
-		})
+	entities!: close({
+		[#Identifier]: #ModelEntity
+	})
+	grain!: close({
+		entity!: #Identifier
+	})
+	fields!: close({
+		[#Identifier]: #ModelField
 	})
 	description?: string
 })
 
-#ProjectSemanticModelSpec: close({
-	tables!: [...#ResourceID]
-	relationships?: [...#Relationship]
-	dimensions?: close({
-		[#Identifier]: #SemanticDimension
-	})
-	measures!: close({
-		[#Identifier]: #Measure
-	})
-	metrics?: close({
-		[#Identifier]: #Metric
-	})
+#SemanticDataset: close({
+	model!: #ResourceName
+	defaultTimeDimension?: #Identifier
+	displayName?: string
+	description?: string
+	aiContext?: #AIContext
 })
 
-#Measure: close({
-	fact!:        #Identifier
-	label?:       string
+#NamedRelationshipEndpoint: close({
+	dataset!: #Identifier
+	entity!: #Identifier
+})
+
+#FieldsRelationshipEndpoint: close({
+	dataset!: #Identifier
+	fields!: [#Identifier, ...#Identifier]
+})
+
+#RelationshipEndpoint: #NamedRelationshipEndpoint | #FieldsRelationshipEndpoint
+
+#Relationship: close({
+	from!: #RelationshipEndpoint
+	to!: #RelationshipEndpoint
 	description?: string
-	aggregation!: "sum" | "count" | "count_distinct" | "avg" | "min" | "max"
-	input?: close({
-		field?: #FieldRef
-		expression?: string
-	})
-	filters?: [...close({
-		field!: #FieldRef
-		operator!: "equals" | "in" | "contains" | "starts_with" | "greater_than_or_equal" | "less_than"
-		values!: [..._]
-	})]
-	empty!: "zero" | "null"
-	unit?:        string
-	format?:      string
-	hidden?:      bool
+	aiContext?: #AIContext
+})
+
+#DimensionBinding: close({
+	field!: #FieldRef
+	path?: [...#Identifier]
+})
+
+#TimeSemantics: close({
+	nativeGrain!: #TimeGrain
+	grains!: [#TimeGrain, ...#TimeGrain]
+	calendar?: string
+	timezone?: string
 })
 
 #SemanticDimension: close({
 	label?: string
 	description?: string
-	type!: "string" | "number" | "boolean" | "date" | "timestamp"
-	grains?: [...("day" | "week" | "month" | "quarter" | "year")]
+	aiContext?: #AIContext
+	datatype!: #LogicalDataType
+	time?: #TimeSemantics
 	bindings!: close({
-		[#Identifier]: close({
-			field!: #FieldRef
-			path?: [...#Identifier]
-		})
+		[#Identifier]: #DimensionBinding
 	})
 })
 
-#Metric: close({
+#Literal: string | int | float | bool
+
+#EqualsFilter: close({field!: #FieldRef, operator!: "equals", value!: #Literal, path?: [...#Identifier], aiContext?: #AIContext})
+#NotEqualsFilter: close({field!: #FieldRef, operator!: "not_equals", value!: #Literal, path?: [...#Identifier], aiContext?: #AIContext})
+#InFilter: close({field!: #FieldRef, operator!: "in", value!: [#Literal, ...#Literal], path?: [...#Identifier], aiContext?: #AIContext})
+#NotInFilter: close({field!: #FieldRef, operator!: "not_in", value!: [#Literal, ...#Literal], path?: [...#Identifier], aiContext?: #AIContext})
+#LessThanFilter: close({field!: #FieldRef, operator!: "less_than", value!: #Literal, path?: [...#Identifier], aiContext?: #AIContext})
+#LessThanOrEqualFilter: close({field!: #FieldRef, operator!: "less_than_or_equal", value!: #Literal, path?: [...#Identifier], aiContext?: #AIContext})
+#GreaterThanFilter: close({field!: #FieldRef, operator!: "greater_than", value!: #Literal, path?: [...#Identifier], aiContext?: #AIContext})
+#GreaterThanOrEqualFilter: close({field!: #FieldRef, operator!: "greater_than_or_equal", value!: #Literal, path?: [...#Identifier], aiContext?: #AIContext})
+#IsNullFilter: close({field!: #FieldRef, operator!: "is_null", path?: [...#Identifier], aiContext?: #AIContext})
+#IsNotNullFilter: close({field!: #FieldRef, operator!: "is_not_null", path?: [...#Identifier], aiContext?: #AIContext})
+
+#FilterLeaf: #EqualsFilter | #NotEqualsFilter | #InFilter | #NotInFilter | #LessThanFilter | #LessThanOrEqualFilter | #GreaterThanFilter | #GreaterThanOrEqualFilter | #IsNullFilter | #IsNotNullFilter
+#FilterNode: #FilterLeaf | close({all!: [#FilterNode, ...#FilterNode]}) | close({any!: [#FilterNode, ...#FilterNode]}) | close({not!: #FilterNode})
+#SemanticFilter: #FilterNode
+
+#AggregateMetric: close({
+	type!: "aggregate"
+	dataset!: #Identifier
+	aggregation!: "sum" | "count" | "count_distinct" | "avg" | "min" | "max"
+	input!: close({field!: #FieldRef})
+	where?: [#Identifier, ...#Identifier]
+	empty?: "zero" | "null"
+	timeDimension?: #Identifier
 	label?: string
 	description?: string
-	expression!: string
+	aiContext?: #AIContext
 	unit?: string
 	format?: string
 	hidden?: bool
 })
 
-#Relationship: close({
-	id!:          #Identifier
+#DerivedMetric: close({
+	type!: "derived"
+	expression!: string
+	label?: string
 	description?: string
-	from!:        #FieldRef
-	to!:          #FieldRef
-	cardinality!: "many_to_one" | "one_to_one"
+	aiContext?: #AIContext
+	unit?: string
+	format?: string
+	hidden?: bool
+})
+
+#RatioMetric: close({
+	type!: "ratio"
+	numerator!: #Identifier
+	denominator!: #Identifier
+	label?: string
+	description?: string
+	aiContext?: #AIContext
+	unit?: string
+	format?: string
+	hidden?: bool
+})
+
+#Metric: #AggregateMetric | #DerivedMetric | #RatioMetric
+
+#ProjectSemanticModelSpec: close({
+	datasets!: close({
+		[#Identifier]: #SemanticDataset
+	})
+	relationships?: close({
+		[#Identifier]: #Relationship
+	})
+	dimensions?: close({
+		[#Identifier]: #SemanticDimension
+	})
+	filters?: close({
+		[#Identifier]: #SemanticFilter
+	})
+	metrics!: close({
+		[#Identifier]: #Metric
+	})
 })
 
 #Dashboard: close({
@@ -364,7 +449,7 @@ package contracts
 	label!:       string
 	description?: string
 	field!:       #FieldRef | #Identifier
-	fact?:        #Identifier
+	dataset?:     #Identifier
 	predicates!: [...#FilterPredicate]
 	options?: #FilterOptionSource
 	formatting?: close({
@@ -907,7 +992,7 @@ package contracts
 		grid?:    "none" | "rows" | "columns" | "full" | string
 	})
 	columns?: [...#TableColumn]
-	measure_formatting?: {
+	metric_formatting?: {
 		[string]: [...#TableFormattingRule]
 	}
 	conditional_formatting?: [...#ConditionalFormat]
@@ -935,7 +1020,7 @@ package contracts
 	table?:      #Identifier
 	dimensions?: #FieldRefs
 	series?:     #FieldRefObject
-	measures?:   #MeasureRefs
+	metrics?:    #MetricRefs
 	time?: close({
 		field?: #FieldRef | #Identifier
 		grain?: string
@@ -949,9 +1034,9 @@ package contracts
 	[#Identifier]: (#FieldRef | #Identifier) | close({field: #FieldRef | #Identifier})
 })
 
-#MeasureRefs: [...#FieldRefValue] | close({
+#MetricRefs: [...#FieldRefValue] | close({
 	[#Identifier]: null | close({
-		measure!: #Identifier
+		metric!: #Identifier
 	})
 })
 
@@ -978,7 +1063,7 @@ package contracts
 	toggle?: bool
 	mappings?: [...close({
 		field!: #FieldRef | #Identifier
-		fact?:  #Identifier
+		dataset?: #Identifier
 		grain?: "day" | "week" | "month" | "quarter" | "year"
 		value!: string
 		label?: string
@@ -1000,7 +1085,7 @@ package contracts
 #SpatialSelectionMapping: close({
 	source!: #Identifier
 	field!:  #FieldRef | #Identifier
-	fact?:   #Identifier
+	dataset?: #Identifier
 })
 
 #TableQuery: close({
@@ -1008,7 +1093,7 @@ package contracts
 	fields?: [...#FieldRef]
 	columns?:  #FieldRefs
 	rows?:     #FieldRefs
-	measures?: #MeasureRefs
+	metrics?:  #MetricRefs
 })
 
 #TableColumn: close({
@@ -1019,7 +1104,7 @@ package contracts
 	role?:         string
 	align?:        string
 	group?:        string
-	measure?:      string
+	metric?:       string
 	column_value?: string
 	formatting?: [...#TableFormattingRule]
 })

@@ -65,14 +65,14 @@ func (m fakeMetrics) dashboardDefinition(string) (dashboarddefinition.Definition
 		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
 			"chart": {
 				Type: "bar", Title: "Chart",
-				Query: dashboardauthoring.VisualQuery{Dimensions: []dashboardauthoring.FieldRef{{Field: "state", Alias: "label"}}, Measures: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}},
+				Query: dashboardauthoring.VisualQuery{Dimensions: []dashboardauthoring.FieldRef{{Field: "state", Alias: "label"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}},
 				Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{
 					Toggle: true, Mappings: []dashboardauthoring.SelectionMapping{{Field: "state", Value: "label"}}, Targets: []string{"orders"},
 				}},
 			},
 			"boolean_chart": {
 				Type: "bar", Title: "Boolean chart",
-				Query: dashboardauthoring.VisualQuery{Dimensions: []dashboardauthoring.FieldRef{{Field: "active", Alias: "label"}}, Measures: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}},
+				Query: dashboardauthoring.VisualQuery{Dimensions: []dashboardauthoring.FieldRef{{Field: "active", Alias: "label"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}},
 				Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{
 					Toggle: true, Mappings: []dashboardauthoring.SelectionMapping{{Field: "active", Value: "label"}}, Targets: []string{"orders"},
 				}},
@@ -82,7 +82,7 @@ func (m fakeMetrics) dashboardDefinition(string) (dashboarddefinition.Definition
 				Query: dashboardauthoring.VisualQuery{
 					Table:      "orders",
 					Dimensions: []dashboardauthoring.FieldRef{{Field: "latitude", Alias: "latitude"}, {Field: "longitude", Alias: "longitude"}, {Field: "state", Alias: "state"}},
-					Measures:   []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
+					Metrics:    []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
 				},
 				Geo: dashboardauthoring.VisualGeo{Basemap: "blank", Layers: []dashboardauthoring.VisualGeoLayer{{ID: "customers", Kind: "point", Latitude: "latitude", Longitude: "longitude", Value: "value"}}},
 				Interaction: dashboardauthoring.Interaction{SpatialSelection: dashboardauthoring.SpatialSelectionInteraction{
@@ -114,7 +114,7 @@ func (m fakeMetrics) dashboardDefinition(string) (dashboarddefinition.Definition
 			"latitude":  {Type: "number", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.latitude"}}},
 			"longitude": {Type: "number", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.longitude"}}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count"}},
+		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.state"}}},
 	}
 	definition := dashboardfixture.Compile(authored, model)
 	if m.report != nil {

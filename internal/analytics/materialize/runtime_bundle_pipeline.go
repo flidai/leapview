@@ -191,7 +191,7 @@ func (r *Runtime) planBundle(ctx context.Context, resolved resolvedBundle) (plan
 	semanticRequests := make([]semanticquery.BundleRequest, len(resolved.misses))
 	for index, branch := range resolved.misses {
 		request := branch.Query
-		semanticRequests[index] = semanticquery.BundleRequest{ID: branch.ID, Request: semanticquery.Request{Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures), Time: semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias}, Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset}}
+		semanticRequests[index] = semanticquery.BundleRequest{ID: branch.ID, Request: semanticquery.Request{Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Time: semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias}, Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset}}
 	}
 	started := time.Now()
 	plan, err := r.queryPlanner().PlanBundle(semanticRequests)

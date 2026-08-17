@@ -22,7 +22,7 @@ visuals:
       table: conversion_stages
       dimensions:
         stage: conversion_stages.stage
-      measures:
+      metrics:
         conversions: null
       sort:
         - field: stage
@@ -43,7 +43,7 @@ visuals:
     query:
       dimensions:
         delivery_bucket: orders.delivery_bucket
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: delivery_bucket
@@ -68,7 +68,7 @@ visuals:
     query:
       dimensions:
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value

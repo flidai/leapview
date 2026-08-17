@@ -270,7 +270,7 @@ func TestExecuteIntentAuthorizesBeforeDraftRevisionAndRuntimeReads(t *testing.T)
 		acquired++
 		return nil, errors.New("runtime should not be acquired")
 	})
-	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMeasure})
+	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMetric})
 	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); !errors.Is(err, access.ErrForbidden) {
 		t.Fatalf("denied intent error = %v", err)
 	}
@@ -284,7 +284,7 @@ func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
 	authorizer := &recordingAuthorizer{}
 	lease := newFakeLease(t, "project", &previewRuntime{model: previewModel()})
 	app := newApplication(t, repository, authorizer, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
-	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMeasure})
+	command := intentCommandForApplication(revision, lifecycle.Draft.ID, "intent-field", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "order_count", Role: authoring.FieldRoleMetric})
 	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: command}); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestExecuteIntentAssignFieldUsesOneLeaseAndGovernedRole(t *testing.T) {
 	// A role mismatch is rejected against the governed model before the
 	// transactional service can append a partial revision.
 	current := repository.lifecycles[lifecycle.ID].Draft.Revision
-	bad := intentCommandForApplication(repository.revisions[current.RevisionID], lifecycle.Draft.ID, "intent-field-bad", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "orders.status", Role: authoring.FieldRoleMeasure})
+	bad := intentCommandForApplication(repository.revisions[current.RevisionID], lifecycle.Draft.ID, "intent-field-bad", &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders", FieldID: "orders.status", Role: authoring.FieldRoleMetric})
 	lease.releaseCalls = 0
 	if _, err := app.ExecuteIntent(context.Background(), application.IntentRequest{ProjectID: "project", ActorID: "actor", Command: bad}); !errors.Is(err, authoring.ErrInvalidPayload) {
 		t.Fatalf("spoofed role error = %v", err)
@@ -359,14 +359,14 @@ func TestExecuteIntentAssignFieldInfersTableAndCompilesTableVisual(t *testing.T)
 
 func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 	repository, lifecycle, current := previewRepository(t)
-	// The preview fixture intentionally exercises the builder's short measure
+	// The preview fixture intentionally exercises the builder's short metric
 	// aliases. Export's strict contract requires qualified table.field refs, so
 	// make the pre-existing visual canonical before testing the newly added one.
 	document, err := current.Document.Clone()
 	if err != nil {
 		t.Fatal(err)
 	}
-	document.Visuals["orders"].Tabular.Query.Fields[1] = "orders.order_count"
+	document.Visuals["orders"].Tabular.Query.Metrics[0].Field = "order_count"
 	current, err = authoring.NewRevision("canonical-base", current.DashboardID, current.Number, current.CreatedAt, document, current.Provenance)
 	if err != nil {
 		t.Fatal(err)
@@ -624,7 +624,7 @@ func authoredDocumentWithField(id, title, measureField string) authoring.Dashboa
 	return authoring.Dashboard{
 		ID: projectgraph.ResourceID(id), Title: title, SemanticModel: "sales",
 		Visuals: authoring.TabularVisualizations("table", map[string]authoring.TableVisual{
-			"orders": {Title: "Orders", Query: authoring.TableQuery{Table: "orders", Fields: []string{"orders.status", measureField}}},
+			"orders": {Title: "Orders", Query: authoring.TableQuery{Table: "orders", Fields: []string{"orders.status"}, Metrics: []authoring.FieldRef{{Field: strings.TrimPrefix(measureField, "orders."), Alias: "order_count"}}}},
 		}),
 		Pages: []dashboard.Page{page},
 	}
@@ -636,7 +636,7 @@ func previewModel() *semanticmodel.Model {
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string"}}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Input: semanticmodel.MeasureInput{Field: "orders.status"}, Empty: "zero"}},
+		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}},
 	}
 }
 

@@ -115,7 +115,7 @@ func TestCompileDashboardRequiresHighlightTargetsToExposeMappedFieldsUnlessTheyA
 	}
 
 	target.Type = "kpi"
-	target.Query.Measures = target.Query.Measures[:1]
+	target.Query.Metrics = target.Query.Metrics[:1]
 	dashboardDefinition.Visuals["target"] = dashboardauthoring.ChartVisualization(target)
 	if _, err := CompileVisualizationDefinitions(dashboardDefinition, model); err != nil {
 		t.Fatalf("KPI comparison-context highlight error = %v", err)
@@ -142,13 +142,13 @@ func compilerSpatialSelectionFixture() (*dashboardauthoring.Dashboard, *semantic
 		Tables: map[string]semanticmodel.Table{"ratings": {Dimensions: map[string]semanticmodel.MetricDimension{
 			"latitude": {Type: "number"}, "longitude": {Type: "number"}, "release_decade": {Type: "string"},
 		}}},
-		Measures: map[string]semanticmodel.MetricMeasure{"rating_count": {Fact: "ratings", Aggregation: "count", Empty: "zero"}},
+		Metrics: map[string]semanticmodel.Metric{"rating_count": {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "ratings.release_decade"}, Empty: "zero"}},
 	}
 	source := dashboardauthoring.Visual{
 		Title: "Source", Type: "map",
 		Query: dashboardauthoring.VisualQuery{Table: "ratings", Dimensions: []dashboardauthoring.FieldRef{
 			{Field: "ratings.latitude", Alias: "latitude"}, {Field: "ratings.longitude", Alias: "longitude"},
-		}, Measures: []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}}, Limit: 100},
+		}, Metrics: []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}}, Limit: 100},
 		Geo: dashboardauthoring.VisualGeo{Layers: []dashboardauthoring.VisualGeoLayer{{ID: "density", Kind: "density", Latitude: "latitude", Longitude: "longitude", Value: "value"}}},
 		Interaction: dashboardauthoring.Interaction{SpatialSelection: dashboardauthoring.SpatialSelectionInteraction{
 			Gestures:  []string{"box", "lasso", "radius"},
@@ -157,7 +157,7 @@ func compilerSpatialSelectionFixture() (*dashboardauthoring.Dashboard, *semantic
 			Targets:   []string{"target"},
 		}},
 	}
-	target := dashboardauthoring.Visual{Title: "Target", Type: "kpi", Query: dashboardauthoring.VisualQuery{Table: "ratings", Measures: []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}}, Limit: 1}}
+	target := dashboardauthoring.Visual{Title: "Target", Type: "kpi", Query: dashboardauthoring.VisualQuery{Table: "ratings", Metrics: []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}}, Limit: 1}}
 	return &dashboardauthoring.Dashboard{
 		ID: "dashboard", Title: "Dashboard", SemanticModel: "model",
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"source": source, "target": target}),
@@ -178,16 +178,16 @@ func compilerSelectionFixture(mapping dashboardauthoring.SelectionMapping) (*das
 				"tags":    {Field: "tags.release_decade"},
 			}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"rating_count": {Fact: "ratings", Aggregation: "count", Empty: "zero"},
-			"tag_count":    {Fact: "tags", Aggregation: "count", Empty: "zero"},
+		Metrics: map[string]semanticmodel.Metric{
+			"rating_count": {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "ratings.release_decade"}, Empty: "zero"},
+			"tag_count":    {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "tags.release_decade"}, Empty: "zero"},
 		},
 	}
 	source := dashboardauthoring.Visual{
 		Title: "Source", Type: "bar",
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: mapping.Field, Alias: "label"}},
-			Measures:   []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}},
+			Metrics:    []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}},
 		},
 		Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{
 			Mappings: []dashboardauthoring.SelectionMapping{mapping}, Targets: []string{"target"},
@@ -197,7 +197,7 @@ func compilerSelectionFixture(mapping dashboardauthoring.SelectionMapping) (*das
 		Title: "Target", Type: "combo",
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: "release_decade", Alias: "label"}},
-			Measures: []dashboardauthoring.FieldRef{
+			Metrics: []dashboardauthoring.FieldRef{
 				{Field: "rating_count", Alias: "rating_count"},
 				{Field: "tag_count", Alias: "tag_count"},
 			},

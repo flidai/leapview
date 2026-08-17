@@ -7,20 +7,46 @@ metadata:
   description: Aggregated real Olist delivery corridors represented as ordered origin and destination vertices.
 spec:
   description: Two vertices per actual order-seller delivery with seller-allocated revenue.
-  primaryKey: vertex_id
   sources:
   - olist.order_items
   - olist.sellers
   fields:
-    vertex_id: {label: Route vertex, description: Stable route and point-order identity, type: string}
-    route_id: {label: Route, description: Stable order and seller delivery identity, type: string}
-    order_id: {label: Order ID, description: Order identity used to join governed order filters, type: string}
-    point_order: {label: Point order, description: Zero for seller origin and one for customer destination, type: string}
-    latitude: {label: Latitude, description: Latitude of the ordered route vertex, type: number}
-    longitude: {label: Longitude, description: Longitude of the ordered route vertex, type: number}
-    route_label: {label: Route, description: Human-readable origin to destination route label, type: string}
-    destination_state: {label: Destination state, description: Customer destination state used by dashboard filters, type: string}
-    route_revenue: {label: Route revenue, description: Order revenue allocated evenly across participating sellers, type: number}
+    vertex_id:
+      datatype: String
+      label: Route vertex
+      description: Stable route and point-order identity
+    route_id:
+      datatype: String
+      label: Route
+      description: Stable order and seller delivery identity
+    order_id:
+      datatype: String
+      label: Order ID
+      description: Order identity used to join governed order filters
+    point_order:
+      datatype: String
+      label: Point order
+      description: Zero for seller origin and one for customer destination
+    latitude:
+      datatype: Decimal
+      label: Latitude
+      description: Latitude of the ordered route vertex
+    longitude:
+      datatype: Decimal
+      label: Longitude
+      description: Longitude of the ordered route vertex
+    route_label:
+      datatype: String
+      label: Route
+      description: Human-readable origin to destination route label
+    destination_state:
+      datatype: String
+      label: Destination state
+      description: Customer destination state used by dashboard filters
+    route_revenue:
+      datatype: Decimal
+      label: Route revenue
+      description: Order revenue allocated evenly across participating sellers
   transform:
     sql: |
       WITH order_sellers AS (
@@ -85,3 +111,14 @@ spec:
         FROM located
       )
       SELECT * FROM vertices
+  entities:
+    vertex:
+      type: primary
+      fields:
+      - vertex_id
+    order:
+      type: foreign
+      fields:
+      - order_id
+  grain:
+    entity: vertex

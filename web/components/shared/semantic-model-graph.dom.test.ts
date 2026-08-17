@@ -125,7 +125,7 @@ for (const viewport of [
       expect(state.primaryKeyMarkerText).toBe('PK')
       expect(state.primaryKeyMarkerTitle).toBe('Primary key')
       expect(state.hasBadgeElement).toBe(true)
-      expect(state.badges).toEqual(['fact', '2 measures'])
+      expect(state.badges).toEqual(['dataset', '2 metrics'])
       expect(state.joinRowBackground).not.toBe('')
       expect(state.joinRowBoxShadow).toContain('inset')
       expect(state.hasTypeIcon).toBe(true)
@@ -241,13 +241,13 @@ function testDocument(): string {
         <script type="module" src="/semantic-model-graph-under-test.js"></script>
         <script type="module">
           const graph = {
-            facts: ['orders'],
+            datasets: ['orders'],
             nodes: [
               {
                 id: 'orders',
                 title: 'orders',
                 primaryKey: 'order_id',
-                badges: ['fact', '2 measures'],
+                badges: ['dataset', '2 metrics'],
                 fields: [
                   { name: 'order_id', label: 'Order ID', type: 'VARCHAR', primaryKey: true },
                   { name: 'customer_id', label: 'Customer ID', type: 'VARCHAR', join: true, relationships: ['orders_customers'] },

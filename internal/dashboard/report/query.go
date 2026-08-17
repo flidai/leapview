@@ -52,7 +52,7 @@ type QuerySort struct {
 type AggregateQuery struct {
 	Table      string
 	Dimensions []QueryField
-	Measures   []QueryField
+	Metrics    []QueryField
 	Time       dashboardauthoring.QueryTime
 	Filters    []QueryFilter
 	Sort       []QuerySort
@@ -63,7 +63,7 @@ type AggregateQuery struct {
 type RowQuery struct {
 	Table      string
 	Dimensions []QueryField
-	Measures   []QueryField
+	Metrics    []QueryField
 	Filters    []QueryFilter
 	Sort       []QuerySort
 	Limit      int
@@ -81,7 +81,7 @@ type ModelTableQuery struct {
 type RawValueQuery struct {
 	Table      string
 	Dimensions []QueryField
-	Measure    QueryField
+	Metric     QueryField
 	Filters    []QueryFilter
 }
 
@@ -113,7 +113,7 @@ func SemanticAggregateRequest(request AggregateQuery) semanticquery.Request {
 	return semanticquery.Request{
 		Table:      request.Table,
 		Dimensions: queryFields(request.Dimensions),
-		Measures:   queryFields(request.Measures),
+		Metrics:    queryFields(request.Metrics),
 		Time:       semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 		Filters:    queryFilters(request.Filters),
 		Sort:       querySorts(request.Sort),
@@ -126,7 +126,7 @@ func SemanticRowRequest(request RowQuery) semanticquery.RowRequest {
 	return semanticquery.RowRequest{
 		Table:      request.Table,
 		Dimensions: queryFields(request.Dimensions),
-		Measures:   queryFields(request.Measures),
+		Metrics:    queryFields(request.Metrics),
 		Filters:    queryFilters(request.Filters),
 		Sort:       querySorts(request.Sort),
 		Limit:      request.Limit,

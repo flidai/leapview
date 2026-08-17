@@ -59,7 +59,7 @@ The active pointer is a LeapView concern; snapshot and file ownership are DuckLa
 
 ## Query execution
 
-Dashboard and headless handlers resolve the project resource, active deployment, semantic model, principal, data policies, filters, selections, sorting, and limits. The semantic query layer turns governed field/measure requests into bounded DuckDB work.
+Dashboard and headless handlers resolve the project resource, active deployment, semantic model, principal, data policies, filters, selections, sorting, and limits. The semantic query layer turns governed field/metric requests into bounded DuckDB work.
 
 Hierarchical workload admission separates interactive reads from refresh writes with bounded project-fair queues and deadlines. Node-wide DuckDB, logical-result, and cache limits keep aggregate analytical work within the supported process envelope. Query cancellation and refresh generations prevent obsolete work from replacing newer state.
 

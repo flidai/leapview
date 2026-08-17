@@ -31,7 +31,7 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 		"    query:\n" +
 		"      dimensions:\n" +
 		"        month: orders.month\n" +
-		"      measures:\n" +
+		"      metrics:\n" +
 		"        revenue: null\n" +
 		"```\n")
 
@@ -603,7 +603,7 @@ func TestParseVisualExamplesRejectsBrokenContracts(t *testing.T) {
 		},
 		{
 			name: "missing shortcode",
-			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    query:\n      dimensions: [orders.month]\n      measures: [revenue]\n```",
+			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    query:\n      dimensions: [orders.month]\n      metrics: [revenue]\n```",
 			want: `visual example "line_basic" has no matching shortcode`,
 		},
 		{
@@ -623,12 +623,12 @@ func TestParseVisualExamplesRejectsBrokenContracts(t *testing.T) {
 		},
 		{
 			name: "missing type",
-			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    shape: single_value\n    query:\n      measures: [revenue]\n```",
+			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    shape: single_value\n    query:\n      metrics: [revenue]\n```",
 			want: `type`,
 		},
 		{
 			name: "legacy kind",
-			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    kind: kpi\n    shape: single_value\n    query:\n      measures: [revenue]\n```",
+			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    kind: kpi\n    shape: single_value\n    query:\n      metrics: [revenue]\n```",
 			want: `kind`,
 		},
 	}

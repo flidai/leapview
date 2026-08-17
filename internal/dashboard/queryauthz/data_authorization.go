@@ -445,10 +445,10 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 		return nil, nil, fmt.Errorf("unknown semantic model %q", request.ModelID)
 	}
 	dimensions := dataFieldsToSemanticFields(request.Fields)
-	measures := dataFieldsToSemanticFields(request.Measures)
+	metrics := dataFieldsToSemanticFields(request.Metrics)
 	for _, field := range request.AuthorizationFields {
 		if semanticFieldIsMeasure(model, field.Field) {
-			measures = append(measures, semanticquery.Field{Field: field.Field, Alias: field.Alias})
+			metrics = append(metrics, semanticquery.Field{Field: field.Field, Alias: field.Alias})
 		} else {
 			dimensions = append(dimensions, semanticquery.Field{Field: field.Field, Alias: field.Alias})
 		}
@@ -456,7 +456,7 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 	if request.Value.Field != "" {
 		field := semanticquery.Field{Field: request.Value.Field, Alias: request.Value.Alias}
 		if semanticFieldIsMeasure(model, request.Value.Field) {
-			measures = append(measures, field)
+			metrics = append(metrics, field)
 		} else {
 			dimensions = append(dimensions, field)
 		}
@@ -464,7 +464,7 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 	queryRequest := semanticquery.Request{
 		Table:      request.Target,
 		Dimensions: dimensions,
-		Measures:   measures,
+		Metrics:    metrics,
 		Time:       semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 		Filters:    dataFiltersToSemanticFilters(request.Filters),
 		Sort:       dataSortToSemanticSort(request.Sort),
@@ -519,7 +519,7 @@ func semanticFieldIsMeasure(model *semanticmodel.Model, field string) bool {
 	if model == nil {
 		return false
 	}
-	if _, ok := model.Measures[field]; ok {
+	if _, ok := model.Metrics[field]; ok {
 		return true
 	}
 	_, ok := model.Metrics[field]
@@ -530,7 +530,7 @@ func isSemanticField(model *semanticmodel.Model, field string) bool {
 	if _, ok := model.Dimensions[field]; ok {
 		return true
 	}
-	if _, ok := model.Measures[field]; ok {
+	if _, ok := model.Metrics[field]; ok {
 		return true
 	}
 	_, ok := model.Metrics[field]
@@ -632,30 +632,30 @@ func (m Metrics) PreviewSemantic(ctx context.Context, modelID string, request re
 
 func semanticAggregateDataQuery(modelID string, request reportdef.AggregateQuery) dataquery.Query {
 	return dataquery.Query{
-		ModelID:  modelID,
-		Kind:     dataquery.KindSemanticAggregate,
-		Target:   request.Table,
-		Fields:   queryFieldsToDataFields(request.Dimensions),
-		Measures: queryFieldsToDataFields(request.Measures),
-		Time:     dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-		Filters:  queryFiltersToDataFilters(request.Filters),
-		Sort:     querySortToDataSort(request.Sort),
-		Limit:    request.Limit,
-		Offset:   request.Offset,
+		ModelID: modelID,
+		Kind:    dataquery.KindSemanticAggregate,
+		Target:  request.Table,
+		Fields:  queryFieldsToDataFields(request.Dimensions),
+		Metrics: queryFieldsToDataFields(request.Metrics),
+		Time:    dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+		Filters: queryFiltersToDataFilters(request.Filters),
+		Sort:    querySortToDataSort(request.Sort),
+		Limit:   request.Limit,
+		Offset:  request.Offset,
 	}
 }
 
 func semanticRowsDataQuery(modelID string, request reportdef.RowQuery) dataquery.Query {
 	return dataquery.Query{
-		ModelID:  modelID,
-		Kind:     dataquery.KindSemanticRows,
-		Target:   request.Table,
-		Fields:   queryFieldsToDataFields(request.Dimensions),
-		Measures: queryFieldsToDataFields(request.Measures),
-		Filters:  queryFiltersToDataFilters(request.Filters),
-		Sort:     querySortToDataSort(request.Sort),
-		Limit:    request.Limit,
-		Offset:   request.Offset,
+		ModelID: modelID,
+		Kind:    dataquery.KindSemanticRows,
+		Target:  request.Table,
+		Fields:  queryFieldsToDataFields(request.Dimensions),
+		Metrics: queryFieldsToDataFields(request.Metrics),
+		Filters: queryFiltersToDataFilters(request.Filters),
+		Sort:    querySortToDataSort(request.Sort),
+		Limit:   request.Limit,
+		Offset:  request.Offset,
 	}
 }
 
@@ -789,7 +789,7 @@ func (m Metrics) resolvePolicyFilterFacts(request dataquery.Query, filters []dat
 		return filters, nil
 	}
 	dependencies, err := semanticquery.ResolveDependencies(model, semanticquery.Request{
-		Dimensions: dataFieldsToSemanticFields(request.Fields), Measures: dataFieldsToSemanticFields(request.Measures),
+		Dimensions: dataFieldsToSemanticFields(request.Fields), Metrics: dataFieldsToSemanticFields(request.Metrics),
 		Time: semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 	})
 	if err != nil {
@@ -1091,13 +1091,13 @@ func (m Metrics) dataQueryColumnObjects(resourceIndex projectResourceIndex, requ
 }
 
 func dataQuerySelectedFields(request dataquery.Query) []string {
-	fields := make([]string, 0, len(request.Fields)+len(request.Measures)+len(request.AuthorizationFields)+1)
+	fields := make([]string, 0, len(request.Fields)+len(request.Metrics)+len(request.AuthorizationFields)+1)
 	for _, field := range request.Fields {
 		if field.Field != "" {
 			fields = append(fields, field.Field)
 		}
 	}
-	for _, field := range request.Measures {
+	for _, field := range request.Metrics {
 		if field.Field != "" {
 			fields = append(fields, field.Field)
 		}

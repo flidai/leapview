@@ -20,15 +20,15 @@ func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Reques
 	if len(grouped.Dimensions) == 0 && grouped.Time.Field == "" {
 		return nil, false, nil
 	}
-	if len(scalar.Dimensions) != 0 || scalar.Time.Field != "" || len(scalar.Measures) != 1 {
+	if len(scalar.Dimensions) != 0 || scalar.Time.Field != "" || len(scalar.Metrics) != 1 {
 		return nil, false, nil
 	}
 	if grouped.Table != scalar.Table || !reflect.DeepEqual(grouped.Filters, scalar.Filters) || !reflect.DeepEqual(grouped.ColumnMasks, scalar.ColumnMasks) {
 		return nil, false, nil
 	}
 
-	target := scalar.Measures[0]
-	dependencyNames, ok, err := AdditiveMeasureDependencies(model, target.Field)
+	target := scalar.Metrics[0]
+	dependencyNames, ok, err := AdditiveMetricDependencies(model, target.Field)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
@@ -36,9 +36,10 @@ func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Reques
 	for _, dependency := range dependencyNames {
 		dependencies[dependency] = struct{}{}
 	}
-	aliases := make(map[string]string, len(grouped.Measures))
-	for _, member := range grouped.Measures {
-		if _, atomic := model.Measures[member.Field]; !atomic {
+	aliases := make(map[string]string, len(grouped.Metrics))
+	for _, member := range grouped.Metrics {
+		metric, atomic := model.Metrics[member.Field]
+		if !atomic || metric.Type != "aggregate" {
 			continue
 		}
 		if member.Alias == "" {
@@ -57,8 +58,8 @@ func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Reques
 
 	values := make(map[string]any, len(dependencies))
 	for dependency := range dependencies {
-		measure := model.Measures[dependency]
-		value, err := recombineAdditive(rows, aliases[dependency], measure.Empty)
+		metric := model.Metrics[dependency]
+		value, err := recombineAdditive(rows, aliases[dependency], metric.Empty)
 		if err != nil {
 			return nil, false, err
 		}
@@ -75,20 +76,20 @@ func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Reques
 	return Rows{{alias: value}}, true, nil
 }
 
-// AdditiveMeasureDependencies expands a measure/metric to atomic count/sum
+// AdditiveMetricDependencies expands a metric to atomic count/sum metrics.
 // members. The boolean is false for any non-additive dependency.
-func AdditiveMeasureDependencies(model *semanticmodel.Model, member string) ([]string, bool, error) {
-	return NewPlanner(model).AdditiveMeasureDependencies(member)
+func AdditiveMetricDependencies(model *semanticmodel.Model, member string) ([]string, bool, error) {
+	return NewPlanner(model).AdditiveMetricDependencies(member)
 }
 
-func (p *Planner) AdditiveMeasureDependencies(member string) ([]string, bool, error) {
+func (p *Planner) AdditiveMetricDependencies(member string) ([]string, bool, error) {
 	model := p.Model
 	dependencies := map[string]struct{}{}
 	visiting := map[string]bool{}
 	var visit func(string) (bool, error)
 	visit = func(name string) (bool, error) {
-		if measure, ok := model.Measures[name]; ok {
-			if measure.Aggregation != "count" && measure.Aggregation != "sum" {
+		if metric, ok := model.Metrics[name]; ok && metric.Type == "aggregate" {
+			if metric.Aggregation != "count" && metric.Aggregation != "sum" {
 				return false, nil
 			}
 			dependencies[name] = struct{}{}
@@ -235,7 +236,7 @@ func recombineAdditive(rows Rows, alias, empty string) (any, error) {
 }
 
 func evaluateAggregateMember(model *semanticmodel.Model, member string, values map[string]any, visiting map[string]bool) (any, error) {
-	if _, ok := model.Measures[member]; ok {
+	if metric, ok := model.Metrics[member]; ok && metric.Type == "aggregate" {
 		return values[member], nil
 	}
 	metric, ok := model.Metrics[member]
@@ -247,7 +248,11 @@ func evaluateAggregateMember(model *semanticmodel.Model, member string, values m
 	}
 	visiting[member] = true
 	defer delete(visiting, member)
-	expression, err := semanticmodel.ParseExpression(metric.Expression)
+	expressionSource := metric.Expression
+	if metric.Type == "ratio" {
+		expressionSource = fmt.Sprintf("safe_divide(${%s}, ${%s})", metric.Numerator, metric.Denominator)
+	}
+	expression, err := semanticmodel.ParseExpression(expressionSource)
 	if err != nil {
 		return nil, fmt.Errorf("metric %q: %w", member, err)
 	}

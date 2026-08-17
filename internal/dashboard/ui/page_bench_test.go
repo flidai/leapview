@@ -116,7 +116,7 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 			Type:  "bar",
 			Query: dashboardauthoring.VisualQuery{
 				Dimensions: fieldRefs("orders.status"),
-				Measures:   fieldRefs("order_count"),
+				Metrics:    fieldRefs("order_count"),
 			},
 		}
 		components = append(components, dashboard.PageVisual{ID: id, Kind: "visual", Visual: id, X: float64((i % 4) * 300), Y: float64((i / 4) * 180), Width: 280, Height: 160})
@@ -164,9 +164,9 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 		Title: "Benchmark Semantic Model",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
-				Grain:      "order_id",
+				Source:      "orders",
+				Entities:    map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Expr: "order_id", Type: "string"},
 					"status":   {Expr: "status", Type: "string"},
@@ -176,7 +176,7 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}},
+		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero", Label: "Orders"}},
 	}
 	catalog := catalog.Catalog{Project: catalog.Project{ID: "benchmark", Title: "Benchmark Workspace"}}
 	return report, model, catalog

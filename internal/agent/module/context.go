@@ -118,9 +118,9 @@ func validateDataExploration(model interface {
 			return fmt.Errorf("invalid exploration dimension %q: %w", dimension, err)
 		}
 	}
-	for _, measure := range exploration.Measures {
-		if err := model.ValidateAggregateMember(measure); err != nil {
-			return fmt.Errorf("invalid exploration measure %q: %w", measure, err)
+	for _, metric := range exploration.Metrics {
+		if err := model.ValidateAggregateMember(metric); err != nil {
+			return fmt.Errorf("invalid exploration metric %q: %w", metric, err)
 		}
 	}
 	allowedFilterOperators := map[string]bool{
@@ -148,7 +148,7 @@ func validateDataExploration(model interface {
 		}
 	}
 	selected := map[string]struct{}{}
-	for _, field := range append(append([]string(nil), exploration.Dimensions...), exploration.Measures...) {
+	for _, field := range append(append([]string(nil), exploration.Dimensions...), exploration.Metrics...) {
 		selected[field] = struct{}{}
 	}
 	for _, sort := range exploration.Sort {

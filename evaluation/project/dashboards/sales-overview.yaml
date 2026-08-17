@@ -49,7 +49,7 @@ spec:
     revenue_kpi:
       type: kpi
       query:
-        measures:
+        metrics:
           revenue:
       presentation:
         note: Governed revenue
@@ -57,7 +57,7 @@ spec:
     total_orders:
       type: kpi
       query:
-        measures:
+        metrics:
           order_count:
       presentation:
         note: Filtered orders
@@ -68,7 +68,7 @@ spec:
       query:
         dimensions:
           category: orders.category
-        measures:
+        metrics:
           revenue:
         sort:
           - field: value

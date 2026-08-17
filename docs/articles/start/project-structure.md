@@ -59,7 +59,7 @@ Paths are resolved relative to the project manifest. Keep include patterns narro
 - **Connections** define how LeapView reaches physical data.
 - **Sources** use a connection and provide stable logical names, paths, and field definitions.
 - **Model tables** transform permitted sources into reusable analytical tables.
-- **Semantic models** define dimensions, measures, metrics, and relationships across model tables. Shared dimensions can serve multiple semantic consumers in the same graph.
+- **Semantic models** define dimensions, metrics, and relationships across model tables. Shared dimensions can serve multiple semantic consumers in the same graph.
 - **Pipelines** describe refresh triggers for semantic models.
 - **Dashboards** compose semantic queries into filters, visuals, tables, pages, and layout.
 - **Access and publication resources** govern project resources and public delivery without creating another resource container.

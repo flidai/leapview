@@ -10,7 +10,7 @@ Specify:
 
 - the visual type ID and compatible page component kind;
 - the renderer-independent specification kind and mark;
-- required and optional dimensions, measures, series, or table input;
+- required and optional dimensions, metrics, series, or table input;
 - sorting and cardinality rules;
 - stable payload fields and formatting behavior;
 - whether point selection is supported and which datum fields identify it;
@@ -29,7 +29,7 @@ Extend compilation and data shaping so a valid semantic query becomes a `Visuali
 Test:
 
 - valid minimum and representative payloads;
-- missing or excessive dimensions/measures;
+- missing or excessive dimensions/metrics;
 - result alias handling;
 - typed null/zero/false values;
 - deterministic sorting and bounds;
@@ -48,7 +48,7 @@ Do not add renderer-native options to YAML or the IR. Add a typed product-level 
 
 ## Implement interactions
 
-If selection is supported, map library events back to the original source datum and let shared interaction code build semantic entries. Test rapid replacement, clear/toggle behavior, and identity containing the correct field, fact/grain, and scalar type.
+If selection is supported, map library events back to the original source datum and let shared interaction code build semantic entries. Test rapid replacement, clear/toggle behavior, and identity containing the correct field, dataset/grain, and scalar type.
 
 For transformed structures such as graph edges, Sankey links, or hierarchy nodes, prove that only data with a real source mapping can become a semantic selection.
 

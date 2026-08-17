@@ -139,7 +139,10 @@ func loadFlatModels(project *Project, includes []string) error {
 		if _, exists := project.Models[name]; exists {
 			return resourceError(path, id, "metadata.name", "duplicate Model %q", name)
 		}
-		project.Models[name] = projectModelTable(spec)
+		table := projectModelTable(spec)
+		table.AIContext = envelope.AIContext
+		project.Models[name] = table
+		project.ModelAIContexts[name] = envelope.AIContext
 		project.ModelIDs[name], project.ModelPaths[name] = id, path
 	}
 	return nil
@@ -170,6 +173,7 @@ func loadFlatSemanticModels(project *Project, includes []string) error {
 			return resourceError(path, id, "metadata.name", "duplicate SemanticModel %q", name)
 		}
 		project.SemanticModels[name] = spec
+		project.SemanticModelAIContexts[name] = envelope.AIContext
 		project.SemanticModelIDs[name], project.SemanticModelPaths[name] = id, path
 	}
 	return nil
@@ -430,12 +434,12 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	for name, spec := range project.SemanticModels {
-		if len(spec.Tables) == 0 {
-			return resourceError(project.SemanticModelPaths[name], project.SemanticModelIDs[name], "spec.tables", "SemanticModel %q requires tables", name)
+		if len(spec.Datasets) == 0 {
+			return resourceError(project.SemanticModelPaths[name], project.SemanticModelIDs[name], "spec.datasets", "SemanticModel %q requires datasets", name)
 		}
-		for _, ref := range spec.Tables {
-			if _, err := resolver.resolve(ref, projectgraph.KindModel); err != nil {
-				return resourceError(project.SemanticModelPaths[name], project.SemanticModelIDs[name], "spec.tables", "SemanticModel %q: %v", name, err)
+		for datasetName, dataset := range spec.Datasets {
+			if _, err := resolver.resolve(dataset.Model, projectgraph.KindModel); err != nil {
+				return resourceError(project.SemanticModelPaths[name], project.SemanticModelIDs[name], "spec.datasets."+datasetName+".model", "SemanticModel %q: %v", name, err)
 			}
 		}
 	}
@@ -709,7 +713,8 @@ func compileProjectGraph(project Project) (projectgraph.ProjectGraph, error) {
 	}
 	for name, spec := range project.SemanticModels {
 		from, _ := resolver.resolve(project.SemanticModelIDs[name], projectgraph.KindSemanticModel)
-		for _, ref := range spec.Tables {
+		for _, dataset := range spec.Datasets {
+			ref := dataset.Model
 			to, err := resolver.resolve(ref, projectgraph.KindModel)
 			if err != nil {
 				return projectgraph.ProjectGraph{}, err

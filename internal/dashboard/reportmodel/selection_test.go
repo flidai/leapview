@@ -213,9 +213,9 @@ func selectionFixture() (*dashboardauthoring.Dashboard, *semanticmodel.Model) {
 				"ratings": {Field: "ratings.rating_bucket"},
 			}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"rating_count": {Fact: "ratings"},
-			"tag_count":    {Fact: "tags"},
+		Metrics: map[string]semanticmodel.Metric{
+			"rating_count": {Type: "aggregate", Dataset: "ratings"},
+			"tag_count":    {Type: "aggregate", Dataset: "tags"},
 		},
 	}
 	dashboard := &dashboardauthoring.Dashboard{Visuals: map[string]dashboardauthoring.AuthoringVisualization{
@@ -225,8 +225,8 @@ func selectionFixture() (*dashboardauthoring.Dashboard, *semanticmodel.Model) {
 	return dashboard, model
 }
 
-func selectionVisual(dimensions, measures []dashboardauthoring.FieldRef, time dashboardauthoring.QueryTime, selection dashboardauthoring.SelectionInteraction) dashboardauthoring.AuthoringVisualization {
-	return dashboardauthoring.ChartVisualization(dashboardauthoring.Visual{Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: dimensions, Measures: measures, Time: time}, Interaction: dashboardauthoring.Interaction{PointSelection: selection}})
+func selectionVisual(dimensions, metrics []dashboardauthoring.FieldRef, time dashboardauthoring.QueryTime, selection dashboardauthoring.SelectionInteraction) dashboardauthoring.AuthoringVisualization {
+	return dashboardauthoring.ChartVisualization(dashboardauthoring.Visual{Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: dimensions, Metrics: metrics, Time: time}, Interaction: dashboardauthoring.Interaction{PointSelection: selection}})
 }
 
 func refs(fields ...string) []dashboardauthoring.FieldRef {

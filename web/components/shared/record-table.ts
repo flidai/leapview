@@ -768,7 +768,7 @@ function iconForName(name: string): any {
       return Server
     case 'field':
       return KeyRound
-    case 'measure':
+    case 'metric':
       return Sigma
     case 'filter':
       return Filter

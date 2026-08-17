@@ -5982,8 +5982,8 @@ paths:
                 componentId: example
                 definition:
                   calendar: example
+                  dataset: example
                   description: example
-                  fact: example
                   field: example
                   formatPattern: example
                   formatUnit: example
@@ -50594,28 +50594,25 @@ paths:
                 $ref: '#/components/schemas/SemanticModelDescriptionResponse'
               example:
                 counts:
-                  atomic_measures: 1
-                  conformed_dimensions: 1
-                  facts: 1
+                  datasets: 1
+                  dimensions: 1
                   fields: 1
+                  filters: 1
                   metrics: 1
-                  model_tables: 1
                   relationships: 1
-                  sources: 1
                 dashboards:
                   - id: example
                     pages: 1
                     semantic_model: example
                     title: example
+                datasets:
+                  - description: example
+                    fieldCount: 1
+                    id: example
+                    metricCount: 1
+                    model: example
                 description: example
                 id: example
-                tables:
-                  - description: example
-                    fields: 1
-                    id: example
-                    roles:
-                      - example
-                    source: example
                 title: example
         '400':
           description: The server could not understand the request due to invalid syntax.
@@ -50902,9 +50899,8 @@ paths:
                   - description: example
                     fieldCount: 1
                     id: example
-                    kind: example
-                    measureCount: 1
-                    source: example
+                    metricCount: 1
+                    model: example
                 page:
                   nextCursor: example
         '400':
@@ -51176,15 +51172,16 @@ paths:
                 $ref: '#/components/schemas/SemanticDatasetResponse'
               example:
                 description: example
+                entities:
+                  key:
+                    fields:
+                      - example
+                    type: example
                 fieldCount: 1
-                grain: example
+                grainEntity: example
                 id: example
-                kind: example
-                measureCount: 1
-                primaryKey: example
-                source: example
-                sources:
-                  - example
+                metricCount: 1
+                model: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -51473,7 +51470,9 @@ paths:
                 $ref: '#/components/schemas/SemanticFieldListResponse'
               example:
                 items:
-                  - description: example
+                  - dataset: example
+                    datatype: example
+                    description: example
                     format: example
                     grain: example
                     grains:
@@ -51482,7 +51481,6 @@ paths:
                     kind: dimension
                     label: example
                     name: example
-                    table: example
                     time: example
                     type: example
                     unit: example
@@ -52040,7 +52038,7 @@ paths:
                 - alias: example
                   field: example
               filters:
-                - fact: example
+                - dataset: example
                   field: example
                   groups:
                     - filters: []
@@ -52048,7 +52046,7 @@ paths:
                   values:
                     - example
               limit: 1
-              measures:
+              metrics:
                 - alias: example
                   field: example
               pageToken: example
@@ -52093,11 +52091,11 @@ paths:
                   - key: example
                 columns:
                   - example
+                datasets:
+                  - example
                 effectiveOrdering:
                   - direction: asc
                     field: example
-                facts:
-                  - example
                 mode: example
                 physicalDependencies:
                   - example
@@ -52355,7 +52353,7 @@ paths:
                 - alias: example
                   field: example
               filters:
-                - fact: example
+                - dataset: example
                   field: example
                   groups:
                     - filters: []
@@ -52363,7 +52361,7 @@ paths:
                   values:
                     - example
               limit: 1
-              measures:
+              metrics:
                 - alias: example
                   field: example
               pageToken: example
@@ -52416,7 +52414,9 @@ paths:
                 $ref: '#/components/schemas/SemanticFieldListResponse'
               example:
                 items:
-                  - description: example
+                  - dataset: example
+                    datatype: example
+                    description: example
                     format: example
                     grain: example
                     grains:
@@ -52425,7 +52425,6 @@ paths:
                     kind: dimension
                     label: example
                     name: example
-                    table: example
                     time: example
                     type: example
                     unit: example
@@ -52977,7 +52976,7 @@ paths:
                 - alias: example
                   field: example
               filters:
-                - fact: example
+                - dataset: example
                   field: example
                   groups:
                     - filters: []
@@ -52985,7 +52984,7 @@ paths:
                   values:
                     - example
               limit: 1
-              measures:
+              metrics:
                 - alias: example
                   field: example
               pageToken: example
@@ -52995,7 +52994,7 @@ paths:
               time:
                 alias: example
                 field: example
-                grain: day
+                grain: second
       x-apigen-operation-kind: query
       x-apigen-tool:
         confirmation: never
@@ -53077,11 +53076,11 @@ paths:
                   - key: example
                 columns:
                   - example
+                datasets:
+                  - example
                 effectiveOrdering:
                   - direction: asc
                     field: example
-                facts:
-                  - example
                 mode: example
                 physicalDependencies:
                   - example
@@ -53339,7 +53338,7 @@ paths:
                 - alias: example
                   field: example
               filters:
-                - fact: example
+                - dataset: example
                   field: example
                   groups:
                     - filters: []
@@ -53347,7 +53346,7 @@ paths:
                   values:
                     - example
               limit: 1
-              measures:
+              metrics:
                 - alias: example
                   field: example
               pageToken: example
@@ -53357,7 +53356,7 @@ paths:
               time:
                 alias: example
                 field: example
-                grain: day
+                grain: second
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
@@ -53407,10 +53406,12 @@ paths:
                   - active: true
                     cardinality: example
                     fromDataset: example
-                    fromField: example
+                    fromFields:
+                      - example
                     id: example
                     toDataset: example
-                    toField: example
+                    toFields:
+                      - example
                 page:
                   nextCursor: example
         '400':
@@ -58672,7 +58673,7 @@ components:
         role:
           type: string
           enum:
-            - measure
+            - metric
             - dimension
             - detail
           example: example
@@ -59546,7 +59547,7 @@ components:
         field:
           type: string
           example: example
-        fact:
+        dataset:
           type: string
           example: example
         valueKind:
@@ -59586,8 +59587,8 @@ components:
           example: example
       example:
         calendar: example
+        dataset: example
         description: example
-        fact: example
         field: example
         formatPattern: example
         formatUnit: example
@@ -59807,8 +59808,8 @@ components:
         componentId: example
         definition:
           calendar: example
+          dataset: example
           description: example
-          fact: example
           field: example
           formatPattern: example
           formatUnit: example
@@ -63823,8 +63824,8 @@ components:
         - kind
         - rows
         - columns
-        - measures
-        - measureFormatting
+        - metrics
+        - metricFormatting
         - presentation
       properties:
         kind:
@@ -63846,14 +63847,14 @@ components:
           example:
             - dataset: example
               field: example
-        measures:
+        metrics:
           type: array
           items:
             $ref: '#/components/schemas/VisualizationFieldRef'
           example:
             - dataset: example
               field: example
-        measureFormatting:
+        metricFormatting:
           type: object
           additionalProperties:
             type: array
@@ -63868,9 +63869,9 @@ components:
           - dataset: example
             field: example
         kind: example
-        measureFormatting:
+        metricFormatting:
           key: []
-        measures:
+        metrics:
           - dataset: example
             field: example
         presentation:
@@ -64009,8 +64010,8 @@ components:
         - kind
         - rows
         - columns
-        - measures
-        - measureFormatting
+        - metrics
+        - metricFormatting
         - presentation
       properties:
         kind:
@@ -64032,14 +64033,14 @@ components:
           example:
             - dataset: example
               field: example
-        measures:
+        metrics:
           type: array
           items:
             $ref: '#/components/schemas/VisualizationFieldRef'
           example:
             - dataset: example
               field: example
-        measureFormatting:
+        metricFormatting:
           type: object
           additionalProperties:
             type: array
@@ -64054,9 +64055,9 @@ components:
           - dataset: example
             field: example
         kind: example
-        measureFormatting:
+        metricFormatting:
           key: []
-        measures:
+        metrics:
           - dataset: example
             field: example
         presentation:
@@ -65295,7 +65296,7 @@ components:
           example: true
         fieldRef:
           $ref: '#/components/schemas/QueryFieldRef'
-          description: Governed catalog ref for the selected field, measure, or metric.
+          description: Governed catalog ref for the selected field or metric.
         label:
           type: string
           description: Business-facing semantic label.
@@ -65304,17 +65305,16 @@ components:
           type: string
           enum:
             - dimension
-            - measure
             - metric
           description: Semantic role of the selected member.
           example: example
         unit:
           type: string
-          description: Business unit declared by the semantic measure or metric.
+          description: Business unit declared by the semantic metric.
           example: example
         format:
           type: string
-          description: Formatting contract declared by the semantic measure or metric.
+          description: Formatting contract declared by the semantic metric.
           example: example
       example:
         fieldRef:
@@ -65542,7 +65542,7 @@ components:
           type: string
           enum:
             - field
-            - measure
+            - metric
           description: Catalog type of the semantic member.
           example: example
         id:
@@ -66904,9 +66904,8 @@ components:
             - description: example
               fieldCount: 1
               id: example
-              kind: example
-              measureCount: 1
-              source: example
+              metricCount: 1
+              model: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
@@ -66914,109 +66913,122 @@ components:
           - description: example
             fieldCount: 1
             id: example
-            kind: example
-            measureCount: 1
-            source: example
+            metricCount: 1
+            model: example
         page:
           nextCursor: example
     SemanticDatasetResponse:
       type: object
       required:
         - id
-        - kind
-        - source
-        - sources
+        - model
         - description
-        - primaryKey
-        - grain
+        - entities
         - fieldCount
-        - measureCount
+        - metricCount
       properties:
         id:
           type: string
           example: example
-        kind:
+        model:
           type: string
           example: example
-        source:
+        description:
           type: string
           example: example
-        sources:
+        grainEntity:
+          type: string
+          example: example
+        entities:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/SemanticEntitySummary'
+          example:
+            key:
+              fields:
+                - example
+              type: example
+        fieldCount:
+          type: integer
+          format: int32
+          example: 1
+        metricCount:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        description: example
+        entities:
+          key:
+            fields:
+              - example
+            type: example
+        fieldCount: 1
+        grainEntity: example
+        id: example
+        metricCount: 1
+        model: example
+    SemanticDatasetSummary:
+      type: object
+      required:
+        - id
+        - model
+        - description
+        - fieldCount
+        - metricCount
+      properties:
+        id:
+          type: string
+          example: example
+        model:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+        fieldCount:
+          type: integer
+          format: int32
+          example: 1
+        metricCount:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        description: example
+        fieldCount: 1
+        id: example
+        metricCount: 1
+        model: example
+    SemanticEntitySummary:
+      type: object
+      required:
+        - type
+        - fields
+      properties:
+        type:
+          type: string
+          enum:
+            - primary
+            - unique
+            - foreign
+            - natural
+          example: example
+        fields:
           type: array
           items:
             type: string
           example:
             - example
-        description:
-          type: string
-          example: example
-        primaryKey:
-          type: string
-          example: example
-        grain:
-          type: string
-          example: example
-        fieldCount:
-          type: integer
-          format: int32
-          example: 1
-        measureCount:
-          type: integer
-          format: int32
-          example: 1
       example:
-        description: example
-        fieldCount: 1
-        grain: example
-        id: example
-        kind: example
-        measureCount: 1
-        primaryKey: example
-        source: example
-        sources:
+        fields:
           - example
-    SemanticDatasetSummary:
-      type: object
-      required:
-        - id
-        - kind
-        - source
-        - description
-        - fieldCount
-        - measureCount
-      properties:
-        id:
-          type: string
-          example: example
-        kind:
-          type: string
-          example: example
-        source:
-          type: string
-          example: example
-        description:
-          type: string
-          example: example
-        fieldCount:
-          type: integer
-          format: int32
-          example: 1
-        measureCount:
-          type: integer
-          format: int32
-          example: 1
-      example:
-        description: example
-        fieldCount: 1
-        id: example
-        kind: example
-        measureCount: 1
-        source: example
+        type: example
     SemanticExplainResponse:
       type: object
       required:
         - mode
-        - facts
+        - datasets
         - stitchDimensions
         - physicalDependencies
         - relationshipPaths
@@ -67029,7 +67041,7 @@ components:
         mode:
           type: string
           example: example
-        facts:
+        datasets:
           type: array
           items:
             type: string
@@ -67088,11 +67100,11 @@ components:
           - key: example
         columns:
           - example
+        datasets:
+          - example
         effectiveOrdering:
           - direction: asc
             field: example
-        facts:
-          - example
         mode: example
         physicalDependencies:
           - example
@@ -67107,7 +67119,6 @@ components:
       type: string
       enum:
         - dimension
-        - measure
         - metric
       example: dimension
     SemanticFieldListResponse:
@@ -67121,7 +67132,9 @@ components:
           items:
             $ref: '#/components/schemas/SemanticFieldResponse'
           example:
-            - description: example
+            - dataset: example
+              datatype: example
+              description: example
               format: example
               grain: example
               grains:
@@ -67130,7 +67143,6 @@ components:
               kind: dimension
               label: example
               name: example
-              table: example
               time: example
               type: example
               unit: example
@@ -67138,7 +67150,9 @@ components:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - description: example
+          - dataset: example
+            datatype: example
+            description: example
             format: example
             grain: example
             grains:
@@ -67147,7 +67161,6 @@ components:
             kind: dimension
             label: example
             name: example
-            table: example
             time: example
             type: example
             unit: example
@@ -67160,7 +67173,7 @@ components:
       properties:
         field:
           type: string
-          description: Semantic field or measure ID. Use the ID returned by catalog_list or catalog_get.
+          description: Semantic field or metric ID. Use the ID returned by catalog_list or catalog_get.
           example: example
         alias:
           type: string
@@ -67174,7 +67187,7 @@ components:
       required:
         - id
         - kind
-        - table
+        - dataset
         - name
         - label
       properties:
@@ -67183,7 +67196,7 @@ components:
           example: example
         kind:
           $ref: '#/components/schemas/SemanticFieldKind'
-        table:
+        dataset:
           type: string
           example: example
         name:
@@ -67196,6 +67209,9 @@ components:
           type: string
           example: example
         type:
+          type: string
+          example: example
+        datatype:
           type: string
           example: example
         unit:
@@ -67217,6 +67233,8 @@ components:
           example:
             - example
       example:
+        dataset: example
+        datatype: example
         description: example
         format: example
         grain: example
@@ -67226,7 +67244,6 @@ components:
         kind: dimension
         label: example
         name: example
-        table: example
         time: example
         type: example
         unit: example
@@ -67237,9 +67254,9 @@ components:
           type: string
           description: Semantic field ID. Omit only when groups supplies nested filters.
           example: example
-        fact:
+        dataset:
           type: string
-          description: Fact table used to resolve a conformed dimension when it is otherwise ambiguous.
+          description: Dataset used to resolve a conformed dimension when it is otherwise ambiguous.
           example: example
         operator:
           $ref: '#/components/schemas/SemanticFilterOperator'
@@ -67259,7 +67276,7 @@ components:
           example:
             - filters: []
       example:
-        fact: example
+        dataset: example
         field: example
         groups:
           - filters: []
@@ -67277,7 +67294,7 @@ components:
             $ref: '#/components/schemas/SemanticFilter'
           description: Filters combined within this nested group.
           example:
-            - fact: example
+            - dataset: example
               field: example
               groups:
                 - filters: []
@@ -67302,20 +67319,14 @@ components:
     SemanticModelCounts:
       type: object
       required:
-        - sources
-        - model_tables
+        - datasets
         - fields
-        - facts
-        - conformed_dimensions
-        - atomic_measures
+        - dimensions
         - metrics
+        - filters
         - relationships
       properties:
-        sources:
-          type: integer
-          format: int32
-          example: 1
-        model_tables:
+        datasets:
           type: integer
           format: int32
           example: 1
@@ -67323,19 +67334,15 @@ components:
           type: integer
           format: int32
           example: 1
-        facts:
-          type: integer
-          format: int32
-          example: 1
-        conformed_dimensions:
-          type: integer
-          format: int32
-          example: 1
-        atomic_measures:
+        dimensions:
           type: integer
           format: int32
           example: 1
         metrics:
+          type: integer
+          format: int32
+          example: 1
+        filters:
           type: integer
           format: int32
           example: 1
@@ -67344,14 +67351,12 @@ components:
           format: int32
           example: 1
       example:
-        atomic_measures: 1
-        conformed_dimensions: 1
-        facts: 1
+        datasets: 1
+        dimensions: 1
         fields: 1
+        filters: 1
         metrics: 1
-        model_tables: 1
         relationships: 1
-        sources: 1
     SemanticModelDescriptionResponse:
       type: object
       required:
@@ -67382,41 +67387,37 @@ components:
               title: example
         counts:
           $ref: '#/components/schemas/SemanticModelCounts'
-        tables:
+        datasets:
           type: array
           items:
-            $ref: '#/components/schemas/SemanticModelTableSummary'
+            $ref: '#/components/schemas/SemanticDatasetSummary'
           example:
             - description: example
-              fields: 1
+              fieldCount: 1
               id: example
-              roles:
-                - example
-              source: example
+              metricCount: 1
+              model: example
       example:
         counts:
-          atomic_measures: 1
-          conformed_dimensions: 1
-          facts: 1
+          datasets: 1
+          dimensions: 1
           fields: 1
+          filters: 1
           metrics: 1
-          model_tables: 1
           relationships: 1
-          sources: 1
         dashboards:
           - id: example
             pages: 1
             semantic_model: example
             title: example
+        datasets:
+          - description: example
+            fieldCount: 1
+            id: example
+            metricCount: 1
+            model: example
         description: example
         id: example
-        tables:
-          - description: example
-            fields: 1
-            id: example
-            roles:
-              - example
-            source: example
         title: example
     SemanticModelListResponse:
       type: object
@@ -67463,41 +67464,6 @@ components:
         description: example
         id: example
         title: example
-    SemanticModelTableSummary:
-      type: object
-      required:
-        - id
-        - roles
-        - source
-        - description
-        - fields
-      properties:
-        id:
-          type: string
-          example: example
-        roles:
-          type: array
-          items:
-            type: string
-          example:
-            - example
-        source:
-          type: string
-          example: example
-        description:
-          type: string
-          example: example
-        fields:
-          type: integer
-          format: int32
-          example: 1
-      example:
-        description: example
-        fields: 1
-        id: example
-        roles:
-          - example
-        source: example
     SemanticPreviewRequest:
       type: object
       properties:
@@ -67508,7 +67474,7 @@ components:
           example:
             - alias: example
               field: example
-        measures:
+        metrics:
           type: array
           items:
             $ref: '#/components/schemas/SemanticFieldRef'
@@ -67520,7 +67486,7 @@ components:
           items:
             $ref: '#/components/schemas/SemanticFilter'
           example:
-            - fact: example
+            - dataset: example
               field: example
               groups:
                 - filters: []
@@ -67550,7 +67516,7 @@ components:
           - alias: example
             field: example
         filters:
-          - fact: example
+          - dataset: example
             field: example
             groups:
               - filters: []
@@ -67558,7 +67524,7 @@ components:
             values:
               - example
         limit: 1
-        measures:
+        metrics:
           - alias: example
             field: example
         pageToken: example
@@ -67575,7 +67541,7 @@ components:
           example:
             - alias: example
               field: example
-        measures:
+        metrics:
           type: array
           items:
             $ref: '#/components/schemas/SemanticFieldRef'
@@ -67589,7 +67555,7 @@ components:
           items:
             $ref: '#/components/schemas/SemanticFilter'
           example:
-            - fact: example
+            - dataset: example
               field: example
               groups:
                 - filters: []
@@ -67619,7 +67585,7 @@ components:
           - alias: example
             field: example
         filters:
-          - fact: example
+          - dataset: example
             field: example
             groups:
               - filters: []
@@ -67627,7 +67593,7 @@ components:
             values:
               - example
         limit: 1
-        measures:
+        metrics:
           - alias: example
             field: example
         pageToken: example
@@ -67637,7 +67603,7 @@ components:
         time:
           alias: example
           field: example
-          grain: day
+          grain: second
     SemanticQueryResponse:
       type: object
       required:
@@ -67727,10 +67693,12 @@ components:
             - active: true
               cardinality: example
               fromDataset: example
-              fromField: example
+              fromFields:
+                - example
               id: example
               toDataset: example
-              toField: example
+              toFields:
+                - example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
@@ -67738,10 +67706,12 @@ components:
           - active: true
             cardinality: example
             fromDataset: example
-            fromField: example
+            fromFields:
+              - example
             id: example
             toDataset: example
-            toField: example
+            toFields:
+              - example
         page:
           nextCursor: example
     SemanticRelationshipResponse:
@@ -67749,9 +67719,9 @@ components:
       required:
         - id
         - fromDataset
-        - fromField
+        - fromFields
         - toDataset
-        - toField
+        - toFields
         - cardinality
         - active
       properties:
@@ -67761,15 +67731,21 @@ components:
         fromDataset:
           type: string
           example: example
-        fromField:
-          type: string
-          example: example
+        fromFields:
+          type: array
+          items:
+            type: string
+          example:
+            - example
         toDataset:
           type: string
           example: example
-        toField:
-          type: string
-          example: example
+        toFields:
+          type: array
+          items:
+            type: string
+          example:
+            - example
         cardinality:
           type: string
           example: example
@@ -67780,10 +67756,12 @@ components:
         active: true
         cardinality: example
         fromDataset: example
-        fromField: example
+        fromFields:
+          - example
         id: example
         toDataset: example
-        toField: example
+        toFields:
+          - example
     SemanticSort:
       type: object
       required:
@@ -67868,12 +67846,15 @@ components:
     SemanticTimeGrain:
       type: string
       enum:
+        - second
+        - minute
+        - hour
         - day
         - week
         - month
         - quarter
         - year
-      example: day
+      example: second
     SemanticTimeRef:
       type: object
       required:
@@ -67893,7 +67874,7 @@ components:
       example:
         alias: example
         field: example
-        grain: day
+        grain: second
     ServicePrincipalAuditPayload:
       type: object
       required:
@@ -68292,7 +68273,7 @@ components:
                 columnValue: example
                 formatting: []
                 group: example
-                measure: example
+                metric: example
               id: example
               label: example
               nullable: true
@@ -68465,7 +68446,7 @@ components:
         group:
           type: string
           example: example
-        measure:
+        metric:
           type: string
           example: example
         columnValue:
@@ -68484,7 +68465,7 @@ components:
         formatting: []
         group: example
         label: example
-        measure: example
+        metric: example
         width: 1
     TableVisualizationFormattingRule:
       oneOf:
@@ -68535,7 +68516,7 @@ components:
               formatting: []
               group: example
               label: example
-              measure: example
+              metric: example
               width: 1
         defaultSort:
           type: array
@@ -68557,7 +68538,7 @@ components:
             formatting: []
             group: example
             label: example
-            measure: example
+            metric: example
             width: 1
         defaultSort:
           - direction: ascending
@@ -69797,7 +69778,7 @@ components:
                 columnValue: example
                 formatting: []
                 group: example
-                measure: example
+                metric: example
               id: example
               label: example
               nullable: true
@@ -69826,7 +69807,7 @@ components:
               columnValue: example
               formatting: []
               group: example
-              measure: example
+              metric: example
             id: example
             label: example
             nullable: true
@@ -70166,7 +70147,7 @@ components:
           columnValue: example
           formatting: []
           group: example
-          measure: example
+          metric: example
         id: example
         label: example
         nullable: true
@@ -70231,7 +70212,7 @@ components:
       type: string
       enum:
         - dimension
-        - measure
+        - metric
         - metadata
         - identity
       example: dimension
@@ -70399,7 +70380,7 @@ components:
         group:
           type: string
           example: example
-        measure:
+        metric:
           type: string
           example: example
         columnValue:
@@ -70414,7 +70395,7 @@ components:
         columnValue: example
         formatting: []
         group: example
-        measure: example
+        metric: example
     VisualizationHeatLayer:
       type: object
       allOf:
@@ -72086,7 +72067,7 @@ components:
                     columnValue: example
                     formatting: []
                     group: example
-                    measure: example
+                    metric: example
                   id: example
                   label: example
                   nullable: true
@@ -72231,7 +72212,7 @@ components:
                   columnValue: example
                   formatting: []
                   group: example
-                  measure: example
+                  metric: example
                 id: example
                 label: example
                 nullable: true
@@ -72599,7 +72580,7 @@ components:
                 columnValue: example
                 formatting: []
                 group: example
-                measure: example
+                metric: example
               id: example
               label: example
               nullable: true

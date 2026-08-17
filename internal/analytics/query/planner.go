@@ -30,15 +30,15 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		}
 		fieldSet = append(fieldSet, field)
 	}
-	for _, measure := range request.Measures {
-		field, resolved, err := view.ResolveMeasureRef(measure.Field)
+	for _, metric := range request.Metrics {
+		field, resolved, err := view.ResolveMetricRef(metric.Field)
 		if err != nil {
 			return Plan{}, err
 		}
 		if resolved.Fact != view.Fact {
-			return Plan{}, fmt.Errorf("measure %q is not owned by fact %q", field, view.Fact)
+			return Plan{}, fmt.Errorf("metric %q is not owned by fact %q", field, view.Fact)
 		}
-		fieldSet = append(fieldSet, measurePhysicalFields(resolved)...)
+		fieldSet = append(fieldSet, aggregateMetricPhysicalFields(resolved)...)
 	}
 	filterFields, err := filterFieldSet(view, request.Filters)
 	if err != nil {
@@ -72,8 +72,8 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		selects = append(selects, expr+" AS "+alias)
 		columns = append(columns, alias)
 	}
-	for _, item := range request.Measures {
-		field, _, _ := view.ResolveMeasureRef(item.Field)
+	for _, item := range request.Metrics {
+		field, _, _ := view.ResolveMetricRef(item.Field)
 		alias, err := outputAlias(Field{Field: field, Alias: item.Alias})
 		if err != nil {
 			return Plan{}, err
@@ -81,7 +81,7 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		if err := addOutputColumn(columnSet, alias); err != nil {
 			return Plan{}, err
 		}
-		expr, err := maskedRawMeasureExpr(p.Model, field, view.Measures[field], aliases, masks)
+		expr, err := maskedRawMetricExpr(p.Model, field, view.Metrics[field], aliases, masks)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -125,17 +125,17 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 		}
 		fieldSet = append(fieldSet, field)
 	}
-	measureField, measure, err := view.ResolveMeasureRef(request.Measure.Field)
+	metricField, metric, err := view.ResolveMetricRef(request.Metric.Field)
 	if err != nil {
 		return Plan{}, err
 	}
-	if measure.Fact != view.Fact {
-		return Plan{}, fmt.Errorf("measure %q is not owned by fact %q", measureField, view.Fact)
+	if metric.Fact != view.Fact {
+		return Plan{}, fmt.Errorf("metric %q is not owned by fact %q", metricField, view.Fact)
 	}
-	if masks.matchesMeasure(measureField, measure) {
-		return Plan{}, fmt.Errorf("measure %q depends on a masked field", measureField)
+	if masks.matchesMetric(metricField, metric) {
+		return Plan{}, fmt.Errorf("metric %q depends on a masked field", metricField)
 	}
-	fieldSet = append(fieldSet, measurePhysicalFields(measure)...)
+	fieldSet = append(fieldSet, aggregateMetricPhysicalFields(metric)...)
 	filterFields, err := filterFieldSet(view, request.Filters)
 	if err != nil {
 		return Plan{}, err
@@ -170,11 +170,11 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 		columns = append(columns, alias)
 		dimensionFields = append(dimensionFields, field)
 	}
-	rawExpr, err := rawMeasureExpr(p.Model, measure, aliases)
+	rawExpr, err := rawAggregateMetricExpr(p.Model, metric, aliases)
 	if err != nil {
 		return Plan{}, err
 	}
-	valueAlias := request.Measure.Alias
+	valueAlias := request.Metric.Alias
 	if valueAlias == "" {
 		valueAlias = "value"
 	}
@@ -328,16 +328,16 @@ func (m columnMaskSet) matchesDimension(ref string, dimension semanticmodel.Metr
 	return false
 }
 
-func (m columnMaskSet) matchesMeasure(ref string, measure ResolvedMeasure) bool {
+func (m columnMaskSet) matchesMetric(ref string, metric resolvedAggregateMetric) bool {
 	if len(m) == 0 {
 		return false
 	}
-	for _, key := range []string{ref, measure.Field} {
+	for _, key := range []string{ref, metric.Field} {
 		if _, ok := m[strings.ToLower(strings.TrimSpace(key))]; ok {
 			return true
 		}
 	}
-	for _, dependency := range measurePhysicalFields(measure) {
+	for _, dependency := range aggregateMetricPhysicalFields(metric) {
 		if _, ok := m[strings.ToLower(strings.TrimSpace(dependency))]; ok {
 			return true
 		}
@@ -353,31 +353,31 @@ func maskedDimensionExpr(ref string, dimension semanticmodel.MetricDimension, al
 	return mask.SQL(), nil
 }
 
-func maskedRawMeasureExpr(model *semanticmodel.Model, ref string, measure ResolvedMeasure, aliases map[string]tableAlias, masks columnMaskSet) (string, error) {
+func maskedRawMetricExpr(model *semanticmodel.Model, ref string, metric resolvedAggregateMetric, aliases map[string]tableAlias, masks columnMaskSet) (string, error) {
 	if mask, ok := masks[strings.ToLower(strings.TrimSpace(ref))]; ok {
 		return mask.SQL(), nil
 	}
-	for _, dependency := range measurePhysicalFields(measure) {
+	for _, dependency := range aggregateMetricPhysicalFields(metric) {
 		if mask, ok := masks[strings.ToLower(strings.TrimSpace(dependency))]; ok {
 			return mask.SQL(), nil
 		}
 	}
-	return rawMeasureExpr(model, measure, aliases)
+	return rawAggregateMetricExpr(model, metric, aliases)
 }
 
-func measurePhysicalFields(measure ResolvedMeasure) []string {
+func aggregateMetricPhysicalFields(metric resolvedAggregateMetric) []string {
 	fields := []string{}
-	if measure.InputField != "" {
-		fields = append(fields, measure.InputField)
+	if metric.InputField != "" {
+		fields = append(fields, metric.InputField)
 	}
-	if measure.InputExpr != "" {
-		if measure.InputExpression != nil {
-			fields = append(fields, measure.InputExpression.References()...)
-		} else if expression, err := semanticmodel.ParseExpression(measure.InputExpr); err == nil {
+	if metric.InputExpr != "" {
+		if metric.InputExpression != nil {
+			fields = append(fields, metric.InputExpression.References()...)
+		} else if expression, err := semanticmodel.ParseExpression(metric.InputExpr); err == nil {
 			fields = append(fields, expression.References()...)
 		}
 	}
-	for _, filter := range measure.Filters {
+	for _, filter := range metric.Filters {
 		if filter.Field != "" {
 			fields = append(fields, filter.Field)
 		}
@@ -427,7 +427,7 @@ func filterFields(view *queryView, filter Filter) ([]string, error) {
 
 func allowedTimeGrain(grain string) bool {
 	switch grain {
-	case "day", "week", "month", "quarter", "year":
+	case "second", "minute", "hour", "day", "week", "month", "quarter", "year":
 		return true
 	default:
 		return false
@@ -505,7 +505,7 @@ func writeOrderLimitOffset(sql *strings.Builder, sorts []Sort, columns map[strin
 // sorts remain authoritative and selected output columns are appended as
 // ascending tie-breakers in deterministic alias order. Aggregate rows are
 // unique by their selected dimension tuple; a zero-dimension aggregate has one
-// row, so its measure ordering is deterministic but vacuous. Row/value plans
+// row, so its metric ordering is deterministic but vacuous. Row/value plans
 // also receive a stable order over their projected columns.
 func effectiveOrderSorts(sorts []Sort, columns map[string]bool) []Sort {
 	effective := append([]Sort(nil), sorts...)

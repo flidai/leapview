@@ -6,6 +6,9 @@ Decision date: 2026-06-18
 
 Implementation: complete
 
+Amended by: [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md), authored
+semantic shape and quantitative-member vocabulary only
+
 Deciders: LeapView maintainers
 
 ## Summary

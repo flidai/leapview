@@ -130,7 +130,7 @@ type canceledResultGovernor struct {
 }
 
 func (governor *canceledResultGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
-	isSingleMiss := len(request.Measures) == 1 && request.Measures[0].Field == "event_count"
+	isSingleMiss := len(request.Metrics) == 1 && request.Metrics[0].Field == "event_count"
 	return request, func(result *dataquery.Result, err error) error {
 		if isSingleMiss && errors.Is(err, context.Canceled) && result.Status == dataquery.StatusSuccess {
 			governor.sawCanceledSuccess.Store(true)

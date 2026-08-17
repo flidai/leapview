@@ -10,10 +10,11 @@ import (
 )
 
 type resourceEnvelope struct {
-	APIVersion string    `yaml:"apiVersion"`
-	Kind       string    `yaml:"kind"`
-	Metadata   metadata  `yaml:"metadata"`
-	Spec       yaml.Node `yaml:"spec"`
+	APIVersion string                   `yaml:"apiVersion"`
+	Kind       string                   `yaml:"kind"`
+	Metadata   metadata                 `yaml:"metadata"`
+	AIContext  *semanticmodel.AIContext `yaml:"aiContext"`
+	Spec       yaml.Node                `yaml:"spec"`
 }
 
 type metadata struct {
@@ -74,11 +75,11 @@ type projectSourceField struct {
 }
 
 type projectSemanticModelSpec struct {
-	Tables        []string                                   `yaml:"tables"`
-	Relationships []semanticmodel.Relationship               `yaml:"relationships"`
-	Dimensions    map[string]semanticmodel.SemanticDimension `yaml:"dimensions"`
-	Measures      map[string]semanticmodel.MetricMeasure     `yaml:"measures"`
-	Metrics       map[string]semanticmodel.Metric            `yaml:"metrics"`
+	Datasets      map[string]semanticmodel.SemanticDatasetSpec   `yaml:"datasets"`
+	Relationships map[string]semanticmodel.RelationshipSpec      `yaml:"relationships"`
+	Dimensions    map[string]semanticmodel.SemanticDimensionSpec `yaml:"dimensions"`
+	Filters       map[string]semanticmodel.SemanticFilterSpec    `yaml:"filters"`
+	Metrics       map[string]semanticmodel.SemanticMetricSpec    `yaml:"metrics"`
 }
 
 type dashboardSpec struct {
@@ -93,24 +94,15 @@ type dashboardSpec struct {
 }
 
 type projectModelTableSpec struct {
-	Source      string                               `yaml:"source"`
-	Sources     []string                             `yaml:"sources"`
-	SourceReads map[string][]string                  `yaml:"sourceReads"`
-	SQL         string                               `yaml:"sql"`
-	Transform   semanticmodel.Transform              `yaml:"transform"`
-	Columns     map[string]semanticmodel.ModelColumn `yaml:"columns"`
-	PrimaryKey  string                               `yaml:"primaryKey"`
-	Grain       string                               `yaml:"grain"`
-	Fields      map[string]projectModelField         `yaml:"fields"`
-	Description string                               `yaml:"description"`
-}
-
-type projectModelField struct {
-	Label       string `yaml:"label"`
-	Description string `yaml:"description"`
-	Expr        string `yaml:"expr"`
-	Expression  string `yaml:"expression"`
-	Type        string `yaml:"type"`
+	Source      string                                   `yaml:"source"`
+	Sources     []string                                 `yaml:"sources"`
+	SourceReads map[string][]string                      `yaml:"sourceReads"`
+	SQL         string                                   `yaml:"sql"`
+	Transform   semanticmodel.Transform                  `yaml:"transform"`
+	Entities    map[string]semanticmodel.ModelEntitySpec `yaml:"entities"`
+	Grain       semanticmodel.ModelGrainSpec             `yaml:"grain"`
+	Fields      map[string]semanticmodel.ModelFieldSpec  `yaml:"fields"`
+	Description string                                   `yaml:"description"`
 }
 
 type projectDashboardPage struct {

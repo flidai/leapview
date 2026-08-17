@@ -19,7 +19,7 @@ visuals:
       dimensions:
         order_id: orders.order_id
         status: orders.status
-      measures:
+      metrics:
         delivery_days: null
         revenue: null
       sort:
@@ -51,7 +51,7 @@ visuals:
       dimensions:
         order_id: orders.order_id
         category: orders.category
-      measures:
+      metrics:
         delivery_days: null
         review_score: null
         revenue: null
@@ -91,7 +91,7 @@ visuals:
         field: purchase_date
         grain: day
         alias: purchase_day
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_day

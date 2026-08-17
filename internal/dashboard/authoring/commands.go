@@ -133,13 +133,13 @@ func (AddVisualPayload) RequiredAction() (AuthorizationAction, error) {
 type FieldRole string
 
 const (
-	FieldRoleMeasure   FieldRole = "measure"
+	FieldRoleMetric    FieldRole = "metric"
 	FieldRoleDimension FieldRole = "dimension"
 	FieldRoleDetail    FieldRole = "detail"
 )
 
 func (r FieldRole) Valid() bool {
-	return r == FieldRoleMeasure || r == FieldRoleDimension || r == FieldRoleDetail
+	return r == FieldRoleMetric || r == FieldRoleDimension || r == FieldRoleDetail
 }
 
 // AssignFieldPayload binds one governed semantic field to one exact placed

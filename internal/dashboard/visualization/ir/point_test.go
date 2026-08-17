@@ -46,8 +46,8 @@ func pointEnvelope(t *testing.T, rows [][]any) VisualizationEnvelope {
 		Kind: "point", Title: "Orders",
 		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
 			{ID: "order_id", Role: VisualizationFieldRoleIdentity, DataType: VisualizationDataTypeString, Nullable: true, Label: "Order"},
-			{ID: "delivery_days", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Nullable: true, Label: "Delivery days"},
-			{ID: "revenue", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Nullable: true, Label: "Revenue"},
+			{ID: "delivery_days", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Nullable: true, Label: "Delivery days"},
+			{ID: "revenue", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Nullable: true, Label: "Revenue"},
 		}}},
 		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
 		Accessibility: VisualizationAccessibility{Title: "Orders", Description: "Delivery and revenue by order"},

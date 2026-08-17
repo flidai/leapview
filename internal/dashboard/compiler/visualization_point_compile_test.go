@@ -17,7 +17,7 @@ func TestCompiledScatterOwnsTruePointChannelsAndStableIdentity(t *testing.T) {
 				{Field: "orders.id", Alias: "order_id"},
 				{Field: "orders.segment", Alias: "segment"},
 			},
-			Measures: []dashboardauthoring.FieldRef{
+			Metrics: []dashboardauthoring.FieldRef{
 				{Field: "orders.delivery_days", Alias: "delivery_days"},
 				{Field: "orders.revenue", Alias: "revenue"},
 				{Field: "orders.quantity", Alias: "quantity"},

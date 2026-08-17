@@ -72,10 +72,10 @@ func TestAgentVisualInputAcceptsAndNormalizesGovernedFilters(t *testing.T) {
 		"semanticModelId":"commerce",
 		"dataset":"commerce.orders",
 		"dimensions":[{"field":"commerce.orders.country"}],
-		"measures":[{"field":"commerce.revenue"}],
+		"metrics":[{"field":"commerce.revenue"}],
 		"filters":[{
 			"field":"commerce.orders.country",
-			"fact":"commerce.orders",
+			"dataset":"commerce.orders",
 			"operator":"in",
 			"values":["DK","SE"],
 			"groups":[{"filters":[{"field":"commerce.orders.status","operator":"not_contains","values":["cancelled"]}]}]
@@ -88,7 +88,7 @@ func TestAgentVisualInputAcceptsAndNormalizesGovernedFilters(t *testing.T) {
 		t.Fatalf("normalized input = %#v", input)
 	}
 	want := agentVisualFilter{
-		Field: "orders.country", Fact: "orders", Operator: "in", Values: []string{"DK", "SE"},
+		Field: "orders.country", Dataset: "orders", Operator: "in", Values: []string{"DK", "SE"},
 		Groups: []agentVisualFilterGroup{{Filters: []agentVisualFilter{{
 			Field: "orders.status", Operator: "not_contains", Values: []string{"cancelled"},
 		}}}},
@@ -104,7 +104,7 @@ func TestAgentVisualInputAcceptsGroupOnlyFilters(t *testing.T) {
 		"semanticModelId":"commerce",
 		"dataset":"orders",
 		"dimensions":[{"field":"orders.country"}],
-		"measures":[{"field":"revenue"}],
+		"metrics":[{"field":"revenue"}],
 		"filters":[{"groups":[{"filters":[{"field":"orders.country","operator":"equals","values":["DK"]}]}]}]
 	}`))
 	if err != nil {
@@ -129,7 +129,7 @@ func TestAgentVisualQueriesApplyGovernedFilters(t *testing.T) {
 	input := agentVisualInput{
 		Type: "bar", Dataset: "orders", Model: "commerce",
 		Dimensions: []agentVisualFieldRef{{Field: "orders.country"}},
-		Measures:   []agentVisualFieldRef{{Field: "revenue"}},
+		Metrics:    []agentVisualFieldRef{{Field: "revenue"}},
 		Filters: []agentVisualFilter{{
 			Field: "orders.country", Operator: "equals", Values: []string{"DK"},
 		}},
@@ -173,12 +173,12 @@ func TestVisualProviderDecoratesQueryContextWithScope(t *testing.T) {
 
 func TestAgentVisualFieldUsagePreservesSemanticUnitsAndFormats(t *testing.T) {
 	model := &semanticmodel.Model{
-		Measures: map[string]semanticmodel.MetricMeasure{
+		Metrics: map[string]semanticmodel.Metric{
 			"return_rate": {Label: "Return rate", Unit: "percent", Format: "percent_1"},
 		},
 	}
-	got := agentVisualFieldUsage("sales", "commerce", model, agentVisualFieldRef{Field: "return_rate", Alias: "rate"}, "measure")
-	if got.Role != "measure" || got.FieldID != "commerce.return_rate" || got.Label != "Return rate" ||
+	got := agentVisualFieldUsage("sales", "commerce", model, agentVisualFieldRef{Field: "return_rate", Alias: "rate"}, "metric")
+	if got.Role != "metric" || got.FieldID != "commerce.return_rate" || got.Label != "Return rate" ||
 		got.Alias == nil || *got.Alias != "rate" || got.Unit == nil || *got.Unit != "percent" ||
 		got.Format == nil || *got.Format != "percent_1" {
 		t.Fatalf("field usage = %#v", got)
@@ -193,7 +193,7 @@ func TestAgentHistogramProducesBinnedPayload(t *testing.T) {
 	}
 	input := agentVisualInput{
 		Type: "histogram", Dataset: "orders", Model: "sales",
-		Measures: []agentVisualFieldRef{{Field: "revenue"}}, Presentation: agentVisualPresentation{HistogramBins: 12},
+		Metrics: []agentVisualFieldRef{{Field: "revenue"}}, Presentation: agentVisualPresentation{HistogramBins: 12},
 	}
 	data, err := provider.agentChartData(context.Background(), "sales", input, agentVisualShape(input), nil)
 	if err != nil {

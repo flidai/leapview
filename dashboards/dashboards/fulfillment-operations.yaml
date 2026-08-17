@@ -63,7 +63,7 @@ spec:
     total_orders:
       type: kpi
       query:
-        measures:
+        metrics:
           order_count:
       presentation:
         note: Filtered order count
@@ -71,7 +71,7 @@ spec:
     delivery_days:
       type: kpi
       query:
-        measures:
+        metrics:
           delivery_days:
       presentation:
         note: Average days
@@ -79,7 +79,7 @@ spec:
     review_score:
       type: kpi
       query:
-        measures:
+        metrics:
           review_score:
       presentation:
         note: Average score
@@ -90,7 +90,7 @@ spec:
       query:
         dimensions:
           status: operations_orders.status
-        measures:
+        metrics:
           order_count:
         sort:
           - field: value
@@ -102,7 +102,7 @@ spec:
       query:
         dimensions:
           delivery_bucket: operations_orders.delivery_bucket
-        measures:
+        metrics:
           order_count:
         sort:
           - field: delivery_bucket
@@ -113,7 +113,7 @@ spec:
       query:
         dimensions:
           status: operations_orders.status
-        measures:
+        metrics:
           review_score:
         sort:
           - field: value

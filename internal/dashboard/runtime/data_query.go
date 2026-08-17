@@ -13,7 +13,7 @@ func reportAggregateDataQuery(modelID string, request reportdef.AggregateQuery) 
 		Kind:      dataquery.KindSemanticAggregate,
 		Target:    request.Table,
 		Fields:    reportFieldsToDataFields(request.Dimensions),
-		Measures:  reportFieldsToDataFields(request.Measures),
+		Metrics:   reportFieldsToDataFields(request.Metrics),
 		Time:      dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 		Filters:   reportFiltersToDataFilters(request.Filters),
 		Sort:      reportSortToDataSort(request.Sort),
@@ -30,7 +30,7 @@ func reportRowDataQuery(modelID string, request reportdef.RowQuery, includeTotal
 		Kind:         dataquery.KindSemanticRows,
 		Target:       request.Table,
 		Fields:       reportFieldsToDataFields(request.Dimensions),
-		Measures:     reportFieldsToDataFields(request.Measures),
+		Metrics:      reportFieldsToDataFields(request.Metrics),
 		Filters:      reportFiltersToDataFilters(request.Filters),
 		Sort:         reportSortToDataSort(request.Sort),
 		Limit:        request.Limit,
@@ -41,9 +41,9 @@ func reportRowDataQuery(modelID string, request reportdef.RowQuery, includeTotal
 
 func countOnlyDataQuery(request dataquery.Query) dataquery.Query {
 	request.Operation = dataquery.OperationDashboardCount
-	request.AuthorizationFields = append(append([]dataquery.Field{}, request.Fields...), request.Measures...)
+	request.AuthorizationFields = append(append([]dataquery.Field{}, request.Fields...), request.Metrics...)
 	request.Fields = nil
-	request.Measures = nil
+	request.Metrics = nil
 	request.Sort = nil
 	request.Offset = 0
 	request.Limit = 0

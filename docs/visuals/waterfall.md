@@ -22,14 +22,14 @@ visuals:
       table: revenue_bridge
       dimensions:
         component: revenue_bridge.component
-      measures:
+      metrics:
         revenue_impact: null
       sort:
         - field: component
           direction: asc
 ```
 
-## Alternate measure
+## Alternate metric
 
 Replace revenue with order count to reuse the same running-contribution structure for volume rather than value.
 
@@ -43,7 +43,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: purchase_month
@@ -68,7 +68,7 @@ visuals:
     query:
       dimensions:
         category: orders.category
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value

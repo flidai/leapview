@@ -80,7 +80,7 @@ model DashboardAuthoringAssignFieldIntent {
   pageId: string;
   visualId: string;
   fieldId: string;
-  role: "measure" | "dimension" | "detail";
+  role: "metric" | "dimension" | "detail";
 }
 
 model DashboardAuthoringCommandRequest {

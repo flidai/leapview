@@ -129,6 +129,15 @@ func (r projectRuntime) Refresh(ctx context.Context) error { return r.runtime.Re
 func (r projectRuntime) RefreshTables(ctx context.Context, tables []string) error {
 	return r.runtime.RefreshModelTables(ctx, r.modelID, tables)
 }
+func (r projectRuntime) VerifySemantic(ctx context.Context) error {
+	verifier, ok := r.runtime.(interface {
+		VerifySemantic(context.Context, string) error
+	})
+	if !ok {
+		return fmt.Errorf("analytical project runtime does not support semantic verification")
+	}
+	return verifier.VerifySemantic(ctx, r.modelID)
+}
 func (r projectRuntime) Close() error              { return r.close.Close() }
 func (r projectRuntime) LastRefresh() time.Time    { return r.runtime.LastRefresh() }
 func (r projectRuntime) DuckLakeSnapshotID() int64 { return r.runtime.DuckLakeSnapshotID() }

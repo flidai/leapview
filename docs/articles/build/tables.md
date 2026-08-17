@@ -38,7 +38,7 @@ Use `cardinality: bounded` unless the workflow explicitly requires exact global 
 
 ### Matrices
 
-Matrices group semantic measures by row and optional column dimensions:
+Matrices group semantic metrics by row and optional column dimensions:
 
 ```yaml
 visuals:
@@ -50,7 +50,7 @@ visuals:
         state: customers.state
       columns:
         status: orders.status
-      measures:
+      metrics:
         order_count:
         revenue:
 ```
@@ -59,7 +59,7 @@ Use a matrix for a stable multidimensional comparison with known cardinality. Hi
 
 ### Pivots
 
-A pivot uses the same row, column, and measure concepts but emphasizes analytical rearrangement:
+A pivot uses the same row, column, and metric concepts but emphasizes analytical rearrangement:
 
 ```yaml
 visuals:
@@ -71,7 +71,7 @@ visuals:
         category: orders.category
       columns:
         status: orders.status
-      measures:
+      metrics:
         order_count:
 ```
 
@@ -81,13 +81,13 @@ Keep the initial pivot shape useful and bounded. A pivot is not a substitute for
 
 ### Formatting
 
-Semantic measure formatting supplies a good default. Table columns and measure-formatting rules can add table-specific alignment, labels, widths, badges, text colors, background scales, or data bars.
+Semantic metric formatting supplies a good default. Table columns and metric-formatting rules can add table-specific alignment, labels, widths, badges, text colors, background scales, or data bars.
 
 Formatting must not be the only way a value is communicated. Use readable text and numeric formatting alongside color. Choose explicit scale bounds when comparable pages must use the same visual meaning; otherwise users may misread two differently scaled cells as equivalent.
 
 ### Row selections
 
-Data-table rows can emit semantic selections when mappings identify delivered values, semantic fields, facts, and targets. Do not send an entire record as an implicit filter. Map only the values the server needs and verify that selected rows remain identifiable when the loaded window changes.
+Data-table rows can emit semantic selections when mappings identify delivered values, semantic fields, datasets, and targets. Do not send an entire record as an implicit filter. Map only the values the server needs and verify that selected rows remain identifiable when the loaded window changes.
 
 ## Place and test the table
 

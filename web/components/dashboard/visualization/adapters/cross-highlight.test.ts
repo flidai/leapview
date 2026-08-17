@@ -78,7 +78,7 @@ function facetedEnvelope(): VisualizationEnvelope {
   const fields = [
     { id: 'state', sourceRef: 'customers.state', role: 'identity', dataType: 'string', nullable: false, label: 'State' },
     { id: 'status', sourceRef: 'orders.status', role: 'dimension', dataType: 'string', nullable: false, label: 'Status' },
-    { id: 'value', sourceRef: 'order_count', role: 'measure', dataType: 'integer', nullable: false, label: 'Orders' },
+    { id: 'value', sourceRef: 'order_count', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' },
   ]
   return {
     schemaVersion: 9, visualID: 'state-status', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
@@ -114,7 +114,7 @@ function tableEnvelope(): VisualizationEnvelope {
 }
 
 function kpiEnvelope(): VisualizationEnvelope {
-  const fields = [{ id: 'value', role: 'measure', dataType: 'integer', nullable: false, label: 'Orders' }]
+  const fields = [{ id: 'value', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' }]
   return {
     schemaVersion: 9, visualID: 'orders-kpi', rendererID: 'html', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
@@ -129,7 +129,7 @@ function kpiEnvelope(): VisualizationEnvelope {
 function mapEnvelope(): VisualizationEnvelope {
   const fields = [
     { id: 'state', sourceRef: 'customers.state', role: 'identity', dataType: 'string', nullable: false, label: 'State' },
-    { id: 'value', role: 'measure', dataType: 'integer', nullable: false, label: 'Orders' },
+    { id: 'value', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' },
   ]
   const layer = {
     id: 'states', kind: 'choropleth', geometry: {}, join: { dataset: 'primary', field: 'state' }, value: { dataset: 'primary', field: 'value' },

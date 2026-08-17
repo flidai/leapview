@@ -12,7 +12,7 @@ func TestSelectionMappingDecodesFactAndGrain(t *testing.T) {
 point_selection:
   mappings:
     - field: ratings.rated_at
-      fact: ratings
+      dataset: ratings
       grain: month
       value: label
       label: label

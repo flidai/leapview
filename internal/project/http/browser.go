@@ -55,7 +55,7 @@ type ProjectDefinitionReader interface {
 // ErrSemanticModelUnavailable indicates that the active generation could not
 // provide the compiled definition required to render semantic-model detail.
 // A graph metadata payload is not a valid substitute because it would render
-// misleading zero-valued tables, measures, and relationships.
+// misleading zero-valued tables, metrics, and relationships.
 var ErrSemanticModelUnavailable = errors.New("active semantic model definition is unavailable")
 
 // ErrProjectDefinitionUnavailable indicates that the selected graph resource
@@ -888,7 +888,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 	command = normalizeDataExplorerCommand(command)
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
-	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Measures: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
+	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Metrics: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
 	if command.Explore != nil {
 		exploreCommand = *command.Explore
 	}

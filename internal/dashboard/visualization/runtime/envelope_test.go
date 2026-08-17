@@ -31,7 +31,7 @@ func testCartesianDefinition(t *testing.T, id string, fields []ir.VisualizationF
 	}}
 	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{
 		Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, ModelID: "sales", DatasetID: "primary",
-		Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Measures: []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100},
+		Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Metrics: []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func testCartesianDefinition(t *testing.T, id string, fields []ir.VisualizationF
 func testCartesianFields() []ir.VisualizationField {
 	return []ir.VisualizationField{
 		{ID: "label", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: true, Label: "Label"},
-		{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
+		{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
 	}
 }
 
@@ -61,8 +61,8 @@ func testGridDefinition(t *testing.T, id string, table dashboard.Table) visualiz
 		authored.Query.Fields = nil
 		for _, column := range table.Columns {
 			field := dashboardauthoring.FieldRef{Field: column.Key, Alias: column.Key}
-			if column.Role == "measure" || column.Align == "right" {
-				authored.Query.Measures = append(authored.Query.Measures, field)
+			if column.Role == "metric" || column.Align == "right" {
+				authored.Query.Metrics = append(authored.Query.Metrics, field)
 			} else {
 				authored.Query.Rows = append(authored.Query.Rows, field)
 			}

@@ -20,7 +20,7 @@ func reducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
 		Description:   "A sales dashboard",
 		SemanticModel: "sales_model",
 		Visuals: map[string]AuthoringVisualization{
-			"revenue": ChartVisualization(Visual{Title: "Revenue", Type: "line", Query: VisualQuery{Dimensions: []FieldRef{{Field: "month", Alias: "month"}}, Measures: []FieldRef{{Field: "revenue", Alias: "revenue"}}}}),
+			"revenue": ChartVisualization(Visual{Title: "Revenue", Type: "line", Query: VisualQuery{Dimensions: []FieldRef{{Field: "month", Alias: "month"}}, Metrics: []FieldRef{{Field: "revenue", Alias: "revenue"}}}}),
 			"orders":  TabularVisualization("table", TableVisual{Title: "Orders", Query: TableQuery{Table: "orders", Fields: []string{"order_id"}}}),
 		},
 		Pages: []dashboardmodel.Page{{
@@ -125,7 +125,7 @@ func TestApplyEditPayloads(t *testing.T) {
 			}
 		}},
 		{name: "visual upsert", edit: func(Revision) authoringPayload {
-			return &UpsertVisualPayload{VisualID: "new-visual", Visual: ChartVisualization(Visual{Title: "New", Type: "line", Query: VisualQuery{Dimensions: []FieldRef{{Field: "month", Alias: "month"}}, Measures: []FieldRef{{Field: "revenue", Alias: "revenue"}}}})}
+			return &UpsertVisualPayload{VisualID: "new-visual", Visual: ChartVisualization(Visual{Title: "New", Type: "line", Query: VisualQuery{Dimensions: []FieldRef{{Field: "month", Alias: "month"}}, Metrics: []FieldRef{{Field: "revenue", Alias: "revenue"}}}})}
 		}, check: func(t *testing.T, _ DashboardLifecycle, revision Revision) {
 			if _, ok := revision.Document.Visuals["new-visual"]; !ok {
 				t.Fatal("visual not inserted")
@@ -239,7 +239,7 @@ func TestApplyEditSuccessfulRemovals(t *testing.T) {
 	if len(revision.Document.Pages) != 1 || revision.Document.Pages[0].ID != "overview" {
 		t.Fatalf("page removal not applied: %#v", revision.Document.Pages)
 	}
-	visual := ChartVisualization(Visual{Title: "Temporary", Type: "line", Query: VisualQuery{Dimensions: []FieldRef{{Field: "month", Alias: "month"}}, Measures: []FieldRef{{Field: "revenue", Alias: "revenue"}}}})
+	visual := ChartVisualization(Visual{Title: "Temporary", Type: "line", Query: VisualQuery{Dimensions: []FieldRef{{Field: "month", Alias: "month"}}, Metrics: []FieldRef{{Field: "revenue", Alias: "revenue"}}}})
 	next, revision = applyReducer(t, next, revision, reducerCommand(revision, &UpsertVisualPayload{VisualID: "temporary", Visual: visual}))
 	_, revision = applyReducer(t, next, revision, reducerCommand(revision, &RemoveVisualPayload{VisualID: "temporary"}))
 	if _, exists := revision.Document.Visuals["temporary"]; exists {

@@ -7,7 +7,7 @@ type Field struct {
 	Alias string
 }
 
-type ResolvedMeasure struct {
+type resolvedAggregateMetric struct {
 	Field           string
 	Name            string
 	Label           string
@@ -17,13 +17,14 @@ type ResolvedMeasure struct {
 	InputField      string
 	InputExpr       string
 	InputExpression *semanticmodel.Expression
-	Filters         []MeasureFilter
+	Filters         []metricFilter
+	WhereFilters    []Filter
 	Empty           string
 	Unit            string
 	Format          string
 }
 
-type MeasureFilter struct {
+type metricFilter struct {
 	Field    string
 	Operator string
 	Values   []any
@@ -36,12 +37,16 @@ type Time struct {
 }
 
 type Filter struct {
-	Field    string
-	Fact     string
-	Operator string
-	Values   []any
-	Groups   []FilterGroup
-	Spatial  *SpatialFilter
+	Field        string
+	Fact         string
+	Operator     string
+	Values       []any
+	Path         []string
+	Not          bool
+	RequireMatch bool
+	MatchGuard   bool
+	Groups       []FilterGroup
+	Spatial      *SpatialFilter
 }
 
 type SpatialFilter struct {
@@ -80,7 +85,7 @@ type ColumnMask struct {
 type Request struct {
 	Table       string
 	Dimensions  []Field
-	Measures    []Field
+	Metrics     []Field
 	Time        Time
 	Filters     []Filter
 	Sort        []Sort
@@ -88,7 +93,7 @@ type Request struct {
 	Limit       int
 	Offset      int
 	// SpatialBucket replaces the selected coordinate dimensions with globally
-	// aligned Web-Mercator cell indexes before semantic measure aggregation.
+	// aligned Web-Mercator cell indexes before semantic metric aggregation.
 	// It is an internal governed planning primitive for vector tiles.
 	SpatialBucket *SpatialBucket
 }
@@ -102,7 +107,7 @@ type SpatialBucket struct {
 
 type SpatialTileRequest struct {
 	Table        string
-	Measures     []Field
+	Metrics      []Field
 	Filters      []Filter
 	ColumnMasks  []ColumnMask
 	Latitude     Field
@@ -119,7 +124,7 @@ type SpatialTileRequest struct {
 type SpatialTileRawRequest struct {
 	Table        string
 	Dimensions   []Field
-	Measures     []Field
+	Metrics      []Field
 	Identity     []Field
 	Filters      []Filter
 	ColumnMasks  []ColumnMask
@@ -137,7 +142,7 @@ type SpatialTileRawRequest struct {
 type SpatialTileBudgetRequest struct {
 	Table        string
 	Dimensions   []Field
-	Measures     []Field
+	Metrics      []Field
 	Identity     []Field
 	Filters      []Filter
 	ColumnMasks  []ColumnMask
@@ -152,7 +157,7 @@ type SpatialTileBudgetRequest struct {
 
 type SpatialMetadataRequest struct {
 	Table          string
-	Measures       []Field
+	Metrics        []Field
 	Filters        []Filter
 	ColumnMasks    []ColumnMask
 	Latitude       Field
@@ -165,7 +170,7 @@ type SpatialMetadataRequest struct {
 type RowRequest struct {
 	Table       string
 	Dimensions  []Field
-	Measures    []Field
+	Metrics     []Field
 	Filters     []Filter
 	Sort        []Sort
 	ColumnMasks []ColumnMask
@@ -176,7 +181,7 @@ type RowRequest struct {
 type RawValueRequest struct {
 	Table       string
 	Dimensions  []Field
-	Measure     Field
+	Metric      Field
 	Filters     []Filter
 	Sort        []Sort
 	ColumnMasks []ColumnMask

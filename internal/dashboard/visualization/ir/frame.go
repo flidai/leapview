@@ -984,14 +984,14 @@ func (visitor *specificationReferenceVisitor) VisitTableVisualizationSpec(value 
 func (visitor *specificationReferenceVisitor) VisitMatrixVisualizationSpec(value *MatrixVisualizationSpec) error {
 	visitor.refs = append(visitor.refs, value.Rows...)
 	visitor.refs = append(visitor.refs, value.Columns...)
-	visitor.refs = append(visitor.refs, value.Measures...)
+	visitor.refs = append(visitor.refs, value.Metrics...)
 	return nil
 }
 
 func (visitor *specificationReferenceVisitor) VisitPivotVisualizationSpec(value *PivotVisualizationSpec) error {
 	visitor.refs = append(visitor.refs, value.Rows...)
 	visitor.refs = append(visitor.refs, value.Columns...)
-	visitor.refs = append(visitor.refs, value.Measures...)
+	visitor.refs = append(visitor.refs, value.Metrics...)
 	return nil
 }
 

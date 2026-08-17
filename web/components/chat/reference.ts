@@ -180,7 +180,7 @@ function referenceKindIcon(kind: string): ReferenceIcon {
     case 'semantic_model': return { name: 'semantic-model', icon: Waypoints }
     case 'dataset':
     case 'semantic_table': return { name: 'semantic-table', icon: Database }
-    case 'measure': return { name: 'measure', icon: Sigma }
+	case 'metric': return { name: 'metric', icon: Sigma }
     case 'field': return { name: 'field', icon: Columns3 }
     case 'source': return { name: 'source', icon: Plug }
     case 'table': return { name: 'table', icon: Table2 }

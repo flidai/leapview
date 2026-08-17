@@ -178,7 +178,7 @@ func TestSemanticFiltersPreserveOROfCompositeEntries(t *testing.T) {
 	report.Visualizations["composite"] = compiledSelectionVisual("composite", dashboardauthoring.Visual{
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: "release_decade", Alias: "label"}, {Field: "activity_date", Alias: "series"}},
-			Measures:   []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}},
+			Metrics:    []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}},
 		},
 		Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{
 			Mappings: []dashboardauthoring.SelectionMapping{{Field: "release_decade", Value: "label"}, {Field: "activity_date", Value: "series"}},
@@ -243,14 +243,14 @@ func selectionFilterFixture() (*dashboarddefinition.Definition, *semanticmodel.M
 			"release_decade": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"ratings": {Field: "ratings.release_decade"}, "tags": {Field: "tags.release_decade"}}},
 			"activity_date":  {Type: "timestamp", Grains: []string{"day", "week", "month", "quarter", "year"}, Bindings: map[string]semanticmodel.DimensionBinding{"ratings": {Field: "ratings.rated_at"}, "tags": {Field: "tags.tagged_at"}}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"rating_count": {Fact: "ratings"}, "tag_count": {Fact: "tags"}},
+		Metrics: map[string]semanticmodel.Metric{"rating_count": {Type: "aggregate", Dataset: "ratings", Input: &semanticmodel.MetricInput{Field: "ratings.rating_bucket"}}, "tag_count": {Type: "aggregate", Dataset: "tags", Input: &semanticmodel.MetricInput{Field: "tags.tagged_at"}}},
 	}
 	report := &dashboardauthoring.Dashboard{
 		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
 			"decades": selectionFilterVisual([]dashboardauthoring.FieldRef{{Field: "release_decade", Alias: "label"}}, dashboardauthoring.QueryTime{}, []dashboardauthoring.SelectionMapping{{Field: "release_decade", Value: "label"}}),
 			"buckets": selectionFilterVisual([]dashboardauthoring.FieldRef{{Field: "ratings.rating_bucket", Alias: "label"}}, dashboardauthoring.QueryTime{}, []dashboardauthoring.SelectionMapping{{Field: "ratings.rating_bucket", Fact: "ratings", Value: "label"}}),
 			"months":  selectionFilterVisual(nil, dashboardauthoring.QueryTime{Field: "activity_date", Grain: "month", Alias: "label"}, []dashboardauthoring.SelectionMapping{{Field: "activity_date", Grain: "month", Value: "label"}}),
-			"cross":   {Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "rating_count"}, {Field: "tag_count"}}}},
+			"cross":   {Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "rating_count"}, {Field: "tag_count"}}}},
 		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"plain_table": {Query: dashboardauthoring.TableQuery{Table: "ratings"}}})),
 	}
 	return compiledSelectionDashboard(report), model
@@ -280,13 +280,13 @@ func compiledSelectionVisual(id string, authored dashboardauthoring.Visual) visu
 		timeBinding = &visualizationdefinition.TimeBinding{FieldID: authored.Query.Time.Field, Alias: authored.Query.Time.Alias, Grain: authored.Query.Time.Grain}
 		fields = append(fields, visualizationir.VisualizationField{ID: authored.Query.Time.Alias, Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: authored.Query.Time.Alias})
 	}
-	measures := make([]visualizationdefinition.FieldBinding, len(authored.Query.Measures))
-	for index, field := range authored.Query.Measures {
+	metrics := make([]visualizationdefinition.FieldBinding, len(authored.Query.Metrics))
+	for index, field := range authored.Query.Metrics {
 		alias := field.Alias
 		if alias == "" {
 			alias = "value"
 		}
-		measures[index] = visualizationdefinition.FieldBinding{FieldID: field.Field, Alias: alias}
+		metrics[index] = visualizationdefinition.FieldBinding{FieldID: field.Field, Alias: alias}
 	}
 	interactions := []visualizationir.VisualizationInteraction{}
 	if selection := authored.Interaction.PointSelection; len(selection.Mappings) > 0 {
@@ -309,12 +309,12 @@ func compiledSelectionVisual(id string, authored dashboardauthoring.Visual) visu
 	}
 	base := visualizationir.VisualizationSpecBase{Kind: "cartesian", Title: id, Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, Interactions: interactions}
 	spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian"}}
-	return visualizationdefinition.Definition{ID: id, Spec: spec, Query: visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, Aggregate: &visualizationdefinition.AggregateQueryBinding{Dimensions: dimensions, Measures: measures, Time: timeBinding, Limit: 100}}}
+	return visualizationdefinition.Definition{ID: id, Spec: spec, Query: visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, Aggregate: &visualizationdefinition.AggregateQueryBinding{Dimensions: dimensions, Metrics: metrics, Time: timeBinding, Limit: 100}}}
 }
 
 func selectionFilterVisual(dimensions []dashboardauthoring.FieldRef, queryTime dashboardauthoring.QueryTime, mappings []dashboardauthoring.SelectionMapping) dashboardauthoring.Visual {
 	return dashboardauthoring.Visual{
-		Query:       dashboardauthoring.VisualQuery{Dimensions: dimensions, Time: queryTime, Measures: []dashboardauthoring.FieldRef{{Field: "rating_count"}}},
+		Query:       dashboardauthoring.VisualQuery{Dimensions: dimensions, Time: queryTime, Metrics: []dashboardauthoring.FieldRef{{Field: "rating_count"}}},
 		Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Mappings: mappings, Targets: []string{"cross"}}},
 	}
 }

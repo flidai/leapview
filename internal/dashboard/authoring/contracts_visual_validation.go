@@ -14,8 +14,8 @@ func validateVisualQueryShape(name string, visual Visual) error {
 		if visual.ResultShape() != "single_value" {
 			return fmt.Errorf("visual %q kind kpi requires shape single_value", name)
 		}
-		if len(visual.Query.Measures) != 1 {
-			return fmt.Errorf("visual %q kind kpi requires exactly one query measure", name)
+		if len(visual.Query.Metrics) != 1 {
+			return fmt.Errorf("visual %q kind kpi requires exactly one query metric", name)
 		}
 		if dimensionCount != 0 {
 			return fmt.Errorf("visual %q kind kpi does not support query dimensions", name)
@@ -31,24 +31,24 @@ func validateVisualQueryShape(name string, visual Visual) error {
 	}
 	switch shape {
 	case "point":
-		if len(visual.Query.Measures) == 0 {
-			return fmt.Errorf("visual %q shape point requires query measures", name)
+		if len(visual.Query.Metrics) == 0 {
+			return fmt.Errorf("visual %q shape point requires query metrics", name)
 		}
 	case "ohlc":
-		if len(visual.Query.Measures) != 4 {
-			return fmt.Errorf("visual %q shape ohlc requires exactly four query measures", name)
+		if len(visual.Query.Metrics) != 4 {
+			return fmt.Errorf("visual %q shape ohlc requires exactly four query metrics", name)
 		}
 	case "category_multi_measure":
-		if len(visual.Query.Measures) < 2 {
-			return fmt.Errorf("visual %q shape category_multi_measure requires at least two query measures", name)
+		if len(visual.Query.Metrics) < 2 {
+			return fmt.Errorf("visual %q shape category_multi_measure requires at least two query metrics", name)
 		}
 	default:
-		if len(visual.Query.Measures) != 1 {
-			return fmt.Errorf("visual %q requires exactly one query measure", name)
+		if len(visual.Query.Metrics) != 1 {
+			return fmt.Errorf("visual %q requires exactly one query metric", name)
 		}
 	}
-	if len(visual.Query.Measures) == 0 {
-		return fmt.Errorf("visual %q requires exactly one query measure", name)
+	if len(visual.Query.Metrics) == 0 {
+		return fmt.Errorf("visual %q requires exactly one query metric", name)
 	}
 	switch shape {
 	case "point":
@@ -156,7 +156,7 @@ func validatePointVisual(name string, visual Visual) error {
 	}
 
 	stable := payloadKeySet{}
-	measures := payloadKeySet{}
+	metrics := payloadKeySet{}
 	all := payloadKeySet{}
 	add := func(keys payloadKeySet, field, alias string) {
 		if field == "" {
@@ -170,8 +170,8 @@ func validatePointVisual(name string, visual Visual) error {
 		add(stable, field.Field, field.Alias)
 	}
 	add(stable, visual.Query.Time.Field, visual.Query.Time.Alias)
-	for _, field := range visual.Query.Measures {
-		add(measures, field.Field, field.Alias)
+	for _, field := range visual.Query.Metrics {
+		add(metrics, field.Field, field.Alias)
 	}
 
 	seenIdentity := payloadKeySet{}
@@ -191,17 +191,17 @@ func validatePointVisual(name string, visual Visual) error {
 	if _, ok := all[point.X]; !ok {
 		return fmt.Errorf("visual %q point.x references unknown query alias %q", name, point.X)
 	}
-	if !measures.Contains(point.X) && !stable.Contains(point.X) {
-		return fmt.Errorf("visual %q point.x field %q must reference a measure or time alias", name, point.X)
+	if !metrics.Contains(point.X) && !stable.Contains(point.X) {
+		return fmt.Errorf("visual %q point.x field %q must reference a metric or time alias", name, point.X)
 	}
 	if stable.Contains(point.X) && point.X != defaultString(visual.Query.Time.Alias, fieldRefAlias(visual.Query.Time.Field)) {
-		return fmt.Errorf("visual %q point.x field %q must reference a measure or time alias", name, point.X)
+		return fmt.Errorf("visual %q point.x field %q must reference a metric or time alias", name, point.X)
 	}
 	if _, ok := all[point.Y]; !ok {
 		return fmt.Errorf("visual %q point.y references unknown query alias %q", name, point.Y)
 	}
-	if !measures.Contains(point.Y) {
-		return fmt.Errorf("visual %q point.y field %q must reference a measure", name, point.Y)
+	if !metrics.Contains(point.Y) {
+		return fmt.Errorf("visual %q point.y field %q must reference a metric", name, point.Y)
 	}
 	if point.X == point.Y {
 		return fmt.Errorf("visual %q point.x and point.y must reference independent aliases", name)
@@ -210,8 +210,8 @@ func validatePointVisual(name string, visual Visual) error {
 		if _, ok := all[point.Size]; !ok {
 			return fmt.Errorf("visual %q point.size references unknown query alias %q", name, point.Size)
 		}
-		if !measures.Contains(point.Size) {
-			return fmt.Errorf("visual %q point.size field %q must reference a measure", name, point.Size)
+		if !metrics.Contains(point.Size) {
+		return fmt.Errorf("visual %q point.size field %q must reference a metric", name, point.Size)
 		}
 	}
 	for _, channel := range []struct {
@@ -243,7 +243,7 @@ func validatePointVisual(name string, visual Visual) error {
 
 	if point.Color != "" {
 		expectedKind := "categorical"
-		if measures.Contains(point.Color) {
+		if metrics.Contains(point.Color) {
 			expectedKind = "quantitative"
 		}
 		if point.ColorScale.Kind != "" && point.ColorScale.Kind != expectedKind {
@@ -342,7 +342,7 @@ func validateGeographicPointSelectionMappingKeys(name string, visual Visual) err
 	}
 	add(stableAliases, visual.Query.Time.Field, visual.Query.Time.Alias)
 	add(allAliases, visual.Query.Time.Field, visual.Query.Time.Alias)
-	for _, field := range visual.Query.Measures {
+	for _, field := range visual.Query.Metrics {
 		add(allAliases, field.Field, field.Alias)
 	}
 	for index, mapping := range visual.Interaction.PointSelection.Mappings {

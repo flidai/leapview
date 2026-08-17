@@ -301,13 +301,13 @@ func compiledWindowSchema(base ir.VisualizationSpecBase, datasetID string, table
 		role := ir.VisualizationFieldRoleDimension
 		if column.Role == "row_header" && index == 0 {
 			role = ir.VisualizationFieldRoleIdentity
-		} else if column.Role == "measure" || column.Align == "right" {
-			role = ir.VisualizationFieldRoleMeasure
+		} else if column.Role == "metric" || column.Align == "right" {
+			role = ir.VisualizationFieldRoleMetric
 		}
 		fields[index] = ir.VisualizationField{
 			ID: column.Key, Role: role, DataType: tableDataType(column, table), Nullable: true,
 			Label: defaultText(column.Label, column.Key), Format: tableFormat(column),
-			Grid: &ir.VisualizationGridFieldMetadata{Group: optional(column.Group), Measure: optional(column.Measure), ColumnValue: optional(column.ColumnValue), Formatting: tableFormatting(column.Formatting)},
+			Grid: &ir.VisualizationGridFieldMetadata{Group: optional(column.Group), Metric: optional(column.Metric), ColumnValue: optional(column.ColumnValue), Formatting: tableFormatting(column.Formatting)},
 		}
 	}
 	return ir.VisualizationDatasetSchema{ID: datasetID, Fields: fields}

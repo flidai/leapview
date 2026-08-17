@@ -11,8 +11,8 @@ import (
 
 func TestPlanBundleUsesOneStatementAndGroupingSetsForDifferentShapes(t *testing.T) {
 	bundle, err := NewPlanner(executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "kpi", Request: Request{Table: "orders", Measures: []Field{{Field: "order_count", Alias: "value"}}, Filters: bundleConsumerFilter()}},
-		{ID: "by_customer", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Measures: []Field{{Field: "revenue", Alias: "value"}}, Filters: bundleConsumerFilter(), Sort: []Sort{{Field: "label", Direction: "asc"}}, Limit: 10}},
+		{ID: "kpi", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count", Alias: "value"}}, Filters: bundleConsumerFilter()}},
+		{ID: "by_customer", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Filters: bundleConsumerFilter(), Sort: []Sort{{Field: "label", Direction: "asc"}}, Limit: 10}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -40,8 +40,8 @@ func TestPlanBundleUsesOneStatementAndGroupingSetsForDifferentShapes(t *testing.
 
 func TestPlanBundleRejectsDifferentGovernedScopes(t *testing.T) {
 	_, err := NewPlanner(executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "a", Request: Request{Table: "orders", Measures: []Field{{Field: "order_count"}}, Filters: bundleConsumerFilter()}},
-		{ID: "b", Request: Request{Table: "orders", Measures: []Field{{Field: "order_count"}}, Filters: []Filter{{Field: "orders.segment", Fact: "orders", Operator: "equals", Values: []any{"business"}}}}},
+		{ID: "a", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count"}}, Filters: bundleConsumerFilter()}},
+		{ID: "b", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count"}}, Filters: []Filter{{Field: "orders.segment", Fact: "orders", Operator: "equals", Values: []any{"business"}}}}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "governed scope") {
 		t.Fatalf("error = %v", err)
@@ -50,8 +50,8 @@ func TestPlanBundleRejectsDifferentGovernedScopes(t *testing.T) {
 
 func TestPlanBundleScansEachFactOnceForMultiFactBranches(t *testing.T) {
 	bundle, err := NewPlanner(executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "by_customer", Request: Request{Dimensions: []Field{{Field: "customer", Alias: "label"}}, Measures: []Field{{Field: "tags_per_order", Alias: "value"}}}},
-		{ID: "by_segment", Request: Request{Dimensions: []Field{{Field: "segment", Alias: "label"}}, Measures: []Field{{Field: "tags_per_order", Alias: "value"}}}},
+		{ID: "by_customer", Request: Request{Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "tags_per_order", Alias: "value"}}}},
+		{ID: "by_segment", Request: Request{Dimensions: []Field{{Field: "segment", Alias: "label"}}, Metrics: []Field{{Field: "tags_per_order", Alias: "value"}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestPlanBundleSharesFactScansAcrossSingleAndMultiFactBranches(t *testing.T)
 			Request: Request{
 				Table:      "orders",
 				Dimensions: []Field{{Field: "orders.segment", Alias: "label"}},
-				Measures:   []Field{{Field: "revenue", Alias: "value"}},
+				Metrics:    []Field{{Field: "revenue", Alias: "value"}},
 				Sort:       []Sort{{Field: "label", Direction: "asc"}},
 			},
 		},
@@ -99,7 +99,7 @@ func TestPlanBundleSharesFactScansAcrossSingleAndMultiFactBranches(t *testing.T)
 			Request: Request{
 				Table:      "orders",
 				Dimensions: []Field{{Field: "customer", Alias: "label"}},
-				Measures:   []Field{{Field: "revenue", Alias: "value"}},
+				Metrics:    []Field{{Field: "revenue", Alias: "value"}},
 				Sort:       []Sort{{Field: "label", Direction: "asc"}},
 			},
 		},
@@ -107,7 +107,7 @@ func TestPlanBundleSharesFactScansAcrossSingleAndMultiFactBranches(t *testing.T)
 			ID: "ratio_by_customer",
 			Request: Request{
 				Dimensions: []Field{{Field: "customer", Alias: "label"}},
-				Measures:   []Field{{Field: "tags_per_order", Alias: "value"}},
+				Metrics:    []Field{{Field: "tags_per_order", Alias: "value"}},
 				Sort:       []Sort{{Field: "label", Direction: "asc"}},
 			},
 		},
@@ -166,7 +166,7 @@ func TestMultiFactBundleScalarCountOnlyExecutesAcrossThreeFacts(t *testing.T) {
 	}
 	bundle, err := NewPlanner(executableMultiFactModel()).PlanBundle([]BundleRequest{{
 		ID: "totals",
-		Request: Request{Measures: []Field{
+		Request: Request{Metrics: []Field{
 			{Field: "order_count", Alias: "orders"},
 			{Field: "tag_count", Alias: "tags"},
 			{Field: "click_count", Alias: "clicks"},
@@ -212,8 +212,8 @@ func TestMultiFactBundleExecutesExactOuterStitchAcrossGroupingSets(t *testing.T)
 		}
 	}
 	bundle, err := NewPlanner(executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "by_customer", Request: Request{Dimensions: []Field{{Field: "customer", Alias: "label"}}, Measures: []Field{{Field: "tags_per_order", Alias: "value"}, {Field: "click_count", Alias: "clicks"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
-		{ID: "by_segment", Request: Request{Dimensions: []Field{{Field: "segment", Alias: "label"}}, Measures: []Field{{Field: "tags_per_order", Alias: "value"}, {Field: "click_count", Alias: "clicks"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
+		{ID: "by_customer", Request: Request{Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "tags_per_order", Alias: "value"}, {Field: "click_count", Alias: "clicks"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
+		{ID: "by_segment", Request: Request{Dimensions: []Field{{Field: "segment", Alias: "label"}}, Metrics: []Field{{Field: "tags_per_order", Alias: "value"}, {Field: "click_count", Alias: "clicks"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestPlanBundleFailsClosedForColumnMasks(t *testing.T) {
 		Request: Request{
 			Table:       "orders",
 			Dimensions:  []Field{{Field: "customer"}},
-			Measures:    []Field{{Field: "order_count"}},
+			Metrics:     []Field{{Field: "order_count"}},
 			ColumnMasks: []ColumnMask{{Field: "orders.customer_id", Mask: "redact"}},
 		},
 	}})
@@ -298,7 +298,7 @@ func TestPlanBundleRejectsDuplicateBranchOutputAliases(t *testing.T) {
 		Request: Request{
 			Table:      "orders",
 			Dimensions: []Field{{Field: "customer", Alias: "value"}},
-			Measures:   []Field{{Field: "order_count", Alias: "value"}},
+			Metrics:    []Field{{Field: "order_count", Alias: "value"}},
 		},
 	}})
 	if err == nil || !strings.Contains(err.Error(), "duplicate output alias") {
@@ -324,8 +324,8 @@ func TestBundleExecutesOneStatementAndDecodesExactTypedBranches(t *testing.T) {
 		}
 	}
 	bundle, err := NewPlanner(executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "kpi", Request: Request{Table: "orders", Measures: []Field{{Field: "order_count", Alias: "value"}}}},
-		{ID: "customer", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Measures: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
+		{ID: "kpi", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count", Alias: "value"}}}},
+		{ID: "customer", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -401,8 +401,8 @@ func TestBundleDecodePreservesDeterministicAuthoredBranchOrdering(t *testing.T) 
 		}
 	}
 	bundle, err := NewPlanner(executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "descending", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Measures: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "desc"}}, Limit: 2}},
-		{ID: "ascending", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Measures: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}, Limit: 2}},
+		{ID: "descending", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "desc"}}, Limit: 2}},
+		{ID: "ascending", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}, Limit: 2}},
 	})
 	if err != nil {
 		t.Fatal(err)

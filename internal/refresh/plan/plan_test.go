@@ -59,3 +59,32 @@ func TestForPipelineRejectsDependencyCycles(t *testing.T) {
 		t.Fatal("expected dependency cycle to be rejected")
 	}
 }
+
+func TestForPipelineMaterializesDatasetAliasesOnceByModelName(t *testing.T) {
+	definition := &artifact.Definition{
+		Models: map[string]*semanticmodel.Model{
+			"sales": {
+				Tables: map[string]semanticmodel.Table{
+					"orders":    {},
+					"purchases": {},
+					"summary":   {ModelDependencies: []string{"orders"}},
+				},
+				Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+					"orders":    {Model: "sales_orders"},
+					"purchases": {Model: "sales_orders"},
+					"summary":   {Model: "sales_summary"},
+				},
+			},
+		},
+		Pipelines: map[string]refreshschedule.Definition{
+			"daily": {ID: "daily", SemanticModelID: "sales"},
+		},
+	}
+	got, err := ForPipeline(definition, projectgraph.ResourceID("project_acme"), projectgraph.ResourceID("daily"))
+	if err != nil {
+		t.Fatalf("plan refresh pipeline: %v", err)
+	}
+	if want := []string{"sales_orders", "sales_summary"}; !reflect.DeepEqual(got.Tables, want) {
+		t.Fatalf("tables = %#v, want %#v", got.Tables, want)
+	}
+}

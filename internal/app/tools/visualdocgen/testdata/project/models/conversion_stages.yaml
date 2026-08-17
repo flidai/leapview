@@ -5,12 +5,23 @@ metadata:
   name: conversion_stages
   displayName: Conversion stages
 spec:
-  primaryKey: stage
-  sources: [docs.conversion_stages]
+  sources:
+  - docs.conversion_stages
   fields:
-    stage: {label: Stage, type: string}
-    conversions: {label: Conversions, type: number}
+    stage:
+      datatype: String
+      label: Stage
+    conversions:
+      datatype: Float
+      label: Conversions
   transform:
     sql: |
       SELECT stage, CAST(conversions AS DOUBLE) AS conversions
       FROM source."docs.conversion_stages"
+  entities:
+    stage:
+      type: primary
+      fields:
+      - stage
+  grain:
+    entity: stage

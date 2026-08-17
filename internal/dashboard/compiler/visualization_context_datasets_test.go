@@ -15,12 +15,12 @@ func TestCompileAuthoringVisualizationOwnsContextDatasetsAndMetadata(t *testing.
 		Type: "line", Title: "Revenue", Subtitle: "Current scope",
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}},
-			Measures:   []dashboardauthoring.FieldRef{{Field: "revenue"}},
+			Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue"}},
 		},
 		Datasets: map[string]dashboardauthoring.VisualQuery{
 			"context": {
 				Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.region", Alias: "region"}},
-				Measures:   []dashboardauthoring.FieldRef{{Field: "target_revenue", Alias: "target"}},
+				Metrics:    []dashboardauthoring.FieldRef{{Field: "target_revenue", Alias: "target"}},
 				Limit:      1,
 			},
 		},

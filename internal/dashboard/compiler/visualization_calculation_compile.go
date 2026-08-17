@@ -66,7 +66,7 @@ func compileVisualCalculations(spec visualizationir.VisualizationSpec, authored 
 		}
 		calculationID := calculation.ID
 		field := visualizationir.VisualizationField{
-			ID: calculation.ID, Role: visualizationir.VisualizationFieldRoleMeasure, DataType: visualizationir.VisualizationDataTypeDecimal,
+			ID: calculation.ID, Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal,
 			Nullable: true, Label: calculation.Label, Format: format,
 			Provenance: &visualizationir.VisualizationFieldProvenance{
 				Kind: visualizationir.VisualizationFieldProvenanceKindVisualCalculation, SourceRefs: []string{calculation.Source.Field}, CalculationID: &calculationID,
@@ -313,9 +313,9 @@ func appendVisibleCalculationBinding(spec visualizationir.VisualizationSpec, fie
 	case *visualizationir.TableVisualizationSpec:
 		value.Columns = append(value.Columns, visualizationir.TableVisualizationColumn{Field: ref, Label: field.Label, Formatting: []visualizationir.TableVisualizationFormattingRule{}})
 	case *visualizationir.MatrixVisualizationSpec:
-		value.Measures = append(value.Measures, ref)
+		value.Metrics = append(value.Metrics, ref)
 	case *visualizationir.PivotVisualizationSpec:
-		value.Measures = append(value.Measures, ref)
+		value.Metrics = append(value.Metrics, ref)
 	}
 }
 
@@ -354,7 +354,7 @@ func markCompiledFieldProvenance(base *visualizationir.VisualizationSpecBase) {
 				continue
 			}
 			kind := visualizationir.VisualizationFieldProvenanceKindModeled
-			if field.Role == visualizationir.VisualizationFieldRoleMeasure {
+			if field.Role == visualizationir.VisualizationFieldRoleMetric {
 				kind = visualizationir.VisualizationFieldProvenanceKindAggregated
 			}
 			sources := []string{}

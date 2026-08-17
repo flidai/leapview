@@ -9,7 +9,7 @@ namespace LeapViewVisualization;
 
 enum VisualizationFieldRole {
   dimension: "dimension",
-  measure: "measure",
+  metric: "metric",
   metadata: "metadata",
   identity: "identity",
 }
@@ -467,7 +467,7 @@ model TemporalVisualizationFormat extends VisualizationFormat {
 
 model VisualizationGridFieldMetadata {
   `group`?: string;
-  `measure`?: string;
+  `metric`?: string;
   `columnValue`?: string;
   `formatting`: TableVisualizationFormattingRule[];
 }
@@ -948,7 +948,7 @@ model TableVisualizationColumn {
   `label`: string;
   `width`?: int64;
   `group`?: string;
-  `measure`?: string;
+  `metric`?: string;
   `columnValue`?: string;
   `formatting`: TableVisualizationFormattingRule[];
 }
@@ -969,8 +969,8 @@ model MatrixVisualizationSpec extends VisualizationSpec {
   `kind`: "matrix";
   `rows`: VisualizationFieldRef[];
   `columns`: VisualizationFieldRef[];
-  `measures`: VisualizationFieldRef[];
-  `measureFormatting`: Record<TableVisualizationFormattingRule[]>;
+  `metrics`: VisualizationFieldRef[];
+  `metricFormatting`: Record<TableVisualizationFormattingRule[]>;
   `presentation`: GridVisualizationPresentation;
 }
 
@@ -978,8 +978,8 @@ model PivotVisualizationSpec extends VisualizationSpec {
   `kind`: "pivot";
   `rows`: VisualizationFieldRef[];
   `columns`: VisualizationFieldRef[];
-  `measures`: VisualizationFieldRef[];
-  `measureFormatting`: Record<TableVisualizationFormattingRule[]>;
+  `metrics`: VisualizationFieldRef[];
+  `metricFormatting`: Record<TableVisualizationFormattingRule[]>;
   `presentation`: GridVisualizationPresentation;
 }
 

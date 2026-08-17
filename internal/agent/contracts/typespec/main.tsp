@@ -25,7 +25,7 @@ model DashboardVisualColumn {
   id: string;
   sourceRef?: string;
   label: string;
-  role: "dimension" | "measure" | "metadata" | "identity";
+  role: "dimension" | "metric" | "metadata" | "identity";
   dataType: "string" | "boolean" | "integer" | "decimal" | "temporal" | "date" | "geographic";
   nullable: boolean;
   format?: Record<unknown>;
@@ -159,8 +159,8 @@ model QueryVisualFilterGroupInput {
 model QueryVisualFilterInput {
   @doc("Semantic field ID. Omit only when groups supplies nested filters.")
   field?: string;
-  @doc("Fact table used to resolve an otherwise ambiguous conformed dimension.")
-  fact?: string;
+  @doc("Semantic dataset used to resolve an otherwise ambiguous conformed dimension.")
+  dataset?: string;
   @doc("Governed comparison operator. Defaults to equals.")
   operator?: "equals" | "in" | "contains" | "not_contains" | "starts_with" | "greater_than_or_equal" | "less_than" | "is_null" | "is_not_null";
   @doc("Comparison values. is_null and is_not_null accept no values.")
@@ -186,7 +186,7 @@ model QueryVisualTableColumn {
   align?: string;
   role?: string;
   group?: string;
-  measure?: string;
+  metric?: string;
   columnValue?: string;
   width?: int32;
   format?: string;
@@ -292,7 +292,7 @@ model QueryVisualInput {
   @doc("Stable semantic_model resource ID returned by catalog_search/catalog_get.")
   @minLength(1)
   semanticModelId: string;
-  @doc("Semantic dataset/table ID.")
+  @doc("Semantic dataset ID.")
   @minLength(1)
   dataset: string;
   @doc("Optional display title.")
@@ -304,9 +304,9 @@ model QueryVisualInput {
   dimensions?: QueryVisualFieldRef[];
   @doc("Optional series field for split charts.")
   series?: QueryVisualFieldRef;
-  @doc("Measure fields for chart values.")
+  @doc("Metric fields for chart values.")
   @maxItems(50)
-  measures?: QueryVisualFieldRef[];
+  metrics?: QueryVisualFieldRef[];
   @doc("Fields for table output.")
   @maxItems(50)
   fields?: QueryVisualFieldRef[];
@@ -335,7 +335,7 @@ model QueryVisualInput {
 
 model QueryVisualFieldUsage {
   fieldId: string;
-  role: "dimension" | "series" | "measure" | "table_field" | "table_row";
+  role: "dimension" | "series" | "metric" | "table_field" | "table_row";
   `alias`?: string;
   label: string;
   dataType?: string;
@@ -347,8 +347,8 @@ model QueryVisualFilterUsage {
   operator: "equals" | "in" | "contains" | "not_contains" | "starts_with" | "greater_than_or_equal" | "less_than" | "is_null" | "is_not_null";
   @doc("Filtered semantic field.")
   fieldId: string;
-  @doc("Fact table selected to resolve a conformed dimension.")
-  resolvedFactId?: string;
+  @doc("Semantic dataset selected to resolve a conformed dimension.")
+  resolvedDatasetId?: string;
   @doc("Comparison values. Omitted for unary operators.")
   values?: string[];
   @doc("Zero-based nested group path. Omitted for a root-level filter.")
@@ -636,7 +636,7 @@ model DashboardAuthoringAssignFieldInput {
   visualId: string;
   @minLength(1)
   fieldId: string;
-  role: "measure" | "dimension" | "detail";
+  role: "metric" | "dimension" | "detail";
 }
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "command"] })

@@ -60,7 +60,7 @@ A failed component query should remain scoped where possible: the page shell and
 Keeping the lifecycle server-owned provides four durable properties:
 
 - one authorization and data-policy boundary for browser and headless access;
-- one semantic interpretation of fields and measures;
+- one semantic interpretation of fields and metrics;
 - deterministic cancellation and supersession behavior;
 - renderer plugins that remain replaceable presentation adapters.
 

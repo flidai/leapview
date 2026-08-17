@@ -27,7 +27,7 @@ const (
 
 // PlanSpatialTileAggregate plans one 4x4-style metatile at the final semantic
 // bucket grain. Coordinate cells are injected into each fact aggregate before
-// count-distinct, average, ratio dependencies, and other measures are reduced.
+// count-distinct, average, ratio dependencies, and other metrics are reduced.
 // The resulting statement returns one native MVT byte value per child tile.
 func (p *Planner) PlanSpatialTileAggregate(request SpatialTileRequest) (Plan, error) {
 	if err := validateSpatialTileRequest(request); err != nil {
@@ -47,7 +47,7 @@ func (p *Planner) PlanSpatialTileAggregate(request SpatialTileRequest) (Plan, er
 			{Field: request.Latitude.Field, Alias: request.Latitude.Alias},
 			{Field: request.Longitude.Field, Alias: request.Longitude.Alias},
 		},
-		Measures: request.Measures, Filters: filters, ColumnMasks: request.ColumnMasks,
+		Metrics: request.Metrics, Filters: filters, ColumnMasks: request.ColumnMasks,
 		SpatialBucket: &SpatialBucket{Latitude: request.Latitude, Longitude: request.Longitude, Zoom: request.Zoom, CellPixels: request.CellPixels},
 	})
 	if err != nil {
@@ -62,13 +62,13 @@ func (p *Planner) PlanSpatialTileAggregate(request SpatialTileRequest) (Plan, er
 		return Plan{}, err
 	}
 	cellsPerTile := 256 / request.CellPixels
-	measureColumns := make([]string, 0, len(request.Measures))
-	for _, measure := range request.Measures {
-		alias, err := outputAlias(measure)
+	metricColumns := make([]string, 0, len(request.Metrics))
+	for _, metric := range request.Metrics {
+		alias, err := outputAlias(metric)
 		if err != nil {
 			return Plan{}, err
 		}
-		measureColumns = append(measureColumns, alias)
+		metricColumns = append(metricColumns, alias)
 	}
 
 	cellX, cellY := longitude, latitude
@@ -97,7 +97,7 @@ func (p *Planner) PlanSpatialTileAggregate(request SpatialTileRequest) (Plan, er
 		"__lv_coordinate_count",
 		"CASE WHEN __lv_coordinate_count >= 1000000 THEN printf('%.1fM', __lv_coordinate_count / 1000000.0) WHEN __lv_coordinate_count >= 1000 THEN printf('%.1fk', __lv_coordinate_count / 1000.0) ELSE CAST(__lv_coordinate_count AS VARCHAR) END AS __lv_coordinate_count_abbreviated",
 	}
-	properties = append(properties, measureColumns...)
+	properties = append(properties, metricColumns...)
 
 	var sql strings.Builder
 	sql.WriteString("WITH governed AS (\n")
@@ -142,7 +142,7 @@ func (p *Planner) PlanSpatialTileRaw(request SpatialTileRawRequest) (Plan, error
 		Filter{Field: request.Longitude.Field, Operator: "less_than", Values: []any{east}},
 	)
 	raw, err := p.planSpatialRawSource(spatialRawSourceRequest{
-		Table: request.Table, Dimensions: request.Dimensions, Measures: request.Measures, Identity: request.Identity,
+		Table: request.Table, Dimensions: request.Dimensions, Metrics: request.Metrics, Identity: request.Identity,
 		Time: request.Time, Filters: filters, ColumnMasks: request.ColumnMasks, Latitude: request.Latitude, Longitude: request.Longitude,
 	})
 	if err != nil {
@@ -184,7 +184,7 @@ func (p *Planner) PlanSpatialTileBudget(request SpatialTileBudgetRequest) (Plan,
 		Filter{Field: request.Longitude.Field, Operator: "less_than_or_equal", Values: []any{180.0}},
 	)
 	raw, err := p.planSpatialRawSource(spatialRawSourceRequest{
-		Table: request.Table, Dimensions: request.Dimensions, Measures: request.Measures, Identity: request.Identity,
+		Table: request.Table, Dimensions: request.Dimensions, Metrics: request.Metrics, Identity: request.Identity,
 		Time: request.Time, Filters: filters, ColumnMasks: request.ColumnMasks, Latitude: request.Latitude, Longitude: request.Longitude,
 	})
 	if err != nil {
@@ -232,7 +232,7 @@ func spatialRawEstimatedFeatureBytes(columns []string) string {
 type spatialRawSourceRequest struct {
 	Table       string
 	Dimensions  []Field
-	Measures    []Field
+	Metrics     []Field
 	Identity    []Field
 	Filters     []Filter
 	ColumnMasks []ColumnMask
@@ -249,7 +249,7 @@ type spatialRawSource struct {
 }
 
 func (p *Planner) planSpatialRawSource(request spatialRawSourceRequest) (spatialRawSource, error) {
-	governed, err := p.Plan(Request{Table: request.Table, Dimensions: request.Dimensions, Measures: request.Measures, Time: request.Time, Filters: request.Filters, ColumnMasks: request.ColumnMasks})
+	governed, err := p.Plan(Request{Table: request.Table, Dimensions: request.Dimensions, Metrics: request.Metrics, Time: request.Time, Filters: request.Filters, ColumnMasks: request.ColumnMasks})
 	if err != nil {
 		return spatialRawSource{}, err
 	}
@@ -291,13 +291,13 @@ func (p *Planner) planSpatialRawSource(request spatialRawSourceRequest) (spatial
 	// Preserve all 63 hash bits through MVT/JavaScript by promoting their
 	// decimal string representation instead of an unsafe JS number.
 	identity := "CONCAT('raw:', CAST(hash(concat_ws('\\x1f', " + strings.Join(identityParts, ", ") + ")) & 9223372036854775807 AS VARCHAR))"
-	properties := p.spatialMVTProperties(governed.Columns, request.Dimensions, request.Measures, latitude, longitude)
+	properties := p.spatialMVTProperties(governed.Columns, request.Dimensions, request.Metrics, latitude, longitude)
 	properties = append(properties, identity+" AS __lv_id", "FALSE AS __lv_aggregate", "'raw' AS __lv_precision")
 	return spatialRawSource{plan: governed, latitude: latitude, longitude: longitude, properties: properties}, nil
 }
 
-func (p *Planner) spatialMVTProperties(columns []string, dimensions, measures []Field, latitude, longitude string) []string {
-	types := make(map[string]string, len(dimensions)+len(measures))
+func (p *Planner) spatialMVTProperties(columns []string, dimensions, metrics []Field, latitude, longitude string) []string {
+	types := make(map[string]string, len(dimensions)+len(metrics))
 	for _, field := range dimensions {
 		alias, err := outputAlias(field)
 		if err != nil {
@@ -309,7 +309,7 @@ func (p *Planner) spatialMVTProperties(columns []string, dimensions, measures []
 			types[alias] = dimension.Type
 		}
 	}
-	for _, field := range measures {
+	for _, field := range metrics {
 		alias, err := outputAlias(field)
 		if err == nil {
 			types[alias] = "number"

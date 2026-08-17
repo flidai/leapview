@@ -17,10 +17,10 @@ func TestCompileDashboardFilterArchitectureResolvesBindingKeysAndComponentTarget
 			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{
 				"state": {Type: "string"},
 			}},
-			"orders": {},
+			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "string"}}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero"},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
 			"customer_state": {
@@ -41,7 +41,7 @@ func TestCompileDashboardFilterArchitectureResolvesBindingKeysAndComponentTarget
 			},
 		},
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}}},
+			"orders": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count"}}}},
 		}),
 		Pages: []dashboard.Page{{
 			ID: "overview", Title: "Overview",
@@ -93,7 +93,7 @@ func TestValidateDashboardFilterArchitectureRejectsRouteVisibleURLCollision(t *t
 			"category": {Label: "Category", Field: "orders.category", Predicates: []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionSet, Operators: []dashboardfilter.Operator{dashboardfilter.OperatorIn}}}},
 		},
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "missing"}}}},
+			"orders": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "missing"}}}},
 		}),
 		Pages: []dashboard.Page{{
 			ID: "overview", Title: "Overview",

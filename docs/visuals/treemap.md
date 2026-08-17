@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic
 
-Use one categorical dimension and one measure to size rectangular areas, making dominant categories visible within limited space.
+Use one categorical dimension and one metric to size rectangular areas, making dominant categories visible within limited space.
 
 {{< visual id="category_treemap" >}}
 
@@ -18,7 +18,7 @@ visuals:
     query:
       dimensions:
         category: orders.category
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value
@@ -26,9 +26,9 @@ visuals:
       limit: 18
 ```
 
-## Alternate measure
+## Alternate metric
 
-Replace the dimension and measure to compare revenue by state without changing the category-value shape.
+Replace the dimension and metric to compare revenue by state without changing the category-value shape.
 
 {{< visual id="state_treemap" >}}
 
@@ -40,7 +40,7 @@ visuals:
     query:
       dimensions:
         state: orders.state
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value
@@ -66,7 +66,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value

@@ -113,8 +113,8 @@ class SemanticModelGraphElement extends LitElement {
   }
 
 	private get resolvedGraph(): SemanticModelGraphSignal {
-		return {
-			facts: this.graph?.facts ?? [],
+	return {
+		datasets: this.graph?.datasets ?? [],
       nodes: this.graph?.nodes ?? [],
       edges: this.graph?.edges ?? [],
     }
@@ -266,7 +266,7 @@ function modelNodePosition(node: SemanticModelGraphNodeSignal, graph: SemanticMo
 
 function modelNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> {
 	const ranks = new Map<string, number>()
-	const roots = (graph.facts ?? []).filter((fact) => graph.nodes.some((node) => node.id === fact))
+	const roots = (graph.datasets ?? []).filter((dataset) => graph.nodes.some((node) => node.id === dataset))
 	if (!roots.length && graph.nodes[0]?.id) roots.push(graph.nodes[0].id)
 	if (!roots.length) return ranks
 	for (const root of roots) ranks.set(root, 0)
@@ -371,7 +371,7 @@ function relationshipEndpointMarkers(cardinality: string): [string, string] {
 function graphLayoutKey(graph: SemanticModelGraphSignal, storageKey: string): string {
   const nodePart = graph.nodes.map((node) => `${node.id}:${node.fields.map((field) => field.name).join(',')}`).join('|')
   const edgePart = graph.edges.map((edge) => `${edge.id}:${edge.source}.${edge.sourceField}->${edge.target}.${edge.targetField}:${edge.cardinality}`).join('|')
-  return `leapview:semantic-model-graph:v2:${storageKey || (graph.facts ?? []).join(',') || 'model'}:${nodePart}:${edgePart}`
+  return `leapview:semantic-model-graph:v2:${storageKey || (graph.datasets ?? []).join(',') || 'model'}:${nodePart}:${edgePart}`
 }
 
 function loadLayout(key: string): Map<string, NodePosition> {

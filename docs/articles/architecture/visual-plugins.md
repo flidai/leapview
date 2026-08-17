@@ -141,7 +141,7 @@ Each field definition contains:
 Field
   id
   sourceRef
-  role             dimension | measure | metadata | identity
+  role             dimension | metric | metadata | identity
   dataType         string | boolean | integer | decimal | temporal | date | geographic
   nullable
   label
@@ -204,7 +204,7 @@ The project compiler creates the visualization specification during deployment, 
 Compilation performs:
 
 1. Resource and renderer-neutral option validation.
-2. Semantic field and measure resolution.
+2. Semantic field and metric resolution.
 3. Query-shape validation.
 4. Field role, type, nullability, format, unit, grain, timezone, and identity resolution.
 5. Visual-kind and channel construction.
@@ -357,7 +357,7 @@ The HTML adapter owns single-value KPI presentation and accessible data fallback
 
 MapLibre owns geographic visuals. Maps use versioned, verified geometry or vector-tile assets registered in the serving artifact. Geometry identity, projection assumptions, attribution, and join systems are explicit contract metadata.
 
-The map adapter supports choropleth, point, heat, and density layers without pretending schematic rectangles are geographic boundaries. It reports unmatched identifiers and never guesses region mappings. Geometry is loaded from LeapView-controlled same-origin assets and cached by content digest; query refreshes transmit measure frames, not repeated boundary geometry.
+The map adapter supports choropleth, point, heat, and density layers without pretending schematic rectangles are geographic boundaries. It reports unmatched identifiers and never guesses region mappings. Geometry is loaded from LeapView-controlled same-origin assets and cached by content digest; query refreshes transmit metric frames, not repeated boundary geometry.
 
 MapLibre exclusively owns built-in geographic rendering; ECharts `geo` is not a fallback map adapter. The runtime boundary for future typed map glyphs is described in [Geographic rendering](/docs/architecture/geographic-rendering).
 
@@ -376,7 +376,7 @@ Generated conformance fixtures contain input, locale, timezone, format specifica
 
 Interaction intent is part of the specification. Supported product interactions include point, row, tuple, interval, legend, drill, context action, and linked-hover intent. Every command uses `sourceKind: visual`; point versus row behavior is determined by `interactionKind` and the visual specification.
 
-The compiler validates that interaction mappings reference declared fields with compatible scalar types and governed fact/grain identity. The browser host converts `DatumRef` values into existing typed semantic selection commands. Renderers never send field names or arbitrary filter expressions as commands.
+The compiler validates that interaction mappings reference declared fields with compatible scalar types and governed dataset/grain identity. The browser host converts `DatumRef` values into existing typed semantic selection commands. Renderers never send field names or arbitrary filter expressions as commands.
 
 Interval selections carry typed lower and upper bounds plus inclusivity and temporal grain. Linked hover remains ephemeral browser state unless the specification explicitly maps it to a server command. Programmatic selection updates are distinguished from user events to prevent feedback loops.
 

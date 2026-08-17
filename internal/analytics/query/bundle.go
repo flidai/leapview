@@ -69,7 +69,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 	dimensions := []bundleDimension{}
 	dimensionIndex := map[string]int{}
 	branchDimensions := make([][]int, len(requests))
-	measures := map[string]ResolvedMeasure{}
+	aggregates := map[string]resolvedAggregateMetric{}
 	metrics := map[string]semanticmodel.Expression{}
 	bindings := []physicalFieldBinding{}
 	dependencies := map[string]struct{}{fact: {}}
@@ -91,9 +91,9 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 			dependencies[field] = struct{}{}
 			addPathDependencies(dependencies, path)
 		}
-		for name, measure := range resolved.Measures {
-			measures[name] = measure
-			for _, field := range measurePhysicalFields(measure) {
+		for name, metric := range resolved.Aggregates {
+			aggregates[name] = metric
+			for _, field := range aggregateMetricPhysicalFields(metric) {
 				physical, err := p.Model.ResolveDimension(field)
 				if err != nil {
 					return BundlePlan{}, err
@@ -143,32 +143,30 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 		if err != nil {
 			return BundlePlan{}, err
 		}
+		expr = applyTimeSemantics(expr, item.dimension)
 		expr = canonicalDimensionExpr(expr, item.dimension.Type)
-		if item.dimension.Grain != "" {
-			expr = "DATE_TRUNC('" + item.dimension.Grain + "', " + expr + ")"
-		}
 		baseSelects = append(baseSelects, expr+" AS "+item.physical)
 	}
-	measureNames := sortedMeasureNames(measures)
-	measureColumns := map[string]string{}
+	metricNames := sortedAggregateMetricNames(aggregates)
+	metricColumns := map[string]string{}
 	baseArgs := []any{}
 	factAliases, err := aliases.context(nil)
 	if err != nil {
 		return BundlePlan{}, err
 	}
-	for i, name := range measureNames {
-		measure := measures[name]
-		measureColumns[name] = fmt.Sprintf("__m%d", i)
-		if measure.Aggregation != "count" {
-			raw, err := rawMeasureExpr(p.Model, measure, factAliases)
+	for i, name := range metricNames {
+		metric := aggregates[name]
+		metricColumns[name] = fmt.Sprintf("__m%d", i)
+		if metric.Aggregation != "count" {
+			raw, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
 			if err != nil {
 				return BundlePlan{}, err
 			}
 			baseSelects = append(baseSelects, raw+fmt.Sprintf(" AS __v%d", i))
 		}
-		if len(measure.Filters) > 0 {
+		if len(metric.Filters) > 0 {
 			parts := []string{}
-			for _, filter := range measure.Filters {
+			for _, filter := range metric.Filters {
 				physical, err := p.Model.ResolveDimension(filter.Field)
 				if err != nil {
 					return BundlePlan{}, err
@@ -242,37 +240,37 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 		expr := fmt.Sprintf("CASE WHEN %s THEN __d%d END AS __d%d", integerPredicate("__bundle_group", groups), dimensionIndex, dimensionIndex)
 		aggSelects = append(aggSelects, expr)
 	}
-	for i, name := range measureNames {
-		measure := measures[name]
+	for i, name := range metricNames {
+		metric := aggregates[name]
 		input := fmt.Sprintf("__v%d", i)
 		expr := ""
-		switch measure.Aggregation {
+		switch metric.Aggregation {
 		case "count":
 			expr = "COUNT(*)"
 		case "count_distinct":
 			expr = "COUNT(DISTINCT " + input + ")"
 		case "sum", "avg", "min", "max":
-			expr = strings.ToUpper(measure.Aggregation) + "(" + input + ")"
+			expr = strings.ToUpper(metric.Aggregation) + "(" + input + ")"
 		default:
-			return BundlePlan{}, fmt.Errorf("measure %q has unsupported aggregation %q", name, measure.Aggregation)
+			return BundlePlan{}, fmt.Errorf("metric %q has unsupported aggregation %q", name, metric.Aggregation)
 		}
 		groups := []int{}
 		seenGroups := map[int]bool{}
 		for branchIndex, resolved := range resolutions {
-			if _, selected := resolved.Measures[name]; selected && !seenGroups[branchGroups[branchIndex]] {
+			if _, selected := resolved.Aggregates[name]; selected && !seenGroups[branchGroups[branchIndex]] {
 				seenGroups[branchGroups[branchIndex]] = true
 				groups = append(groups, branchGroups[branchIndex])
 			}
 		}
 		filterParts := []string{integerPredicate("__bundle_group", groups)}
-		if len(measure.Filters) > 0 {
+		if len(metric.Filters) > 0 {
 			filterParts = append(filterParts, fmt.Sprintf("__f%d", i))
 		}
 		expr += " FILTER (WHERE " + strings.Join(filterParts, " AND ") + ")"
-		if measure.Empty == "zero" && measure.Aggregation != "count" && measure.Aggregation != "count_distinct" {
+		if metric.Empty == "zero" && metric.Aggregation != "count" && metric.Aggregation != "count_distinct" {
 			expr = "COALESCE(" + expr + ", 0)"
 		}
-		aggSelects = append(aggSelects, expr+" AS "+measureColumns[name])
+		aggSelects = append(aggSelects, expr+" AS "+metricColumns[name])
 	}
 	groupPositions := make([]string, len(dimensions)+1)
 	for i := range groupPositions {
@@ -281,7 +279,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 	agg := "bundle_aggregate AS (\n  SELECT " + strings.Join(aggSelects, ", ") + "\n  FROM bundle_expanded\n  GROUP BY " + strings.Join(groupPositions, ", ") + "\n)"
 
 	memberNames, memberColumns := bundleMemberColumns(resolutions)
-	memberExpr, err := renderBundleMembers(measures, metrics, measureColumns, memberNames)
+	memberExpr, err := renderBundleMembers(aggregates, metrics, metricColumns, memberNames)
 	if err != nil {
 		return BundlePlan{}, err
 	}
@@ -424,15 +422,15 @@ func bundleMemberColumns(resolutions []aggregateResolution) ([]string, []string)
 	return names, columns
 }
 
-func renderBundleMembers(measures map[string]ResolvedMeasure, metrics map[string]semanticmodel.Expression, measureColumns map[string]string, names []string) ([]string, error) {
+func renderBundleMembers(aggregates map[string]resolvedAggregateMetric, metrics map[string]semanticmodel.Expression, metricColumns map[string]string, names []string) ([]string, error) {
 	cache := map[string]string{}
-	measureSQL := func(name string) (string, error) {
-		measure, ok := measures[name]
+	aggregateSQL := func(name string) (string, error) {
+		metric, ok := aggregates[name]
 		if !ok {
-			return "", fmt.Errorf("unknown measure %q", name)
+			return "", fmt.Errorf("unknown metric %q", name)
 		}
-		expr := measureColumns[name]
-		if measure.Empty == "zero" {
+		expr := metricColumns[name]
+		if metric.Empty == "zero" {
 			expr = "COALESCE(" + expr + ", 0)"
 		}
 		return expr, nil
@@ -447,8 +445,8 @@ func renderBundleMembers(measures map[string]ResolvedMeasure, metrics map[string
 			return "", fmt.Errorf("unknown metric %q", name)
 		}
 		value, err := expression.SQL(func(ref string) (string, error) {
-			if _, ok := measures[ref]; ok {
-				return measureSQL(ref)
+			if _, ok := aggregates[ref]; ok {
+				return aggregateSQL(ref)
 			}
 			return metricSQL(ref)
 		})
@@ -460,8 +458,8 @@ func renderBundleMembers(measures map[string]ResolvedMeasure, metrics map[string
 	out := make([]string, len(names))
 	for i, name := range names {
 		var err error
-		if _, ok := measures[name]; ok {
-			out[i], err = measureSQL(name)
+		if _, ok := aggregates[name]; ok {
+			out[i], err = aggregateSQL(name)
 		} else {
 			out[i], err = metricSQL(name)
 		}

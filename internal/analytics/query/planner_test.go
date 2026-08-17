@@ -1,15 +1,19 @@
 package query
 
 import (
+	"database/sql"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	_ "github.com/duckdb/duckdb-go/v2"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
 func TestPlannerScalarMultiFactAggregatesFactsIndependently(t *testing.T) {
-	plan, err := NewPlanner(testModel()).Plan(Request{Measures: []Field{
+	plan, err := NewPlanner(testModel()).Plan(Request{Metrics: []Field{
 		{Field: "revenue", Alias: "revenue"},
 		{Field: "tag_count", Alias: "tags"},
 		{Field: "tags_per_order", Alias: "ratio"},
@@ -33,7 +37,7 @@ func TestPlannerScalarMultiFactAggregatesFactsIndependently(t *testing.T) {
 func TestPlannerAggregatePaginationAlwaysHasTotalOrdering(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
 		Dimensions: []Field{{Field: "customer_state", Alias: "label"}},
-		Measures:   []Field{{Field: "order_count", Alias: "value"}},
+		Metrics:    []Field{{Field: "order_count", Alias: "value"}},
 		Limit:      1,
 	})
 	if err != nil {
@@ -50,7 +54,7 @@ func TestPlannerAggregatePaginationAlwaysHasTotalOrdering(t *testing.T) {
 func TestPlannerExplicitSortRemainsPrimaryAndGetsTieBreaker(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
 		Dimensions: []Field{{Field: "customer_state", Alias: "label"}},
-		Measures:   []Field{{Field: "order_count", Alias: "value"}},
+		Metrics:    []Field{{Field: "order_count", Alias: "value"}},
 		Sort:       []Sort{{Field: "value", Direction: "desc"}},
 		Limit:      1,
 	})
@@ -65,7 +69,7 @@ func TestPlannerExplicitSortRemainsPrimaryAndGetsTieBreaker(t *testing.T) {
 func TestPlannerGroupedMultiFactUsesFullOuterStitch(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
 		Dimensions: []Field{{Field: "customer_state", Alias: "state"}},
-		Measures:   []Field{{Field: "order_count"}, {Field: "tag_count"}},
+		Metrics:    []Field{{Field: "order_count"}, {Field: "tag_count"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -88,8 +92,8 @@ func TestPlannerGroupedMultiFactUsesFullOuterStitch(t *testing.T) {
 
 func TestPlannerConformedFilterPropagatesToEveryFact(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
-		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}},
-		Filters:  []Filter{{Field: "customer_state", Operator: "equals", Values: []any{"DK"}}},
+		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
+		Filters: []Filter{{Field: "customer_state", Operator: "equals", Values: []any{"DK"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +129,7 @@ func TestPlannerDimensionOnlyQueryUsesFactsCompatibleWithConformedFilters(t *tes
 
 func TestPlannerConformedSelectionEntriesPropagateToEveryFact(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
-		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}},
+		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
 		Filters: []Filter{{Groups: []FilterGroup{
 			{Filters: []Filter{{Field: "customer_state", Operator: "equals", Values: []any{"DK"}}}},
 			{Filters: []Filter{{Field: "customer_state", Operator: "equals", Values: []any{"SE"}}}},
@@ -145,8 +149,8 @@ func TestPlannerConformedSelectionEntriesPropagateToEveryFact(t *testing.T) {
 
 func TestPlannerFactLocalSelectionFiltersOnlyNamedFact(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
-		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}},
-		Filters:  []Filter{{Field: "orders.status", Fact: "orders", Operator: "equals", Values: []any{"paid"}}},
+		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
+		Filters: []Filter{{Field: "orders.status", Fact: "orders", Operator: "equals", Values: []any{"paid"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -161,8 +165,8 @@ func TestPlannerFactLocalSelectionFiltersOnlyNamedFact(t *testing.T) {
 
 func TestPlannerRequiresFactForLocalMultiFactFilter(t *testing.T) {
 	_, err := NewPlanner(testModel()).Plan(Request{
-		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}},
-		Filters:  []Filter{{Field: "orders.status", Operator: "equals", Values: []any{"paid"}}},
+		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
+		Filters: []Filter{{Field: "orders.status", Operator: "equals", Values: []any{"paid"}}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "requires fact") {
 		t.Fatalf("error = %v", err)
@@ -182,8 +186,8 @@ func TestPlannerRejectsMismatchedFactOnSingleFactFilter(t *testing.T) {
 
 func TestPlannerTableScopeRejectsOtherFactDependencies(t *testing.T) {
 	_, err := NewPlanner(testModel()).Plan(Request{
-		Table:    "orders",
-		Measures: []Field{{Field: "tags_per_order"}},
+		Table:   "orders",
+		Metrics: []Field{{Field: "tags_per_order"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "selects dependency from fact") {
 		t.Fatalf("error = %v", err)
@@ -193,7 +197,7 @@ func TestPlannerTableScopeRejectsOtherFactDependencies(t *testing.T) {
 func TestPlannerRejectsLocalDimensionInMultiFactQuery(t *testing.T) {
 	_, err := NewPlanner(testModel()).Plan(Request{
 		Dimensions: []Field{{Field: "orders.status"}},
-		Measures:   []Field{{Field: "order_count"}, {Field: "tag_count"}},
+		Metrics:    []Field{{Field: "order_count"}, {Field: "tag_count"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "qualified local dimension") {
 		t.Fatalf("error = %v", err)
@@ -214,7 +218,7 @@ func TestPlannerUsesExplicitBindingPathInAmbiguousGraph(t *testing.T) {
 
 	plan, err := NewPlanner(model).Plan(Request{
 		Dimensions: []Field{{Field: "customer_state"}},
-		Measures:   []Field{{Field: "order_count"}},
+		Metrics:    []Field{{Field: "order_count"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +231,7 @@ func TestPlannerUsesExplicitBindingPathInAmbiguousGraph(t *testing.T) {
 func TestPlannerUsesDistinctAliasesForRolePlayingDimensionPaths(t *testing.T) {
 	plan, err := NewPlanner(rolePlayingDateModel()).Plan(Request{
 		Dimensions: []Field{{Field: "order_date"}, {Field: "ship_date"}},
-		Measures:   []Field{{Field: "order_count"}},
+		Metrics:    []Field{{Field: "order_count"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +252,7 @@ func TestPlannerUsesDistinctAliasesForRolePlayingDimensionPaths(t *testing.T) {
 
 	reversed, err := NewPlanner(rolePlayingDateModel()).Plan(Request{
 		Dimensions: []Field{{Field: "ship_date"}, {Field: "order_date"}},
-		Measures:   []Field{{Field: "order_count"}},
+		Metrics:    []Field{{Field: "order_count"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +269,7 @@ func TestPlannerUsesDistinctAliasesForRolePlayingDimensionPaths(t *testing.T) {
 
 func TestPlannerKeepsRolePlayingFilterPathsDistinct(t *testing.T) {
 	plan, err := NewPlanner(rolePlayingDateModel()).Plan(Request{
-		Measures: []Field{{Field: "order_count"}},
+		Metrics: []Field{{Field: "order_count"}},
 		Filters: []Filter{
 			{Field: "order_date", Operator: "equals", Values: []any{"2026-07-01"}},
 			{Field: "ship_date", Operator: "equals", Values: []any{"2026-07-02"}},
@@ -295,23 +299,72 @@ func TestPlannerKeepsRolePlayingFilterPathsDistinct(t *testing.T) {
 func TestPlannerRowAndRawQueriesStaySingleFact(t *testing.T) {
 	planner := NewPlanner(testModel())
 	row, err := planner.PlanRows(RowRequest{
-		Table: "orders", Dimensions: []Field{{Field: "orders.order_id"}}, Measures: []Field{{Field: "revenue"}},
+		Table: "orders", Dimensions: []Field{{Field: "orders.order_id"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(row.SQL, "t0.revenue AS revenue") {
+	if !strings.Contains(row.SQL, "t0.order_id AS order_id") {
 		t.Fatalf("row SQL:\n%s", row.SQL)
 	}
-	_, err = planner.PlanRawValues(RawValueRequest{Table: "orders", Measure: Field{Field: "order_count"}})
-	if err == nil || !strings.Contains(err.Error(), "no raw input") {
-		t.Fatalf("raw count error = %v", err)
+	_, err = planner.PlanRawValues(RawValueRequest{Table: "orders", Metric: Field{Field: "order_count"}})
+	if err != nil {
+		t.Fatalf("raw canonical count error = %v", err)
+	}
+}
+
+func TestPlannerExecutesTimezoneAndSundayWeekSemantics(t *testing.T) {
+	model := testModel()
+	model.Dimensions["local_week"] = semanticmodel.SemanticDimension{
+		Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ, Grains: []string{"week"}, Calendar: "gregorian", Timezone: "America/Los_Angeles", WeekStart: "sunday",
+		Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.ordered_at"}},
+	}
+	plan, err := NewPlanner(model).Plan(Request{Metrics: []Field{{Field: "order_count", Alias: "orders"}}, Time: Time{Field: "local_week", Grain: "week", Alias: "week"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.SQL, "timezone('America/Los_Angeles'") || !strings.Contains(plan.SQL, "INTERVAL 1 DAY") {
+		t.Fatalf("timezone/week SQL = %s", plan.SQL)
+	}
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		"CREATE SCHEMA model",
+		"CREATE TABLE model.orders(order_id INTEGER, ordered_at TIMESTAMPTZ)",
+		"INSERT INTO model.orders VALUES (1, TIMESTAMPTZ '2026-01-04 07:30:00+00'), (2, TIMESTAMPTZ '2026-01-04 23:30:00+00'), (3, TIMESTAMPTZ '2026-01-05 08:30:00+00')",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := db.Query(plan.SQL, plan.Args...)
+	if err != nil {
+		t.Fatalf("execute timezone/week plan: %v\n%s", err, plan.SQL)
+	}
+	defer rows.Close()
+	counts := []int{}
+	for rows.Next() {
+		var week time.Time
+		var count int
+		if err := rows.Scan(&week, &count); err != nil {
+			t.Fatal(err)
+		}
+		counts = append(counts, count)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(counts, []int{1, 2}) {
+		t.Fatalf("timezone/week counts = %#v, want [1 2]", counts)
 	}
 }
 
 func TestPlannerAppliesSpatialInteractionPredicateBeforeAggregation(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
-		Table: "orders", Measures: []Field{{Field: "order_count"}},
+		Table: "orders", Metrics: []Field{{Field: "order_count"}},
 		Filters: []Filter{{Spatial: &SpatialFilter{
 			Kind: "radius", LatitudeField: "orders.latitude", LongitudeField: "orders.longitude", Fact: "orders",
 			Center: SpatialPoint{Longitude: -46.63, Latitude: -23.55}, RadiusMeters: 25_000,
@@ -360,13 +413,11 @@ func testModel() *semanticmodel.Model {
 				"tags":   {Field: "customers.state", Path: []string{"tags_customers"}},
 			}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero"},
-			"revenue":     {Fact: "orders", Aggregation: "sum", Input: semanticmodel.MeasureInput{Field: "orders.revenue"}, Empty: "zero"},
-			"tag_count":   {Fact: "tags", Aggregation: "count", Empty: "zero"},
-		},
 		Metrics: map[string]semanticmodel.Metric{
-			"tags_per_order": {Expression: "safe_divide(${tag_count}, ${order_count})"},
+			"order_count":    {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"},
+			"revenue":        {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Empty: "zero"},
+			"tag_count":      {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "tags.tag_id"}, Empty: "zero"},
+			"tags_per_order": {Type: "derived", Expression: "safe_divide(${tag_count}, ${order_count})"},
 		},
 	}
 }

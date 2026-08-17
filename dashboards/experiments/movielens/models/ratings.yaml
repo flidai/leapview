@@ -4,22 +4,47 @@ metadata:
   id: model:ratings
   name: ratings
   displayName: Ratings Fact
-  description: Rating-grain fact table from MovieLens 32M ratings.
+  description: Rating-grain model table from MovieLens 32M ratings.
 spec:
-  primaryKey: rating_id
-  grain: rating_id
   sources:
-    - movielens.ratings
+  - movielens.ratings
   fields:
-    rating_id: {label: Rating ID, description: Stable rating-grain identifier.}
-    user_id: {label: User ID, description: Anonymized MovieLens user identifier.}
-    movie_id: {label: Movie ID, description: MovieLens movie identifier.}
-    rating: {label: Rating, description: Rating value on the MovieLens 0.5 to 5.0 scale.}
-    rating_bucket: {label: Rating bucket, description: Rounded rating bucket for distribution charts.}
-    rated_at: {label: Rated at, description: Timestamp when the rating was applied.}
-    rating_date: {label: Rating date, description: Date when the rating was applied.}
-    rating_month: {label: Rating month, description: Calendar month when the rating was applied.}
-    rating_year: {label: Rating year, description: Calendar year when the rating was applied.}
+    rating_id:
+      datatype: String
+      label: Rating ID
+      description: Stable rating-grain identifier.
+    user_id:
+      datatype: Integer
+      label: User ID
+      description: Anonymized MovieLens user identifier.
+    movie_id:
+      datatype: Integer
+      label: Movie ID
+      description: MovieLens movie identifier.
+    rating:
+      datatype: Decimal
+      label: Rating
+      description: Rating value on the MovieLens 0.5 to 5.0 scale.
+    rating_bucket:
+      datatype: String
+      label: Rating bucket
+      description: Rounded rating bucket for distribution charts.
+    rated_at:
+      datatype: DateTime
+      label: Rated at
+      description: Timestamp when the rating was applied.
+    rating_date:
+      datatype: Date
+      label: Rating date
+      description: Date when the rating was applied.
+    rating_month:
+      datatype: String
+      label: Rating month
+      description: Calendar month when the rating was applied.
+    rating_year:
+      datatype: Integer
+      label: Rating year
+      description: Calendar year when the rating was applied.
   transform:
     sql: |
       SELECT
@@ -43,3 +68,18 @@ spec:
         AND movieId IS NOT NULL
         AND rating IS NOT NULL
         AND timestamp IS NOT NULL
+  entities:
+    rating:
+      type: primary
+      fields:
+      - rating_id
+    movie:
+      type: foreign
+      fields:
+      - movie_id
+    user:
+      type: foreign
+      fields:
+      - user_id
+  grain:
+    entity: rating

@@ -55,7 +55,7 @@ func TestQueryBindingRejectsMissingAndConflictingBranches(t *testing.T) {
 		"conflicting branch": {
 			Kind: QueryDetail, ResultShape: ResultDetailWindow, ModelID: "sales", DatasetID: "primary",
 			Detail:    &DetailQueryBinding{TableID: "orders", Fields: []FieldBinding{{FieldID: "orders.id", Alias: "id"}}, Limit: 100},
-			Aggregate: &AggregateQueryBinding{TableID: "orders", Measures: []FieldBinding{{FieldID: "orders.count", Alias: "value"}}, Limit: 1},
+			Aggregate: &AggregateQueryBinding{TableID: "orders", Metrics: []FieldBinding{{FieldID: "orders.count", Alias: "value"}}, Limit: 1},
 		},
 		"spatial tiles without coordinates": {
 			Kind: QuerySpatial, ResultShape: ResultGeographicFeatures, ModelID: "sales", DatasetID: "primary",
@@ -94,7 +94,7 @@ func TestQueryBindingRejectsIncompleteCompiledReferences(t *testing.T) {
 			Aggregate: &AggregateQueryBinding{
 				TableID:    "orders",
 				Dimensions: []FieldBinding{{FieldID: "orders.state", Alias: "state"}},
-				Measures:   []FieldBinding{{FieldID: "orders.revenue", Alias: "value"}},
+				Metrics:    []FieldBinding{{FieldID: "orders.revenue", Alias: "value"}},
 				Sort:       []Sort{{FieldID: "value", Direction: "desc"}},
 				Limit:      100,
 			},
@@ -106,7 +106,7 @@ func TestQueryBindingRejectsIncompleteCompiledReferences(t *testing.T) {
 			binding.Aggregate.Dimensions[0].Alias = ""
 		},
 		"duplicate alias": func(binding *QueryBinding) {
-			binding.Aggregate.Measures[0].Alias = "state"
+			binding.Aggregate.Metrics[0].Alias = "state"
 		},
 		"unknown identity": func(binding *QueryBinding) {
 			binding.Identity = []string{"orders.customer_id"}
@@ -153,10 +153,10 @@ func TestQueryBindingValidatesEveryMatrixField(t *testing.T) {
 	binding := QueryBinding{
 		Kind: QueryMatrix, ResultShape: ResultMatrixWindow, ModelID: "sales", DatasetID: "primary",
 		Matrix: &MatrixQueryBinding{
-			TableID:  "orders",
-			Rows:     []FieldBinding{{FieldID: "orders.state", Alias: ""}},
-			Measures: []FieldBinding{{FieldID: "orders.revenue", Alias: "revenue"}},
-			Limit:    100,
+			TableID: "orders",
+			Rows:    []FieldBinding{{FieldID: "orders.state", Alias: ""}},
+			Metrics: []FieldBinding{{FieldID: "orders.revenue", Alias: "revenue"}},
+			Limit:   100,
 		},
 	}
 	if err := binding.Validate(); err == nil {
@@ -176,7 +176,7 @@ func TestGeographicDefinitionOwnsExplicitSpatialQuery(t *testing.T) {
 				{FieldID: "orders.latitude", Alias: "latitude"},
 				{FieldID: "orders.longitude", Alias: "longitude"},
 			},
-			Measures: []FieldBinding{{FieldID: "orders.revenue", Alias: "revenue"}},
+			Metrics: []FieldBinding{{FieldID: "orders.revenue", Alias: "revenue"}},
 			Tiles: &SpatialTileBinding{
 				Latitude: FieldBinding{FieldID: "orders.latitude", Alias: "latitude"}, Longitude: FieldBinding{FieldID: "orders.longitude", Alias: "longitude"},
 				FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4, CellRadius: 48, MaximumZoom: 18, RawMinimumZoom: 10,

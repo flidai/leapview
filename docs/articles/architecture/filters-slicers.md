@@ -101,7 +101,7 @@ Deployment compilation produces immutable filter definitions, bindings, target s
 A definition owns reusable semantic policy:
 
 - Stable definition ID and reader-facing label/description.
-- Semantic field and optional fact identity.
+- Semantic field and optional dataset identity.
 - Compiler-resolved value type.
 - Allowed predicate variants and operators.
 - Static or governed dynamic option source.

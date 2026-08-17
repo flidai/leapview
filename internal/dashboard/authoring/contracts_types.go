@@ -47,7 +47,7 @@ func (v *AuthoringVisualization) UnmarshalYAML(value *yaml.Node) error {
 	case "table", "matrix", "pivot":
 		if err := rejectUnknownVisualizationFields(value, map[string]struct{}{
 			"type": {}, "title": {}, "description": {}, "cardinality": {}, "query": {}, "default_sort": {},
-			"presentation": {}, "columns": {}, "interaction": {}, "measure_formatting": {}, "conditional_formatting": {}, "calculations": {},
+			"presentation": {}, "columns": {}, "interaction": {}, "metric_formatting": {}, "conditional_formatting": {}, "calculations": {},
 		}); err != nil {
 			return err
 		}
@@ -516,7 +516,7 @@ type VisualQuery struct {
 	Table      string     `yaml:"table" json:"table,omitempty"`
 	Dimensions []FieldRef `yaml:"dimensions" json:"dimensions,omitempty"`
 	Series     FieldRef   `yaml:"series" json:"series,omitempty"`
-	Measures   []FieldRef `yaml:"measures" json:"measures,omitempty"`
+	Metrics    []FieldRef `yaml:"metrics" json:"metrics,omitempty"`
 	Time       QueryTime  `yaml:"time" json:"time,omitempty"`
 	Sort       []Sort     `yaml:"sort" json:"sort,omitempty"`
 	Limit      int        `yaml:"limit" json:"limit,omitempty"`
@@ -578,12 +578,12 @@ func (q *VisualQuery) UnmarshalYAML(value *yaml.Node) error {
 			if err := item.Decode(&out.Series); err != nil {
 				return err
 			}
-		case "measures":
-			fields, err := decodeMeasureRefs(item)
+		case "metrics":
+			fields, err := decodeMetricRefs(item)
 			if err != nil {
-				return fmt.Errorf("measures: %w", err)
+				return fmt.Errorf("metrics: %w", err)
 			}
-			out.Measures = fields
+			out.Metrics = fields
 		case "time":
 			if err := item.Decode(&out.Time); err != nil {
 				return err
@@ -640,7 +640,7 @@ func decodeFieldRefs(node *yaml.Node) ([]FieldRef, error) {
 	}
 }
 
-func decodeMeasureRefs(node *yaml.Node) ([]FieldRef, error) {
+func decodeMetricRefs(node *yaml.Node) ([]FieldRef, error) {
 	switch node.Kind {
 	case yaml.SequenceNode:
 		fields := []FieldRef{}
@@ -656,16 +656,16 @@ func decodeMeasureRefs(node *yaml.Node) ([]FieldRef, error) {
 			field := alias
 			if item.Kind != yaml.ScalarNode || item.Tag != "!!null" {
 				var payload struct {
-					Measure string `yaml:"measure"`
-					Expr    string `yaml:"expr"`
+					Metric string `yaml:"metric"`
+					Expr   string `yaml:"expr"`
 				}
 				if err := item.Decode(&payload); err != nil {
 					return nil, err
 				}
-				if payload.Measure != "" {
-					field = payload.Measure
+				if payload.Metric != "" {
+					field = payload.Metric
 				} else if payload.Expr != "" {
-					return nil, fmt.Errorf("inline dashboard measures are not supported; define %q in the semantic model", alias)
+					return nil, fmt.Errorf("inline dashboard metrics are not supported; define %q in the semantic model", alias)
 				}
 			}
 			fields = append(fields, FieldRef{Field: field, Alias: alias})
@@ -710,7 +710,7 @@ type SelectionInteraction struct {
 
 type SelectionMapping struct {
 	Field string `yaml:"field" json:"field"`
-	Fact  string `yaml:"fact" json:"fact,omitempty"`
+	Fact  string `yaml:"dataset" json:"dataset,omitempty"`
 	Grain string `yaml:"grain" json:"grain,omitempty"`
 	Value string `yaml:"value" json:"value"`
 	Label string `yaml:"label" json:"label,omitempty"`
@@ -728,7 +728,7 @@ type SpatialSelectionInteraction struct {
 type SpatialSelectionMapping struct {
 	Source string `yaml:"source" json:"source"`
 	Field  string `yaml:"field" json:"field"`
-	Fact   string `yaml:"fact" json:"fact,omitempty"`
+	Fact   string `yaml:"dataset" json:"dataset,omitempty"`
 }
 
 func (s SpatialSelectionInteraction) IsZero() bool {
@@ -853,8 +853,8 @@ type TableVisual struct {
 	Columns               []dashboard.TableColumn                    `yaml:"columns"`
 	Interaction           Interaction                                `yaml:"interaction"`
 	Rows                  []string                                   `yaml:"-"`
-	Measures              []string                                   `yaml:"-"`
-	MeasureFormatting     map[string][]dashboard.TableFormattingRule `yaml:"measure_formatting"`
+	Metrics               []string                                   `yaml:"-"`
+	MetricFormatting      map[string][]dashboard.TableFormattingRule `yaml:"metric_formatting"`
 	ConditionalFormatting []VisualConditionalFormat                  `yaml:"conditional_formatting"`
 	Calculations          []VisualCalculation                        `yaml:"calculations"`
 	DataColumns           []FieldRef                                 `yaml:"-"`
@@ -874,11 +874,11 @@ func (t TableVisual) CardinalityOrDefault() string {
 }
 
 type TableQuery struct {
-	Table    string     `yaml:"table"`
-	Fields   []string   `yaml:"fields"`
-	Columns  []FieldRef `yaml:"columns"`
-	Rows     []FieldRef `yaml:"rows"`
-	Measures []FieldRef `yaml:"measures"`
+	Table   string     `yaml:"table"`
+	Fields  []string   `yaml:"fields"`
+	Columns []FieldRef `yaml:"columns"`
+	Rows    []FieldRef `yaml:"rows"`
+	Metrics []FieldRef `yaml:"metrics"`
 }
 
 func (q *TableQuery) UnmarshalYAML(value *yaml.Node) error {
@@ -913,12 +913,12 @@ func (q *TableQuery) UnmarshalYAML(value *yaml.Node) error {
 				return fmt.Errorf("rows: %w", err)
 			}
 			out.Rows = fields
-		case "measures":
-			fields, err := decodeMeasureRefs(item)
+		case "metrics":
+			fields, err := decodeMetricRefs(item)
 			if err != nil {
-				return fmt.Errorf("measures: %w", err)
+				return fmt.Errorf("metrics: %w", err)
 			}
-			out.Measures = fields
+			out.Metrics = fields
 		default:
 			return fmt.Errorf("field %s not found in type report.TableQuery", key)
 		}

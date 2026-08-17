@@ -11,10 +11,10 @@ import (
 // serving-state runtime. Expressions and dependency DAGs are parsed once at
 // activation instead of being rediscovered for every dashboard consumer.
 type CompiledModel struct {
-	Model                   *semanticmodel.Model
-	MetricExpressions       map[string]semanticmodel.Expression
-	MeasureInputExpressions map[string]semanticmodel.Expression
-	MemberFacts             map[string][]string
+	Model                     *semanticmodel.Model
+	MetricExpressions         map[string]semanticmodel.Expression
+	AggregateInputExpressions map[string]semanticmodel.Expression
+	MemberFacts               map[string][]string
 }
 
 func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
@@ -22,24 +22,34 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		return nil, fmt.Errorf("semantic model is required")
 	}
 	compiled := &CompiledModel{
-		Model:                   model,
-		MetricExpressions:       make(map[string]semanticmodel.Expression, len(model.Metrics)),
-		MeasureInputExpressions: map[string]semanticmodel.Expression{},
-		MemberFacts:             map[string][]string{},
-	}
-	for name, measure := range model.Measures {
-		compiled.MemberFacts[name] = []string{measure.Fact}
-		if measure.Input.Expression == "" {
-			continue
-		}
-		expression, err := semanticmodel.ParseExpression(measure.Input.Expression)
-		if err != nil {
-			return nil, fmt.Errorf("measure %q: %w", name, err)
-		}
-		compiled.MeasureInputExpressions[name] = expression
+		Model:                     model,
+		MetricExpressions:         make(map[string]semanticmodel.Expression, len(model.Metrics)),
+		AggregateInputExpressions: map[string]semanticmodel.Expression{},
+		MemberFacts:               map[string][]string{},
 	}
 	for name, metric := range model.Metrics {
-		expression, err := semanticmodel.ParseExpression(metric.Expression)
+		if metric.Type != "aggregate" {
+			continue
+		}
+		compiled.MemberFacts[name] = []string{metric.Dataset}
+		if metric.Input == nil || metric.Input.Expression == "" {
+			continue
+		}
+		expression, err := semanticmodel.ParseExpression(metric.Input.Expression)
+		if err != nil {
+			return nil, fmt.Errorf("metric %q aggregate input: %w", name, err)
+		}
+		compiled.AggregateInputExpressions[name] = expression
+	}
+	for name, metric := range model.Metrics {
+		if metric.Type == "aggregate" {
+			if metric.Dataset == "" {
+				return nil, fmt.Errorf("metric %q aggregate dataset is required", name)
+			}
+			compiled.MemberFacts[name] = []string{metric.Dataset}
+			continue
+		}
+		expression, err := semanticmodel.ParseExpression(metricExecutableExpression(metric))
 		if err != nil {
 			return nil, fmt.Errorf("metric %q: %w", name, err)
 		}
@@ -90,6 +100,16 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		}
 	}
 	return compiled, nil
+}
+
+// metricExecutableExpression is a planner-boundary adapter. Canonical ratio
+// metrics retain numerator/denominator fields in the model; only the existing
+// expression evaluator receives the governed safe_divide form.
+func metricExecutableExpression(metric semanticmodel.Metric) string {
+	if metric.Type == "ratio" {
+		return fmt.Sprintf("safe_divide(${%s}, ${%s})", metric.Numerator, metric.Denominator)
+	}
+	return metric.Expression
 }
 
 type PlannerOption func(*Planner) error

@@ -16,7 +16,7 @@ func TestScatterRequiresGovernedPointBindings(t *testing.T) {
 				{Field: "orders.segment", Alias: "segment"},
 				{Field: "orders.customer", Alias: "customer"},
 			},
-			Measures: []FieldRef{
+			Metrics: []FieldRef{
 				{Field: "orders.delivery_days", Alias: "delivery_days"},
 				{Field: "orders.revenue", Alias: "revenue"},
 				{Field: "orders.quantity", Alias: "quantity"},
@@ -62,7 +62,7 @@ func TestScatterPointBindingsRejectUnstableOrInvalidChannels(t *testing.T) {
 		Type: "scatter",
 		Query: VisualQuery{
 			Dimensions: []FieldRef{{Field: "orders.id", Alias: "order_id"}},
-			Measures: []FieldRef{
+			Metrics: []FieldRef{
 				{Field: "orders.delivery_days", Alias: "delivery_days"},
 				{Field: "orders.revenue", Alias: "revenue"},
 			},
@@ -85,7 +85,7 @@ func TestScatterPointBindingsRejectUnstableOrInvalidChannels(t *testing.T) {
 			want: "requires point.identity",
 		},
 		{
-			name: "measure identity",
+			name: "metric identity",
 			edit: func(visual *Visual) { visual.Point.Identity = []string{"revenue"} },
 			want: "identity field \"revenue\" must reference a dimension or time alias",
 		},
@@ -97,15 +97,15 @@ func TestScatterPointBindingsRejectUnstableOrInvalidChannels(t *testing.T) {
 		{
 			name: "dimension y",
 			edit: func(visual *Visual) { visual.Point.Y = "order_id" },
-			want: "y field \"order_id\" must reference a measure",
+			want: "y field \"order_id\" must reference a metric",
 		},
 		{
 			name: "dimension size",
 			edit: func(visual *Visual) { visual.Point.Size = "order_id" },
-			want: "size field \"order_id\" must reference a measure",
+			want: "size field \"order_id\" must reference a metric",
 		},
 		{
-			name: "measure series",
+			name: "metric series",
 			edit: func(visual *Visual) { visual.Point.Series = "revenue" },
 			want: "series field \"revenue\" must reference a dimension or time alias",
 		},
@@ -149,7 +149,7 @@ func TestScatterSupportsTimeVersusValue(t *testing.T) {
 		Query: VisualQuery{
 			Dimensions: []FieldRef{{Field: "orders.id", Alias: "order_id"}},
 			Time:       QueryTime{Field: "orders.created_at", Grain: "day", Alias: "created_at"},
-			Measures:   []FieldRef{{Field: "orders.revenue", Alias: "revenue"}},
+			Metrics:    []FieldRef{{Field: "orders.revenue", Alias: "revenue"}},
 		},
 		Point: VisualPoint{
 			Identity: []string{"order_id"},

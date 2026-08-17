@@ -3,13 +3,17 @@ package compiler
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
@@ -22,7 +26,7 @@ func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
 	document := dashboardauthoring.Dashboard{
 		ID: "dashboard_sales", Title: "Sales", SemanticModel: "semantic_sales",
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"total": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}}},
+			"total": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}}},
 		}),
 		Pages: []dashboard.Page{{ID: "overview", Title: "Overview"}},
 	}
@@ -51,14 +55,14 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, primaryKey: order_id}
+spec: {source: orders, entities: {order: {type: primary, fields: [order_id]}}, grain: {entity: order}, fields: {order_id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
 spec:
-  tables: [orders_model]
-  measures: {order_count: {fact: orders_model, aggregation: count, empty: zero}}
+  datasets: {orders: {model: orders_model}}
+  metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}, empty: zero}}
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
@@ -69,7 +73,7 @@ spec:
   visuals:
     order_count:
       type: kpi
-      query: {measures: {order_count: null}}
+      query: {metrics: {order_count: null}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
@@ -97,6 +101,226 @@ spec:
 	if !strings.Contains(string(encoded), "domain: revenue") {
 		t.Fatalf("canonical dashboard export omitted authored domain: %s", encoded)
 	}
+}
+
+func TestAIContextIsPreservedWithoutChangingExecutableSemantics(t *testing.T) {
+	load := func(t *testing.T, withContext bool) *Project {
+		t.Helper()
+		modelContext := ""
+		semanticContext := ""
+		if withContext {
+			modelContext = "aiContext:\n  instructions: Use order line identity when answering questions.\n  synonyms: [order line]\n  examples: [show revenue by line]\n"
+			semanticContext = "aiContext:\n  instructions: Prefer the sales grain.\n  synonyms: [sales]\n  examples: [compare revenue]\n"
+		}
+		files := map[string]string{
+			"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {kind: managed}
+`,
+			"sources/orders_source.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders_source, name: orders_source}
+spec: {connection: warehouse, format: csv, path: orders.csv}
+`,
+			"models/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders}\n" + modelContext + `spec:
+  source: orders_source
+  entities:
+    order_line: {type: primary, fields: [order_id, line_number]}
+  grain: {entity: order_line}
+  fields:
+    order_id: {datatype: String}
+    line_number: {datatype: Integer}
+    revenue: {datatype: Decimal}
+    activity_date: {datatype: Date}
+`,
+			"models/customers.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:customers, name: customers}
+spec:
+  source: orders_source
+  entities:
+    customer_line: {type: primary, fields: [order_id, line_number]}
+  grain: {entity: customer_line}
+  fields:
+    order_id: {datatype: String}
+    line_number: {datatype: Integer}
+`,
+			"semantic-models/sales.yaml": "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic:sales, name: sales}\n" + semanticContext + `spec:
+  datasets:
+    orders: {model: orders, defaultTimeDimension: activity_date}
+    customers: {model: customers}
+  relationships:
+    orders_customers:
+      from: {dataset: orders, fields: [order_id, line_number]}
+      to: {dataset: customers, fields: [order_id, line_number]}
+  dimensions:
+    activity_date:
+      datatype: Date
+      bindings:
+        orders: {field: orders.activity_date}
+      time: {nativeGrain: month, grains: [month, quarter, year]}
+  metrics:
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input: {field: orders.revenue}
+      empty: 'null'
+      timeDimension: activity_date
+`,
+			"access/sales-read.yaml": `apiVersion: leapview.dev/v1
+kind: Grant
+metadata: {id: grant:sales-read, name: sales-read}
+spec:
+  object: {kind: semantic_model, id: semantic:sales}
+  subject: {kind: principal, principalId: alice}
+  capability: RESOURCE_READ
+`,
+		}
+		if withContext {
+			files["models/orders.yaml"] = strings.Replace(files["models/orders.yaml"], "order_line: {type: primary, fields: [order_id, line_number]}", "order_line: {type: primary, fields: [order_id, line_number], aiContext: {instructions: Keep the order-line grain.}}", 1)
+			files["models/orders.yaml"] = strings.Replace(files["models/orders.yaml"], "order_id: {datatype: String}", "order_id: {datatype: String, aiContext: {instructions: Use the order identifier.}}", 1)
+			files["semantic-models/sales.yaml"] = strings.Replace(files["semantic-models/sales.yaml"], "orders: {model: orders, defaultTimeDimension: activity_date}", "orders: {model: orders, defaultTimeDimension: activity_date, aiContext: {instructions: Use the governed orders dataset.}}", 1)
+			files["semantic-models/sales.yaml"] = strings.Replace(files["semantic-models/sales.yaml"], "to: {dataset: customers, fields: [order_id, line_number]}", "to: {dataset: customers, fields: [order_id, line_number]}\n      aiContext: {instructions: Traverse to customers safely.}", 1)
+			files["semantic-models/sales.yaml"] = strings.Replace(files["semantic-models/sales.yaml"], "activity_date:\n      datatype: Date", "activity_date:\n      datatype: Date\n      aiContext: {instructions: Use the activity calendar.}", 1)
+		}
+		filterContext := ""
+		if withContext {
+			filterContext = "\n      aiContext: {instructions: Keep captured order rows.}"
+		}
+		files["semantic-models/sales.yaml"] = strings.Replace(files["semantic-models/sales.yaml"], "  metrics:\n", "  filters:\n    captured_orders:\n      field: orders.order_id\n      operator: equals\n      value: sample"+filterContext+"\n  metrics:\n", 1)
+		metricContext := ""
+		if withContext {
+			metricContext = "\n      aiContext: {instructions: Explain governed revenue.}"
+		}
+		files["semantic-models/sales.yaml"] = strings.Replace(files["semantic-models/sales.yaml"], "      timeDimension: activity_date\n", "      timeDimension: activity_date\n      where: [captured_orders]"+metricContext+"\n", 1)
+		projectYAML := flatProjectFixtureYAMLForFiles(files)
+		projectYAML = strings.Replace(projectYAML, "access: {include: []}", "access: {include: [access/*.yaml]}", 1)
+		return mustLoadProject(t, writeFlatProjectFixtureWithProject(t, projectYAML, files))
+	}
+	without := load(t, false)
+	with := load(t, true)
+	withoutModel := without.Manifest.SemanticModels["semantic:sales"]
+	withModel := with.Manifest.SemanticModels["semantic:sales"]
+	if withoutModel == nil || withModel == nil {
+		t.Fatal("compiled semantic model missing")
+	}
+	if withModel.AIContext == nil || withModel.AIContext.Instructions == "" {
+		t.Fatalf("semantic model AI context was not preserved: %#v", withModel.AIContext)
+	}
+	if with.Models["orders"].AIContext == nil || with.Models["orders"].AIContext.Instructions == "" {
+		t.Fatalf("model AI context was not preserved: %#v", with.Models["orders"].AIContext)
+	}
+	if withModel.Tables["orders"].Entities["order_line"].AIContext == nil || withModel.Tables["orders"].Columns["order_id"].AIContext == nil {
+		t.Fatalf("member model AI context was not preserved: table=%#v column=%#v", withModel.Tables["orders"].Entities["order_line"], withModel.Tables["orders"].Columns["order_id"])
+	}
+	if withModel.Datasets["orders"].AIContext == nil || withModel.StructuredRelationships["orders_customers"].AIContext == nil || withModel.Dimensions["activity_date"].AIContext == nil || withModel.Filters["captured_orders"].AIContext == nil || withModel.Metrics["revenue"].AIContext == nil {
+		t.Fatalf("member semantic AI context was not preserved: dataset=%#v relationship=%#v dimension=%#v filter=%#v metric=%#v", withModel.Datasets["orders"], withModel.StructuredRelationships["orders_customers"], withModel.Dimensions["activity_date"], withModel.Filters["captured_orders"], withModel.Metrics["revenue"])
+	}
+	if len(withModel.Relationships) != 1 || !reflect.DeepEqual(withModel.Relationships[0].FromFields, []string{"order_id", "line_number"}) || !reflect.DeepEqual(withModel.Relationships[0].ToFields, []string{"order_id", "line_number"}) {
+		t.Fatalf("composite relationship endpoints were collapsed: %#v", withModel.Relationships)
+	}
+	activityDate := withModel.Dimensions["activity_date"]
+	if activityDate.Datatype != semanticmodel.DataTypeDate || activityDate.NativeGrain != "month" || !reflect.DeepEqual(activityDate.Grains, []string{"month", "quarter", "year"}) {
+		t.Fatalf("time semantics were not retained: %#v", activityDate)
+	}
+	if withModel.Datasets["orders"].DefaultTimeDimension != "activity_date" {
+		t.Fatalf("dataset default time dimension = %#v", withModel.Datasets["orders"])
+	}
+	if withModel.Metrics["revenue"].TimeDimension != "activity_date" {
+		t.Fatalf("aggregate metric time dimension = %#v", withModel.Metrics["revenue"])
+	}
+	strip := func(model *semanticmodel.Model) semanticmodel.Model {
+		copy := *model
+		copy.AIContext = nil
+		copy.Relationships = append([]semanticmodel.Relationship(nil), model.Relationships...)
+		for index := range copy.Relationships {
+			copy.Relationships[index].AIContext = nil
+		}
+		copy.Tables = make(map[string]semanticmodel.Table, len(model.Tables))
+		for name, original := range model.Tables {
+			table := original
+			table.AIContext = nil
+			table.Columns = maps.Clone(original.Columns)
+			for field, column := range table.Columns {
+				column.AIContext = nil
+				table.Columns[field] = column
+			}
+			table.Dimensions = maps.Clone(original.Dimensions)
+			for field, dimension := range table.Dimensions {
+				dimension.AIContext = nil
+				table.Dimensions[field] = dimension
+			}
+			table.Entities = maps.Clone(original.Entities)
+			for name, entity := range table.Entities {
+				entity.AIContext = nil
+				table.Entities[name] = entity
+			}
+			copy.Tables[name] = table
+		}
+		copy.Datasets = maps.Clone(model.Datasets)
+		for name, dataset := range copy.Datasets {
+			dataset.AIContext = nil
+			copy.Datasets[name] = dataset
+		}
+		copy.StructuredRelationships = maps.Clone(model.StructuredRelationships)
+		for name, relationship := range copy.StructuredRelationships {
+			relationship.AIContext = nil
+			copy.StructuredRelationships[name] = relationship
+		}
+		copy.Dimensions = maps.Clone(model.Dimensions)
+		for name, dimension := range copy.Dimensions {
+			dimension.AIContext = nil
+			copy.Dimensions[name] = dimension
+		}
+		copy.Filters = maps.Clone(model.Filters)
+		for name, filter := range copy.Filters {
+			filter.AIContext = nil
+			copy.Filters[name] = filter
+		}
+		copy.Metrics = maps.Clone(model.Metrics)
+		for name, metric := range copy.Metrics {
+			metric.AIContext = nil
+			copy.Metrics[name] = metric
+		}
+		return copy
+	}
+	if !reflect.DeepEqual(strip(withoutModel), strip(withModel)) {
+		t.Fatalf("top-level AI context changed executable semantic model:\n%s", cmp.Diff(strip(withoutModel), strip(withModel)))
+	}
+	if !reflect.DeepEqual(without.Manifest.Access, with.Manifest.Access) {
+		t.Fatalf("AI context changed compiled authorization artifact:\n%s", cmp.Diff(without.Manifest.Access, with.Manifest.Access))
+	}
+	withoutPlanner, err := semanticquery.NewCompiledPlanner(withoutModel)
+	if err != nil {
+		t.Fatalf("compile planner without AI context: %v", err)
+	}
+	withPlanner, err := semanticquery.NewCompiledPlanner(withModel)
+	if err != nil {
+		t.Fatalf("compile planner with AI context: %v", err)
+	}
+	request := semanticquery.Request{Dimensions: []semanticquery.Field{{Field: "activity_date"}}, Metrics: []semanticquery.Field{{Field: "revenue"}}}
+	withoutPlan, err := withoutPlanner.Plan(request)
+	if err != nil {
+		t.Fatalf("plan without AI context: %v", err)
+	}
+	withPlan, err := withPlanner.Plan(request)
+	if err != nil {
+		t.Fatalf("plan with AI context: %v", err)
+	}
+	if withoutPlan.SQL != withPlan.SQL || !reflect.DeepEqual(withoutPlan.Args, withPlan.Args) {
+		t.Fatalf("AI context changed executable plan:\n%s", cmp.Diff(withoutPlan, withPlan))
+	}
+}
+
+func mustLoadProject(t *testing.T, path string) *Project {
+	t.Helper()
+	project, err := LoadProject(path)
+	if err != nil {
+		t.Fatalf("LoadProject(%q): %v", path, err)
+	}
+	return &project
 }
 
 func TestResourceResolverRejectsAmbiguousNames(t *testing.T) {
@@ -142,8 +366,8 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 		Name: "sales", Connections: map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Source: "orders", PrimaryKey: "id"},
-			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, PrimaryKey: "id"},
+			"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id"},
+			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id"},
 		},
 	}
 	if err := model.ValidateAuthored(); err != nil {
@@ -172,7 +396,7 @@ spec: {connection: warehouse, format: csv, path: foo-bar.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders}
-spec: {source: foo-bar, primaryKey: id}
+spec: {source: foo-bar, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	project, err := LoadProject(projectPath)
@@ -208,7 +432,7 @@ spec: {connection: warehouse, format: csv, path: foo_bar.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders}
-spec: {source: foo-bar, primaryKey: id}
+spec: {source: foo-bar, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	_, err := LoadProject(projectPath)
@@ -294,15 +518,16 @@ kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
   source: orders
-  primaryKey: order_id
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
 `)
 	write("semantic-models/sales.yaml", `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
 spec:
-  tables: [orders_model]
-  measures:
-    order_count: {fact: orders_model, aggregation: count, empty: zero}
+  datasets: {orders: {model: orders_model}}
+  metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}, empty: zero}}
 `)
 	write("pipelines/sales.yaml", `apiVersion: leapview.dev/v1
 kind: Pipeline
@@ -318,7 +543,7 @@ spec:
   visuals:
     order_count:
       type: kpi
-      query: {measures: {order_count: null}}
+      query: {metrics: {order_count: null}}
   pages: [{id: overview, title: Overview, components: []}]
 `)
 
@@ -415,8 +640,8 @@ spec:
 `)
 	write("connections/c.yaml", "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:id, name: warehouse}\nspec: {kind: managed}\n")
 	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, format: csv, path: orders.csv}\n")
-	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {source: source:id, primaryKey: id}\n")
-	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {tables: [model:id], measures: {count: {fact: orders_model, aggregation: count, empty: zero}}}\n")
+	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {source: source:id, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n")
+	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {datasets: {orders: {model: orders_model}}, metrics: {count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}\n")
 	graph, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -443,30 +668,31 @@ kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
   source: orders
-  primaryKey: id
-  fields: {id: {type: string}}
+  entities: {id: {type: primary, fields: [id]}}
+  grain: {entity: id}
+  fields: {id: {datatype: String}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
 spec:
-  tables: [orders_model]
+  datasets: {orders: {model: orders_model}}
   dimensions:
     shared_id:
-      type: string
-      bindings: {orders_model: {field: orders_model.id}}
-  measures: {row_count: {fact: orders_model, aggregation: count, empty: zero}}
+      datatype: String
+      bindings: {orders: {field: orders.id}}
+  metrics: {row_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}
 `,
 		"semantic-models/operations.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:operations, name: operations}
 spec:
-  tables: [orders_model]
+  datasets: {orders: {model: orders_model}}
   dimensions:
     shared_id:
-      type: string
-      bindings: {orders_model: {field: orders_model.id}}
-  measures: {row_count: {fact: orders_model, aggregation: count, empty: zero}}
+      datatype: String
+      bindings: {orders: {field: orders.id}}
+  metrics: {row_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}
 `,
 	})
 	project, err := LoadProject(projectPath)
@@ -501,7 +727,7 @@ spec: {kind: managed}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: resource:duplicate, name: orders}
-spec: {source: orders, primaryKey: id}
+spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	_, err := LoadProject(projectPath)
@@ -529,12 +755,12 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, primaryKey: id}
+spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders], measures: {}}
+spec: {datasets: {orders: {model: orders}}, metrics: {}}
 `,
 	})
 	_, err := LoadProject(projectPath)
@@ -542,7 +768,7 @@ spec: {tables: [orders], measures: {}}
 		t.Fatalf("LoadProject() error = %v, want wrong-kind reference", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
-	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "semantic:sales" || diagnostics[0].FieldPath != "spec.tables" || !strings.HasSuffix(filepath.ToSlash(diagnostics[0].File), "semantic-models/sales.yaml") {
+	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "semantic:sales" || diagnostics[0].FieldPath != "spec.datasets.orders.model" || !strings.HasSuffix(filepath.ToSlash(diagnostics[0].File), "semantic-models/sales.yaml") {
 		t.Fatalf("diagnostics = %#v, want semantic model path/id/field", diagnostics)
 	}
 }
@@ -562,12 +788,12 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, primaryKey: id}
+spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders_model], measures: {}}
+spec: {datasets: {orders: {model: orders_model}}, metrics: {}}
 `,
 	}
 	first, err := LoadProject(writeFlatProjectFixture(t, files))
@@ -731,7 +957,9 @@ metadata: {id: model:orders, name: orders_model}
 spec:
   sources: [orders]
   transform: {sql: 'SELECT * FROM raw.orders'}
-  primaryKey: id
+  entities: {id: {type: primary, fields: [id]}}
+  grain: {entity: id}
+  fields: {id: {datatype: String}}
 `,
 	})
 	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "raw.<name> is internal") {
@@ -766,12 +994,12 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, primaryKey: id}
+spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders_model], measures: {}}
+spec: {datasets: {orders: {model: orders_model}}, metrics: {}}
 `,
 	}
 	validFiles := cloneFixtureFiles(base)
@@ -863,7 +1091,7 @@ spec: {connection: warehouse, format: csv, path: customers.csv}
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, primaryKey: id}
+spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
 		_, err := LoadProject(writeFlatProjectFixture(t, files))
 		if err == nil || !strings.Contains(err.Error(), "SQL source references") {
@@ -875,12 +1103,12 @@ spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, pr
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.orders JOIN model.customers_model USING (id)'}, primaryKey: id}
+spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.orders JOIN model.customers_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
 		files["models/customers.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:customers, name: customers_model}
-spec: {sources: [customers], transform: {sql: 'SELECT * FROM source.customers JOIN model.orders_model USING (id)'}, primaryKey: id}
+spec: {sources: [customers], transform: {sql: 'SELECT * FROM source.customers JOIN model.orders_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
 		_, err := LoadProject(writeFlatProjectFixture(t, files))
 		if err == nil || !strings.Contains(err.Error(), "cycle") {
@@ -905,12 +1133,12 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, primaryKey: id}
+spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders_model], measures: {order_count: {fact: orders_model, aggregation: count, empty: zero}}}
+spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
@@ -918,7 +1146,7 @@ metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
   title: Sales
   semanticModel: sales
-  visuals: {order_count: {type: kpi, query: {measures: {order_count: null}}}}
+  visuals: {order_count: {type: kpi, query: {metrics: {order_count: null}}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
@@ -960,12 +1188,12 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, primaryKey: id}
+spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic:sales, name: sales}
-spec: {tables: [orders_model], measures: {order_count: {fact: orders_model, aggregation: count, empty: zero}}}
+spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
@@ -973,7 +1201,7 @@ metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
   title: Sales
   semanticModel: sales
-  visuals: {order_count: {type: kpi, query: {measures: {order_count: null}}}}
+  visuals: {order_count: {type: kpi, query: {metrics: {order_count: null}}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 		"publications/website.yaml": `apiVersion: leapview.dev/v1

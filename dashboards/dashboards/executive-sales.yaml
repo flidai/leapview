@@ -55,7 +55,7 @@ spec:
     revenue_kpi:
       type: kpi
       query:
-        measures:
+        metrics:
           revenue:
       presentation:
         note: Payment value
@@ -63,7 +63,7 @@ spec:
     aov_kpi:
       type: kpi
       query:
-        measures:
+        metrics:
           aov:
       presentation:
         note: Revenue per order
@@ -71,7 +71,7 @@ spec:
     total_orders:
       type: kpi
       query:
-        measures:
+        metrics:
           order_count:
       presentation:
         note: Filtered order count
@@ -82,7 +82,7 @@ spec:
       query:
         dimensions:
           purchase_month: sales_orders.purchase_month
-        measures:
+        metrics:
           revenue:
         sort:
           - field: purchase_month
@@ -94,7 +94,7 @@ spec:
       query:
         dimensions:
           category: sales_orders.category
-        measures:
+        metrics:
           revenue:
         sort:
           - field: value
@@ -119,15 +119,15 @@ spec:
         row_selection:
           mappings:
             - field: sales_orders.order_id
-              fact: sales_orders
+              dataset: sales_orders
               value: order_id
               label: order_id
             - field: sales_orders.status
-              fact: sales_orders
+              dataset: sales_orders
               value: status
               label: status
             - field: sales_orders.category
-              fact: sales_orders
+              dataset: sales_orders
               value: category
               label: category
           targets:

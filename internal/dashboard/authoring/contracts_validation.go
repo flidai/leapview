@@ -139,9 +139,9 @@ func (d *Dashboard) validateTabularContract(name, visualType string, table Table
 			return err
 		}
 	}
-	for measure, rules := range table.MeasureFormatting {
+	for metric, rules := range table.MetricFormatting {
 		for _, rule := range rules {
-			if err := validateTableFormattingRule(name, measure, rule); err != nil {
+			if err := validateTableFormattingRule(name, metric, rule); err != nil {
 				return err
 			}
 		}
@@ -161,8 +161,8 @@ func (d *Dashboard) validateTabularContract(name, visualType string, table Table
 		if !table.Interaction.RowSelection.IsZero() {
 			return fmt.Errorf("table %q type matrix does not support row_selection", name)
 		}
-		if len(table.Query.Rows) == 0 || len(table.Query.Measures) == 0 {
-			return fmt.Errorf("table %q type matrix requires query.rows and query.measures", name)
+		if len(table.Query.Rows) == 0 || len(table.Query.Metrics) == 0 {
+			return fmt.Errorf("table %q type matrix requires query.rows and query.metrics", name)
 		}
 		if len(table.Query.Columns) > 1 {
 			return fmt.Errorf("table %q type matrix supports at most one column dimension", name)
@@ -171,8 +171,8 @@ func (d *Dashboard) validateTabularContract(name, visualType string, table Table
 		if !table.Interaction.RowSelection.IsZero() {
 			return fmt.Errorf("table %q type pivot does not support row_selection", name)
 		}
-		if len(table.Query.Rows) == 0 || len(table.Query.Columns) != 1 || len(table.Query.Measures) != 1 {
-			return fmt.Errorf("table %q type pivot requires query.rows, one query column dimension, and one query measure", name)
+		if len(table.Query.Rows) == 0 || len(table.Query.Columns) != 1 || len(table.Query.Metrics) != 1 {
+			return fmt.Errorf("table %q type pivot requires query.rows, one query column dimension, and one query metric", name)
 		}
 	default:
 		return fmt.Errorf("visual %q has unsupported tabular type %q", name, visualType)
@@ -202,7 +202,7 @@ func validateGeographicVisual(name string, visual Visual) error {
 	if visual.Query.Time.Field != "" {
 		aliases[defaultString(visual.Query.Time.Alias, fieldRefAlias(visual.Query.Time.Field))] = struct{}{}
 	}
-	for _, field := range visual.Query.Measures {
+	for _, field := range visual.Query.Metrics {
 		aliases[defaultString(field.Alias, fieldRefAlias(field.Field))] = struct{}{}
 	}
 	requireAlias := func(layerID, property, alias string) error {
@@ -494,8 +494,8 @@ func validateContextDatasetsAndMetadata(name string, visual Visual) error {
 		if datasetID == "primary" {
 			return fmt.Errorf("visual %q dataset id %q is reserved", name, datasetID)
 		}
-		if len(query.Dimensions) == 0 && query.Time.Field == "" && len(query.Measures) == 0 {
-			return fmt.Errorf("visual %q dataset %q requires dimensions, time, or measures", name, datasetID)
+		if len(query.Dimensions) == 0 && query.Time.Field == "" && len(query.Metrics) == 0 {
+			return fmt.Errorf("visual %q dataset %q requires dimensions, time, or metrics", name, datasetID)
 		}
 	}
 	bindings := []struct {
@@ -650,7 +650,7 @@ func validateKPIValueBinding(name, bindingName string, visual Visual, binding Vi
 }
 
 func visualQueryAliases(query VisualQuery) map[string]struct{} {
-	aliases := make(map[string]struct{}, len(query.Dimensions)+len(query.Measures)+2)
+	aliases := make(map[string]struct{}, len(query.Dimensions)+len(query.Metrics)+2)
 	for _, field := range query.Dimensions {
 		aliases[defaultString(field.Alias, fieldRefAlias(field.Field))] = struct{}{}
 	}
@@ -660,7 +660,7 @@ func visualQueryAliases(query VisualQuery) map[string]struct{} {
 	if !query.Series.IsZero() {
 		aliases[defaultString(query.Series.Alias, fieldRefAlias(query.Series.Field))] = struct{}{}
 	}
-	for _, field := range query.Measures {
+	for _, field := range query.Metrics {
 		aliases[defaultString(field.Alias, fieldRefAlias(field.Field))] = struct{}{}
 	}
 	return aliases
@@ -820,8 +820,8 @@ func validateSeriesPresentation(name string, visual Visual) error {
 		if !oneOf(visual.Type, "line", "area", "bar", "column", "combo") {
 			return fmt.Errorf("visual %q stacking is unsupported for type %q", name, visual.Type)
 		}
-		if presentation.Stacking == "percent" && visual.Query.Series.IsZero() && len(visual.Query.Measures) < 2 {
-			return fmt.Errorf("visual %q percent stacking requires a series or multiple measures", name)
+		if presentation.Stacking == "percent" && visual.Query.Series.IsZero() && len(visual.Query.Metrics) < 2 {
+			return fmt.Errorf("visual %q percent stacking requires a series or multiple metrics", name)
 		}
 		if presentation.Stacking == "percent" && presentation.DualAxis {
 			return fmt.Errorf("visual %q percent stacking cannot use dual axes", name)
@@ -834,8 +834,8 @@ func validateSeriesPresentation(name string, visual Visual) error {
 	if !oneOf(visual.Type, "line", "area", "bar", "column", "combo", "scatter") {
 		return fmt.Errorf("visual %q series intent is unsupported for type %q", name, visual.Type)
 	}
-	if visual.Query.Series.IsZero() && len(visual.Query.Measures) < 2 {
-		return fmt.Errorf("visual %q series intent requires a series or multiple measures", name)
+	if visual.Query.Series.IsZero() && len(visual.Query.Metrics) < 2 {
+		return fmt.Errorf("visual %q series intent requires a series or multiple metrics", name)
 	}
 	seen := make(map[string]struct{}, len(presentation.SeriesOrder))
 	for _, value := range presentation.SeriesOrder {

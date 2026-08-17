@@ -11,7 +11,7 @@ LeapView separates physical data access, reusable analytical state, business mea
 ## Build analytical meaning
 
 - [Model tables](/docs/concepts/model-tables) explains materialized analytical grain, keys, transformations, refresh, and activation.
-- [Semantic models](/docs/concepts/semantic-models) explains dimensions, measures, metrics, relationships, and governed query meaning.
+- [Semantic models](/docs/concepts/semantic-models) explains dimensions, metrics, relationships, and governed query meaning.
 
 ## Present and serve results
 

@@ -282,7 +282,7 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 		},
 		{
 			name:     "query",
-			args:     []string{"query", "test", "--body-json", `{"dimensions":[{"field":"state"}],"measures":[{"field":"order_count"}]}`},
+			args:     []string{"query", "test", "--body-json", `{"dimensions":[{"field":"state"}],"metrics":[{"field":"order_count"}]}`},
 			method:   http.MethodPost,
 			path:     "/api/v1/semantic-models/test/query",
 			wantBody: []string{`"state"`, `"order_count"`},
@@ -294,7 +294,7 @@ func TestSemanticModelDatasetCommandsUseGeneratedURLsAndBodies(t *testing.T) {
 		},
 		{
 			name:     "explain query",
-			args:     []string{"explain-query", "test", "--body-json", `{"dimensions":[{"field":"state"}],"measures":[{"field":"order_count"}]}`},
+			args:     []string{"explain-query", "test", "--body-json", `{"dimensions":[{"field":"state"}],"metrics":[{"field":"order_count"}]}`},
 			method:   http.MethodPost,
 			path:     "/api/v1/semantic-models/test/query/explain",
 			wantBody: []string{`"state"`, `"order_count"`},

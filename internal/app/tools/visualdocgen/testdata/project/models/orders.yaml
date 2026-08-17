@@ -5,22 +5,45 @@ metadata:
   name: orders
   displayName: Documentation orders
 spec:
-  primaryKey: order_id
   sources:
   - docs.orders
   fields:
-    order_id: {label: Order ID, type: string}
-    purchase_month: {label: Purchase month, type: string}
-    purchase_date: {label: Purchase date, type: date}
-    status: {label: Status, type: string}
-    category: {label: Category, type: string}
-    state: {label: State, type: string}
-    latitude: {label: Latitude, type: number}
-    longitude: {label: Longitude, type: number}
-    revenue: {label: Revenue, type: number}
-    review_score: {label: Review score, type: number}
-    delivery_days: {label: Delivery days, type: number}
-    delivery_bucket: {label: Delivery speed, type: string}
+    order_id:
+      datatype: String
+      label: Order ID
+    purchase_month:
+      datatype: String
+      label: Purchase month
+    purchase_date:
+      datatype: Date
+      label: Purchase date
+    status:
+      datatype: String
+      label: Status
+    category:
+      datatype: String
+      label: Category
+    state:
+      datatype: String
+      label: State
+    latitude:
+      datatype: Float
+      label: Latitude
+    longitude:
+      datatype: Float
+      label: Longitude
+    revenue:
+      datatype: Float
+      label: Revenue
+    review_score:
+      datatype: Float
+      label: Review score
+    delivery_days:
+      datatype: Float
+      label: Delivery days
+    delivery_bucket:
+      datatype: String
+      label: Delivery speed
   transform:
     sql: |
       SELECT
@@ -37,3 +60,10 @@ spec:
         CAST(delivery_days AS DOUBLE) AS delivery_days,
         delivery_bucket
       FROM source."docs.orders"
+  entities:
+    order:
+      type: primary
+      fields:
+      - order_id
+  grain:
+    entity: order

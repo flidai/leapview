@@ -19,7 +19,7 @@ test('HTML KPI values compose governed display units with the field formatting c
   const envelope = {
     schemaVersion: 9, visualID: 'revenue', rendererID: 'html', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
-      kind: 'kpi', title: 'Revenue', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue', format: { kind: 'currency', currency: 'BRL' } }] }],
+      kind: 'kpi', title: 'Revenue', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue', format: { kind: 'currency', currency: 'BRL' } }] }],
       dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Revenue', description: 'Revenue' }, interactions: [],
       value: { dataset: 'primary', field: 'value' },
       presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [], tone: 'success' },
@@ -36,7 +36,7 @@ test('HTML KPI formatting resolves semantic backgrounds, readable text, and redu
   const envelope = {
     schemaVersion: 9, visualID: 'health', rendererID: 'html', specRevision: 'sha256:health', dataRevision: 1,
     spec: {
-      kind: 'kpi', title: 'Health', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Health' }] }],
+      kind: 'kpi', title: 'Health', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Health' }] }],
       dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Health', description: 'Health' }, interactions: [],
       conditionalFormatting: [
         {
@@ -73,16 +73,16 @@ test('HTML KPI layout requirements come only from explicitly configured features
         {
           id: 'primary',
           fields: [
-            { id: 'value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
-            { id: 'comparison', role: 'measure', dataType: 'decimal', nullable: false, label: 'Baseline' },
-            { id: 'goal', role: 'measure', dataType: 'decimal', nullable: false, label: 'Goal' },
+            { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
+            { id: 'comparison', role: 'metric', dataType: 'decimal', nullable: false, label: 'Baseline' },
+            { id: 'goal', role: 'metric', dataType: 'decimal', nullable: false, label: 'Goal' },
           ],
         },
         {
           id: 'trend',
           fields: [
             { id: 'month', role: 'category', dataType: 'date', nullable: false, label: 'Month' },
-            { id: 'trend_value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+            { id: 'trend_value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
           ],
         },
       ],

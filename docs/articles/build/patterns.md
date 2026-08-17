@@ -6,15 +6,15 @@ These patterns keep a dashboard repository understandable as the number of proje
 
 ### Model once, present many times
 
-Put reusable business calculations in semantic measures and metrics. Dashboard YAML should select and present them, not redefine them. When two visuals need “Revenue,” both should request the same measure unless their business meaning genuinely differs.
+Put reusable business calculations in semantic metrics. Dashboard YAML should select and present them, not redefine them. When two visuals need “Revenue,” both should request the same metric unless their business meaning genuinely differs.
 
-If a formula changes, one semantic edit should update browser dashboards, headless API clients, and agent queries together. Add a separate named measure when two interpretations must coexist.
+If a formula changes, one semantic edit should update browser dashboards, headless API clients, and agent queries together. Add a separate named metric when two interpretations must coexist.
 
 ### Keep grains explicit
 
 Give each model table a one-sentence grain and primary key. Review joins for how they change that grain. A one-to-many join performed before aggregation is a common source of inflated sums and counts.
 
-Semantic measures should name their fact table, and relationships should declare only cardinality verified from data. If a question spans incompatible facts, create an explicit analytical table or redesign the question rather than relying on a convenient join.
+Semantic metrics should name their dataset, and relationships should use endpoint keys verified from data. If a question spans incompatible datasets, add an explicit semantic relationship or redesign the question rather than relying on a convenient join.
 
 ### Prefer bounded, deterministic results
 
@@ -38,7 +38,7 @@ Avoid copying the same query under several page components. Reuse a dashboard de
 
 ### Design for empty and partial state
 
-Every component should have understandable loading, empty, and failure behavior. A filter combination that yields no rows is normal, not exceptional. Measures should declare empty behavior, charts should explain the absence of points, and tables should retain their column context.
+Every component should have understandable loading, empty, and failure behavior. A filter combination that yields no rows is normal, not exceptional. Metrics should declare empty behavior, charts should explain the absence of points, and tables should retain their column context.
 
 Do not let one component failure make the entire page unreadable when the rest of the state is still valid.
 
@@ -46,13 +46,13 @@ Do not let one component failure make the entire page unreadable when the rest o
 
 Explicitly target filters and selections when broad behavior would surprise users. Add one interaction at a time and test it with existing filter state. Users should be able to see and clear a selection.
 
-Semantic mappings should preserve types and fact/grain identity. Never treat a browser label or row index as durable query identity.
+Semantic mappings should preserve types and dataset/grain identity. Never treat a browser label or row index as durable query identity.
 
 ## Make ownership reviewable
 
 ### Document ownership and intent
 
-Use titles, descriptions, owners, and tags to make discovery and review easier. Add descriptions to non-obvious measures, relationships, transformations, filters, and dashboards. A future maintainer should understand why a resource exists without reconstructing the original ticket.
+Use titles, descriptions, owners, and tags to make discovery and review easier. Add descriptions to non-obvious metrics, relationships, transformations, filters, and dashboards. A future maintainer should understand why a resource exists without reconstructing the original ticket.
 
 Keep operational runbooks in documentation and exact machine contracts in generated references. Do not maintain a second hand-written field list that can drift from the schema.
 

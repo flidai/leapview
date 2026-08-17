@@ -6,7 +6,7 @@ Build a LeapView dashboard from governed data resources upward: connect physical
 
 1. [Connect a data source](/docs/guides/build/connect-data) and give physical inputs stable project identities.
 2. [Define model tables](/docs/guides/build/model-tables) with explicit keys, grain, and reusable transformations.
-3. [Build a semantic model](/docs/guides/build/semantic-model) containing governed dimensions, measures, metrics, and relationships.
+3. [Build a semantic model](/docs/guides/build/semantic-model) containing governed dimensions, metrics, and relationships.
 4. [Create a dashboard](/docs/guides/build/dashboard) with filters, queries, visuals, tables, and an initial report page.
 5. [Compose pages and layout](/docs/guides/build/pages-layout) for desktop and compact widths.
 6. [Add filters and interactions](/docs/guides/build/filters-interactions) through server-validated semantic mappings.

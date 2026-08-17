@@ -226,7 +226,7 @@ func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, er
 		Kind:                         request.Kind,
 		Target:                       request.Target,
 		Fields:                       request.Fields,
-		Measures:                     request.Measures,
+		Metrics:                      request.Metrics,
 		AuthorizationFields:          request.AuthorizationFields,
 		Value:                        request.Value,
 		Time:                         request.Time,
@@ -266,7 +266,7 @@ type queryResultCacheKey struct {
 	Kind                         dataquery.Kind
 	Target                       string
 	Fields                       []dataquery.Field
-	Measures                     []dataquery.Field
+	Metrics                      []dataquery.Field
 	AuthorizationFields          []dataquery.Field
 	Value                        dataquery.Field
 	Time                         dataquery.Time

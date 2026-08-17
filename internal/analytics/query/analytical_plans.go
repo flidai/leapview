@@ -15,7 +15,7 @@ func (p *Planner) PlanHistogram(request RawValueRequest, binCount int) (Plan, er
 	if err != nil {
 		return Plan{}, err
 	}
-	valueColumn := request.Measure.Alias
+	valueColumn := request.Metric.Alias
 	if valueColumn == "" {
 		valueColumn = "value"
 	}
@@ -54,7 +54,7 @@ func (p *Planner) PlanDistribution(request RawValueRequest, sorts []Sort, limit 
 	if err != nil {
 		return Plan{}, err
 	}
-	valueColumn := request.Measure.Alias
+	valueColumn := request.Metric.Alias
 	if valueColumn == "" {
 		valueColumn = "value"
 	}

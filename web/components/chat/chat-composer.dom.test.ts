@@ -291,10 +291,10 @@ test('composer distinguishes matching reference IDs from different kinds', async
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const attached = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const references = ['field', 'measure'].map((kind) => ({
+		const references = ['field', 'metric'].map((kind) => ({
 		reference: { kind, id: 'orders.revenue' },
 		name: `Revenue ${kind}`,
-		href: `/explore?field=${kind}`,
+		href: kind === 'metric' ? `/explore?metric=${kind}` : `/explore?field=${kind}`,
 		locations: [],
 		context: [],
       }))
@@ -316,7 +316,7 @@ test('composer distinguishes matching reference IDs from different kinds', async
 	  return element.references.map((reference: any) => reference.reference.kind)
     })
 
-    expect(attached).toEqual(['field', 'measure'])
+	expect(attached).toEqual(['field', 'metric'])
   } finally {
     await page.close()
   }
@@ -343,7 +343,7 @@ test('mention picker opens immediately, renders compact rows, and scrolls with k
       }
 
       element.suggestions = Array.from({ length: 8 }, (_, index) => ({
-		reference: { kind: index % 2 === 0 ? 'visual' : 'measure', id: `result-${index}` },
+		reference: { kind: index % 2 === 0 ? 'visual' : 'metric', id: `result-${index}` },
 		name: `Result ${index + 1}`,
         description: `Compact description ${index + 1}`,
 		href: `/explore?result=${index}`, locations: [], context: [],
@@ -430,7 +430,7 @@ test('mention picker ignores search responses from an older request', async () =
 
       element.suggestionQuery = second.query
       element.suggestionRequestId = second.requestId
-	  element.suggestions = [{ reference: { kind: 'measure', id: 'revenue' }, name: 'Revenue', href: '/explore?measure=revenue', locations: [], context: [] }]
+	 element.suggestions = [{ reference: { kind: 'metric', id: 'revenue' }, name: 'Revenue', href: '/explore?metric=revenue', locations: [], context: [] }]
       await element.updateComplete
       const currentVisible = optionText()
 
@@ -450,8 +450,8 @@ test('mention picker ignores search responses from an older request', async () =
 	expect(result.firstVisible).toBe('Orders Visual')
     expect(result.staleVisible).toBe('')
     expect(result.staleStatus).toBe('Searching…')
-	expect(result.currentVisible).toBe('Revenue Measure')
-	expect(result.afterLateStale).toBe('Revenue Measure')
+	expect(result.currentVisible).toBe('Revenue Metric')
+	expect(result.afterLateStale).toBe('Revenue Metric')
   } finally {
     await page.close()
   }
@@ -472,7 +472,7 @@ test('mention picker pins on-page results above deduplicated accessible results'
       element.pinnedSuggestions = [onPage]
       element.suggestions = [
         onPage,
-		{ reference: { kind: 'measure', id: 'orders-measure' }, name: 'Orders measure', description: 'Sales model', hierarchy: ['Sales model'], href: '/explore?measure=orders', locations: [], context: [] },
+		{ reference: { kind: 'metric', id: 'orders-metric' }, name: 'Orders metric', description: 'Sales model', hierarchy: ['Sales model'], href: '/explore?metric=orders', locations: [], context: [] },
       ]
       await element.updateComplete
       const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
@@ -488,7 +488,7 @@ test('mention picker pins on-page results above deduplicated accessible results'
     })
 
     expect(result.labels).toEqual(['On this page', 'All accessible'])
-	expect(result.options).toEqual(['Orders on this page Sales › Executive Sales › Overview Visual', 'Orders measure Sales model Measure'])
+	expect(result.options).toEqual(['Orders on this page Sales › Executive Sales › Overview Visual', 'Orders metric Sales model Metric'])
   } finally {
     await page.close()
   }
@@ -505,7 +505,7 @@ test('composer enforces the server-provided reference limit', async () => {
       element.addEventListener('lv-chat-reference-search', (event: CustomEvent) => searches.push(event.detail.query))
       const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
       for (const id of ['one', 'two', 'three']) {
-		element.suggestions = [{ reference: { kind: 'measure', id }, name: id, href: `/explore?measure=${id}`, locations: [], context: [] }]
+	 element.suggestions = [{ reference: { kind: 'metric', id }, name: id, href: `/explore?metric=${id}`, locations: [], context: [] }]
         textarea.value = `@${id}`
         textarea.setSelectionRange(textarea.value.length, textarea.value.length)
         textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))

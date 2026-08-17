@@ -10,7 +10,7 @@ test('TanStack adapter derives semantic row interactions from the typed IR', () 
       kind: 'table', title: 'Orders',
       datasets: [{ id: 'primary', fields: [
         { id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
-        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] }],
       dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Orders', description: 'Orders' },
       interactions: [{ id: 'row_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['revenue'], mappings: [
@@ -33,7 +33,7 @@ test('TanStack adapter derives semantic row interactions from the typed IR', () 
       kind: 'windowed', specRevision: 'sha256:test', dataRevision: 3, generation: 1,
       schema: { id: 'primary', fields: [
         { id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
-        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] },
       cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 1000, chunkSize: 50, resetVersion: 2,
       sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }],
@@ -73,17 +73,17 @@ test('TanStack matrix adapter renders dynamic window schema columns with compile
     spec: {
       kind: 'matrix', title: 'Matrix', datasets: [{ id: 'primary', fields: [
         { id: 'state', role: 'dimension', dataType: 'string', nullable: true, label: 'State' },
-        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: true, label: 'Revenue' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Revenue' },
       ] }], dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Matrix', description: 'Matrix' }, interactions: [],
-      rows: [{ dataset: 'primary', field: 'state' }], columns: [], measures: [{ dataset: 'primary', field: 'revenue' }],
-      measureFormatting: { revenue: [{ kind: 'data_bar', minimum: 0, maximum: 100, color: 'accent' }] },
+      rows: [{ dataset: 'primary', field: 'state' }], columns: [], metrics: [{ dataset: 'primary', field: 'revenue' }],
+      metricFormatting: { revenue: [{ kind: 'data_bar', minimum: 0, maximum: 100, color: 'accent' }] },
       presentation: { rowHeight: 34, striped: true, showHeader: true },
     },
     dataState: {
       kind: 'windowed', specRevision: 'sha256:matrix', dataRevision: 2, generation: 1,
       schema: { id: 'primary', fields: [
         { id: 'state', role: 'identity', dataType: 'string', nullable: true, label: 'State', grid: { formatting: [] } },
-        { id: 'delivered__revenue', role: 'measure', dataType: 'decimal', nullable: true, label: 'Delivered revenue', grid: { group: 'Delivered', measure: 'revenue', columnValue: 'delivered', formatting: [] } },
+        { id: 'delivered__revenue', role: 'metric', dataType: 'decimal', nullable: true, label: 'Delivered revenue', grid: { group: 'Delivered', metric: 'revenue', columnValue: 'delivered', formatting: [] } },
       ] },
       cardinality: { kind: 'exact', count: 1 }, availableRows: 1, rowCap: 1000, chunkSize: 50, resetVersion: 1,
       sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }],
@@ -92,5 +92,5 @@ test('TanStack matrix adapter renders dynamic window schema columns with compile
   } as VisualizationEnvelope
   const table = tableSignal(envelope)
   expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue'])
-  expect(table.columns[1]).toMatchObject({ group: 'Delivered', measure: 'revenue', columnValue: 'delivered', formatting: [{ kind: 'data_bar', min: 0, max: 100, color: 'accent' }] })
+	expect(table.columns[1]).toMatchObject({ group: 'Delivered', metric: 'revenue', columnValue: 'delivered', formatting: [{ kind: 'data_bar', min: 0, max: 100, color: 'accent' }] })
 })

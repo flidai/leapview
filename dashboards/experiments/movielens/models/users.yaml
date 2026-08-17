@@ -6,21 +6,46 @@ metadata:
   displayName: Users Dimension
   description: Derived user dimension based on rating and tagging activity.
 spec:
-  primaryKey: user_id
-  grain: user_id
   sources:
-    - movielens.ratings
-    - movielens.tags
+  - movielens.ratings
+  - movielens.tags
   fields:
-    user_id: {label: User ID, description: Anonymized MovieLens user identifier.}
-    rating_count: {label: Rating count, description: Number of ratings submitted by the user.}
-    average_rating: {label: Average rating, description: User-level average rating value.}
-    tag_count: {label: Tag count, description: Number of tags submitted by the user.}
-    first_rated_at: {label: First rated at, description: First observed rating timestamp.}
-    last_rated_at: {label: Last rated at, description: Last observed rating timestamp.}
-    first_rating_year: {label: First rating year, description: First observed rating calendar year.}
-    last_rating_year: {label: Last rating year, description: Last observed rating calendar year.}
-    activity_bucket: {label: Activity bucket, description: Rating-volume segment derived from user activity.}
+    user_id:
+      datatype: Integer
+      label: User ID
+      description: Anonymized MovieLens user identifier.
+    rating_count:
+      datatype: Integer
+      label: Rating count
+      description: Number of ratings submitted by the user.
+    average_rating:
+      datatype: Decimal
+      label: Average rating
+      description: User-level average rating value.
+    tag_count:
+      datatype: Integer
+      label: Tag count
+      description: Number of tags submitted by the user.
+    first_rated_at:
+      datatype: DateTime
+      label: First rated at
+      description: First observed rating timestamp.
+    last_rated_at:
+      datatype: DateTime
+      label: Last rated at
+      description: Last observed rating timestamp.
+    first_rating_year:
+      datatype: Integer
+      label: First rating year
+      description: First observed rating calendar year.
+    last_rating_year:
+      datatype: Integer
+      label: Last rating year
+      description: Last observed rating calendar year.
+    activity_bucket:
+      datatype: String
+      label: Activity bucket
+      description: Rating-volume segment derived from user activity.
   transform:
     sql: |
       WITH rating_activity AS (
@@ -61,3 +86,10 @@ spec:
       FROM rating_activity r
       LEFT JOIN tag_activity t ON t.user_id = r.user_id
       WHERE r.user_id IS NOT NULL
+  entities:
+    user:
+      type: primary
+      fields:
+      - user_id
+  grain:
+    entity: user

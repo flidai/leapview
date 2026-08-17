@@ -288,6 +288,100 @@ func (r *Runtime) RefreshModelTables(ctx context.Context, tableNames []string) e
 	return nil
 }
 
+// VerifySemantic prepares representative governed plans and proves all
+// authored primary/unique entity claims against the discovered serving data.
+// It intentionally never executes authored SQL; only planner-generated
+// statements and bounded key checks are run during deployment verification.
+func (r *Runtime) VerifySemantic(ctx context.Context) error {
+	if r == nil || r.model == nil {
+		return fmt.Errorf("semantic verification: materialization runtime is not initialized")
+	}
+	var relation semanticquery.TableRelation
+	if r.planner != nil {
+		relation = r.planner.TableRelation()
+	}
+	if err := semanticquery.VerifyRepresentativePlans(r.model, relation); err != nil {
+		return err
+	}
+	return r.VerifyEntityClaims(ctx)
+}
+
+// VerifyEntityClaims checks non-null and uniqueness for every primary and
+// unique entity tuple. Queries are bounded by EXISTS/LIMIT so a pathological
+// relation cannot materialize an unbounded verification result.
+func (r *Runtime) VerifyEntityClaims(ctx context.Context) error {
+	if r == nil || r.model == nil || r.db == nil {
+		return fmt.Errorf("entity verification: materialization runtime is not initialized")
+	}
+	provider, ok := r.db.(analyticsresource.SessionProvider)
+	if !ok {
+		return fmt.Errorf("entity verification: analytical database does not support schema sessions")
+	}
+	lease, queryCtx, err := acquireDatabaseLease(ctx, r.db)
+	if err != nil {
+		return fmt.Errorf("entity verification: acquire database lease: %w", err)
+	}
+	if lease != nil {
+		defer lease.Release()
+	}
+	session, err := provider.Session(queryCtx)
+	if err != nil {
+		return fmt.Errorf("entity verification: open database session: %w", err)
+	}
+	tableNames := make([]string, 0, len(r.model.Tables))
+	for tableName := range r.model.Tables {
+		tableNames = append(tableNames, tableName)
+	}
+	sort.Strings(tableNames)
+	for _, tableName := range tableNames {
+		if err := queryCtx.Err(); err != nil {
+			return err
+		}
+		table := r.model.Tables[tableName]
+		relation, err := r.physicalModelTable(tableName)
+		if err != nil {
+			return fmt.Errorf("entity verification table %q: %w", tableName, err)
+		}
+		entityNames := make([]string, 0, len(table.Entities))
+		for entityName, entity := range table.Entities {
+			if entity.Type == "primary" || entity.Type == "unique" {
+				entityNames = append(entityNames, entityName)
+			}
+		}
+		sort.Strings(entityNames)
+		for _, entityName := range entityNames {
+			entity := table.Entities[entityName]
+			fields := make([]string, len(entity.Fields))
+			for index, field := range entity.Fields {
+				if err := validateIdentifier(field); err != nil {
+					return fmt.Errorf("entity verification table %q entity %q field %q: %w", tableName, entityName, field, err)
+				}
+				fields[index] = quoteMaterializedIdentifier(field)
+			}
+			for _, field := range fields {
+				var found bool
+				err := session.QueryRowContext(queryCtx, "SELECT EXISTS (SELECT 1 FROM "+relation+" WHERE "+field+" IS NULL LIMIT 1)").Scan(&found)
+				if err != nil {
+					return fmt.Errorf("entity verification table %q entity %q null check: %w", tableName, entityName, err)
+				}
+				if found {
+					return fmt.Errorf("entity verification table %q entity %q has null key field %q", tableName, entityName, strings.Trim(field, `"`))
+				}
+			}
+			groupFields := strings.Join(fields, ", ")
+			var duplicate bool
+			duplicateSQL := "SELECT EXISTS (SELECT 1 FROM (SELECT " + groupFields + " FROM " + relation + " GROUP BY " + groupFields + " HAVING COUNT(*) > 1 LIMIT 1) AS __leapview_duplicates)"
+			if err := session.QueryRowContext(queryCtx, duplicateSQL).Scan(&duplicate); err != nil {
+				return fmt.Errorf("entity verification table %q entity %q uniqueness check: %w", tableName, entityName, err)
+			}
+			if duplicate {
+				return fmt.Errorf("entity verification table %q entity %q has duplicate key tuple", tableName, entityName)
+			}
+		}
+	}
+	return nil
+}
+
 func (r *Runtime) queryResultLimits() dataquery.ResultLimits {
 	limits := r.resultLimits
 	if limits.MaxRows <= 0 {
@@ -428,7 +522,7 @@ func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, e
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate:
 		return r.queryPlanner().Plan(semanticquery.Request{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures),
+			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
@@ -438,7 +532,7 @@ func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, e
 			return semanticquery.Plan{}, fmt.Errorf("native Arrow row queries do not include an auxiliary total")
 		}
 		return r.queryPlanner().PlanRows(semanticquery.RowRequest{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures),
+			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
 		})

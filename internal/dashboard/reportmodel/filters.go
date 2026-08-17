@@ -40,14 +40,14 @@ func FieldAppliesToTarget(d *dashboardauthoring.Dashboard, model *semanticmodel.
 
 func TargetFacts(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, targetKind, targetID string) ([]string, error) {
 	var table string
-	var measures []dashboardauthoring.FieldRef
+	var metrics []dashboardauthoring.FieldRef
 	switch targetKind {
 	case "visual":
 		if visual, ok := d.Visuals[targetID]; ok {
 			if visual.Chart != nil {
-				table, measures = visual.Chart.Query.Table, visual.Chart.Query.Measures
+				table, metrics = visual.Chart.Query.Table, visual.Chart.Query.Metrics
 			} else if visual.Tabular != nil {
-				table, measures = visual.Tabular.Query.Table, visual.Tabular.Query.Measures
+				table, metrics = visual.Tabular.Query.Table, visual.Tabular.Query.Metrics
 			}
 		} else {
 			return nil, fmt.Errorf("unknown target visual %q", targetID)
@@ -65,19 +65,23 @@ func TargetFacts(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, ta
 	var addMember func(string) error
 	visiting := map[string]bool{}
 	addMember = func(name string) error {
-		if measure, ok := model.Measures[name]; ok {
-			factSet[measure.Fact] = struct{}{}
-			return nil
-		}
 		metric, ok := model.Metrics[name]
 		if !ok {
-			return fmt.Errorf("unknown measure or metric %q", name)
+			return fmt.Errorf("unknown metric %q", name)
 		}
 		if visiting[name] {
 			return fmt.Errorf("metric dependency cycle includes %q", name)
 		}
+		if metric.Type == "aggregate" {
+			factSet[metric.Dataset] = struct{}{}
+			return nil
+		}
 		visiting[name] = true
-		expression, err := semanticmodel.ParseExpression(metric.Expression)
+		expressionSource := metric.Expression
+		if metric.Type == "ratio" {
+			expressionSource = fmt.Sprintf("safe_divide(${%s}, ${%s})", metric.Numerator, metric.Denominator)
+		}
+		expression, err := semanticmodel.ParseExpression(expressionSource)
 		if err != nil {
 			return err
 		}
@@ -89,8 +93,8 @@ func TargetFacts(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, ta
 		delete(visiting, name)
 		return nil
 	}
-	for _, measure := range measures {
-		if err := addMember(measure.Field); err != nil {
+	for _, metric := range metrics {
+		if err := addMember(metric.Field); err != nil {
 			return nil, err
 		}
 	}

@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic
 
-Use one ordered category and one measure for a direct vertical comparison. Ascending month order makes changes over time easy to scan.
+Use one ordered category and one metric for a direct vertical comparison. Ascending month order makes changes over time easy to scan.
 
 {{< visual id="orders_by_month_column" >}}
 
@@ -18,7 +18,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: purchase_month
@@ -46,7 +46,7 @@ visuals:
       series:
         field: orders.status
         alias: status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: purchase_month
@@ -73,7 +73,7 @@ visuals:
       series:
         field: orders.status
         alias: status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: purchase_month

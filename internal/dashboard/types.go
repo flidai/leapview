@@ -223,7 +223,7 @@ type InteractionSelectionValue any
 
 type InteractionSelectionMapping struct {
 	Field string                    `json:"field"`
-	Fact  string                    `json:"fact,omitempty"`
+	Fact  string                    `json:"dataset,omitempty"`
 	Grain string                    `json:"grain,omitempty"`
 	Value InteractionSelectionValue `json:"value"`
 	Label string                    `json:"label,omitempty"`
@@ -271,7 +271,7 @@ const UIRowSelectionField = "__leapview.rowKey"
 
 type InteractionCommandMapping struct {
 	Field string                    `json:"field"`
-	Fact  string                    `json:"fact,omitempty"`
+	Fact  string                    `json:"dataset,omitempty"`
 	Grain string                    `json:"grain,omitempty"`
 	Value InteractionSelectionValue `json:"value"`
 	Label string                    `json:"label,omitempty"`
@@ -686,7 +686,7 @@ type InteractionConfig struct {
 
 type InteractionConfigMapping struct {
 	Field string `json:"field"`
-	Fact  string `json:"fact,omitempty"`
+	Fact  string `json:"dataset,omitempty"`
 	Grain string `json:"grain,omitempty"`
 	Value string `json:"value"`
 	Label string `json:"label,omitempty"`
@@ -876,7 +876,7 @@ type TableColumn struct {
 	Align       string                `json:"align,omitempty" yaml:"align,omitempty"`
 	Role        string                `json:"role,omitempty" yaml:"role,omitempty"`
 	Group       string                `json:"group,omitempty" yaml:"group,omitempty"`
-	Measure     string                `json:"measure,omitempty" yaml:"measure,omitempty"`
+	Metric      string                `json:"metric,omitempty" yaml:"metric,omitempty"`
 	ColumnValue string                `json:"columnValue,omitempty" yaml:"column_value,omitempty"`
 	Width       int                   `json:"width,omitempty" yaml:"width,omitempty"`
 	Format      string                `json:"format,omitempty" yaml:"format,omitempty"`

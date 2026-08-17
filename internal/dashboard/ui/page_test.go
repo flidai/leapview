@@ -64,16 +64,16 @@ func TestPageInitialSignalsArePageScoped(t *testing.T) {
 			},
 		},
 		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"active_chart":   {Title: "Active", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.status", Fact: "orders", Value: "label"}}, Targets: []string{"orders"}}}},
-			"active_kpi":     {Type: "kpi", Query: dashboardauthoring.VisualQuery{Measures: fieldRefs("order_count")}, Presentation: dashboardauthoring.VisualPresentation{Note: "Filtered", Tone: "ink"}},
-			"off_page_chart": {Title: "Off Page", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}},
+			"active_chart":   {Title: "Active", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.status", Fact: "orders", Value: "label"}}, Targets: []string{"orders"}}}},
+			"active_kpi":     {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: fieldRefs("order_count")}, Presentation: dashboardauthoring.VisualPresentation{Note: "Filtered", Tone: "ink"}},
+			"off_page_chart": {Title: "Off Page", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}},
 		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
 			"orders":   {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Interaction: dashboardauthoring.Interaction{RowSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.order_id", Fact: "orders", Value: "order_id"}}, Targets: []string{"active_chart"}}}, Style: dashboard.TableStyle{Density: "compact", Grid: "full"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order", Width: 220, Format: "text"}}},
 			"off_page": {Title: "Off Page", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
 		}), dashboardauthoring.TabularVisualizations("matrix", map[string]dashboardauthoring.TableVisual{
-			"matrix": {Title: "Matrix", Query: dashboardauthoring.TableQuery{Rows: fieldRefs("orders.status"), Measures: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
+			"matrix": {Title: "Matrix", Query: dashboardauthoring.TableQuery{Rows: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
 		}), dashboardauthoring.TabularVisualizations("pivot", map[string]dashboardauthoring.TableVisual{
-			"pivot": {Title: "Pivot", Query: dashboardauthoring.TableQuery{Rows: fieldRefs("orders.status"), Columns: fieldRefs("orders.category"), Measures: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
+			"pivot": {Title: "Pivot", Query: dashboardauthoring.TableQuery{Rows: fieldRefs("orders.status"), Columns: fieldRefs("orders.category"), Metrics: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
 		})),
 		Pages: []dashboard.Page{
 			{
@@ -117,7 +117,7 @@ func TestPageInitialSignalsArePageScoped(t *testing.T) {
 		Title: "Test",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", PrimaryKey: "order_id", Grain: "order_id",
+				Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Expr: "order_id", Type: "string"},
 					"status":   {Expr: "status", Type: "string"},
@@ -126,7 +126,7 @@ func TestPageInitialSignalsArePageScoped(t *testing.T) {
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}},
+		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero", Label: "Orders"}},
 	}
 	normalizedReport, err := dashboardcompiler.ValidateAndNormalizeDashboard(&report, map[string]*semanticmodel.Model{"test": model})
 	if err != nil {

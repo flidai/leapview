@@ -5,45 +5,59 @@ metadata:
   name: operations
   displayName: Operations Semantic Model
 spec:
-  tables:
-    - operations_orders
-    - operations_customers
+  datasets:
+    operations_orders:
+      model: operations_orders
+    operations_customers:
+      model: operations_customers
   relationships:
-    - id: orders_customers
-      from: operations_orders.customer_id
-      to: operations_customers.customer_id
-      cardinality: many_to_one
+    orders_customers:
+      from:
+        dataset: operations_orders
+        entity: customer
+      to:
+        dataset: operations_customers
+        entity: customer
   dimensions:
     state:
-      type: string
+      datatype: String
       bindings:
         operations_orders:
           field: operations_customers.state
-          path: [orders_customers]
+          path:
+          - orders_customers
     status:
-      type: string
+      datatype: String
       bindings:
-        operations_orders: {field: operations_orders.status}
+        operations_orders:
+          field: operations_orders.status
     delivery_bucket:
-      type: string
+      datatype: String
       bindings:
-        operations_orders: {field: operations_orders.delivery_bucket}
-  measures:
+        operations_orders:
+          field: operations_orders.delivery_bucket
+  metrics:
     order_count:
-      label: Orders
-      fact: operations_orders
+      type: aggregate
+      dataset: operations_orders
       aggregation: count_distinct
-      input: {field: operations_orders.order_id}
+      input:
+        field: operations_orders.order_id
       empty: zero
+      label: Orders
     review_score:
+      type: aggregate
+      dataset: operations_orders
+      aggregation: avg
+      input:
+        field: operations_orders.review_score
+      empty: 'null'
       label: Review score
-      fact: operations_orders
-      aggregation: avg
-      input: {field: operations_orders.review_score}
-      empty: "null"
     delivery_days:
-      label: Delivery days
-      fact: operations_orders
+      type: aggregate
+      dataset: operations_orders
       aggregation: avg
-      input: {field: operations_orders.delivery_days}
-      empty: "null"
+      input:
+        field: operations_orders.delivery_days
+      empty: 'null'
+      label: Delivery days
