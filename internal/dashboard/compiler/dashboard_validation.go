@@ -129,7 +129,10 @@ func ValidateAndNormalizeDashboard(d *dashboardauthoring.Dashboard, models map[s
 }
 
 func validateVisualQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, name string, visual dashboardauthoring.Visual) error {
-	planner := semanticquery.NewPlanner(model)
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		return fmt.Errorf("semantic model is invalid: %w", err)
+	}
 	plan := func(query dashboardauthoring.VisualQuery) error {
 		dimensions := reportFieldRefsToQueryFields(query.Dimensions)
 		if !query.Series.IsZero() {
@@ -149,7 +152,7 @@ func validateVisualQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmod
 		})
 		return err
 	}
-	err := plan(visual.Query)
+	err = plan(visual.Query)
 	if err != nil {
 		return fmt.Errorf("visual %q query is invalid: %w", name, err)
 	}
@@ -166,9 +169,11 @@ func validateVisualQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmod
 }
 
 func validateTableQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, name, visualType string, table dashboardauthoring.TableVisual) error {
-	planner := semanticquery.NewPlanner(model)
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		return fmt.Errorf("semantic model is invalid: %w", err)
+	}
 	filters := scopedQueryFilters(d, model, "visual", name)
-	var err error
 	switch visualType {
 	case "matrix", "pivot":
 		dimensions := reportFieldRefsToQueryFields(table.Query.Rows)

@@ -14,7 +14,7 @@ test('TanStack adapter derives semantic row interactions from the typed IR', () 
       ] }],
       dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Orders', description: 'Orders' },
       interactions: [{ id: 'row_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['revenue'], mappings: [
-        { source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetFactID: 'orders', label: { dataset: 'primary', field: 'order_id' } },
+        { source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetDatasetID: 'orders', label: { dataset: 'primary', field: 'order_id' } },
       ] }],
       conditionalFormatting: [{
         id: 'revenue-health', target: 'cell_background', field: { dataset: 'primary', field: 'revenue' },
@@ -44,7 +44,7 @@ test('TanStack adapter derives semantic row interactions from the typed IR', () 
 
   expect(tableSignal(envelope).interaction).toEqual({
     kind: 'row_selection', toggle: true, targets: ['revenue'],
-    mappings: [{ field: 'orders.order_id', fact: 'orders', value: 'order_id', label: 'order_id' }],
+    mappings: [{ field: 'orders.order_id', dataset: 'orders', value: 'order_id', label: 'order_id' }],
   })
   expect(tableSignal(envelope).columns[1]?.formatting).toEqual([{ kind: 'data_bar', min: 0, max: 100, color: 'accent' }])
   expect(tableSignal(envelope).columns[1]?.conditionalFormatting?.[0]).toMatchObject({

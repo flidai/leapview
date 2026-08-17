@@ -194,7 +194,11 @@ func (r *Runtime) planBundle(ctx context.Context, resolved resolvedBundle) (plan
 		semanticRequests[index] = semanticquery.BundleRequest{ID: branch.ID, Request: semanticquery.Request{Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Time: semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias}, Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset}}
 	}
 	started := time.Now()
-	plan, err := r.queryPlanner().PlanBundle(semanticRequests)
+	planner, err := r.queryPlanner()
+	if err != nil {
+		return plannedBundle{}, err
+	}
+	plan, err := planner.PlanBundle(semanticRequests)
 	planningMS := elapsedStageMS(started)
 	if err != nil {
 		return plannedBundle{}, &dataquery.BundleIncompatibleError{Err: err}

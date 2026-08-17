@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
 type aggregateDimension struct {
@@ -73,6 +74,52 @@ func (p *Planner) planAggregate(request Request) (Plan, error) {
 	metricColumns := map[string]string{}
 	for index, name := range metricNames {
 		metricColumns[name] = fmt.Sprintf("__m%d", index)
+	}
+	var irGraph *planir.Graph
+	var fallbackDependencies Dependencies
+	if !requestHasSpatialFilter(request.Filters) {
+		irGraph, err = p.buildAggregatePlanIR(request, resolved)
+		if err != nil {
+			return Plan{}, err
+		}
+		if err := irGraph.Validate(); err != nil {
+			return Plan{}, fmt.Errorf("validate aggregate plan IR: %w", err)
+		}
+		rendered, renderErr := planir.RenderDuckDB(irGraph)
+		if renderErr != nil {
+			return Plan{}, fmt.Errorf("render aggregate plan IR: %w", renderErr)
+		}
+		lineage, depErr := irGraph.Dependencies()
+		if depErr != nil {
+			return Plan{}, fmt.Errorf("derive aggregate dependencies: %w", depErr)
+		}
+		mode := "single_fact"
+		if resolved.MultiFact {
+			mode = "multi_fact"
+		}
+		stitchDimensions := []string{}
+		if resolved.MultiFact {
+			for _, dimension := range resolved.Dimensions {
+				stitchDimensions = append(stitchDimensions, dimension.Name)
+			}
+		}
+		columnSet := map[string]bool{}
+		for _, column := range rendered.Columns {
+			columnSet[column] = true
+		}
+		return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Mode: mode,
+			Facts: append([]string{}, resolved.Facts...), StitchDimensions: stitchDimensions,
+			PhysicalDependencies: uniqueStrings(append(append([]string(nil), lineage.Datasets...), lineage.PhysicalFields...)),
+			RelationshipPaths:    lineage.RelationshipPaths, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
+	} else {
+		// Spatial interaction predicates still use the specialised wrapper until
+		// the closed predicate algebra gains geometry primitives. Resolve their
+		// scope before that conservative fallback; ordinary and bucketed
+		// aggregates derive scope exclusively from validated PlanIR above.
+		fallbackDependencies, err = p.ResolveDependencies(request)
+		if err != nil {
+			return Plan{}, err
+		}
 	}
 
 	ctes := make([]string, 0, len(resolved.Facts)+len(resolved.Facts))
@@ -206,9 +253,16 @@ func (p *Planner) planAggregate(request Request) (Plan, error) {
 			stitchDimensions = append(stitchDimensions, dimension.Name)
 		}
 	}
-	dependencyResolution, err := ResolveDependencies(p.Model, request)
-	if err != nil {
-		return Plan{}, err
+	relationshipPaths := fallbackDependencies.RelationshipPaths
+	if irGraph != nil {
+		lineage, err := irGraph.Dependencies()
+		if err != nil {
+			return Plan{}, fmt.Errorf("derive aggregate dependencies: %w", err)
+		}
+		physicalDependencies = append(append([]string(nil), lineage.Datasets...), lineage.PhysicalFields...)
+		sort.Strings(physicalDependencies)
+		physicalDependencies = uniqueStrings(physicalDependencies)
+		relationshipPaths = lineage.RelationshipPaths
 	}
 	return Plan{
 		SQL:                  sql.String(),
@@ -218,14 +272,15 @@ func (p *Planner) planAggregate(request Request) (Plan, error) {
 		Facts:                append([]string{}, resolved.Facts...),
 		StitchDimensions:     stitchDimensions,
 		PhysicalDependencies: physicalDependencies,
-		RelationshipPaths:    dependencyResolution.RelationshipPaths,
+		RelationshipPaths:    relationshipPaths,
 		EffectiveOrdering:    effectiveOrdering,
+		IR:                   irGraph,
 	}, nil
 }
 
 func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error) {
-	if p.Model == nil {
-		return aggregateResolution{}, fmt.Errorf("semantic model is required")
+	if p == nil || p.model == nil || p.compiled == nil {
+		return aggregateResolution{}, fmt.Errorf("planner is not compiled")
 	}
 	masks, err := columnMaskMap(request.ColumnMasks)
 	if err != nil {
@@ -239,11 +294,11 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 	visiting := map[string]bool{}
 	var addMetric func(string) error
 	addAggregate := func(name string) error {
-		metric, err := p.Model.ResolveAggregateMetric(name)
-		if err != nil {
-			return err
+		node, ok := p.compiled.metric(name)
+		if !ok || node.Type != "aggregate" {
+			return fmt.Errorf("metric %q is not aggregate", name)
 		}
-		resolvedMetric, err := p.resolvedAggregateMetric(name, metric)
+		resolvedMetric, err := p.resolvedAggregateMetric(name)
 		if err != nil {
 			return err
 		}
@@ -263,7 +318,7 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		if visiting[name] {
 			return fmt.Errorf("metric dependency cycle includes %q", name)
 		}
-		metric, ok := p.Model.Metrics[name]
+		metric, ok := p.compiled.metric(name)
 		if !ok {
 			return fmt.Errorf("unknown metric %q", name)
 		}
@@ -274,18 +329,18 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 			return nil
 		}
 		visiting[name] = true
-		expression, err := p.metricExpression(name, metric)
+		expression, err := p.metricExpression(name)
 		if err != nil {
 			return fmt.Errorf("metric %q: %w", name, err)
 		}
 		for _, ref := range expression.References() {
-			if metricRef, ok := p.Model.Metrics[ref]; ok && metricRef.Type == "aggregate" {
+			if metricRef, ok := p.compiled.metric(ref); ok && metricRef.Type == "aggregate" {
 				if err := addAggregate(ref); err != nil {
 					return err
 				}
 				continue
 			}
-			if _, ok := p.Model.Metrics[ref]; ok {
+			if _, ok := p.compiled.metric(ref); ok {
 				if err := addMetric(ref); err != nil {
 					return err
 				}
@@ -309,11 +364,12 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		if err != nil {
 			return aggregateResolution{}, err
 		}
-		if _, ok := p.Model.Metrics[name]; ok {
+		metric, ok := p.compiled.metric(name)
+		if ok {
 			if _, masked := masks[strings.ToLower(name)]; masked {
 				return aggregateResolution{}, fmt.Errorf("metric %q is masked", name)
 			}
-			if p.Model.Metrics[name].Type == "aggregate" {
+			if metric.Type == "aggregate" {
 				if err := addAggregate(name); err != nil {
 					return aggregateResolution{}, err
 				}
@@ -334,7 +390,7 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		factSet[metric.Fact] = struct{}{}
 	}
 	if request.Table != "" {
-		if _, ok := p.Model.Tables[request.Table]; !ok {
+		if _, ok := p.model.Tables[request.Table]; !ok {
 			return aggregateResolution{}, fmt.Errorf("unknown table %q", request.Table)
 		}
 		for fact := range factSet {
@@ -361,7 +417,7 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		if request.Time.Field != "" && index == len(dimensionFields)-1 {
 			grain = request.Time.Grain
 		}
-		if dimension, ok := p.Model.Dimensions[item.Field]; ok {
+		if dimension, ok := p.model.Dimensions[item.Field]; ok {
 			if grain != "" && !containsString(dimension.Grains, grain) {
 				return aggregateResolution{}, fmt.Errorf("semantic dimension %q does not support grain %q", item.Field, grain)
 			}
@@ -370,7 +426,7 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 			})
 			continue
 		}
-		physical, err := p.Model.ResolveDimension(item.Field)
+		physical, err := p.model.ResolveDimension(item.Field)
 		if err != nil {
 			return aggregateResolution{}, err
 		}
@@ -386,14 +442,14 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		if len(resolved.Dimensions) == 0 {
 			return aggregateResolution{}, fmt.Errorf("aggregate query requires a metric or dimension")
 		}
-		for _, fact := range p.Model.FactNames() {
+		for _, fact := range p.model.FactNames() {
 			compatible := true
 			for _, dimension := range resolved.Dimensions {
 				if !dimension.Semantic {
 					compatible = false
 					break
 				}
-				if _, ok := p.Model.Dimensions[dimension.Name].Bindings[fact]; !ok {
+				if _, ok := p.model.Dimensions[dimension.Name].Bindings[fact]; !ok {
 					compatible = false
 					break
 				}
@@ -424,7 +480,7 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 			}
 			continue
 		}
-		semanticDimension := p.Model.Dimensions[dimension.Name]
+		semanticDimension := p.model.Dimensions[dimension.Name]
 		for _, fact := range resolved.Facts {
 			if _, ok := semanticDimension.Bindings[fact]; !ok {
 				return aggregateResolution{}, fmt.Errorf("semantic dimension %q has no binding for fact %q", dimension.Name, fact)
@@ -443,7 +499,7 @@ func (p *Planner) factSupportsInferredFilters(filters []Filter, fact string) boo
 	var supports func(Filter) bool
 	supports = func(filter Filter) bool {
 		if filter.Field != "" && filter.Fact == "" {
-			if dimension, ok := p.Model.Dimensions[filter.Field]; ok {
+			if dimension, ok := p.model.Dimensions[filter.Field]; ok {
 				if _, bound := dimension.Bindings[fact]; !bound {
 					return false
 				}
@@ -451,7 +507,7 @@ func (p *Planner) factSupportsInferredFilters(filters []Filter, fact string) boo
 		}
 		if filter.Spatial != nil && filter.Spatial.Fact == "" {
 			for _, field := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
-				if dimension, ok := p.Model.Dimensions[field]; ok {
+				if dimension, ok := p.model.Dimensions[field]; ok {
 					if _, bound := dimension.Bindings[fact]; !bound {
 						return false
 					}
@@ -493,7 +549,7 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 		}
 		for _, field := range aggregateMetricPhysicalFields(metric) {
 			dependencies[field] = struct{}{}
-			physical, err := p.Model.ResolveDimension(field)
+			physical, err := p.model.ResolveDimension(field)
 			if err != nil {
 				return "", nil, nil, err
 			}
@@ -515,10 +571,10 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 		addPathDependencies(dependencies, binding.Path)
 	}
 	for _, metric := range resolved.Aggregates {
-		if metric.Fact != fact || len(metric.WhereFilters) == 0 {
+		if metric.Fact != fact || len(metric.NamedFilters) == 0 {
 			continue
 		}
-		whereFilters := scopeMetricWhereFilters(metric.WhereFilters, fact)
+		whereFilters := scopeMetricWhereFilters(namedMetricFilters(metric.NamedFilters), fact)
 		whereBindings, err := p.factFilterFields(whereFilters, resolved, fact)
 		if err != nil {
 			return "", nil, nil, err
@@ -542,7 +598,7 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 	spatialLatitudeExpr, spatialLongitudeExpr := "", ""
 	for index, dimension := range resolved.Dimensions {
 		field, path, _ := p.aggregateDimensionBinding(fact, dimension)
-		physical, _ := p.Model.ResolveDimension(field)
+		physical, _ := p.model.ResolveDimension(field)
 		expr, err := dimensionExprForPath(physical, aliases, path)
 		if err != nil {
 			return "", nil, nil, err
@@ -571,13 +627,13 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 		if err != nil {
 			return "", nil, nil, err
 		}
-		expr, err := aggregateMetricExpr(p.Model, metric, factAliases)
+		expr, err := aggregateMetricExpr(p.model, metric, factAliases)
 		if err != nil {
 			return "", nil, nil, err
 		}
 		metricFilterParts := []string{}
 		for _, filter := range metric.Filters {
-			physical, _ := p.Model.ResolveDimension(filter.Field)
+			physical, _ := p.model.ResolveDimension(filter.Field)
 			path, err := p.relationshipPath(fact, physical.Table)
 			if err != nil {
 				return "", nil, nil, err
@@ -595,7 +651,7 @@ func (p *Planner) compileFactAggregate(request Request, resolved aggregateResolu
 				metricArgs = append(metricArgs, partArgs...)
 			}
 		}
-		for _, filter := range scopeMetricWhereFilters(metric.WhereFilters, fact) {
+		for _, filter := range scopeMetricWhereFilters(namedMetricFilters(metric.NamedFilters), fact) {
 			part, partArgs, err := p.factFilterPart(filter, resolved, fact, aliases)
 			if err != nil {
 				return "", nil, nil, err
@@ -756,7 +812,7 @@ func (p *Planner) validateAggregateFilters(filters []Filter, resolved aggregateR
 	for _, filter := range filters {
 		scopes := []string{}
 		collectField := func(field, filterFact string) error {
-			if _, semantic := p.Model.Dimensions[field]; semantic && filterFact == "" {
+			if _, semantic := p.model.Dimensions[field]; semantic && filterFact == "" {
 				scopes = append(scopes, "conformed")
 				return nil
 			}
@@ -899,7 +955,7 @@ func (p *Planner) factFilterPart(filter Filter, resolved aggregateResolution, fa
 			if err != nil || !applies {
 				return "", applies, err
 			}
-			physical, err := p.Model.ResolveDimension(field)
+			physical, err := p.model.ResolveDimension(field)
 			if err != nil {
 				return "", false, err
 			}
@@ -953,7 +1009,7 @@ func (p *Planner) factFilterPart(filter Filter, resolved aggregateResolution, fa
 	if err != nil || !applies {
 		return "", nil, err
 	}
-	physical, err := p.Model.ResolveDimension(field)
+	physical, err := p.model.ResolveDimension(field)
 	if err != nil {
 		return "", nil, err
 	}
@@ -982,7 +1038,7 @@ func (p *Planner) filterMatchGuards(filter Filter, resolved aggregateResolution,
 				return err
 			}
 			if len(path) > 0 {
-				physical, err := p.Model.ResolveDimension(field)
+				physical, err := p.model.ResolveDimension(field)
 				if err != nil {
 					return err
 				}
@@ -1035,7 +1091,7 @@ func (p *Planner) relationshipMatchGuard(fact, target string, path []semanticmod
 	}
 	parts := make([]string, 0, len(fields))
 	for _, field := range fields {
-		physical, err := p.Model.ResolveDimension(dataset + "." + field)
+		physical, err := p.model.ResolveDimension(dataset + "." + field)
 		if err != nil {
 			return "", err
 		}
@@ -1062,7 +1118,7 @@ func uniqueStrings(values []string) []string {
 }
 
 func (p *Planner) resolveFactFilterField(filter Filter, resolved aggregateResolution, fact string) (string, []semanticmodel.Relationship, bool, error) {
-	if semanticDimension, ok := p.Model.Dimensions[filter.Field]; ok {
+	if semanticDimension, ok := p.model.Dimensions[filter.Field]; ok {
 		if filter.Fact != "" && filter.Fact != fact {
 			return "", nil, false, nil
 		}
@@ -1073,7 +1129,7 @@ func (p *Planner) resolveFactFilterField(filter Filter, resolved aggregateResolu
 		if len(filter.Path) > 0 {
 			binding.Path = append([]string(nil), filter.Path...)
 		}
-		path, err := p.Model.ResolveBindingPath(fact, binding)
+		path, err := p.model.ResolveBindingPath(fact, binding)
 		return binding.Field, path, true, err
 	}
 	target := filter.Fact
@@ -1086,13 +1142,13 @@ func (p *Planner) resolveFactFilterField(filter Filter, resolved aggregateResolu
 	if target != fact {
 		return "", nil, false, nil
 	}
-	physical, err := p.Model.ResolveDimension(filter.Field)
+	physical, err := p.model.ResolveDimension(filter.Field)
 	if err != nil {
 		return "", nil, false, err
 	}
 	var path []semanticmodel.Relationship
 	if len(filter.Path) > 0 {
-		path, err = p.Model.ResolveBindingPath(fact, semanticmodel.DimensionBinding{Field: filter.Field, Path: append([]string(nil), filter.Path...)})
+		path, err = p.model.ResolveBindingPath(fact, semanticmodel.DimensionBinding{Field: filter.Field, Path: append([]string(nil), filter.Path...)})
 	} else {
 		path, err = p.relationshipPath(fact, physical.Table)
 	}
@@ -1104,11 +1160,11 @@ func (p *Planner) aggregateDimensionBinding(fact string, dimension aggregateDime
 		path, err := p.relationshipPath(fact, dimension.Physical.Table)
 		return dimension.Name, path, err
 	}
-	binding, ok := p.Model.Dimensions[dimension.Name].Bindings[fact]
+	binding, ok := p.model.Dimensions[dimension.Name].Bindings[fact]
 	if !ok {
 		return "", nil, fmt.Errorf("semantic dimension %q has no binding for fact %q", dimension.Name, fact)
 	}
-	path, err := p.Model.ResolveBindingPath(fact, binding)
+	path, err := p.model.ResolveBindingPath(fact, binding)
 	return binding.Field, path, err
 }
 

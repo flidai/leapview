@@ -47,6 +47,19 @@ type Metrics struct {
 	auditRecorder         access.CanonicalAuditRecorder
 }
 
+// Planner forwards the activation-owned planner exposed by the active runtime.
+// Authorization uses the same compiled semantic graph as execution and
+// dashboard optimization; it never compiles a request-local planner.
+func (m Metrics) Planner(modelID string) (*semanticquery.Planner, bool) {
+	provider, ok := m.Metrics.(interface {
+		Planner(string) (*semanticquery.Planner, bool)
+	})
+	if !ok {
+		return nil, false
+	}
+	return provider.Planner(modelID)
+}
+
 type DeniedError struct {
 	PrincipalID string
 	Capability  access.Capability
@@ -469,7 +482,11 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 		Filters:    dataFiltersToSemanticFilters(request.Filters),
 		Sort:       dataSortToSemanticSort(request.Sort),
 	}
-	dependencies, err := semanticquery.ResolveDependencies(model, queryRequest)
+	planner, ok := m.Planner(request.ModelID)
+	if !ok || planner == nil {
+		return nil, nil, fmt.Errorf("compiled semantic planner for model %q is unavailable", request.ModelID)
+	}
+	dependencies, err := planner.ResolveDependencies(queryRequest)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -788,7 +805,11 @@ func (m Metrics) resolvePolicyFilterFacts(request dataquery.Query, filters []dat
 	if !ok || model == nil {
 		return filters, nil
 	}
-	dependencies, err := semanticquery.ResolveDependencies(model, semanticquery.Request{
+	planner, ok := m.Planner(request.ModelID)
+	if !ok || planner == nil {
+		return nil, fmt.Errorf("compiled semantic planner for model %q is unavailable", request.ModelID)
+	}
+	dependencies, err := planner.ResolveDependencies(semanticquery.Request{
 		Dimensions: dataFieldsToSemanticFields(request.Fields), Metrics: dataFieldsToSemanticFields(request.Metrics),
 		Time: semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 	})

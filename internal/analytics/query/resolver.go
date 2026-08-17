@@ -9,8 +9,8 @@ import (
 )
 
 type Planner struct {
-	Model         *semanticmodel.Model
-	Compiled      *CompiledModel
+	model         *semanticmodel.Model
+	compiled      *CompiledModel
 	tableRelation TableRelation
 }
 
@@ -18,6 +18,12 @@ type Planner struct {
 // relation used by a serving plan. Adapters use it to bind immutable storage
 // versions without teaching the semantic planner about a storage engine.
 type TableRelation func(table string) (string, error)
+
+// IsCompiled reports whether the planner owns an activated immutable semantic
+// snapshot. It intentionally does not expose that snapshot to consumers.
+func (p *Planner) IsCompiled() bool {
+	return p != nil && p.model != nil && p.compiled != nil
+}
 
 type tableAlias struct {
 	Table string
@@ -35,14 +41,6 @@ type queryView struct {
 	// dimension: two semantic references can intentionally resolve to the same
 	// physical table and field through different relationship paths.
 	Paths map[string][]semanticmodel.Relationship
-}
-
-func NewPlanner(model *semanticmodel.Model) *Planner {
-	planner, err := NewCompiledPlanner(model)
-	if err != nil {
-		return &Planner{Model: model}
-	}
-	return planner
 }
 
 func (p *Planner) physicalTable(table string) (string, error) {
@@ -70,34 +68,44 @@ func (p *Planner) TableRelation() TableRelation {
 	return p.tableRelation
 }
 
-func (p *Planner) metricExpression(name string, metric semanticmodel.Metric) (semanticmodel.Expression, error) {
-	if p.Compiled != nil {
-		if expression, ok := p.Compiled.MetricExpressions[name]; ok {
-			return expression, nil
-		}
+func (p *Planner) metricExpression(name string) (semanticmodel.Expression, error) {
+	if p == nil || p.compiled == nil {
+		return semanticmodel.Expression{}, fmt.Errorf("planner is not compiled")
 	}
-	return semanticmodel.ParseExpression(metricExecutableExpression(metric))
+	if node, ok := p.compiled.metric(name); ok {
+		if node.Type == "aggregate" {
+			return semanticmodel.Expression{}, fmt.Errorf("metric %q is aggregate", name)
+		}
+		return node.Expression, nil
+	}
+	return semanticmodel.Expression{}, fmt.Errorf("unknown metric %q", name)
 }
 
-func (p *Planner) resolvedAggregateMetric(name string, metric semanticmodel.Metric) (resolvedAggregateMetric, error) {
-	if metric.Type != "aggregate" {
-		return resolvedAggregateMetric{}, fmt.Errorf("metric %q is not aggregate", name)
+func (p *Planner) resolvedAggregateMetric(name string) (resolvedAggregateMetric, error) {
+	if p == nil || p.compiled == nil {
+		return resolvedAggregateMetric{}, fmt.Errorf("planner is not compiled")
 	}
-	if metric.Input == nil {
-		return resolvedAggregateMetric{}, fmt.Errorf("metric %q aggregate input is required", name)
-	}
-	resolved := resolvedAggregateMetricFromSemantic(metric)
-	if resolved.TimeDimension == "" {
-		if dataset, ok := p.Model.Datasets[metric.Dataset]; ok {
-			resolved.TimeDimension = dataset.DefaultTimeDimension
+	node, ok := p.compiled.metric(name)
+	if !ok || node.Type != "aggregate" {
+		if ok {
+			return resolvedAggregateMetric{}, fmt.Errorf("metric %q is not aggregate", name)
 		}
+		return resolvedAggregateMetric{}, fmt.Errorf("unknown aggregate metric %q", name)
 	}
-	where, err := compileNamedSemanticFilters(p.Model, metric.Where)
-	if err != nil {
-		return resolvedAggregateMetric{}, err
-	}
-	resolved.WhereFilters = where
-	return resolved, nil
+	return resolvedAggregateMetric{
+		Field:         node.Name,
+		Name:          node.Name,
+		Label:         node.Label,
+		Description:   node.Description,
+		Fact:          node.Dataset,
+		Aggregation:   node.Aggregation,
+		InputField:    node.InputField,
+		Empty:         node.Empty,
+		Unit:          node.Unit,
+		Format:        node.Format,
+		TimeDimension: node.TimeDimension,
+		NamedFilters:  cloneCompiledNamedFilters(node.NamedFilters),
+	}, nil
 }
 
 type AggregateAnalysis struct {
@@ -153,20 +161,13 @@ func (p *Planner) countView(request CountRequest) (*queryView, error) {
 }
 
 func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field, filters []Filter, timeField string) (*queryView, error) {
-	if p.Model == nil {
+	if p.model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
 	fact := table
 	resolvedMetrics := map[string]resolvedAggregateMetric{}
 	for _, item := range metrics {
-		metric, ok := p.Model.Metrics[item.Field]
-		if !ok {
-			return nil, fmt.Errorf("unknown metric %q", item.Field)
-		}
-		if metric.Type != "aggregate" {
-			return nil, fmt.Errorf("metric %q is aggregate-only", item.Field)
-		}
-		resolved, err := p.resolvedAggregateMetric(item.Field, metric)
+		resolved, err := p.resolvedAggregateMetric(item.Field)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +182,7 @@ func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field
 	if fact == "" {
 		return nil, fmt.Errorf("query requires a fact table")
 	}
-	if _, ok := p.Model.Tables[fact]; !ok {
+	if _, ok := p.model.Tables[fact]; !ok {
 		return nil, fmt.Errorf("unknown table %q", fact)
 	}
 	if err := validateSingleFactFilterScope(fact, filters); err != nil {
@@ -221,19 +222,19 @@ func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field
 }
 
 func (p *Planner) resolveViewDimension(fact, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
-	if semanticDimension, ok := p.Model.Dimensions[ref]; ok {
+	if semanticDimension, ok := p.model.Dimensions[ref]; ok {
 		binding, ok := semanticDimension.Bindings[fact]
 		if !ok {
 			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for fact %q", ref, fact)
 		}
-		dimension, err := p.Model.ResolveDimension(binding.Field)
+		dimension, err := p.model.ResolveDimension(binding.Field)
 		if err != nil {
 			return semanticmodel.MetricDimension{}, nil, err
 		}
-		path, err := p.Model.ResolveBindingPath(fact, binding)
+		path, err := p.model.ResolveBindingPath(fact, binding)
 		return dimension, path, err
 	}
-	dimension, err := p.Model.ResolveDimension(ref)
+	dimension, err := p.model.ResolveDimension(ref)
 	if err != nil {
 		return semanticmodel.MetricDimension{}, nil, err
 	}
@@ -313,7 +314,7 @@ func (p *Planner) exposeViewFilters(view *queryView, filters []Filter) error {
 }
 
 func (p *Planner) resolveViewFilterDimension(fact, ref string, explicitPath []string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
-	if semanticDimension, ok := p.Model.Dimensions[ref]; ok {
+	if semanticDimension, ok := p.model.Dimensions[ref]; ok {
 		binding, ok := semanticDimension.Bindings[fact]
 		if !ok {
 			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for fact %q", ref, fact)
@@ -321,20 +322,20 @@ func (p *Planner) resolveViewFilterDimension(fact, ref string, explicitPath []st
 		if len(explicitPath) > 0 {
 			binding.Path = append([]string(nil), explicitPath...)
 		}
-		dimension, err := p.Model.ResolveDimension(binding.Field)
+		dimension, err := p.model.ResolveDimension(binding.Field)
 		if err != nil {
 			return semanticmodel.MetricDimension{}, nil, err
 		}
-		path, err := p.Model.ResolveBindingPath(fact, binding)
+		path, err := p.model.ResolveBindingPath(fact, binding)
 		return dimension, path, err
 	}
-	dimension, err := p.Model.ResolveDimension(ref)
+	dimension, err := p.model.ResolveDimension(ref)
 	if err != nil {
 		return semanticmodel.MetricDimension{}, nil, err
 	}
 	var path []semanticmodel.Relationship
 	if len(explicitPath) > 0 {
-		path, err = p.Model.ResolveBindingPath(fact, semanticmodel.DimensionBinding{Field: ref, Path: append([]string(nil), explicitPath...)})
+		path, err = p.model.ResolveBindingPath(fact, semanticmodel.DimensionBinding{Field: ref, Path: append([]string(nil), explicitPath...)})
 	} else {
 		path, err = p.relationshipPath(fact, dimension.Table)
 	}
@@ -355,26 +356,6 @@ func filterRefs(filters []Filter) []string {
 		}
 	}
 	return fields
-}
-
-func resolvedAggregateMetricFromSemantic(metric semanticmodel.Metric) resolvedAggregateMetric {
-	inputField := ""
-	if metric.Input != nil {
-		inputField = metric.Input.Field
-	}
-	return resolvedAggregateMetric{
-		Field:         metric.Name,
-		Name:          metric.Name,
-		Label:         metric.Label,
-		Description:   metric.Description,
-		Fact:          metric.Dataset,
-		Aggregation:   metric.Aggregation,
-		InputField:    inputField,
-		Empty:         metric.Empty,
-		Unit:          metric.Unit,
-		Format:        metric.Format,
-		TimeDimension: metric.TimeDimension,
-	}
 }
 
 func (s *queryView) ResolveDimensionRef(ref string) (string, semanticmodel.MetricDimension, error) {
@@ -404,7 +385,7 @@ func (s *queryView) ResolveMetricRef(ref string) (string, resolvedAggregateMetri
 }
 
 func (p *Planner) relationshipPath(base, target string) ([]semanticmodel.Relationship, error) {
-	return p.Model.SafeRelationshipPath(base, target)
+	return p.model.SafeRelationshipPath(base, target)
 }
 
 func defaultString(value, fallback string) string {

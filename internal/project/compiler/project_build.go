@@ -514,6 +514,7 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticMode
 		if !ok {
 			return fmt.Errorf("SemanticModel %q dataset %q references unknown Model %q", model.Name, datasetName, dataset.Model)
 		}
+		table.ModelName = dataset.Model
 		tables[datasetName] = table
 	}
 	relationships := make([]semanticmodel.Relationship, 0, len(spec.Relationships))

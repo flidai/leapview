@@ -3,7 +3,7 @@ kind: Model
 metadata:
   id: model:ratings
   name: ratings
-  displayName: Ratings Fact
+  displayName: Ratings
   description: Rating-grain model table from MovieLens 32M ratings.
 spec:
   sources:

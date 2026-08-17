@@ -152,6 +152,9 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	if err != nil {
 		return nil, fmt.Errorf("compile semantic model: %w", err)
 	}
+	if !planner.IsCompiled() {
+		return nil, fmt.Errorf("compiled semantic planner is required")
+	}
 	cache = newQueryResultCacheWithScope(config.QueryCache, config.QueryCacheNamespace)
 	if config.QueryCache == nil {
 		cache = newQueryResultCache(256, config.QueryCacheNamespace)
@@ -206,11 +209,23 @@ func (r *Runtime) ensureRequiredExtensions(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runtime) queryPlanner() *semanticquery.Planner {
-	if r != nil && r.planner != nil {
-		return r.planner
+func (r *Runtime) queryPlanner() (*semanticquery.Planner, error) {
+	if r == nil {
+		return nil, fmt.Errorf("compiled semantic planner is unavailable")
 	}
-	return semanticquery.NewPlanner(r.model)
+	if r.planner == nil {
+		return nil, fmt.Errorf("compiled semantic planner is unavailable")
+	}
+	return r.planner, nil
+}
+
+// Planner returns the immutable planner bound during activation. It is a
+// narrow read-only port used by dashboard optimization and authorization.
+func (r *Runtime) Planner() *semanticquery.Planner {
+	if r == nil {
+		return nil
+	}
+	return r.planner
 }
 
 func (r *Runtime) Close() error {
@@ -296,11 +311,10 @@ func (r *Runtime) VerifySemantic(ctx context.Context) error {
 	if r == nil || r.model == nil {
 		return fmt.Errorf("semantic verification: materialization runtime is not initialized")
 	}
-	var relation semanticquery.TableRelation
-	if r.planner != nil {
-		relation = r.planner.TableRelation()
+	if r.planner == nil {
+		return fmt.Errorf("semantic verification: compiled semantic planner is unavailable")
 	}
-	if err := semanticquery.VerifyRepresentativePlans(r.model, relation); err != nil {
+	if _, err := r.planner.PrepareRepresentativePlans(r.model); err != nil {
 		return err
 	}
 	return r.VerifyEntityClaims(ctx)
@@ -519,9 +533,13 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 }
 
 func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, error) {
+	planner, err := r.queryPlanner()
+	if err != nil {
+		return semanticquery.Plan{}, err
+	}
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate:
-		return r.queryPlanner().Plan(semanticquery.Request{
+		return planner.Plan(semanticquery.Request{
 			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
@@ -531,7 +549,7 @@ func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, e
 		if request.IncludeTotal {
 			return semanticquery.Plan{}, fmt.Errorf("native Arrow row queries do not include an auxiliary total")
 		}
-		return r.queryPlanner().PlanRows(semanticquery.RowRequest{
+		return planner.PlanRows(semanticquery.RowRequest{
 			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,

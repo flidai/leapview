@@ -321,8 +321,8 @@ func compiledInteractionConfig(interaction visualizationir.VisualizationInteract
 	mappings := make([]dashboard.InteractionConfigMapping, 0, len(interaction.Mappings))
 	for _, mapping := range interaction.Mappings {
 		fact, grain, label := "", "", ""
-		if mapping.TargetFactID != nil {
-			fact = *mapping.TargetFactID
+		if mapping.TargetDatasetID != nil {
+			fact = *mapping.TargetDatasetID
 		}
 		if mapping.Grain != nil {
 			grain = *mapping.Grain
@@ -375,7 +375,7 @@ func selectedHighlights(runtime *modelRuntime, report *dashboarddefinition.Defin
 			next := visualizationir.VisualizationHighlightEntry{Mappings: []visualizationir.VisualizationHighlightMapping{}, Label: entry.Label}
 			for _, mapping := range entry.Mappings {
 				next.Mappings = append(next.Mappings, visualizationir.VisualizationHighlightMapping{
-					TargetFieldID: mapping.Field, TargetFactID: optionalRuntimeString(mapping.Fact),
+					TargetFieldID: mapping.Field, TargetDatasetID: optionalRuntimeString(mapping.Fact),
 					Grain: optionalRuntimeString(mapping.Grain), Value: mapping.Value, Label: optionalRuntimeString(mapping.Label),
 				})
 			}

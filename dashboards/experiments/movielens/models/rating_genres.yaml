@@ -3,7 +3,7 @@ kind: Model
 metadata:
   id: model:rating_genres
   name: rating_genres
-  displayName: Rating Genres Fact
+  displayName: Rating Genres
   description: Rating-by-genre bridge model used to analyze genres without unsafe many-to-many joins.
 spec:
   fields:

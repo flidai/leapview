@@ -307,8 +307,11 @@ function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedEdges: Set<strin
     type: 'relationship',
     source: edge.source,
     target: edge.target,
-    sourceHandle: `${edge.sourceField}:source`,
-    targetHandle: `${edge.targetField}:target`,
+    // Composite endpoints retain their complete ordered tuple in the signal;
+    // React Flow anchors the edge to the first physical field's handle while
+    // the tuple remains visible in the edge label and metadata.
+    sourceHandle: `${endpointAnchorField(edge.sourceField)}:source`,
+    targetHandle: `${endpointAnchorField(edge.targetField)}:target`,
     interactionWidth: 18,
     data: { ...edge, selected, sourceMarker, targetMarker },
     style: {
@@ -317,6 +320,10 @@ function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedEdges: Set<strin
       opacity: selected ? 0.92 : 0.18,
     },
   }
+}
+
+function endpointAnchorField(fields: string): string {
+  return fields.split(',')[0]?.trim() ?? fields.trim()
 }
 
 function RelationshipEdge(props: EdgeProps<ModelEdge>) {
@@ -359,10 +366,6 @@ function relationshipEndpointMarkers(cardinality: string): [string, string] {
       return ['*', '1']
     case 'one_to_one':
       return ['1', '1']
-    case 'one_to_many':
-      return ['1', '*']
-    case 'many_to_many':
-      return ['*', '*']
     default:
       return ['', '']
   }

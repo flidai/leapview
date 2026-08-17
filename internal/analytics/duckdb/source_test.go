@@ -160,7 +160,8 @@ func TestDiscoverSchemasIgnoresAttachedDatabaseSchemas(t *testing.T) {
 				},
 			},
 		},
-		Metrics: map[string]semanticmodel.Metric{},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics:  map[string]semanticmodel.Metric{},
 	}
 	if err := model.Validate(); err != nil {
 		t.Fatal(err)
@@ -222,6 +223,7 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 				},
 			},
 		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Metrics: map[string]semanticmodel.Metric{
 			"revenue": {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
 		},
@@ -848,7 +850,8 @@ func TestSourceRelationResolvesSourcePlans(t *testing.T) {
 				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
 			},
 		},
-		Metrics: map[string]semanticmodel.Metric{"orders": {Type: "aggregate", Dataset: "orders", Label: "Orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics:  map[string]semanticmodel.Metric{"orders": {Type: "aggregate", Dataset: "orders", Label: "Orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"}},
 	}
 	if err := model.Validate(); err != nil {
 		t.Fatal(err)

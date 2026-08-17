@@ -14,6 +14,73 @@ type Expression struct {
 	calls []string
 }
 
+// ScalarExpressionNode is the immutable, renderer-neutral view of a parsed
+// scalar expression. Number is retained as its source token so downstream
+// typed plans do not round-trip decimal literals through float64.
+type ScalarExpressionKind string
+type ScalarExpressionOperator string
+type ScalarExpressionFunction string
+
+type ScalarExpressionNode struct {
+	Kind     ScalarExpressionKind
+	Metric   string
+	Number   string
+	Operator ScalarExpressionOperator
+	Function ScalarExpressionFunction
+	Children []ScalarExpressionNode
+}
+
+const (
+	ScalarExpressionMetric ScalarExpressionKind = "metric_ref"
+	ScalarExpressionNumber ScalarExpressionKind = "number"
+	ScalarExpressionUnary  ScalarExpressionKind = "unary"
+	ScalarExpressionBinary ScalarExpressionKind = "binary"
+	ScalarExpressionCall   ScalarExpressionKind = "function"
+)
+
+// Tree returns a detached typed AST for a parsed expression. Keeping this
+// conversion beside the parser ensures every planner consumes the same
+// grammar and function/arity checks.
+func (e Expression) Tree() (ScalarExpressionNode, error) {
+	if e.root == nil {
+		return ScalarExpressionNode{}, fmt.Errorf("expression is not parsed")
+	}
+	return expressionTree(e.root)
+}
+
+func expressionTree(node expressionNode) (ScalarExpressionNode, error) {
+	var out ScalarExpressionNode
+	var children []expressionNode
+	switch value := node.(type) {
+	case expressionRef:
+		out.Kind, out.Metric = ScalarExpressionMetric, string(value)
+	case expressionNumber:
+		out.Kind, out.Number = ScalarExpressionNumber, string(value)
+	case expressionUnary:
+		out.Kind, out.Operator = ScalarExpressionUnary, ScalarExpressionOperator(value.op)
+		children = []expressionNode{value.node}
+	case expressionBinary:
+		out.Kind, out.Operator = ScalarExpressionBinary, ScalarExpressionOperator(value.op)
+		children = []expressionNode{value.left, value.right}
+	case expressionCall:
+		out.Kind, out.Function = ScalarExpressionCall, ScalarExpressionFunction(value.name)
+		children = value.args
+	default:
+		return ScalarExpressionNode{}, fmt.Errorf("unsupported expression node %T", node)
+	}
+	if len(children) != 0 {
+		out.Children = make([]ScalarExpressionNode, len(children))
+		for index, child := range children {
+			converted, err := expressionTree(child)
+			if err != nil {
+				return ScalarExpressionNode{}, err
+			}
+			out.Children[index] = converted
+		}
+	}
+	return out, nil
+}
+
 func ParseExpression(input string) (Expression, error) {
 	p := expressionParser{input: strings.TrimSpace(input)}
 	if p.input == "" {

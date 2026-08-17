@@ -194,6 +194,43 @@ test('semantic model graph persists dragged node layout and resets it', async ()
   }
 })
 
+test('semantic model graph anchors composite endpoints and shows one-to-one markers', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => document.querySelectorAll('lv-semantic-model-graph .react-flow__node').length >= 2)
+    await page.evaluate(() => {
+      const graph = document.querySelector('lv-semantic-model-graph') as HTMLElement & { graph: any }
+      const current = graph.graph
+      graph.graph = {
+        ...current,
+        nodes: current.nodes.map((node: any) => ({
+          ...node,
+          fields: [...node.fields, { name: 'customer_region', label: 'Customer region', type: 'VARCHAR', join: true, relationships: ['orders_customers'] }],
+        })),
+        edges: [{
+          id: 'orders_customers',
+          source: 'orders',
+          target: 'customers',
+          sourceField: 'customer_id, customer_region',
+          targetField: 'customer_id, customer_region',
+          cardinality: 'one_to_one',
+          label: '1:1',
+        }],
+      }
+    })
+    await page.waitForFunction(() => document.querySelector('.semantic-model-edge-label')?.textContent?.trim() === '1:1')
+    const state = await page.evaluate(() => ({
+      labels: Array.from(document.querySelectorAll('.semantic-model-edge-endpoint')).map((endpoint) => endpoint.textContent?.trim()),
+      path: document.querySelector('.semantic-model-relationship-path')?.getAttribute('d') ?? '',
+    }))
+    expect(state.labels).toEqual(['1', '1'])
+    expect(state.path).not.toBe('')
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   return `
     <!doctype html>

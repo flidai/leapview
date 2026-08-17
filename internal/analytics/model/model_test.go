@@ -400,11 +400,13 @@ func directSemanticValidationModel() *Model {
 	return &Model{
 		Name: "sales",
 		Tables: map[string]Table{
-			"orders": {Dimensions: map[string]MetricDimension{
-				"amount": {Type: "number", Datatype: DataTypeDecimal},
-				"status": {Type: "string", Datatype: DataTypeString},
+			"orders": {Entities: map[string]ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]MetricDimension{
+				"order_id": {Type: "string", Datatype: DataTypeString},
+				"amount":   {Type: "number", Datatype: DataTypeDecimal},
+				"status":   {Type: "string", Datatype: DataTypeString},
 			}},
 		},
+		Datasets: map[string]SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Metrics: map[string]Metric{
 			"amount": {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &MetricInput{Field: "orders.amount"}},
 		},

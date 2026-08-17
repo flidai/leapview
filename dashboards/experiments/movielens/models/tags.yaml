@@ -3,7 +3,7 @@ kind: Model
 metadata:
   id: model:tags
   name: tags
-  displayName: Tags Fact
+  displayName: Tags
   description: User-generated tag events from MovieLens.
 spec:
   sources:

@@ -122,7 +122,7 @@ func compiledSpatialSelectionInteractions(selection dashboardauthoring.SpatialSe
 	mapping := func(value dashboardauthoring.SpatialSelectionMapping) visualizationir.VisualizationSpatialFieldMapping {
 		return visualizationir.VisualizationSpatialFieldMapping{
 			Source:        visualizationir.VisualizationFieldRef{Dataset: "primary", Field: value.Source},
-			TargetFieldID: value.Field, TargetFactID: optionalString(value.Fact),
+			TargetFieldID: value.Field, TargetDatasetID: optionalString(value.Fact),
 		}
 	}
 	return []visualizationir.VisualizationSpatialSelectionInteraction{{

@@ -279,6 +279,7 @@ func planningModel(sourceColumns map[string][]string, table semanticmodel.Table)
 		Connections: map[string]semanticmodel.Connection{"local_files": {Kind: "managed"}},
 		Sources:     sources,
 		Tables:      map[string]semanticmodel.Table{"orders": table},
+		Datasets:    map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Metrics:     map[string]semanticmodel.Metric{},
 	}
 }

@@ -125,8 +125,8 @@ func TestRuntimeCachesOwnedArrowAndRebuildsRequestTimingOnHit(t *testing.T) {
 	runtime := &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id"}}},
-		}},
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
 	}
@@ -490,8 +490,8 @@ func TestRuntimeCountsFilterOptionCacheMissAsPhysicalAndHitAsZero(t *testing.T) 
 	runtime := &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id"}}},
-		}},
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         cacheRuntimeDatabase{},
 		queryCache: newQueryResultCache(256, ""),
 	}
@@ -531,10 +531,10 @@ func TestRuntimeCachesGovernedDashboardQueriesAndToggleBackExecutesZeroSQL(t *te
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Columns:    map[string]semanticmodel.ModelColumn{"id": {Name: "id"}},
-				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "ID"}},
+				Columns:    map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "ID", Datatype: semanticmodel.DataTypeInteger}},
 			},
-		}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
 	}
@@ -579,10 +579,10 @@ func TestRuntimeReauthorizesBeforeCacheLookupAndRejectsRevocation(t *testing.T) 
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Columns:    map[string]semanticmodel.ModelColumn{"id": {Name: "id"}},
-				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "ID"}},
+				Columns:    map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "ID", Datatype: semanticmodel.DataTypeInteger}},
 			},
-		}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
 	}
@@ -860,9 +860,9 @@ func (g *bundleMaskGovernor) GovernDataQuery(_ context.Context, request dataquer
 func bundleCacheRuntime(database Database) *Runtime {
 	return &Runtime{modelID: "sales", model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {
 		Dimensions: map[string]semanticmodel.MetricDimension{
-			"id": {Type: "number"},
+			"id": {Type: "number", Datatype: semanticmodel.DataTypeInteger},
 		},
-	}}, Metrics: map[string]semanticmodel.Metric{
+	}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Metrics: map[string]semanticmodel.Metric{
 		"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
 		"event_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
 	}}, db: database, queryCache: newQueryResultCache(256, "bundle-test")}
@@ -917,10 +917,10 @@ func TestRuntimeDoesNotCacheNonDashboardQueries(t *testing.T) {
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Columns:    map[string]semanticmodel.ModelColumn{"id": {Name: "id"}},
-				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "ID"}},
+				Columns:    map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "ID", Datatype: semanticmodel.DataTypeInteger}},
 			},
-		}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
 	}
@@ -943,8 +943,8 @@ func TestRuntimeCountFailsClosedForMaskedAuthorizationProjection(t *testing.T) {
 	runtime := &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"email": {Type: "string"}}},
-		}},
+			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"email": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db: cacheRuntimeDatabase{}, queryCache: newQueryResultCache(256, ""),
 	}
 	_, err := runtime.ExecuteDataQuery(context.Background(), dataquery.Query{
@@ -964,10 +964,10 @@ func TestRuntimeDashboardCacheHitDoesNotConsumeReadPermit(t *testing.T) {
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Columns:    map[string]semanticmodel.ModelColumn{"id": {Name: "id"}},
-				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "ID"}},
+				Columns:    map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "ID", Datatype: semanticmodel.DataTypeInteger}},
 			},
-		}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
 	}
@@ -1059,7 +1059,7 @@ func TestRuntimeRefreshInvalidatesCacheAfterPartialMaterializationFailure(t *tes
 				model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 					"first":  {},
 					"second": {},
-				}},
+				}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"first": {Model: "first"}, "second": {Model: "second"}}},
 				db:         database,
 				sources:    partialRefreshSourcePreparer{},
 				queryCache: newQueryResultCache(256, "mutable"),
@@ -1288,8 +1288,8 @@ func TestRuntimeSeparatesConnectionWaitFromDatabaseExecution(t *testing.T) {
 	runtime := &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id"}}},
-		}},
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db: timingRuntimeDatabase{},
 	}
 	result, err := runtime.ExecuteDataQuery(context.Background(), dataquery.Query{

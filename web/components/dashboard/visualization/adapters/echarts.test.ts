@@ -63,7 +63,7 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
       dataBudget: { maxRows: 2000, requiredCompleteness: 'complete' },
       accessibility: { title: 'Delivery and revenue', description: 'Each point is one order.' },
       interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: [{ visualID: 'detail', effect: 'filter' }], mappings: [
-        { source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.id', targetFactID: 'orders' },
+        { source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.id', targetDatasetID: 'orders' },
       ] }],
       identity: [{ dataset: 'primary', field: 'order_id' }],
       x: { dataset: 'primary', field: 'delivery_days' }, y: { dataset: 'primary', field: 'revenue' },
@@ -121,11 +121,11 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   })).toEqual([
     {
       sourceKind: 'visual', sourceId: 'delivery', interactionKind: 'point_selection', action: 'replace', toggle: true,
-      mappings: [{ field: 'orders.id', fact: 'orders', value: 'o-1', label: 'o-1' }],
+      mappings: [{ field: 'orders.id', dataset: 'orders', value: 'o-1', label: 'o-1' }],
     },
     {
       sourceKind: 'visual', sourceId: 'delivery', interactionKind: 'point_selection', action: 'set', toggle: true,
-      mappings: [{ field: 'orders.id', fact: 'orders', value: 'o-2', label: 'o-2' }],
+      mappings: [{ field: 'orders.id', dataset: 'orders', value: 'o-2', label: 'o-2' }],
     },
   ])
   expect(brushSelectionCommands(envelope, { batch: [{ selected: [] }] })).toEqual([{
@@ -308,7 +308,7 @@ test('ECharts interactions translate stable IR field mappings without renderer r
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders by status' },
       interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [
-        { source: { dataset: 'primary', field: 'status' }, targetFieldID: 'orders.status', targetFactID: 'orders', label: { dataset: 'primary', field: 'status' } },
+        { source: { dataset: 'primary', field: 'status' }, targetFieldID: 'orders.status', targetDatasetID: 'orders', label: { dataset: 'primary', field: 'status' } },
       ] }],
       x: { dataset: 'primary', field: 'status' }, y: [{ dataset: 'primary', field: 'count' }],
       presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false },
@@ -321,7 +321,7 @@ test('ECharts interactions translate stable IR field mappings without renderer r
 
   expect(interactionCommandForRow(envelope, 'primary', ['delivered', 42])).toEqual({
     sourceKind: 'visual', sourceId: 'orders', interactionKind: 'point_selection', action: 'set', toggle: true,
-    mappings: [{ field: 'orders.status', fact: 'orders', value: 'delivered', label: 'delivered' }],
+    mappings: [{ field: 'orders.status', dataset: 'orders', value: 'delivered', label: 'delivered' }],
   })
   expect(interactionCommandForRow(envelope, 'primary', [{ forged: true }, 42])).toBeUndefined()
   const option = echartsOption(envelope) as any
@@ -335,7 +335,7 @@ test('ECharts gives selectable line and area rows reliable hit targets at either
     envelope.spec.datasets[0].fields[0].role = 'identity'
     envelope.spec.interactions = [{
       id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [
-        { source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.purchase_month', targetFactID: 'orders' },
+        { source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.purchase_month', targetDatasetID: 'orders' },
       ],
     }]
 
@@ -357,7 +357,7 @@ test('ECharts gives selectable line and area rows reliable hit targets at either
   authoredSymbols.spec.presentation.showSymbols = true
   authoredSymbols.spec.interactions = [{
     id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [
-      { source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.purchase_month', targetFactID: 'orders' },
+        { source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.purchase_month', targetDatasetID: 'orders' },
     ],
   }]
   expect((echartsOption(authoredSymbols, defaultRendererContext) as any).series).toHaveLength(2)
@@ -879,13 +879,13 @@ test('ECharts translates proportional legend categories into governed selections
   envelope.spec.datasets[0].fields[0].role = 'identity'
   envelope.spec.interactions = [{
     id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
-      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetFactID: 'orders',
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
     }],
   }]
 
   expect(legendSelectionCommand(envelope, 'A')).toEqual({
     sourceKind: 'visual', sourceId: 'donut', interactionKind: 'point_selection', action: 'set', toggle: true,
-    mappings: [{ field: 'orders.status', fact: 'orders', value: 'A', label: 'A' }],
+    mappings: [{ field: 'orders.status', dataset: 'orders', value: 'A', label: 'A' }],
   })
   expect(legendSelectionCommand(envelope, 'missing')).toBeUndefined()
 })

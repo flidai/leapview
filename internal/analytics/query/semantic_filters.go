@@ -108,6 +108,14 @@ func scopeMetricWhereFilters(filters []Filter, fact string) []Filter {
 	return out
 }
 
+func namedMetricFilters(filters []CompiledNamedFilter) []Filter {
+	out := make([]Filter, 0, len(filters))
+	for _, named := range filters {
+		out = append(out, named.Filter)
+	}
+	return out
+}
+
 func scopeMetricWhereFilter(filter Filter, fact string) Filter {
 	if filter.Field != "" && filter.Fact == "" {
 		filter.Fact = fact

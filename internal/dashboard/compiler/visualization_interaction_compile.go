@@ -14,7 +14,7 @@ func compiledSelectionInteractions(id string, selection dashboardauthoring.Selec
 		value := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: mapping.Value}
 		item := visualizationir.VisualizationInteractionMapping{Source: value, TargetFieldID: mapping.Field}
 		if mapping.Fact != "" {
-			item.TargetFactID = &mapping.Fact
+			item.TargetDatasetID = &mapping.Fact
 		}
 		if mapping.Grain != "" {
 			item.Grain = &mapping.Grain

@@ -11,6 +11,13 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 )
 
+func TestRuntimeQueryPlannerFailsClosedWhenActivationPlannerIsAbsent(t *testing.T) {
+	runtime := &Runtime{}
+	if _, err := runtime.queryPlanner(); err == nil {
+		t.Fatal("queryPlanner() accepted a runtime without an activation planner")
+	}
+}
+
 type ownershipDatabase struct {
 	cacheRuntimeDatabase
 	closes   atomic.Int32
@@ -35,11 +42,11 @@ type ownershipPreparedSources struct{}
 
 func (ownershipPreparedSources) Close() error { return nil }
 func (ownershipPreparedSources) PlanModelTable(context.Context, *semanticmodel.Model, string, semanticmodel.Table) (ModelTablePlan, error) {
-	return ModelTablePlan{}, nil
+	return ModelTablePlan{Mode: PlanModeModelSQL, SQL: "SELECT 1 AS id"}, nil
 }
 
 func ownershipModel() *semanticmodel.Model {
-	return &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{}}
+	return &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Transform: semanticmodel.Transform{SQL: "SELECT 1 AS id"}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
 }
 
 func TestOpenRuntimeOwnedFailureClosesDatabaseExactlyOnceAndJoinsErrors(t *testing.T) {

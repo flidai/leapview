@@ -1,5 +1,11 @@
 package query
 
+import (
+	"fmt"
+
+	"github.com/flidai/leapview/internal/analytics/query/planir"
+)
+
 type Field struct {
 	Field string
 	Alias string
@@ -14,7 +20,7 @@ type resolvedAggregateMetric struct {
 	Aggregation   string
 	InputField    string
 	Filters       []metricFilter
-	WhereFilters  []Filter
+	NamedFilters  []CompiledNamedFilter
 	Empty         string
 	Unit          string
 	Format        string
@@ -202,6 +208,20 @@ type Plan struct {
 	// EffectiveOrdering is the total ordering applied to the result. Explicit
 	// caller sorts are kept first; selected output columns complete ties.
 	EffectiveOrdering []Sort
+	// IR is the validated, renderer-independent graph used by every semantic
+	// query path, including row, count, raw-value, aggregate, bundle, and
+	// spatial planning boundaries.
+	IR *planir.Graph
+}
+
+// Explain returns the deterministic typed plan explanation. SQL is included
+// only as the renderer result; callers should use this for audit/debug output
+// instead of depending on CTE naming or formatting details.
+func (p Plan) Explain() (string, error) {
+	if p.IR == nil {
+		return "", fmt.Errorf("plan has no PlanIR")
+	}
+	return p.IR.Explain()
 }
 
 // BundleRequest is one independently shaped aggregate in a shared governed
@@ -220,9 +240,10 @@ type BundlePlan struct {
 }
 
 type BundleBranch struct {
-	ID      string
-	Ordinal int
-	Columns []BundleColumn
+	ID          string
+	Ordinal     int
+	Columns     []BundleColumn
+	Fingerprint string
 }
 
 type BundleColumn struct {

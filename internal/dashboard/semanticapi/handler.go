@@ -41,6 +41,10 @@ type Metrics interface {
 	SemanticModel(modelID string) (*semanticmodel.Model, bool)
 }
 
+type plannerProvider interface {
+	Planner(modelID string) (*semanticquery.Planner, bool)
+}
+
 type Handler struct {
 	Metrics               Metrics
 	ResolveProjectID      func(context.Context) (projectgraph.ResourceID, error)
@@ -829,19 +833,27 @@ func semanticQueryFields(fields []api.SemanticFieldRef) []reportdef.QueryField {
 }
 
 func semanticExplainAggregate(metrics Metrics, modelID string, request reportdef.AggregateQuery) (semanticquery.Plan, error) {
-	model := semanticModelForID(metrics, modelID)
-	if model == nil {
-		return semanticquery.Plan{}, fmt.Errorf("unknown semantic model %q", modelID)
+	planner, ok := metrics.(plannerProvider)
+	if !ok {
+		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
 	}
-	return semanticquery.NewPlanner(model).Plan(reportdef.SemanticAggregateRequest(request))
+	compiled, ok := planner.Planner(modelID)
+	if !ok || compiled == nil {
+		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
+	}
+	return compiled.Plan(reportdef.SemanticAggregateRequest(request))
 }
 
 func semanticExplainRows(metrics Metrics, modelID string, request reportdef.RowQuery) (semanticquery.Plan, error) {
-	model := semanticModelForID(metrics, modelID)
-	if model == nil {
-		return semanticquery.Plan{}, fmt.Errorf("unknown semantic model %q", modelID)
+	planner, ok := metrics.(plannerProvider)
+	if !ok {
+		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
 	}
-	return semanticquery.NewPlanner(model).PlanRows(reportdef.SemanticRowRequest(request))
+	compiled, ok := planner.Planner(modelID)
+	if !ok || compiled == nil {
+		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
+	}
+	return compiled.PlanRows(reportdef.SemanticRowRequest(request))
 }
 
 func semanticFilters(filters []api.SemanticFilter) []reportdef.QueryFilter {

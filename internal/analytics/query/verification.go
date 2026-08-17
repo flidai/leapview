@@ -35,6 +35,22 @@ func PrepareRepresentativePlans(model *semanticmodel.Model, relation TableRelati
 	if err != nil {
 		return nil, fmt.Errorf("semantic verification: compile planner: %w", err)
 	}
+	return planner.PrepareRepresentativePlans(model)
+}
+
+// PrepareRepresentativePlans validates the discovered schema and prepares
+// representative checks against this activation-owned planner. Unlike the
+// package helper above, this method never compiles semantic metadata.
+func (planner *Planner) PrepareRepresentativePlans(model *semanticmodel.Model) ([]RepresentativePlan, error) {
+	if planner == nil || !planner.IsCompiled() {
+		return nil, fmt.Errorf("semantic verification: compiled planner is required")
+	}
+	if model == nil {
+		return nil, fmt.Errorf("semantic verification: semantic model is required")
+	}
+	if err := model.ValidateDiscoveredSchemas(); err != nil {
+		return nil, fmt.Errorf("semantic verification: discovered schema: %w", err)
+	}
 	prepared := make([]RepresentativePlan, 0)
 	add := func(route string, request Request) error {
 		plan, err := planner.Plan(request)
@@ -147,13 +163,16 @@ func PrepareRepresentativePlans(model *semanticmodel.Model, relation TableRelati
 		if relationship.FromDataset == "" || relationship.ToDataset == "" || len(relationship.ToFields) == 0 {
 			continue
 		}
-		path := []semanticmodel.Relationship{relationship}
-		if _, err := model.ResolveDimension(relationship.ToDataset + "." + relationship.ToFields[0]); err == nil {
-			if _, err := model.ResolveBindingPath(relationship.FromDataset, semanticmodel.DimensionBinding{Field: relationship.ToDataset + "." + relationship.ToFields[0], Path: []string{relationship.ID}}); err != nil {
-				return nil, fmt.Errorf("semantic verification relationship %q path: %w", relationship.ID, err)
-			}
+		field := relationship.ToDataset + "." + relationship.ToFields[0]
+		if _, err := model.ResolveDimension(field); err != nil {
+			// Entity-only endpoints have no authored semantic field to plan;
+			// entity validation below still covers their key claims.
+			continue
 		}
-		plan, err := prepareExplicitRelationshipPlan(model, relation, relationship.FromDataset, relationship.ToDataset, relationship.ToFields[0], path)
+		if _, err := model.ResolveBindingPath(relationship.FromDataset, semanticmodel.DimensionBinding{Field: field, Path: []string{relationship.ID}}); err != nil {
+			return nil, fmt.Errorf("semantic verification relationship %q path: %w", relationship.ID, err)
+		}
+		plan, err := planner.Plan(Request{Table: relationship.FromDataset, Dimensions: []Field{{Field: field}}})
 		if err != nil {
 			return nil, fmt.Errorf("semantic verification route relationship:%s: %w", relationship.ID, err)
 		}
@@ -182,7 +201,7 @@ func prepareExplicitRelationshipPlan(model *semanticmodel.Model, relation TableR
 		}
 		if name == to {
 			if _, ok := tableCopy.Dimensions[field]; !ok {
-				tableCopy.Dimensions[field] = semanticmodel.MetricDimension{Field: to + "." + field, Table: to, Name: field, Type: "string"}
+				tableCopy.Dimensions[field] = semanticmodel.MetricDimension{Field: to + "." + field, Table: to, Name: field, Type: "string", Datatype: semanticmodel.DataTypeString}
 			}
 		}
 		tables[name] = tableCopy
@@ -193,7 +212,7 @@ func prepareExplicitRelationshipPlan(model *semanticmodel.Model, relation TableR
 	for name, dimension := range model.Dimensions {
 		candidate.Dimensions[name] = dimension
 	}
-	candidate.Dimensions[dimensionName] = semanticmodel.SemanticDimension{Bindings: map[string]semanticmodel.DimensionBinding{
+	candidate.Dimensions[dimensionName] = semanticmodel.SemanticDimension{Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{
 		from: {Field: to + "." + field, Path: relationshipIDs(path)},
 	}}
 	options := []PlannerOption{}

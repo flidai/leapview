@@ -200,6 +200,7 @@ func explorerDatasets(model *semanticmodel.Model) []projectsignals.DataExploreDa
 	out := make([]projectsignals.DataExploreDatasetSignal, 0, len(names))
 	for _, name := range names {
 		table := model.Tables[name]
+		entities, grainEntity, grainFields := explorerDatasetEntities(table)
 		fieldCount := len(table.Dimensions)
 		for metricName, metric := range model.Metrics {
 			if metric.Hidden {
@@ -214,10 +215,36 @@ func explorerDatasets(model *semanticmodel.Model) []projectsignals.DataExploreDa
 		}
 		out = append(out, projectsignals.DataExploreDatasetSignal{
 			ID: name, Title: explorerLabel(name), Description: projectsignals.Optional(table.Description),
-			Grain: projectsignals.Optional(table.GrainEntity), FieldCount: int64(fieldCount),
+			Entities: entities, GrainEntity: grainEntity, GrainFields: grainFields, FieldCount: int64(fieldCount),
 		})
 	}
 	return out
+}
+
+// explorerDatasetEntities preserves the semantic entity contract in the
+// browser projection. Entity names are sorted for a stable signal while each
+// entity's field tuple remains in authored order, which is significant for
+// composite primary and unique grains.
+func explorerDatasetEntities(table semanticmodel.Table) ([]projectsignals.SemanticModelGraphEntitySignal, string, []string) {
+	names := make([]string, 0, len(table.Entities))
+	for name := range table.Entities {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entities := make([]projectsignals.SemanticModelGraphEntitySignal, 0, len(names))
+	grainEntity := strings.TrimSpace(table.GrainEntity)
+	grainFields := []string{}
+	for _, name := range names {
+		entity := table.Entities[name]
+		fields := append([]string(nil), entity.Fields...)
+		entities = append(entities, projectsignals.SemanticModelGraphEntitySignal{
+			Name: name, Type: entity.Type, Fields: fields, Grain: projectsignals.Optional(name == grainEntity),
+		})
+		if name == grainEntity {
+			grainFields = append([]string(nil), entity.Fields...)
+		}
+	}
+	return entities, grainEntity, grainFields
 }
 
 func explorerFields(model *semanticmodel.Model, baseTable string, command projectsignals.DataExploreCommand) []projectsignals.DataExploreFieldSignal {

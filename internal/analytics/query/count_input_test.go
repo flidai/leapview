@@ -29,7 +29,7 @@ func TestCountInputExcludesNullAcrossPlannerModes(t *testing.T) {
 		}
 	}
 
-	single, err := NewPlanner(testModel()).Plan(Request{
+	single, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Table: "orders", Metrics: []Field{{Field: "order_count", Alias: "value"}},
 	})
 	if err != nil {
@@ -43,7 +43,7 @@ func TestCountInputExcludesNullAcrossPlannerModes(t *testing.T) {
 		t.Fatalf("single-fact count = %d, want 2", singleCount)
 	}
 
-	multi, err := NewPlanner(executableMultiFactModel()).Plan(Request{Metrics: []Field{
+	multi, err := mustNewCompiledPlanner(t, executableMultiFactModel()).Plan(Request{Metrics: []Field{
 		{Field: "order_count", Alias: "orders"},
 		{Field: "tag_count", Alias: "tags"},
 	}})
@@ -58,7 +58,7 @@ func TestCountInputExcludesNullAcrossPlannerModes(t *testing.T) {
 		t.Fatalf("multi-fact counts = (%d, %d), want (2, 2)", multiOrders, multiTags)
 	}
 
-	bundle, err := NewPlanner(executableMultiFactModel()).PlanBundle([]BundleRequest{
+	bundle, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{
 		{ID: "orders", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count", Alias: "value"}}}},
 		{ID: "totals", Request: Request{Metrics: []Field{{Field: "order_count", Alias: "orders"}, {Field: "tag_count", Alias: "tags"}}}},
 	})

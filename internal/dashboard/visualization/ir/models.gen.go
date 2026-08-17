@@ -2300,11 +2300,11 @@ type VisualizationHighlightEntry struct {
 }
 
 type VisualizationHighlightMapping struct {
-	TargetFieldID string  `json:"targetFieldID"`
-	TargetFactID  *string `json:"targetFactID,omitempty"`
-	Grain         *string `json:"grain,omitempty"`
-	Value         any     `json:"value"`
-	Label         *string `json:"label,omitempty"`
+	TargetFieldID   string  `json:"targetFieldID"`
+	TargetDatasetID *string `json:"targetDatasetID,omitempty"`
+	Grain           *string `json:"grain,omitempty"`
+	Value           any     `json:"value"`
+	Label           *string `json:"label,omitempty"`
 }
 
 type VisualizationHighlightState struct {
@@ -2367,11 +2367,11 @@ const (
 )
 
 type VisualizationInteractionMapping struct {
-	Source        VisualizationFieldRef  `json:"source"`
-	TargetFieldID string                 `json:"targetFieldID"`
-	TargetFactID  *string                `json:"targetFactID,omitempty"`
-	Grain         *string                `json:"grain,omitempty"`
-	Label         *VisualizationFieldRef `json:"label,omitempty"`
+	Source          VisualizationFieldRef  `json:"source"`
+	TargetFieldID   string                 `json:"targetFieldID"`
+	TargetDatasetID *string                `json:"targetDatasetID,omitempty"`
+	Grain           *string                `json:"grain,omitempty"`
+	Label           *VisualizationFieldRef `json:"label,omitempty"`
 }
 
 type VisualizationInteractionTarget struct {
@@ -2965,9 +2965,9 @@ type VisualizationSpatialCoordinate struct {
 }
 
 type VisualizationSpatialFieldMapping struct {
-	Source        VisualizationFieldRef `json:"source"`
-	TargetFieldID string                `json:"targetFieldID"`
-	TargetFactID  *string               `json:"targetFactID,omitempty"`
+	Source          VisualizationFieldRef `json:"source"`
+	TargetFieldID   string                `json:"targetFieldID"`
+	TargetDatasetID *string               `json:"targetDatasetID,omitempty"`
 }
 
 type VisualizationSpatialLassoSelection struct {

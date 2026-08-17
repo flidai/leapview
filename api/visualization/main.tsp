@@ -666,7 +666,7 @@ model VisualizationAccessibility {
 model VisualizationInteractionMapping {
   `source`: VisualizationFieldRef;
   `targetFieldID`: string;
-  `targetFactID`?: string;
+  `targetDatasetID`?: string;
   `grain`?: string;
   `label`?: VisualizationFieldRef;
 }
@@ -1083,7 +1083,7 @@ model VisualizationMapLineStyle {
 model VisualizationSpatialFieldMapping {
   `source`: VisualizationFieldRef;
   `targetFieldID`: string;
-  `targetFactID`?: string;
+  `targetDatasetID`?: string;
 }
 
 model VisualizationSpatialSelectionInteraction {
@@ -1354,7 +1354,7 @@ model VisualizationSelectionEntry {
 
 model VisualizationHighlightMapping {
   `targetFieldID`: string;
-  `targetFactID`?: string;
+  `targetDatasetID`?: string;
   `grain`?: string;
   `value`: unknown;
   `label`?: string;

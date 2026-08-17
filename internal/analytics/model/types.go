@@ -7,7 +7,17 @@ import (
 
 var (
 	semanticIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// Resource names may carry project-level dot/hyphen qualifiers, while
+	// semantic dataset/table/member aliases use semanticIdentifierPattern.
+	modelBindingNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 )
+
+func validateModelBindingName(value string) error {
+	if !modelBindingNamePattern.MatchString(value) {
+		return fmt.Errorf("must match %s", modelBindingNamePattern.String())
+	}
+	return nil
+}
 
 // AIContext is descriptive authoring metadata. It is intentionally kept out
 // of planning and execution inputs.
@@ -217,6 +227,10 @@ type Source struct {
 }
 
 type Table struct {
+	// ModelName is populated only on lowered semantic execution tables. It
+	// preserves the project Model binding after the runtime table is keyed by
+	// its semantic dataset alias; authored Model resources do not expose it.
+	ModelName          string                     `yaml:"-" json:"-"`
 	Source             string                     `yaml:"source"`
 	AIContext          *AIContext                 `yaml:"aiContext,omitempty" json:"-"`
 	Sources            []string                   `yaml:"sources"`

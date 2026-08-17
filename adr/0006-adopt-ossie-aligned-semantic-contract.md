@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-08-17
 
-Implementation: complete
+Implementation: pending
 
 Deciders: LeapView maintainers
 
@@ -347,6 +347,13 @@ Fields and conformed dimensions use the Ossie logical data-type vocabulary:
 `DateTimeTz`, and `Opaque`. `Opaque` requires an extension or runtime mapping
 before operations that depend on its concrete type.
 
+`Decimal` has exact base-10 semantics; `Float` has approximate binary
+floating-point semantics. Every governed evaluation path, including compiled
+plans, runtime projections, validation helpers, and test evaluators, must
+preserve that distinction. A Decimal value or operation must not be routed
+through binary floating point when doing so can change its governed value,
+comparison, null behavior, or result type.
+
 Temporal type and temporal role remain separate. A queryable time dimension
 declares its native grain, allowed rollups, calendar, and effective timezone
 where applicable:
@@ -432,6 +439,15 @@ resources and compile into the same typed internal representation. Ossie
 datasets resolve to existing project Models; an import must not synthesize an
 unreviewed connection, source, transformation, or materialization from a
 dataset `source` string.
+
+The initial supported Ossie profile is the unreleased `0.2.0.dev0` snapshot at
+Apache Ossie commit `88e0011148283302c9a04cd0287e00e0b9d87354`, using the
+official `osi-schema.json` whose SHA-256 digest is
+`8ce9f82aa92080265f9ae119e31cda5bef062f489674d3c467245c2d4c5ff264`.
+Because upstream identifies that development version as mutable, the version,
+commit, and schema digest together define the profile. A document from another
+snapshot is unsupported until LeapView adds and tests a separate pinned
+profile; the adapter never follows Ossie `main` dynamically.
 
 Import and export preserve LeapView-only behavior through versioned extensions.
 Unsupported executable behavior is a compile error. Importers must never drop a
@@ -548,7 +564,10 @@ unsafe SQL or AI instructions in the meantime.
   filter Boolean composition and null semantics, `where` population, strict
   metric tagged unions, empty-value rules, ratio population and governed
   division, derived-metric dependency acyclicity, time-grain compatibility, and
-  basic unit inference.
+  basic unit inference. An implementation-independent expression conformance
+  corpus proves accepted and rejected syntax, metric dependencies, exact
+  numeric values and result types, units, null behavior, governed division,
+  cycle rejection, and generated PlanIR without depending on parser internals.
 - Architecture tests prove that `aiContext` is not consumed by compiler,
   authorization, planner, or runtime packages. Removing AI context from a
   fixture produces identical compiled plans and authorization artifacts.

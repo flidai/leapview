@@ -1788,7 +1788,7 @@ func semanticModelDetailModel(model *assetDetailModel, project projectview.Devel
 	datasetMeta := metaMap(meta, "Datasets")
 	datasets := sortedMapKeys(datasetMeta)
 	metrics := sortedMapKeys(metaMap(meta, "Metrics"))
-	relationships := semanticModelRelationshipItems(meta)
+	relationships := metaSlice(meta, "Relationships")
 	model.SemanticModelGraph = semanticModelGraphSignal(meta)
 
 	model.Overview = append(model.Overview,
@@ -1952,7 +1952,7 @@ func semanticModelGraphSignal(meta map[string]any) *uisignals.SemanticModelGraph
 	metricDatasets := semanticModelMetricDatasets(metrics)
 	metricCounts := semanticMetricCountsByDataset(metrics)
 	conformedCounts := semanticConformedDimensionCounts(dimensions)
-	relationships := semanticModelGraphRelationships(semanticModelRelationshipItems(meta), datasets)
+	relationships := semanticModelGraphRelationships(meta, datasets)
 	joinFields := semanticModelJoinFields(relationships)
 	nodes := make([]uisignals.SemanticModelGraphNodeSignal, 0, len(datasets))
 	for _, name := range semanticModelGraphDatasetNames(datasets, metricDatasets) {
@@ -1988,12 +1988,13 @@ func semanticModelGraphSignal(meta map[string]any) *uisignals.SemanticModelGraph
 	}
 }
 
-func semanticModelGraphRelationships(raw []any, datasets map[string]any) []uisignals.SemanticModelGraphEdgeSignal {
+func semanticModelGraphRelationships(meta map[string]any, datasets map[string]any) []uisignals.SemanticModelGraphEdgeSignal {
+	raw := metaSlice(meta, "Relationships")
 	edges := make([]uisignals.SemanticModelGraphEdgeSignal, 0, len(raw))
 	for _, item := range raw {
 		relationship := asMap(item)
-		fromTable, fromFields := semanticRelationshipEndpointMeta(relationship, "From")
-		toTable, toFields := semanticRelationshipEndpointMeta(relationship, "To")
+		fromTable, fromFields := semanticCompiledRelationshipEndpointMeta(relationship, "From")
+		toTable, toFields := semanticCompiledRelationshipEndpointMeta(relationship, "To")
 		fromField, toField := strings.Join(fromFields, ", "), strings.Join(toFields, ", ")
 		if fromTable == "" || fromField == "" || toTable == "" || toField == "" {
 			continue
@@ -2008,7 +2009,7 @@ func semanticModelGraphRelationships(raw []any, datasets map[string]any) []uisig
 		if id == "" {
 			id = fromTable + "_" + fromField + "_" + toTable + "_" + toField
 		}
-		cardinality := metaString(relationship, "Cardinality")
+		cardinality := metaString(relationship, "Cardinality", "cardinality")
 		edges = append(edges, uisignals.SemanticModelGraphEdgeSignal{
 			ID:          id,
 			Source:      fromTable,
@@ -2031,6 +2032,14 @@ func semanticModelGraphRelationships(raw []any, datasets map[string]any) []uisig
 	return edges
 }
 
+// semanticCompiledRelationshipEndpointMeta reads physical endpoint tuples from
+// compiled relationships. Entity endpoints are resolved by the compiler, so
+// FromFields/ToFields always contain the ordered physical field tuple rather
+// than an entity name (which cannot address a graph handle).
+func semanticCompiledRelationshipEndpointMeta(relationship map[string]any, prefix string) (string, []string) {
+	return metaString(relationship, prefix+"Dataset"), metaStringSlice(relationship, prefix+"Fields")
+}
+
 func semanticModelJoinFields(edges []uisignals.SemanticModelGraphEdgeSignal) map[string]map[string][]string {
 	joinFields := map[string]map[string][]string{}
 	add := func(table, field, relationship string) {
@@ -2040,8 +2049,8 @@ func semanticModelJoinFields(edges []uisignals.SemanticModelGraphEdgeSignal) map
 		joinFields[table][field] = append(joinFields[table][field], relationship)
 	}
 	for _, edge := range edges {
-		add(edge.Source, edge.SourceField, edge.ID)
-		add(edge.Target, edge.TargetField, edge.ID)
+		addEndpointFields(add, edge.Source, edge.SourceField, edge.ID)
+		addEndpointFields(add, edge.Target, edge.TargetField, edge.ID)
 	}
 	for _, fields := range joinFields {
 		for field := range fields {
@@ -2049,6 +2058,15 @@ func semanticModelJoinFields(edges []uisignals.SemanticModelGraphEdgeSignal) map
 		}
 	}
 	return joinFields
+}
+
+func addEndpointFields(add func(string, string, string), table, fields, relationship string) {
+	for _, field := range strings.Split(fields, ",") {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			add(table, field, relationship)
+		}
+	}
 }
 
 func semanticModelGraphDatasetNames(datasets map[string]any, metricDatasets []string) []string {
@@ -2194,10 +2212,6 @@ func semanticModelGraphCardinalityLabel(cardinality string) string {
 		return "*:1"
 	case "one_to_one":
 		return "1:1"
-	case "one_to_many":
-		return "1:*"
-	case "many_to_many":
-		return "*:*"
 	default:
 		return cardinality
 	}
@@ -2461,14 +2475,15 @@ func semanticMetricsTable(projectID string, parent projectview.DevelopAssetView,
 }
 
 func semanticRelationshipsTable(projectID string, parent projectview.DevelopAssetView, assets []projectview.DevelopAssetView, meta map[string]any) recordTable {
-	relationships := semanticModelRelationshipItems(meta)
+	relationships := metaSlice(meta, "Relationships")
 	rows := make([]map[string]any, 0, len(relationships))
 	for _, item := range relationships {
 		relationship := asMap(item)
 		id := metaString(relationship, "ID", "id")
 		child := semanticAssetByName(parent.Key, "relationship", id, assets)
-		fromTable, fromFields := semanticRelationshipEndpointMeta(relationship, "From")
-		toTable, toFields := semanticRelationshipEndpointMeta(relationship, "To")
+		fromTable, fromFields := semanticCompiledRelationshipEndpointMeta(relationship, "From")
+		toTable, toFields := semanticCompiledRelationshipEndpointMeta(relationship, "To")
+		cardinality := metaString(relationship, "Cardinality", "cardinality")
 		fromField, toField := strings.Join(fromFields, ", "), strings.Join(toFields, ", ")
 		rows = append(rows, map[string]any{
 			"id":          id,
@@ -2477,7 +2492,7 @@ func semanticRelationshipsTable(projectID string, parent projectview.DevelopAsse
 			"from_field":  emptyDash(fromField),
 			"to_table":    emptyDash(toTable),
 			"to_field":    emptyDash(toField),
-			"cardinality": recordTableBadgeValue(metaString(relationship, "Cardinality", "cardinality"), "muted"),
+			"cardinality": recordTableBadgeValue(cardinality, "muted"),
 		})
 	}
 	return recordTable{
@@ -2501,35 +2516,6 @@ func splitSemanticFieldRef(ref string) (string, string) {
 		return strings.TrimSpace(ref), ""
 	}
 	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-}
-
-// semanticModelRelationshipItems reads the authored structured relationship map.
-func semanticModelRelationshipItems(meta map[string]any) []any {
-	structured := metaMap(meta, "StructuredRelationships")
-	items := make([]any, 0, len(structured))
-	for _, id := range sortedMapKeys(structured) {
-		value := asMap(structured[id])
-		if _, ok := value["ID"]; !ok {
-			value["ID"] = id
-		}
-		items = append(items, value)
-	}
-	return items
-}
-
-func semanticRelationshipEndpointMeta(relationship map[string]any, upper string) (string, []string) {
-	endpoint := metaMap(relationship, upper)
-	if len(endpoint) > 0 {
-		dataset := metaString(endpoint, "Dataset")
-		fields := metaStringSlice(endpoint, "Fields")
-		if len(fields) == 0 {
-			if entity := metaString(endpoint, "Entity"); entity != "" {
-				fields = []string{entity}
-			}
-		}
-		return dataset, fields
-	}
-	return "", nil
 }
 
 func dashboardDetailModel(model *assetDetailModel, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView) {

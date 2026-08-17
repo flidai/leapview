@@ -9,6 +9,7 @@ import (
 
 func TestProjectScalarFromCompleteGroupedAtomicMetrics(t *testing.T) {
 	model := projectionModel()
+	planner := mustNewCompiledPlanner(t, model)
 	grouped := Request{
 		Dimensions: []Field{{Field: "activity_date", Alias: "label"}},
 		Metrics: []Field{
@@ -27,7 +28,7 @@ func TestProjectScalarFromCompleteGroupedAtomicMetrics(t *testing.T) {
 		{"label": "2024-02-01", "ratings": int64(2), "tags": int64(1)},
 	}
 
-	projected, ok, err := ProjectScalarFromGrouped(model, grouped, scalar, rows, true)
+	projected, ok, err := planner.ProjectScalarFromGrouped(grouped, scalar, rows, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +43,7 @@ func TestProjectScalarFromCompleteGroupedAtomicMetrics(t *testing.T) {
 
 func TestProjectScalarFromGroupedRejectsUnsafeShapes(t *testing.T) {
 	model := projectionModel()
+	planner := mustNewCompiledPlanner(t, model)
 	base := Request{Dimensions: []Field{{Field: "activity_date", Alias: "label"}}, Metrics: []Field{{Field: "rating_count", Alias: "ratings"}, {Field: "tag_count", Alias: "tags"}}}
 	scalar := Request{Metrics: []Field{{Field: "tags_per_rating", Alias: "value"}}}
 	rows := Rows{{"ratings": int64(2), "tags": int64(1)}}
@@ -59,7 +61,7 @@ func TestProjectScalarFromGroupedRejectsUnsafeShapes(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, ok, err := ProjectScalarFromGrouped(model, test.grouped, test.scalar, rows, test.complete)
+			_, ok, err := planner.ProjectScalarFromGrouped(test.grouped, test.scalar, rows, test.complete)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -76,7 +78,8 @@ func TestProjectScalarFromGroupedRejectsNonAdditiveDependency(t *testing.T) {
 	model.Metrics["normalized_rating"] = semanticmodel.Metric{Type: "derived", Expression: "${average_rating} / 5"}
 	grouped := Request{Dimensions: []Field{{Field: "activity_date"}}, Metrics: []Field{{Field: "average_rating", Alias: "average"}}}
 	scalar := Request{Metrics: []Field{{Field: "normalized_rating", Alias: "value"}}}
-	if _, ok, err := ProjectScalarFromGrouped(model, grouped, scalar, Rows{{"average": 4.0}}, true); err != nil || ok {
+	planner := mustNewCompiledPlanner(t, model)
+	if _, ok, err := planner.ProjectScalarFromGrouped(grouped, scalar, Rows{{"average": 4.0}}, true); err != nil || ok {
 		t.Fatalf("projection ok=%v err=%v, want safe rejection", ok, err)
 	}
 }
@@ -89,7 +92,8 @@ func TestProjectScalarFromGroupedRecombinesAdditiveSumsBeforeMetricEvaluation(t 
 	grouped := Request{Dimensions: []Field{{Field: "activity_date"}}, Metrics: []Field{{Field: "revenue", Alias: "revenue"}, {Field: "cost", Alias: "cost"}}}
 	scalar := Request{Metrics: []Field{{Field: "margin", Alias: "value"}}}
 	rows := Rows{{"revenue": 10.0, "cost": 3.0}, {"revenue": 30.0, "cost": 9.0}}
-	projected, ok, err := ProjectScalarFromGrouped(model, grouped, scalar, rows, true)
+	planner := mustNewCompiledPlanner(t, model)
+	projected, ok, err := planner.ProjectScalarFromGrouped(grouped, scalar, rows, true)
 	if err != nil || !ok {
 		t.Fatalf("projection ok=%v err=%v", ok, err)
 	}
@@ -100,11 +104,24 @@ func TestProjectScalarFromGroupedRecombinesAdditiveSumsBeforeMetricEvaluation(t 
 
 func projectionModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
+		Tables: map[string]semanticmodel.Table{
+			"ratings": {GrainEntity: "rating", Entities: map[string]semanticmodel.ModelEntitySpec{"rating": {Type: "primary", Fields: []string{"rating"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+				"rating": {Type: "number", Datatype: semanticmodel.DataTypeDecimal}, "activity_date": {Type: "date", Datatype: semanticmodel.DataTypeDate}, "release_decade": {Type: "string", Datatype: semanticmodel.DataTypeString},
+			}},
+			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.ModelEntitySpec{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+				"tag_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "activity_date": {Type: "date", Datatype: semanticmodel.DataTypeDate}, "release_decade": {Type: "string", Datatype: semanticmodel.DataTypeString},
+			}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"ratings": {Model: "ratings"}, "tags": {Model: "tags"}},
 		Metrics: map[string]semanticmodel.Metric{
 			"rating_count":    {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "ratings.rating"}, Empty: "zero"},
 			"tag_count":       {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "tags.tag_id"}, Empty: "zero"},
-			"rating_share":    {Expression: "${rating_count}"},
-			"tags_per_rating": {Expression: "safe_divide(${tag_count}, ${rating_share})"},
+			"rating_share":    {Type: "derived", Expression: "${rating_count}"},
+			"tags_per_rating": {Type: "derived", Expression: "safe_divide(${tag_count}, ${rating_share})"},
+		},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"activity_date":  {Type: "date", Datatype: semanticmodel.DataTypeDate, Bindings: map[string]semanticmodel.DimensionBinding{"ratings": {Field: "ratings.activity_date"}, "tags": {Field: "tags.activity_date"}}},
+			"release_decade": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"ratings": {Field: "ratings.release_decade"}, "tags": {Field: "tags.release_decade"}}},
 		},
 	}
 }

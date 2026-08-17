@@ -1020,11 +1020,13 @@ type DataExploreCommand struct {
 }
 
 type DataExploreDatasetSignal struct {
-	Description *string `json:"description,omitempty"`
-	FieldCount  int64   `json:"fieldCount"`
-	Grain       *string `json:"grain,omitempty"`
-	ID          string  `json:"id"`
-	Title       string  `json:"title"`
+	Description *string                          `json:"description,omitempty"`
+	Entities    []SemanticModelGraphEntitySignal `json:"entities"`
+	FieldCount  int64                            `json:"fieldCount"`
+	GrainEntity string                           `json:"grainEntity"`
+	GrainFields []string                         `json:"grainFields"`
+	ID          string                           `json:"id"`
+	Title       string                           `json:"title"`
 }
 
 type DataExploreFieldSignal struct {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/masking"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
 func (p *Planner) Plan(request Request) (Plan, error) {
@@ -39,7 +40,7 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 			return Plan{}, fmt.Errorf("metric %q is not owned by fact %q", field, view.Fact)
 		}
 		for _, field := range aggregateMetricPhysicalFields(resolved) {
-			physical, err := p.Model.ResolveDimension(field)
+			physical, err := p.model.ResolveDimension(field)
 			if err != nil {
 				return Plan{}, err
 			}
@@ -101,7 +102,7 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		if err := addOutputColumn(columnSet, alias); err != nil {
 			return Plan{}, err
 		}
-		expr, err := maskedRawMetricExpr(p.Model, field, metric, factAliases, masks)
+		expr, err := maskedRawMetricExpr(p.model, field, metric, factAliases, masks)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -125,7 +126,31 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 	if err := writeOrderLimitOffset(&sql, request.Sort, columnSet, request.Limit, request.Offset); err != nil {
 		return Plan{}, err
 	}
-	return Plan{SQL: sql.String(), Args: args, Columns: columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet)}, nil
+	_ = args
+	irGraph, irErr := p.buildFlatPlanIR(view.Fact, request.Dimensions, request.Metrics, request.Filters, request.Sort, request.Limit, request.Offset)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("build row plan IR: %w", irErr)
+	}
+	if sortNode, ok := irGraph.Nodes[irGraph.Output].(planir.SortLimit); ok {
+		masks, _ := columnMaskMap(request.ColumnMasks)
+		for index := range sortNode.Projection {
+			if kind, found := masks[strings.ToLower(sortNode.Projection[index].Source)]; found {
+				sortNode.Projection[index].Mask = string(kind)
+			}
+			if physical, _, err := p.flatPhysicalField(view.Fact, sortNode.Projection[index].Source); err == nil {
+				if kind, found := masks[strings.ToLower(physical.Table+"."+physical.Field)]; found {
+					sortNode.Projection[index].Mask = string(kind)
+				}
+			}
+		}
+		irGraph.Nodes[irGraph.Output] = sortNode
+		irGraph.NodeMeta = sortNode.NodeMeta
+	}
+	rendered, irErr := planir.RenderDuckDB(irGraph)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("render row plan IR: %w", irErr)
+	}
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
@@ -155,12 +180,12 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	if masks.matchesMetric(metricField, metric) {
 		return Plan{}, fmt.Errorf("metric %q depends on a masked field", metricField)
 	}
-	metricFilters := scopeMetricWhereFilters(metric.WhereFilters, view.Fact)
+	metricFilters := scopeMetricWhereFilters(namedMetricFilters(metric.NamedFilters), view.Fact)
 	if err := p.exposeViewFilters(view, metricFilters); err != nil {
 		return Plan{}, err
 	}
 	for _, field := range aggregateMetricPhysicalFields(metric) {
-		physical, err := p.Model.ResolveDimension(field)
+		physical, err := p.model.ResolveDimension(field)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -214,7 +239,7 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 		selects = append(selects, expr+" AS "+alias)
 		columns = append(columns, alias)
 	}
-	rawExpr, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
+	rawExpr, err := rawAggregateMetricExpr(p.model, metric, factAliases)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -256,7 +281,32 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	if err := writeOrderLimitOffset(&sql, request.Sort, columnSet, request.Limit, 0); err != nil {
 		return Plan{}, err
 	}
-	return Plan{SQL: sql.String(), Args: args, Columns: columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet)}, nil
+	irFilters := append([]Filter(nil), request.Filters...)
+	irFilters = append(irFilters, metricFilters...)
+	irFilters = append(irFilters, Filter{Field: metric.InputField, Operator: "is_not_null"})
+	irGraph, irErr := p.buildFlatPlanIR(view.Fact, request.Dimensions, []Field{{Field: metricField, Alias: valueAlias}}, irFilters, request.Sort, request.Limit, 0)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("build raw-value plan IR: %w", irErr)
+	}
+	if sortNode, ok := irGraph.Nodes[irGraph.Output].(planir.SortLimit); ok {
+		for index := range sortNode.Projection {
+			if kind, found := masks[strings.ToLower(sortNode.Projection[index].Source)]; found {
+				sortNode.Projection[index].Mask = string(kind)
+			}
+			if physical, _, err := p.flatPhysicalField(view.Fact, sortNode.Projection[index].Source); err == nil {
+				if kind, found := masks[strings.ToLower(physical.Table+"."+physical.Field)]; found {
+					sortNode.Projection[index].Mask = string(kind)
+				}
+			}
+		}
+		irGraph.Nodes[irGraph.Output] = sortNode
+		irGraph.NodeMeta = sortNode.NodeMeta
+	}
+	rendered, irErr := planir.RenderDuckDB(irGraph)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("render raw-value plan IR: %w", irErr)
+	}
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
@@ -281,7 +331,17 @@ func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
 		return Plan{}, err
 	}
 	sql := "SELECT COUNT(*) AS value\nFROM " + from + "\nWHERE " + strings.Join(whereParts, " AND ")
-	return Plan{SQL: sql, Args: args, Columns: []string{"value"}}, nil
+	_ = args
+	_ = sql
+	irGraph, irErr := p.buildFlatPlanIR(view.Fact, nil, nil, request.Filters, nil, 0, 0)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("build count plan IR: %w", irErr)
+	}
+	rendered, irErr := planir.RenderDuckDB(irGraph)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("render count plan IR: %w", irErr)
+	}
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, IR: irGraph}, nil
 }
 
 func (p *Planner) wherePartsPath(view *queryView, aliases pathAliasSet, filters []Filter) ([]string, []any, error) {

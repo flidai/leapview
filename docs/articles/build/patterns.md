@@ -12,7 +12,7 @@ If a formula changes, one semantic edit should update browser dashboards, headle
 
 ### Keep grains explicit
 
-Give each model table a one-sentence grain and primary key. Review joins for how they change that grain. A one-to-many join performed before aggregation is a common source of inflated sums and counts.
+Give each project Model a one-sentence grain and declare its named entity identity through `grain.entity`. Review joins for how they change that grain. A one-to-many join performed before aggregation is a common source of inflated sums and counts.
 
 Semantic metrics should name their dataset, and relationships should use endpoint keys verified from data. If a question spans incompatible datasets, add an explicit semantic relationship or redesign the question rather than relying on a convenient join.
 

@@ -1360,8 +1360,10 @@ model DataExploreCommand {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreDatasetSignal {
   `description`?: string;
+  `entities`: SemanticModelGraphEntitySignal[];
   `fieldCount`: int64;
-  `grain`?: string;
+  `grainEntity`: string;
+  `grainFields`: string[];
   `id`: string;
   `title`: string;
 }

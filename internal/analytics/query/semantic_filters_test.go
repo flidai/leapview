@@ -262,11 +262,7 @@ func TestNamedMetricWhereCoercesIntegerLiteralsAndRejectsUnknownFilter(t *testin
 	}
 	metric.Where = []string{"missing"}
 	model.Metrics["order_count"] = metric
-	planner, err = NewCompiledPlanner(model)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := planner.Plan(Request{Metrics: []Field{{Field: "order_count"}}}); err == nil || !strings.Contains(err.Error(), `unknown semantic filter "missing"`) {
+	if _, err := NewCompiledPlanner(model); err == nil || !strings.Contains(err.Error(), `unknown semantic filter "missing"`) {
 		t.Fatalf("unknown named filter error = %v", err)
 	}
 }
@@ -285,17 +281,13 @@ func TestNamedFilterRequiresExplicitPathWhenJoinedDatasetIsAmbiguous(t *testing.
 	metric := model.Metrics["order_count"]
 	metric.Where = []string{"ambiguous"}
 	model.Metrics["order_count"] = metric
-	planner, err := NewCompiledPlanner(model)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := planner.Plan(Request{Metrics: []Field{{Field: "order_count"}}}); err == nil || !strings.Contains(err.Error(), "ambiguous relationship path") {
+	if _, err := NewCompiledPlanner(model); err == nil || !strings.Contains(err.Error(), "ambiguous relationship path") {
 		t.Fatalf("ambiguous named filter error = %v", err)
 	}
 	filter := model.Filters["ambiguous"]
 	filter.Path = []string{"orders_customers"}
 	model.Filters["ambiguous"] = filter
-	planner, err = NewCompiledPlanner(model)
+	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
 	}

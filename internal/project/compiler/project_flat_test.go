@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -12,6 +13,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
+	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
+	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
@@ -20,6 +24,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
+	"github.com/flidai/leapview/internal/workload"
 )
 
 func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
@@ -113,6 +118,7 @@ func TestAIContextIsPreservedWithoutChangingExecutableSemantics(t *testing.T) {
 			semanticContext = "aiContext:\n  instructions: Prefer the sales grain.\n  synonyms: [sales]\n  examples: [compare revenue]\n"
 		}
 		files := map[string]string{
+			"orders.csv": "order_id,line_number,revenue,activity_date\nsample,1,10.50,2026-01-03\nsample,2,5.25,2026-01-14\nother,1,99.00,2026-01-20\n",
 			"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
@@ -197,7 +203,17 @@ spec:
 		files["semantic-models/sales.yaml"] = strings.Replace(files["semantic-models/sales.yaml"], "      timeDimension: activity_date\n", "      timeDimension: activity_date\n      where: [captured_orders]"+metricContext+"\n", 1)
 		projectYAML := flatProjectFixtureYAMLForFiles(files)
 		projectYAML = strings.Replace(projectYAML, "access: {include: []}", "access: {include: [access/*.yaml]}", 1)
-		return mustLoadProject(t, writeFlatProjectFixtureWithProject(t, projectYAML, files))
+		projectPath := writeFlatProjectFixtureWithProject(t, projectYAML, files)
+		project := mustLoadProject(t, projectPath)
+		// Managed source paths are relative to the active revision root. Keep
+		// both projects pointed at their own identical fixture data.
+		for name, model := range project.Manifest.SemanticModels {
+			connection := model.Connections["warehouse"]
+			connection.Root = filepath.Dir(projectPath)
+			model.Connections["warehouse"] = connection
+			project.Manifest.SemanticModels[name] = model
+		}
+		return project
 	}
 	without := load(t, false)
 	with := load(t, true)
@@ -312,6 +328,68 @@ spec:
 	if withoutPlan.SQL != withPlan.SQL || !reflect.DeepEqual(withoutPlan.Args, withPlan.Args) {
 		t.Fatalf("AI context changed executable plan:\n%s", cmp.Diff(withoutPlan, withPlan))
 	}
+
+	// Exercise the complete governed path against identical fixture data. The
+	// result comparison intentionally ignores timing and cache metadata; rows,
+	// columns, status, and the generated SQL are the executable contract.
+	execute := func(model *semanticmodel.Model) dataquery.Result {
+		ctx := context.Background()
+		dir := t.TempDir()
+		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+		if err != nil {
+			t.Fatalf("open DuckLake fixture environment: %v", err)
+		}
+		controller, err := workload.New(workload.DefaultConfig())
+		if err != nil {
+			_ = environment.Close()
+			t.Fatalf("open fixture workload controller: %v", err)
+		}
+		lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "alice", Operation: "ai-context-qualification", EstimatedMemoryBytes: 1})
+		if err != nil {
+			controller.Close()
+			_ = environment.Close()
+			t.Fatalf("admit fixture refresh: %v", err)
+		}
+		runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(lease.Context(), analyticsduckdb.ProjectRuntimeConfig{
+			ProjectID: "project:test", Models: map[string]*semanticmodel.Model{"semantic:sales": model}, Database: environment,
+		})
+		if err != nil {
+			lease.Release()
+			controller.Close()
+			_ = environment.Close()
+			t.Fatalf("open governed fixture runtime: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = runtime.Close()
+			lease.Release()
+			controller.Close()
+			_ = environment.Close()
+		})
+		request := dataquery.SemanticAggregate("semantic:sales", "orders", []dataquery.Field{{Field: "activity_date"}}, []dataquery.Field{{Field: "revenue"}}, nil, nil, 0, 0)
+		request.ProjectID = "project:test"
+		request.Surface = dataquery.SurfaceDashboard
+		request.Operation = dataquery.OperationDashboardAggregate
+		request.PrincipalID = "alice"
+		request.ObjectType = "semantic_model"
+		request.ObjectID = "semantic:sales"
+		result, err := runtime.ExecuteDataQuery(dataquery.WithGovernor(lease.Context(), aiContextQualificationGovernor{}), request)
+		if err != nil {
+			t.Fatalf("execute governed fixture query: %v", err)
+		}
+		return result
+	}
+	withoutResult := execute(withoutModel)
+	withResult := execute(withModel)
+	if !reflect.DeepEqual(withoutResult.Columns, withResult.Columns) || !reflect.DeepEqual(withoutResult.Rows, withResult.Rows) || withoutResult.TotalRows != withResult.TotalRows || withoutResult.TotalRowsKnown != withResult.TotalRowsKnown || withoutResult.SQL != withResult.SQL || withoutResult.Status != withResult.Status || withoutResult.ExecutionState != withResult.ExecutionState {
+		t.Fatalf("AI context changed governed query result:\n%s", cmp.Diff(withoutResult, withResult))
+	}
+}
+
+type aiContextQualificationGovernor struct{}
+
+func (aiContextQualificationGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+	request.EffectivePolicyFingerprint = "fixture-policy"
+	return request, nil, nil
 }
 
 func mustLoadProject(t *testing.T, path string) *Project {

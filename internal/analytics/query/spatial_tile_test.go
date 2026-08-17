@@ -32,7 +32,7 @@ func TestSpatialBucketRunsNonAdditiveMetricsAtFinalCellGrain(t *testing.T) {
 	model := testModel()
 	model.Metrics["average_revenue"] = semanticmodel.Metric{Type: "aggregate", Dataset: "orders", Aggregation: "avg", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}}
 	model.Metrics["unique_customers"] = semanticmodel.Metric{Type: "aggregate", Dataset: "orders", Aggregation: "count_distinct", Input: &semanticmodel.MetricInput{Field: "orders.customer_id"}}
-	planner := NewPlanner(model)
+	planner := mustNewCompiledPlanner(t, model)
 	plan, err := planner.Plan(Request{
 		Table:         "orders",
 		Dimensions:    []Field{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
@@ -93,7 +93,7 @@ func TestSpatialMetadataReturnsExactCoordinateGrainAndSemanticTotals(t *testing.
 			t.Fatal(err)
 		}
 	}
-	plan, err := NewPlanner(model).PlanSpatialMetadata(SpatialMetadataRequest{
+	plan, err := mustNewCompiledPlanner(t, model).PlanSpatialMetadata(SpatialMetadataRequest{
 		Table: "orders", Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
 		Metrics:    []Field{{Field: "average_revenue", Alias: "average_revenue"}, {Field: "unique_customers", Alias: "unique_customers"}},
 		FeatureCap: 1, RawMinimumZoom: 0, MaximumZoom: 2,
@@ -121,7 +121,7 @@ func TestSpatialMetadataReturnsExactCoordinateGrainAndSemanticTotals(t *testing.
 }
 
 func TestPlanSpatialTileAggregateUsesNativeMVTAndAlignedMetatile(t *testing.T) {
-	plan, err := NewPlanner(testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
+	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
 		Table: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
 		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
 		Zoom: 4, TargetZoom: 6, MetatileX: 4, MetatileY: 8, MetatileSize: 4, CellPixels: 48, Buffer: 768,
@@ -148,11 +148,11 @@ func TestSpatialTileAggregateRequiresForwardTargetZoom(t *testing.T) {
 		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
 		Zoom: 4, TargetZoom: 4, MetatileX: 4, MetatileY: 8, MetatileSize: 4, CellPixels: 48, Buffer: 768,
 	}
-	if _, err := NewPlanner(testModel()).PlanSpatialTileAggregate(request); err == nil || !strings.Contains(err.Error(), "target zoom") {
+	if _, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(request); err == nil || !strings.Contains(err.Error(), "target zoom") {
 		t.Fatalf("non-forward aggregate target error = %v", err)
 	}
 	request.TargetZoom = SpatialTileMaximumZoom + 1
-	if _, err := NewPlanner(testModel()).PlanSpatialTileAggregate(request); err == nil || !strings.Contains(err.Error(), "target zoom") {
+	if _, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(request); err == nil || !strings.Contains(err.Error(), "target zoom") {
 		t.Fatalf("out-of-range aggregate target error = %v", err)
 	}
 }
@@ -160,10 +160,10 @@ func TestSpatialTileAggregateRequiresForwardTargetZoom(t *testing.T) {
 func TestSpatialTilePlansCrossFactCoordinatesWithoutTableScope(t *testing.T) {
 	model := testModel()
 	customers := model.Tables["customers"]
-	customers.Dimensions["latitude"] = semanticmodel.MetricDimension{Type: "number"}
-	customers.Dimensions["longitude"] = semanticmodel.MetricDimension{Type: "number"}
+	customers.Dimensions["latitude"] = semanticmodel.MetricDimension{Type: "number", Datatype: semanticmodel.DataTypeFloat}
+	customers.Dimensions["longitude"] = semanticmodel.MetricDimension{Type: "number", Datatype: semanticmodel.DataTypeFloat}
 	model.Tables["customers"] = customers
-	plan, err := NewPlanner(model).PlanSpatialTileAggregate(SpatialTileRequest{
+	plan, err := mustNewCompiledPlanner(t, model).PlanSpatialTileAggregate(SpatialTileRequest{
 		Metrics:  []Field{{Field: "order_count", Alias: "order_count"}},
 		Latitude: Field{Field: "customers.latitude", Alias: "latitude"}, Longitude: Field{Field: "customers.longitude", Alias: "longitude"},
 		Zoom: 2, MetatileX: 0, MetatileY: 0, MetatileSize: 4, CellPixels: 48, Buffer: 768,
@@ -181,7 +181,7 @@ func TestSpatialMetatileBoundsClampToMercatorWorld(t *testing.T) {
 	if west != -180 || east != 180 || south < -mercatorMaximumLatitude-1e-9 || north > mercatorMaximumLatitude+1e-9 {
 		t.Fatalf("world bounds = %v,%v,%v,%v", west, south, east, north)
 	}
-	if _, err := NewPlanner(testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
+	if _, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
 		Table: "orders", Latitude: Field{Field: "orders.latitude"}, Longitude: Field{Field: "orders.longitude"},
 		Zoom: 3, MetatileX: 1, MetatileY: 0, MetatileSize: 4, CellPixels: 64,
 	}); err == nil || !strings.Contains(err.Error(), "align") {
@@ -197,7 +197,7 @@ func TestSpatialTilePlanExecutesNativeMVT(t *testing.T) {
 			t.Skipf("DuckDB spatial extension unavailable: %v", err)
 		}
 	}
-	plan, err := NewPlanner(testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
+	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
 		Table: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
 		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
 		Zoom: 0, MetatileX: 0, MetatileY: 0, MetatileSize: 4, CellPixels: 48, Buffer: 768,
@@ -230,7 +230,7 @@ func TestSpatialRawTileFallsBackWithoutTruncating(t *testing.T) {
 		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
 		Zoom: 0, MetatileX: 0, MetatileY: 0, MetatileSize: 4, FeatureCap: 500, Buffer: 768,
 	}
-	plan, err := NewPlanner(testModel()).PlanSpatialTileRaw(request)
+	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileRaw(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestSpatialRawTileFallsBackWithoutTruncating(t *testing.T) {
 		t.Fatalf("overflow raw tile = count %d, %d bytes; want untruncated count and nil MVT", count, len(tile))
 	}
 	request.FeatureCap = 2_000
-	plan, err = NewPlanner(testModel()).PlanSpatialTileRaw(request)
+	plan, err = mustNewCompiledPlanner(t, testModel()).PlanSpatialTileRaw(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestSpatialTileBudgetMetricsRevisionWideEncodedBytes(t *testing.T) {
 		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
 		Zoom: 0, FeatureCap: 500, MaximumBytes: 512 * 1024, Buffer: 768,
 	}
-	plan, err := NewPlanner(testModel()).PlanSpatialTileBudget(request)
+	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileBudget(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestSpatialTileBudgetMetricsRevisionWideEncodedBytes(t *testing.T) {
 		t.Fatalf("feature-overflow budget = %d features, %d bytes; want 1000 features and skipped encoding", maximumFeatures, maximumBytes)
 	}
 	request.FeatureCap = 2_000
-	plan, err = NewPlanner(testModel()).PlanSpatialTileBudget(request)
+	plan, err = mustNewCompiledPlanner(t, testModel()).PlanSpatialTileBudget(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func BenchmarkSpatialOneColumnPanMillionRowsMVT(b *testing.B) {
 func BenchmarkSpatialRawHighZoomMillionRowsMVT(b *testing.B) {
 	db := spatialMVTScaleFixture(b, 1_000_000)
 	defer db.Close()
-	plan, err := NewPlanner(testModel()).PlanSpatialTileRaw(SpatialTileRawRequest{
+	plan, err := mustNewCompiledPlanner(b, testModel()).PlanSpatialTileRaw(SpatialTileRawRequest{
 		Table:      "orders",
 		Dimensions: []Field{{Field: "orders.order_id", Alias: "order_id"}, {Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
 		Metrics:    []Field{{Field: "revenue", Alias: "revenue"}}, Identity: []Field{{Field: "orders.order_id", Alias: "order_id"}},
@@ -365,7 +365,7 @@ func spatialMVTScaleFixture(t testing.TB, rows int) *sql.DB {
 
 func spatialAggregateTilePlan(t testing.TB, zoom, x, y int) Plan {
 	t.Helper()
-	plan, err := NewPlanner(testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
+	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
 		Table: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
 		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
 		Zoom: zoom, MetatileX: x, MetatileY: y, MetatileSize: 4, CellPixels: 48, Buffer: 768,

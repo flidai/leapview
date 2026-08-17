@@ -2,11 +2,11 @@ package query
 
 import (
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
 type bundleDimension struct {
@@ -27,6 +27,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 	factSignature := ""
 	heterogeneousFacts := false
 	containsMultiFact := false
+	scopeFingerprint := ""
 	ids := map[string]bool{}
 	for i, item := range requests {
 		if item.ID == "" || ids[item.ID] {
@@ -57,14 +58,21 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 			heterogeneousFacts = true
 		}
 		containsMultiFact = containsMultiFact || resolved.MultiFact
-		if i > 0 && (!reflect.DeepEqual(item.Request.Filters, requests[0].Request.Filters) || !reflect.DeepEqual(item.Request.ColumnMasks, requests[0].Request.ColumnMasks)) {
+		fingerprint, err := p.bundleScopeFingerprint(item.Request, resolved)
+		if err != nil {
+			return BundlePlan{}, fmt.Errorf("bundle branch %q scope fingerprint: %w", item.ID, err)
+		}
+		if scopeFingerprint == "" {
+			scopeFingerprint = fingerprint
+		} else if !heterogeneousFacts && fingerprint != scopeFingerprint {
 			return BundlePlan{}, fmt.Errorf("bundle branch %q has a different governed scope", item.ID)
 		}
 		resolutions[i] = resolved
 	}
 	if containsMultiFact || heterogeneousFacts {
-		return p.planMultiFactBundle(requests, resolutions)
+		return p.renderBundlePlanIR(requests, resolutions)
 	}
+	return p.renderBundlePlanIR(requests, resolutions)
 
 	dimensions := []bundleDimension{}
 	dimensionIndex := map[string]int{}
@@ -94,7 +102,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 		for name, metric := range resolved.Aggregates {
 			aggregates[name] = metric
 			for _, field := range aggregateMetricPhysicalFields(metric) {
-				physical, err := p.Model.ResolveDimension(field)
+				physical, err := p.model.ResolveDimension(field)
 				if err != nil {
 					return BundlePlan{}, err
 				}
@@ -121,10 +129,10 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 		addPathDependencies(dependencies, binding.Path)
 	}
 	for _, metric := range aggregates {
-		if len(metric.WhereFilters) == 0 {
+		if len(metric.NamedFilters) == 0 {
 			continue
 		}
-		whereFilters := scopeMetricWhereFilters(metric.WhereFilters, fact)
+		whereFilters := scopeMetricWhereFilters(namedMetricFilters(metric.NamedFilters), fact)
 		whereBindings, err := p.factFilterFields(whereFilters, resolutions[0], fact)
 		if err != nil {
 			return BundlePlan{}, err
@@ -150,7 +158,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 		if err != nil {
 			return BundlePlan{}, err
 		}
-		physical, err := p.Model.ResolveDimension(field)
+		physical, err := p.model.ResolveDimension(field)
 		if err != nil {
 			return BundlePlan{}, err
 		}
@@ -172,15 +180,15 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 	for i, name := range metricNames {
 		metric := aggregates[name]
 		metricColumns[name] = fmt.Sprintf("__m%d", i)
-		raw, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
+		raw, err := rawAggregateMetricExpr(p.model, metric, factAliases)
 		if err != nil {
 			return BundlePlan{}, err
 		}
 		baseSelects = append(baseSelects, raw+fmt.Sprintf(" AS __v%d", i))
-		if len(metric.Filters) > 0 || len(metric.WhereFilters) > 0 {
+		if len(metric.Filters) > 0 || len(metric.NamedFilters) > 0 {
 			parts := []string{}
 			for _, filter := range metric.Filters {
-				physical, err := p.Model.ResolveDimension(filter.Field)
+				physical, err := p.model.ResolveDimension(filter.Field)
 				if err != nil {
 					return BundlePlan{}, err
 				}
@@ -201,7 +209,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 					baseArgs = append(baseArgs, args...)
 				}
 			}
-			for _, filter := range scopeMetricWhereFilters(metric.WhereFilters, fact) {
+			for _, filter := range scopeMetricWhereFilters(namedMetricFilters(metric.NamedFilters), fact) {
 				part, args, err := p.factFilterPart(filter, resolutions[0], fact, aliases)
 				if err != nil {
 					return BundlePlan{}, err
@@ -286,7 +294,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 			}
 		}
 		filterParts := []string{integerPredicate("__bundle_group", groups)}
-		if len(metric.Filters) > 0 || len(metric.WhereFilters) > 0 {
+		if len(metric.Filters) > 0 || len(metric.NamedFilters) > 0 {
 			filterParts = append(filterParts, fmt.Sprintf("__f%d", i))
 		}
 		expr += " FILTER (WHERE " + strings.Join(filterParts, " AND ") + ")"
@@ -386,7 +394,72 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 	sort.Strings(deps)
 	physicalColumns = append(physicalColumns, BundleRowColumn)
 	planSQL := "WITH " + base.String() + ",\n" + expanded + ",\n" + agg + "\n" + bundleUnionSQL(branchSQL) + "\nORDER BY " + BundleBranchColumn + " ASC, " + BundleRowColumn + " ASC"
-	return BundlePlan{Plan: Plan{SQL: planSQL, Args: baseArgs, Columns: physicalColumns, Mode: "single_fact", Facts: []string{fact}, PhysicalDependencies: deps}, Branches: branches}, nil
+	irGraph, err := p.buildBundlePlanIR(requests, resolutions)
+	if err != nil {
+		return BundlePlan{}, err
+	}
+	fingerprints, err := p.bundleBranchFingerprints(requests, resolutions)
+	if err != nil {
+		return BundlePlan{}, err
+	}
+	for i := range branches {
+		branches[i].Fingerprint = fingerprints[i]
+	}
+	return BundlePlan{Plan: Plan{SQL: planSQL, Args: baseArgs, Columns: physicalColumns, Mode: "single_fact", Facts: []string{fact}, PhysicalDependencies: deps, IR: irGraph}, Branches: branches}, nil
+}
+
+// renderBundlePlanIR is the sole production lowering for aggregate bundles.
+// The older SQL lowering above remains an equivalence oracle for focused
+// tests, but PlanBundle never selects it.
+func (p *Planner) renderBundlePlanIR(requests []BundleRequest, resolutions []aggregateResolution) (BundlePlan, error) {
+	irGraph, err := p.buildBundlePlanIR(requests, resolutions)
+	if err != nil {
+		return BundlePlan{}, err
+	}
+	rendered, err := planir.RenderDuckDB(irGraph)
+	if err != nil {
+		return BundlePlan{}, fmt.Errorf("render bundle plan IR: %w", err)
+	}
+	fingerprints, err := p.bundleBranchFingerprints(requests, resolutions)
+	if err != nil {
+		return BundlePlan{}, err
+	}
+	branches := make([]BundleBranch, len(requests))
+	for index, item := range requests {
+		columns := make([]BundleColumn, 0, len(resolutions[index].Dimensions)+len(resolutions[index].Members))
+		for _, dimension := range resolutions[index].Dimensions {
+			columns = append(columns, BundleColumn{Output: dimension.Alias, Physical: fmt.Sprintf("__bundle_%d_%s", index, dimension.Alias)})
+		}
+		for _, member := range resolutions[index].Members {
+			columns = append(columns, BundleColumn{Output: member.Alias, Physical: fmt.Sprintf("__bundle_%d_%s", index, member.Alias)})
+		}
+		branches[index] = BundleBranch{ID: item.ID, Ordinal: index, Columns: columns, Fingerprint: fingerprints[index]}
+	}
+	lineage, err := irGraph.Dependencies()
+	if err != nil {
+		return BundlePlan{}, fmt.Errorf("derive bundle dependencies: %w", err)
+	}
+	facts := []string{}
+	factSet := map[string]bool{}
+	multiFact := false
+	for _, resolved := range resolutions {
+		if resolved.MultiFact {
+			multiFact = true
+		}
+		for _, fact := range resolved.Facts {
+			if !factSet[fact] {
+				factSet[fact] = true
+				facts = append(facts, fact)
+			}
+		}
+	}
+	sort.Strings(facts)
+	mode := "single_fact"
+	if multiFact || len(facts) > 1 {
+		mode = "multi_fact"
+	}
+	return BundlePlan{Plan: Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Mode: mode, Facts: facts,
+		PhysicalDependencies: uniqueStrings(append(append([]string(nil), lineage.Datasets...), lineage.PhysicalFields...)), RelationshipPaths: lineage.RelationshipPaths, IR: irGraph}, Branches: branches}, nil
 }
 
 func bundleUnionSQL(branches []string) string {

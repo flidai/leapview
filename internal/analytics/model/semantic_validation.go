@@ -115,19 +115,38 @@ func (m *Model) ValidateSemanticGraph() error {
 }
 
 func (m *Model) validateSemanticDefinitions() error {
-	for tableName, table := range m.Tables {
-		for field, dimension := range table.Dimensions {
+	for _, tableName := range m.TableNames() {
+		table := m.Tables[tableName]
+		fieldNames := make([]string, 0, len(table.Dimensions))
+		for field := range table.Dimensions {
+			fieldNames = append(fieldNames, field)
+		}
+		sort.Strings(fieldNames)
+		for _, field := range fieldNames {
+			dimension := table.Dimensions[field]
 			if err := validateLogicalDataType("model table "+tableName+" field "+field, dimension.Datatype); err != nil {
 				return err
 			}
 		}
-		for field, column := range table.Columns {
+		columnNames := make([]string, 0, len(table.Columns))
+		for field := range table.Columns {
+			columnNames = append(columnNames, field)
+		}
+		sort.Strings(columnNames)
+		for _, field := range columnNames {
+			column := table.Columns[field]
 			if err := validateLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
 				return err
 			}
 		}
 	}
-	for name, filter := range m.Filters {
+	filterNames := make([]string, 0, len(m.Filters))
+	for name := range m.Filters {
+		filterNames = append(filterNames, name)
+	}
+	sort.Strings(filterNames)
+	for _, name := range filterNames {
+		filter := m.Filters[name]
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("semantic filter %q is invalid: %w", name, err)
 		}
@@ -139,7 +158,13 @@ func (m *Model) validateSemanticDefinitions() error {
 	for _, fact := range m.FactNames() {
 		facts[fact] = struct{}{}
 	}
-	for name, dimension := range m.Dimensions {
+	dimensionNames := make([]string, 0, len(m.Dimensions))
+	for name := range m.Dimensions {
+		dimensionNames = append(dimensionNames, name)
+	}
+	sort.Strings(dimensionNames)
+	for _, name := range dimensionNames {
+		dimension := m.Dimensions[name]
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("semantic dimension %q is invalid: %w", name, err)
 		}
@@ -215,7 +240,16 @@ func (m *Model) validateSemanticDefinitions() error {
 		if len(dimension.Bindings) == 0 {
 			return fmt.Errorf("semantic dimension %q requires bindings", name)
 		}
-		for fact, binding := range dimension.Bindings {
+		bindingFacts := make([]string, 0, len(dimension.Bindings))
+		for fact := range dimension.Bindings {
+			bindingFacts = append(bindingFacts, fact)
+		}
+		sort.Strings(bindingFacts)
+		for _, fact := range bindingFacts {
+			binding := dimension.Bindings[fact]
+			if err := validateSemanticIdentifier(fact); err != nil {
+				return fmt.Errorf("semantic dimension %q binding fact %q is invalid: %w", name, fact, err)
+			}
 			if _, ok := facts[fact]; !ok {
 				return fmt.Errorf("semantic dimension %q binding references non-fact table %q", name, fact)
 			}
@@ -232,7 +266,13 @@ func (m *Model) validateSemanticDefinitions() error {
 		}
 		m.Dimensions[name] = dimension
 	}
-	for datasetName, dataset := range m.Datasets {
+	datasetNames := make([]string, 0, len(m.Datasets))
+	for datasetName := range m.Datasets {
+		datasetNames = append(datasetNames, datasetName)
+	}
+	sort.Strings(datasetNames)
+	for _, datasetName := range datasetNames {
+		dataset := m.Datasets[datasetName]
 		if _, ok := m.Tables[datasetName]; !ok {
 			return fmt.Errorf("semantic dataset %q has no runtime table", datasetName)
 		}
@@ -327,6 +367,9 @@ func (m *Model) validateSemanticFilterNode(name string, filter SemanticFilterSpe
 			}
 		}
 		for _, relationshipID := range filter.Path {
+			if err := validateSemanticIdentifier(relationshipID); err != nil {
+				return fmt.Errorf("semantic filter %q relationship path id %q is invalid: %w", name, relationshipID, err)
+			}
 			if _, ok := m.RelationshipByID(relationshipID); !ok {
 				return fmt.Errorf("semantic filter %q references unknown relationship path %q", name, relationshipID)
 			}
@@ -398,7 +441,13 @@ func compatibleConformedBindingTypes(dimension SemanticDimension, physical Metri
 
 func (m *Model) validateMetrics() error {
 	dependencies := map[string][]string{}
-	for name, metric := range m.Metrics {
+	metricNames := make([]string, 0, len(m.Metrics))
+	for name := range m.Metrics {
+		metricNames = append(metricNames, name)
+	}
+	sort.Strings(metricNames)
+	for _, name := range metricNames {
+		metric := m.Metrics[name]
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("semantic metric %q is invalid: %w", name, err)
 		}
@@ -413,10 +462,16 @@ func (m *Model) validateMetrics() error {
 			if metric.Dataset == "" {
 				return fmt.Errorf("semantic metric %q aggregate dataset is required", name)
 			}
+			if err := validateSemanticIdentifier(metric.Dataset); err != nil {
+				return fmt.Errorf("semantic metric %q aggregate dataset %q is invalid: %w", name, metric.Dataset, err)
+			}
 			if _, ok := supportedAggregations[metric.Aggregation]; !ok {
 				return fmt.Errorf("semantic metric %q has unsupported aggregation %q", name, metric.Aggregation)
 			}
-			if metric.Empty != "" && metric.Empty != "zero" && metric.Empty != "null" {
+			if metric.Empty == "" {
+				metric.Empty = defaultMetricEmpty(metric.Aggregation)
+			}
+			if metric.Empty != "zero" && metric.Empty != "null" {
 				return fmt.Errorf("semantic metric %q has unsupported empty value %q", name, metric.Empty)
 			}
 			if metric.Where != nil && len(metric.Where) == 0 {
@@ -439,6 +494,9 @@ func (m *Model) validateMetrics() error {
 				return err
 			}
 			if metric.TimeDimension != "" {
+				if err := validateSemanticIdentifier(metric.TimeDimension); err != nil {
+					return fmt.Errorf("semantic metric %q time dimension %q is invalid: %w", name, metric.TimeDimension, err)
+				}
 				dimension, ok := m.Dimensions[metric.TimeDimension]
 				if !ok {
 					return fmt.Errorf("semantic metric %q time dimension %q is unknown", name, metric.TimeDimension)
@@ -461,6 +519,13 @@ func (m *Model) validateMetrics() error {
 				if err := m.validateMetricFilterReachability(name, metric.Dataset, filter, definition); err != nil {
 					return err
 				}
+			}
+			seenFilters := map[string]struct{}{}
+			for _, filter := range metric.Where {
+				if _, exists := seenFilters[filter]; exists {
+					return fmt.Errorf("semantic metric %q where contains duplicate filter %q", name, filter)
+				}
+				seenFilters[filter] = struct{}{}
 			}
 		case "derived":
 			if metric.Dataset != "" || metric.Aggregation != "" || metric.Input != nil || metric.Where != nil || metric.Empty != "" || metric.TimeDimension != "" || metric.Numerator != "" || metric.Denominator != "" {
@@ -516,12 +581,19 @@ func (m *Model) validateMetrics() error {
 		state[name] = 2
 		return nil
 	}
-	for name := range dependencies {
+	for _, name := range metricNames {
 		if err := visit(name); err != nil {
 			return err
 		}
 	}
 	return m.validateMetricUnits()
+}
+
+func defaultMetricEmpty(aggregation string) string {
+	if aggregation == "count" || aggregation == "count_distinct" {
+		return "zero"
+	}
+	return "null"
 }
 
 // validateMetricFilterReachability proves every leaf in a named filter tree

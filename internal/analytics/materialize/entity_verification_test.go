@@ -36,7 +36,7 @@ func entityVerificationModel() *semanticmodel.Model {
 				{Name: "order_id", PhysicalType: "BIGINT"}, {Name: "line_no", PhysicalType: "BIGINT"},
 			}},
 		},
-	}}
+	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
 }
 
 func TestVerifyEntityClaimsRejectsNullCompositeKey(t *testing.T) {

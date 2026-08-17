@@ -197,7 +197,7 @@ func TestGeographicVisualCompilesTiledCoordinateLayers(t *testing.T) {
 		t.Fatalf("geographic spatial interactions = %d, want %d", got, want)
 	}
 	spatial := spec.SpatialInteractions[0]
-	if spatial.ID != "spatial_selection" || spatial.Latitude.Source.Field != "latitude" || spatial.Longitude.TargetFieldID != "orders.longitude" || spatial.Longitude.TargetFactID == nil || *spatial.Longitude.TargetFactID != "orders" {
+	if spatial.ID != "spatial_selection" || spatial.Latitude.Source.Field != "latitude" || spatial.Longitude.TargetFieldID != "orders.longitude" || spatial.Longitude.TargetDatasetID == nil || *spatial.Longitude.TargetDatasetID != "orders" {
 		t.Fatalf("geographic spatial interaction = %#v", spatial)
 	}
 	if got, want := spatial.Gestures, []visualizationir.VisualizationSpatialSelectionGesture{"box", "lasso", "radius"}; !slices.Equal(got, want) {

@@ -40,6 +40,37 @@ func TestExpressionReportsAllowlistedFunctions(t *testing.T) {
 	}
 }
 
+func TestExpressionTreePreservesTypedOperatorsAndNumberTokens(t *testing.T) {
+	expression, err := ParseExpression("-safe_divide(${tags}, 9007199254740993.125)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := expression.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree.Kind != ScalarExpressionUnary || tree.Operator != "-" || len(tree.Children) != 1 {
+		t.Fatalf("tree root = %#v", tree)
+	}
+	call := tree.Children[0]
+	if call.Kind != ScalarExpressionCall || call.Function != "safe_divide" || len(call.Children) != 2 {
+		t.Fatalf("tree call = %#v", call)
+	}
+	if got := call.Children[1].Number; got != "9007199254740993.125" {
+		t.Fatalf("number token = %q", got)
+	}
+	// Tree returns detached slices, so callers cannot mutate the parsed
+	// expression through the exported view.
+	tree.Children[0].Children[0].Metric = "mutated"
+	again, err := expression.Tree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Children[0].Children[0].Metric != "tags" {
+		t.Fatalf("Tree() did not return a detached AST: %#v", again)
+	}
+}
+
 func TestExpressionEvaluateMetricArithmeticAndNullSemantics(t *testing.T) {
 	expression, err := ParseExpression("round(safe_divide(${tags}, ${ratings}), 3)")
 	if err != nil {

@@ -133,7 +133,10 @@ func (r *Runtime) captureArrowPlan(ctx context.Context, plan semanticquery.Plan)
 
 func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuery, error) {
 	started := time.Now()
-	planner := r.queryPlanner()
+	planner, plannerErr := r.queryPlanner()
+	if plannerErr != nil {
+		return plannedArrowQuery{}, plannerErr
+	}
 	var planned plannedArrowQuery
 	var err error
 	switch request.Kind {

@@ -114,6 +114,10 @@ type semanticArrowQueryRuntime interface {
 	ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error)
 }
 
+type semanticPlannerRuntime interface {
+	Planner(modelID string) (*semanticquery.Planner, bool)
+}
+
 func SupportsNativeArrow(metrics Metrics) bool {
 	_, ok := metrics.(semanticArrowQueryRuntime)
 	return ok
@@ -279,6 +283,19 @@ func (m runtimeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, boo
 		return nil, false
 	}
 	return port.SemanticModel(modelID)
+}
+
+func (m runtimeMetrics) Planner(modelID string) (*semanticquery.Planner, bool) {
+	runtime, release, err := m.active(context.Background())
+	if err != nil {
+		return nil, false
+	}
+	defer release()
+	port, ok := runtime.(semanticPlannerRuntime)
+	if !ok {
+		return nil, false
+	}
+	return port.Planner(modelID)
 }
 
 func (m runtimeMetrics) DefaultFilters(dashboardID string) dashboard.Filters {
@@ -540,19 +557,19 @@ func (m runtimeMetrics) PreviewSemantic(ctx context.Context, modelID string, req
 }
 
 func (m runtimeMetrics) ExplainSemanticQuery(modelID string, request reportdef.AggregateQuery) (semanticquery.Plan, error) {
-	model, ok := m.SemanticModel(modelID)
-	if !ok {
-		return semanticquery.Plan{}, fmt.Errorf("unknown semantic model %q", modelID)
+	planner, ok := m.Planner(modelID)
+	if !ok || planner == nil {
+		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
 	}
-	return semanticquery.NewPlanner(model).Plan(reportdef.SemanticAggregateRequest(request))
+	return planner.Plan(reportdef.SemanticAggregateRequest(request))
 }
 
 func (m runtimeMetrics) ExplainSemanticPreview(modelID string, request reportdef.RowQuery) (semanticquery.Plan, error) {
-	model, ok := m.SemanticModel(modelID)
-	if !ok {
-		return semanticquery.Plan{}, fmt.Errorf("unknown semantic model %q", modelID)
+	planner, ok := m.Planner(modelID)
+	if !ok || planner == nil {
+		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
 	}
-	return semanticquery.NewPlanner(model).PlanRows(reportdef.SemanticRowRequest(request))
+	return planner.PlanRows(reportdef.SemanticRowRequest(request))
 }
 
 func (m runtimeMetrics) Pages(dashboardID string) []dashboard.Page {

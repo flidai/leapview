@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 )
 
@@ -37,10 +36,13 @@ type Optimizer struct {
 	planner *semanticquery.Planner
 }
 
-func NewOptimizer(model *semanticmodel.Model) (*Optimizer, error) {
-	planner, err := semanticquery.NewCompiledPlanner(model)
-	if err != nil {
-		return nil, err
+// NewOptimizerFromPlanner binds the dashboard consumer optimizer to the
+// planner compiled for the active serving generation. The planner is shared
+// with governed execution and authorization; this constructor deliberately
+// does not compile or copy semantic metadata.
+func NewOptimizerFromPlanner(planner *semanticquery.Planner) (*Optimizer, error) {
+	if planner == nil || !planner.IsCompiled() {
+		return nil, fmt.Errorf("compiled semantic planner is required")
 	}
 	return &Optimizer{planner: planner}, nil
 }
@@ -53,17 +55,6 @@ type analyzedQuery struct {
 	scalar    bool
 	grouped   bool
 	aggregate bool
-}
-
-// Optimize groups renderer-neutral semantic consumers by their normalized
-// governed query scope. Presentation shape and visual identifiers never
-// participate in physical compatibility decisions.
-func Optimize(model *semanticmodel.Model, queries []LogicalQuery) (Plan, error) {
-	optimizer, err := NewOptimizer(model)
-	if err != nil {
-		return Plan{}, err
-	}
-	return optimizer.Optimize(queries)
 }
 
 func (o *Optimizer) Optimize(queries []LogicalQuery) (Plan, error) {
@@ -80,7 +71,7 @@ func (o *Optimizer) OptimizeForConcurrency(queries []LogicalQuery, concurrency i
 
 func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool) (Plan, error) {
 	planner := o.planner
-	if planner == nil || planner.Model == nil {
+	if !planner.IsCompiled() {
 		return Plan{}, fmt.Errorf("compiled semantic planner is required")
 	}
 	analyzed := make([]analyzedQuery, len(queries))

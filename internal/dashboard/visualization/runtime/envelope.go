@@ -431,8 +431,8 @@ func compiledSelections(spec ir.VisualizationSpec, entries []dashboard.Interacti
 			matched := false
 			for _, selected := range entry.Mappings {
 				fact, grain := "", ""
-				if mapping.TargetFactID != nil {
-					fact = *mapping.TargetFactID
+				if mapping.TargetDatasetID != nil {
+					fact = *mapping.TargetDatasetID
 				}
 				if mapping.Grain != nil {
 					grain = *mapping.Grain

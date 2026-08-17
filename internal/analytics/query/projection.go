@@ -3,18 +3,14 @@ package query
 import (
 	"fmt"
 	"math"
-	"reflect"
 	"sort"
-
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
-// ProjectScalarFromGrouped derives one scalar aggregate from a complete set of
-// grouped rows. It accepts only direct additive atomic dependencies and exact
-// governed-scope equality. Callers must prove completeness, typically by
-// over-fetching one row when the grouped query has a limit.
-func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Request, rows Rows, complete bool) (Rows, bool, error) {
-	if model == nil || !complete || grouped.Offset != 0 || scalar.Offset != 0 {
+// ProjectScalarFromGrouped resolves a grouped result against an already
+// activated planner. Request paths should use this variant so compilation is
+// performed once at serving-state activation, not once per projection.
+func (p *Planner) ProjectScalarFromGrouped(grouped, scalar Request, rows Rows, complete bool) (Rows, bool, error) {
+	if p == nil || p.compiled == nil || !complete || grouped.Offset != 0 || scalar.Offset != 0 {
 		return nil, false, nil
 	}
 	if len(grouped.Dimensions) == 0 && grouped.Time.Field == "" {
@@ -23,12 +19,43 @@ func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Reques
 	if len(scalar.Dimensions) != 0 || scalar.Time.Field != "" || len(scalar.Metrics) != 1 {
 		return nil, false, nil
 	}
-	if grouped.Table != scalar.Table || !reflect.DeepEqual(grouped.Filters, scalar.Filters) || !reflect.DeepEqual(grouped.ColumnMasks, scalar.ColumnMasks) {
+	if grouped.Table != scalar.Table {
+		return nil, false, nil
+	}
+	groupedScope, scalarScope := grouped.Table, scalar.Table
+	var err error
+	if len(grouped.Filters) != 0 || len(scalar.Filters) != 0 {
+		groupedResolved, resolveErr := p.resolveAggregate(grouped)
+		if resolveErr != nil {
+			return nil, false, nil
+		}
+		scalarResolved, resolveErr := p.resolveAggregate(scalar)
+		if resolveErr != nil {
+			return nil, false, nil
+		}
+		groupedScope, err = p.bundleScopeFingerprint(grouped, groupedResolved)
+		if err != nil {
+			return nil, false, nil
+		}
+		scalarScope, err = p.bundleScopeFingerprint(scalar, scalarResolved)
+		if err != nil {
+			return nil, false, nil
+		}
+	}
+	groupedMasks, err := columnMaskFingerprint(grouped.ColumnMasks)
+	if err != nil {
+		return nil, false, nil
+	}
+	scalarMasks, err := columnMaskFingerprint(scalar.ColumnMasks)
+	if err != nil {
+		return nil, false, nil
+	}
+	if groupedScope != scalarScope || groupedMasks != scalarMasks {
 		return nil, false, nil
 	}
 
 	target := scalar.Metrics[0]
-	dependencyNames, ok, err := AdditiveMetricDependencies(model, target.Field)
+	dependencyNames, ok, err := p.AdditiveMetricDependencies(target.Field)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
@@ -38,8 +65,8 @@ func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Reques
 	}
 	aliases := make(map[string]string, len(grouped.Metrics))
 	for _, member := range grouped.Metrics {
-		metric, atomic := model.Metrics[member.Field]
-		if !atomic || metric.Type != "aggregate" {
+		node, atomic := p.compiled.metric(member.Field)
+		if !atomic || node.Type != "aggregate" {
 			continue
 		}
 		if member.Alias == "" {
@@ -58,14 +85,17 @@ func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Reques
 
 	values := make(map[string]any, len(dependencies))
 	for dependency := range dependencies {
-		metric := model.Metrics[dependency]
-		value, err := recombineAdditive(rows, aliases[dependency], metric.Empty)
+		node, exists := p.compiled.metric(dependency)
+		if !exists || node.Type != "aggregate" {
+			return nil, false, fmt.Errorf("unknown additive aggregate metric %q", dependency)
+		}
+		value, err := recombineAdditive(rows, aliases[dependency], node.Empty)
 		if err != nil {
 			return nil, false, err
 		}
 		values[dependency] = value
 	}
-	value, err := evaluateAggregateMember(model, target.Field, values, map[string]bool{})
+	value, err := evaluateCompiledAggregateMember(p.compiled, target.Field, values, map[string]bool{})
 	if err != nil {
 		return nil, false, err
 	}
@@ -76,26 +106,24 @@ func ProjectScalarFromGrouped(model *semanticmodel.Model, grouped, scalar Reques
 	return Rows{{alias: value}}, true, nil
 }
 
-// AdditiveMetricDependencies expands a metric to atomic count/sum metrics.
-// members. The boolean is false for any non-additive dependency.
-func AdditiveMetricDependencies(model *semanticmodel.Model, member string) ([]string, bool, error) {
-	return NewPlanner(model).AdditiveMetricDependencies(member)
-}
-
+// AdditiveMetricDependencies expands a metric to atomic count/sum members.
+// The boolean is false for any non-additive dependency.
 func (p *Planner) AdditiveMetricDependencies(member string) ([]string, bool, error) {
-	model := p.Model
+	if p == nil || p.compiled == nil {
+		return nil, false, fmt.Errorf("planner is not compiled")
+	}
 	dependencies := map[string]struct{}{}
 	visiting := map[string]bool{}
 	var visit func(string) (bool, error)
 	visit = func(name string) (bool, error) {
-		if metric, ok := model.Metrics[name]; ok && metric.Type == "aggregate" {
-			if metric.Aggregation != "count" && metric.Aggregation != "sum" {
+		node, ok := p.compiled.metric(name)
+		if ok && node.Type == "aggregate" {
+			if node.Aggregation != "count" && node.Aggregation != "sum" {
 				return false, nil
 			}
 			dependencies[name] = struct{}{}
 			return true, nil
 		}
-		metric, ok := model.Metrics[name]
 		if !ok {
 			return false, fmt.Errorf("unknown aggregate member %q", name)
 		}
@@ -103,7 +131,7 @@ func (p *Planner) AdditiveMetricDependencies(member string) ([]string, bool, err
 			return false, fmt.Errorf("metric dependency cycle includes %q", name)
 		}
 		visiting[name] = true
-		expression, err := p.metricExpression(name, metric)
+		expression, err := p.metricExpression(name)
 		if err != nil {
 			return false, err
 		}
@@ -235,11 +263,11 @@ func recombineAdditive(rows Rows, alias, empty string) (any, error) {
 	return floatTotal, nil
 }
 
-func evaluateAggregateMember(model *semanticmodel.Model, member string, values map[string]any, visiting map[string]bool) (any, error) {
-	if metric, ok := model.Metrics[member]; ok && metric.Type == "aggregate" {
+func evaluateCompiledAggregateMember(compiled *CompiledModel, member string, values map[string]any, visiting map[string]bool) (any, error) {
+	node, ok := compiled.metric(member)
+	if ok && node.Type == "aggregate" {
 		return values[member], nil
 	}
-	metric, ok := model.Metrics[member]
 	if !ok {
 		return nil, fmt.Errorf("unknown aggregate member %q", member)
 	}
@@ -248,15 +276,7 @@ func evaluateAggregateMember(model *semanticmodel.Model, member string, values m
 	}
 	visiting[member] = true
 	defer delete(visiting, member)
-	expressionSource := metric.Expression
-	if metric.Type == "ratio" {
-		expressionSource = fmt.Sprintf("safe_divide(${%s}, ${%s})", metric.Numerator, metric.Denominator)
-	}
-	expression, err := semanticmodel.ParseExpression(expressionSource)
-	if err != nil {
-		return nil, fmt.Errorf("metric %q: %w", member, err)
-	}
-	return expression.Evaluate(func(ref string) (any, error) {
-		return evaluateAggregateMember(model, ref, values, visiting)
+	return node.Expression.Evaluate(func(ref string) (any, error) {
+		return evaluateCompiledAggregateMember(compiled, ref, values, visiting)
 	})
 }

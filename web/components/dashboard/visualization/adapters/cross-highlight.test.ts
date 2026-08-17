@@ -12,7 +12,7 @@ const highlight = [{
   sourceVisualID: 'state-map',
   interactionID: 'point_selection',
   label: 'São Paulo',
-  entries: [{ label: 'São Paulo', mappings: [{ targetFieldID: 'customers.state', targetFactID: 'orders', value: 'SP', label: 'São Paulo' }] }],
+  entries: [{ label: 'São Paulo', mappings: [{ targetFieldID: 'customers.state', targetDatasetID: 'orders', value: 'SP', label: 'São Paulo' }] }],
 }]
 
 test('mixed renderer targets preserve comparison frames and project one governed highlight', () => {

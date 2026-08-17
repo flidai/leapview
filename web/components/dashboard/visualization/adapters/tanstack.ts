@@ -97,7 +97,7 @@ function tableInteraction(spec: Extract<VisualizationEnvelope['spec'], { kind: '
     targets: [...interaction.targets],
     mappings: interaction.mappings.map((mapping) => ({
       field: mapping.targetFieldID,
-      ...(mapping.targetFactID ? { fact: mapping.targetFactID } : {}),
+      ...(mapping.targetDatasetID ? { dataset: mapping.targetDatasetID } : {}),
       ...(mapping.grain ? { grain: mapping.grain } : {}),
       value: mapping.source.field,
       ...(mapping.label ? { label: mapping.label.field } : {}),
@@ -112,7 +112,7 @@ function tableSelection(envelope: VisualizationEnvelope, interaction: TableSigna
     const selected = mappings.flatMap((mapping) => {
       const value = entry.datum.identity[mapping.value]
       if (value !== null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return []
-      return [{ field: mapping.field, fact: mapping.fact, grain: mapping.grain, value, label: entry.label }]
+      return [{ field: mapping.field, dataset: mapping.dataset, grain: mapping.grain, value, label: entry.label }]
     })
     return selected.length === mappings.length ? [{ mappings: selected, label: entry.label }] : []
   })

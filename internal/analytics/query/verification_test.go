@@ -18,6 +18,7 @@ func TestPrepareRepresentativePlansCoversMetricDependenciesAndBindings(t *testin
 			},
 			Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "BIGINT"}, {Name: "revenue", PhysicalType: "DECIMAL(12,2)"}}},
 		}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
 			"order_key": {Type: "number", Datatype: semanticmodel.DataTypeInteger, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
 		},
@@ -93,11 +94,11 @@ func verificationRouteModel() *semanticmodel.Model {
 	}
 	return &semanticmodel.Model{
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {GrainEntity: "order_id", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}, Schema: semanticmodel.TableSchema{Columns: columns("order_id", "customer_id")}},
-			"events": {Dimensions: map[string]semanticmodel.MetricDimension{"event_id": {Type: "string", Datatype: semanticmodel.DataTypeString}}, Schema: semanticmodel.TableSchema{Columns: columns("event_id")}},
-			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{
+			"events": {GrainEntity: "event_id", Entities: map[string]semanticmodel.ModelEntitySpec{"event_id": {Type: "primary", Fields: []string{"event_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"event_id": {Type: "string", Datatype: semanticmodel.DataTypeString}}, Schema: semanticmodel.TableSchema{Columns: columns("event_id")}},
+			"customers": {GrainEntity: "customer_id", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}, "customer_code": {Type: "unique", Fields: []string{"customer_code"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_code": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}, Schema: semanticmodel.TableSchema{Columns: columns("customer_id", "customer_code", "state")}},
 		},
@@ -105,7 +106,8 @@ func verificationRouteModel() *semanticmodel.Model {
 			{ID: "orders_customer_primary", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
 			{ID: "orders_customer_alt", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_code"}, Cardinality: "many_to_one"},
 		},
-		Filters: map[string]semanticmodel.SemanticFilterSpec{"captured": {All: []semanticmodel.SemanticFilterSpec{{Field: "customers.state", Operator: "equals", Value: "CA", Path: []string{"orders_customer_primary"}}}}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "events": {Model: "events"}, "customers": {Model: "customers"}},
+		Filters:  map[string]semanticmodel.SemanticFilterSpec{"captured": {All: []semanticmodel.SemanticFilterSpec{{Field: "customers.state", Operator: "equals", Value: "CA", Path: []string{"orders_customer_primary"}}}}},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
 			"event_count": {Type: "aggregate", Dataset: "events", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "events.event_id"}},

@@ -294,7 +294,7 @@ func compiledSelectionVisual(id string, authored dashboardauthoring.Visual) visu
 		for index, mapping := range selection.Mappings {
 			item := visualizationir.VisualizationInteractionMapping{Source: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: mapping.Value}, TargetFieldID: mapping.Field}
 			if mapping.Fact != "" {
-				item.TargetFactID = &mapping.Fact
+				item.TargetDatasetID = &mapping.Fact
 			}
 			if mapping.Grain != "" {
 				item.Grain = &mapping.Grain

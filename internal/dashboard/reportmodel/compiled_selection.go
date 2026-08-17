@@ -66,7 +66,7 @@ func ResolveCompiledSpatialSelectionInteraction(definition *dashboarddefinition.
 		return ResolvedSpatialSelectionInteraction{}, fmt.Errorf("visualization %q has no spatial interaction %q", sourceID, interactionID)
 	}
 	resolve := func(mapping visualizationir.VisualizationSpatialFieldMapping) (ResolvedSelectionMapping, error) {
-		compiled := visualizationir.VisualizationInteractionMapping{TargetFieldID: mapping.TargetFieldID, TargetFactID: mapping.TargetFactID}
+		compiled := visualizationir.VisualizationInteractionMapping{TargetFieldID: mapping.TargetFieldID, TargetDatasetID: mapping.TargetDatasetID}
 		resolved, err := resolveCompiledMapping(model, compiled)
 		if err != nil {
 			return ResolvedSelectionMapping{}, err
@@ -96,8 +96,8 @@ func ResolveCompiledSpatialSelectionInteraction(definition *dashboarddefinition.
 
 func resolveCompiledMapping(model *semanticmodel.Model, mapping visualizationir.VisualizationInteractionMapping) (ResolvedSelectionMapping, error) {
 	field, fact, grain := mapping.TargetFieldID, "", ""
-	if mapping.TargetFactID != nil {
-		fact = *mapping.TargetFactID
+	if mapping.TargetDatasetID != nil {
+		fact = *mapping.TargetDatasetID
 	}
 	if mapping.Grain != nil {
 		grain = *mapping.Grain

@@ -81,7 +81,7 @@ func TestNativeOssieNativeRoundTripPreservesPortableAndLeapViewSemantics(t *test
 			Description: "Orders",
 			GrainEntity: "order_line",
 			Entities:    map[string]semanticmodel.ModelEntitySpec{"order_line": {Type: "primary", Fields: []string{"order_id", "line_no"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}, "order_number": {Type: "unique", Fields: []string{"order_number"}}},
-			Columns:     map[string]semanticmodel.ModelColumn{"order_id": {SourceField: "order_id", Datatype: semanticmodel.DataTypeString}, "line_no": {SourceField: "line_no", Datatype: semanticmodel.DataTypeInteger}, "customer_id": {SourceField: "customer_id", Datatype: semanticmodel.DataTypeString}, "order_number": {SourceField: "order_number", Datatype: semanticmodel.DataTypeString}, "revenue": {SourceField: "revenue", Datatype: semanticmodel.DataTypeDecimal}, "payment_status": {SourceField: "payment_status", Datatype: semanticmodel.DataTypeString}, "event_time": {SourceField: "event_time", Datatype: semanticmodel.DataTypeDateTimeTZ}},
+			Columns:     map[string]semanticmodel.ModelColumn{"order_id": {SourceField: "order_id", Datatype: semanticmodel.DataTypeString}, "line_no": {SourceField: "line_no", Datatype: semanticmodel.DataTypeInteger}, "customer_id": {SourceField: "customer_id", Datatype: semanticmodel.DataTypeString}, "order_number": {SourceField: "order_number", Datatype: semanticmodel.DataTypeString}, "revenue": {SourceField: "revenue", Datatype: semanticmodel.DataTypeDecimal}, "payment_status": {SourceField: "payment_status", Datatype: semanticmodel.DataTypeString}, "purchase_date": {SourceField: "purchase_date", Datatype: semanticmodel.DataTypeDate}, "event_time": {SourceField: "event_time", Datatype: semanticmodel.DataTypeDateTimeTZ}},
 			Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id":       {Type: "string", Datatype: semanticmodel.DataTypeString},
 				"line_no":        {Type: "number", Datatype: semanticmodel.DataTypeInteger},
@@ -429,14 +429,16 @@ semantic_model:
 func TestImportRejectsUnsafeRelationshipsAndMetricPopulation(t *testing.T) {
 	models := map[string]semanticmodel.Table{
 		"orders": {
-			Entities:   map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}},
-			Columns:    map[string]semanticmodel.ModelColumn{"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}},
-			Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
+			GrainEntity: "order",
+			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}},
+			Columns:     map[string]semanticmodel.ModelColumn{"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}},
+			Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
 		"customers": {
-			Entities:   map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
-			Columns:    map[string]semanticmodel.ModelColumn{"customer_id": {Datatype: semanticmodel.DataTypeString}, "state": {Datatype: semanticmodel.DataTypeString}},
-			Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString}},
+			GrainEntity: "customer",
+			Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+			Columns:     map[string]semanticmodel.ModelColumn{"customer_id": {Datatype: semanticmodel.DataTypeString}, "state": {Datatype: semanticmodel.DataTypeString}},
+			Dimensions:  map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
 	}
 	unknownEntity := []byte(`version: 0.2.0.dev0
@@ -489,19 +491,22 @@ semantic_model:
 func TestImportRejectsAmbiguousImplicitBindingPath(t *testing.T) {
 	models := map[string]semanticmodel.Table{
 		"orders": {
-			Entities:   map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}, "region": {Type: "foreign", Fields: []string{"region_id"}}},
-			Columns:    map[string]semanticmodel.ModelColumn{"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}, "region_id": {Datatype: semanticmodel.DataTypeString}},
-			Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "region_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
+			GrainEntity: "order",
+			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}, "region": {Type: "foreign", Fields: []string{"region_id"}}},
+			Columns:     map[string]semanticmodel.ModelColumn{"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}, "region_id": {Datatype: semanticmodel.DataTypeString}},
+			Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "region_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
 		"regions": {
-			Entities:   map[string]semanticmodel.ModelEntitySpec{"region": {Type: "primary", Fields: []string{"region_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}},
-			Columns:    map[string]semanticmodel.ModelColumn{"region_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}},
-			Dimensions: map[string]semanticmodel.MetricDimension{"region_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
+			GrainEntity: "region",
+			Entities:    map[string]semanticmodel.ModelEntitySpec{"region": {Type: "primary", Fields: []string{"region_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}},
+			Columns:     map[string]semanticmodel.ModelColumn{"region_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}},
+			Dimensions:  map[string]semanticmodel.MetricDimension{"region_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
 		"customers": {
-			Entities:   map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
-			Columns:    map[string]semanticmodel.ModelColumn{"customer_id": {Datatype: semanticmodel.DataTypeString}, "state": {Datatype: semanticmodel.DataTypeString}},
-			Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString}},
+			GrainEntity: "customer",
+			Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+			Columns:     map[string]semanticmodel.ModelColumn{"customer_id": {Datatype: semanticmodel.DataTypeString}, "state": {Datatype: semanticmodel.DataTypeString}},
+			Dimensions:  map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
 	}
 	doc := []byte(`version: 0.2.0.dev0

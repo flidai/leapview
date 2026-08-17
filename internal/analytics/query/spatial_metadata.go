@@ -49,6 +49,10 @@ func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, err
 			return Plan{}, err
 		}
 	}
+	irGraph, err := p.spatialMetadataPlanIR(request, filters, coordinate)
+	if err != nil {
+		return Plan{}, err
+	}
 	selects := []string{
 		"MIN(" + longitude + ") AS __spatial_west",
 		"MIN(" + latitude + ") AS __spatial_south",
@@ -83,5 +87,5 @@ func (p *Planner) PlanSpatialMetadata(request SpatialMetadataRequest) (Plan, err
 	selects = append(selects, "MAX(r."+SpatialRawMinimumZoomColumn+") AS "+SpatialRawMinimumZoomColumn)
 	columns = append(columns, SpatialRawMinimumZoomColumn)
 	sql := "WITH coordinate_grain AS (\n" + coordinate.SQL + "\n), whole_filter AS (\n" + totals.SQL + "\n), raw_zoom_occupancy AS (\n" + strings.Join(occupancy, "\nUNION ALL\n") + "\n), raw_transition AS (\nSELECT COALESCE(MIN(zoom) FILTER (WHERE maximum_features <= " + fmt.Sprint(request.FeatureCap) + "), " + fmt.Sprint(request.MaximumZoom+1) + ") AS " + SpatialRawMinimumZoomColumn + " FROM raw_zoom_occupancy\n)\nSELECT " + strings.Join(selects, ", ") + "\nFROM coordinate_grain c CROSS JOIN whole_filter t CROSS JOIN raw_transition r"
-	return Plan{SQL: sql, Args: append(append([]any(nil), coordinate.Args...), totals.Args...), Columns: columns, Mode: "spatial_metadata", Facts: coordinate.Facts, PhysicalDependencies: coordinate.PhysicalDependencies, RelationshipPaths: coordinate.RelationshipPaths}, nil
+	return Plan{SQL: sql, Args: append(append([]any(nil), coordinate.Args...), totals.Args...), Columns: columns, Mode: "spatial_metadata", Facts: coordinate.Facts, PhysicalDependencies: coordinate.PhysicalDependencies, RelationshipPaths: coordinate.RelationshipPaths, IR: irGraph}, nil
 }

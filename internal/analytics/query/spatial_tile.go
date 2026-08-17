@@ -85,6 +85,10 @@ func (p *Planner) PlanSpatialTileAggregate(request SpatialTileRequest) (Plan, er
 	if targetZoom == 0 {
 		targetZoom = min(request.Zoom+1, SpatialTileMaximumZoom)
 	}
+	irGraph, err := p.spatialAggregatePlanIR(request, filters)
+	if err != nil {
+		return Plan{}, err
+	}
 
 	properties := []string{
 		identity + " AS __lv_id",
@@ -122,6 +126,7 @@ func (p *Planner) PlanSpatialTileAggregate(request SpatialTileRequest) (Plan, er
 	return Plan{
 		SQL: sql.String(), Args: governed.Args, Columns: []string{"__tile_x", "__tile_y", "feature_count", "mvt"}, Mode: "spatial_mvt_aggregated",
 		Facts: governed.Facts, PhysicalDependencies: governed.PhysicalDependencies, RelationshipPaths: governed.RelationshipPaths,
+		IR: irGraph,
 	}, nil
 }
 
@@ -165,7 +170,7 @@ func (p *Planner) PlanSpatialTileRaw(request SpatialTileRawRequest) (Plan, error
 	sql.WriteString("), ST_Extent(ST_TileEnvelope(")
 	sql.WriteString(fmt.Sprintf("%d, __tile_x, __tile_y", request.Zoom))
 	sql.WriteString(fmt.Sprintf(")), %d, %d, TRUE) AS geom\nFROM counted\nWHERE __tile_feature_count <= %d\n), encoded AS (\nSELECT __tile_x, __tile_y, ST_AsMVT(encodable, 'primary', %d, 'geom') AS mvt\nFROM encodable\nGROUP BY __tile_x, __tile_y\n)\nSELECT c.__tile_x, c.__tile_y, c.feature_count, e.mvt\nFROM tile_counts c\nLEFT JOIN encoded e USING (__tile_x, __tile_y)\nORDER BY c.__tile_y, c.__tile_x", SpatialTileExtent, request.Buffer, request.FeatureCap, SpatialTileExtent))
-	return Plan{SQL: sql.String(), Args: raw.plan.Args, Columns: []string{"__tile_x", "__tile_y", "feature_count", "mvt"}, Mode: "spatial_mvt_raw", Facts: raw.plan.Facts, PhysicalDependencies: raw.plan.PhysicalDependencies, RelationshipPaths: raw.plan.RelationshipPaths}, nil
+	return Plan{SQL: sql.String(), Args: raw.plan.Args, Columns: []string{"__tile_x", "__tile_y", "feature_count", "mvt"}, Mode: "spatial_mvt_raw", Facts: raw.plan.Facts, PhysicalDependencies: raw.plan.PhysicalDependencies, RelationshipPaths: raw.plan.RelationshipPaths, IR: raw.plan.IR}, nil
 }
 
 // PlanSpatialTileBudget returns the exact revision-wide maximum raw feature
@@ -215,6 +220,7 @@ func (p *Planner) PlanSpatialTileBudget(request SpatialTileBudgetRequest) (Plan,
 	return Plan{
 		SQL: sql.String(), Args: raw.plan.Args, Columns: []string{SpatialTileMaximumFeaturesColumn, SpatialTileMaximumBytesColumn}, Mode: "spatial_mvt_budget",
 		Facts: raw.plan.Facts, PhysicalDependencies: raw.plan.PhysicalDependencies, RelationshipPaths: raw.plan.RelationshipPaths,
+		IR: raw.plan.IR,
 	}, nil
 }
 
@@ -303,9 +309,9 @@ func (p *Planner) spatialMVTProperties(columns []string, dimensions, metrics []F
 		if err != nil {
 			continue
 		}
-		if dimension, err := p.Model.ResolveDimension(field.Field); err == nil {
+		if dimension, err := p.model.ResolveDimension(field.Field); err == nil {
 			types[alias] = dimension.Type
-		} else if dimension, ok := p.Model.Dimensions[field.Field]; ok {
+		} else if dimension, ok := p.model.Dimensions[field.Field]; ok {
 			types[alias] = dimension.Type
 		}
 	}

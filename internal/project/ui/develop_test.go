@@ -43,6 +43,10 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
 			"orders_customer": {From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Fields: []string{"customer_id"}}, To: semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Fields: []string{"customer_id"}}},
 		},
+		Relationships: []semanticmodel.Relationship{{
+			ID: "orders_customer", FromDataset: "orders", FromFields: []string{"customer_id"},
+			ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one",
+		}},
 	}
 	asset := projectview.DevelopAssetView{
 		ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales",
@@ -122,6 +126,77 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 	dom := rendered.String()
 	if !strings.Contains(dom, "<lv-project-asset-page") || !strings.Contains(dom, "/static/semantic-model-graph.js") {
 		t.Fatalf("semantic-model detail DOM missing route root or graph asset: %s", dom)
+	}
+}
+
+func TestSemanticModelGraphProjectsCompiledEntityAndCompositeEndpoints(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
+					"customer":   {Type: "foreign", Fields: []string{"customer_id", "customer_region"}},
+				},
+				GrainEntity: "order_line",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"order_id": {Label: "Order ID"}, "line_number": {Label: "Line number"},
+					"customer_id": {Label: "Customer ID"}, "customer_region": {Label: "Customer region"},
+				},
+			},
+			"customers": {
+				Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id", "customer_region"}}},
+				GrainEntity: "customer",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer_id": {Label: "Customer ID"}, "customer_region": {Label: "Customer region"},
+				},
+			},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "customers": {Model: "customers"},
+		},
+		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
+			"orders_customers": {
+				From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Entity: "customer"},
+				To:   semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Entity: "customer"},
+			},
+		},
+		Relationships: []semanticmodel.Relationship{{
+			ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id", "customer_region"},
+			ToDataset: "customers", ToFields: []string{"customer_id", "customer_region"}, Cardinality: "one_to_one",
+		}},
+	}
+	asset := projectview.DevelopAssetView{
+		ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales",
+		Payload: projectview.SemanticModelAssetPayload(model),
+	}
+	details := projectAssetDetailsSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil)
+	if details.SemanticModelGraph == nil || len(details.SemanticModelGraph.Edges) != 1 {
+		t.Fatalf("semantic graph = %#v, want one composite edge", details.SemanticModelGraph)
+	}
+	edge := details.SemanticModelGraph.Edges[0]
+	if edge.SourceField != "customer_id, customer_region" || edge.TargetField != "customer_id, customer_region" {
+		t.Fatalf("composite edge fields = (%q, %q), want ordered physical tuple", edge.SourceField, edge.TargetField)
+	}
+	if edge.Cardinality != "one_to_one" || edge.Label != "1:1" {
+		t.Fatalf("composite edge cardinality = (%q, %q), want inferred safe marker", edge.Cardinality, edge.Label)
+	}
+	var orders *uisignals.SemanticModelGraphNodeSignal
+	for index := range details.SemanticModelGraph.Nodes {
+		if details.SemanticModelGraph.Nodes[index].ID == "orders" {
+			orders = &details.SemanticModelGraph.Nodes[index]
+			break
+		}
+	}
+	if orders == nil {
+		t.Fatal("orders graph node missing")
+	}
+	for _, field := range orders.Fields {
+		if field.Name == "customer_id" || field.Name == "customer_region" {
+			if field.Join == nil || !*field.Join {
+				t.Fatalf("orders field %q = %#v, want join handle", field.Name, field)
+			}
+		}
 	}
 }
 

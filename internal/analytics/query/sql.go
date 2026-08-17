@@ -41,7 +41,7 @@ func joinPathSQL(planner *Planner, aliases pathAliasSet) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("missing base alias for fact %q", aliases.BaseTable)
 	}
-	model := planner.Model
+	model := planner.model
 	parts := []string{baseRelation + " " + baseAlias.Alias}
 	for _, alias := range aliases.Ordered {
 		if len(alias.Path) == 0 {

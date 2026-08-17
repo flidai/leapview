@@ -581,7 +581,7 @@ function tiledPointEnvelope(): VisualizationEnvelope {
         { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] }],
       dataBudget: { maxRows: 0, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Order locations' },
-      interactions: [{ id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['detail'], mappings: [{ source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetFactID: 'orders' }] }],
+      interactions: [{ id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['detail'], mappings: [{ source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetDatasetID: 'orders' }] }],
       layers: [layer], spatialInteractions: [],
       presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam: true, theme: 'auto', labelDensity: 'normal', camera: { mode: 'fit_data', padding: 24, minimumZoom: 0, maximumZoom: 18 }, controls: { zoom: true, reset: true, compass: true } },
     },
@@ -612,7 +612,7 @@ function selectableEnvelope(): VisualizationEnvelope {
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'States', description: 'States' },
       interactions: [{ id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['detail'], mappings: [
-        { source: { dataset: 'primary', field: 'state' }, targetFieldID: 'customers.state', targetFactID: 'customers' },
+        { source: { dataset: 'primary', field: 'state' }, targetFieldID: 'customers.state', targetDatasetID: 'customers' },
       ] }],
       layers: [{ id: 'states', kind: 'choropleth', geometry: {} as any, join: { dataset: 'primary', field: 'state' }, value: { dataset: 'primary', field: 'value' }, tooltip: [{ dataset: 'primary', field: 'state' }, { dataset: 'primary', field: 'value' }], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#d0d7de' }, stroke: { color: '#fff', width: 1.5, opacity: 1 }, opacity: .82 }],
       presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam: false, theme: 'auto', labelDensity: 'normal', camera: { mode: 'fit_data', padding: 24, minimumZoom: 0, maximumZoom: 10 }, controls: { zoom: false, reset: false, compass: false } },

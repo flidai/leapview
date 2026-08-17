@@ -109,7 +109,7 @@ func TestEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
 	fields[0].Role = ir.VisualizationFieldRoleIdentity
 	interaction := ir.VisualizationInteraction{
 		ID: "point_selection", Kind: ir.VisualizationInteractionKindSelect, Mode: ir.VisualizationSelectionModeSingle, RequiresStableIdentity: true,
-		Mappings: []ir.VisualizationInteractionMapping{{Source: ir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, TargetFieldID: "orders.status", TargetFactID: &fact}},
+		Mappings: []ir.VisualizationInteractionMapping{{Source: ir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, TargetFieldID: "orders.status", TargetDatasetID: &fact}},
 	}
 	definition := testCartesianDefinition(t, "orders", fields, []ir.VisualizationInteraction{interaction})
 	selection := []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: "orders.status", Fact: "orders", Value: "delivered"}}, Label: "Delivered"}}

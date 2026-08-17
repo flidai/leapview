@@ -29,6 +29,7 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
 			"orders_customer": {From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Fields: []string{"customer_id"}}, To: semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Fields: []string{"customer_id"}}},
 		},
+		Relationships: []semanticmodel.Relationship{{ID: "orders_customer", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}},
 	}
 
 	payload := SemanticModelAssetPayload(model)
@@ -44,9 +45,12 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	if !ok || len(metrics) != 1 {
 		t.Fatalf("metrics = %#v, want one projected metric", payload["Metrics"])
 	}
-	relationships, ok := payload["StructuredRelationships"].(map[string]any)
+	relationships, ok := payload["Relationships"].([]any)
 	if !ok || len(relationships) != 1 {
-		t.Fatalf("structured relationships = %#v, want one projected relationship", payload["StructuredRelationships"])
+		t.Fatalf("compiled relationships = %#v, want one projected relationship", payload["Relationships"])
+	}
+	if _, exists := payload["StructuredRelationships"]; exists {
+		t.Fatalf("asset payload leaked authored relationship representation: %#v", payload["StructuredRelationships"])
 	}
 	orders, ok := datasetDetails["orders"].(map[string]any)
 	if !ok || orders["GrainEntity"] != "order_id" {

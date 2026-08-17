@@ -5,12 +5,41 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 )
+
+func mustTestOptimizer(t *testing.T, model *semanticmodel.Model) *Optimizer {
+	t.Helper()
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	optimizer, err := NewOptimizerFromPlanner(planner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return optimizer
+}
+
+func TestNewOptimizerFromPlannerRetainsActivationPlanner(t *testing.T) {
+	model := optimizerTestModel()
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	optimizer, err := NewOptimizerFromPlanner(planner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if optimizer.planner != planner {
+		t.Fatal("optimizer copied or replaced the activation planner")
+	}
+}
 
 func TestOptimizerGroupsSemanticConsumersWithoutPresentationShapes(t *testing.T) {
 	model := optimizerTestModel()
 	scope := []dataquery.Filter{{Field: "segment", Operator: "equals", Values: []any{"consumer"}}}
-	plan, err := Optimize(model, []LogicalQuery{
+	plan, err := mustTestOptimizer(t, model).Optimize([]LogicalQuery{
 		{
 			Target: Target{Kind: KindVisual, ID: "trend"},
 			Query:  dataquery.Query{Kind: dataquery.KindSemanticAggregate, Fields: []dataquery.Field{{Field: "customer", Alias: "label"}}, Metrics: []dataquery.Field{{Field: "order_count", Alias: "orders"}, {Field: "tag_count", Alias: "tags"}}, Filters: scope, Limit: 500},
@@ -33,7 +62,7 @@ func TestOptimizerGroupsSemanticConsumersWithoutPresentationShapes(t *testing.T)
 
 func TestOptimizerKeepsDifferentGovernedScopesSeparate(t *testing.T) {
 	model := optimizerTestModel()
-	plan, err := Optimize(model, []LogicalQuery{
+	plan, err := mustTestOptimizer(t, model).Optimize([]LogicalQuery{
 		{Target: Target{Kind: KindVisual, ID: "consumer"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "order_count"}}, Filters: []dataquery.Filter{{Field: "segment", Operator: "equals", Values: []any{"consumer"}}}}},
 		{Target: Target{Kind: KindVisual, ID: "business"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "order_count"}}, Filters: []dataquery.Filter{{Field: "segment", Operator: "equals", Values: []any{"business"}}}}},
 	})
@@ -46,7 +75,7 @@ func TestOptimizerKeepsDifferentGovernedScopesSeparate(t *testing.T) {
 }
 
 func TestOptimizerBatchesScalarConsumersAcrossFacts(t *testing.T) {
-	plan, err := Optimize(optimizerTestModel(), []LogicalQuery{
+	plan, err := mustTestOptimizer(t, optimizerTestModel()).Optimize([]LogicalQuery{
 		{Target: Target{Kind: KindVisual, ID: "orders"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "order_count"}}}},
 		{Target: Target{Kind: KindVisual, ID: "tags"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "tag_count"}}}},
 		{Target: Target{Kind: KindVisual, ID: "ratio"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "tags_per_order"}}}},
@@ -60,7 +89,7 @@ func TestOptimizerBatchesScalarConsumersAcrossFacts(t *testing.T) {
 }
 
 func TestOptimizerBundlesSameFactNonAdditiveScalarWithGroupedConsumers(t *testing.T) {
-	plan, err := Optimize(optimizerTestModel(), []LogicalQuery{
+	plan, err := mustTestOptimizer(t, optimizerTestModel()).Optimize([]LogicalQuery{
 		{
 			Target: Target{Kind: KindVisual, ID: "orders_by_customer"},
 			Query: dataquery.Query{
@@ -112,7 +141,11 @@ func TestOptimizerBundlesGroupedConsumersAcrossFactSignatures(t *testing.T) {
 			},
 		},
 	}
-	optimizer, err := NewOptimizer(optimizerTestModel())
+	planner, err := semanticquery.NewCompiledPlanner(optimizerTestModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	optimizer, err := NewOptimizerFromPlanner(planner)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"reflect"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -8,6 +9,51 @@ import (
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
+
+func TestExplorerDatasetsProjectsCompositeAndUniqueGrains(t *testing.T) {
+	model := &semanticmodel.Model{Tables: map[string]semanticmodel.Table{
+		"order_lines": {
+			Entities: map[string]semanticmodel.ModelEntitySpec{
+				"order_line":   {Type: "primary", Fields: []string{"order_id", "line_number"}},
+				"customer_ref": {Type: "unique", Fields: []string{"customer_id", "region_code"}},
+			},
+			GrainEntity: "order_line",
+		},
+		"customer_snapshots": {
+			Entities: map[string]semanticmodel.ModelEntitySpec{
+				"external_key": {Type: "unique", Fields: []string{"tenant_id", "customer_id"}},
+			},
+			GrainEntity: "external_key",
+		},
+	}}
+
+	datasets := explorerDatasets(model)
+	if len(datasets) != 2 {
+		t.Fatalf("datasets = %#v, want two datasets", datasets)
+	}
+	byID := map[string]projectsignals.DataExploreDatasetSignal{}
+	for _, dataset := range datasets {
+		byID[dataset.ID] = dataset
+	}
+	orderLines := byID["order_lines"]
+	if orderLines.GrainEntity != "order_line" || !reflect.DeepEqual(orderLines.GrainFields, []string{"order_id", "line_number"}) {
+		t.Fatalf("composite grain = %#v/%#v, want order_line and authored tuple", orderLines.GrainEntity, orderLines.GrainFields)
+	}
+	if len(orderLines.Entities) != 2 || orderLines.Entities[0].Name != "customer_ref" || orderLines.Entities[0].Type != "unique" || !reflect.DeepEqual(orderLines.Entities[0].Fields, []string{"customer_id", "region_code"}) {
+		t.Fatalf("entities = %#v, want sorted names and ordered fields", orderLines.Entities)
+	}
+	if orderLines.Entities[1].Grain == nil || !*orderLines.Entities[1].Grain {
+		t.Fatalf("grain entity signal = %#v, want order_line marked grain", orderLines.Entities[1])
+	}
+
+	customerSnapshots := byID["customer_snapshots"]
+	if customerSnapshots.GrainEntity != "external_key" || !reflect.DeepEqual(customerSnapshots.GrainFields, []string{"tenant_id", "customer_id"}) {
+		t.Fatalf("unique grain = %#v/%#v, want non-primary composite tuple", customerSnapshots.GrainEntity, customerSnapshots.GrainFields)
+	}
+	if len(customerSnapshots.Entities) != 1 || customerSnapshots.Entities[0].Type != "unique" {
+		t.Fatalf("unique entity signal = %#v, want type unique", customerSnapshots.Entities)
+	}
+}
 
 func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testing.T) {
 	model := &semanticmodel.Model{

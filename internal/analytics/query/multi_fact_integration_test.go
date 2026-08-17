@@ -27,7 +27,7 @@ func TestRolePlayingDimensionPathsExecuteWithIndependentAliases(t *testing.T) {
 		}
 	}
 
-	plan, err := NewPlanner(rolePlayingDateModel()).Plan(Request{
+	plan, err := mustNewCompiledPlanner(t, rolePlayingDateModel()).Plan(Request{
 		Dimensions: []Field{{Field: "order_date"}, {Field: "ship_date"}},
 		Metrics:    []Field{{Field: "order_count"}},
 		Sort:       []Sort{{Field: "order_date", Direction: "asc"}, {Field: "ship_date", Direction: "asc"}},
@@ -88,7 +88,7 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 	}
 
 	model := executableMultiFactModel()
-	planner := NewPlanner(model)
+	planner := mustNewCompiledPlanner(t, model)
 	scalar, err := planner.Plan(Request{Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "click_count"}, {Field: "tags_per_order"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -192,17 +192,17 @@ func executableMultiFactModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Name: "executable",
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"order_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string"}, "amount": {Type: "number"},
+			"orders": {GrainEntity: "order_id", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+				"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string", Datatype: semanticmodel.DataTypeString}, "amount": {Type: "number", Datatype: semanticmodel.DataTypeDecimal},
 			}},
-			"tags": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"tag_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string"}, "tag": {Type: "string"},
+			"tags": {GrainEntity: "tag_id", Entities: map[string]semanticmodel.ModelEntitySpec{"tag_id": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+				"tag_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string", Datatype: semanticmodel.DataTypeString}, "tag": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
-			"clicks": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"click_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string"},
+			"clicks": {GrainEntity: "click_id", Entities: map[string]semanticmodel.ModelEntitySpec{"click_id": {Type: "primary", Fields: []string{"click_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+				"click_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
-			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string"},
+			"customers": {GrainEntity: "customer_id", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+				"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
 		},
 		Relationships: []semanticmodel.Relationship{
@@ -210,11 +210,14 @@ func executableMultiFactModel() *semanticmodel.Model {
 			{ID: "tags_customers", FromDataset: "tags", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
 			{ID: "clicks_customers", FromDataset: "clicks", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
 		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "tags": {Model: "tags"}, "clicks": {Model: "clicks"}, "customers": {Model: "customers"},
+		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"customer": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{
+			"customer": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{
 				"orders": {Field: "orders.customer_id"}, "tags": {Field: "tags.customer_id"}, "clicks": {Field: "clicks.customer_id"},
 			}},
-			"segment": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{
+			"segment": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{
 				"orders": {Field: "orders.segment"}, "tags": {Field: "tags.segment"}, "clicks": {Field: "clicks.segment"},
 			}},
 		},
@@ -223,7 +226,7 @@ func executableMultiFactModel() *semanticmodel.Model {
 			"revenue":        {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.amount"}, Empty: "zero"},
 			"tag_count":      {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "tags.tag_id"}, Empty: "zero"},
 			"click_count":    {Type: "aggregate", Dataset: "clicks", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "clicks.click_id"}, Empty: "zero"},
-			"tags_per_order": {Expression: "safe_divide(${tag_count}, ${order_count})"},
+			"tags_per_order": {Type: "derived", Expression: "safe_divide(${tag_count}, ${order_count})"},
 		},
 	}
 }

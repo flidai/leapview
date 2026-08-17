@@ -4,6 +4,7 @@ import { ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, Rotat
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
+  DataExploreDatasetSignal,
   DataExploreFieldSignal,
   DataExploreFilterSignal,
   DataExploreSignal,
@@ -1246,7 +1247,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           ${this.filterField ? this.renderFilterEditor(command, explore.fields) : nothing}
           <div class="result-meta" aria-live="polite">
             <span><strong>${selectedModel?.title ?? 'Semantic model'}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
-            ${selectedDataset?.grain ? html`<span>Grain: ${selectedDataset.grain}</span>` : nothing}
+            ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
             ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
             ${result.error ? html`<span class="result-error">${result.error}</span>` : nothing}
             ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
@@ -1690,7 +1691,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             ${this.filterField ? this.renderFilterEditor(command, explore.fields) : nothing}
             <div class="result-meta" aria-live="polite">
               <span><strong>${selectedModel?.title ?? label(command.modelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
-              ${selectedDataset?.grain ? html`<span>Grain: ${selectedDataset.grain}</span>` : nothing}
+              ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
               ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
               ${result.error ? html`<span class="result-error">${result.error}</span>` : nothing}
               ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
@@ -1930,6 +1931,11 @@ function groupExploreFields(fields: DataExploreFieldSignal[]): ExploreFieldGroup
 
 function fieldLabel(id: string, fields: DataExploreFieldSignal[]): string {
   return fields.find((field) => field.id === id)?.label ?? label(id)
+}
+
+function datasetGrainLabel(dataset: DataExploreDatasetSignal): string {
+  const fields = dataset.grainFields ?? []
+  return fields.length ? `${dataset.grainEntity} (${fields.join(', ')})` : dataset.grainEntity
 }
 
 function replaceDataExplorerURL(command: DataExplorerCommand) {

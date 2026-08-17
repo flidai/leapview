@@ -74,7 +74,18 @@ func (p *Planner) planMultiFactBundle(requests []BundleRequest, resolutions []ag
 	}
 	sort.Strings(deps)
 	sql := "WITH " + strings.Join(ctes, ",\n") + "\n" + bundleUnionSQL(branchSQL) + "\nORDER BY " + BundleBranchColumn + " ASC, " + BundleRowColumn + " ASC"
-	return BundlePlan{Plan: Plan{SQL: sql, Args: args, Columns: physicalColumns, Mode: "multi_fact", Facts: append([]string{}, facts...), PhysicalDependencies: deps}, Branches: branches}, nil
+	irGraph, err := p.buildBundlePlanIR(requests, resolutions)
+	if err != nil {
+		return BundlePlan{}, err
+	}
+	fingerprints, err := p.bundleBranchFingerprints(requests, resolutions)
+	if err != nil {
+		return BundlePlan{}, err
+	}
+	for i := range branches {
+		branches[i].Fingerprint = fingerprints[i]
+	}
+	return BundlePlan{Plan: Plan{SQL: sql, Args: args, Columns: physicalColumns, Mode: "multi_fact", Facts: append([]string{}, facts...), PhysicalDependencies: deps, IR: irGraph}, Branches: branches}, nil
 }
 
 func multiFactBundleDimensions(resolutions []aggregateResolution) ([]bundleDimension, [][]int, error) {
@@ -167,7 +178,7 @@ func (p *Planner) compileMultiFactBundleFact(requests []BundleRequest, resolutio
 			continue
 		}
 		for _, field := range aggregateMetricPhysicalFields(metric) {
-			physical, err := p.Model.ResolveDimension(field)
+			physical, err := p.model.ResolveDimension(field)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -190,10 +201,10 @@ func (p *Planner) compileMultiFactBundleFact(requests []BundleRequest, resolutio
 		addPathDependencies(dependencies, binding.Path)
 	}
 	for _, metric := range metrics {
-		if metric.Fact != fact || len(metric.WhereFilters) == 0 {
+		if metric.Fact != fact || len(metric.NamedFilters) == 0 {
 			continue
 		}
-		whereFilters := scopeMetricWhereFilters(metric.WhereFilters, fact)
+		whereFilters := scopeMetricWhereFilters(namedMetricFilters(metric.NamedFilters), fact)
 		whereBindings, err := p.factFilterFields(whereFilters, filterResolution, fact)
 		if err != nil {
 			return nil, nil, nil, err
@@ -222,7 +233,7 @@ func (p *Planner) compileMultiFactBundleFact(requests []BundleRequest, resolutio
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		physical, err := p.Model.ResolveDimension(field)
+		physical, err := p.model.ResolveDimension(field)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -243,15 +254,15 @@ func (p *Planner) compileMultiFactBundleFact(requests []BundleRequest, resolutio
 		if metric.Fact != fact {
 			continue
 		}
-		raw, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
+		raw, err := rawAggregateMetricExpr(p.model, metric, factAliases)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		baseSelects = append(baseSelects, raw+fmt.Sprintf(" AS __v%d", metricIndex))
-		if len(metric.Filters) > 0 || len(metric.WhereFilters) > 0 {
+		if len(metric.Filters) > 0 || len(metric.NamedFilters) > 0 {
 			parts := []string{}
 			for _, filter := range metric.Filters {
-				physical, err := p.Model.ResolveDimension(filter.Field)
+				physical, err := p.model.ResolveDimension(filter.Field)
 				if err != nil {
 					return nil, nil, nil, err
 				}
@@ -272,7 +283,7 @@ func (p *Planner) compileMultiFactBundleFact(requests []BundleRequest, resolutio
 					baseArgs = append(baseArgs, filterArgs...)
 				}
 			}
-			for _, filter := range scopeMetricWhereFilters(metric.WhereFilters, fact) {
+			for _, filter := range scopeMetricWhereFilters(namedMetricFilters(metric.NamedFilters), fact) {
 				part, filterArgs, err := p.factFilterPart(filter, filterResolution, fact, aliases)
 				if err != nil {
 					return nil, nil, nil, err
@@ -378,7 +389,7 @@ func bundleFactMetricAggregate(metric resolvedAggregateMetric, metricIndex int) 
 	default:
 		return "", fmt.Errorf("unsupported aggregation %q", metric.Aggregation)
 	}
-	if len(metric.Filters) > 0 || len(metric.WhereFilters) > 0 {
+	if len(metric.Filters) > 0 || len(metric.NamedFilters) > 0 {
 		expr += fmt.Sprintf(" FILTER (WHERE __f%d)", metricIndex)
 	}
 	if metric.Empty == "zero" && metric.Aggregation != "count" && metric.Aggregation != "count_distinct" {

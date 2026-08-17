@@ -6634,7 +6634,7 @@ paths:
                             mappings:
                               - grain: example
                                 label: example
-                                targetFactID: example
+                                targetDatasetID: example
                                 targetFieldID: example
                                 value: example
                         interactionID: example
@@ -7272,7 +7272,7 @@ paths:
                         mappings:
                           - grain: example
                             label: example
-                            targetFactID: example
+                            targetDatasetID: example
                             targetFieldID: example
                             value: example
                     interactionID: example
@@ -60388,7 +60388,7 @@ components:
                       mappings:
                         - grain: example
                           label: example
-                          targetFactID: example
+                          targetDatasetID: example
                           targetFieldID: example
                           value: example
                   interactionID: example
@@ -60436,7 +60436,7 @@ components:
                     mappings:
                       - grain: example
                         label: example
-                        targetFactID: example
+                        targetDatasetID: example
                         targetFieldID: example
                         value: example
                 interactionID: example
@@ -62116,13 +62116,13 @@ components:
                 source:
                   dataset: example
                   field: example
-                targetFactID: example
+                targetDatasetID: example
                 targetFieldID: example
               longitude:
                 source:
                   dataset: example
                   field: example
-                targetFactID: example
+                targetDatasetID: example
                 targetFieldID: example
               targets:
                 - effect: none
@@ -62172,13 +62172,13 @@ components:
               source:
                 dataset: example
                 field: example
-              targetFactID: example
+              targetDatasetID: example
               targetFieldID: example
             longitude:
               source:
                 dataset: example
                 field: example
-              targetFactID: example
+              targetDatasetID: example
               targetFieldID: example
             targets:
               - effect: none
@@ -70010,7 +70010,7 @@ components:
                   mappings:
                     - grain: example
                       label: example
-                      targetFactID: example
+                      targetDatasetID: example
                       targetFieldID: example
                       value: example
               interactionID: example
@@ -70044,7 +70044,7 @@ components:
                 mappings:
                   - grain: example
                     label: example
-                    targetFactID: example
+                    targetDatasetID: example
                     targetFieldID: example
                     value: example
             interactionID: example
@@ -70478,7 +70478,7 @@ components:
           example:
             - grain: example
               label: example
-              targetFactID: example
+              targetDatasetID: example
               targetFieldID: example
               value: example
         label:
@@ -70489,7 +70489,7 @@ components:
         mappings:
           - grain: example
             label: example
-            targetFactID: example
+            targetDatasetID: example
             targetFieldID: example
             value: example
     VisualizationHighlightMapping:
@@ -70501,7 +70501,7 @@ components:
         targetFieldID:
           type: string
           example: example
-        targetFactID:
+        targetDatasetID:
           type: string
           example: example
         grain:
@@ -70515,7 +70515,7 @@ components:
       example:
         grain: example
         label: example
-        targetFactID: example
+        targetDatasetID: example
         targetFieldID: example
         value: example
     VisualizationHighlightState:
@@ -70541,7 +70541,7 @@ components:
               mappings:
                 - grain: example
                   label: example
-                  targetFactID: example
+                  targetDatasetID: example
                   targetFieldID: example
                   value: example
         spatialGeometry:
@@ -70561,7 +70561,7 @@ components:
             mappings:
               - grain: example
                 label: example
-                targetFactID: example
+                targetDatasetID: example
                 targetFieldID: example
                 value: example
         interactionID: example
@@ -70658,7 +70658,7 @@ components:
               source:
                 dataset: example
                 field: example
-              targetFactID: example
+              targetDatasetID: example
               targetFieldID: example
         targets:
           type: array
@@ -70683,7 +70683,7 @@ components:
             source:
               dataset: example
               field: example
-            targetFactID: example
+            targetDatasetID: example
             targetFieldID: example
         mode: single
         requiresStableIdentity: true
@@ -70716,7 +70716,7 @@ components:
         targetFieldID:
           type: string
           example: example
-        targetFactID:
+        targetDatasetID:
           type: string
           example: example
         grain:
@@ -70732,7 +70732,7 @@ components:
         source:
           dataset: example
           field: example
-        targetFactID: example
+        targetDatasetID: example
         targetFieldID: example
     VisualizationInteractionTarget:
       type: object
@@ -71828,14 +71828,14 @@ components:
         targetFieldID:
           type: string
           example: example
-        targetFactID:
+        targetDatasetID:
           type: string
           example: example
       example:
         source:
           dataset: example
           field: example
-        targetFactID: example
+        targetDatasetID: example
         targetFieldID: example
     VisualizationSpatialLassoSelection:
       type: object
@@ -71978,13 +71978,13 @@ components:
           source:
             dataset: example
             field: example
-          targetFactID: example
+          targetDatasetID: example
           targetFieldID: example
         longitude:
           source:
             dataset: example
             field: example
-          targetFactID: example
+          targetDatasetID: example
           targetFieldID: example
         targets:
           - effect: none
@@ -72104,7 +72104,7 @@ components:
                   source:
                     dataset: example
                     field: example
-                  targetFactID: example
+                  targetDatasetID: example
                   targetFieldID: example
               mode: single
               requiresStableIdentity: true
@@ -72241,7 +72241,7 @@ components:
                 source:
                   dataset: example
                   field: example
-                targetFactID: example
+                targetDatasetID: example
                 targetFieldID: example
             mode: single
             requiresStableIdentity: true

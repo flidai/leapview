@@ -17,6 +17,7 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
@@ -407,6 +408,21 @@ type ProjectRuntime struct {
 	lastSnapshotID       int64
 	commitMetadata       map[string]string
 	cacheScope           *resultcache.Scope
+}
+
+// Planner returns the activation-owned planner for one semantic model. The
+// returned pointer is immutable after construction and is shared by dashboard
+// consumers and authorization rather than recompiled per request.
+func (r *ProjectRuntime) Planner(modelID string) (*semanticquery.Planner, bool) {
+	if r == nil {
+		return nil, false
+	}
+	view, ok := r.views[modelID]
+	if !ok || view == nil {
+		return nil, false
+	}
+	planner := view.Planner()
+	return planner, planner != nil
 }
 
 type duckLakeCommitter interface {

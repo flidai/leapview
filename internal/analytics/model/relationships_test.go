@@ -133,6 +133,7 @@ func TestCompositeRelationshipValidatesArityTypesAndUniqueTuple(t *testing.T) {
 	customerTable = model.Tables["customers"]
 	customerTable.Dimensions["line_number"] = MetricDimension{Type: "number", Datatype: DataTypeInteger}
 	customerTable.Entities = map[string]ModelEntitySpec{"customer": {Type: "unique", Fields: []string{"customer_id"}}}
+	customerTable.GrainEntity = "customer"
 	model.Tables["customers"] = customerTable
 	if err := model.validateSemanticGraph(); err == nil || !strings.Contains(err.Error(), "primary or unique entity") {
 		t.Fatalf("non-unique tuple error = %v", err)
@@ -187,6 +188,9 @@ func relationshipMatrixModel() *Model {
 					"tag_id": {Type: "string", Datatype: DataTypeString}, "order_id": {Type: "string", Datatype: DataTypeString},
 				},
 			},
+		},
+		Datasets: map[string]SemanticDatasetSpec{
+			"accounts": {Model: "accounts"}, "customers": {Model: "customers"}, "orders": {Model: "orders"}, "profiles": {Model: "profiles"}, "tags": {Model: "tags"},
 		},
 		Dimensions: map[string]SemanticDimension{},
 		Metrics:    map[string]Metric{},

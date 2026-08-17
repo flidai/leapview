@@ -399,10 +399,10 @@ test('data explorer builds a governed semantic exploration and filter command', 
         command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
         explore: {
           command: exploreCommand,
-          models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 }] }],
-          datasets: [{ id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 }],
-          selectedModel: { id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 }] },
-          selectedDataset: { id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 },
+          models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] }],
+          datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }],
+          selectedModel: { id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] },
+          selectedDataset: { id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] },
           fields: [
             { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: false },
             { id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: true },
@@ -480,7 +480,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         explore: {
           ...dataExplorer.explore,
           command: customerCommand,
-          selectedDataset: { id: 'customers', title: 'Customers', grain: 'customer_id', fieldCount: 1 },
+          selectedDataset: { id: 'customers', title: 'Customers', grainEntity: 'customer_id', grainFields: ['customer_id'], fieldCount: 1, entities: [] },
           fields: [
             { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Order ID and change grain from Customers to Orders.', selected: false },
             { id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Status and change grain from Customers to Orders.', selected: false },

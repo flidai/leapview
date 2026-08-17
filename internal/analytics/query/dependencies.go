@@ -1,6 +1,7 @@
 package query
 
 import (
+	"fmt"
 	"sort"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -17,9 +18,15 @@ type Dependencies struct {
 	RelationshipPaths  []string
 }
 
-func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependencies, error) {
-	planner := NewPlanner(model)
-	resolved, err := planner.resolveAggregate(request)
+// ResolveDependencies resolves request lineage against an already activated
+// planner. Serving request paths must retain and use this planner so semantic
+// metadata is never compiled outside serving-state activation.
+func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
+	if p == nil || p.compiled == nil || p.model == nil {
+		return Dependencies{}, fmt.Errorf("planner is not compiled")
+	}
+	model := p.model
+	resolved, err := p.resolveAggregate(request)
 	if err != nil {
 		return Dependencies{}, err
 	}
@@ -30,7 +37,7 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 	for _, dimension := range resolved.Dimensions {
 		logical[dimension.Name] = struct{}{}
 		for _, fact := range resolved.Facts {
-			field, path, err := planner.aggregateDimensionBinding(fact, dimension)
+			field, path, err := p.aggregateDimensionBinding(fact, dimension)
 			if err != nil {
 				return Dependencies{}, err
 			}
@@ -74,7 +81,7 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 		}
 	}
 	for _, fact := range resolved.Facts {
-		bindings, err := planner.factFilterFields(request.Filters, resolved, fact)
+		bindings, err := p.factFilterFields(request.Filters, resolved, fact)
 		if err != nil {
 			return Dependencies{}, err
 		}

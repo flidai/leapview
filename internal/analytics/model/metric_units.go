@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -66,7 +67,13 @@ func normalizeMetricUnit(value string) metricUnit {
 
 func (m *Model) validateMetricUnits() error {
 	units := make(map[string]metricUnit, len(m.Metrics))
-	for name, metric := range m.Metrics {
+	names := make([]string, 0, len(m.Metrics))
+	for name := range m.Metrics {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		metric := m.Metrics[name]
 		if metric.Type == "aggregate" && (metric.Aggregation == "count" || metric.Aggregation == "count_distinct") {
 			units[name] = metricUnit{name: "dimensionless", known: true, dimensionless: true}
 			continue
@@ -128,7 +135,7 @@ func (m *Model) validateMetricUnits() error {
 		state[name] = 2
 		return inferred, nil
 	}
-	for name := range m.Metrics {
+	for _, name := range names {
 		if _, err := inferMetric(name); err != nil {
 			return err
 		}
