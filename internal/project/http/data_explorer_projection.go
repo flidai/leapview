@@ -27,6 +27,8 @@ type DataExplorerProjection struct {
 	Datasets        []projectsignals.DataExploreDatasetSignal
 	SelectedDataset *projectsignals.DataExploreDatasetSignal
 	Fields          []projectsignals.DataExploreFieldSignal
+	Command         projectsignals.DataExploreCommand
+	Warnings        []string
 }
 
 // BuildDataExplorerProjection projects authorized serving assets together
@@ -142,12 +144,13 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	if selectedModelIndex < 0 && len(models) > 0 {
 		selectedModelIndex = 0
 	}
-	result := DataExplorerProjection{Objects: objects, Models: models}
+	result := DataExplorerProjection{Objects: objects, Models: models, Command: command, Warnings: []string{}}
 	if selectedModelIndex < 0 {
 		return result
 	}
 	selectedModel := models[selectedModelIndex]
 	result.SelectedModel = &selectedModel
+	command.ModelID = projectsignals.Optional(selectedModel.ID)
 	result.Datasets = append([]projectsignals.DataExploreDatasetSignal(nil), selectedModel.Datasets...)
 	selectedDatasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
 	for index := range result.Datasets {
@@ -164,8 +167,24 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	baseTable := ""
 	if result.SelectedDataset != nil {
 		baseTable = result.SelectedDataset.ID
+		command.DatasetID = projectsignals.Optional(baseTable)
 	}
-	result.Fields = explorerFields(modelByID[selectedModel.ID], baseTable, command)
+	model := modelByID[selectedModel.ID]
+	if resolvedBase, changed := resolveExplorerBase(model, baseTable, command); changed {
+		previousBase := baseTable
+		baseTable = resolvedBase
+		command.DatasetID = projectsignals.Optional(baseTable)
+		for index := range result.Datasets {
+			if result.Datasets[index].ID == baseTable {
+				selected := result.Datasets[index]
+				result.SelectedDataset = &selected
+				break
+			}
+		}
+		result.Warnings = append(result.Warnings, "Grain changed from "+explorerLabel(previousBase)+" to "+explorerLabel(baseTable)+" to support the selected fields.")
+	}
+	result.Command = command
+	result.Fields = explorerFields(model, baseTable, command)
 	return result
 }
 
@@ -219,10 +238,18 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 			id := tableName + "." + fieldName
 			fieldType := firstExplorerNonEmpty(dimension.Type, table.Columns[fieldName].Type)
 			compatible, reason, path := explorerFieldCompatibility(model, baseTable, tableName)
+			rebaseDatasetID := ""
+			if !compatible {
+				rebaseDatasetID = explorerFieldRebase(model, command, baseTable, id, "dimension")
+				if rebaseDatasetID != "" {
+					reason = "Select " + firstExplorerNonEmpty(dimension.Label, explorerLabel(fieldName)) + " and change grain from " + explorerLabel(baseTable) + " to " + explorerLabel(rebaseDatasetID) + "."
+				}
+			}
 			out = append(out, projectsignals.DataExploreFieldSignal{
 				ID: id, Label: firstExplorerNonEmpty(dimension.Label, explorerLabel(fieldName)), Kind: "dimension", ModelTable: tableName,
 				Description: projectsignals.Optional(dimension.Description), Type: projectsignals.Optional(fieldType), Selected: selectedDimensions[id],
 				Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RelationshipPath: projectsignals.OptionalSlice(path),
+				RebaseDatasetID: projectsignals.Optional(rebaseDatasetID),
 			})
 		}
 	}
@@ -237,13 +264,19 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 		measure := model.Measures[name]
 		compatible := strings.TrimSpace(baseTable) == "" || measure.Fact == baseTable
 		reason := ""
+		rebaseDatasetID := ""
 		if !compatible {
-			reason = "Measure belongs to " + explorerLabel(measure.Fact) + " and cannot be combined safely with the selected fields."
+			rebaseDatasetID = explorerFieldRebase(model, command, baseTable, name, "measure")
+			if rebaseDatasetID != "" {
+				reason = "Select " + firstExplorerNonEmpty(measure.Label, explorerLabel(name)) + " and change grain from " + explorerLabel(baseTable) + " to " + explorerLabel(rebaseDatasetID) + "."
+			} else {
+				reason = "Measure belongs to " + explorerLabel(measure.Fact) + " and cannot be combined safely with the selected fields."
+			}
 		}
 		out = append(out, projectsignals.DataExploreFieldSignal{
 			ID: name, Label: firstExplorerNonEmpty(measure.Label, explorerLabel(name)), Kind: "measure", ModelTable: measure.Fact,
 			Description: projectsignals.Optional(measure.Description), Fact: projectsignals.Optional(measure.Fact), Selected: selectedMeasures[name],
-			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason),
+			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RebaseDatasetID: projectsignals.Optional(rebaseDatasetID),
 		})
 	}
 	return out
@@ -251,51 +284,134 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 
 func explorerFieldCompatibility(model *semanticmodel.Model, baseTable, table string) (bool, string, []string) {
 	baseTable = strings.TrimSpace(baseTable)
-	if baseTable == "" || baseTable == table {
+	if model == nil || baseTable == "" || baseTable == table {
 		return true, "", nil
 	}
-	// Relationships are intentionally treated as a small undirected graph for
-	// field presentation. Query planning remains the authority for whether a
-	// governed join is executable.
-	type step struct {
-		table string
-		path  []string
+	path, err := model.SafeRelationshipPath(baseTable, table)
+	if err != nil {
+		return false, "Not available from " + explorerLabel(baseTable) + " because no grain-preserving relationship path reaches " + explorerLabel(table) + ".", nil
 	}
-	queue := []step{{table: baseTable}}
-	seen := map[string]struct{}{baseTable: {}}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, relationship := range model.Relationships {
-			from, fromField, fromOK := strings.Cut(relationship.From, ".")
-			to, toField, toOK := strings.Cut(relationship.To, ".")
-			if !fromOK || !toOK {
-				continue
-			}
-			next, edgeLabel := "", relationship.ID
-			switch current.table {
-			case from:
-				next = to
-			case to:
-				next = from
-			}
-			_ = fromField
-			_ = toField
-			if next == "" {
-				continue
-			}
-			path := append(append([]string(nil), current.path...), edgeLabel)
-			if next == table {
-				return true, "", path
-			}
-			if _, ok := seen[next]; ok {
-				continue
-			}
-			seen[next] = struct{}{}
-			queue = append(queue, step{table: next, path: path})
+	ids := make([]string, 0, len(path))
+	for _, relationship := range path {
+		ids = append(ids, relationship.ID)
+	}
+	return true, "", ids
+}
+
+func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command projectsignals.DataExploreCommand) (string, bool) {
+	currentBase = strings.TrimSpace(currentBase)
+	if model == nil {
+		return currentBase, false
+	}
+	targets, measureFacts := explorerCommandTargets(model, command)
+	if explorerBaseScore(model, currentBase, targets, measureFacts) >= 0 {
+		return currentBase, false
+	}
+	bestBase, bestScore, tied := "", -1, false
+	for candidate := range model.Tables {
+		score := explorerBaseScore(model, candidate, targets, measureFacts)
+		if score < 0 {
+			continue
+		}
+		switch {
+		case bestScore < 0 || score < bestScore:
+			bestBase, bestScore, tied = candidate, score, false
+		case score == bestScore:
+			tied = true
 		}
 	}
-	return false, "Field belongs to an unrelated table and cannot be combined safely with the selected fields.", nil
+	if bestBase == "" || tied || bestBase == currentBase {
+		return currentBase, false
+	}
+	return bestBase, true
+}
+
+func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.DataExploreCommand) ([]string, []string) {
+	if model == nil {
+		return nil, nil
+	}
+	targetSet := map[string]bool{}
+	measureSet := map[string]bool{}
+	addDimension := func(id string) {
+		if dimension, err := model.ResolveDimension(strings.TrimSpace(id)); err == nil {
+			targetSet[dimension.Table] = true
+		}
+	}
+	for _, id := range command.Dimensions {
+		addDimension(id)
+	}
+	for _, filter := range command.Filters {
+		addDimension(filter.Field)
+	}
+	if command.Time != nil {
+		addDimension(command.Time.Field)
+	}
+	for _, id := range command.Measures {
+		if measure, err := model.ResolveMeasure(strings.TrimSpace(id)); err == nil && !measure.Hidden {
+			measureSet[measure.Fact] = true
+		}
+	}
+	targets := make([]string, 0, len(targetSet))
+	for table := range targetSet {
+		targets = append(targets, table)
+	}
+	measureFacts := make([]string, 0, len(measureSet))
+	for fact := range measureSet {
+		measureFacts = append(measureFacts, fact)
+	}
+	sort.Strings(targets)
+	sort.Strings(measureFacts)
+	return targets, measureFacts
+}
+
+func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, measureFacts []string) int {
+	if model == nil {
+		return -1
+	}
+	if _, ok := model.Tables[candidate]; !ok {
+		return -1
+	}
+	for _, fact := range measureFacts {
+		if fact != candidate {
+			return -1
+		}
+	}
+	score := 0
+	for _, target := range targets {
+		if target == candidate {
+			continue
+		}
+		path, err := model.SafeRelationshipPath(candidate, target)
+		if err != nil {
+			return -1
+		}
+		score += len(path)
+	}
+	return score
+}
+
+func explorerFieldRebase(model *semanticmodel.Model, command projectsignals.DataExploreCommand, currentBase, fieldID, kind string) string {
+	hypothetical := command
+	if kind == "measure" {
+		hypothetical.Measures = appendUniqueExplorerValue(hypothetical.Measures, fieldID)
+	} else {
+		hypothetical.Dimensions = appendUniqueExplorerValue(hypothetical.Dimensions, fieldID)
+	}
+	base, changed := resolveExplorerBase(model, currentBase, hypothetical)
+	if !changed {
+		return ""
+	}
+	return base
+}
+
+func appendUniqueExplorerValue(values []string, value string) []string {
+	out := append([]string(nil), values...)
+	for _, current := range out {
+		if current == value {
+			return out
+		}
+	}
+	return append(out, value)
 }
 
 func explorerModelTableObject(asset projectview.DevelopAssetView, table semanticmodel.Table, columns []projectsignals.DataPreviewColumnSignal, modelID string) projectsignals.DataExplorerObjectSignal {

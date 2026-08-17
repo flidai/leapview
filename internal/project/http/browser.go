@@ -920,12 +920,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 	explorer.Explore.Datasets = projection.Datasets
 	explorer.Explore.SelectedDataset = projection.SelectedDataset
 	explorer.Explore.Fields = projection.Fields
-	if projection.SelectedModel != nil {
-		exploreCommand.ModelID = projectsignals.Optional(projection.SelectedModel.ID)
-	}
-	if projection.SelectedDataset != nil {
-		exploreCommand.DatasetID = projectsignals.Optional(projection.SelectedDataset.ID)
-	}
+	exploreCommand = projection.Command
 	explorer.Explore.Command = exploreCommand
 	explorer.Command.Explore = &exploreCommand
 	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
@@ -935,13 +930,15 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 		}
 		exploreCommand, explorer.Explore.Result = dataExplorerSemanticResult(r.Context(), h.QueryExecutor, projectID, exploreCommand, explorer.Explore.Fields)
+		explorer.Explore.Result.Warnings = append(explorer.Explore.Result.Warnings, projection.Warnings...)
 		explorer.Explore.Command = exploreCommand
 		explorer.Command.Explore = &exploreCommand
 	}
 	page.Context.ObjectCount = int64(len(explorer.Objects))
 
 	requestedObject := strings.TrimSpace(projectsignals.ValueOrZero(command.ObjectKey))
-	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" && requestedObject == "" {
+	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
+		requestedObject = ""
 		modelID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.ModelID))
 		datasetID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.DatasetID))
 		for _, object := range explorer.Objects {

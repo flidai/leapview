@@ -114,6 +114,73 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 	}
 }
 
+func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer_id": {Field: "orders.customer_id", Table: "orders"},
+					"status":      {Field: "orders.status", Table: "orders"},
+				},
+			},
+			"customers": {
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer_id": {Field: "customers.customer_id", Table: "customers"},
+					"region":      {Field: "customers.region", Table: "customers"},
+				},
+			},
+		},
+		Relationships: []semanticmodel.Relationship{{
+			ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one",
+		}},
+	}
+	project := projectmanifest.Project{
+		Models: map[string]semanticmodel.Table{
+			"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"],
+		},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
+		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
+	}
+	command := projectsignals.DataExploreCommand{
+		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
+		Dimensions: []string{"customers.region", "orders.status"},
+	}
+	assets := []projectview.DevelopAssetView{
+		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
+		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
+		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
+	}
+	customersProjection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
+		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
+		Dimensions: []string{"customers.region"},
+	})
+	foundOrdersStatus := false
+	for _, field := range customersProjection.Fields {
+		if field.ID == "orders.status" {
+			foundOrdersStatus = true
+			if field.Compatible || projectsignals.ValueOrZero(field.RebaseDatasetID) != "orders" {
+				t.Fatalf("orders status = %#v, want unsafe reverse field that can rebase to orders", field)
+			}
+		}
+	}
+	if !foundOrdersStatus {
+		t.Fatal("orders status field was not projected")
+	}
+
+	projection := BuildDataExplorerProjection(assets, project, command)
+
+	if projection.SelectedDataset == nil || projection.SelectedDataset.ID != "orders" {
+		t.Fatalf("selected dataset = %#v, want safely inferred orders base", projection.SelectedDataset)
+	}
+	if projectsignals.ValueOrZero(projection.Command.DatasetID) != "orders" {
+		t.Fatalf("resolved command = %#v, want orders base", projection.Command)
+	}
+	if len(projection.Warnings) != 1 || projection.Warnings[0] != "Grain changed from Customers to Orders to support the selected fields." {
+		t.Fatalf("warnings = %#v", projection.Warnings)
+	}
+}
+
 func TestBuildDataExplorerProjectionDoesNotUseGraphPayloadAsSchema(t *testing.T) {
 	project := projectmanifest.Project{
 		Models:         map[string]semanticmodel.Table{"model:orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Type: "integer"}}}},
