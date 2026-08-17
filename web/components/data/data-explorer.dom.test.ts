@@ -321,6 +321,43 @@ test('data explorer renders object browser and emits preview commands', async ()
   }
 })
 
+test('data explorer prompts for a selection when objects are available', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+
+    const message = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [{
+            key: 'model_table:model:orders', resourceId: 'model:orders', layer: 'model_table',
+            modelId: 'semantic:sales', table: 'orders', title: 'Orders', columnCount: 1,
+            columns: [{ key: 'order_id', label: 'Order ID', type: 'string' }],
+          }],
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { offset: 0, limit: 100, start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+          explore: { command: { dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
+          warnings: [],
+        },
+      })
+      document.body.append(element)
+      for (let index = 0; index < 10; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      return element.shadowRoot?.querySelector('.main .empty')?.textContent?.trim()
+    })
+
+    expect(message).toBe('Select a data object to begin.')
+  } finally {
+    await page.close()
+  }
+})
+
 test('data explorer builds a governed semantic exploration and filter command', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -346,7 +383,10 @@ test('data explorer builds a governed semantic exploration and filter command', 
       }
       const customersObject = {
         key: 'model_table:model_table:sales.customers', resourceId: 'model_table:sales.customers', layer: 'model_table', modelId: 'sales', table: 'customers', title: 'customers',
-        columnCount: 1, rowCountLabel: '10', columns: [{ key: 'state', label: 'State', type: 'string' }],
+        columnCount: 2, rowCountLabel: '10', columns: [
+          { key: 'customer_id', label: 'Customer ID', type: 'string' },
+          { key: 'state', label: 'State', type: 'string' },
+        ],
       }
       const itemsObject = {
         key: 'model_table:model_table:sales.items', resourceId: 'model_table:sales.items', layer: 'model_table', modelId: 'sales', table: 'items', title: 'items',
@@ -366,6 +406,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
           fields: [
             { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: false },
             { id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: true },
+            { id: 'customers.customer_id', label: 'Customer ID', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'customers.state', label: 'State', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'items.sku', label: 'SKU', kind: 'dimension', modelTable: 'items', type: 'string', compatible: false, compatibilityReason: 'Not available from Orders because no grain-preserving relationship path reaches Items.', selected: false },
             { id: 'revenue', label: 'Revenue', kind: 'measure', modelTable: 'orders', type: 'sum', compatible: true, selected: true },
@@ -388,6 +429,10 @@ test('data explorer builds a governed semantic exploration and filter command', 
       }
 
       const root = element.shadowRoot
+      const customersTable = Array.from(root.querySelectorAll<HTMLElement>('.object-button')).find((button) => button.textContent?.includes('customers'))!
+      customersTable.click()
+      await element.updateComplete
+      const tableSelectionCommand = commands.at(-1)?.explore
       const orderID = Array.from(root.querySelectorAll<HTMLButtonElement>('.field-button')).find((button) => button.textContent?.includes('Order ID'))
       if (!orderID) throw new Error(`Order ID field was not rendered: ${root.textContent}`)
       orderID.click()
@@ -460,6 +505,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         unavailableField,
         rebaseField: { disabled: rebaseField.disabled, text: rebaseField.textContent?.replace(/\s+/g, ' ').trim(), title: rebaseField.title },
         rebaseCommand,
+        tableSelectionCommand,
         commands,
       }
     })
@@ -482,6 +528,9 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.rebaseField.title).toContain('change grain from Customers to Orders')
     expect(state.rebaseCommand.datasetId).toBe('customers')
     expect(state.rebaseCommand.dimensions).toEqual(['customers.state', 'orders.status'])
+    expect(state.tableSelectionCommand.datasetId).toBe('customers')
+    expect(state.tableSelectionCommand.dimensions).toEqual(['customers.customer_id', 'customers.state'])
+    expect(state.tableSelectionCommand.measures).toEqual([])
     expect(state.commands.some((command) => command.explore?.dimensions?.includes('items.sku'))).toBe(false)
     expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.dimensions?.includes('orders.order_id'))).toBe(true)
     expect(state.commands.some((command) => command.explore?.filters?.[0]?.field === 'orders.status' && command.explore.filters[0].values[0] === 'delivered')).toBe(true)

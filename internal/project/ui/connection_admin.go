@@ -77,6 +77,13 @@ func connectionLifecycleSignal(asset projectview.DevelopAssetView, assets []proj
 		Tone:              "neutral",
 	}
 	if !classified {
+		// A graph-only browser request has no binding administration snapshot.
+		// Anonymous connections are still valid when the compiled definition
+		// explicitly says credentials are not required; do not mislabel them as
+		// missing configuration merely because no binding row exists.
+		if _, hasRequired := asset.Payload["credentials_required"]; hasRequired && !metaBool(asset.Payload, "credentials_required") {
+			return lifecycle
+		}
 		lifecycle.State = "missing"
 		lifecycle.StatusLabel = "Not configured"
 		lifecycle.Tone = "warning"

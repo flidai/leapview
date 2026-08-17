@@ -277,7 +277,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private renderAssetPage(page: ResourceAssetPageSignal) {
     return html`
-      <section class="asset-page" aria-label="Project asset detail">
+      <section class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}`} aria-label="Project asset detail">
         <header class="breadcrumb-header">
           <nav aria-label="Breadcrumb">
             <ol>
@@ -304,7 +304,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         </header>
         <div class="asset-body">
           ${renderTabs(page.tabs)}
-          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'details' && page.details?.semanticModelGraph ? 'section-body graph-details-body' : 'section-body'}>
+          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'data' ? 'section-body data-body' : page.activeSection === 'details' && page.details?.semanticModelGraph ? 'section-body graph-details-body' : 'section-body'}>
             ${this.renderSection(page)}
           </div>
         </div>
@@ -315,6 +315,8 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   private renderSection(page: ResourceAssetPageSignal) {
     return page.activeSection === 'lineage'
       ? this.renderLineage(page)
+      : page.activeSection === 'data'
+        ? html`<lv-data-explorer embedded></lv-data-explorer>`
       : page.activeSection === 'refreshes'
         ? this.renderRefreshes(page)
         : page.activeSection === 'versions'
@@ -639,6 +641,13 @@ const projectStyles = css`
     margin-inline: 0;
     padding: 0;
     overflow: visible;
+  }
+
+  .asset-page.data-asset-page {
+    height: 100svh;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
   }
 
   .connection-detail-route {
@@ -1103,6 +1112,11 @@ const projectStyles = css`
     grid-template-rows: auto auto;
   }
 
+  .data-asset-page .asset-body {
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
   .asset-body > .tabs {
     padding-inline: var(--base-size-16);
   }
@@ -1115,6 +1129,16 @@ const projectStyles = css`
 
   .lineage-body {
     padding: 0;
+  }
+
+  .data-body {
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .data-body lv-data-explorer {
+    height: 100%;
   }
 
   .graph-details-body {
@@ -1297,6 +1321,12 @@ const projectStyles = css`
       overflow: visible;
     }
 
+    .asset-page.data-asset-page {
+      height: 100svh;
+      min-height: 0;
+      overflow: hidden;
+    }
+
     .connection-detail-route {
       width: 100%;
       padding: var(--base-size-16);
@@ -1309,6 +1339,10 @@ const projectStyles = css`
 
     .section-body {
       overflow: visible;
+    }
+
+    .data-asset-page .section-body {
+      overflow: hidden;
     }
 
     .graph-details-body {

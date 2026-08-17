@@ -43,6 +43,7 @@ import (
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
+	projectmodule "github.com/flidai/leapview/internal/project/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -518,8 +519,12 @@ func buildApplicationSurfaces(
 	policy.requestLogging = httpConfig.RequestLogging
 	routes.managedDataModule = capabilities.ManagedDataModule
 	routes.projectCatalog = capabilities.ProjectCatalog
+	var projectDefinitionReader projecthttp.ProjectDefinitionReader
+	if runtimeConfig.RuntimeHost != nil {
+		projectDefinitionReader = projectmodule.NewActiveProjectDefinitionReader(runtimeConfig.RuntimeHost.Provider())
+	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, SemanticModelReader: metrics, Catalog: capabilities.ProjectCatalog,
+		Graph: capabilities.ProjectGraph, SemanticModelReader: metrics, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
 		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)

@@ -361,7 +361,7 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 		{ID: "details", Label: "Details", Href: assetnav.CanonicalAssetSectionHref(asset, "details"), Active: activeSection == "details"},
 	}
 	if assetDataInspectable(asset.Type) {
-		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: "Data", Href: projectAssetDataHref(project.ID, asset.ID), Active: activeSection == "data"})
+		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: "Data", Href: projectAssetDataHref(asset), Active: activeSection == "data"})
 	}
 	if assetRefreshable(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "refreshes", Label: "Refreshes", Href: assetnav.CanonicalAssetSectionHref(asset, "refreshes"), Active: activeSection == "refreshes"})
@@ -499,6 +499,11 @@ func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalo
 	attrs := []g.Node{
 		g.Attr("slot", "page"),
 	}
+	if activeSection == "data" && assetDataInspectable(asset.Type) {
+		extras.CSRFToken = refresh.CSRFToken
+		commandPath := projectAssetDataHref(asset) + "/command"
+		attrs = append(attrs, g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost(commandPath)))
+	}
 	if assetRefreshable(asset.Type) {
 		refreshPath := "/pipelines/" + url.PathEscape(asset.ID) + "/refresh"
 		extras.CSRFToken = refresh.CSRFToken
@@ -510,7 +515,7 @@ func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalo
 		}
 		return projectAssetRouteDocument(asset, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-asset-page", attrs...), extras, activeSection, chromeOptions)
 	}
-	return projectAssetRouteDocument(asset, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-asset-page", attrs...), projectDocumentExtras{}, activeSection, chromeOptions)
+	return projectAssetRouteDocument(asset, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-asset-page", attrs...), extras, activeSection, chromeOptions)
 }
 
 func ProjectAssetBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) map[string]any {
@@ -575,6 +580,11 @@ func projectAssetRouteDocument(asset projectview.DevelopAssetView, catalog catal
 		extraHead = append(extraHead,
 			h.Link(h.Rel("stylesheet"), h.Href(projectStaticAssetURL(chromeOptions, "/static/semantic-model-graph.css"))),
 			h.Script(h.Type("module"), h.Src(projectStaticAssetURL(chromeOptions, "/static/semantic-model-graph.js"))),
+		)
+	}
+	if activeSection == "data" && assetDataInspectable(asset.Type) {
+		extraHead = append(extraHead,
+			h.Script(h.Type("module"), h.Src(projectStaticAssetURL(chromeOptions, "/static/data-explorer.js"))),
 		)
 	}
 	return projectRouteDocumentWithBodyExtras(asset.Title, catalog, active, roleLabel, page, routeKind, routeRoot, extras, bodyExtras, chromeOptions, extraHead...)
@@ -978,13 +988,11 @@ func assetRefreshable(assetType string) bool {
 }
 
 func assetDataInspectable(assetType string) bool {
-	return assetType == "semantic_model" || assetType == "model_table" || assetType == "source"
+	return assetType == "semantic_model" || assetType == "model_table"
 }
 
-func projectAssetDataHref(projectID, assetID string) string {
-	values := url.Values{}
-	values.Set("object", assetID)
-	return "/explore?" + values.Encode()
+func projectAssetDataHref(asset projectview.DevelopAssetView) string {
+	return assetnav.CanonicalAssetSectionHref(asset, "data")
 }
 
 func normalizeProjectAssetSection(section string) string {
@@ -2635,13 +2643,17 @@ func sourcesUsingConnection(connectionID string, assets []projectview.DevelopAss
 }
 
 func connectionFacts(asset projectview.DevelopAssetView) []definitionFact {
+	options := compactJSON(metaValue(asset.Payload, "Options", "options"))
+	if options == "" {
+		options = compactJSON(metaValue(asset.Payload, "Defaults", "defaults"))
+	}
 	return []definitionFact{
 		{Label: "Kind", Value: metaString(asset.Payload, "Kind", "kind")},
 		{Label: "Scope", Value: metaString(asset.Payload, "Scope", "scope")},
 		{Label: "Root", Value: metaString(asset.Payload, "Root", "root")},
 		{Label: "Path", Value: metaString(asset.Payload, "Path", "path")},
 		{Label: "Credentials", Value: boolLabel(metaBool(asset.Payload, "credentials_configured"))},
-		{Label: "Options", Value: compactJSON(metaValue(asset.Payload, "Options", "options"))},
+		{Label: "Options", Value: options},
 	}
 }
 

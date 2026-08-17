@@ -8,7 +8,10 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectview "github.com/flidai/leapview/internal/project"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
+	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
 func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph(t *testing.T) {
@@ -84,6 +87,81 @@ func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph
 	}
 }
 
+func TestModelAndSemanticDataTabsStayOnAssetRoutes(t *testing.T) {
+	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
+	for _, test := range []struct {
+		asset projectview.DevelopAssetView
+		href  string
+	}{
+		{asset: projectview.DevelopAssetView{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders"}, href: "/models/model:orders/data"},
+		{asset: projectview.DevelopAssetView{ID: "semantic-model:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales"}, href: "/semantic-models/semantic-model:sales/data"},
+	} {
+		page := projectAssetPageSignal(project, test.asset, []projectview.DevelopAssetView{test.asset}, nil, "data", assetLineageModel{})
+		var dataTab *uisignals.ResourceTabSignal
+		for index := range page.Tabs {
+			if page.Tabs[index].ID == "data" {
+				dataTab = &page.Tabs[index]
+				break
+			}
+		}
+		if dataTab == nil || dataTab.Href != test.href || !dataTab.Active {
+			t.Fatalf("asset %s data tab = %#v, want active %s", test.asset.ID, dataTab, test.href)
+		}
+	}
+	source := projectview.DevelopAssetView{ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders"}
+	page := projectAssetPageSignal(project, source, []projectview.DevelopAssetView{source}, nil, "details", assetLineageModel{})
+	for _, tab := range page.Tabs {
+		if tab.ID == "data" {
+			t.Fatalf("source unexpectedly exposes unsupported data tab: %#v", tab)
+		}
+	}
+}
+
+func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
+	table := semanticmodel.Table{
+		Sources:            []string{"olist.geolocation"},
+		Transform:          semanticmodel.Transform{SQL: "SELECT zip_prefix FROM source.\"olist.geolocation\""},
+		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix", Description: "ZIP code prefix"}},
+		PrimaryKey:         "zip_prefix",
+		Grain:              "zip_prefix",
+		SourceDependencies: []string{"olist.geolocation"},
+		Schema:             semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", Ordinal: 0, PhysicalType: "VARCHAR"}}},
+	}
+	asset := projectview.DevelopAssetView{
+		ID: "model:zip_geolocations", Type: string(projectview.AssetTypeModelTable), Key: "zip_geolocations", Title: "ZIP locations",
+		Payload: projectview.ModelTableAssetPayload(table),
+	}
+	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
+	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
+	if got := factValue(details.Overview, "Fields"); got != "1" {
+		t.Fatalf("fields fact = %q, want 1", got)
+	}
+	if got := factValue(details.Overview, "Input sources"); got != "1" {
+		t.Fatalf("input sources fact = %q, want 1", got)
+	}
+	if got := factValue(details.Overview, "Mode"); got != "Transform" {
+		t.Fatalf("mode fact = %q, want Transform", got)
+	}
+	if len(details.Sections) != 2 || details.Sections[0].Title != "Fields (1)" || details.Sections[1].Title != "SQL" {
+		t.Fatalf("sections = %#v, want fields and SQL", details.Sections)
+	}
+	if uisignals.ValueOrZero(details.Sections[1].Code) != table.Transform.SQL || uisignals.ValueOrZero(details.Sections[1].Lang) != "sql" {
+		t.Fatalf("SQL section = %#v, want compiled transform SQL", details.Sections[1])
+	}
+	if len(details.Sections[0].Table.Rows) != 1 {
+		t.Fatalf("field rows = %#v, want one row", details.Sections[0].Table.Rows)
+	}
+}
+
+func factValue(facts []uisignals.DefinitionFactSignal, label string) string {
+	for _, fact := range facts {
+		if fact.Label == label {
+			return fact.Value
+		}
+	}
+	return ""
+}
+
 func TestDevelopCatalogUsesStableDashboardLinksWithoutProjectPicker(t *testing.T) {
 	page := catalogPageSignal(catalog.Catalog{
 		Project:    catalog.Project{ID: "sales", Title: "Sales"},
@@ -92,6 +170,47 @@ func TestDevelopCatalogUsesStableDashboardLinksWithoutProjectPicker(t *testing.T
 	if len(page.Dashboards) != 1 || page.Dashboards[0].Href != "/dashboards/executive" {
 		t.Fatalf("dashboard link = %#v, want stable dashboard route", page.Dashboards)
 	}
+}
+
+func TestSourceAndPipelineDetailsConsumeTypedAssetProjections(t *testing.T) {
+	source := projectview.DevelopAssetView{
+		ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders", Title: "Orders",
+		Payload: projectview.SourceAssetPayload(semanticmodel.Source{
+			Format: "csv", Connection: "warehouse", Path: "s3://bucket/orders.csv",
+			Fields: map[string]semanticmodel.SourceField{"order_id": {Type: "int"}},
+		}),
+	}
+	sourceDetails := assetDetailModelForAsset(projectview.DevelopView{ID: "project:test"}, source, []projectview.DevelopAssetView{source}, nil)
+	if got := detailFactValue(sourceDetails.Overview, "Connection"); got != "warehouse" {
+		t.Fatalf("source connection fact = %q, want warehouse", got)
+	}
+	if len(sourceDetails.Sections) != 1 || len(sourceDetails.Sections[0].Table.Rows) != 1 {
+		t.Fatalf("source field section = %#v, want one projected field", sourceDetails.Sections)
+	}
+
+	pipeline := projectview.DevelopAssetView{
+		ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Title: "Sales refresh",
+		Payload: projectview.RefreshPipelineAssetPayload(refreshschedule.Definition{
+			ID: "pipeline:sales", Name: "sales", SemanticModelID: projectgraph.ResourceID("semantic:sales"),
+			Schedules: []refreshschedule.Schedule{{Expression: "0 * * * *", Timezone: "UTC"}},
+		}),
+	}
+	pipelineDetails := assetDetailModelForAsset(projectview.DevelopView{ID: "project:test"}, pipeline, []projectview.DevelopAssetView{pipeline}, nil)
+	if got := detailFactValue(pipelineDetails.Overview, "Semantic model"); got != "semantic:sales" {
+		t.Fatalf("pipeline semantic model fact = %q, want semantic:sales", got)
+	}
+	if got := detailFactValue(pipelineDetails.Overview, "Schedule"); !strings.Contains(got, "0 * * * *") || !strings.Contains(got, "UTC") {
+		t.Fatalf("pipeline schedule fact = %q, want cron and timezone", got)
+	}
+}
+
+func detailFactValue(facts []definitionFact, label string) string {
+	for _, fact := range facts {
+		if fact.Label == label {
+			return fact.Value
+		}
+	}
+	return ""
 }
 
 func TestDevelopAssetLinksStayInResourceArea(t *testing.T) {

@@ -1,5 +1,5 @@
 import { LitElement, css, html, nothing } from 'lit'
-import { state } from 'lit/decorators.js'
+import { property, state } from 'lit/decorators.js'
 import { ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
 import type {
   AgentReferenceSignal,
@@ -70,6 +70,7 @@ function readDataExplorerAgentState(): { open: boolean, conversationId: string }
 }
 
 class DataExplorerPage extends DatastarLit(LitElement) {
+  @property({ type: Boolean, reflect: true }) embedded = false
   @state() private search = ''
   @state() private fieldSearch = ''
   @state() private showSQL = false
@@ -98,6 +99,30 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       background: var(--lv-bg-app);
       font-family: var(--fontStack-system);
+    }
+
+    :host([embedded]) {
+      height: 100%;
+      min-height: 0;
+    }
+
+    :host([embedded]) .route {
+      height: 100%;
+      min-height: 32rem;
+      grid-template-rows: minmax(0, 1fr);
+    }
+
+    :host([embedded]) .header {
+      display: none;
+    }
+
+    :host([embedded]) .route:not(.semantic) .explorer {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    :host([embedded]) .route:not(.semantic) .browser,
+    :host([embedded]) .route:not(.semantic) .browser-resizer {
+      display: none;
     }
 
     .route {
@@ -986,7 +1011,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     if (this.optimisticExplore && (this.dataExplorer.explore?.command?.requestSeq ?? 0) >= this.optimisticExplore.requestSeq) {
       this.optimisticExplore = null
-      replaceDataExplorerURL(this.dataExplorer.command)
+      if (!this.embedded) replaceDataExplorerURL(this.dataExplorer.command)
     }
     const agent = this.signal<{ activeConversationId?: string } | null>('agent', null)
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
@@ -1014,12 +1039,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selected = explorer.selectedObject
     const semanticActive = explorer.command?.mode === 'explore' || this.optimisticExplore !== null
     const filtered = filterObjects(explorer.objects ?? [], this.search)
-    const grouped = groupObjectsByModel(filtered)
+    const grouped = groupObjectsByModel(filtered, explorer.explore?.models ?? [])
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
     const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
     return html`
-      <section class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
+      <section class=${`route${semanticActive ? ' semantic' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
           <h1>${page?.title ?? 'Data Explorer'}</h1>
           <div class="header-actions">
@@ -1102,7 +1127,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               ? semanticActive
                 ? this.renderExploreSelected(selected, explorer.explore ?? emptyExplorer.explore)
                 : this.renderSelected(selected, explorer.preview ?? emptyPreview, explorer.command ?? emptyExplorer.command)
-              : html`<p class="empty">No data objects are available.</p>`}
+              : html`<p class="empty">${(explorer.objects ?? []).length
+                ? 'Select a data object to begin.'
+                : 'No data objects are available.'}</p>`}
           </main>
         </div>
         ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer
@@ -1386,7 +1413,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       columnWidths: next.columnWidths ?? current.columnWidths ?? {},
     }
     this.optimisticExplore = command
-    replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
+    if (!this.embedded) replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ mode: 'explore', explore: command })
     if (immediate) dispatch()
     else this.exploreTimer = window.setTimeout(dispatch, 320)
@@ -1704,11 +1731,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.optimisticExplore = null
     this.closeFilter()
     const currentExplore = this.dataExplorer?.explore?.command ?? emptyExplorer.explore.command
+    const tableID = objectTableID(object)
+    const localDimensions = localPreviewDimensions(object, this.dataExplorer?.explore?.fields ?? [])
+    const semanticActive = this.dataExplorer?.command?.mode === 'explore'
     const explore: DataExploreCommand = {
       ...currentExplore,
       modelId: object.modelId ?? '',
-      datasetId: objectTableID(object),
-      dimensions: [],
+      datasetId: tableID,
+      dimensions: localDimensions,
       measures: [],
       filters: [],
       sort: [],
@@ -1717,7 +1747,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       columnWidths: {},
     }
     this.emitCommand({
-      mode: 'browse',
+      mode: semanticActive ? 'explore' : 'browse',
       explore,
       objectKey: object.key,
       offset: 0,
@@ -1801,11 +1831,23 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       visibleColumns: partial.visibleColumns ?? current.visibleColumns ?? [],
       columnWidths: partial.columnWidths ?? current.columnWidths ?? {},
     }
-    if (partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined) {
+    if (!this.embedded && (partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined)) {
       replaceDataExplorerURL(next)
     }
     this.dispatchEvent(new CustomEvent('lv-data-explorer-command', { bubbles: true, composed: true, detail: next }))
   }
+}
+
+function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
+  const tableID = objectTableID(object)
+  const localFields = fields.filter((field) => field.kind !== 'measure' && field.modelTable === tableID)
+  const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
+  const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${tableID}.${column.key}`)
+  const seen = new Set(ordered)
+  for (const field of localFields) {
+    if (!seen.has(field.id)) ordered.push(field.id)
+  }
+  return ordered
 }
 
 function objectTableID(object: DataExplorerObjectSignal): string {
@@ -1847,13 +1889,14 @@ function objectColumnMatchesSearch(object: DataExplorerObjectSignal, query: stri
     .some((value) => String(value ?? '').toLowerCase().includes(normalized)))
 }
 
-function groupObjectsByModel(objects: DataExplorerObjectSignal[]): ResourceGroup[] {
+function groupObjectsByModel(objects: DataExplorerObjectSignal[], models: DataExploreSignal['models'] = []): ResourceGroup[] {
   const groups = new Map<string, ResourceGroup>()
+  const modelTitles = new Map(models.map((model) => [model.id, model.title]))
   for (const object of objects) {
     if (object.layer === 'source') continue
     const id = object.modelId || object.layer
     if (!groups.has(id)) {
-      groups.set(id, { id, title: object.modelId || 'Data objects', objects: [] })
+      groups.set(id, { id, title: modelTitles.get(id) || object.modelId || 'Data objects', objects: [] })
     }
     groups.get(id)!.objects.push(object)
   }
