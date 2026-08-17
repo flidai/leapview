@@ -87,6 +87,36 @@ func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph
 	}
 }
 
+func TestModelAndSemanticDataTabsStayOnAssetRoutes(t *testing.T) {
+	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
+	for _, test := range []struct {
+		asset projectview.DevelopAssetView
+		href  string
+	}{
+		{asset: projectview.DevelopAssetView{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders"}, href: "/models/model:orders/data"},
+		{asset: projectview.DevelopAssetView{ID: "semantic-model:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales"}, href: "/semantic-models/semantic-model:sales/data"},
+	} {
+		page := projectAssetPageSignal(project, test.asset, []projectview.DevelopAssetView{test.asset}, nil, "data", assetLineageModel{})
+		var dataTab *uisignals.ResourceTabSignal
+		for index := range page.Tabs {
+			if page.Tabs[index].ID == "data" {
+				dataTab = &page.Tabs[index]
+				break
+			}
+		}
+		if dataTab == nil || dataTab.Href != test.href || !dataTab.Active {
+			t.Fatalf("asset %s data tab = %#v, want active %s", test.asset.ID, dataTab, test.href)
+		}
+	}
+	source := projectview.DevelopAssetView{ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders"}
+	page := projectAssetPageSignal(project, source, []projectview.DevelopAssetView{source}, nil, "details", assetLineageModel{})
+	for _, tab := range page.Tabs {
+		if tab.ID == "data" {
+			t.Fatalf("source unexpectedly exposes unsupported data tab: %#v", tab)
+		}
+	}
+}
+
 func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	table := semanticmodel.Table{
 		Sources:            []string{"olist.geolocation"},

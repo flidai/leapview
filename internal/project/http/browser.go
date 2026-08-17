@@ -73,6 +73,7 @@ type BrowserHandler struct {
 	Graph                   GraphReader
 	SemanticModelReader     SemanticModelReader
 	ProjectDefinitionReader ProjectDefinitionReader
+	QueryExecutor           DataQueryExecutor
 	Catalog                 CatalogAuthorizer
 	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
 	Environment             string
@@ -97,12 +98,15 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	}
 	r.Get("/", wrap(h.Insights))
 	r.Get("/explore", wrap(h.Explore))
+	r.Post("/explore/command", wrap(h.DataExplorerCommand))
 	r.Get("/sources", wrap(h.Sources))
 	r.Get("/sources/{asset}/{section}", wrap(h.SourceAsset))
 	r.Get("/models", wrap(h.Models))
 	r.Get("/models/{asset}/{section}", wrap(h.ModelAsset))
+	r.Post("/models/{asset}/data/command", wrap(h.ModelDataExplorerCommand))
 	r.Get("/semantic-models", wrap(h.SemanticModels))
 	r.Get("/semantic-models/{asset}/{section}", wrap(h.SemanticModelAsset))
+	r.Post("/semantic-models/{asset}/data/command", wrap(h.SemanticModelDataExplorerCommand))
 	r.Get("/pipelines", wrap(h.Pipelines))
 	r.Get("/pipelines/{asset}/{section}", wrap(h.PipelineAsset))
 	r.Get("/connections", wrap(h.Connections))
@@ -144,6 +148,59 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	writeDocument(w, projectui.DataExplorerPage(catalog, page, explorer, h.csrf(r), h.layout(r)))
+}
+
+func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindSemanticModel}) {
+		return
+	}
+	var signals struct {
+		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
+	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		stdhttp.Error(w, "data explorer command payload is required", stdhttp.StatusBadRequest)
+		return
+	}
+	page, explorer, ok := h.dataExplorerSignalsForCommand(w, r, signals.Command)
+	if !ok {
+		return
+	}
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
+	})
+}
+
+func (h *BrowserHandler) ModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.assetDataExplorerCommand(w, r, string(projectview.AssetTypeModelTable))
+}
+
+func (h *BrowserHandler) SemanticModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.assetDataExplorerCommand(w, r, string(projectview.AssetTypeSemanticModel))
+}
+
+func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, expectedType string) {
+	kind, ok := catalogKindForAssetType(expectedType)
+	if !ok || !h.authorizeAny(w, r, []projectgraph.Kind{kind}) {
+		return
+	}
+	var signals struct {
+		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
+	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		stdhttp.Error(w, "data explorer command payload is required", stdhttp.StatusBadRequest)
+		return
+	}
+	_, explorer, asset, ok := h.dataExplorerSignalsForAssetCommand(w, r, chi.URLParam(r, "asset"), signals.Command)
+	if !ok {
+		return
+	}
+	if asset.Type != expectedType {
+		stdhttp.NotFound(w, r)
+		return
+	}
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+		"dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
+	})
 }
 
 func (h *BrowserHandler) Sources(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -203,7 +260,7 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeDocument(w, projectui.ConnectionAssetPageWithVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", projectui.AssetVersionsState{}))
 		return
 	}
-	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", projectui.AssetRefreshState{}, projectui.AssetVersionsState{}, h.layout(r)))
+	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", projectui.AssetRefreshState{CSRFToken: h.csrf(r)}, projectui.AssetVersionsState{}, h.layout(r)))
 }
 
 func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Request, area, activeType string) {
@@ -425,7 +482,16 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 	}
 	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
 	if r.URL.Query().Get("surface") == "asset" {
-		return projectui.ProjectAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, r.URL.Query().Get("section"), h.Environment, "", projectui.AssetRefreshState{}, projectui.AssetVersionsState{}, h.layout(r)), true
+		patch := projectui.ProjectAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, r.URL.Query().Get("section"), h.Environment, "", projectui.AssetRefreshState{}, projectui.AssetVersionsState{}, h.layout(r))
+		if r.URL.Query().Get("section") == "data" && (asset.Type == string(projectview.AssetTypeModelTable) || asset.Type == string(projectview.AssetTypeSemanticModel)) {
+			_, explorer, _, explorerOK := h.dataExplorerSignalsForAssetCommand(w, r, asset.ID, projectsignals.DataExplorerCommand{})
+			if !explorerOK {
+				return nil, false
+			}
+			patch["dataExplorer"] = explorer
+			patch["dataExplorerCommand"] = explorer.Command
+		}
+		return patch, true
 	}
 	return projectui.ConnectionAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, r.URL.Query().Get("section"), h.Environment, "", projectui.AssetVersionsState{}), true
 }
@@ -810,16 +876,30 @@ func projectAreaType(area string) string {
 }
 
 func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhttp.Request) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	command := projectsignals.DataExplorerCommand{
+		ObjectKey: projectsignals.Optional(strings.TrimSpace(r.URL.Query().Get("object"))),
+		Mode:      projectsignals.Optional(strings.TrimSpace(r.URL.Query().Get("mode"))),
+		Limit:     dataExplorerDefaultLimit, Count: dataExplorerDefaultLimit, Block: projectsignals.Pointer("all"),
+	}
+	return h.dataExplorerSignalsForCommand(w, r, command)
+}
+
+func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	command = normalizeDataExplorerCommand(command)
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
-	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Measures: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: 100}
-	explorer := projectsignals.DataExplorerSignal{Command: projectsignals.DataExplorerCommand{Explore: &exploreCommand, Limit: 100}, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, Models: []projectsignals.DataExploreModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: map[string]projectsignals.DataPreviewBlockSignal{}, Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: 100, RowHeight: 32}}
-	if value := strings.TrimSpace(r.URL.Query().Get("model")); value != "" {
+	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Measures: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: dataExplorerDefaultLimit}
+	if command.Explore != nil {
+		exploreCommand = *command.Explore
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("model")); value != "" && exploreCommand.ModelID == nil {
 		exploreCommand.ModelID = projectsignals.Optional(value)
 	}
-	if value := strings.TrimSpace(r.URL.Query().Get("dataset")); value != "" {
+	if value := strings.TrimSpace(r.URL.Query().Get("dataset")); value != "" && exploreCommand.DatasetID == nil {
 		exploreCommand.DatasetID = projectsignals.Optional(value)
 	}
+	command.Explore = &exploreCommand
+	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, Models: []projectsignals.DataExploreModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight}}
 	_, assets, _, ok := h.assets(w, r)
 	if !ok {
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
@@ -848,9 +928,29 @@ func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhtt
 	}
 	explorer.Explore.Command = exploreCommand
 	explorer.Command.Explore = &exploreCommand
+	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
+		projectID, err := h.boundProject(r.Context())
+		if err != nil {
+			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+		}
+		exploreCommand, explorer.Explore.Result = dataExplorerSemanticResult(r.Context(), h.QueryExecutor, projectID, exploreCommand, explorer.Explore.Fields)
+		explorer.Explore.Command = exploreCommand
+		explorer.Command.Explore = &exploreCommand
+	}
 	page.Context.ObjectCount = int64(len(explorer.Objects))
 
-	requestedObject := strings.TrimSpace(r.URL.Query().Get("object"))
+	requestedObject := strings.TrimSpace(projectsignals.ValueOrZero(command.ObjectKey))
+	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" && requestedObject == "" {
+		modelID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.ModelID))
+		datasetID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.DatasetID))
+		for _, object := range explorer.Objects {
+			if object.Layer == "model_table" && projectsignals.ValueOrZero(object.ModelID) == modelID && projectsignals.ValueOrZero(object.Table) == datasetID {
+				requestedObject = object.Key
+				break
+			}
+		}
+	}
 	if requestedObject != "" {
 		for index := range explorer.Objects {
 			object := explorer.Objects[index]
@@ -861,13 +961,82 @@ func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhtt
 			explorer.SelectedKey = projectsignals.Optional(object.Key)
 			explorer.SelectedObject = &object
 			page.SelectedObject = projectsignals.Optional(object.Key)
-			if object.Columns != nil {
-				explorer.Preview.Columns = append([]projectsignals.DataPreviewColumnSignal(nil), (*object.Columns)...)
+			projectID, err := h.boundProject(r.Context())
+			if err != nil {
+				stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+				return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+			}
+			if projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" {
+				explorer.Preview = dataExplorerPreview(r.Context(), h.QueryExecutor, projectID, object, explorer.Command)
 			}
 			break
 		}
 	}
 	return page, explorer, true
+}
+
+func (h *BrowserHandler) dataExplorerSignalsForAssetCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, assetID string, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, projectview.DevelopAssetView, bool) {
+	_, assets, _, ok := h.assets(w, r)
+	if !ok {
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, projectview.DevelopAssetView{}, false
+	}
+	asset, found := projectview.AssetByID(assets, assetID)
+	if !found || (asset.Type != string(projectview.AssetTypeModelTable) && asset.Type != string(projectview.AssetTypeSemanticModel)) {
+		stdhttp.NotFound(w, r)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, projectview.DevelopAssetView{}, false
+	}
+
+	if asset.Type == string(projectview.AssetTypeModelTable) {
+		command.Mode = projectsignals.Pointer("browse")
+		command.ObjectKey = projectsignals.Pointer(asset.ID)
+	} else {
+		command.Mode = projectsignals.Pointer("explore")
+		explore := projectsignals.DataExploreCommand{}
+		if command.Explore != nil {
+			explore = *command.Explore
+		}
+		explore.ModelID = projectsignals.Pointer(asset.ID)
+		command.Explore = &explore
+	}
+
+	page, explorer, ok := h.dataExplorerSignalsForCommand(w, r, command)
+	if !ok {
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, projectview.DevelopAssetView{}, false
+	}
+	objects := make([]projectsignals.DataExplorerObjectSignal, 0, len(explorer.Objects))
+	for _, object := range explorer.Objects {
+		include := asset.Type == string(projectview.AssetTypeModelTable) && explorer.SelectedObject != nil && object.Key == explorer.SelectedObject.Key
+		include = include || asset.Type == string(projectview.AssetTypeSemanticModel) && projectsignals.ValueOrZero(object.ModelID) == asset.ID
+		if include {
+			objects = append(objects, object)
+		}
+	}
+	explorer.Objects = objects
+	page.Context.ObjectCount = int64(len(objects))
+	if explorer.SelectedObject != nil {
+		selected := false
+		for _, object := range objects {
+			if object.Key == explorer.SelectedObject.Key {
+				selected = true
+				break
+			}
+		}
+		if !selected {
+			explorer.SelectedKey = nil
+			explorer.SelectedObject = nil
+			page.SelectedObject = nil
+		}
+	}
+	if asset.Type == string(projectview.AssetTypeSemanticModel) {
+		models := make([]projectsignals.DataExploreModelSignal, 0, 1)
+		for _, model := range explorer.Explore.Models {
+			if model.ID == asset.ID {
+				models = append(models, model)
+			}
+		}
+		explorer.Explore.Models = models
+	}
+	return page, explorer, asset, true
 }
 
 func (h *BrowserHandler) layout(r *stdhttp.Request) webpage.Provider {

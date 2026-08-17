@@ -120,7 +120,11 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 	if operation == "" {
 		operation = string(request.Kind)
 	}
-	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: "system:dashboard-query", Operation: operation, EstimatedMemoryBytes: 64 << 20})
+	principalID := "system:query"
+	if class == workload.Background {
+		principalID = "system:dashboard-query"
+	}
+	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		result := dataquery.Result{ExecutionState: executionStateForWorkloadError(ctx, err)}
 		var rejection *workload.Rejection
@@ -169,7 +173,11 @@ func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request data
 	if operation == "" {
 		operation = string(request.Kind)
 	}
-	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: "system:dashboard-query", Operation: operation, EstimatedMemoryBytes: 64 << 20})
+	principalID := "system:query"
+	if class == workload.Background {
+		principalID = "system:dashboard-query"
+	}
+	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		result := dataquery.Result{ExecutionState: executionStateForWorkloadError(ctx, err)}
 		var rejection *workload.Rejection

@@ -108,6 +108,34 @@ test('semantic model asset details use the Waypoints SVG identity', async () => 
   }
 })
 
+test('asset data section embeds the shared explorer without a duplicate route header', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=model-data`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page') && customElements.get('lv-data-explorer'))
+    const data = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const explorer = element.shadowRoot?.querySelector('lv-data-explorer') as any
+      await explorer?.updateComplete
+      explorer?.emitCommand({ objectKey: 'orders' })
+      return {
+        embedded: explorer?.hasAttribute('embedded') ?? false,
+        routeHeaders: explorer?.shadowRoot?.querySelectorAll('.header').length ?? 0,
+        visibleRouteHeaders: Array.from(explorer?.shadowRoot?.querySelectorAll('.header') ?? []).filter((node: any) => getComputedStyle(node).display !== 'none').length,
+        browserVisible: getComputedStyle(explorer?.shadowRoot?.querySelector('.browser') as Element).display !== 'none',
+        pathname: window.location.pathname,
+      }
+    })
+    expect(data.embedded).toBe(true)
+    expect(data.routeHeaders).toBe(1)
+    expect(data.visibleRouteHeaders).toBe(0)
+    expect(data.browserVisible).toBe(false)
+    expect(data.pathname).toBe('/')
+  } finally {
+    await page.close()
+  }
+})
+
 test('connections list and asset detail render without workspace terminology', async () => {
   const page = await browser.newPage()
   try {
@@ -144,6 +172,8 @@ function testDocument(rootName: string): string {
     kind: 'data', title: 'orders', assetId: 'orders', activeSection: 'details', asset: { id: 'orders', key: 'model_table:orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Develop', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details', active: true }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
   } : rootName === 'semantic-detail' ? {
     kind: 'data', title: 'orders', assetId: 'semantic:orders', activeSection: 'details', asset: { id: 'semantic:orders', key: 'semantic_model:orders', title: 'orders', type: 'semantic_model', typeLabel: 'Semantic model', detailHref: '/semantic-models/semantic:orders/details', openHref: '/semantic-models/semantic:orders/details' }, breadcrumbs: [{ label: 'Semantic models', href: '/semantic-models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/semantic-models/semantic:orders/details', active: true }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
+  } : rootName === 'model-data' ? {
+    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'data', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'data', label: 'Data', href: '/models/model:orders/data', active: true }], details: { overview: [], sections: [] },
   } : rootName === 'models' ? {
     kind: 'data', title: 'Models', assetList: { activeType: 'model_table', assets: [{ id: 'model:orders', key: 'model_table:orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }], empty: 'No models.', searchHref: '/models', tabs: [] },
   } : rootName === 'semantic-models' ? {
@@ -151,8 +181,9 @@ function testDocument(rootName: string): string {
   } : {
     kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
-  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'detail' || rootName === 'semantic-detail' ? 'lv-project-asset-page' : 'lv-project-page'
-  return `<!doctype html><html><body><main data-signals="${escapeHTML(JSON.stringify({ page, connectionAdmin: { command: {}, status: { loading: false, error: '', message: '' } } }))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'detail' || rootName === 'semantic-detail' || rootName === 'model-data' ? 'lv-project-asset-page' : 'lv-project-page'
+  const dataExplorer = { objects: [{ key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }], selectedKey: 'orders', selectedObject: { key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }, preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, totalRowLabel: '0', sort: {}, sql: '', error: '' }, explore: { command: { modelId: '', datasetId: '', dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, command: { mode: 'browse', objectKey: 'orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }, warnings: [] }
+  return `<!doctype html><html><body><main data-signals="${escapeHTML(JSON.stringify({ page, dataExplorer, connectionAdmin: { command: {}, status: { loading: false, error: '', message: '' } } }))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script>${rootName === 'model-data' ? '<script type="module" src="/data-explorer-under-test.js"></script>' : ''}<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
 function lifecycle() {

@@ -304,7 +304,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         </header>
         <div class="asset-body">
           ${renderTabs(page.tabs)}
-          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'details' && page.details?.semanticModelGraph ? 'section-body graph-details-body' : 'section-body'}>
+          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'data' ? 'section-body data-body' : page.activeSection === 'details' && page.details?.semanticModelGraph ? 'section-body graph-details-body' : 'section-body'}>
             ${this.renderSection(page)}
           </div>
         </div>
@@ -315,6 +315,8 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   private renderSection(page: ResourceAssetPageSignal) {
     return page.activeSection === 'lineage'
       ? this.renderLineage(page)
+      : page.activeSection === 'data'
+        ? html`<lv-data-explorer embedded></lv-data-explorer>`
       : page.activeSection === 'refreshes'
         ? this.renderRefreshes(page)
         : page.activeSection === 'versions'
@@ -1115,6 +1117,16 @@ const projectStyles = css`
 
   .lineage-body {
     padding: 0;
+  }
+
+  .data-body {
+    min-height: 32rem;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  .data-body lv-data-explorer {
+    height: 100%;
   }
 
   .graph-details-body {

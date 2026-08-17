@@ -25,7 +25,26 @@ const fixtures = new Map<string, FixtureBuild>([
     ),
   ],
   ['dashboard-builder', single('dashboard-builder', 'web/components/dashboard/dashboard-builder.ts', '.tmp/dashboard-builder-test/dashboard-builder-under-test.js')],
-  ['project-page', single('project-page', 'web/components/project/project-page.ts', '.tmp/project-page-test/project-page-under-test.js')],
+  [
+    'project-page',
+    {
+      label: 'project-page',
+      clean: ['.tmp/project-page-test'],
+      options: {
+        entrypoints: ['web/components/project/project-page.ts', 'web/components/data/data-explorer.ts'],
+        target: 'browser',
+        format: 'esm',
+        splitting: true,
+        external: externalModules,
+        outdir: '.tmp/project-page-test',
+        naming: { entry: '[name].[ext]', chunk: 'chunks/project-page-[name]-[hash].[ext]' },
+      },
+      copy: [
+        { from: '.tmp/project-page-test/project-page.js', to: '.tmp/project-page-test/project-page-under-test.js' },
+        { from: '.tmp/project-page-test/data-explorer.js', to: '.tmp/project-page-test/data-explorer-under-test.js' },
+      ],
+    },
+  ],
   [
     'chat-page',
     split('chat-page', 'web/components/chat/chat-page.ts', '.tmp/chat-page-test', 'chat-page-under-test.js', 'chunks/[name]-[hash].[ext]'),

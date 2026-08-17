@@ -112,6 +112,20 @@ func TestWorkloadMetricsClassifiesAgentAndReleasesFailedQueries(t *testing.T) {
 	}
 }
 
+func TestWorkloadMetricsReusesInteractivePhysicalQueryAdmission(t *testing.T) {
+	controller, err := workload.New(workload.Config{MaxRunning: 1, Classes: map[workload.Class]workload.Policy{
+		workload.Interactive: {MaximumRunning: 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(controller.Close)
+	metrics := dashboardmodule.WithAdmission(nestedAdmissionMetrics{controller: controller}, controller)
+	if _, err := metrics.ExecuteDataQuery(t.Context(), workloadTestQuery()); err != nil {
+		t.Fatalf("physical query admission should reuse the outer interactive lease: %v", err)
+	}
+}
+
 func workloadTestQuery() dataquery.Query {
 	request := dataquery.SemanticRows("sales", "orders", []dataquery.Field{{Field: "orders.id"}}, nil, nil, nil, 0, 1, false)
 	request.ProjectID = "project:sales"
@@ -128,6 +142,22 @@ type errorQueryMetrics struct {
 	fakeMetrics
 	err     error
 	inspect func()
+}
+
+type nestedAdmissionMetrics struct {
+	fakeMetrics
+	controller *workload.Controller
+}
+
+func (m nestedAdmissionMetrics) ExecuteDataQuery(ctx context.Context, _ dataquery.Query) (dataquery.Result, error) {
+	lease, err := m.controller.Acquire(ctx, workload.Request{
+		Class: workload.Interactive, PrincipalID: "system:query", Operation: "physical_query", EstimatedMemoryBytes: 64 << 20,
+	})
+	if err != nil {
+		return dataquery.Result{}, err
+	}
+	defer lease.Release()
+	return dataquery.Result{}, nil
 }
 
 func (m errorQueryMetrics) ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error) {
