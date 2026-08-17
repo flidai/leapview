@@ -1102,7 +1102,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               ? semanticActive
                 ? this.renderExploreSelected(selected, explorer.explore ?? emptyExplorer.explore)
                 : this.renderSelected(selected, explorer.preview ?? emptyPreview, explorer.command ?? emptyExplorer.command)
-              : html`<p class="empty">No data objects are available.</p>`}
+              : html`<p class="empty">${(explorer.objects ?? []).length
+                ? 'Select a data object to begin.'
+                : 'No data objects are available.'}</p>`}
           </main>
         </div>
         ${agentEnabled && this.agentDrawerOpen ? html`<lv-chat-drawer

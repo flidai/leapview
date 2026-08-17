@@ -2,6 +2,7 @@ package runtimefactory
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
@@ -21,6 +22,7 @@ type dashboardRuntimeWithGraph struct {
 	servingStateID  string
 	authorization   accesssnapshot.AuthorizationSnapshot
 	authoredSources map[string]dashboardauthoring.AuthoredDashboardSource
+	projectManifest projectmanifest.Project
 }
 
 // AuthorizationSnapshot returns the immutable authorization policy compiled
@@ -28,6 +30,23 @@ type dashboardRuntimeWithGraph struct {
 // project-resource guards can authorize against the exact active generation.
 func (r dashboardRuntimeWithGraph) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
 	return r.authorization
+}
+
+// ProjectManifest returns a detached copy of the complete compiled project
+// definition for this serving generation. The portable graph deliberately
+// contains only identity, metadata, and topology; browser detail projections
+// must read their typed definitions from the exact active generation instead
+// of interpreting graph metadata as a resource document.
+func (r dashboardRuntimeWithGraph) ProjectManifest() projectmanifest.Project {
+	encoded, err := json.Marshal(r.projectManifest)
+	if err != nil {
+		return projectmanifest.Project{}
+	}
+	var cloned projectmanifest.Project
+	if err := json.Unmarshal(encoded, &cloned); err != nil {
+		return projectmanifest.Project{}
+	}
+	return cloned
 }
 
 // AuthoredDashboardSource returns a fresh deep copy of retained authored

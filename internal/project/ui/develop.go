@@ -2635,13 +2635,17 @@ func sourcesUsingConnection(connectionID string, assets []projectview.DevelopAss
 }
 
 func connectionFacts(asset projectview.DevelopAssetView) []definitionFact {
+	options := compactJSON(metaValue(asset.Payload, "Options", "options"))
+	if options == "" {
+		options = compactJSON(metaValue(asset.Payload, "Defaults", "defaults"))
+	}
 	return []definitionFact{
 		{Label: "Kind", Value: metaString(asset.Payload, "Kind", "kind")},
 		{Label: "Scope", Value: metaString(asset.Payload, "Scope", "scope")},
 		{Label: "Root", Value: metaString(asset.Payload, "Root", "root")},
 		{Label: "Path", Value: metaString(asset.Payload, "Path", "path")},
 		{Label: "Credentials", Value: boolLabel(metaBool(asset.Payload, "credentials_configured"))},
-		{Label: "Options", Value: compactJSON(metaValue(asset.Payload, "Options", "options"))},
+		{Label: "Options", Value: options},
 	}
 }
 

@@ -140,6 +140,7 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 		servingStateID:  string(input.State.ID),
 		authorization:   authorization,
 		authoredSources: authoredSources,
+		projectManifest: compiled.Manifest,
 	}, nil
 }
 

@@ -18,6 +18,7 @@ import (
 	projectview "github.com/flidai/leapview/internal/project"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectnavigation "github.com/flidai/leapview/internal/project/navigation"
 	projectui "github.com/flidai/leapview/internal/project/ui"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
@@ -43,11 +44,25 @@ type SemanticModelReader interface {
 	SemanticModel(string) (*semanticmodel.Model, bool)
 }
 
+// ProjectDefinitionReader resolves the complete compiled definition from the
+// exact active serving generation. Graph payloads are intentionally limited
+// to portable identity, metadata, and topology and cannot populate resource
+// detail pages or Data Explorer on their own.
+type ProjectDefinitionReader interface {
+	ProjectDefinition(context.Context) (projectmanifest.Project, error)
+}
+
 // ErrSemanticModelUnavailable indicates that the active generation could not
 // provide the compiled definition required to render semantic-model detail.
 // A graph metadata payload is not a valid substitute because it would render
 // misleading zero-valued tables, measures, and relationships.
 var ErrSemanticModelUnavailable = errors.New("active semantic model definition is unavailable")
+
+// ErrProjectDefinitionUnavailable indicates that the selected graph resource
+// cannot be paired with its typed definition from the active generation.
+// Rendering graph metadata as a complete resource would produce misleading
+// empty fields, sources, schedules, and configuration values.
+var ErrProjectDefinitionUnavailable = errors.New("active project definition is unavailable")
 
 type Principal struct {
 	ID        string
@@ -55,16 +70,17 @@ type Principal struct {
 }
 
 type BrowserHandler struct {
-	Graph               GraphReader
-	SemanticModelReader SemanticModelReader
-	Catalog             CatalogAuthorizer
-	ResolveProjectID    func(context.Context) (projectgraph.ResourceID, error)
-	Environment         string
-	Trace               *pagestream.TraceStore
-	Layout              func(*stdhttp.Request) webpage.Provider
-	CSRFToken           func(*stdhttp.Request) string
-	CurrentUser         func(*stdhttp.Request) (Principal, bool)
-	Authenticate        func(stdhttp.Handler) stdhttp.Handler
+	Graph                   GraphReader
+	SemanticModelReader     SemanticModelReader
+	ProjectDefinitionReader ProjectDefinitionReader
+	Catalog                 CatalogAuthorizer
+	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
+	Environment             string
+	Trace                   *pagestream.TraceStore
+	Layout                  func(*stdhttp.Request) webpage.Provider
+	CSRFToken               func(*stdhttp.Request) string
+	CurrentUser             func(*stdhttp.Request) (Principal, bool)
+	Authenticate            func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -123,7 +139,10 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	catalog := h.navigationCatalog(r)
-	page, explorer := h.dataExplorerSignals(r)
+	page, explorer, ok := h.dataExplorerSignals(w, r)
+	if !ok {
+		return
+	}
 	writeDocument(w, projectui.DataExplorerPage(catalog, page, explorer, h.csrf(r), h.layout(r)))
 }
 
@@ -173,7 +192,7 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	var err error
-	asset, err = h.semanticModelAssetReadModel(asset)
+	asset, err = h.projectAssetReadModel(r.Context(), asset)
 	if err != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
@@ -212,7 +231,20 @@ func (h *BrowserHandler) Pipelines(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindPipeline}) {
 		return
 	}
-	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r)}
+	_, assets, _, ok := h.assets(w, r)
+	if !ok {
+		return
+	}
+	pipelines := projectview.FilterProjectLandingAssets(assets, string(projectview.AssetTypeRefreshPipeline), "")
+	pipelines, err := h.projectAssetReadModels(r.Context(), pipelines)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return
+	}
+	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), Pipelines: make([]projectui.PipelineMonitorPipeline, 0, len(pipelines))}
+	for _, asset := range pipelines {
+		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset})
+	}
 	writeDocument(w, projectui.PipelinesPage(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)))
 }
 
@@ -225,6 +257,11 @@ func (h *BrowserHandler) Connections(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		return
 	}
 	assets = projectview.FilterConnections(assets, strings.TrimSpace(r.URL.Query().Get("q")))
+	assets, err := h.projectAssetReadModels(r.Context(), assets)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return
+	}
 	writeDocument(w, projectui.ConnectionsPage(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), "", h.layout(r)))
 }
 
@@ -273,7 +310,13 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 	if query == "" {
 		query = strings.TrimSpace(r.FormValue("entityListQuery"))
 	}
-	patch := projectui.ConnectionsListResultsPatch(projectview.FilterConnections(assets, query), edges)
+	assets = projectview.FilterConnections(assets, query)
+	assets, err := h.projectAssetReadModels(r.Context(), assets)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return
+	}
+	patch := projectui.ConnectionsListResultsPatch(assets, edges)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
 
@@ -288,7 +331,10 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	case "data":
 		surface := r.URL.Query().Get("surface")
 		if surface == "explore" {
-			page, explorer := h.dataExplorerSignals(r)
+			page, explorer, ok := h.dataExplorerSignals(w, r)
+			if !ok {
+				return
+			}
 			patch = projectui.DataExplorerBootstrapSignals(h.navigationCatalog(r), page, explorer, h.layout(r))
 		} else if surface == "asset" {
 			if assetPatch, ok := h.assetBootstrap(w, r); ok {
@@ -335,6 +381,11 @@ func (h *BrowserHandler) connectionsBootstrap(w stdhttp.ResponseWriter, r *stdht
 		return nil, false
 	}
 	assets = projectview.FilterConnections(assets, r.URL.Query().Get("q"))
+	assets, err := h.projectAssetReadModels(r.Context(), assets)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return nil, false
+	}
 	return projectui.ConnectionsBootstrapSignalsForEnvironment(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), h.Environment, "", h.layout(r)), true
 }
 
@@ -344,6 +395,11 @@ func (h *BrowserHandler) pipelinesBootstrap(w stdhttp.ResponseWriter, r *stdhttp
 		return nil, false
 	}
 	pipelines := projectview.FilterProjectLandingAssets(assets, string(projectview.AssetTypeRefreshPipeline), "")
+	pipelines, err := h.projectAssetReadModels(r.Context(), pipelines)
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return nil, false
+	}
 	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), Pipelines: make([]projectui.PipelineMonitorPipeline, 0, len(pipelines))}
 	for _, asset := range pipelines {
 		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset})
@@ -362,7 +418,7 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return nil, false
 	}
 	var err error
-	asset, err = h.semanticModelAssetReadModel(asset)
+	asset, err = h.projectAssetReadModel(r.Context(), asset)
 	if err != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return nil, false
@@ -374,24 +430,99 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 	return projectui.ConnectionAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, r.URL.Query().Get("section"), h.Environment, "", projectui.AssetVersionsState{}), true
 }
 
-// semanticModelAssetReadModel enriches only the selected asset. Lists and
-// lineage continue to use the immutable graph projection, while details and
-// their SSE bootstrap read the complete compiled semantic model for the
-// active generation.
-func (h *BrowserHandler) semanticModelAssetReadModel(asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
-	if asset.Type != string(projectview.AssetTypeSemanticModel) {
+// projectAssetReadModel enriches only the selected asset. Lists and lineage
+// continue to use the immutable graph projection, while details and their SSE
+// bootstrap read the complete typed definition from the active generation.
+func (h *BrowserHandler) projectAssetReadModel(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
+	if h == nil {
+		return projectview.DevelopAssetView{}, ErrProjectDefinitionUnavailable
+	}
+	var payload map[string]any
+	if h.ProjectDefinitionReader != nil {
+		definition, err := h.ProjectDefinitionReader.ProjectDefinition(ctx)
+		if err != nil {
+			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s: %v", ErrProjectDefinitionUnavailable, asset.ID, err)
+		}
+		return projectAssetReadModelFromDefinition(asset, definition)
+	} else if asset.Type == string(projectview.AssetTypeSemanticModel) && h.SemanticModelReader != nil {
+		// Retain the narrow compatibility seam for embedders that expose only
+		// semantic query runtime definitions. Production composition supplies
+		// ProjectDefinitionReader for every resource kind.
+		model, ok := h.SemanticModelReader.SemanticModel(asset.ID)
+		if !ok || model == nil {
+			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrSemanticModelUnavailable, asset.ID)
+		}
+		payload = projectview.SemanticModelAssetPayload(model)
+	} else {
+		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
+	}
+	return mergeProjectAssetPayload(asset, payload)
+}
+
+func (h *BrowserHandler) projectAssetReadModels(ctx context.Context, assets []projectview.DevelopAssetView) ([]projectview.DevelopAssetView, error) {
+	if len(assets) == 0 {
+		return assets, nil
+	}
+	if h == nil || h.ProjectDefinitionReader == nil {
+		return nil, ErrProjectDefinitionUnavailable
+	}
+	definition, err := h.ProjectDefinitionReader.ProjectDefinition(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrProjectDefinitionUnavailable, err)
+	}
+	out := make([]projectview.DevelopAssetView, 0, len(assets))
+	for _, asset := range assets {
+		enriched, err := projectAssetReadModelFromDefinition(asset, definition)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, enriched)
+	}
+	return out, nil
+}
+
+func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, definition projectmanifest.Project) (projectview.DevelopAssetView, error) {
+	var payload map[string]any
+	switch asset.Type {
+	case string(projectview.AssetTypeConnection):
+		resource, ok := definition.Connections[asset.ID]
+		if !ok {
+			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
+		}
+		payload = projectview.ConnectionAssetPayload(resource)
+	case string(projectview.AssetTypeSource):
+		resource, ok := definition.Sources[asset.ID]
+		if !ok {
+			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
+		}
+		payload = projectview.SourceAssetPayload(resource)
+	case string(projectview.AssetTypeModelTable):
+		resource, ok := definition.Models[asset.ID]
+		if !ok {
+			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
+		}
+		payload = projectview.ModelTableAssetPayload(resource)
+	case string(projectview.AssetTypeSemanticModel):
+		resource, ok := definition.SemanticModels[asset.ID]
+		if !ok || resource == nil {
+			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrSemanticModelUnavailable, asset.ID)
+		}
+		payload = projectview.SemanticModelAssetPayload(resource)
+	case string(projectview.AssetTypeRefreshPipeline):
+		resource, ok := definition.RefreshPipelines[asset.ID]
+		if !ok {
+			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
+		}
+		payload = projectview.RefreshPipelineAssetPayload(resource)
+	default:
 		return asset, nil
 	}
-	if h == nil || h.SemanticModelReader == nil {
-		return projectview.DevelopAssetView{}, ErrSemanticModelUnavailable
-	}
-	model, ok := h.SemanticModelReader.SemanticModel(asset.ID)
-	if !ok || model == nil {
-		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrSemanticModelUnavailable, asset.ID)
-	}
-	payload := projectview.SemanticModelAssetPayload(model)
+	return mergeProjectAssetPayload(asset, payload)
+}
+
+func mergeProjectAssetPayload(asset projectview.DevelopAssetView, payload map[string]any) (projectview.DevelopAssetView, error) {
 	if len(payload) == 0 {
-		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrSemanticModelUnavailable, asset.ID)
+		return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
 	}
 	// Preserve graph identity/metadata keys while replacing the resource's
 	// generic payload fields with the typed detail projection.
@@ -678,21 +809,65 @@ func projectAreaType(area string) string {
 	}
 }
 
-func (h *BrowserHandler) dataExplorerSignals(r *stdhttp.Request) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal) {
+func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhttp.Request) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
 	exploreCommand := projectsignals.DataExploreCommand{Dimensions: []string{}, Measures: []string{}, Filters: []projectsignals.DataExploreFilterSignal{}, Sort: []projectsignals.DataExploreSortSignal{}, Limit: 100}
 	explorer := projectsignals.DataExplorerSignal{Command: projectsignals.DataExplorerCommand{Explore: &exploreCommand, Limit: 100}, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, Models: []projectsignals.DataExploreModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: map[string]projectsignals.DataPreviewBlockSignal{}, Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: 100, RowHeight: 32}}
-	for _, model := range h.navigationCatalog(r).SemanticModels {
-		explorer.Explore.Models = append(explorer.Explore.Models, projectsignals.DataExploreModelSignal{ID: model.ID, Title: model.Title, Description: projectsignals.Optional(model.Description)})
+	if value := strings.TrimSpace(r.URL.Query().Get("model")); value != "" {
+		exploreCommand.ModelID = projectsignals.Optional(value)
 	}
-	if len(explorer.Explore.Models) > 0 {
-		selected := explorer.Explore.Models[0]
-		explorer.Explore.SelectedModel = &selected
-		exploreCommand.ModelID = projectsignals.Optional(selected.ID)
-		explorer.Command.Explore.ModelID = exploreCommand.ModelID
+	if value := strings.TrimSpace(r.URL.Query().Get("dataset")); value != "" {
+		exploreCommand.DatasetID = projectsignals.Optional(value)
 	}
-	return page, explorer
+	_, assets, _, ok := h.assets(w, r)
+	if !ok {
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+	}
+	if h == nil || h.ProjectDefinitionReader == nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+	}
+	definition, err := h.ProjectDefinitionReader.ProjectDefinition(r.Context())
+	if err != nil {
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+	}
+	projection := BuildDataExplorerProjection(assets, definition, exploreCommand)
+	explorer.Objects = projection.Objects
+	explorer.Explore.Models = projection.Models
+	explorer.Explore.SelectedModel = projection.SelectedModel
+	explorer.Explore.Datasets = projection.Datasets
+	explorer.Explore.SelectedDataset = projection.SelectedDataset
+	explorer.Explore.Fields = projection.Fields
+	if projection.SelectedModel != nil {
+		exploreCommand.ModelID = projectsignals.Optional(projection.SelectedModel.ID)
+	}
+	if projection.SelectedDataset != nil {
+		exploreCommand.DatasetID = projectsignals.Optional(projection.SelectedDataset.ID)
+	}
+	explorer.Explore.Command = exploreCommand
+	explorer.Command.Explore = &exploreCommand
+	page.Context.ObjectCount = int64(len(explorer.Objects))
+
+	requestedObject := strings.TrimSpace(r.URL.Query().Get("object"))
+	if requestedObject != "" {
+		for index := range explorer.Objects {
+			object := explorer.Objects[index]
+			if object.Key != requestedObject && object.ResourceID != requestedObject && projectsignals.ValueOrZero(object.AssetID) != requestedObject {
+				continue
+			}
+			explorer.Command.ObjectKey = projectsignals.Optional(object.Key)
+			explorer.SelectedKey = projectsignals.Optional(object.Key)
+			explorer.SelectedObject = &object
+			page.SelectedObject = projectsignals.Optional(object.Key)
+			if object.Columns != nil {
+				explorer.Preview.Columns = append([]projectsignals.DataPreviewColumnSignal(nil), (*object.Columns)...)
+			}
+			break
+		}
+	}
+	return page, explorer, true
 }
 
 func (h *BrowserHandler) layout(r *stdhttp.Request) webpage.Provider {

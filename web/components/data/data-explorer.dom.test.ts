@@ -321,6 +321,43 @@ test('data explorer renders object browser and emits preview commands', async ()
   }
 })
 
+test('data explorer prompts for a selection when objects are available', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+
+    const message = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [{
+            key: 'model_table:model:orders', resourceId: 'model:orders', layer: 'model_table',
+            modelId: 'semantic:sales', table: 'orders', title: 'Orders', columnCount: 1,
+            columns: [{ key: 'order_id', label: 'Order ID', type: 'string' }],
+          }],
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { offset: 0, limit: 100, start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+          explore: { command: { dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
+          warnings: [],
+        },
+      })
+      document.body.append(element)
+      for (let index = 0; index < 10; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      return element.shadowRoot?.querySelector('.main .empty')?.textContent?.trim()
+    })
+
+    expect(message).toBe('Select a data object to begin.')
+  } finally {
+    await page.close()
+  }
+})
+
 test('data explorer builds a governed semantic exploration and filter command', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
