@@ -727,7 +727,13 @@ func TestRuntimeBundleCanceledExecutionDoesNotCacheOrAuditSuccess(t *testing.T) 
 		_, err := runtime.ExecuteDataQueryBundle(ctx, bundleCacheRequests())
 		done <- err
 	}()
-	<-database.started
+	select {
+	case <-database.started:
+	case err := <-done:
+		t.Fatalf("bundle execution exited before database start: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bundle database execution to start")
+	}
 	cancel()
 	close(database.release)
 	if err := <-done; !errors.Is(err, context.Canceled) {
@@ -852,7 +858,11 @@ func (g *bundleMaskGovernor) GovernDataQuery(_ context.Context, request dataquer
 }
 
 func bundleCacheRuntime(database Database) *Runtime {
-	return &Runtime{modelID: "sales", model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {}}, Metrics: map[string]semanticmodel.Metric{
+	return &Runtime{modelID: "sales", model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"id": {Expr: "id", Type: "number"},
+		},
+	}}, Metrics: map[string]semanticmodel.Metric{
 		"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
 		"event_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
 	}}, db: database, queryCache: newQueryResultCache(256, "bundle-test")}
