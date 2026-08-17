@@ -21,9 +21,11 @@ func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboa
 	activePage = activePage.WithDefaults()
 	tableRequest := DefaultTableRequest(report, activePage)
 	initialFilters = report.NormalizeFiltersForPage(activePage.ID, initialFilters).WithDefaults()
-	modelID, modelTitle := "", ""
+	modelID, modelTitle := strings.TrimSpace(report.SemanticModel), ""
 	if model != nil {
-		modelID = model.Name
+		if modelID == "" {
+			modelID = model.Name
+		}
 		modelTitle = model.Title
 	}
 	filterState := report.DefaultFilterState()
