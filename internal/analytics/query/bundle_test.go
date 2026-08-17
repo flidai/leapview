@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
 func TestPlanBundleUsesOneStatementAndGroupingSetsForDifferentShapes(t *testing.T) {
@@ -24,7 +25,7 @@ func TestPlanBundleUsesOneStatementAndGroupingSetsForDifferentShapes(t *testing.
 	if !strings.Contains(sql, "CROSS JOIN UNNEST([0, 1])") {
 		t.Fatalf("missing one-pass expanded grouping sets:\n%s", sql)
 	}
-	if !strings.Contains(sql, "COUNT(*) FILTER (WHERE __bundle_group = 0)") || !strings.Contains(sql, "SUM(__v1) FILTER (WHERE __bundle_group = 1)") {
+	if !strings.Contains(sql, "COUNT(__v0) FILTER (WHERE __bundle_group = 0)") || !strings.Contains(sql, "SUM(__v1) FILTER (WHERE __bundle_group = 1)") {
 		t.Fatalf("aggregates are not pruned to their consumer groups:\n%s", sql)
 	}
 	if strings.Contains(sql, "CREATE TEMP") || strings.Contains(sql, "MATERIALIZED") {
@@ -35,6 +36,121 @@ func TestPlanBundleUsesOneStatementAndGroupingSetsForDifferentShapes(t *testing.
 	}
 	if len(bundle.Plan.Args) != 1 || bundle.Plan.Args[0] != "consumer" {
 		t.Fatalf("args = %#v", bundle.Plan.Args)
+	}
+}
+
+func TestBundleAppliesNamedMetricWhereFiltersSingleFact(t *testing.T) {
+	model := executableMultiFactModel()
+	model.Filters = map[string]semanticmodel.SemanticFilterSpec{
+		"business_customers": {Field: "customers.state", Operator: "equals", Value: "business"},
+	}
+	filteredRevenue := model.Metrics["revenue"]
+	filteredRevenue.Where = []string{"business_customers"}
+	model.Metrics["business_revenue"] = filteredRevenue
+
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		"CREATE SCHEMA model",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'a', 'consumer', 10), ('o2', 'a', 'consumer', 20), ('o3', 'b', 'business', 30)",
+		"CREATE TABLE model.customers(customer_id VARCHAR, state VARCHAR)",
+		"INSERT INTO model.customers VALUES ('a', 'consumer'), ('b', 'business')",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle, err := NewPlanner(model).PlanBundle([]BundleRequest{
+		{ID: "filtered_total", Request: Request{Table: "orders", Metrics: []Field{{Field: "business_revenue", Alias: "value"}}}},
+		{ID: "all_by_segment", Request: Request{Table: "orders", Dimensions: []Field{{Field: "segment", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := queryBundlePlan(db, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := bundle.Decode(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered := decoded["filtered_total"]
+	if len(filtered) != 1 || filtered[0]["value"] != float64(30) {
+		t.Fatalf("filtered total = %#v, want 30", filtered)
+	}
+	all := map[string]float64{}
+	for _, row := range decoded["all_by_segment"] {
+		all[row["label"].(string)] = row["value"].(float64)
+	}
+	if fmt.Sprint(all) != "map[business:30 consumer:30]" {
+		t.Fatalf("unfiltered segment revenue = %v", all)
+	}
+}
+
+func TestBundleAppliesNamedMetricWhereFiltersMultiFact(t *testing.T) {
+	model := executableMultiFactModel()
+	model.Filters = map[string]semanticmodel.SemanticFilterSpec{
+		"vip_customer": {Field: "customers.state", Operator: "equals", Value: "vip"},
+	}
+	filteredTagCount := model.Metrics["tag_count"]
+	filteredTagCount.Where = []string{"vip_customer"}
+	model.Metrics["vip_tag_count"] = filteredTagCount
+
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		"CREATE SCHEMA model",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'a', 'consumer', 10), ('o2', 'b', 'business', 30)",
+		"CREATE TABLE model.tags(tag_id VARCHAR, customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
+		"INSERT INTO model.tags VALUES ('t1', 'a', 'consumer', 'new'), ('t2', 'c', 'consumer', 'vip'), ('t3', 'c', 'consumer', 'repeat')",
+		"CREATE TABLE model.customers(customer_id VARCHAR, state VARCHAR)",
+		"INSERT INTO model.customers VALUES ('a', 'consumer'), ('b', 'business'), ('c', 'vip')",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle, err := NewPlanner(model).PlanBundle([]BundleRequest{
+		{ID: "filtered_tags", Request: Request{Metrics: []Field{{Field: "vip_tag_count", Alias: "value"}}}},
+		{ID: "all_tags", Request: Request{Metrics: []Field{{Field: "tag_count", Alias: "value"}}}},
+		{ID: "all_orders", Request: Request{Metrics: []Field{{Field: "order_count", Alias: "value"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Plan.Mode != "multi_fact" {
+		t.Fatalf("bundle mode = %q, want multi_fact", bundle.Plan.Mode)
+	}
+	rows, err := queryBundlePlan(db, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := bundle.Decode(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		id    string
+		value int64
+	}{
+		{id: "filtered_tags", value: 2},
+		{id: "all_tags", value: 3},
+		{id: "all_orders", value: 2},
+	}
+	for _, check := range checks {
+		got := decoded[check.id]
+		if len(got) != 1 || got[0]["value"] != check.value {
+			t.Fatalf("%s = %#v, want %d", check.id, got, check.value)
+		}
 	}
 }
 
@@ -74,11 +190,11 @@ func TestPlanBundleSharesFactScansAcrossSingleAndMultiFactBranches(t *testing.T)
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE SCHEMA model",
-		"CREATE TABLE model.orders(customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
-		"INSERT INTO model.orders VALUES ('a', 'consumer', 10), ('a', 'consumer', 20), ('b', 'business', 30)",
-		"CREATE TABLE model.tags(customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
-		"INSERT INTO model.tags VALUES ('a', 'consumer', 'new'), ('c', 'consumer', 'vip'), ('c', 'consumer', 'repeat')",
-		"CREATE TABLE model.clicks(customer_id VARCHAR, segment VARCHAR)",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'a', 'consumer', 10), ('o2', 'a', 'consumer', 20), ('o3', 'b', 'business', 30)",
+		"CREATE TABLE model.tags(tag_id VARCHAR, customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
+		"INSERT INTO model.tags VALUES ('t1', 'a', 'consumer', 'new'), ('t2', 'c', 'consumer', 'vip'), ('t3', 'c', 'consumer', 'repeat')",
+		"CREATE TABLE model.clicks(click_id VARCHAR, customer_id VARCHAR, segment VARCHAR)",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -154,11 +270,11 @@ func TestMultiFactBundleScalarCountOnlyExecutesAcrossThreeFacts(t *testing.T) {
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE SCHEMA model",
-		"CREATE TABLE model.orders(customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
-		"INSERT INTO model.orders VALUES ('a', 'consumer', 10), ('b', 'business', 30)",
-		"CREATE TABLE model.tags(customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
-		"INSERT INTO model.tags VALUES ('a', 'consumer', 'new'), ('c', 'consumer', 'vip'), ('c', 'consumer', 'repeat')",
-		"CREATE TABLE model.clicks(customer_id VARCHAR, segment VARCHAR)",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'a', 'consumer', 10), ('o2', 'b', 'business', 30)",
+		"CREATE TABLE model.tags(tag_id VARCHAR, customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
+		"INSERT INTO model.tags VALUES ('t1', 'a', 'consumer', 'new'), ('t2', 'c', 'consumer', 'vip'), ('t3', 'c', 'consumer', 'repeat')",
+		"CREATE TABLE model.clicks(click_id VARCHAR, customer_id VARCHAR, segment VARCHAR)",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -200,12 +316,12 @@ func TestMultiFactBundleExecutesExactOuterStitchAcrossGroupingSets(t *testing.T)
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE SCHEMA model",
-		"CREATE TABLE model.orders(customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
-		"INSERT INTO model.orders VALUES ('a', 'consumer', 10), ('a', 'consumer', 20), ('b', 'business', 30)",
-		"CREATE TABLE model.tags(customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
-		"INSERT INTO model.tags VALUES ('a', 'consumer', 'new'), ('c', 'consumer', 'vip'), ('c', 'consumer', 'repeat')",
-		"CREATE TABLE model.clicks(customer_id VARCHAR, segment VARCHAR)",
-		"INSERT INTO model.clicks VALUES ('a', 'consumer'), ('d', 'business'), ('d', 'business')",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'a', 'consumer', 10), ('o2', 'a', 'consumer', 20), ('o3', 'b', 'business', 30)",
+		"CREATE TABLE model.tags(tag_id VARCHAR, customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
+		"INSERT INTO model.tags VALUES ('t1', 'a', 'consumer', 'new'), ('t2', 'c', 'consumer', 'vip'), ('t3', 'c', 'consumer', 'repeat')",
+		"CREATE TABLE model.clicks(click_id VARCHAR, customer_id VARCHAR, segment VARCHAR)",
+		"INSERT INTO model.clicks VALUES ('c1', 'a', 'consumer'), ('c2', 'd', 'business'), ('c3', 'd', 'business')",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -314,10 +430,10 @@ func TestBundleExecutesOneStatementAndDecodesExactTypedBranches(t *testing.T) {
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE SCHEMA model",
-		"CREATE TABLE model.orders(customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
-		"INSERT INTO model.orders VALUES ('a', 'consumer', 10), ('a', 'consumer', 20), ('b', 'business', 30)",
-		"CREATE TABLE model.tags(customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
-		"CREATE TABLE model.clicks(customer_id VARCHAR, segment VARCHAR)",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'a', 'consumer', 10), ('o2', 'a', 'consumer', 20), ('o3', 'b', 'business', 30)",
+		"CREATE TABLE model.tags(tag_id VARCHAR, customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
+		"CREATE TABLE model.clicks(click_id VARCHAR, customer_id VARCHAR, segment VARCHAR)",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -391,10 +507,10 @@ func TestBundleDecodePreservesDeterministicAuthoredBranchOrdering(t *testing.T) 
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE SCHEMA model",
-		"CREATE TABLE model.orders(customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
-		"INSERT INTO model.orders VALUES ('b', 'consumer', 20), ('a', 'consumer', 10), ('c', 'consumer', 30)",
-		"CREATE TABLE model.tags(customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
-		"CREATE TABLE model.clicks(customer_id VARCHAR, segment VARCHAR)",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'b', 'consumer', 20), ('o2', 'a', 'consumer', 10), ('o3', 'c', 'consumer', 30)",
+		"CREATE TABLE model.tags(tag_id VARCHAR, customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
+		"CREATE TABLE model.clicks(click_id VARCHAR, customer_id VARCHAR, segment VARCHAR)",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)

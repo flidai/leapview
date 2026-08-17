@@ -1227,7 +1227,7 @@ func fakeSemanticModel() *semanticmodel.Model {
 				Entities:    map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
 				GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Expr: "order_id"},
+					"order_id": {},
 				},
 			},
 		},

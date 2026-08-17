@@ -41,10 +41,10 @@ func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) 
 			"source:orders": {Connection: "connection:warehouse"},
 		},
 		Models: map[string]semanticmodel.Table{
-			"model:orders": {Source: "source:orders", SourceDependencies: []string{"source:orders"}},
+			"model:orders": {Source: "source:orders", SourceDependencies: []string{"source:orders"}, Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}},
 		},
 		SemanticModels: map[string]*semanticmodel.Model{
-			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders"}}},
+			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}}}},
 		},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{
 			"dashboard:sales": {ID: "dashboard:sales", SemanticModel: "semantic:sales"},
@@ -103,6 +103,12 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 	if _, ok := model.Sources["orders"]; !ok {
 		t.Fatalf("semantic runtime symbolic ref was rewritten: %#v", model.Sources)
+	}
+	if got := model.Tables["orders"].Dimensions["order_id"].Datatype; got != semanticmodel.DataTypeString {
+		t.Fatalf("semantic logical datatype = %q, want %q after artifact round trip", got, semanticmodel.DataTypeString)
+	}
+	if got := decoded.ModelTables()["model:orders"].Dimensions["order_id"].Datatype; got != semanticmodel.DataTypeString {
+		t.Fatalf("model logical datatype = %q, want %q after artifact round trip", got, semanticmodel.DataTypeString)
 	}
 	if got := decoded.Manifest().NameIndex.SemanticModels["sales"]; got != "semantic:sales" {
 		t.Fatalf("name index semantic model = %q, want semantic:sales", got)

@@ -13,8 +13,8 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		SQL:                "SELECT * FROM source.\"olist.geolocation\"",
 		Transform:          semanticmodel.Transform{SQL: "SELECT * FROM source.\"olist.geolocation\""},
 		Columns:            map[string]semanticmodel.ModelColumn{"zip_prefix": {Type: "string", SourceField: "geolocation_zip_code_prefix"}},
-		PrimaryKey:         "zip_prefix",
-		Grain:              "zip_prefix",
+		Entities:           map[string]semanticmodel.ModelEntitySpec{"location": {Type: "primary", Fields: []string{"zip_prefix", "city"}}},
+		GrainEntity:        "location",
 		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix", Type: "string"}},
 		Schema:             semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", Ordinal: 0, PhysicalType: "VARCHAR"}}},
 		SourceDependencies: []string{"olist.geolocation"},
@@ -22,8 +22,19 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	}
 
 	payload := ModelTableAssetPayload(table)
-	if payload["Source"] != "olist.geolocation" || payload["PrimaryKey"] != "zip_prefix" || payload["Grain"] != "zip_prefix" {
+	if payload["Source"] != "olist.geolocation" || payload["GrainEntity"] != "location" {
 		t.Fatalf("payload metadata = %#v", payload)
+	}
+	if _, ok := payload["PrimaryKey"]; ok {
+		t.Fatalf("payload retains removed PrimaryKey contract: %#v", payload)
+	}
+	entities, ok := payload["Entities"].(map[string]any)
+	if !ok || entities["location"] == nil {
+		t.Fatalf("payload entities = %#v", payload["Entities"])
+	}
+	entity, ok := entities["location"].(map[string]any)
+	if !ok || entity["Fields"] == nil {
+		t.Fatalf("payload composite entity = %#v", entities["location"])
 	}
 	if payload["SQL"] != table.SQL {
 		t.Fatalf("payload SQL = %#v, want %q", payload["SQL"], table.SQL)

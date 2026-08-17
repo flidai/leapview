@@ -8,13 +8,13 @@ import (
 )
 
 // CompiledModel is the immutable semantic metadata shared by every query in a
-// serving-state runtime. Expressions and dependency DAGs are parsed once at
-// activation instead of being rediscovered for every dashboard consumer.
+// serving-state runtime. Derived and ratio expressions and their dependency
+// DAGs are parsed once at activation instead of being rediscovered for every
+// dashboard consumer.
 type CompiledModel struct {
-	Model                     *semanticmodel.Model
-	MetricExpressions         map[string]semanticmodel.Expression
-	AggregateInputExpressions map[string]semanticmodel.Expression
-	MemberFacts               map[string][]string
+	Model             *semanticmodel.Model
+	MetricExpressions map[string]semanticmodel.Expression
+	MemberFacts       map[string][]string
 }
 
 func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
@@ -22,24 +22,15 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		return nil, fmt.Errorf("semantic model is required")
 	}
 	compiled := &CompiledModel{
-		Model:                     model,
-		MetricExpressions:         make(map[string]semanticmodel.Expression, len(model.Metrics)),
-		AggregateInputExpressions: map[string]semanticmodel.Expression{},
-		MemberFacts:               map[string][]string{},
+		Model:             model,
+		MetricExpressions: make(map[string]semanticmodel.Expression, len(model.Metrics)),
+		MemberFacts:       map[string][]string{},
 	}
 	for name, metric := range model.Metrics {
 		if metric.Type != "aggregate" {
 			continue
 		}
 		compiled.MemberFacts[name] = []string{metric.Dataset}
-		if metric.Input == nil || metric.Input.Expression == "" {
-			continue
-		}
-		expression, err := semanticmodel.ParseExpression(metric.Input.Expression)
-		if err != nil {
-			return nil, fmt.Errorf("metric %q aggregate input: %w", name, err)
-		}
-		compiled.AggregateInputExpressions[name] = expression
 	}
 	for name, metric := range model.Metrics {
 		if metric.Type == "aggregate" {

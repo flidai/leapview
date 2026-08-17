@@ -3,7 +3,6 @@ package query
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -31,68 +30,6 @@ func applyAliases(expr string, aliases map[string]tableAlias, fallbackAlias stri
 	}
 	expr = strings.ReplaceAll(expr, "{alias}", fallbackAlias)
 	return expr
-}
-
-func joinSQL(planner *Planner, base string, aliases map[string]tableAlias) (string, error) {
-	baseRelation, err := planner.physicalTable(base)
-	if err != nil {
-		return "", err
-	}
-	model := planner.Model
-	parts := []string{baseRelation + " t0"}
-	joinAliases := make([]tableAlias, 0, len(aliases)-1)
-	for table, alias := range aliases {
-		if table != base {
-			joinAliases = append(joinAliases, alias)
-		}
-	}
-	sort.Slice(joinAliases, func(i, j int) bool {
-		if len(joinAliases[i].Path) != len(joinAliases[j].Path) {
-			return len(joinAliases[i].Path) < len(joinAliases[j].Path)
-		}
-		return joinAliases[i].Alias < joinAliases[j].Alias
-	})
-	for _, alias := range joinAliases {
-		if len(alias.Path) == 0 {
-			continue
-		}
-		relationship := alias.Path[len(alias.Path)-1]
-		fromTable, fromFields, err := semanticmodel.RelationshipEndpoint(relationship, true)
-		if err != nil {
-			return "", err
-		}
-		toTable, toFields, err := semanticmodel.RelationshipEndpoint(relationship, false)
-		if err != nil {
-			return "", err
-		}
-		rightRelation, err := planner.physicalTable(alias.Table)
-		if err != nil {
-			return "", err
-		}
-		leftTable, leftFields := fromTable, fromFields
-		rightTable, rightFields := toTable, toFields
-		if alias.Table == fromTable && relationship.Cardinality == "one_to_one" {
-			leftTable, leftFields = toTable, toFields
-			rightTable, rightFields = fromTable, fromFields
-		}
-		left, ok := aliases[leftTable]
-		if !ok {
-			return "", fmt.Errorf("missing relationship alias for %q", leftTable)
-		}
-		right, ok := aliases[rightTable]
-		if !ok {
-			return "", fmt.Errorf("missing relationship alias for %q", rightTable)
-		}
-		if right.Table != alias.Table {
-			return "", fmt.Errorf("relationship path to %q ends at %q", alias.Table, right.Table)
-		}
-		condition, err := tupleJoinCondition(model, leftTable, leftFields, rightTable, rightFields, aliases, left.Alias, alias.Alias)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, fmt.Sprintf("LEFT JOIN %s %s ON %s", rightRelation, alias.Alias, condition))
-	}
-	return strings.Join(parts, "\n"), nil
 }
 
 func joinPathSQL(planner *Planner, aliases pathAliasSet) (string, error) {
@@ -175,7 +112,7 @@ func tupleJoinConditionWithAliases(model *semanticmodel.Model, leftTable string,
 		if err != nil {
 			return "", err
 		}
-		if left.Datatype != "" && right.Datatype != "" && left.Datatype != right.Datatype {
+		if !relationshipKeyTypesCompatible(left, right) {
 			return "", fmt.Errorf("relationship tuple field %q datatype %q is incompatible with %q datatype %q", left.Field, left.Datatype, right.Field, right.Datatype)
 		}
 		leftExpr := applyAliases(left.SQLExpression(), leftAliases, leftAlias)
@@ -183,6 +120,10 @@ func tupleJoinConditionWithAliases(model *semanticmodel.Model, leftTable string,
 		parts = append(parts, leftExpr+" = "+rightExpr)
 	}
 	return strings.Join(parts, " AND "), nil
+}
+
+func relationshipKeyTypesCompatible(left, right semanticmodel.MetricDimension) bool {
+	return left.Datatype != "" && right.Datatype != "" && left.Datatype == right.Datatype
 }
 
 func dimensionExpr(dimension semanticmodel.MetricDimension, aliases map[string]tableAlias) string {
@@ -202,19 +143,15 @@ func dimensionExprForPath(dimension semanticmodel.MetricDimension, aliases pathA
 	return applyAliases(dimension.SQLExpression(), context, alias.Alias), nil
 }
 
-func dimensionWhereExpr(dimension semanticmodel.MetricDimension, aliases map[string]tableAlias) string {
-	return ""
-}
-
 func aggregateMetricExpr(model *semanticmodel.Model, metric resolvedAggregateMetric, aliases map[string]tableAlias) (string, error) {
 	input, err := rawAggregateMetricExpr(model, metric, aliases)
-	if err != nil && metric.Aggregation != "count" {
+	if err != nil {
 		return "", err
 	}
 	expr := ""
 	switch metric.Aggregation {
 	case "count":
-		expr = "COUNT(*)"
+		expr = "COUNT(" + input + ")"
 	case "count_distinct":
 		expr = "COUNT(DISTINCT " + input + ")"
 	case "sum", "avg", "min", "max":
@@ -226,31 +163,12 @@ func aggregateMetricExpr(model *semanticmodel.Model, metric resolvedAggregateMet
 }
 
 func rawAggregateMetricExpr(model *semanticmodel.Model, metric resolvedAggregateMetric, aliases map[string]tableAlias) (string, error) {
-	if metric.InputField != "" {
-		dimension, err := model.ResolveDimension(metric.InputField)
-		if err != nil {
-			return "", err
-		}
-		return dimensionExpr(dimension, aliases), nil
-	}
-	if metric.InputExpr == "" {
+	if metric.InputField == "" {
 		return "", fmt.Errorf("metric %q has no raw input", metric.Name)
 	}
-	var expression semanticmodel.Expression
-	if metric.InputExpression != nil {
-		expression = *metric.InputExpression
-	} else {
-		var err error
-		expression, err = semanticmodel.ParseExpression(metric.InputExpr)
-		if err != nil {
-			return "", err
-		}
+	dimension, err := model.ResolveDimension(metric.InputField)
+	if err != nil {
+		return "", err
 	}
-	return expression.SQL(func(ref string) (string, error) {
-		dimension, err := model.ResolveDimension(ref)
-		if err != nil {
-			return "", err
-		}
-		return dimensionExpr(dimension, aliases), nil
-	})
+	return dimensionExpr(dimension, aliases), nil
 }

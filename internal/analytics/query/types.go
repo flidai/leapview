@@ -1,27 +1,24 @@
 package query
 
-import semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-
 type Field struct {
 	Field string
 	Alias string
 }
 
 type resolvedAggregateMetric struct {
-	Field           string
-	Name            string
-	Label           string
-	Description     string
-	Fact            string
-	Aggregation     string
-	InputField      string
-	InputExpr       string
-	InputExpression *semanticmodel.Expression
-	Filters         []metricFilter
-	WhereFilters    []Filter
-	Empty           string
-	Unit            string
-	Format          string
+	Field         string
+	Name          string
+	Label         string
+	Description   string
+	Fact          string
+	Aggregation   string
+	InputField    string
+	Filters       []metricFilter
+	WhereFilters  []Filter
+	Empty         string
+	Unit          string
+	Format        string
+	TimeDimension string
 }
 
 type metricFilter struct {

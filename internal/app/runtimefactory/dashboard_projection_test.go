@@ -1,6 +1,7 @@
 package runtimefactory
 
 import (
+	"slices"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -13,18 +14,24 @@ func TestProjectManifestReturnsDetachedCompiledDefinition(t *testing.T) {
 	runtime := dashboardRuntimeWithGraph{projectManifest: projectmanifest.Project{
 		ID: "project:demo",
 		Models: map[string]semanticmodel.Table{
-			"model:orders": {PrimaryKey: "order_id", Sources: []string{"orders"}},
+			"model:orders": {
+				Entities:    map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity: "order_id",
+				Sources:     []string{"orders"},
+			},
 		},
 	}}
 
 	first := runtime.ProjectManifest()
 	model := first.Models["model:orders"]
-	model.PrimaryKey = "changed"
+	model.GrainEntity = "changed"
+	model.Entities["order_id"] = semanticmodel.ModelEntitySpec{Type: "unique", Fields: []string{"changed"}}
 	model.Sources[0] = "changed"
 	first.Models["model:orders"] = model
 
 	second := runtime.ProjectManifest()
-	if second.Models["model:orders"].PrimaryKey != "order_id" || second.Models["model:orders"].Sources[0] != "orders" {
+	model = second.Models["model:orders"]
+	if model.GrainEntity != "order_id" || !slices.Equal(model.GrainFields(), []string{"order_id"}) || model.Sources[0] != "orders" {
 		t.Fatalf("project manifest aliases caller mutation: %#v", second.Models["model:orders"])
 	}
 }

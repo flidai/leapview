@@ -201,14 +201,20 @@ func explorerDatasets(model *semanticmodel.Model) []projectsignals.DataExploreDa
 	for _, name := range names {
 		table := model.Tables[name]
 		fieldCount := len(table.Dimensions)
-		for _, measure := range model.Measures {
-			if !measure.Hidden && measure.Fact == name {
-				fieldCount++
+		for metricName, metric := range model.Metrics {
+			if metric.Hidden {
+				continue
+			}
+			for _, root := range explorerMetricRootFacts(model, metricName) {
+				if root == name {
+					fieldCount++
+					break
+				}
 			}
 		}
 		out = append(out, projectsignals.DataExploreDatasetSignal{
 			ID: name, Title: explorerLabel(name), Description: projectsignals.Optional(table.Description),
-			Grain: projectsignals.Optional(table.Grain), FieldCount: int64(fieldCount),
+			Grain: projectsignals.Optional(table.GrainEntity), FieldCount: int64(fieldCount),
 		})
 	}
 	return out
@@ -219,7 +225,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 		return []projectsignals.DataExploreFieldSignal{}
 	}
 	selectedDimensions := explorerStringSet(command.Dimensions)
-	selectedMeasures := explorerStringSet(command.Measures)
+	selectedMetrics := explorerStringSet(command.Metrics)
 	tableNames := make([]string, 0, len(model.Tables))
 	for name := range model.Tables {
 		tableNames = append(tableNames, name)
@@ -253,29 +259,37 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 			})
 		}
 	}
-	measureNames := make([]string, 0, len(model.Measures))
-	for name, measure := range model.Measures {
-		if !measure.Hidden {
-			measureNames = append(measureNames, name)
+	metricNames := make([]string, 0, len(model.Metrics))
+	for name, metric := range model.Metrics {
+		if !metric.Hidden {
+			metricNames = append(metricNames, name)
 		}
 	}
-	sort.Strings(measureNames)
-	for _, name := range measureNames {
-		measure := model.Measures[name]
-		compatible := strings.TrimSpace(baseTable) == "" || measure.Fact == baseTable
+	sort.Strings(metricNames)
+	for _, name := range metricNames {
+		metric := model.Metrics[name]
+		roots := explorerMetricRootFacts(model, name)
+		// Aggregate metrics have one root dataset. Derived and ratio metrics
+		// may span multiple roots; keep those visible from every base and let
+		// the governed planner decide whether the selected combination is safe.
+		modelTable := ""
+		if len(roots) == 1 {
+			modelTable = roots[0]
+		}
+		compatible := strings.TrimSpace(baseTable) == "" || len(roots) != 1 || roots[0] == baseTable
 		reason := ""
 		rebaseDatasetID := ""
 		if !compatible {
-			rebaseDatasetID = explorerFieldRebase(model, command, baseTable, name, "measure")
+			rebaseDatasetID = explorerFieldRebase(model, command, baseTable, name, "metric")
 			if rebaseDatasetID != "" {
-				reason = "Select " + firstExplorerNonEmpty(measure.Label, explorerLabel(name)) + " and change grain from " + explorerLabel(baseTable) + " to " + explorerLabel(rebaseDatasetID) + "."
+				reason = "Select " + firstExplorerNonEmpty(metric.Label, explorerLabel(name)) + " and change grain from " + explorerLabel(baseTable) + " to " + explorerLabel(rebaseDatasetID) + "."
 			} else {
-				reason = "Measure belongs to " + explorerLabel(measure.Fact) + " and cannot be combined safely with the selected fields."
+				reason = "Metric belongs to " + explorerLabel(modelTable) + " and cannot be combined safely with the selected fields."
 			}
 		}
 		out = append(out, projectsignals.DataExploreFieldSignal{
-			ID: name, Label: firstExplorerNonEmpty(measure.Label, explorerLabel(name)), Kind: "measure", ModelTable: measure.Fact,
-			Description: projectsignals.Optional(measure.Description), Fact: projectsignals.Optional(measure.Fact), Selected: selectedMeasures[name],
+			ID: name, Label: firstExplorerNonEmpty(metric.Label, explorerLabel(name)), Kind: "metric", ModelTable: modelTable,
+			Description: projectsignals.Optional(metric.Description), Dataset: projectsignals.Optional(modelTable), Type: projectsignals.Optional(firstExplorerNonEmpty(metric.Aggregation, metric.Type)), Selected: selectedMetrics[name],
 			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RebaseDatasetID: projectsignals.Optional(rebaseDatasetID),
 		})
 	}
@@ -303,13 +317,13 @@ func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command
 	if model == nil {
 		return currentBase, false
 	}
-	targets, measureFacts := explorerCommandTargets(model, command)
-	if explorerBaseScore(model, currentBase, targets, measureFacts) >= 0 {
+	targets, metricFacts := explorerCommandTargets(model, command)
+	if explorerBaseScore(model, currentBase, targets, metricFacts) >= 0 {
 		return currentBase, false
 	}
 	bestBase, bestScore, tied := "", -1, false
 	for candidate := range model.Tables {
-		score := explorerBaseScore(model, candidate, targets, measureFacts)
+		score := explorerBaseScore(model, candidate, targets, metricFacts)
 		if score < 0 {
 			continue
 		}
@@ -326,12 +340,67 @@ func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command
 	return bestBase, true
 }
 
+// explorerMetricRootFacts resolves the physical dataset roots for a metric.
+// Aggregate metrics have one direct root; derived and ratio metrics recurse
+// through their metric dependencies. Validation rejects cycles, but the
+// visiting guard keeps this browser projection defensive for an incomplete
+// or stale manifest.
+func explorerMetricRootFacts(model *semanticmodel.Model, name string) []string {
+	if model == nil {
+		return nil
+	}
+	memo := map[string]map[string]struct{}{}
+	visiting := map[string]bool{}
+	var visit func(string) map[string]struct{}
+	visit = func(metricName string) map[string]struct{} {
+		if roots, ok := memo[metricName]; ok {
+			return roots
+		}
+		if visiting[metricName] {
+			return nil
+		}
+		metric, ok := model.Metrics[metricName]
+		if !ok {
+			return nil
+		}
+		visiting[metricName] = true
+		roots := map[string]struct{}{}
+		if metric.Type == "aggregate" && strings.TrimSpace(metric.Dataset) != "" {
+			roots[metric.Dataset] = struct{}{}
+		}
+		var refs []string
+		switch metric.Type {
+		case "derived":
+			if expression, err := semanticmodel.ParseExpression(metric.Expression); err == nil {
+				refs = expression.References()
+			}
+		case "ratio":
+			refs = []string{metric.Numerator, metric.Denominator}
+		}
+		for _, ref := range refs {
+			for root := range visit(ref) {
+				roots[root] = struct{}{}
+			}
+		}
+		delete(visiting, metricName)
+		memo[metricName] = roots
+		return roots
+	}
+	roots := visit(strings.TrimSpace(name))
+	out := make([]string, 0, len(roots))
+	for root := range roots {
+		out = append(out, root)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.DataExploreCommand) ([]string, []string) {
 	if model == nil {
 		return nil, nil
 	}
 	targetSet := map[string]bool{}
-	measureSet := map[string]bool{}
+	metricSet := map[string]bool{}
 	addDimension := func(id string) {
 		if dimension, err := model.ResolveDimension(strings.TrimSpace(id)); err == nil {
 			targetSet[dimension.Table] = true
@@ -346,32 +415,39 @@ func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.D
 	if command.Time != nil {
 		addDimension(command.Time.Field)
 	}
-	for _, id := range command.Measures {
-		if measure, err := model.ResolveMeasure(strings.TrimSpace(id)); err == nil && !measure.Hidden {
-			measureSet[measure.Fact] = true
+	for _, id := range command.Metrics {
+		metric := strings.TrimSpace(id)
+		if resolved, err := model.ResolveMetric(metric); err == nil && !resolved.Hidden {
+			roots := explorerMetricRootFacts(model, metric)
+			// A base can be constrained safely only when a metric has one root
+			// fact. Multi-fact derived/ratio metrics remain unconstrained here
+			// so they are not misrepresented as belonging to one table.
+			if len(roots) == 1 {
+				metricSet[roots[0]] = true
+			}
 		}
 	}
 	targets := make([]string, 0, len(targetSet))
 	for table := range targetSet {
 		targets = append(targets, table)
 	}
-	measureFacts := make([]string, 0, len(measureSet))
-	for fact := range measureSet {
-		measureFacts = append(measureFacts, fact)
+	metricFacts := make([]string, 0, len(metricSet))
+	for fact := range metricSet {
+		metricFacts = append(metricFacts, fact)
 	}
 	sort.Strings(targets)
-	sort.Strings(measureFacts)
-	return targets, measureFacts
+	sort.Strings(metricFacts)
+	return targets, metricFacts
 }
 
-func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, measureFacts []string) int {
+func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, metricFacts []string) int {
 	if model == nil {
 		return -1
 	}
 	if _, ok := model.Tables[candidate]; !ok {
 		return -1
 	}
-	for _, fact := range measureFacts {
+	for _, fact := range metricFacts {
 		if fact != candidate {
 			return -1
 		}
@@ -392,8 +468,8 @@ func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, me
 
 func explorerFieldRebase(model *semanticmodel.Model, command projectsignals.DataExploreCommand, currentBase, fieldID, kind string) string {
 	hypothetical := command
-	if kind == "measure" {
-		hypothetical.Measures = appendUniqueExplorerValue(hypothetical.Measures, fieldID)
+	if kind == "metric" {
+		hypothetical.Metrics = appendUniqueExplorerValue(hypothetical.Metrics, fieldID)
 	} else {
 		hypothetical.Dimensions = appendUniqueExplorerValue(hypothetical.Dimensions, fieldID)
 	}
@@ -425,7 +501,7 @@ func explorerModelTableObject(asset projectview.DevelopAssetView, table semantic
 		Title:         firstExplorerNonEmpty(asset.Title, asset.Key, asset.ID),
 		Description:   projectsignals.Optional(firstExplorerNonEmpty(asset.Description, table.Description)),
 		DetailHref:    projectsignals.Optional(explorerAssetDetailsHref(asset, "details")),
-		Grain:         projectsignals.Optional(table.Grain),
+		Grain:         projectsignals.Optional(table.GrainEntity),
 		ColumnCount:   int64(len(columns)),
 		RowCountLabel: projectsignals.Pointer("Unknown"),
 		Columns:       projectsignals.OptionalSlice(columns),

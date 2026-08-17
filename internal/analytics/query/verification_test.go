@@ -19,7 +19,7 @@ func TestPrepareRepresentativePlansCoversMetricDependenciesAndBindings(t *testin
 			Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "BIGINT"}, {Name: "revenue", PhysicalType: "DECIMAL(12,2)"}}},
 		}},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"order_key": {Type: "number", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
+			"order_key": {Type: "number", Datatype: semanticmodel.DataTypeInteger, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
@@ -94,11 +94,11 @@ func verificationRouteModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"order_id": {Type: "string"}, "customer_id": {Type: "string"},
+				"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}, Schema: semanticmodel.TableSchema{Columns: columns("order_id", "customer_id")}},
-			"events": {Dimensions: map[string]semanticmodel.MetricDimension{"event_id": {Type: "string"}}, Schema: semanticmodel.TableSchema{Columns: columns("event_id")}},
+			"events": {Dimensions: map[string]semanticmodel.MetricDimension{"event_id": {Type: "string", Datatype: semanticmodel.DataTypeString}}, Schema: semanticmodel.TableSchema{Columns: columns("event_id")}},
 			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"customer_id": {Type: "string"}, "customer_code": {Type: "string"}, "state": {Type: "string"},
+				"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_code": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}, Schema: semanticmodel.TableSchema{Columns: columns("customer_id", "customer_code", "state")}},
 		},
 		Relationships: []semanticmodel.Relationship{

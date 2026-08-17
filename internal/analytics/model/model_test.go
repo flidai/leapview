@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestManagedConnectionRejectsAuthoredPhysicalLocation(t *testing.T) {
@@ -121,13 +123,6 @@ func TestSemanticDefinitionsValidateTypedMetricsDimensionsAndMetrics(t *testing.
 		wantErr string
 	}{
 		{
-			name: "count input conflict",
-			mutate: func(model *Model) {
-				model.Metrics["rating_count"] = Metric{Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &MetricInput{Field: "ratings.score", Expression: "1"}, Empty: "zero"}
-			},
-			wantErr: "count requires at most one input",
-		},
-		{
 			name: "missing non-count input",
 			mutate: func(model *Model) {
 				model.Metrics["rating_count"] = Metric{Type: "aggregate", Dataset: "ratings", Aggregation: "sum", Empty: "zero"}
@@ -144,21 +139,21 @@ func TestSemanticDefinitionsValidateTypedMetricsDimensionsAndMetrics(t *testing.
 		{
 			name: "metric-only input function",
 			mutate: func(model *Model) {
-				model.Metrics["rating_total"] = Metric{Type: "aggregate", Dataset: "ratings", Aggregation: "sum", Input: &MetricInput{Expression: "safe_divide(${ratings.score}, 2)"}, Empty: "null"}
+				model.Metrics["rating_total"] = Metric{Type: "aggregate", Dataset: "ratings", Aggregation: "sum", Input: &MetricInput{}, Empty: "null"}
 			},
 			wantErr: "aggregate input is required",
 		},
 		{
 			name: "invalid time grain",
 			mutate: func(model *Model) {
-				model.Dimensions["activity_date"] = SemanticDimension{Type: "timestamp", Grains: []string{"fortnight"}, Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.rated_at"}}}
+				model.Dimensions["activity_date"] = SemanticDimension{Type: "timestamp", Datatype: DataTypeDateTime, Grains: []string{"fortnight"}, Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.rated_at"}}}
 			},
 			wantErr: "unsupported time grain",
 		},
 		{
 			name: "incompatible binding type",
 			mutate: func(model *Model) {
-				model.Dimensions["score_label"] = SemanticDimension{Type: "string", Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.score"}}}
+				model.Dimensions["score_label"] = SemanticDimension{Type: "string", Datatype: DataTypeString, Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.score"}}}
 			},
 			wantErr: "is incompatible",
 		},
@@ -193,9 +188,9 @@ func TestSemanticDefinitionsValidateTypedMetricsDimensionsAndMetrics(t *testing.
 			name: "ambiguous implicit binding",
 			mutate: func(model *Model) {
 				model.Relationships = append(model.Relationships,
-					Relationship{ID: "ratings_movies_alt", From: "ratings.alt_movie_id", To: "movies.movie_id", Cardinality: "many_to_one"},
+					Relationship{ID: "ratings_movies_alt", FromDataset: "ratings", FromFields: []string{"alt_movie_id"}, ToDataset: "movies", ToFields: []string{"movie_id"}, Cardinality: "many_to_one"},
 				)
-				model.Dimensions["movie_title"] = SemanticDimension{Type: "string", Bindings: map[string]DimensionBinding{"ratings": {Field: "movies.title"}}}
+				model.Dimensions["movie_title"] = SemanticDimension{Type: "string", Datatype: DataTypeString, Bindings: map[string]DimensionBinding{"ratings": {Field: "movies.title"}}}
 			},
 			wantErr: "ambiguous relationship path",
 		},
@@ -223,9 +218,9 @@ func TestSemanticCountAcceptsTypedInput(t *testing.T) {
 func TestSemanticDimensionExplicitPathResolvesAmbiguousGraph(t *testing.T) {
 	model := semanticDefinitionTestModel()
 	model.Relationships = append(model.Relationships,
-		Relationship{ID: "ratings_movies_alt", From: "ratings.alt_movie_id", To: "movies.movie_id", Cardinality: "many_to_one"},
+		Relationship{ID: "ratings_movies_alt", FromDataset: "ratings", FromFields: []string{"alt_movie_id"}, ToDataset: "movies", ToFields: []string{"movie_id"}, Cardinality: "many_to_one"},
 	)
-	model.Dimensions["movie_title"] = SemanticDimension{Type: "string", Bindings: map[string]DimensionBinding{
+	model.Dimensions["movie_title"] = SemanticDimension{Type: "string", Datatype: DataTypeString, Bindings: map[string]DimensionBinding{
 		"ratings": {Field: "movies.title", Path: []string{"ratings_movies"}},
 	}}
 	if err := model.validateSemanticDefinitions(); err != nil {
@@ -279,12 +274,151 @@ func TestSemanticDefinitionsRejectInvalidFilterLiteral(t *testing.T) {
 	}
 }
 
+func TestSemanticGraphRejectsClosedMetricAndFilterShapes(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Model)
+		wantErr string
+	}{
+		{
+			name: "unsupported aggregation",
+			mutate: func(model *Model) {
+				model.Metrics["bad"] = Metric{Type: "aggregate", Dataset: "orders", Aggregation: "median", Input: &MetricInput{Field: "orders.amount"}}
+			},
+			wantErr: "unsupported aggregation",
+		},
+		{
+			name: "unsupported empty value",
+			mutate: func(model *Model) {
+				model.Metrics["bad"] = Metric{Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &MetricInput{Field: "orders.amount"}, Empty: "error"}
+			},
+			wantErr: "unsupported empty value",
+		},
+		{
+			name: "numeric input type",
+			mutate: func(model *Model) {
+				model.Metrics["bad"] = Metric{Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &MetricInput{Field: "orders.status"}}
+			},
+			wantErr: "input has unsupported datatype",
+		},
+		{
+			name: "ratio rejects where",
+			mutate: func(model *Model) {
+				model.Metrics["bad"] = Metric{Type: "ratio", Numerator: "amount", Denominator: "amount", Where: []string{"eligible"}}
+			},
+			wantErr: "ratio does not accept aggregate or derived fields",
+		},
+		{
+			name: "derived rejects aggregate fields",
+			mutate: func(model *Model) {
+				model.Metrics["bad"] = Metric{Type: "derived", Expression: "${amount}", Dataset: "orders"}
+			},
+			wantErr: "derived does not accept aggregate or ratio fields",
+		},
+		{
+			name: "invalid logical datatype",
+			mutate: func(model *Model) {
+				model.Dimensions["bad"] = SemanticDimension{Datatype: LogicalDataType("Money"), Bindings: map[string]DimensionBinding{}}
+			},
+			wantErr: "unsupported datatype",
+		},
+		{
+			name: "empty all node",
+			mutate: func(model *Model) {
+				model.Filters["bad"] = SemanticFilterSpec{All: []SemanticFilterSpec{}}
+			},
+			wantErr: "all node requires a non-empty child list",
+		},
+		{
+			name: "boolean node cannot carry leaf fields",
+			mutate: func(model *Model) {
+				model.Filters["bad"] = SemanticFilterSpec{
+					All:      []SemanticFilterSpec{{Field: "orders.status", Operator: "equals", Value: "open"}},
+					Field:    "orders.status",
+					Operator: "equals",
+					Value:    "open",
+				}
+			},
+			wantErr: "boolean node cannot contain leaf fields",
+		},
+		{
+			name: "comparison rejects null literal",
+			mutate: func(model *Model) {
+				model.Filters["bad"] = SemanticFilterSpec{Field: "orders.status", Operator: "equals", Value: nil}
+			},
+			wantErr: "requires a value",
+		},
+		{
+			name: "set rejects null literal",
+			mutate: func(model *Model) {
+				model.Filters["bad"] = SemanticFilterSpec{Field: "orders.status", Operator: "in", Value: []any{"open", nil}}
+			},
+			wantErr: "prohibits null values",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := directSemanticValidationModel()
+			test.mutate(model)
+			err := model.ValidateSemanticGraph()
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("ValidateSemanticGraph() error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestSemanticFilterInterchangeOmitsAbsentUnionBranches(t *testing.T) {
+	value := SemanticFilterSpec{Field: "orders.status", Operator: "equals", Value: "open"}
+	encoded, err := yaml.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if strings.Contains(text, "all:") || strings.Contains(text, "any:") || strings.Contains(text, "not:") {
+		t.Fatalf("leaf filter encoded absent union branches: %s", text)
+	}
+	var decoded SemanticFilterSpec
+	if err := yaml.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := directSemanticValidationModelWithFilter(decoded).ValidateSemanticGraph(); err != nil {
+		t.Fatalf("round-tripped leaf filter rejected: %v", err)
+	}
+}
+
+func directSemanticValidationModelWithFilter(filter SemanticFilterSpec) *Model {
+	model := directSemanticValidationModel()
+	model.Filters = map[string]SemanticFilterSpec{"eligible": filter}
+	metric := model.Metrics["amount"]
+	metric.Where = []string{"eligible"}
+	model.Metrics["amount"] = metric
+	return model
+}
+
+func directSemanticValidationModel() *Model {
+	return &Model{
+		Name: "sales",
+		Tables: map[string]Table{
+			"orders": {Dimensions: map[string]MetricDimension{
+				"amount": {Type: "number", Datatype: DataTypeDecimal},
+				"status": {Type: "string", Datatype: DataTypeString},
+			}},
+		},
+		Metrics: map[string]Metric{
+			"amount": {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &MetricInput{Field: "orders.amount"}},
+		},
+		Dimensions: map[string]SemanticDimension{},
+		Filters:    map[string]SemanticFilterSpec{},
+	}
+}
+
 func TestMetricUnitInferenceAndContradictions(t *testing.T) {
 	base := func() *Model {
 		return &Model{
 			Name: "sales",
 			Tables: map[string]Table{"orders": {Dimensions: map[string]MetricDimension{
-				"amount": {Type: "number"},
+				"amount": {Type: "number", Datatype: DataTypeDecimal},
 			}}},
 			Metrics: map[string]Metric{
 				"revenue":       {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &MetricInput{Field: "orders.amount"}, Unit: "BRL"},
@@ -351,12 +485,12 @@ func semanticDefinitionTestModel() *Model {
 		Name: "activity",
 		Tables: map[string]Table{
 			"ratings": {Dimensions: map[string]MetricDimension{
-				"movie_id": {Type: "string"}, "alt_movie_id": {Type: "string"}, "score": {Type: "number"}, "rated_at": {Type: "timestamp"},
+				"movie_id": {Type: "string", Datatype: DataTypeString}, "alt_movie_id": {Type: "string", Datatype: DataTypeString}, "score": {Type: "number", Datatype: DataTypeDecimal}, "rated_at": {Type: "timestamp", Datatype: DataTypeDateTime},
 			}},
-			"tags":   {Dimensions: map[string]MetricDimension{"weight": {Type: "number"}}},
-			"movies": {Dimensions: map[string]MetricDimension{"movie_id": {Type: "string"}, "title": {Type: "string"}}},
+			"tags":   {Dimensions: map[string]MetricDimension{"weight": {Type: "number", Datatype: DataTypeDecimal}}},
+			"movies": {Dimensions: map[string]MetricDimension{"movie_id": {Type: "string", Datatype: DataTypeString}, "title": {Type: "string", Datatype: DataTypeString}}},
 		},
-		Relationships: []Relationship{{ID: "ratings_movies", From: "ratings.movie_id", To: "movies.movie_id", Cardinality: "many_to_one"}},
+		Relationships: []Relationship{{ID: "ratings_movies", FromDataset: "ratings", FromFields: []string{"movie_id"}, ToDataset: "movies", ToFields: []string{"movie_id"}, Cardinality: "many_to_one"}},
 		Metrics: map[string]Metric{
 			"rating_count": {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &MetricInput{Field: "ratings.score"}, Empty: "zero"},
 			"tag_count":    {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &MetricInput{Field: "tags.weight"}, Empty: "zero"},
@@ -383,7 +517,7 @@ func TestCanonicalGrainPreservesOrderedCompositeIdentity(t *testing.T) {
 func TestSemanticTimeGrainRetainsNativeOrderAndDatasetMetricBindings(t *testing.T) {
 	model := semanticDefinitionTestModel()
 	model.Dimensions["activity_date"] = SemanticDimension{
-		Type: "timestamp", NativeGrain: "month", Grains: []string{"month", "quarter", "year"},
+		Type: "timestamp", Datatype: DataTypeDateTime, NativeGrain: "month", Grains: []string{"month", "quarter", "year"},
 		Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.rated_at"}},
 	}
 	model.Datasets = map[string]SemanticDatasetSpec{"ratings": {Model: "ratings", DefaultTimeDimension: "activity_date"}}
@@ -395,25 +529,25 @@ func TestSemanticTimeGrainRetainsNativeOrderAndDatasetMetricBindings(t *testing.
 	}
 
 	model.Dimensions["activity_date"] = SemanticDimension{
-		Type: "timestamp", NativeGrain: "month", Grains: []string{"day", "month"},
+		Type: "timestamp", Datatype: DataTypeDateTime, NativeGrain: "month", Grains: []string{"day", "month"},
 		Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.rated_at"}},
 	}
 	if err := model.validateSemanticDefinitions(); err == nil || !strings.Contains(err.Error(), "finer than native grain") {
 		t.Fatalf("finer time grain error = %v", err)
 	}
 
-	model.Dimensions["activity_date"] = SemanticDimension{Type: "timestamp", Grains: []string{"month"}, Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.rated_at"}}}
+	model.Dimensions["activity_date"] = SemanticDimension{Type: "timestamp", Datatype: DataTypeDateTime, Grains: []string{"month"}, Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.rated_at"}}}
 	model.Datasets["ratings"] = SemanticDatasetSpec{Model: "ratings", DefaultTimeDimension: "missing"}
 	if err := model.validateSemanticDefinitions(); err == nil || !strings.Contains(err.Error(), "default time dimension") {
 		t.Fatalf("unknown default time dimension error = %v", err)
 	}
 
 	model.Dimensions["activity_date"] = SemanticDimension{
-		Type: "timestamp", NativeGrain: "month", Grains: []string{"month", "quarter", "year"},
+		Type: "timestamp", Datatype: DataTypeDateTime, NativeGrain: "month", Grains: []string{"month", "quarter", "year"},
 		Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.rated_at"}},
 	}
 	model.Dimensions["activity_date_override"] = SemanticDimension{
-		Type: "timestamp", NativeGrain: "month", Grains: []string{"month", "quarter", "year"},
+		Type: "timestamp", Datatype: DataTypeDateTime, NativeGrain: "month", Grains: []string{"month", "quarter", "year"},
 		Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.rated_at"}},
 	}
 	model.Datasets["ratings"] = SemanticDatasetSpec{Model: "ratings", DefaultTimeDimension: "activity_date"}
@@ -423,7 +557,7 @@ func TestSemanticTimeGrainRetainsNativeOrderAndDatasetMetricBindings(t *testing.
 	if err := model.validateSemanticDefinitions(); err != nil {
 		t.Fatalf("valid metric time dimension override rejected: %v", err)
 	}
-	model.Dimensions["activity_date_override"] = SemanticDimension{Type: "string", Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.movie_id"}}}
+	model.Dimensions["activity_date_override"] = SemanticDimension{Type: "string", Datatype: DataTypeString, Bindings: map[string]DimensionBinding{"ratings": {Field: "ratings.movie_id"}}}
 	if err := model.validateSemanticDefinitions(); err == nil || !strings.Contains(err.Error(), "is not temporal") {
 		t.Fatalf("non-temporal metric override error = %v", err)
 	}

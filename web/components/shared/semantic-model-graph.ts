@@ -433,27 +433,33 @@ function ModelTableNode({ data }: { data: ModelNodeData }) {
 	),
 	React.createElement('div', { className: 'semantic-model-node-badges' },
 		(data.badges ?? []).map((badge) => React.createElement('span', { key: badge, className: 'semantic-model-node-badge' }, badge)),
+		data.grainEntity ? React.createElement('span', { className: 'semantic-model-node-badge semantic-model-node-grain', title: `Grain entity ${data.grainEntity}` }, `grain: ${data.grainEntity}`) : null,
+		(data.entities?.length ?? 0) > 0 ? React.createElement('span', {
+			className: 'semantic-model-node-badge semantic-model-node-entities',
+			title: `Entities: ${data.entities?.map((entity) => `${entity.name} (${entity.type}) [${entity.fields.join(', ')}]`).join('; ')}`,
+		}, `${data.entities?.length ?? 0} ${(data.entities?.length ?? 0) === 1 ? 'entity' : 'entities'}`) : null,
 	),
     React.createElement('div', { className: 'semantic-model-node-fields' },
-      data.fields.map((field, index) => React.createElement(ModelFieldRow, { key: field.name, field, index })),
+      data.fields.map((field, index) => React.createElement(ModelFieldRow, { key: field.name, field, grainEntity: data.grainEntity, index })),
     ),
   )
 }
 
-function ModelFieldRow({ field, index }: { field: SemanticModelGraphFieldSignal; index: number }) {
+function ModelFieldRow({ field, grainEntity, index }: { field: SemanticModelGraphFieldSignal; grainEntity?: string; index: number }) {
   const top = HEADER_HEIGHT + BADGE_HEIGHT + index * FIELD_HEIGHT + FIELD_HEIGHT / 2
   const className = [
     'semantic-model-field',
     field.join ? 'semantic-model-field-join' : '',
-    field.primaryKey ? 'semantic-model-field-primary' : '',
+    field.grain ? 'semantic-model-field-grain' : '',
   ].filter(Boolean).join(' ')
+  const identity = field.entities?.length ? `; entities: ${field.entities.join(', ')}` : ''
   return React.createElement(
     'div',
     { className },
     field.join ? React.createElement(Handle, { id: `${field.name}:target`, type: 'target', position: Position.Left, style: { top } }) : null,
     React.createElement('span', { className: 'semantic-model-field-type-icon', title: field.type ? `Column type ${field.type}` : 'Column type unknown' }, iconElement(fieldTypeIcon(field.type), 'semantic-model-type-icon')),
-    React.createElement('span', { className: 'semantic-model-field-name', title: field.primaryKey ? `${field.name} (primary key)` : field.name }, field.name),
-    field.primaryKey ? React.createElement('span', { className: 'semantic-model-field-key', title: 'Primary key' }, 'PK') : null,
+    React.createElement('span', { className: 'semantic-model-field-name', title: `${field.name}${field.grain ? ` (grain: ${grainEntity ?? 'model grain'})` : ''}${identity}` }, field.name),
+    field.grain ? React.createElement('span', { className: 'semantic-model-field-grain-marker', title: `Grain field for ${grainEntity ?? 'model grain'}` }, 'G') : null,
     field.join ? React.createElement(Handle, { id: `${field.name}:source`, type: 'source', position: Position.Right, style: { top } }) : null,
   )
 }
@@ -804,7 +810,7 @@ const semanticModelGraphStyles = `
     font: var(--lv-type-code-inline);
   }
 
-  lv-semantic-model-graph .semantic-model-field-primary .semantic-model-field-name {
+  lv-semantic-model-graph .semantic-model-field-grain .semantic-model-field-name {
     font-weight: var(--base-text-weight-semibold);
   }
 
@@ -822,7 +828,7 @@ const semanticModelGraphStyles = `
     height: 14px;
   }
 
-  lv-semantic-model-graph .semantic-model-field-key {
+  lv-semantic-model-graph .semantic-model-field-grain-marker {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
     line-height: 1;

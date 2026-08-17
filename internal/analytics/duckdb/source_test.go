@@ -41,8 +41,8 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 				Source:   "orders",
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Label: "Order ID"},
-					"revenue":  {Label: "Revenue"},
+					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
+					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
 				},
 			},
 		},
@@ -155,8 +155,8 @@ func TestDiscoverSchemasIgnoresAttachedDatabaseSchemas(t *testing.T) {
 				Source:   "orders",
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Label: "Order ID"},
-					"revenue":  {Label: "Revenue"},
+					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
+					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
 				},
 			},
 		},
@@ -217,8 +217,8 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 				Source:   "orders",
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Label: "Order ID"},
-					"revenue":  {Label: "Revenue"},
+					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
+					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
 				},
 			},
 		},
@@ -845,7 +845,7 @@ func TestSourceRelationResolvesSourcePlans(t *testing.T) {
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
-				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Expr: "order_id"}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
 			},
 		},
 		Metrics: map[string]semanticmodel.Metric{"orders": {Type: "aggregate", Dataset: "orders", Label: "Orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"}},

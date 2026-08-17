@@ -29,7 +29,12 @@ type queryView struct {
 	Fact       string
 	Dimensions map[string]semanticmodel.MetricDimension
 	Metrics    map[string]resolvedAggregateMetric
-	Paths      map[string][]semanticmodel.Relationship
+	// Paths is keyed by the caller's semantic reference first. The physical
+	// field is retained as a fallback for callers that resolve a qualified
+	// field directly, but must not be used as the identity of a role-playing
+	// dimension: two semantic references can intentionally resolve to the same
+	// physical table and field through different relationship paths.
+	Paths map[string][]semanticmodel.Relationship
 }
 
 func NewPlanner(model *semanticmodel.Model) *Planner {
@@ -82,9 +87,9 @@ func (p *Planner) resolvedAggregateMetric(name string, metric semanticmodel.Metr
 		return resolvedAggregateMetric{}, fmt.Errorf("metric %q aggregate input is required", name)
 	}
 	resolved := resolvedAggregateMetricFromSemantic(metric)
-	if p.Compiled != nil {
-		if expression, ok := p.Compiled.AggregateInputExpressions[name]; ok {
-			resolved.InputExpression = &expression
+	if resolved.TimeDimension == "" {
+		if dataset, ok := p.Model.Datasets[metric.Dataset]; ok {
+			resolved.TimeDimension = dataset.DefaultTimeDimension
 		}
 	}
 	where, err := compileNamedSemanticFilters(p.Model, metric.Where)
@@ -185,32 +190,55 @@ func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field
 	resolvedDimensions := map[string]semanticmodel.MetricDimension{}
 	paths := map[string][]semanticmodel.Relationship{}
 	for _, item := range dimensions {
-		dimension, err := p.Model.ResolveDimension(item.Field)
+		dimension, path, err := p.resolveViewDimension(fact, item.Field)
 		if err != nil {
-			return nil, err
-		}
-		if _, err := p.relationshipPath(fact, dimension.Table); err != nil {
 			return nil, err
 		}
 		resolvedDimensions[item.Field] = dimension
 		resolvedDimensions[dimension.Field] = dimension
+		paths[item.Field] = path
+		if _, exists := paths[dimension.Field]; !exists {
+			paths[dimension.Field] = path
+		}
 	}
 	view := &queryView{Fact: fact, Dimensions: resolvedDimensions, Metrics: resolvedMetrics, Paths: paths}
 	if err := p.exposeViewFilters(view, filters); err != nil {
 		return nil, err
 	}
 	if timeField != "" {
-		dimension, err := p.Model.ResolveDimension(timeField)
+		dimension, path, err := p.resolveViewDimension(fact, timeField)
 		if err != nil {
-			return nil, err
-		}
-		if _, err := p.relationshipPath(fact, dimension.Table); err != nil {
 			return nil, err
 		}
 		resolvedDimensions[timeField] = dimension
 		resolvedDimensions[dimension.Field] = dimension
+		paths[timeField] = path
+		if _, exists := paths[dimension.Field]; !exists {
+			paths[dimension.Field] = path
+		}
 	}
 	return view, nil
+}
+
+func (p *Planner) resolveViewDimension(fact, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
+	if semanticDimension, ok := p.Model.Dimensions[ref]; ok {
+		binding, ok := semanticDimension.Bindings[fact]
+		if !ok {
+			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for fact %q", ref, fact)
+		}
+		dimension, err := p.Model.ResolveDimension(binding.Field)
+		if err != nil {
+			return semanticmodel.MetricDimension{}, nil, err
+		}
+		path, err := p.Model.ResolveBindingPath(fact, binding)
+		return dimension, path, err
+	}
+	dimension, err := p.Model.ResolveDimension(ref)
+	if err != nil {
+		return semanticmodel.MetricDimension{}, nil, err
+	}
+	path, err := p.relationshipPath(fact, dimension.Table)
+	return dimension, path, err
 }
 
 func validateSingleFactFilterScope(fact string, filters []Filter) error {
@@ -262,7 +290,10 @@ func (p *Planner) exposeViewFilters(view *queryView, filters []Filter) error {
 			}
 			view.Dimensions[ref.field] = dimension
 			view.Dimensions[dimension.Field] = dimension
-			view.Paths[dimension.Field] = path
+			view.Paths[ref.field] = path
+			if _, exists := view.Paths[dimension.Field]; !exists {
+				view.Paths[dimension.Field] = path
+			}
 		}
 		for _, group := range filter.Groups {
 			for _, child := range group.Filters {
@@ -327,22 +358,22 @@ func filterRefs(filters []Filter) []string {
 }
 
 func resolvedAggregateMetricFromSemantic(metric semanticmodel.Metric) resolvedAggregateMetric {
-	inputField, inputExpr := "", ""
+	inputField := ""
 	if metric.Input != nil {
-		inputField, inputExpr = metric.Input.Field, metric.Input.Expression
+		inputField = metric.Input.Field
 	}
 	return resolvedAggregateMetric{
-		Field:       metric.Name,
-		Name:        metric.Name,
-		Label:       metric.Label,
-		Description: metric.Description,
-		Fact:        metric.Dataset,
-		Aggregation: metric.Aggregation,
-		InputField:  inputField,
-		InputExpr:   inputExpr,
-		Empty:       metric.Empty,
-		Unit:        metric.Unit,
-		Format:      metric.Format,
+		Field:         metric.Name,
+		Name:          metric.Name,
+		Label:         metric.Label,
+		Description:   metric.Description,
+		Fact:          metric.Dataset,
+		Aggregation:   metric.Aggregation,
+		InputField:    inputField,
+		Empty:         metric.Empty,
+		Unit:          metric.Unit,
+		Format:        metric.Format,
+		TimeDimension: metric.TimeDimension,
 	}
 }
 
@@ -353,42 +384,23 @@ func (s *queryView) ResolveDimensionRef(ref string) (string, semanticmodel.Metri
 	return "", semanticmodel.MetricDimension{}, fmt.Errorf("field %q is not exposed", ref)
 }
 
+func (s *queryView) ResolveDimensionRefPath(ref string) (string, semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
+	field, dimension, err := s.ResolveDimensionRef(ref)
+	if err != nil {
+		return "", semanticmodel.MetricDimension{}, nil, err
+	}
+	path, ok := s.Paths[ref]
+	if !ok {
+		path = s.Paths[field]
+	}
+	return field, dimension, path, nil
+}
+
 func (s *queryView) ResolveMetricRef(ref string) (string, resolvedAggregateMetric, error) {
 	if metric, ok := s.Metrics[ref]; ok {
 		return ref, metric, nil
 	}
 	return "", resolvedAggregateMetric{}, fmt.Errorf("field %q is not exposed", ref)
-}
-
-func (p *Planner) aliases(view *queryView, fields []string) (map[string]tableAlias, error) {
-	aliases := map[string]tableAlias{
-		view.Fact: {Table: view.Fact, Alias: "t0"},
-	}
-	nextAlias := 1
-	for _, field := range fields {
-		table, _, err := splitField(field)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := aliases[table]; ok {
-			continue
-		}
-		path, ok := view.Paths[field]
-		if !ok {
-			path, err = p.relationshipPath(view.Fact, table)
-			if err != nil {
-				return nil, err
-			}
-		}
-		for _, step := range pathTables(view.Fact, path) {
-			if _, ok := aliases[step.Table]; ok {
-				continue
-			}
-			aliases[step.Table] = tableAlias{Table: step.Table, Alias: fmt.Sprintf("t%d", nextAlias), Path: step.Path}
-			nextAlias++
-		}
-	}
-	return aliases, nil
 }
 
 func (p *Planner) relationshipPath(base, target string) ([]semanticmodel.Relationship, error) {

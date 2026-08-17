@@ -252,10 +252,10 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		fieldByID[field.ID] = field
 	}
 	command.Dimensions = validExplorerFields(command.Dimensions, "dimension", fieldByID)
-	command.Measures = validExplorerFields(command.Measures, "measure", fieldByID)
+	command.Metrics = validExplorerFields(command.Metrics, "metric", fieldByID)
 	command.Filters = validExplorerFilters(command.Filters, fieldByID)
 	command.Sort = validExplorerSort(command.Sort, command)
-	if len(command.Dimensions) == 0 && len(command.Measures) == 0 && command.Time == nil {
+	if len(command.Dimensions) == 0 && len(command.Metrics) == 0 && command.Time == nil {
 		return command, resultSignal
 	}
 	if executor == nil {
@@ -264,18 +264,19 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	}
 	modelID := strings.TrimSpace(projectsignals.ValueOrZero(command.ModelID))
 	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
+	clearTarget := explorerCommandHasMultiRootMetric(command.Metrics, fieldByID)
 	if modelID == "" || datasetID == "" {
 		resultSignal.Error = projectsignals.Pointer("semantic exploration target is incomplete")
 		return command, resultSignal
 	}
-	aliases := explorerQueryAliases(command.Dimensions, command.Measures)
+	aliases := explorerQueryAliases(command.Dimensions, command.Metrics)
 	dimensions := make([]dataquery.Field, 0, len(command.Dimensions))
 	for _, field := range command.Dimensions {
 		dimensions = append(dimensions, dataquery.Field{Field: field, Alias: aliases[field]})
 	}
-	measures := make([]dataquery.Field, 0, len(command.Measures))
-	for _, field := range command.Measures {
-		measures = append(measures, dataquery.Field{Field: field, Alias: aliases[field]})
+	metrics := make([]dataquery.Field, 0, len(command.Metrics))
+	for _, field := range command.Metrics {
+		metrics = append(metrics, dataquery.Field{Field: field, Alias: aliases[field]})
 	}
 	filters := make([]dataquery.Filter, 0, len(command.Filters))
 	for _, filter := range command.Filters {
@@ -283,13 +284,20 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		for _, value := range filter.Values {
 			values = append(values, value)
 		}
-		filters = append(filters, dataquery.Filter{Field: filter.Field, Fact: projectsignals.ValueOrZero(filter.Fact), Operator: filter.Operator, Values: values})
+		filters = append(filters, dataquery.Filter{Field: filter.Field, Fact: projectsignals.ValueOrZero(filter.Dataset), Operator: filter.Operator, Values: values})
 	}
 	sortSpec := make([]dataquery.Sort, 0, len(command.Sort))
 	for _, sortSignal := range command.Sort {
 		sortSpec = append(sortSpec, dataquery.Sort{Field: sortSignal.Field, Direction: sortSignal.Direction})
 	}
-	query := dataquery.SemanticAggregate(modelID, datasetID, dimensions, measures, filters, sortSpec, 0, int(command.Limit)+1)
+	// A metric with multiple physical roots is not owned by the selected
+	// browser dataset. Leave the target unscoped so the governed planner can
+	// infer all metric facts and validate the selected qualified dimensions.
+	queryTarget := datasetID
+	if clearTarget {
+		queryTarget = ""
+	}
+	query := dataquery.SemanticAggregate(modelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(command.Limit)+1)
 	if command.Time != nil {
 		query.Time = dataquery.Time{Field: command.Time.Field, Grain: command.Time.Grain, Alias: projectsignals.ValueOrZero(command.Time.Alias)}
 	}
@@ -321,6 +329,16 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		DurationMS: executed.DurationMS, RowsReturned: int64(len(rows)), Truncated: truncated,
 		Warnings: append([]string(nil), executed.Warnings...), RequestSeq: command.RequestSeq,
 	}
+}
+
+func explorerCommandHasMultiRootMetric(metrics []string, fields map[string]projectsignals.DataExploreFieldSignal) bool {
+	for _, id := range metrics {
+		field, ok := fields[id]
+		if ok && field.Kind == "metric" && strings.TrimSpace(field.ModelTable) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func validExplorerFields(values []string, kind string, fields map[string]projectsignals.DataExploreFieldSignal) []string {
@@ -355,7 +373,7 @@ func validExplorerFilters(filters []projectsignals.DataExploreFilterSignal, fiel
 
 func validExplorerSort(sortSignals []projectsignals.DataExploreSortSignal, command projectsignals.DataExploreCommand) []projectsignals.DataExploreSortSignal {
 	selected := map[string]struct{}{}
-	for _, field := range append(append([]string(nil), command.Dimensions...), command.Measures...) {
+	for _, field := range append(append([]string(nil), command.Dimensions...), command.Metrics...) {
 		selected[field] = struct{}{}
 	}
 	out := make([]projectsignals.DataExploreSortSignal, 0, len(sortSignals))
@@ -370,8 +388,8 @@ func validExplorerSort(sortSignals []projectsignals.DataExploreSortSignal, comma
 	return out
 }
 
-func explorerQueryAliases(dimensions, measures []string) map[string]string {
-	all := append(append([]string(nil), dimensions...), measures...)
+func explorerQueryAliases(dimensions, metrics []string) map[string]string {
+	all := append(append([]string(nil), dimensions...), metrics...)
 	counts := map[string]int{}
 	for _, field := range all {
 		counts[explorerFieldName(field)]++

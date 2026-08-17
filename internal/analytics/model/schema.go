@@ -56,6 +56,9 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 	if m == nil {
 		return fmt.Errorf("semantic model is required")
 	}
+	if err := m.validateSemanticDefinitions(); err != nil {
+		return err
+	}
 	if err := m.ValidateDiscoveredSourceSchemas(); err != nil {
 		return err
 	}
@@ -127,15 +130,7 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 		if metric.Type != "aggregate" || metric.Input == nil {
 			continue
 		}
-		refs := []string{metric.Input.Field}
-		if metric.Input.Expression != "" {
-			expression, err := ParseExpression(metric.Input.Expression)
-			if err != nil {
-				return fmt.Errorf("metric %q input expression: %w", metricName, err)
-			}
-			refs = append(refs, expression.References()...)
-		}
-		for _, ref := range refs {
+		for _, ref := range []string{metric.Input.Field} {
 			if ref == "" {
 				continue
 			}

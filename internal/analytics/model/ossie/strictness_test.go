@@ -130,3 +130,48 @@ func TestImportDoesNotMutateProjectModelTables(t *testing.T) {
 		t.Fatalf("Import mutated project model dimension: before=%#v after=%#v", before, after)
 	}
 }
+
+func TestImportRejectsUnknownLeapViewExtensionJSONFields(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}]
+    custom_extensions:
+      - vendor_name: LEAPVIEW
+        data: '{"version":"leapview.dev/ossie-extension/v1","unexpected":true}'
+`)
+	if _, err := Import(doc, strictnessProjectModels()); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("unknown extension field error = %v", err)
+	}
+}
+
+func TestImportRejectsContradictoryLeapViewMetricTagFields(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}]
+    custom_extensions:
+      - vendor_name: LEAPVIEW
+        data: '{"version":"leapview.dev/ossie-extension/v1","metrics":{"rows":{"type":"ratio","numerator":"rows","denominator":"rows","dataset":"orders"}}}'
+`)
+	if _, err := Import(doc, strictnessProjectModels()); err == nil || !strings.Contains(err.Error(), "contradictory field") {
+		t.Fatalf("contradictory metric tag error = %v", err)
+	}
+}
+
+func TestImportRejectsCountFieldExtensionContradiction(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}]
+    metrics:
+      - name: rows
+        expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(orders.order_id)}]}
+    custom_extensions:
+      - vendor_name: LEAPVIEW
+        data: '{"version":"leapview.dev/ossie-extension/v1","metrics":{"rows":{"type":"aggregate","dataset":"orders","aggregation":"count","input":{"field":"orders.event_date"},"empty":"zero"}}}'
+`)
+	if _, err := Import(doc, strictnessProjectModels()); err == nil || !strings.Contains(err.Error(), "disagrees with Ossie core") {
+		t.Fatalf("count field contradiction error = %v", err)
+	}
+}

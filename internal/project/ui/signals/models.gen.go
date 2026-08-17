@@ -1500,22 +1500,31 @@ type SemanticModelGraphEdgeSignal struct {
 	TargetField string `json:"targetField"`
 }
 
+type SemanticModelGraphEntitySignal struct {
+	Fields []string `json:"fields"`
+	Grain  *bool    `json:"grain,omitempty"`
+	Name   string   `json:"name"`
+	Type   string   `json:"type"`
+}
+
 type SemanticModelGraphFieldSignal struct {
+	Entities      *[]string `json:"entities,omitempty"`
+	Grain         *bool     `json:"grain,omitempty"`
 	Join          *bool     `json:"join,omitempty"`
 	Label         *string   `json:"label,omitempty"`
 	Name          string    `json:"name"`
-	PrimaryKey    *bool     `json:"primaryKey,omitempty"`
 	Relationships *[]string `json:"relationships,omitempty"`
 	Type          *string   `json:"type,omitempty"`
 }
 
 type SemanticModelGraphNodeSignal struct {
-	Badges      *[]string                       `json:"badges,omitempty"`
-	Description *string                         `json:"description,omitempty"`
-	Fields      []SemanticModelGraphFieldSignal `json:"fields"`
-	ID          string                          `json:"id"`
-	PrimaryKey  *string                         `json:"primaryKey,omitempty"`
-	Title       string                          `json:"title"`
+	Badges      *[]string                         `json:"badges,omitempty"`
+	Description *string                           `json:"description,omitempty"`
+	Entities    *[]SemanticModelGraphEntitySignal `json:"entities,omitempty"`
+	Fields      []SemanticModelGraphFieldSignal   `json:"fields"`
+	GrainEntity *string                           `json:"grainEntity,omitempty"`
+	ID          string                            `json:"id"`
+	Title       string                            `json:"title"`
 }
 
 type SemanticModelGraphSignal struct {

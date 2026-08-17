@@ -530,14 +530,7 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticMode
 		if semanticRelationshipEndpointUnique(baseTables, spec.Datasets, relationship.From) && semanticRelationshipEndpointUnique(baseTables, spec.Datasets, relationship.To) {
 			cardinality = "one_to_one"
 		}
-		from, to := "", ""
-		if len(fromFields) == 1 {
-			from = fromDataset + "." + fromFields[0]
-		}
-		if len(toFields) == 1 {
-			to = toDataset + "." + toFields[0]
-		}
-		relationships = append(relationships, semanticmodel.Relationship{ID: id, From: from, To: to, FromDataset: fromDataset, FromFields: fromFields, ToDataset: toDataset, ToFields: toFields, Cardinality: cardinality, Description: relationship.Description, AIContext: relationship.AIContext})
+		relationships = append(relationships, semanticmodel.Relationship{ID: id, FromDataset: fromDataset, FromFields: fromFields, ToDataset: toDataset, ToFields: toFields, Cardinality: cardinality, Description: relationship.Description, AIContext: relationship.AIContext})
 	}
 	sort.SliceStable(relationships, func(i, j int) bool { return relationships[i].ID < relationships[j].ID })
 	dimensions := map[string]semanticmodel.SemanticDimension{}
@@ -623,17 +616,6 @@ func sameOrderedFields(left, right []string) bool {
 		}
 	}
 	return true
-}
-
-func semanticRelationshipEndpoint(tables map[string]semanticmodel.Table, datasets map[string]semanticmodel.SemanticDatasetSpec, endpoint semanticmodel.RelationshipEndpointSpec) (string, error) {
-	dataset, fields, err := semanticRelationshipEndpointTuple(tables, datasets, endpoint)
-	if err != nil {
-		return "", err
-	}
-	if len(fields) != 1 {
-		return "", fmt.Errorf("composite relationship endpoints are not executable by the current planner")
-	}
-	return dataset + "." + fields[0], nil
 }
 
 func semanticRelationshipEndpointTuple(tables map[string]semanticmodel.Table, datasets map[string]semanticmodel.SemanticDatasetSpec, endpoint semanticmodel.RelationshipEndpointSpec) (string, []string, error) {

@@ -86,10 +86,10 @@ authoritative for execution; Ossie is an import, export, validation, and
 extension boundary.
 
 This decision freezes the authored and executable semantics of
-`leapview.dev/v1`. Implementation remains pending, but implementation work does
-not reopen the contract. A later incompatible or result-affecting semantic
-change requires an explicit versioned contract and a superseding or amending
-ADR.
+`leapview.dev/v1`. The completed implementation follows this contract without
+compatibility readers or dual representations. A later incompatible or
+result-affecting semantic change requires an explicit versioned contract and a
+superseding or amending ADR.
 
 ### Models own identity and grain
 
@@ -266,6 +266,12 @@ scalar functions and operators only; SQL aggregates, raw SQL, dataset fields,
 and physical fields remain prohibited. Ratios give the planner explicit
 numerator and denominator populations rather than requiring it to infer
 division semantics from a general expression.
+
+The `count` aggregation counts non-null values of its required typed input.
+Row count is expressed by counting a Model grain field, whose primary or unique
+entity contract proves it non-null. Ossie `COUNT(*)` imports only when it can be
+mapped to such a declared grain field; `COUNT(field)` retains the authored field
+and its null semantics.
 
 `safe_divide(a, b)` remains a portable LeapView expression function. It returns
 null when either operand is null or the denominator is zero and otherwise
@@ -556,6 +562,9 @@ unsafe SQL or AI instructions in the meantime.
 - Pinned Ossie fixtures validate against the official versioned schema. Native
   to Ossie to native round trips preserve portable semantics and versioned
   extensions; unsupported executable imports fail without partial compilation.
+  The shipped `semantic-model ossie import|export` CLI routes through the
+  canonical project compiler, and strict extension decoding rejects unknown or
+  contradictory fields.
 - Dashboard, API, CLI, catalog, agent, generated-contract, documentation, and
   example tests use only the unified metric vocabulary before implementation is
   marked complete.

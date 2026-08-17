@@ -101,14 +101,14 @@ type SemanticDimensionSpec struct {
 }
 
 type SemanticFilterSpec struct {
-	Field     string               `yaml:"field"`
-	Operator  string               `yaml:"operator"`
-	Value     any                  `yaml:"value"`
-	Path      []string             `yaml:"path"`
-	All       []SemanticFilterSpec `yaml:"all"`
-	Any       []SemanticFilterSpec `yaml:"any"`
-	Not       *SemanticFilterSpec  `yaml:"not"`
-	AIContext *AIContext           `yaml:"aiContext"`
+	Field     string               `yaml:"field,omitempty"`
+	Operator  string               `yaml:"operator,omitempty"`
+	Value     any                  `yaml:"value,omitempty"`
+	Path      []string             `yaml:"path,omitempty"`
+	All       []SemanticFilterSpec `yaml:"all,omitempty"`
+	Any       []SemanticFilterSpec `yaml:"any,omitempty"`
+	Not       *SemanticFilterSpec  `yaml:"not,omitempty"`
+	AIContext *AIContext           `yaml:"aiContext,omitempty"`
 }
 
 type AggregateMetricSpec struct {
@@ -285,9 +285,7 @@ type MetricDimension struct {
 	Label       string          `yaml:"label"`
 	Description string          `yaml:"description"`
 	Type        string          `yaml:"-" json:"-"`
-	Datatype    LogicalDataType `yaml:"datatype,omitempty" json:"-"`
-	Expr        string          `yaml:"-" json:"-"`
-	Expression  string          `yaml:"-" json:"-"`
+	Datatype    LogicalDataType `yaml:"datatype,omitempty" json:"datatype,omitempty"`
 	AIContext   *AIContext      `yaml:"aiContext,omitempty" json:"-"`
 }
 
@@ -306,8 +304,7 @@ type ColumnSchema struct {
 }
 
 type MetricInput struct {
-	Field      string `yaml:"field"`
-	Expression string `yaml:"expression"`
+	Field string `yaml:"field"`
 }
 
 type SemanticDimension struct {
@@ -353,8 +350,6 @@ type Metric struct {
 type Relationship struct {
 	ID          string     `yaml:"id"`
 	Description string     `yaml:"description"`
-	From        string     `yaml:"from"`
-	To          string     `yaml:"to"`
 	Cardinality string     `yaml:"cardinality"`
 	FromDataset string     `yaml:"from_dataset,omitempty"`
 	FromFields  []string   `yaml:"from_fields,omitempty"`

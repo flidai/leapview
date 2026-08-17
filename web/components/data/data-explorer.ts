@@ -1840,7 +1840,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
 function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
   const tableID = objectTableID(object)
-  const localFields = fields.filter((field) => field.kind !== 'measure' && field.modelTable === tableID)
+  const localFields = fields.filter((field) => field.kind !== 'metric' && field.modelTable === tableID)
   const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
   const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${tableID}.${column.key}`)
   const seen = new Set(ordered)
@@ -1913,12 +1913,13 @@ type ExploreFieldGroup = {
 function groupExploreFields(fields: DataExploreFieldSignal[]): ExploreFieldGroup[] {
   const groups = new Map<string, ExploreFieldGroup>()
   for (const field of fields) {
-    const id = `${field.modelTable}:${field.kind}`
+    const crossDatasetMetric = field.kind === 'metric' && !field.modelTable
+    const id = crossDatasetMetric ? 'cross-dataset:metric' : `${field.modelTable}:${field.kind}`
     if (!groups.has(id)) {
       groups.set(id, {
         id,
         kind: field.kind,
-        label: `${label(field.modelTable)} · ${field.kind === 'metric' ? 'Metrics' : 'Dimensions'}`,
+        label: crossDatasetMetric ? 'Multiple datasets · Metrics' : `${label(field.modelTable)} · ${field.kind === 'metric' ? 'Metrics' : 'Dimensions'}`,
         fields: [],
       })
     }

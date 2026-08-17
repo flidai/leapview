@@ -200,25 +200,25 @@ func singleFactFanoutModel() *semanticmodel.Model {
 			"orders": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Type: "string"}, "customer_id": {Type: "string"}, "revenue": {Type: "number"},
+					"order_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "revenue": {Type: "number"},
 				},
 			},
 			"customers": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"customer_id": {Type: "string"}, "region": {Type: "string"},
+					"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "region": {Type: "string"},
 				},
 			},
 			"profiles": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"customer_id": {Type: "string"}, "tier": {Type: "string"},
+					"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "tier": {Type: "string"},
 				},
 			},
 		},
 		Relationships: []semanticmodel.Relationship{
-			{ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
-			{ID: "customers_profiles", From: "customers.customer_id", To: "profiles.customer_id", Cardinality: "one_to_one"},
+			{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+			{ID: "customers_profiles", FromDataset: "customers", FromFields: []string{"customer_id"}, ToDataset: "profiles", ToFields: []string{"customer_id"}, Cardinality: "one_to_one"},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
 			"region": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{
@@ -246,32 +246,32 @@ func multiFactFanoutModel() *semanticmodel.Model {
 			"orders": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Type: "string"}, "customer_id": {Type: "string"},
+					"order_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 			"returns": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"return_id": {Type: "primary", Fields: []string{"return_id"}}}, GrainEntity: "return_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"return_id": {Type: "string"}, "customer_id": {Type: "string"},
+					"return_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 			"clicks": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"click_id": {Type: "primary", Fields: []string{"click_id"}}}, GrainEntity: "click_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"click_id": {Type: "string"}, "customer_id": {Type: "string"},
+					"click_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 			"customers": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"customer_id": {Type: "string"}, "region": {Type: "string"},
+					"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "region": {Type: "string"},
 				},
 			},
 		},
 		Relationships: []semanticmodel.Relationship{
-			{ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
-			{ID: "returns_customers", From: "returns.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
-			{ID: "clicks_customers", From: "clicks.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
+			{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+			{ID: "returns_customers", FromDataset: "returns", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+			{ID: "clicks_customers", FromDataset: "clicks", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
 			"region": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{

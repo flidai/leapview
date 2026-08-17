@@ -29,7 +29,7 @@ const (
 	AssetEdgeUsesSemanticModel      AssetEdgeType = "uses_semantic_model"
 	AssetEdgeUsesModelTable         AssetEdgeType = "uses_model_table"
 	AssetEdgeUsesSemanticTable      AssetEdgeType = "uses_semantic_table"
-	AssetEdgeUsesMeasure            AssetEdgeType = "uses_metric"
+	AssetEdgeUsesMetric             AssetEdgeType = "uses_metric"
 	AssetEdgeUsesField              AssetEdgeType = "uses_field"
 	AssetEdgeUsesVisual             AssetEdgeType = "uses_visual"
 	AssetEdgeUsesFilter             AssetEdgeType = "uses_filter"

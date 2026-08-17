@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -9,6 +10,12 @@ import (
 
 var supportedAggregations = map[string]struct{}{
 	"sum": {}, "count": {}, "count_distinct": {}, "avg": {}, "min": {}, "max": {},
+}
+
+var supportedLogicalDataTypes = map[LogicalDataType]struct{}{
+	DataTypeString: {}, DataTypeInteger: {}, DataTypeDecimal: {}, DataTypeFloat: {},
+	DataTypeBoolean: {}, DataTypeDate: {}, DataTypeTime: {}, DataTypeDateTime: {},
+	DataTypeDateTimeTZ: {}, DataTypeOpaque: {},
 }
 
 var supportedSemanticDimensionTypes = map[string]struct{}{
@@ -21,6 +28,55 @@ var supportedTimeGrains = map[string]struct{}{
 
 var timeGrainOrder = map[string]int{
 	"second": 0, "minute": 1, "hour": 2, "day": 3, "week": 4, "month": 5, "quarter": 6, "year": 7,
+}
+
+func validateLogicalDataType(scope string, datatype LogicalDataType) error {
+	if datatype == "" {
+		return fmt.Errorf("%s requires a logical datatype", scope)
+	}
+	if _, ok := supportedLogicalDataTypes[datatype]; !ok {
+		return fmt.Errorf("%s has unsupported datatype %q", scope, datatype)
+	}
+	return nil
+}
+
+func semanticDimensionTypeForDatatype(datatype LogicalDataType) string {
+	switch datatype {
+	case DataTypeString:
+		return "string"
+	case DataTypeInteger, DataTypeDecimal, DataTypeFloat:
+		return "number"
+	case DataTypeBoolean:
+		return "boolean"
+	case DataTypeDate:
+		return "date"
+	case DataTypeTime, DataTypeDateTime, DataTypeDateTimeTZ:
+		return "timestamp"
+	case DataTypeOpaque:
+		return "opaque"
+	default:
+		return ""
+	}
+}
+
+func validateMetricInputDatatype(name, aggregation string, input MetricDimension) error {
+	if input.Datatype == "" {
+		return fmt.Errorf("semantic metric %q input requires a logical datatype", name)
+	}
+	if aggregation == "sum" || aggregation == "avg" {
+		switch input.Datatype {
+		case DataTypeInteger, DataTypeDecimal, DataTypeFloat:
+			return nil
+		default:
+			return fmt.Errorf("semantic metric %q %s input has unsupported datatype %q", name, aggregation, input.Datatype)
+		}
+	}
+	if aggregation == "min" || aggregation == "max" {
+		if input.Datatype == DataTypeOpaque {
+			return fmt.Errorf("semantic metric %q %s input has unsupported datatype %q", name, aggregation, input.Datatype)
+		}
+	}
+	return nil
 }
 
 func containsTimeGrain(values []string, target string) bool {
@@ -59,6 +115,18 @@ func (m *Model) ValidateSemanticGraph() error {
 }
 
 func (m *Model) validateSemanticDefinitions() error {
+	for tableName, table := range m.Tables {
+		for field, dimension := range table.Dimensions {
+			if err := validateLogicalDataType("model table "+tableName+" field "+field, dimension.Datatype); err != nil {
+				return err
+			}
+		}
+		for field, column := range table.Columns {
+			if err := validateLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
+				return err
+			}
+		}
+	}
 	for name, filter := range m.Filters {
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("semantic filter %q is invalid: %w", name, err)
@@ -74,6 +142,17 @@ func (m *Model) validateSemanticDefinitions() error {
 	for name, dimension := range m.Dimensions {
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("semantic dimension %q is invalid: %w", name, err)
+		}
+		if err := validateLogicalDataType("semantic dimension "+name, dimension.Datatype); err != nil {
+			return err
+		}
+		if dimension.Datatype != "" {
+			canonicalType := semanticDimensionTypeForDatatype(dimension.Datatype)
+			if dimension.Type == "" {
+				dimension.Type = canonicalType
+			} else if canonicalType != "" && dimension.Type != canonicalType {
+				return fmt.Errorf("semantic dimension %q type %q disagrees with logical datatype %q", name, dimension.Type, dimension.Datatype)
+			}
 		}
 		dimension.Name = name
 		dimension.Label = defaultString(dimension.Label, titleFromIdentifier(name))
@@ -176,16 +255,22 @@ func (m *Model) validateSemanticDefinitions() error {
 
 func (m *Model) validateSemanticFilterNode(name string, filter SemanticFilterSpec) error {
 	branches := 0
-	if len(filter.All) > 0 {
+	if filter.All != nil {
 		branches++
+		if len(filter.All) == 0 {
+			return fmt.Errorf("semantic filter %q all node requires a non-empty child list", name)
+		}
 		for _, child := range filter.All {
 			if err := m.validateSemanticFilterNode(name, child); err != nil {
 				return err
 			}
 		}
 	}
-	if len(filter.Any) > 0 {
+	if filter.Any != nil {
 		branches++
+		if len(filter.Any) == 0 {
+			return fmt.Errorf("semantic filter %q any node requires a non-empty child list", name)
+		}
 		for _, child := range filter.Any {
 			if err := m.validateSemanticFilterNode(name, child); err != nil {
 				return err
@@ -198,6 +283,10 @@ func (m *Model) validateSemanticFilterNode(name string, filter SemanticFilterSpe
 			return err
 		}
 	}
+	if (filter.All != nil || filter.Any != nil || filter.Not != nil) &&
+		(filter.Field != "" || filter.Operator != "" || filter.Value != nil || len(filter.Path) > 0 || filter.AIContext != nil) {
+		return fmt.Errorf("semantic filter %q boolean node cannot contain leaf fields", name)
+	}
 	if filter.Field != "" || filter.Operator != "" {
 		branches++
 		if filter.Field == "" || filter.Operator == "" {
@@ -209,7 +298,7 @@ func (m *Model) validateSemanticFilterNode(name string, filter SemanticFilterSpe
 		}
 		switch filter.Operator {
 		case "equals", "not_equals", "less_than", "less_than_or_equal", "greater_than", "greater_than_or_equal":
-			if filter.Value == nil {
+			if filter.Value == nil || isNilSemanticLiteral(filter.Value) {
 				return fmt.Errorf("semantic filter %q operator %q requires a value", name, filter.Operator)
 			}
 		case "in", "not_in":
@@ -218,6 +307,9 @@ func (m *Model) validateSemanticFilterNode(name string, filter SemanticFilterSpe
 				return fmt.Errorf("semantic filter %q operator %q requires a non-empty value list", name, filter.Operator)
 			}
 			for _, value := range values {
+				if isNilSemanticLiteral(value) {
+					return fmt.Errorf("semantic filter %q operator %q prohibits null values", name, filter.Operator)
+				}
 				if _, err := CoerceSemanticLiteral(value, dimension); err != nil {
 					return fmt.Errorf("semantic filter %q: %w", name, err)
 				}
@@ -244,6 +336,19 @@ func (m *Model) validateSemanticFilterNode(name string, filter SemanticFilterSpe
 		return fmt.Errorf("semantic filter %q must contain exactly one leaf or boolean node", name)
 	}
 	return nil
+}
+
+func isNilSemanticLiteral(value any) bool {
+	if value == nil {
+		return true
+	}
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 func semanticFilterValues(value any) ([]any, bool) {
@@ -285,48 +390,10 @@ func semanticFilterValues(value any) ([]any, bool) {
 	}
 }
 
-func canonicalDimensionType(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	switch {
-	case value == "string" || strings.Contains(value, "char") || strings.Contains(value, "text") || value == "uuid":
-		return "string"
-	case value == "number" || strings.Contains(value, "int") || strings.Contains(value, "decimal") || strings.Contains(value, "numeric") || strings.Contains(value, "double") || strings.Contains(value, "float") || strings.Contains(value, "real"):
-		return "number"
-	case value == "boolean" || strings.Contains(value, "bool"):
-		return "boolean"
-	case value == "date":
-		return "date"
-	case strings.Contains(value, "timestamp") || strings.Contains(value, "datetime"):
-		return "timestamp"
-	default:
-		return ""
-	}
-}
-
-func compatibleDimensionTypes(canonical, physical string) bool {
-	if canonical == physical {
-		return true
-	}
-	return (canonical == "date" || canonical == "timestamp") && (physical == "date" || physical == "timestamp")
-}
-
-// compatibleConformedBindingTypes keeps the portable logical datatype exact
-// for conformed dimensions. Legacy dimensions that omit datatype continue to
-// use the existing broad category check, but once either side declares the
-// logical contract, both sides must declare the same type. In particular,
-// Date, DateTime, and DateTimeTz are not interchangeable timestamp aliases.
+// compatibleConformedBindingTypes requires the portable logical datatype to
+// match exactly across every fact binding of a conformed dimension.
 func compatibleConformedBindingTypes(dimension SemanticDimension, physical MetricDimension) bool {
-	if dimension.Datatype != "" || physical.Datatype != "" {
-		if dimension.Datatype == "" || physical.Datatype == "" {
-			return false
-		}
-		if dimension.Datatype == physical.Datatype {
-			return true
-		}
-		return false
-	}
-	physicalType := canonicalDimensionType(physical.Type)
-	return physicalType == "" || compatibleDimensionTypes(dimension.Type, physicalType)
+	return dimension.Datatype != "" && physical.Datatype != "" && dimension.Datatype == physical.Datatype
 }
 
 func (m *Model) validateMetrics() error {
@@ -340,11 +407,23 @@ func (m *Model) validateMetrics() error {
 		var refs []string
 		switch metric.Type {
 		case "aggregate":
+			if metric.Expression != "" || metric.Numerator != "" || metric.Denominator != "" {
+				return fmt.Errorf("semantic metric %q aggregate does not accept derived or ratio fields", name)
+			}
+			if metric.Dataset == "" {
+				return fmt.Errorf("semantic metric %q aggregate dataset is required", name)
+			}
+			if _, ok := supportedAggregations[metric.Aggregation]; !ok {
+				return fmt.Errorf("semantic metric %q has unsupported aggregation %q", name, metric.Aggregation)
+			}
+			if metric.Empty != "" && metric.Empty != "zero" && metric.Empty != "null" {
+				return fmt.Errorf("semantic metric %q has unsupported empty value %q", name, metric.Empty)
+			}
+			if metric.Where != nil && len(metric.Where) == 0 {
+				return fmt.Errorf("semantic metric %q aggregate where requires a non-empty list", name)
+			}
 			if _, ok := m.Tables[metric.Dataset]; !ok {
 				return fmt.Errorf("semantic metric %q references unknown dataset %q", name, metric.Dataset)
-			}
-			if metric.Aggregation == "count" && metric.Input != nil && strings.TrimSpace(metric.Input.Field) != "" && strings.TrimSpace(metric.Input.Expression) != "" {
-				return fmt.Errorf("semantic metric %q count requires at most one input", name)
 			}
 			if metric.Input == nil || strings.TrimSpace(metric.Input.Field) == "" {
 				return fmt.Errorf("semantic metric %q aggregate input is required", name)
@@ -355,6 +434,9 @@ func (m *Model) validateMetrics() error {
 			}
 			if input.Table != metric.Dataset {
 				return fmt.Errorf("semantic metric %q aggregate input field %q is not owned by dataset %q", name, metric.Input.Field, metric.Dataset)
+			}
+			if err := validateMetricInputDatatype(name, metric.Aggregation, input); err != nil {
+				return err
 			}
 			if metric.TimeDimension != "" {
 				dimension, ok := m.Dimensions[metric.TimeDimension]
@@ -369,6 +451,9 @@ func (m *Model) validateMetrics() error {
 				}
 			}
 			for _, filter := range metric.Where {
+				if err := validateSemanticIdentifier(filter); err != nil {
+					return fmt.Errorf("semantic metric %q where filter %q is invalid: %w", name, filter, err)
+				}
 				definition, ok := m.Filters[filter]
 				if !ok {
 					return fmt.Errorf("semantic metric %q references unknown semantic filter %q", name, filter)
@@ -378,15 +463,27 @@ func (m *Model) validateMetrics() error {
 				}
 			}
 		case "derived":
+			if metric.Dataset != "" || metric.Aggregation != "" || metric.Input != nil || metric.Where != nil || metric.Empty != "" || metric.TimeDimension != "" || metric.Numerator != "" || metric.Denominator != "" {
+				return fmt.Errorf("semantic metric %q derived does not accept aggregate or ratio fields", name)
+			}
 			expression, err := ParseExpression(metric.Expression)
 			if err != nil {
 				return fmt.Errorf("semantic metric %q: %w", name, err)
 			}
 			refs = expression.References()
 		case "ratio":
+			if metric.Dataset != "" || metric.Aggregation != "" || metric.Input != nil || metric.Where != nil || metric.Empty != "" || metric.TimeDimension != "" || metric.Expression != "" {
+				return fmt.Errorf("semantic metric %q ratio does not accept aggregate or derived fields", name)
+			}
 			refs = []string{metric.Numerator, metric.Denominator}
 			if metric.Numerator == "" || metric.Denominator == "" {
 				return fmt.Errorf("semantic metric %q ratio requires numerator and denominator", name)
+			}
+			if err := validateSemanticIdentifier(metric.Numerator); err != nil {
+				return fmt.Errorf("semantic metric %q numerator %q is invalid: %w", name, metric.Numerator, err)
+			}
+			if err := validateSemanticIdentifier(metric.Denominator); err != nil {
+				return fmt.Errorf("semantic metric %q denominator %q is invalid: %w", name, metric.Denominator, err)
 			}
 		default:
 			return fmt.Errorf("semantic metric %q has unsupported type %q", name, metric.Type)

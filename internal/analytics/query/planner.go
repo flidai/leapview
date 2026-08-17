@@ -22,13 +22,13 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet := []string{}
+	bindings := []physicalFieldBinding{}
 	for _, dimension := range request.Dimensions {
-		field, _, err := view.ResolveDimensionRef(dimension.Field)
+		field, _, path, err := view.ResolveDimensionRefPath(dimension.Field)
 		if err != nil {
 			return Plan{}, err
 		}
-		fieldSet = append(fieldSet, field)
+		bindings = append(bindings, physicalFieldBinding{Field: field, Path: path})
 	}
 	for _, metric := range request.Metrics {
 		field, resolved, err := view.ResolveMetricRef(metric.Field)
@@ -38,18 +38,32 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		if resolved.Fact != view.Fact {
 			return Plan{}, fmt.Errorf("metric %q is not owned by fact %q", field, view.Fact)
 		}
-		fieldSet = append(fieldSet, aggregateMetricPhysicalFields(resolved)...)
+		for _, field := range aggregateMetricPhysicalFields(resolved) {
+			physical, err := p.Model.ResolveDimension(field)
+			if err != nil {
+				return Plan{}, err
+			}
+			path, err := p.relationshipPath(view.Fact, physical.Table)
+			if err != nil {
+				return Plan{}, err
+			}
+			bindings = append(bindings, physicalFieldBinding{Field: field, Path: path})
+		}
 	}
-	filterFields, err := filterFieldSet(view, request.Filters)
+	filterBindings, err := filterFieldBindings(view, request.Filters)
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet = append(fieldSet, filterFields...)
-	aliases, err := p.aliases(view, fieldSet)
+	bindings = append(bindings, filterBindings...)
+	aliases, err := p.aliasesForFact(view.Fact, bindings)
 	if err != nil {
 		return Plan{}, err
 	}
-	from, err := joinSQL(p, view.Fact, aliases)
+	from, err := joinPathSQL(p, aliases)
+	if err != nil {
+		return Plan{}, err
+	}
+	factAliases, err := aliases.context(nil)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -57,15 +71,18 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 	columns := []string{}
 	columnSet := map[string]bool{}
 	for _, item := range request.Dimensions {
-		field, _, _ := view.ResolveDimensionRef(item.Field)
-		alias, err := outputAlias(Field{Field: field, Alias: item.Alias})
+		_, dimension, path, err := view.ResolveDimensionRefPath(item.Field)
+		if err != nil {
+			return Plan{}, err
+		}
+		alias, err := outputAlias(Field{Field: item.Field, Alias: item.Alias})
 		if err != nil {
 			return Plan{}, err
 		}
 		if err := addOutputColumn(columnSet, alias); err != nil {
 			return Plan{}, err
 		}
-		expr, err := maskedDimensionExpr(field, view.Dimensions[field], aliases, masks)
+		expr, err := maskedDimensionExprForPath(item.Field, dimension, aliases, path, masks)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -73,7 +90,10 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		columns = append(columns, alias)
 	}
 	for _, item := range request.Metrics {
-		field, _, _ := view.ResolveMetricRef(item.Field)
+		field, metric, err := view.ResolveMetricRef(item.Field)
+		if err != nil {
+			return Plan{}, err
+		}
 		alias, err := outputAlias(Field{Field: field, Alias: item.Alias})
 		if err != nil {
 			return Plan{}, err
@@ -81,7 +101,7 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		if err := addOutputColumn(columnSet, alias); err != nil {
 			return Plan{}, err
 		}
-		expr, err := maskedRawMetricExpr(p.Model, field, view.Metrics[field], aliases, masks)
+		expr, err := maskedRawMetricExpr(p.Model, field, metric, factAliases, masks)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -91,7 +111,7 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 	if len(selects) == 0 {
 		return Plan{}, fmt.Errorf("row query requires at least one selected field")
 	}
-	whereParts, args, err := p.whereParts(view, aliases, request.Filters)
+	whereParts, args, err := p.wherePartsPath(view, aliases, request.Filters)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -117,13 +137,13 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet := []string{}
+	bindings := []physicalFieldBinding{}
 	for _, dimension := range request.Dimensions {
-		field, _, err := view.ResolveDimensionRef(dimension.Field)
+		field, _, path, err := view.ResolveDimensionRefPath(dimension.Field)
 		if err != nil {
 			return Plan{}, err
 		}
-		fieldSet = append(fieldSet, field)
+		bindings = append(bindings, physicalFieldBinding{Field: field, Path: path})
 	}
 	metricField, metric, err := view.ResolveMetricRef(request.Metric.Field)
 	if err != nil {
@@ -139,47 +159,62 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	if err := p.exposeViewFilters(view, metricFilters); err != nil {
 		return Plan{}, err
 	}
-	fieldSet = append(fieldSet, aggregateMetricPhysicalFields(metric)...)
-	filterFields, err := filterFieldSet(view, request.Filters)
+	for _, field := range aggregateMetricPhysicalFields(metric) {
+		physical, err := p.Model.ResolveDimension(field)
+		if err != nil {
+			return Plan{}, err
+		}
+		path, err := p.relationshipPath(view.Fact, physical.Table)
+		if err != nil {
+			return Plan{}, err
+		}
+		bindings = append(bindings, physicalFieldBinding{Field: field, Path: path})
+	}
+	filterBindings, err := filterFieldBindings(view, request.Filters)
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet = append(fieldSet, filterFields...)
-	metricFilterFields, err := filterFieldSet(view, metricFilters)
+	bindings = append(bindings, filterBindings...)
+	metricFilterBindings, err := filterFieldBindings(view, metricFilters)
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet = append(fieldSet, metricFilterFields...)
-	aliases, err := p.aliases(view, fieldSet)
+	bindings = append(bindings, metricFilterBindings...)
+	aliases, err := p.aliasesForFact(view.Fact, bindings)
 	if err != nil {
 		return Plan{}, err
 	}
-	from, err := joinSQL(p, view.Fact, aliases)
+	from, err := joinPathSQL(p, aliases)
+	if err != nil {
+		return Plan{}, err
+	}
+	factAliases, err := aliases.context(nil)
 	if err != nil {
 		return Plan{}, err
 	}
 	selects := []string{}
 	columns := []string{}
 	columnSet := map[string]bool{}
-	dimensionFields := []string{}
 	for _, item := range request.Dimensions {
-		field, _, _ := view.ResolveDimensionRef(item.Field)
-		alias, err := outputAlias(Field{Field: field, Alias: item.Alias})
+		_, dimension, path, err := view.ResolveDimensionRefPath(item.Field)
+		if err != nil {
+			return Plan{}, err
+		}
+		alias, err := outputAlias(Field{Field: item.Field, Alias: item.Alias})
 		if err != nil {
 			return Plan{}, err
 		}
 		if err := addOutputColumn(columnSet, alias); err != nil {
 			return Plan{}, err
 		}
-		expr, err := maskedDimensionExpr(field, view.Dimensions[field], aliases, masks)
+		expr, err := maskedDimensionExprForPath(item.Field, dimension, aliases, path, masks)
 		if err != nil {
 			return Plan{}, err
 		}
 		selects = append(selects, expr+" AS "+alias)
 		columns = append(columns, alias)
-		dimensionFields = append(dimensionFields, field)
 	}
-	rawExpr, err := rawAggregateMetricExpr(p.Model, metric, aliases)
+	rawExpr, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -195,28 +230,19 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	}
 	selects = append(selects, "CAST("+rawExpr+" AS DOUBLE) AS "+valueAlias)
 	columns = append(columns, valueAlias)
-	whereParts, args, err := p.whereParts(view, aliases, request.Filters)
+	whereParts, args, err := p.wherePartsPath(view, aliases, request.Filters)
 	if err != nil {
 		return Plan{}, err
 	}
-	pathAliases := pathAliasSet{BaseTable: view.Fact, ByPath: map[string]tableAlias{}}
-	for _, alias := range aliases {
-		pathAliases.ByPath[relationshipPathSignature(alias.Path)] = alias
-	}
 	filterResolution := aggregateResolution{Facts: []string{view.Fact}}
 	for _, filter := range metricFilters {
-		part, partArgs, err := p.factFilterPart(filter, filterResolution, view.Fact, pathAliases)
+		part, partArgs, err := p.factFilterPart(filter, filterResolution, view.Fact, aliases)
 		if err != nil {
 			return Plan{}, err
 		}
 		if part != "" {
 			whereParts = append(whereParts, part)
 			args = append(args, partArgs...)
-		}
-	}
-	for _, field := range dimensionFields {
-		if where := dimensionWhereExpr(view.Dimensions[field], aliases); where != "" {
-			whereParts = append(whereParts, where)
 		}
 	}
 	whereParts = append(whereParts, rawExpr+" IS NOT NULL")
@@ -238,21 +264,19 @@ func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet := []string{}
-	filterFields, err := filterFieldSet(view, request.Filters)
+	bindings, err := filterFieldBindings(view, request.Filters)
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet = append(fieldSet, filterFields...)
-	aliases, err := p.aliases(view, fieldSet)
+	aliases, err := p.aliasesForFact(view.Fact, bindings)
 	if err != nil {
 		return Plan{}, err
 	}
-	from, err := joinSQL(p, view.Fact, aliases)
+	from, err := joinPathSQL(p, aliases)
 	if err != nil {
 		return Plan{}, err
 	}
-	whereParts, args, err := p.whereParts(view, aliases, request.Filters)
+	whereParts, args, err := p.wherePartsPath(view, aliases, request.Filters)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -260,11 +284,11 @@ func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
 	return Plan{SQL: sql, Args: args, Columns: []string{"value"}}, nil
 }
 
-func (p *Planner) whereParts(view *queryView, aliases map[string]tableAlias, filters []Filter) ([]string, []any, error) {
+func (p *Planner) wherePartsPath(view *queryView, aliases pathAliasSet, filters []Filter) ([]string, []any, error) {
 	whereParts := []string{"1 = 1"}
 	args := []any{}
 	for _, filter := range filters {
-		part, partArgs, err := p.filterPart(view, aliases, filter)
+		part, partArgs, err := p.filterPartPath(view, aliases, filter)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -276,20 +300,28 @@ func (p *Planner) whereParts(view *queryView, aliases map[string]tableAlias, fil
 	return whereParts, args, nil
 }
 
-func (p *Planner) filterPart(view *queryView, aliases map[string]tableAlias, filter Filter) (string, []any, error) {
+func (p *Planner) filterPartPath(view *queryView, aliases pathAliasSet, filter Filter) (string, []any, error) {
 	if filter.Spatial != nil {
 		if filter.Field != "" || len(filter.Groups) != 0 {
 			return "", nil, fmt.Errorf("spatial filter cannot combine scalar or grouped filter fields")
 		}
-		_, latitude, err := view.ResolveDimensionRef(filter.Spatial.LatitudeField)
+		_, latitude, latitudePath, err := view.ResolveDimensionRefPath(filter.Spatial.LatitudeField)
 		if err != nil {
 			return "", nil, err
 		}
-		_, longitude, err := view.ResolveDimensionRef(filter.Spatial.LongitudeField)
+		_, longitude, longitudePath, err := view.ResolveDimensionRefPath(filter.Spatial.LongitudeField)
 		if err != nil {
 			return "", nil, err
 		}
-		return spatialFilterSQL(dimensionExpr(latitude, aliases), dimensionExpr(longitude, aliases), *filter.Spatial)
+		latitudeExpr, err := dimensionExprForPath(latitude, aliases, latitudePath)
+		if err != nil {
+			return "", nil, err
+		}
+		longitudeExpr, err := dimensionExprForPath(longitude, aliases, longitudePath)
+		if err != nil {
+			return "", nil, err
+		}
+		return spatialFilterSQL(latitudeExpr, longitudeExpr, *filter.Spatial)
 	}
 	if len(filter.Groups) > 0 {
 		parts := []string{}
@@ -297,7 +329,7 @@ func (p *Planner) filterPart(view *queryView, aliases map[string]tableAlias, fil
 		for _, group := range filter.Groups {
 			groupParts := []string{}
 			for _, child := range group.Filters {
-				part, partArgs, err := p.filterPart(view, aliases, child)
+				part, partArgs, err := p.filterPartPath(view, aliases, child)
 				if err != nil {
 					return "", nil, err
 				}
@@ -319,8 +351,14 @@ func (p *Planner) filterPart(view *queryView, aliases map[string]tableAlias, fil
 	if filter.Field == "" {
 		return "", nil, nil
 	}
-	_, dimension, _ := view.ResolveDimensionRef(filter.Field)
-	expr := dimensionExpr(dimension, aliases)
+	_, dimension, path, err := view.ResolveDimensionRefPath(filter.Field)
+	if err != nil {
+		return "", nil, err
+	}
+	expr, err := dimensionExprForPath(dimension, aliases, path)
+	if err != nil {
+		return "", nil, err
+	}
 	return filterSQL(expr, filter)
 }
 
@@ -369,12 +407,13 @@ func (m columnMaskSet) matchesMetric(ref string, metric resolvedAggregateMetric)
 	return false
 }
 
-func maskedDimensionExpr(ref string, dimension semanticmodel.MetricDimension, aliases map[string]tableAlias, masks columnMaskSet) (string, error) {
-	mask, ok := masks[strings.ToLower(strings.TrimSpace(ref))]
-	if !ok {
-		return dimensionExpr(dimension, aliases), nil
+func maskedDimensionExprForPath(ref string, dimension semanticmodel.MetricDimension, aliases pathAliasSet, path []semanticmodel.Relationship, masks columnMaskSet) (string, error) {
+	for _, key := range []string{ref, dimension.Field} {
+		if mask, ok := masks[strings.ToLower(strings.TrimSpace(key))]; ok {
+			return mask.SQL(), nil
+		}
 	}
-	return mask.SQL(), nil
+	return dimensionExprForPath(dimension, aliases, path)
 }
 
 func maskedRawMetricExpr(model *semanticmodel.Model, ref string, metric resolvedAggregateMetric, aliases map[string]tableAlias, masks columnMaskSet) (string, error) {
@@ -394,13 +433,6 @@ func aggregateMetricPhysicalFields(metric resolvedAggregateMetric) []string {
 	if metric.InputField != "" {
 		fields = append(fields, metric.InputField)
 	}
-	if metric.InputExpr != "" {
-		if metric.InputExpression != nil {
-			fields = append(fields, metric.InputExpression.References()...)
-		} else if expression, err := semanticmodel.ParseExpression(metric.InputExpr); err == nil {
-			fields = append(fields, expression.References()...)
-		}
-	}
 	for _, filter := range metric.Filters {
 		if filter.Field != "" {
 			fields = append(fields, filter.Field)
@@ -409,44 +441,41 @@ func aggregateMetricPhysicalFields(metric resolvedAggregateMetric) []string {
 	return fields
 }
 
-func filterFieldSet(view *queryView, filters []Filter) ([]string, error) {
-	fields := []string{}
-	for _, filter := range filters {
-		items, err := filterFields(view, filter)
-		if err != nil {
-			return nil, err
-		}
-		fields = append(fields, items...)
-	}
-	return fields, nil
-}
-
-func filterFields(view *queryView, filter Filter) ([]string, error) {
-	fields := []string{}
-	if filter.Spatial != nil {
-		for _, ref := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
-			field, _, err := view.ResolveDimensionRef(ref)
-			if err != nil {
-				return nil, err
+func filterFieldBindings(view *queryView, filters []Filter) ([]physicalFieldBinding, error) {
+	bindings := []physicalFieldBinding{}
+	var walk func(Filter) error
+	walk = func(filter Filter) error {
+		if filter.Spatial != nil {
+			for _, ref := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
+				field, _, path, err := view.ResolveDimensionRefPath(ref)
+				if err != nil {
+					return err
+				}
+				bindings = append(bindings, physicalFieldBinding{Field: field, Path: path})
 			}
-			fields = append(fields, field)
 		}
+		if filter.Field != "" {
+			field, _, path, err := view.ResolveDimensionRefPath(filter.Field)
+			if err != nil {
+				return err
+			}
+			bindings = append(bindings, physicalFieldBinding{Field: field, Path: path})
+		}
+		for _, group := range filter.Groups {
+			for _, child := range group.Filters {
+				if err := walk(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
-	if filter.Field != "" {
-		field, _, err := view.ResolveDimensionRef(filter.Field)
-		if err != nil {
+	for _, filter := range filters {
+		if err := walk(filter); err != nil {
 			return nil, err
 		}
-		fields = append(fields, field)
 	}
-	for _, group := range filter.Groups {
-		items, err := filterFieldSet(view, group.Filters)
-		if err != nil {
-			return nil, err
-		}
-		fields = append(fields, items...)
-	}
-	return fields, nil
+	return bindings, nil
 }
 
 func allowedTimeGrain(grain string) bool {

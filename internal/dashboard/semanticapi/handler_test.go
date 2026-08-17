@@ -323,8 +323,10 @@ func (m nativeArrowTestMetrics) ExecuteDataQueryArrow(_ context.Context, request
 func TestSemanticRelationshipDTOParsesTypedEndpoints(t *testing.T) {
 	got, err := semanticRelationshipDTO(semanticmodel.Relationship{
 		ID:          "orders_customers",
-		From:        "orders.customer_id",
-		To:          "customers.customer_id",
+		FromDataset: "orders",
+		FromFields:  []string{"customer_id"},
+		ToDataset:   "customers",
+		ToFields:    []string{"customer_id"},
 		Cardinality: "many_to_one",
 	})
 	if err != nil {
@@ -336,7 +338,7 @@ func TestSemanticRelationshipDTOParsesTypedEndpoints(t *testing.T) {
 }
 
 func TestSemanticRelationshipDTORejectsMalformedEndpoint(t *testing.T) {
-	if _, err := semanticRelationshipDTO(semanticmodel.Relationship{ID: "broken", From: "orders", To: "customers.id"}); err == nil {
+	if _, err := semanticRelationshipDTO(semanticmodel.Relationship{ID: "broken", FromDataset: "orders"}); err == nil {
 		t.Fatal("expected malformed endpoint error")
 	}
 }

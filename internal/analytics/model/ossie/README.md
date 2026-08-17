@@ -18,3 +18,8 @@ entity endpoints. `Export` retains those result-affecting semantics in one
 structured, versioned `LEAPVIEW` custom extension. Import rejects unknown
 extension versions and unsupported core executable expressions rather than
 silently weakening a model.
+
+Count expressions retain their input field across the boundary. `COUNT(*)` is
+resolved only against a proven project Model grain, and a LeapView extension
+must agree with that selected input; `COUNT(field)` is never rewritten as a
+row count.

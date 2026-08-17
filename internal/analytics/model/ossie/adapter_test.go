@@ -254,8 +254,8 @@ func TestCountExportPreservesDatasetRowSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(wire), `"expression": "COUNT(*)"`) {
-		t.Fatalf("count export did not preserve row-count semantics: %s", wire)
+	if !strings.Contains(string(wire), `"expression": "COUNT(orders.order_id)"`) {
+		t.Fatalf("count export did not preserve input-field semantics: %s", wire)
 	}
 	got, err := Import(wire, models)
 	if err != nil {
@@ -308,6 +308,42 @@ semantic_model:
 	}
 }
 
+func TestCoreCountFieldImportPreservesInputField(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}]
+    metrics:
+      - name: row_count
+        expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(orders.event_date)}]}
+`)
+	got, err := Import(doc, strictnessProjectModels())
+	if err != nil {
+		t.Fatal(err)
+	}
+	metric := got.Metrics["row_count"]
+	if metric.Aggregation != "count" || metric.Input == nil || metric.Input.Field != "orders.event_date" {
+		t.Fatalf("core COUNT(field) metric = %#v", metric)
+	}
+}
+
+func TestCountStarExtensionMustAgreeWithProvenModelInput(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}]
+    metrics:
+      - name: rows
+        expression: {dialects: [{dialect: ANSI_SQL, expression: COUNT(*)}]}
+    custom_extensions:
+      - vendor_name: LEAPVIEW
+        data: '{"version":"leapview.dev/ossie-extension/v1","metrics":{"rows":{"type":"aggregate","dataset":"orders","aggregation":"count","input":{"field":"orders.event_date"},"empty":"zero"}}}'
+`)
+	if _, err := Import(doc, strictnessProjectModels()); err == nil || !strings.Contains(err.Error(), "disagrees with Ossie core") {
+		t.Fatalf("COUNT(*) extension contradiction error = %v", err)
+	}
+}
+
 func TestExtensionMetricsMergeWithCompatibleCoreMetrics(t *testing.T) {
 	doc := []byte(`version: 0.2.0.dev0
 semantic_model:
@@ -343,6 +379,50 @@ semantic_model:
 `)
 	if _, err := Import(doc, strictnessProjectModels()); err == nil || !strings.Contains(err.Error(), "disagrees with Ossie core") {
 		t.Fatalf("portable metric contradiction error = %v", err)
+	}
+}
+
+func TestEmptyExtensionRelationshipsDoNotEraseCoreRelationships(t *testing.T) {
+	doc := []byte(`version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets: [{name: orders, source: orders}, {name: customers, source: customers}]
+    relationships:
+      - name: order_customer
+        from: orders
+        to: customers
+        from_columns: [customer_id]
+        to_columns: [customer_id]
+    custom_extensions:
+      - vendor_name: LEAPVIEW
+        data: '{"version":"leapview.dev/ossie-extension/v1","relationships":{}}'
+`)
+	got, err := Import(doc, map[string]semanticmodel.Table{
+		"orders": {
+			GrainEntity: "order",
+			Entities: map[string]semanticmodel.ModelEntitySpec{
+				"order":    {Type: "primary", Fields: []string{"order_id"}},
+				"customer": {Type: "foreign", Fields: []string{"customer_id"}},
+			},
+			Columns: map[string]semanticmodel.ModelColumn{
+				"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString},
+			},
+			Dimensions: map[string]semanticmodel.MetricDimension{
+				"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
+			},
+		},
+		"customers": {
+			GrainEntity: "customer",
+			Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+			Columns:     map[string]semanticmodel.ModelColumn{"customer_id": {Datatype: semanticmodel.DataTypeString}},
+			Dimensions:  map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.StructuredRelationships["order_customer"]; !ok {
+		t.Fatalf("empty extension erased core relationship: %#v", got.StructuredRelationships)
 	}
 }
 

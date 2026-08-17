@@ -78,7 +78,7 @@ func TestResolveSelectionInteractionFactLocalThroughSafeRelationship(t *testing.
 	}
 
 	model.Relationships = append(model.Relationships, semanticmodel.Relationship{
-		ID: "ratings_movies_alternate", From: "ratings.alternate_movie_id", To: "movies.movie_id", Cardinality: "many_to_one",
+		ID: "ratings_movies_alternate", FromDataset: "ratings", FromFields: []string{"alternate_movie_id"}, ToDataset: "movies", ToFields: []string{"movie_id"}, Cardinality: "many_to_one",
 	})
 	_, err = ResolveSelectionInteraction(dashboard, model, "visual", "source")
 	if err == nil || !strings.Contains(err.Error(), `ambiguous relationship path from "ratings" to "movies"`) {
@@ -199,7 +199,7 @@ func selectionFixture() (*dashboardauthoring.Dashboard, *semanticmodel.Model) {
 				"release_decade": {Type: "string"},
 			}},
 		},
-		Relationships: []semanticmodel.Relationship{{ID: "ratings_movies", From: "ratings.movie_id", To: "movies.movie_id", Cardinality: "many_to_one"}},
+		Relationships: []semanticmodel.Relationship{{ID: "ratings_movies", FromDataset: "ratings", FromFields: []string{"movie_id"}, ToDataset: "movies", ToFields: []string{"movie_id"}, Cardinality: "many_to_one"}},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
 			"release_decade": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{
 				"ratings": {Field: "movies.release_decade", Path: []string{"ratings_movies"}},

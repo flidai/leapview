@@ -1,9 +1,11 @@
 package ossie
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"sort"
 	"strings"
@@ -176,13 +178,13 @@ func (p *extensionPayload) UnmarshalJSON(data []byte) error {
 		Metrics       json.RawMessage `json:"metrics"`
 	}
 	var source wire
-	if err := json.Unmarshal(data, &source); err != nil {
+	if err := decodeStrictJSON(data, &source); err != nil {
 		return err
 	}
 	p.Version, p.Description = source.Version, source.Description
 	if len(source.AIContext) > 0 {
 		var context semanticmodel.AIContext
-		if err := json.Unmarshal(source.AIContext, &context); err != nil {
+		if err := decodeStrictYAML(source.AIContext, &context); err != nil {
 			return err
 		}
 		p.AIContext = &context
@@ -199,8 +201,14 @@ func (p *extensionPayload) UnmarshalJSON(data []byte) error {
 	if err := unmarshalExtensionMember(source.Filters, &p.Filters); err != nil {
 		return fmt.Errorf("filters: %w", err)
 	}
+	if err := validateRawMetricTags(source.Metrics); err != nil {
+		return err
+	}
 	if err := unmarshalExtensionMember(source.Metrics, &p.Metrics); err != nil {
 		return fmt.Errorf("metrics: %w", err)
+	}
+	if err := validateExtensionMetricTags(p.Metrics); err != nil {
+		return err
 	}
 	return nil
 }
@@ -209,7 +217,164 @@ func unmarshalExtensionMember(data json.RawMessage, target any) error {
 	if len(data) == 0 || string(data) == "null" {
 		return nil
 	}
-	return json.Unmarshal(data, target)
+	return decodeStrictYAML(data, target)
+}
+
+// decodeStrictJSON rejects unknown fields in the extension envelope. A
+// regular json.Unmarshal would silently ignore a misspelled extension member,
+// making an export appear portable while dropping result-affecting behavior.
+func decodeStrictJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err == nil {
+		return fmt.Errorf("trailing JSON value")
+	} else if err != io.EOF {
+		return fmt.Errorf("trailing JSON data: %w", err)
+	}
+	return nil
+}
+
+// decodeStrictYAML applies the native YAML tags while retaining strict field
+// checking for nested extension members. Extension data is JSON on the Ossie
+// wire, but the native semantic contract is authored with YAML names such as
+// timeDimension and aiContext.
+func decodeStrictYAML(data []byte, target any) error {
+	normalized, err := yamlJSON(data)
+	if err != nil {
+		return err
+	}
+	encoded, err := yaml.Marshal(normalized)
+	if err != nil {
+		return err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(encoded))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err == nil {
+		return fmt.Errorf("trailing YAML value")
+	} else if err != io.EOF {
+		return fmt.Errorf("trailing YAML data: %w", err)
+	}
+	return nil
+}
+
+// validateExtensionMetricTags enforces the native metric tagged union at the
+// interchange boundary. The native project schema gets this guarantee from
+// CUE, while extension JSON is decoded independently and therefore needs the
+// same explicit rejection here. Fields from another metric tag are never
+// ignored and cannot be used to smuggle contradictory executable behavior.
+func validateExtensionMetricTags(metrics map[string]semanticmodel.Metric) error {
+	for name, metric := range metrics {
+		var contradictory string
+		switch metric.Type {
+		case "aggregate":
+			switch {
+			case metric.Expression != "":
+				contradictory = "expression"
+			case metric.Numerator != "":
+				contradictory = "numerator"
+			case metric.Denominator != "":
+				contradictory = "denominator"
+			}
+		case "derived":
+			switch {
+			case metric.Dataset != "":
+				contradictory = "dataset"
+			case metric.Aggregation != "":
+				contradictory = "aggregation"
+			case metric.Input != nil:
+				contradictory = "input"
+			case len(metric.Where) > 0:
+				contradictory = "where"
+			case metric.Empty != "":
+				contradictory = "empty"
+			case metric.TimeDimension != "":
+				contradictory = "timeDimension"
+			case metric.Numerator != "":
+				contradictory = "numerator"
+			case metric.Denominator != "":
+				contradictory = "denominator"
+			}
+		case "ratio":
+			switch {
+			case metric.Dataset != "":
+				contradictory = "dataset"
+			case metric.Aggregation != "":
+				contradictory = "aggregation"
+			case metric.Input != nil:
+				contradictory = "input"
+			case len(metric.Where) > 0:
+				contradictory = "where"
+			case metric.Empty != "":
+				contradictory = "empty"
+			case metric.TimeDimension != "":
+				contradictory = "timeDimension"
+			case metric.Expression != "":
+				contradictory = "expression"
+			}
+		}
+		if contradictory != "" {
+			return fmt.Errorf("LeapView extension metric %q type %q contains contradictory field %q", name, metric.Type, contradictory)
+		}
+	}
+	return nil
+}
+
+// validateRawMetricTags preserves field presence while checking the tagged
+// union. Decoding into a Go struct alone cannot distinguish an omitted field
+// from an explicitly authored zero value such as where: [] or expression: "";
+// both are still contradictory fields when they belong to another tag.
+func validateRawMetricTags(data json.RawMessage) error {
+	if len(data) == 0 || string(data) == "null" {
+		return nil
+	}
+	var metrics map[string]json.RawMessage
+	if err := decodeStrictJSON(data, &metrics); err != nil {
+		return fmt.Errorf("metrics: %w", err)
+	}
+	for name, raw := range metrics {
+		var fields map[string]json.RawMessage
+		if err := decodeStrictJSON(raw, &fields); err != nil {
+			return fmt.Errorf("metrics.%s: %w", name, err)
+		}
+		var tag string
+		if value, ok := fields["type"]; ok {
+			if err := json.Unmarshal(value, &tag); err != nil {
+				return fmt.Errorf("metrics.%s type: %w", name, err)
+			}
+		}
+		for field := range metricTagFields(tag) {
+			if _, present := fields[field]; present {
+				return fmt.Errorf("LeapView extension metric %q type %q contains contradictory field %q", name, tag, field)
+			}
+		}
+	}
+	return nil
+}
+
+func metricTagFields(tag string) map[string]struct{} {
+	fields := map[string]struct{}{}
+	add := func(values ...string) {
+		for _, value := range values {
+			fields[value] = struct{}{}
+		}
+	}
+	switch tag {
+	case "aggregate":
+		add("expression", "numerator", "denominator")
+	case "derived":
+		add("dataset", "aggregation", "input", "where", "empty", "timeDimension", "numerator", "denominator")
+	case "ratio":
+		add("dataset", "aggregation", "input", "where", "empty", "timeDimension", "expression")
+	}
+	return fields
 }
 
 func yamlTaggedJSON(value any) (json.RawMessage, error) {
@@ -493,10 +658,6 @@ func importRelationship(result *semanticmodel.Model, value Relationship) error {
 		return fmt.Errorf("Ossie relationship %q references unknown to dataset %q", value.Name, value.To)
 	}
 	r := semanticmodel.Relationship{ID: value.Name, FromDataset: value.From, ToDataset: value.To, FromFields: append([]string(nil), value.FromColumns...), ToFields: append([]string(nil), value.ToColumns...), Description: ""}
-	if len(value.FromColumns) == 1 {
-		r.From = value.From + "." + value.FromColumns[0]
-		r.To = value.To + "." + value.ToColumns[0]
-	}
 	r.Cardinality = "many_to_one"
 	result.Relationships = append(result.Relationships, r)
 	result.StructuredRelationships[value.Name] = semanticmodel.RelationshipSpec{
@@ -522,7 +683,7 @@ func importCoreMetric(value Metric, model *semanticmodel.Model) (semanticmodel.M
 	if expression.Dialect != "ANSI_SQL" {
 		return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q has unsupported executable dialect %q", value.Name, expression.Dialect)
 	}
-	if regexp.MustCompile(`(?i)^\s*COUNT\s*\(\s*\*\s*\)\s*$`).MatchString(expression.Expression) {
+	if isCountStarExpression(expression.Expression) {
 		datasetNames := sortedKeys(model.Datasets)
 		if len(datasetNames) != 1 {
 			return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q COUNT(*) requires exactly one dataset or a LeapView extension", value.Name)
@@ -531,10 +692,7 @@ func importCoreMetric(value Metric, model *semanticmodel.Model) (semanticmodel.M
 		table := model.Tables[dataset]
 		inputFields := table.GrainFields()
 		if len(inputFields) == 0 {
-			inputFields = sortedKeys(table.Dimensions)
-		}
-		if len(inputFields) == 0 {
-			return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q COUNT(*) dataset %q has no Model field for the native input contract", value.Name, dataset)
+			return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q COUNT(*) dataset %q requires a declared Model grain for the native input contract", value.Name, dataset)
 		}
 		return semanticmodel.Metric{
 			Type: "aggregate", Dataset: dataset, Aggregation: "count",
@@ -560,6 +718,10 @@ func importCoreMetric(value Metric, model *semanticmodel.Model) (semanticmodel.M
 		return semanticmodel.Metric{Type: "aggregate", Dataset: call[2], Aggregation: aggregation, Input: &semanticmodel.MetricInput{Field: call[2] + "." + call[3]}, Empty: empty, Label: value.Name, Description: value.Description, AIContext: fromAIContext(value.AIContext)}, nil
 	}
 	return semanticmodel.Metric{}, fmt.Errorf("Ossie metric %q contains unsupported executable expression %q; import a LeapView extension", value.Name, expression.Expression)
+}
+
+func isCountStarExpression(expression string) bool {
+	return regexp.MustCompile(`(?i)^\s*COUNT\s*\(\s*\*\s*\)\s*$`).MatchString(expression)
 }
 
 func normalizeImportedGraph(value *semanticmodel.Model) error {
@@ -633,31 +795,6 @@ func nativeDimensionType(value semanticmodel.LogicalDataType) string {
 	}
 }
 
-func logicalDatatypeFromNative(value string) semanticmodel.LogicalDataType {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "string":
-		return semanticmodel.DataTypeString
-	case "number", "integer", "decimal":
-		return semanticmodel.DataTypeDecimal
-	case "float":
-		return semanticmodel.DataTypeFloat
-	case "boolean":
-		return semanticmodel.DataTypeBoolean
-	case "date":
-		return semanticmodel.DataTypeDate
-	case "time":
-		return semanticmodel.DataTypeTime
-	case "timestamp", "datetime":
-		return semanticmodel.DataTypeDateTime
-	case "datetimetz":
-		return semanticmodel.DataTypeDateTimeTZ
-	case "opaque":
-		return semanticmodel.DataTypeOpaque
-	default:
-		return semanticmodel.LogicalDataType(value)
-	}
-}
-
 func relationEndpointUnique(table semanticmodel.Table, fields []string) bool {
 	for _, entity := range table.Entities {
 		if (entity.Type == "primary" || entity.Type == "unique") && sameFields(entity.Fields, fields) {
@@ -697,7 +834,14 @@ func applyExtension(result *semanticmodel.Model, extension *extensionPayload, pr
 		result.Datasets = extension.Datasets
 	}
 	if extension.Relationships != nil {
-		result.StructuredRelationships = extension.Relationships
+		for name, extensionRelationship := range extension.Relationships {
+			if coreRelationship, ok := result.StructuredRelationships[name]; ok {
+				if err := validatePortableRelationshipAgreement(name, coreRelationship, extensionRelationship, result.Tables); err != nil {
+					return err
+				}
+			}
+			result.StructuredRelationships[name] = extensionRelationship
+		}
 	}
 	if extension.Dimensions != nil {
 		for name, value := range extension.Dimensions {
@@ -727,13 +871,22 @@ func applyExtension(result *semanticmodel.Model, extension *extensionPayload, pr
 		}
 		from := relation.From.Dataset
 		to := relation.To.Dataset
-		r := semanticmodel.Relationship{ID: id, FromDataset: from, ToDataset: to, FromFields: fromFields, ToFields: toFields, Description: relation.Description, AIContext: relation.AIContext, Cardinality: "many_to_one"}
-		if len(fromFields) == 1 {
-			r.From, r.To = from+"."+fromFields[0], to+"."+toFields[0]
-		}
+		r := semanticmodel.Relationship{ID: id, FromDataset: from, FromFields: fromFields, ToDataset: to, ToFields: toFields, Description: relation.Description, AIContext: relation.AIContext, Cardinality: "many_to_one"}
 		result.Relationships = append(result.Relationships, r)
 	}
 	sort.Slice(result.Relationships, func(i, j int) bool { return result.Relationships[i].ID < result.Relationships[j].ID })
+	return nil
+}
+
+func validatePortableRelationshipAgreement(name string, core, extension semanticmodel.RelationshipSpec, tables map[string]semanticmodel.Table) error {
+	if core.From.Dataset != extension.From.Dataset || core.To.Dataset != extension.To.Dataset {
+		return fmt.Errorf("LeapView extension relationship %q endpoints disagree with Ossie core", name)
+	}
+	coreFrom, coreTo := endpointFieldsResolved(core.From, tables), endpointFieldsResolved(core.To, tables)
+	extensionFrom, extensionTo := endpointFieldsResolved(extension.From, tables), endpointFieldsResolved(extension.To, tables)
+	if !sameFields(coreFrom, extensionFrom) || !sameFields(coreTo, extensionTo) {
+		return fmt.Errorf("LeapView extension relationship %q key definition disagrees with Ossie core", name)
+	}
 	return nil
 }
 
@@ -742,12 +895,6 @@ func validatePortableMetricAgreement(name string, core, extension semanticmodel.
 		return fmt.Errorf("LeapView extension metric %q type %q disagrees with Ossie core type %q", name, extension.Type, core.Type)
 	}
 	if core.Type != "aggregate" {
-		return nil
-	}
-	if core.Aggregation == "count" && extension.Aggregation == "count" {
-		if core.Dataset != extension.Dataset {
-			return fmt.Errorf("LeapView extension metric %q executable definition disagrees with Ossie core", name)
-		}
 		return nil
 	}
 	coreInput, extensionInput := "", ""
@@ -911,10 +1058,6 @@ func relationshipsFromSpecs(specs map[string]semanticmodel.RelationshipSpec, tab
 			cardinality = "one_to_one"
 		}
 		relationship := semanticmodel.Relationship{ID: id, FromDataset: spec.From.Dataset, FromFields: fromFields, ToDataset: spec.To.Dataset, ToFields: toFields, Cardinality: cardinality, Description: spec.Description, AIContext: spec.AIContext}
-		if len(fromFields) == 1 && len(toFields) == 1 {
-			relationship.From = spec.From.Dataset + "." + fromFields[0]
-			relationship.To = spec.To.Dataset + "." + toFields[0]
-		}
 		result = append(result, relationship)
 	}
 	return result, nil
@@ -1126,11 +1269,7 @@ func exportDocument(value *semanticmodel.Model) (Document, error) {
 	if len(value.Dimensions) > 0 {
 		extension.Dimensions = make(map[string]semanticmodel.SemanticDimensionSpec, len(value.Dimensions))
 		for name, dimension := range value.Dimensions {
-			datatype := dimension.Datatype
-			if datatype == "" {
-				datatype = logicalDatatypeFromNative(dimension.Type)
-			}
-			spec := semanticmodel.SemanticDimensionSpec{Label: dimension.Label, Description: dimension.Description, AIContext: dimension.AIContext, Datatype: datatype, Bindings: dimension.Bindings}
+			spec := semanticmodel.SemanticDimensionSpec{Label: dimension.Label, Description: dimension.Description, AIContext: dimension.AIContext, Datatype: dimension.Datatype, Bindings: dimension.Bindings}
 			if len(dimension.Grains) > 0 || dimension.NativeGrain != "" || dimension.Calendar != "" || dimension.Timezone != "" {
 				nativeGrain := dimension.NativeGrain
 				if nativeGrain == "" {
@@ -1159,11 +1298,7 @@ func exportFields(table semanticmodel.Table, dimensions map[string]semanticmodel
 		field := fields[name]
 		field.Name = name
 		field.Label, field.Description, field.AIContext = dimension.Label, dimension.Description, toAIContext(dimension.AIContext)
-		fieldDatatype := dimension.Datatype
-		if fieldDatatype == "" {
-			fieldDatatype = logicalDatatypeFromNative(dimension.Type)
-		}
-		field.Datatype = string(fieldDatatype)
+		field.Datatype = string(dimension.Datatype)
 		if semantic, ok := dimensions[name]; ok {
 			isTime := len(semantic.Grains) > 0
 			field.Dimension = &Dimension{IsTime: &isTime}
@@ -1215,7 +1350,7 @@ func metricExpression(metric semanticmodel.Metric) (string, error) {
 		}
 		aggregation := strings.ToUpper(metric.Aggregation)
 		if aggregation == "COUNT" {
-			return "COUNT(*)", nil
+			return aggregation + "(" + metric.Input.Field + ")", nil
 		}
 		if aggregation == "COUNT_DISTINCT" {
 			aggregation = "COUNT(DISTINCT"

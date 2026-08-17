@@ -103,7 +103,7 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 			ID: projectID,
 			Models: map[string]semanticmodel.Table{assetID: {
 				Sources: []string{"geolocations"}, Transform: semanticmodel.Transform{SQL: "select zip_code from source.geolocations"},
-				PrimaryKey: "zip_code", Grain: "zip_code", Dimensions: map[string]semanticmodel.MetricDimension{"zip_code": {Label: "ZIP code"}},
+				Entities: map[string]semanticmodel.ModelEntitySpec{"zip": {Type: "primary", Fields: []string{"zip_code"}}}, GrainEntity: "zip", Dimensions: map[string]semanticmodel.MetricDimension{"zip_code": {Label: "ZIP code"}},
 			}},
 		}},
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
@@ -129,7 +129,7 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	const projectID = "project:test"
 	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-		"orders": {Grain: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+		"orders": {Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
 	}}
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
@@ -205,24 +205,52 @@ func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
 	}}
 	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
 		ModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("orders"),
-		Dimensions: []string{"orders.status"}, Measures: []string{"orders"}, Filters: []projectsignals.DataExploreFilterSignal{},
+		Dimensions: []string{"orders.status"}, Metrics: []string{"orders"}, Filters: []projectsignals.DataExploreFilterSignal{},
 		Sort: []projectsignals.DataExploreSortSignal{{Field: "orders", Direction: "desc"}}, Limit: 100,
 	}, []projectsignals.DataExploreFieldSignal{
 		{ID: "orders.status", Label: "Status", Kind: "dimension", Compatible: true},
-		{ID: "orders", Label: "Orders", Kind: "measure", Compatible: true},
+		{ID: "orders", Label: "Orders", Kind: "metric", Compatible: true},
 	})
 
 	if result.Error != nil || result.RowsReturned != 1 || len(result.Rows) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
-	if len(command.Dimensions) != 1 || len(command.Measures) != 1 {
+	if len(command.Dimensions) != 1 || len(command.Metrics) != 1 {
 		t.Fatalf("normalized command = %#v", command)
 	}
 	if executor.query.Kind != dataquery.KindSemanticAggregate || executor.query.ProjectID != "project:test" || executor.query.Operation != dataquery.OperationSemanticExplore {
 		t.Fatalf("query = %#v", executor.query)
 	}
-	if executor.query.Fields[0].Alias != "status" || executor.query.Measures[0].Alias != "orders" {
-		t.Fatalf("query aliases = %#v / %#v", executor.query.Fields, executor.query.Measures)
+	if executor.query.Fields[0].Alias != "status" || executor.query.Metrics[0].Alias != "orders" {
+		t.Fatalf("query aliases = %#v / %#v", executor.query.Fields, executor.query.Metrics)
+	}
+}
+
+func TestDataExplorerSemanticExploreUnscopesMultiRootMetric(t *testing.T) {
+	executor := &browserDataQueryStub{result: dataquery.Result{
+		Columns: []dataquery.Column{{Name: "order_share"}},
+		Rows:    []dataquery.Row{{"order_share": 0.5}}, SQL: "select order_share",
+	}}
+	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
+		ModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("customers"),
+		Metrics: []string{"order_share"}, Limit: 100,
+	}, []projectsignals.DataExploreFieldSignal{
+		// An empty modelTable is the projection contract for a derived/ratio
+		// metric whose dependencies span more than one physical dataset.
+		{ID: "order_share", Label: "Order share", Kind: "metric", Compatible: true},
+	})
+
+	if result.Error != nil {
+		t.Fatalf("result error = %q", *result.Error)
+	}
+	if len(command.Metrics) != 1 || executor.query.Kind != dataquery.KindSemanticAggregate {
+		t.Fatalf("normalized command/query = %#v / %#v", command, executor.query)
+	}
+	if executor.query.Target != "" {
+		t.Fatalf("query target = %q, want unscoped multi-root execution", executor.query.Target)
+	}
+	if executor.query.Metrics[0].Field != "order_share" {
+		t.Fatalf("query metrics = %#v", executor.query.Metrics)
 	}
 }
 
@@ -287,7 +315,7 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 				To:   semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Fields: []string{"customer_id"}},
 			},
 		},
-		Relationships: []semanticmodel.Relationship{{ID: "orders_customer", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"}},
+		Relationships: []semanticmodel.Relationship{{ID: "orders_customer", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}},
 	}
 	const projectID = "project:test"
 	const assetID = "semantic:sales"

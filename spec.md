@@ -40,8 +40,8 @@ Connection → Source → Model table → Semantic model → Dashboard
 ```
 
 Connections and sources provide governed inputs. Model tables provide reusable
-transformations. Semantic models define dimensions, relationships, measures,
-metrics, and policy-aware query contracts. Pipelines schedule refresh work.
+transformations. Semantic models define dimensions, relationships, metrics, and
+policy-aware query contracts. Pipelines schedule refresh work.
 Dashboards compose governed semantic queries into pages, filters, visuals, and
 layout. Shared resources are defined once and referenced by stable IDs.
 

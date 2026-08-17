@@ -160,8 +160,8 @@ func TestSpatialTileAggregateRequiresForwardTargetZoom(t *testing.T) {
 func TestSpatialTilePlansCrossFactCoordinatesWithoutTableScope(t *testing.T) {
 	model := testModel()
 	customers := model.Tables["customers"]
-	customers.Dimensions["latitude"] = semanticmodel.MetricDimension{Expr: "latitude", Type: "number"}
-	customers.Dimensions["longitude"] = semanticmodel.MetricDimension{Expr: "longitude", Type: "number"}
+	customers.Dimensions["latitude"] = semanticmodel.MetricDimension{Type: "number"}
+	customers.Dimensions["longitude"] = semanticmodel.MetricDimension{Type: "number"}
 	model.Tables["customers"] = customers
 	plan, err := NewPlanner(model).PlanSpatialTileAggregate(SpatialTileRequest{
 		Metrics:  []Field{{Field: "order_count", Alias: "order_count"}},

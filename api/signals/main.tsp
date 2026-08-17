@@ -1769,12 +1769,22 @@ model SemanticModelGraphEdgeSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model SemanticModelGraphFieldSignal {
+  `entities`?: string[];
+  `grain`?: boolean;
   `join`?: boolean;
   `label`?: string;
   `name`: string;
-  `primaryKey`?: boolean;
   `relationships`?: string[];
   `type`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model SemanticModelGraphEntitySignal {
+  `fields`: string[];
+  `grain`?: boolean;
+  `name`: string;
+  `type`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
@@ -1782,9 +1792,10 @@ model SemanticModelGraphFieldSignal {
 model SemanticModelGraphNodeSignal {
   `badges`?: string[];
   `description`?: string;
+  `entities`?: SemanticModelGraphEntitySignal[];
   `fields`: SemanticModelGraphFieldSignal[];
+  `grainEntity`?: string;
   `id`: string;
-  `primaryKey`?: string;
   `title`: string;
 }
 

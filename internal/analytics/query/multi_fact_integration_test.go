@@ -17,8 +17,8 @@ func TestRolePlayingDimensionPathsExecuteWithIndependentAliases(t *testing.T) {
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE SCHEMA model",
-		"CREATE TABLE model.orders(ordered_date_id INTEGER, shipped_date_id INTEGER)",
-		"INSERT INTO model.orders VALUES (1, 2), (1, 3), (2, 3)",
+		"CREATE TABLE model.orders(order_id INTEGER, ordered_date_id INTEGER, shipped_date_id INTEGER)",
+		"INSERT INTO model.orders VALUES (1, 1, 2), (2, 1, 3), (3, 2, 3)",
 		"CREATE TABLE model.dates(date_id INTEGER, date_value DATE)",
 		"INSERT INTO model.dates VALUES (1, DATE '2026-07-01'), (2, DATE '2026-07-02'), (3, DATE '2026-07-03')",
 	} {
@@ -75,12 +75,12 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE SCHEMA model",
-		"CREATE TABLE model.orders(customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
-		"INSERT INTO model.orders VALUES ('a', 'consumer', 10), ('a', 'consumer', 20), ('b', 'business', 30)",
-		"CREATE TABLE model.tags(customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
-		"INSERT INTO model.tags VALUES ('a', 'consumer', 'new'), ('c', 'consumer', 'vip'), ('c', 'consumer', 'repeat')",
-		"CREATE TABLE model.clicks(customer_id VARCHAR, segment VARCHAR)",
-		"INSERT INTO model.clicks VALUES ('a', 'consumer'), ('d', 'business'), ('d', 'business')",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'a', 'consumer', 10), ('o2', 'a', 'consumer', 20), ('o3', 'b', 'business', 30)",
+		"CREATE TABLE model.tags(tag_id VARCHAR, customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
+		"INSERT INTO model.tags VALUES ('t1', 'a', 'consumer', 'new'), ('t2', 'c', 'consumer', 'vip'), ('t3', 'c', 'consumer', 'repeat')",
+		"CREATE TABLE model.clicks(click_id VARCHAR, customer_id VARCHAR, segment VARCHAR)",
+		"INSERT INTO model.clicks VALUES ('c1', 'a', 'consumer'), ('c2', 'd', 'business'), ('c3', 'd', 'business')",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatalf("execute %q: %v", statement, err)
@@ -193,14 +193,22 @@ func executableMultiFactModel() *semanticmodel.Model {
 		Name: "executable",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"order_id": {Expr: "order_id", Type: "string"}, "customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"}, "amount": {Expr: "amount", Type: "number"},
+				"order_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string"}, "amount": {Type: "number"},
 			}},
 			"tags": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"tag_id": {Expr: "tag_id", Type: "string"}, "customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"}, "tag": {Expr: "tag", Type: "string"},
+				"tag_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string"}, "tag": {Type: "string"},
 			}},
 			"clicks": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"click_id": {Expr: "click_id", Type: "string"}, "customer_id": {Expr: "customer_id", Type: "string"}, "segment": {Expr: "segment", Type: "string"},
+				"click_id": {Type: "string"}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string"},
 			}},
+			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{
+				"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string"},
+			}},
+		},
+		Relationships: []semanticmodel.Relationship{
+			{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+			{ID: "tags_customers", FromDataset: "tags", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+			{ID: "clicks_customers", FromDataset: "clicks", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
 			"customer": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{

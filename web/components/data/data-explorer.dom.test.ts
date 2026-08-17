@@ -340,7 +340,7 @@ test('data explorer prompts for a selection when objects are available', async (
           }],
           preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
           command: { offset: 0, limit: 100, start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
-          explore: { command: { dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
+          explore: { command: { dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
           warnings: [],
         },
       })
@@ -530,7 +530,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.rebaseCommand.dimensions).toEqual(['customers.state', 'orders.status'])
     expect(state.tableSelectionCommand.datasetId).toBe('customers')
     expect(state.tableSelectionCommand.dimensions).toEqual(['customers.customer_id', 'customers.state'])
-    expect(state.tableSelectionCommand.measures).toEqual([])
+    expect(state.tableSelectionCommand.metrics).toEqual([])
     expect(state.commands.some((command) => command.explore?.dimensions?.includes('items.sku'))).toBe(false)
     expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.dimensions?.includes('orders.order_id'))).toBe(true)
     expect(state.commands.some((command) => command.explore?.filters?.[0]?.field === 'orders.status' && command.explore.filters[0].values[0] === 'delivered')).toBe(true)

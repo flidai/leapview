@@ -192,10 +192,10 @@ func testSemanticModel() *semanticmodel.Model {
 		Title: "Test",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{
-				"order_id": {Expr: "order_id", Type: "string"},
-				"status":   {Expr: "status", Type: "string"},
-				"state":    {Expr: "state", Type: "string"},
-				"category": {Expr: "category", Type: "string"},
+				"order_id": {Type: "string"},
+				"status":   {Type: "string"},
+				"state":    {Type: "string"},
+				"category": {Type: "string"},
 			}},
 		},
 		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}},

@@ -22,7 +22,7 @@ func TestPlannerScalarMultiFactAggregatesFactsIndependently(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"fact_0 AS", "SUM(t0.revenue)", "fact_1 AS", "COUNT(*) AS __m2",
+		"fact_0 AS", "SUM(t0.revenue)", "fact_1 AS", "COUNT(t0.tag_id) AS __m2",
 		"CROSS JOIN", "NULLIF(COALESCE(s.__m0, 0), 0)",
 	} {
 		if !strings.Contains(plan.SQL, want) {
@@ -207,10 +207,10 @@ func TestPlannerRejectsLocalDimensionInMultiFactQuery(t *testing.T) {
 func TestPlannerUsesExplicitBindingPathInAmbiguousGraph(t *testing.T) {
 	model := testModel()
 	orders := model.Tables["orders"]
-	orders.Dimensions["billing_customer_id"] = semanticmodel.MetricDimension{Expr: "billing_customer_id"}
+	orders.Dimensions["billing_customer_id"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeInteger}
 	model.Tables["orders"] = orders
 	model.Relationships = append(model.Relationships, semanticmodel.Relationship{
-		ID: "orders_billing_customers", From: "orders.billing_customer_id", To: "customers.customer_id", Cardinality: "many_to_one",
+		ID: "orders_billing_customers", FromDataset: "orders", FromFields: []string{"billing_customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one",
 	})
 	state := model.Dimensions["customer_state"]
 	state.Bindings["orders"] = semanticmodel.DimensionBinding{Field: "customers.state", Path: []string{"orders_customers"}}
@@ -230,7 +230,7 @@ func TestPlannerUsesExplicitBindingPathInAmbiguousGraph(t *testing.T) {
 
 func TestPlannerUsesDistinctAliasesForRolePlayingDimensionPaths(t *testing.T) {
 	plan, err := NewPlanner(rolePlayingDateModel()).Plan(Request{
-		Dimensions: []Field{{Field: "order_date"}, {Field: "ship_date"}},
+		Dimensions: []Field{{Field: "order_date", Alias: "order_date"}, {Field: "ship_date", Alias: "ship_date"}},
 		Metrics:    []Field{{Field: "order_count"}},
 	})
 	if err != nil {
@@ -293,6 +293,133 @@ func TestPlannerKeepsRolePlayingFilterPathsDistinct(t *testing.T) {
 	}
 	if strings.Join(plan.RelationshipPaths, ",") != "orders:orders_order_date,orders:orders_ship_date" {
 		t.Fatalf("filter relationship paths = %v", plan.RelationshipPaths)
+	}
+}
+
+func TestPlannerRowsKeepsRolePlayingDimensionPathsDistinct(t *testing.T) {
+	plan, err := NewPlanner(rolePlayingDateModel()).PlanRows(RowRequest{
+		Table:      "orders",
+		Dimensions: []Field{{Field: "order_date"}, {Field: "ship_date"}},
+		Metrics:    []Field{{Field: "order_count"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
+		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
+		"t1.date_value AS order_date",
+		"t2.date_value AS ship_date",
+	} {
+		if !strings.Contains(plan.SQL, want) {
+			t.Fatalf("role-playing row SQL missing %q:\n%s", want, plan.SQL)
+		}
+	}
+}
+
+func TestPlannerRawValuesKeepsRolePlayingDimensionPathsDistinct(t *testing.T) {
+	plan, err := NewPlanner(rolePlayingDateModel()).PlanRawValues(RawValueRequest{
+		Table:      "orders",
+		Dimensions: []Field{{Field: "order_date", Alias: "order_date"}, {Field: "ship_date", Alias: "ship_date"}},
+		Metric:     Field{Field: "order_count"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
+		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
+		"t1.date_value AS order_date",
+		"t2.date_value AS ship_date",
+	} {
+		if !strings.Contains(plan.SQL, want) {
+			t.Fatalf("role-playing raw SQL missing %q:\n%s", want, plan.SQL)
+		}
+	}
+}
+
+func TestPlannerRowsAppliesPhysicalMaskToPathResolvedDimension(t *testing.T) {
+	plan, err := NewPlanner(rolePlayingDateModel()).PlanRows(RowRequest{
+		Table:       "orders",
+		Dimensions:  []Field{{Field: "order_date", Alias: "order_date"}},
+		ColumnMasks: []ColumnMask{{Field: "dates.date_value", Mask: "null"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.SQL, "NULL AS order_date") {
+		t.Fatalf("physical dimension mask was not applied:\n%s", plan.SQL)
+	}
+}
+
+func TestPlannerCountKeepsRolePlayingFilterPathsDistinct(t *testing.T) {
+	plan, err := NewPlanner(rolePlayingDateModel()).PlanCount(CountRequest{
+		Table: "orders",
+		Filters: []Filter{
+			{Field: "order_date", Operator: "equals", Values: []any{"2026-08-01"}},
+			{Field: "ship_date", Operator: "equals", Values: []any{"2026-08-02"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
+		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
+		"t1.date_value = ?",
+		"t2.date_value = ?",
+	} {
+		if !strings.Contains(plan.SQL, want) {
+			t.Fatalf("role-playing count SQL missing %q:\n%s", want, plan.SQL)
+		}
+	}
+}
+
+func TestPlannerResolvesDatasetDefaultTimeDimensionForAggregateMetric(t *testing.T) {
+	model := testModel()
+	model.Datasets = map[string]semanticmodel.SemanticDatasetSpec{
+		"orders": {Model: "orders", DefaultTimeDimension: "activity_date"},
+	}
+	model.Dimensions["activity_date"] = semanticmodel.SemanticDimension{
+		Type: "timestamp", Grains: []string{"day"},
+		Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.ordered_at"}},
+	}
+	planner := NewPlanner(model)
+	resolved, err := planner.resolvedAggregateMetric("revenue", model.Metrics["revenue"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.TimeDimension != "activity_date" {
+		t.Fatalf("effective metric time dimension = %q, want activity_date", resolved.TimeDimension)
+	}
+
+	metric := model.Metrics["revenue"]
+	metric.TimeDimension = "activity_date_override"
+	model.Dimensions["activity_date_override"] = model.Dimensions["activity_date"]
+	model.Metrics["revenue"] = metric
+	resolved, err = NewPlanner(model).resolvedAggregateMetric("revenue", metric)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.TimeDimension != "activity_date_override" {
+		t.Fatalf("explicit metric time dimension = %q, want activity_date_override", resolved.TimeDimension)
+	}
+}
+
+func TestPlannerRejectsRelationshipKeyLogicalDatatypeMismatch(t *testing.T) {
+	model := testModel()
+	orders := model.Tables["orders"]
+	orders.Dimensions["customer_id"] = semanticmodel.MetricDimension{Type: "number", Datatype: semanticmodel.DataTypeInteger}
+	model.Tables["orders"] = orders
+	customers := model.Tables["customers"]
+	customers.Dimensions["customer_id"] = semanticmodel.MetricDimension{Type: "number", Datatype: semanticmodel.DataTypeDecimal}
+	model.Tables["customers"] = customers
+	_, err := NewPlanner(model).Plan(Request{
+		Dimensions: []Field{{Field: "customer_state"}},
+		Metrics:    []Field{{Field: "order_count"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "relationship tuple field") {
+		t.Fatalf("relationship key datatype mismatch accepted: %v", err)
 	}
 }
 
@@ -415,21 +542,21 @@ func testModel() *semanticmodel.Model {
 		Name: "commerce",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"order_id": {Expr: "order_id"}, "customer_id": {Expr: "customer_id"},
-				"ordered_at": {Expr: "ordered_at", Type: "timestamp"}, "revenue": {Expr: "revenue", Type: "number"},
-				"status": {Expr: "status", Type: "string"}, "latitude": {Expr: "latitude", Type: "number"}, "longitude": {Expr: "longitude", Type: "number"},
+				"order_id": {Datatype: semanticmodel.DataTypeInteger}, "customer_id": {Datatype: semanticmodel.DataTypeInteger},
+				"ordered_at": {Type: "timestamp"}, "revenue": {Type: "number"},
+				"status": {Type: "string"}, "latitude": {Type: "number"}, "longitude": {Type: "number"},
 			}},
 			"tags": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"tag_id": {Expr: "tag_id"}, "customer_id": {Expr: "customer_id"},
-				"tagged_at": {Expr: "tagged_at", Type: "timestamp"},
+				"tag_id": {}, "customer_id": {Datatype: semanticmodel.DataTypeInteger},
+				"tagged_at": {Type: "timestamp"},
 			}},
 			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"customer_id": {Expr: "customer_id"}, "state": {Expr: "state", Type: "string"},
+				"customer_id": {Datatype: semanticmodel.DataTypeInteger}, "state": {Type: "string"},
 			}},
 		},
 		Relationships: []semanticmodel.Relationship{
-			{ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
-			{ID: "tags_customers", From: "tags.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
+			{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+			{ID: "tags_customers", FromDataset: "tags", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
 			"activity_date": {Type: "timestamp", Grains: []string{"day", "month"}, Bindings: map[string]semanticmodel.DimensionBinding{
@@ -452,16 +579,16 @@ func testModel() *semanticmodel.Model {
 func rolePlayingDateModel() *semanticmodel.Model {
 	model := testModel()
 	orders := model.Tables["orders"]
-	orders.Dimensions["ordered_date_id"] = semanticmodel.MetricDimension{Expr: "ordered_date_id"}
-	orders.Dimensions["shipped_date_id"] = semanticmodel.MetricDimension{Expr: "shipped_date_id"}
+	orders.Dimensions["ordered_date_id"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeInteger}
+	orders.Dimensions["shipped_date_id"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeInteger}
 	model.Tables["orders"] = orders
 	model.Tables["dates"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
-		"date_id":    {Expr: "date_id"},
-		"date_value": {Expr: "date_value", Type: "date"},
+		"date_id":    {Datatype: semanticmodel.DataTypeInteger},
+		"date_value": {Type: "date"},
 	}}
 	model.Relationships = append(model.Relationships,
-		semanticmodel.Relationship{ID: "orders_order_date", From: "orders.ordered_date_id", To: "dates.date_id", Cardinality: "many_to_one"},
-		semanticmodel.Relationship{ID: "orders_ship_date", From: "orders.shipped_date_id", To: "dates.date_id", Cardinality: "many_to_one"},
+		semanticmodel.Relationship{ID: "orders_order_date", FromDataset: "orders", FromFields: []string{"ordered_date_id"}, ToDataset: "dates", ToFields: []string{"date_id"}, Cardinality: "many_to_one"},
+		semanticmodel.Relationship{ID: "orders_ship_date", FromDataset: "orders", FromFields: []string{"shipped_date_id"}, ToDataset: "dates", ToFields: []string{"date_id"}, Cardinality: "many_to_one"},
 	)
 	model.Dimensions["order_date"] = semanticmodel.SemanticDimension{Type: "date", Bindings: map[string]semanticmodel.DimensionBinding{
 		"orders": {Field: "dates.date_value", Path: []string{"orders_order_date"}},

@@ -15,7 +15,7 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 		Title: "Sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				PrimaryKey: "order_id", Grain: "order_id", Description: "Orders table",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Description: "Orders table",
 				Columns: map[string]semanticmodel.ModelColumn{
 					"order_id": {Name: "order_id", Type: "integer"},
 					"status":   {Name: "status", Type: "string", Description: "Order status"},
@@ -25,8 +25,8 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Label: "Orders", Aggregation: "count"},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Type: "aggregate", Dataset: "orders", Label: "Orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
 		},
 	}
 	project := projectmanifest.Project{
@@ -70,7 +70,7 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 		t.Fatalf("model object columns = %#v, want rich table columns", modelObject)
 	}
 	if len(projection.Fields) != 2 || projection.Fields[0].ID != "orders.status" || projection.Fields[1].ID != "order_count" {
-		t.Fatalf("fields = %#v, want dimension and measure", projection.Fields)
+		t.Fatalf("fields = %#v, want dimension and metric", projection.Fields)
 	}
 }
 
@@ -81,14 +81,14 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 			"orders":    {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
 			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{"region": {Label: "Region"}}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"revenue": {Fact: "orders", Label: "Revenue"}},
+		Metrics: map[string]semanticmodel.Metric{"revenue": {Type: "aggregate", Dataset: "orders", Label: "Revenue", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}}},
 	}
 	project := projectmanifest.Project{
 		Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"]},
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
 	}
-	command := projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"), Dimensions: []string{"customers.region"}, Measures: []string{"revenue"}}
+	command := projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"), Dimensions: []string{"customers.region"}, Metrics: []string{"revenue"}}
 	projection := BuildDataExplorerProjection([]projectview.DevelopAssetView{
 		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
 		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
@@ -98,7 +98,7 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 		t.Fatalf("selected dataset = %#v, want customers", projection.SelectedDataset)
 	}
 	if len(projection.Fields) != 3 {
-		t.Fatalf("fields = %#v, want two dimensions and one measure", projection.Fields)
+		t.Fatalf("fields = %#v, want two dimensions and one metric", projection.Fields)
 	}
 	for _, field := range projection.Fields {
 		switch field.ID {
@@ -108,7 +108,7 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 			}
 		case "revenue":
 			if !field.Selected || field.Compatible {
-				t.Fatalf("cross-table measure = %#v, want selected and incompatible", field)
+				t.Fatalf("cross-table metric = %#v, want selected and incompatible", field)
 			}
 		}
 	}
@@ -132,7 +132,7 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 			},
 		},
 		Relationships: []semanticmodel.Relationship{{
-			ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one",
+			ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one",
 		}},
 	}
 	project := projectmanifest.Project{
@@ -193,5 +193,47 @@ func TestBuildDataExplorerProjectionDoesNotUseGraphPayloadAsSchema(t *testing.T)
 	}, project, projectsignals.DataExploreCommand{})
 	if len(projection.Objects) != 1 || projection.Objects[0].ColumnCount != 1 {
 		t.Fatalf("objects = %#v, want one manifest-backed object", projection.Objects)
+	}
+}
+
+func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders":    {Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Order ID"}}},
+			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Customer ID"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count":    {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}},
+			"customer_count": {Type: "aggregate", Dataset: "customers", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "customers.id"}},
+			"order_rate":     {Type: "derived", Expression: "${order_count} * 2"},
+			"order_share":    {Type: "ratio", Numerator: "order_count", Denominator: "customer_count"},
+		},
+	}
+	project := projectmanifest.Project{
+		Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"]},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
+		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
+	}
+	assets := []projectview.DevelopAssetView{
+		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
+		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
+		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
+	}
+	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
+		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
+	})
+	fields := map[string]projectsignals.DataExploreFieldSignal{}
+	for _, field := range projection.Fields {
+		fields[field.ID] = field
+	}
+	if got := fields["order_rate"]; got.ModelTable != "orders" || projectsignals.ValueOrZero(got.Dataset) != "orders" || got.Compatible {
+		t.Fatalf("single-root derived metric = %#v, want orders ownership and incompatibility from customers", got)
+	}
+	for _, name := range []string{"order_share"} {
+		got := fields[name]
+		if got.ModelTable != "" || got.Dataset != nil || !got.Compatible {
+			t.Fatalf("multi-root metric %q = %#v, want visible without false ownership", name, got)
+		}
 	}
 }

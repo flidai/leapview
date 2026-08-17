@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,8 +20,17 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
-				Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}},
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
+					"customer":   {Type: "foreign", Fields: []string{"customer_id"}},
+				},
+				GrainEntity: "order_line",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"order_id":    {Label: "Order ID"},
+					"line_number": {Label: "Line number"},
+					"customer_id": {Label: "Customer ID"},
+					"status":      {Label: "Status"},
+				},
 			},
 			"customers": {Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
@@ -57,6 +67,31 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 	}
 	if details.SemanticModelGraph == nil || len(details.SemanticModelGraph.Nodes) != 2 || len(details.SemanticModelGraph.Edges) != 1 {
 		t.Fatalf("semantic graph = %#v, want two nodes and one edge", details.SemanticModelGraph)
+	}
+	var ordersNode *uisignals.SemanticModelGraphNodeSignal
+	for index := range details.SemanticModelGraph.Nodes {
+		if details.SemanticModelGraph.Nodes[index].ID == "orders" {
+			ordersNode = &details.SemanticModelGraph.Nodes[index]
+			break
+		}
+	}
+	if ordersNode == nil || ordersNode.GrainEntity == nil || *ordersNode.GrainEntity != "order_line" {
+		t.Fatalf("orders graph node = %#v, want order_line grain", ordersNode)
+	}
+	if ordersNode.Entities == nil || len(*ordersNode.Entities) != 2 {
+		t.Fatalf("orders graph entities = %#v, want primary and foreign entities", ordersNode.Entities)
+	}
+	if got := (*ordersNode.Entities)[1]; got.Name != "order_line" || got.Type != "primary" || !slices.Equal(got.Fields, []string{"order_id", "line_number"}) || got.Grain == nil || !*got.Grain {
+		t.Fatalf("orders graph grain entity = %#v, want ordered composite order_line", got)
+	}
+	grainFields := []string{}
+	for _, field := range ordersNode.Fields {
+		if field.Grain != nil && *field.Grain {
+			grainFields = append(grainFields, field.Name)
+		}
+	}
+	if !slices.Equal(grainFields, []string{"line_number", "order_id"}) {
+		t.Fatalf("orders graph grain fields = %v, want composite grain fields", grainFields)
 	}
 	metricTable := semanticMetricsTable(project.ID, asset, []projectview.DevelopAssetView{asset}, asset.Payload)
 	if len(metricTable.Rows) != 1 {
@@ -125,8 +160,8 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 		Sources:            []string{"olist.geolocation"},
 		Transform:          semanticmodel.Transform{SQL: "SELECT zip_prefix FROM source.\"olist.geolocation\""},
 		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix", Description: "ZIP code prefix"}},
-		PrimaryKey:         "zip_prefix",
-		Grain:              "zip_prefix",
+		Entities:           map[string]semanticmodel.ModelEntitySpec{"zip_prefix": {Type: "primary", Fields: []string{"zip_prefix"}}},
+		GrainEntity:        "zip_prefix",
 		SourceDependencies: []string{"olist.geolocation"},
 		Schema:             semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", Ordinal: 0, PhysicalType: "VARCHAR"}}},
 	}
@@ -145,14 +180,17 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := factValue(details.Overview, "Mode"); got != "Transform" {
 		t.Fatalf("mode fact = %q, want Transform", got)
 	}
-	if len(details.Sections) != 2 || details.Sections[0].Title != "Fields (1)" || details.Sections[1].Title != "SQL" {
-		t.Fatalf("sections = %#v, want fields and SQL", details.Sections)
+	if len(details.Sections) != 3 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (1)" || details.Sections[2].Title != "SQL" {
+		t.Fatalf("sections = %#v, want entities, fields, and SQL", details.Sections)
 	}
-	if uisignals.ValueOrZero(details.Sections[1].Code) != table.Transform.SQL || uisignals.ValueOrZero(details.Sections[1].Lang) != "sql" {
-		t.Fatalf("SQL section = %#v, want compiled transform SQL", details.Sections[1])
+	if len(details.Sections[0].Table.Rows) != 1 || details.Sections[0].Table.Rows[0]["name"] != "zip_prefix" || details.Sections[0].Table.Rows[0]["grain"] != "Yes" {
+		t.Fatalf("entity rows = %#v, want grain zip_prefix entity", details.Sections[0].Table.Rows)
 	}
-	if len(details.Sections[0].Table.Rows) != 1 {
-		t.Fatalf("field rows = %#v, want one row", details.Sections[0].Table.Rows)
+	if uisignals.ValueOrZero(details.Sections[2].Code) != table.Transform.SQL || uisignals.ValueOrZero(details.Sections[2].Lang) != "sql" {
+		t.Fatalf("SQL section = %#v, want compiled transform SQL", details.Sections[2])
+	}
+	if len(details.Sections[1].Table.Rows) != 1 {
+		t.Fatalf("field rows = %#v, want one row", details.Sections[1].Table.Rows)
 	}
 }
 
@@ -224,6 +262,47 @@ func TestDevelopAssetLinksStayInResourceArea(t *testing.T) {
 	}
 	if page.DetailHref == "/projects/sales/assets/model_table:orders/details" {
 		t.Fatal("legacy project-prefixed asset link escaped into resource signal")
+	}
+}
+
+func TestModelDetailUsesNamedEntitiesAndExactGrain(t *testing.T) {
+	asset := projectview.DevelopAssetView{
+		ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders",
+		Payload: map[string]any{
+			"Entities": map[string]any{
+				"order_line": map[string]any{"Type": "primary", "Fields": []any{"order_id", "line_number"}},
+			},
+			"GrainEntity": "order_line",
+			"Dimensions": map[string]any{
+				"order_id": map[string]any{}, "line_number": map[string]any{}, "amount": map[string]any{},
+			},
+		},
+	}
+	details := projectAssetDetailsSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil)
+	overview := map[string]string{}
+	for _, fact := range details.Overview {
+		overview[fact.Label] = fact.Value
+	}
+	if overview["Grain entity"] != "order_line" || overview["Entities"] != "1" {
+		t.Fatalf("overview = %#v, want named entity and grain", overview)
+	}
+	if _, exists := overview["Primary key"]; exists {
+		t.Fatalf("overview = %#v, removed scalar primary-key contract is still exposed", overview)
+	}
+	if len(details.Sections) != 2 || details.Sections[0].Title != "Entities (1)" || details.Sections[0].Table == nil {
+		t.Fatalf("sections = %#v, want entities and fields", details.Sections)
+	}
+	entityRows := details.Sections[0].Table.Rows
+	if len(entityRows) != 1 || entityRows[0]["name"] != "order_line" || entityRows[0]["fields"] != "order_id, line_number" || entityRows[0]["grain"] != "Yes" {
+		t.Fatalf("entity rows = %#v, want ordered composite grain", entityRows)
+	}
+	fieldRows := details.Sections[1].Table.Rows
+	for _, row := range fieldRows {
+		if row["name"] == "order_id" || row["name"] == "line_number" {
+			if row["entities"] != "order_line" || row["grain"] != "Yes" {
+				t.Fatalf("grain field row = %#v, want entity membership and grain", row)
+			}
+		}
 	}
 }
 

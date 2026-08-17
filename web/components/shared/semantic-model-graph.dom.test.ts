@@ -67,8 +67,9 @@ for (const viewport of [
         const headerTexts = Array.from(graph.querySelectorAll('.semantic-model-node-header')).map((node) => node.textContent?.trim())
         const badges = Array.from(graph.querySelectorAll('.semantic-model-node-badge')).map((badge) => badge.textContent?.trim())
         const joinRow = graph.querySelector<HTMLElement>('.semantic-model-field-join')
-        const primaryKeyName = graph.querySelector<HTMLElement>('.semantic-model-field-primary .semantic-model-field-name')
-        const primaryKeyMarker = graph.querySelector<HTMLElement>('.semantic-model-field-key')
+        const grainName = graph.querySelector<HTMLElement>('.semantic-model-field-grain .semantic-model-field-name')
+        const grainMarker = graph.querySelector<HTMLElement>('.semantic-model-field-grain-marker')
+        const entityBadges = Array.from(graph.querySelectorAll<HTMLElement>('.semantic-model-node-entities'))
         const resetButton = graph.querySelector('.semantic-model-reset-button') as HTMLButtonElement | null
         const flowRect = flow.getBoundingClientRect()
         const nodeRects = nodes.map((node) => node.getBoundingClientRect())
@@ -87,12 +88,13 @@ for (const viewport of [
           hasCustomers: nodeTexts.some((text) => text.includes('customers')),
           hasJoinLabel: nodeTexts.some((text) => text.includes('Join')),
           hasJoinRow: Boolean(graph.querySelector('.semantic-model-field-join')),
-          hasPkMarker: nodeTexts.some((text) => text.includes('PK')),
-          primaryKeyText: primaryKeyName?.textContent?.trim(),
-          primaryKeyTitle: primaryKeyName?.getAttribute('title'),
-          primaryKeyFontWeight: primaryKeyName ? getComputedStyle(primaryKeyName).fontWeight : '',
-          primaryKeyMarkerText: primaryKeyMarker?.textContent?.trim(),
-          primaryKeyMarkerTitle: primaryKeyMarker?.getAttribute('title'),
+          hasGrainMarker: nodeTexts.some((text) => text.includes('G')),
+          grainText: grainName?.textContent?.trim(),
+          grainTitle: grainName?.getAttribute('title'),
+          grainFontWeight: grainName ? getComputedStyle(grainName).fontWeight : '',
+          grainMarkerText: grainMarker?.textContent?.trim(),
+          grainMarkerTitle: grainMarker?.getAttribute('title'),
+          entityTitles: entityBadges.map((badge) => badge.getAttribute('title')),
           hasBadgeElement: Boolean(graph.querySelector('.semantic-model-node-badge')),
           badges,
           joinRowBackground: joinRow ? getComputedStyle(joinRow).backgroundColor : '',
@@ -118,14 +120,15 @@ for (const viewport of [
       expect(state.hasCustomers).toBe(true)
       expect(state.hasJoinLabel).toBe(false)
       expect(state.hasJoinRow).toBe(true)
-      expect(state.hasPkMarker).toBe(true)
-      expect(state.primaryKeyText).toBe('order_id')
-      expect(state.primaryKeyTitle).toBe('order_id (primary key)')
-      expect(Number(state.primaryKeyFontWeight)).toBeGreaterThanOrEqual(600)
-      expect(state.primaryKeyMarkerText).toBe('PK')
-      expect(state.primaryKeyMarkerTitle).toBe('Primary key')
+      expect(state.hasGrainMarker).toBe(true)
+      expect(state.grainText).toBe('order_id')
+      expect(state.grainTitle).toBe('order_id (grain: order); entities: order')
+      expect(Number(state.grainFontWeight)).toBeGreaterThanOrEqual(600)
+      expect(state.grainMarkerText).toBe('G')
+      expect(state.grainMarkerTitle).toBe('Grain field for order')
+      expect(state.entityTitles).toContain('Entities: order (primary) [order_id]; customer (foreign) [customer_id]')
       expect(state.hasBadgeElement).toBe(true)
-      expect(state.badges).toEqual(['dataset', '2 metrics'])
+      expect(state.badges).toEqual(['dataset', '2 metrics', 'grain: order', '2 entities', 'grain: customer', '1 entity'])
       expect(state.joinRowBackground).not.toBe('')
       expect(state.joinRowBoxShadow).toContain('inset')
       expect(state.hasTypeIcon).toBe(true)
@@ -246,20 +249,25 @@ function testDocument(): string {
               {
                 id: 'orders',
                 title: 'orders',
-                primaryKey: 'order_id',
+                grainEntity: 'order',
+                entities: [
+                  { name: 'order', type: 'primary', fields: ['order_id'], grain: true },
+                  { name: 'customer', type: 'foreign', fields: ['customer_id'] },
+                ],
                 badges: ['dataset', '2 metrics'],
                 fields: [
-                  { name: 'order_id', label: 'Order ID', type: 'VARCHAR', primaryKey: true },
-                  { name: 'customer_id', label: 'Customer ID', type: 'VARCHAR', join: true, relationships: ['orders_customers'] },
+                  { name: 'order_id', label: 'Order ID', type: 'VARCHAR', grain: true, entities: ['order'] },
+                  { name: 'customer_id', label: 'Customer ID', type: 'VARCHAR', entities: ['customer'], join: true, relationships: ['orders_customers'] },
                   { name: 'state', label: 'State', type: 'VARCHAR' },
                 ],
               },
               {
                 id: 'customers',
                 title: 'customers',
-                primaryKey: 'customer_id',
+                grainEntity: 'customer',
+                entities: [{ name: 'customer', type: 'primary', fields: ['customer_id'], grain: true }],
                 fields: [
-                  { name: 'customer_id', label: 'Customer ID', type: 'VARCHAR', primaryKey: true, join: true, relationships: ['orders_customers'] },
+                  { name: 'customer_id', label: 'Customer ID', type: 'VARCHAR', grain: true, entities: ['customer'], join: true, relationships: ['orders_customers'] },
                   { name: 'segment', label: 'Segment', type: 'VARCHAR' },
                 ],
               },

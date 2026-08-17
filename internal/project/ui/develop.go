@@ -1975,9 +1975,10 @@ func semanticModelGraphSignal(meta map[string]any) *uisignals.SemanticModelGraph
 			ID:          name,
 			Title:       name,
 			Description: uisignals.Optional(metaString(dataset, "Description")),
-			PrimaryKey:  uisignals.Optional(metaString(details, "PrimaryKey")),
+			Entities:    uisignals.OptionalSlice(semanticModelGraphEntities(details)),
 			Badges:      uisignals.OptionalSlice(badges),
 			Fields:      semanticModelGraphFields(details, joinFields[name]),
+			GrainEntity: uisignals.Optional(metaString(details, "GrainEntity")),
 		})
 	}
 	return &uisignals.SemanticModelGraphSignal{
@@ -2115,16 +2116,16 @@ func containsString(values []string, target string) bool {
 func semanticModelGraphFields(table map[string]any, joins map[string][]string) []uisignals.SemanticModelGraphFieldSignal {
 	fields := metaMap(table, "Dimensions")
 	columns := modelTableSchemaColumns(fields, metaMap(table, "Schema"))
+	entityNames, grainFields := semanticModelGraphFieldIdentity(table)
 	seen := map[string]struct{}{}
 	out := make([]uisignals.SemanticModelGraphFieldSignal, 0, len(columns)+len(joins))
-	primaryKey := metaString(table, "PrimaryKey")
 	for _, column := range columns {
-		name := metaString(column, "Name")
+		name := metaString(column, "Name", "name")
 		if name == "" {
 			continue
 		}
 		field := asMap(fields[name])
-		out = append(out, semanticModelGraphField(name, field, column, primaryKey, joins[name]))
+		out = append(out, semanticModelGraphField(name, field, column, entityNames[name], grainFields[name], joins[name]))
 		seen[name] = struct{}{}
 	}
 	for _, name := range sortedMapKeysString(joins) {
@@ -2134,23 +2135,57 @@ func semanticModelGraphFields(table map[string]any, joins map[string][]string) [
 		out = append(out, uisignals.SemanticModelGraphFieldSignal{
 			Name:          name,
 			Label:         uisignals.Optional(labelFromKey(name)),
+			Entities:      uisignals.OptionalSlice(entityNames[name]),
+			Grain:         uisignals.Optional(grainFields[name]),
 			Join:          uisignals.Pointer(true),
 			Relationships: uisignals.OptionalSlice(joins[name]),
-			PrimaryKey:    uisignals.Optional(name == primaryKey),
 		})
 	}
 	return out
 }
 
-func semanticModelGraphField(name string, field, column map[string]any, primaryKey string, relationships []string) uisignals.SemanticModelGraphFieldSignal {
+func semanticModelGraphField(name string, field, column map[string]any, entities []string, grain bool, relationships []string) uisignals.SemanticModelGraphFieldSignal {
 	return uisignals.SemanticModelGraphFieldSignal{
 		Name:          name,
 		Label:         uisignals.Optional(firstNonEmpty(metaString(field, "Label"), labelFromKey(name))),
-		Type:          uisignals.Optional(firstNonEmpty(metaString(column, "PhysicalType"), metaString(column, "Type"))),
-		PrimaryKey:    uisignals.Optional(metaBool(column, "PrimaryKey") || name == primaryKey),
+		Type:          uisignals.Optional(firstNonEmpty(metaString(column, "PhysicalType", "physicalType"), metaString(column, "Type", "type"))),
+		Entities:      uisignals.OptionalSlice(entities),
+		Grain:         uisignals.Optional(grain),
 		Join:          uisignals.Optional(len(relationships) > 0),
 		Relationships: uisignals.OptionalSlice(relationships),
 	}
+}
+
+func semanticModelGraphEntities(table map[string]any) []uisignals.SemanticModelGraphEntitySignal {
+	entities := metaMap(table, "Entities")
+	grainEntity := metaString(table, "GrainEntity")
+	out := make([]uisignals.SemanticModelGraphEntitySignal, 0, len(entities))
+	for _, name := range sortedMapKeys(entities) {
+		entity := asMap(entities[name])
+		out = append(out, uisignals.SemanticModelGraphEntitySignal{
+			Name:   name,
+			Type:   metaString(entity, "Type"),
+			Fields: metaStringSlice(entity, "Fields"),
+			Grain:  uisignals.Optional(name == grainEntity),
+		})
+	}
+	return out
+}
+
+func semanticModelGraphFieldIdentity(table map[string]any) (map[string][]string, map[string]bool) {
+	entityNames := map[string][]string{}
+	grainFields := map[string]bool{}
+	grainEntity := metaString(table, "GrainEntity")
+	for _, entityName := range sortedMapKeys(metaMap(table, "Entities")) {
+		entity := asMap(metaMap(table, "Entities")[entityName])
+		for _, field := range metaStringSlice(entity, "Fields") {
+			entityNames[field] = append(entityNames[field], entityName)
+			if entityName == grainEntity {
+				grainFields[field] = true
+			}
+		}
+	}
+	return entityNames, grainFields
 }
 
 func semanticModelGraphCardinalityLabel(cardinality string) string {
@@ -2187,18 +2222,19 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 	} else if metaString(asset.Payload, "Source", "source") != "" {
 		mode = "Direct source"
 	}
-	semanticModel := assetByTypeKey("semantic_model", modelKey, assets)
+	entities := metaMap(asset.Payload, "Entities", "entities")
+	grainEntity := metaString(asset.Payload, "GrainEntity", "grainEntity")
 	model.Overview = append(model.Overview,
-		definitionFact{Label: "Semantic model", Value: assetTitle(semanticModel)},
-		definitionFact{Label: "Primary key", Value: metaString(asset.Payload, "PrimaryKey", "primary_key"), Code: true},
-		definitionFact{Label: "Grain", Value: metaString(asset.Payload, "Grain", "grain"), Code: true},
+		definitionFact{Label: "Grain entity", Value: grainEntity, Code: true},
+		definitionFact{Label: "Entities", Value: fmt.Sprint(len(entities))},
 		definitionFact{Label: "Fields", Value: fmt.Sprint(len(fields))},
 		definitionFact{Label: "Input sources", Value: fmt.Sprint(len(sources))},
 		definitionFact{Label: "Mode", Value: mode},
 	)
 	model.Overview = append(model.Overview, refreshOverviewFacts(refresh)...)
 	model.Sections = append(model.Sections,
-		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", len(fields)), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(project.ID, modelKey, tableName, fields, metaMap(asset.Payload, "Schema", "schema"), assets)},
+		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelTableEntitiesTable", Table: modelTableEntitiesGrid(asset.Payload)},
+		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", len(fields)), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(project.ID, modelKey, tableName, asset.Payload, assets)},
 	)
 	if sql := modelTableSQL(asset.Payload); sql != "" {
 		model.Sections = append(model.Sections, assetDetailSection{Title: "SQL", Lang: "sql", Code: sql})
@@ -2252,24 +2288,24 @@ func modelTableSQL(meta map[string]any) string {
 	)
 }
 
-func modelTableFieldsGrid(projectID, modelKey, tableName string, fields, schema map[string]any, assets []projectview.DevelopAssetView) recordTable {
+func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[string]any, assets []projectview.DevelopAssetView) recordTable {
+	fields := modelTableFields(table)
+	schema := metaMap(table, "Schema", "schema")
 	schemaColumns := modelTableSchemaColumns(fields, schema)
+	entityNames, grainFields := semanticModelGraphFieldIdentity(table)
 	rows := make([]map[string]any, 0, len(schemaColumns))
 	for _, column := range schemaColumns {
 		name := metaString(column, "Name", "name")
 		field := asMap(fields[name])
 		child := assetByTypeKey("field", modelKey+"."+tableName+"."+name, assets)
-		key := ""
-		if metaBool(column, "PrimaryKey", "primaryKey") {
-			key = "Primary key"
-		}
 		rows = append(rows, map[string]any{
 			"name":          name,
 			"nameHref":      childHref(projectID, child),
 			"label":         firstNonEmpty(metaString(field, "Label", "label"), labelFromKey(name)),
 			"physical_type": recordTableBadgeValue(metaString(column, "PhysicalType", "physicalType"), "muted"),
 			"nullable":      nullableLabel(column, "Nullable", "nullable"),
-			"key":           key,
+			"entities":      emptyDash(strings.Join(entityNames[name], ", ")),
+			"grain":         boolLabel(grainFields[name]),
 			"description":   emptyDash(metaString(field, "Description", "description")),
 		})
 	}
@@ -2279,12 +2315,37 @@ func modelTableFieldsGrid(projectID, modelKey, tableName string, fields, schema 
 			{ID: "label", Header: "Label", Width: uisignals.Pointer("180px")},
 			{ID: "physical_type", Header: "Physical type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
 			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
-			{ID: "key", Header: "Key", Width: uisignals.Pointer("130px")},
+			{ID: "entities", Header: "Entities", Width: uisignals.Pointer("180px")},
+			{ID: "grain", Header: "Grain", Width: uisignals.Pointer("90px")},
 			{ID: "description", Header: "Description"},
 		},
 		Rows:     rows,
 		Empty:    "No schema is available for this model table.",
 		MinWidth: uisignals.Pointer("900px"),
+	}
+}
+
+func modelTableEntitiesGrid(table map[string]any) recordTable {
+	entities := semanticModelGraphEntities(table)
+	rows := make([]map[string]any, 0, len(entities))
+	for _, entity := range entities {
+		rows = append(rows, map[string]any{
+			"name":   entity.Name,
+			"type":   recordTableBadgeValue(entity.Type, "muted"),
+			"fields": strings.Join(entity.Fields, ", "),
+			"grain":  boolLabel(entity.Grain != nil && *entity.Grain),
+		})
+	}
+	return recordTable{
+		Columns: []recordTableColumn{
+			{ID: "name", Header: "Name", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
+			{ID: "type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("120px")},
+			{ID: "fields", Header: "Ordered key fields"},
+			{ID: "grain", Header: "Grain", Width: uisignals.Pointer("90px")},
+		},
+		Rows:     rows,
+		Empty:    "No entities are defined for this model.",
+		MinWidth: uisignals.Pointer("720px"),
 	}
 }
 
@@ -2349,10 +2410,9 @@ func semanticFieldsGrid(projectID string, parent projectview.DevelopAssetView, a
 				"name":       fieldName,
 				"nameHref":   childHref(projectID, child),
 				"dataset":    datasetName,
-				"expression": firstNonEmpty(metaString(field, "Expr", "Expression"), datasetName+"."+fieldName),
+				"expression": datasetName + "." + fieldName,
 				"type":       recordTableBadgeValue(metaString(field, "Type"), "muted"),
 				"filter":     emptyDash(metaString(field, "Where")),
-				"order":      emptyDash(metaString(field, "OrderExpr")),
 			})
 		}
 	}
@@ -2363,7 +2423,6 @@ func semanticFieldsGrid(projectID string, parent projectview.DevelopAssetView, a
 			{ID: "expression", Header: "Expression", Kind: uisignals.Pointer("expression"), Width: uisignals.Pointer("260px")},
 			{ID: "type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("110px")},
 			{ID: "filter", Header: "Filter", Kind: uisignals.Pointer("expression"), Width: uisignals.Pointer("220px")},
-			{ID: "order", Header: "Order", Kind: uisignals.Pointer("expression"), Width: uisignals.Pointer("190px")},
 		},
 		Rows:     rows,
 		Empty:    "No fields are defined for this semantic model.",
@@ -2383,7 +2442,7 @@ func semanticMetricsTable(projectID string, parent projectview.DevelopAssetView,
 			"nameHref":    childHref(projectID, child),
 			"dataset":     emptyDash(metaString(metric, "Dataset", "dataset")),
 			"aggregation": recordTableBadgeValue(firstNonEmpty(metaString(metric, "Aggregation", "aggregation"), metaString(metric, "Type", "type")), "muted"),
-			"input":       firstNonEmpty(metaString(input, "Field", "field"), metaString(input, "Expression", "expression"), metaString(metric, "Expression", "expression"), metaString(metric, "Expr", "expr")),
+			"input":       firstNonEmpty(metaString(input, "Field", "field"), metaString(metric, "Expression", "expression")),
 			"format":      recordTableBadgeValue(metaString(metric, "Format", "format"), "accent"),
 		})
 	}
@@ -2660,7 +2719,7 @@ func sourceFacts(asset projectview.DevelopAssetView) []definitionFact {
 
 func metricLeafFacts(asset projectview.DevelopAssetView) []definitionFact {
 	facts := []definitionFact{}
-	for _, key := range []string{"Expression", "expression", "Expr", "expr", "Where", "where", "OrderExpr", "order_expr", "Unit", "unit", "Format", "format"} {
+	for _, key := range []string{"Expression", "Where", "Unit", "Format"} {
 		if value := metaString(asset.Payload, key); strings.TrimSpace(value) != "" {
 			facts = append(facts, definitionFact{Label: labelFromKey(key), Value: value, Code: strings.Contains(strings.ToLower(key), "expr") || strings.EqualFold(key, "expression")})
 		}

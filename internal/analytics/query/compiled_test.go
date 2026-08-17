@@ -16,11 +16,11 @@ func TestCompileModelBuildsReusableMetricDependencyMetadata(t *testing.T) {
 	model.Metrics["net_revenue"] = semanticmodel.Metric{
 		Type: "aggregate", Dataset: "orders",
 		Aggregation: "sum",
-		Input:       &semanticmodel.MetricInput{Expression: "${orders.revenue} - coalesce(${orders.discount}, 0)"},
+		Input:       &semanticmodel.MetricInput{Field: "orders.revenue"},
 		Empty:       "zero",
 	}
 	orders := model.Tables["orders"]
-	orders.Dimensions["discount"] = semanticmodel.MetricDimension{Expr: "discount", Type: "number"}
+	orders.Dimensions["discount"] = semanticmodel.MetricDimension{Type: "number"}
 	model.Tables["orders"] = orders
 
 	compiled, err := CompileModel(model)
@@ -32,9 +32,6 @@ func TestCompileModelBuildsReusableMetricDependencyMetadata(t *testing.T) {
 	}
 	if len(compiled.MetricExpressions["tags_per_order"].References()) == 0 {
 		t.Fatal("metric expression was not compiled")
-	}
-	if len(compiled.AggregateInputExpressions["net_revenue"].References()) != 2 {
-		t.Fatalf("metric input references = %#v", compiled.AggregateInputExpressions["net_revenue"].References())
 	}
 }
 
@@ -68,7 +65,7 @@ func TestPlannerLowersCanonicalAggregateMetricsWithoutMetricsDualWrite(t *testin
 	if err != nil {
 		t.Fatalf("canonical aggregate plan error = %v", err)
 	}
-	if !strings.Contains(plan.SQL, "COUNT(*)") || !strings.Contains(plan.SQL, "safe_divide") && !strings.Contains(plan.SQL, "NULLIF") {
+	if !strings.Contains(plan.SQL, "COUNT(t0.order_id)") || !strings.Contains(plan.SQL, "safe_divide") && !strings.Contains(plan.SQL, "NULLIF") {
 		t.Fatalf("canonical aggregate SQL = %s", plan.SQL)
 	}
 }
@@ -92,7 +89,7 @@ func TestPlannerRendersCompositeRelationshipJoinTuple(t *testing.T) {
 	}
 	model := testModel()
 	customers := model.Tables["customers"]
-	customers.Dimensions["order_id"] = semanticmodel.MetricDimension{Expr: "order_id"}
+	customers.Dimensions["order_id"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeInteger}
 	model.Tables["customers"] = customers
 	model.Relationships[0] = semanticmodel.Relationship{
 		ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id", "order_id"},

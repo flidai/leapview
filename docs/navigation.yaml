@@ -65,6 +65,11 @@ sections:
         type: explanation
         summary: Define datasets, dimensions, metrics, and relationships once.
         source: articles/concepts/semantic-models.md
+      - slug: concepts/ossie-interchange
+        title: Apache Ossie interchange
+        type: explanation
+        summary: Import and export semantic models through the pinned Ossie boundary.
+        source: articles/concepts/ossie-interchange.md
       - slug: concepts/dashboards
         title: Dashboards, pages, and visuals
         type: explanation

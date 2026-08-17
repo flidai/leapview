@@ -366,8 +366,8 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 		Name: "sales", Connections: map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id"},
-			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id"},
+			"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
+			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
 		},
 	}
 	if err := model.ValidateAuthored(); err != nil {

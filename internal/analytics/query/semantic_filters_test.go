@@ -67,10 +67,10 @@ func TestNamedMetricWhereAppliesPerFactBeforeMultiFactStitch(t *testing.T) {
 	defer db.Close()
 	for _, statement := range []string{
 		"CREATE SCHEMA model",
-		"CREATE TABLE model.orders (customer_id INTEGER, segment VARCHAR)",
-		"CREATE TABLE model.tags (customer_id INTEGER, segment VARCHAR)",
-		"INSERT INTO model.orders VALUES (1, 'consumer'), (2, 'consumer'), (3, 'business')",
-		"INSERT INTO model.tags VALUES (1, 'consumer'), (2, 'business'), (3, 'business'), (4, 'business')",
+		"CREATE TABLE model.orders (order_id INTEGER, customer_id INTEGER, segment VARCHAR)",
+		"CREATE TABLE model.tags (tag_id INTEGER, customer_id INTEGER, segment VARCHAR)",
+		"INSERT INTO model.orders VALUES (1, 1, 'consumer'), (2, 2, 'consumer'), (3, 3, 'business')",
+		"INSERT INTO model.tags VALUES (1, 1, 'consumer'), (2, 2, 'business'), (3, 3, 'business'), (4, 4, 'business')",
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatal(err)
@@ -238,7 +238,7 @@ func TestNamedMetricWhereCompilesJoinedBooleanFilterTree(t *testing.T) {
 func TestNamedMetricWhereCoercesIntegerLiteralsAndRejectsUnknownFilter(t *testing.T) {
 	model := testModel()
 	orders := model.Tables["orders"]
-	orders.Dimensions["order_id"] = semanticmodel.MetricDimension{Expr: "order_id", Type: "number", Datatype: semanticmodel.DataTypeInteger}
+	orders.Dimensions["order_id"] = semanticmodel.MetricDimension{Type: "number", Datatype: semanticmodel.DataTypeInteger}
 	model.Tables["orders"] = orders
 	model.Filters = map[string]semanticmodel.SemanticFilterSpec{
 		"ids": {Field: "orders.order_id", Operator: "in", Value: []any{1, 2}},
@@ -274,10 +274,10 @@ func TestNamedMetricWhereCoercesIntegerLiteralsAndRejectsUnknownFilter(t *testin
 func TestNamedFilterRequiresExplicitPathWhenJoinedDatasetIsAmbiguous(t *testing.T) {
 	model := testModel()
 	orders := model.Tables["orders"]
-	orders.Dimensions["alt_customer_id"] = semanticmodel.MetricDimension{Expr: "alt_customer_id"}
+	orders.Dimensions["alt_customer_id"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeInteger}
 	model.Tables["orders"] = orders
 	model.Relationships = append(model.Relationships, semanticmodel.Relationship{
-		ID: "orders_customers_alt", From: "orders.alt_customer_id", To: "customers.customer_id", Cardinality: "many_to_one",
+		ID: "orders_customers_alt", FromDataset: "orders", FromFields: []string{"alt_customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one",
 	})
 	model.Filters = map[string]semanticmodel.SemanticFilterSpec{
 		"ambiguous": {Field: "customers.state", Operator: "equals", Value: "DK"},

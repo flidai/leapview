@@ -189,6 +189,21 @@ func (p *Planner) compileMultiFactBundleFact(requests []BundleRequest, resolutio
 		dependencies[binding.Field] = struct{}{}
 		addPathDependencies(dependencies, binding.Path)
 	}
+	for _, metric := range metrics {
+		if metric.Fact != fact || len(metric.WhereFilters) == 0 {
+			continue
+		}
+		whereFilters := scopeMetricWhereFilters(metric.WhereFilters, fact)
+		whereBindings, err := p.factFilterFields(whereFilters, filterResolution, fact)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		bindings = append(bindings, whereBindings...)
+		for _, binding := range whereBindings {
+			dependencies[binding.Field] = struct{}{}
+			addPathDependencies(dependencies, binding.Path)
+		}
+	}
 	aliases, err := p.aliasesForFact(fact, bindings)
 	if err != nil {
 		return nil, nil, nil, err
@@ -228,14 +243,12 @@ func (p *Planner) compileMultiFactBundleFact(requests []BundleRequest, resolutio
 		if metric.Fact != fact {
 			continue
 		}
-		if metric.Aggregation != "count" {
-			raw, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-			baseSelects = append(baseSelects, raw+fmt.Sprintf(" AS __v%d", metricIndex))
+		raw, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
+		if err != nil {
+			return nil, nil, nil, err
 		}
-		if len(metric.Filters) > 0 {
+		baseSelects = append(baseSelects, raw+fmt.Sprintf(" AS __v%d", metricIndex))
+		if len(metric.Filters) > 0 || len(metric.WhereFilters) > 0 {
 			parts := []string{}
 			for _, filter := range metric.Filters {
 				physical, err := p.Model.ResolveDimension(filter.Field)
@@ -259,12 +272,21 @@ func (p *Planner) compileMultiFactBundleFact(requests []BundleRequest, resolutio
 					baseArgs = append(baseArgs, filterArgs...)
 				}
 			}
+			for _, filter := range scopeMetricWhereFilters(metric.WhereFilters, fact) {
+				part, filterArgs, err := p.factFilterPart(filter, filterResolution, fact, aliases)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				if part != "" {
+					parts = append(parts, part)
+					baseArgs = append(baseArgs, filterArgs...)
+				}
+			}
 			baseSelects = append(baseSelects, "("+strings.Join(parts, " AND ")+") AS "+fmt.Sprintf("__f%d", metricIndex))
 		}
 	}
-	// A scalar count-only fact has neither dimension nor raw input columns. It
-	// still needs a syntactically valid governed base whose rows COUNT(*) can
-	// consume, including when the physical fact is empty.
+	// Keep the governed base syntactically valid for a future zero-projection
+	// request. ADR-0006 aggregate metrics always contribute a typed input.
 	if len(baseSelects) == 0 {
 		baseSelects = append(baseSelects, "1 AS __row")
 	}
@@ -348,7 +370,7 @@ func bundleFactMetricAggregate(metric resolvedAggregateMetric, metricIndex int) 
 	expr := ""
 	switch metric.Aggregation {
 	case "count":
-		expr = "COUNT(*)"
+		expr = "COUNT(" + input + ")"
 	case "count_distinct":
 		expr = "COUNT(DISTINCT " + input + ")"
 	case "sum", "avg", "min", "max":
@@ -356,7 +378,7 @@ func bundleFactMetricAggregate(metric resolvedAggregateMetric, metricIndex int) 
 	default:
 		return "", fmt.Errorf("unsupported aggregation %q", metric.Aggregation)
 	}
-	if len(metric.Filters) > 0 {
+	if len(metric.Filters) > 0 || len(metric.WhereFilters) > 0 {
 		expr += fmt.Sprintf(" FILTER (WHERE __f%d)", metricIndex)
 	}
 	if metric.Empty == "zero" && metric.Aggregation != "count" && metric.Aggregation != "count_distinct" {

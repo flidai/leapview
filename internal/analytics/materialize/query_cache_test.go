@@ -860,7 +860,7 @@ func (g *bundleMaskGovernor) GovernDataQuery(_ context.Context, request dataquer
 func bundleCacheRuntime(database Database) *Runtime {
 	return &Runtime{modelID: "sales", model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {
 		Dimensions: map[string]semanticmodel.MetricDimension{
-			"id": {Expr: "id", Type: "number"},
+			"id": {Type: "number"},
 		},
 	}}, Metrics: map[string]semanticmodel.Metric{
 		"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},

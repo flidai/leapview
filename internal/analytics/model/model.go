@@ -127,6 +127,9 @@ func (m *Model) validate(authored bool) error {
 			if err := validateSemanticIdentifier(field); err != nil {
 				return fmt.Errorf("model table %q field %q is invalid: %w", name, field, err)
 			}
+			if err := validateLogicalDataType("model table "+name+" field "+field, dimension.Datatype); err != nil {
+				return err
+			}
 			dimension.Field = name + "." + field
 			dimension.Table = name
 			dimension.Name = field
@@ -241,6 +244,14 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 			if err := validateSemanticIdentifier(name); err != nil {
 				return nil, fmt.Errorf("model table %q column %q is invalid: %w", tableName, name, err)
 			}
+			if column.Datatype == "" {
+				if dimension, ok := table.Dimensions[name]; ok {
+					column.Datatype = dimension.Datatype
+				}
+			}
+			if err := validateLogicalDataType("model table "+tableName+" column "+name, column.Datatype); err != nil {
+				return nil, err
+			}
 			if column.SourceField == "" {
 				column.SourceField = name
 			}
@@ -263,7 +274,11 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 		if name == "" {
 			return
 		}
-		columns[name] = ModelColumn{Name: name, Field: tableName + "." + name, SourceField: name}
+		column := ModelColumn{Name: name, Field: tableName + "." + name, SourceField: name}
+		if dimension, ok := table.Dimensions[name]; ok {
+			column.Datatype = dimension.Datatype
+		}
+		columns[name] = column
 	}
 	for _, entity := range table.Entities {
 		for _, field := range entity.Fields {
@@ -278,13 +293,7 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 			if metric.Type != "aggregate" || metric.Dataset != tableName || metric.Input == nil {
 				continue
 			}
-			refs := []string{metric.Input.Field}
-			if metric.Input.Expression != "" {
-				if expression, err := ParseExpression(metric.Input.Expression); err == nil {
-					refs = append(refs, expression.References()...)
-				}
-			}
-			for _, ref := range refs {
+			for _, ref := range []string{metric.Input.Field} {
 				refTable, refField, ok := strings.Cut(ref, ".")
 				if ok && refTable == tableName {
 					add(refField)
@@ -739,6 +748,18 @@ func sameStringSet(left []string, right []string) bool {
 }
 
 func (m *Model) validateSemanticGraph() error {
+	for tableName, table := range m.Tables {
+		for field, dimension := range table.Dimensions {
+			if err := validateLogicalDataType("model table "+tableName+" field "+field, dimension.Datatype); err != nil {
+				return err
+			}
+		}
+		for field, column := range table.Columns {
+			if err := validateLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
+				return err
+			}
+		}
+	}
 	if err := validateRelationshipEndpointDuplicates(m.Relationships); err != nil {
 		return err
 	}
@@ -884,16 +905,7 @@ func relationshipFieldType(field MetricDimension) string {
 }
 
 func relationshipTypesCompatible(left, right MetricDimension) bool {
-	leftType, rightType := relationshipFieldType(left), relationshipFieldType(right)
-	if leftType == "" || rightType == "" || leftType == rightType {
-		return true
-	}
-	// Physical discovery collapses numeric logical types to number; retain that
-	// compatibility while rejecting text/temporal/boolean key mismatches.
-	if left.Type == "number" && right.Type == "number" {
-		return true
-	}
-	return false
+	return left.Datatype != "" && right.Datatype != "" && left.Datatype == right.Datatype
 }
 
 func (m *Model) requireRelationshipPrimaryKey(relationship Relationship, tableName string, fields []string) error {
@@ -948,21 +960,13 @@ func relationshipHasEndpoint(relationship Relationship, from bool) bool {
 
 func relationshipEndpoint(relationship Relationship, from bool) (string, []string, error) {
 	dataset, fields := relationship.FromDataset, relationship.FromFields
-	endpoint := relationship.From
 	if !from {
-		dataset, fields, endpoint = relationship.ToDataset, relationship.ToFields, relationship.To
+		dataset, fields = relationship.ToDataset, relationship.ToFields
 	}
-	if dataset != "" || len(fields) > 0 {
-		if dataset == "" || len(fields) == 0 {
-			return "", nil, fmt.Errorf("endpoint requires dataset and non-empty fields")
-		}
-		return dataset, append([]string(nil), fields...), nil
+	if dataset == "" || len(fields) == 0 {
+		return "", nil, fmt.Errorf("endpoint requires dataset and non-empty fields")
 	}
-	table, field, err := splitSemanticField(endpoint)
-	if err != nil {
-		return "", nil, err
-	}
-	return table, []string{field}, nil
+	return dataset, append([]string(nil), fields...), nil
 }
 
 func relationshipEndpointDisplay(relationship Relationship, from bool) string {
@@ -971,9 +975,14 @@ func relationshipEndpointDisplay(relationship Relationship, from bool) string {
 		return dataset + "." + strings.Join(fields, ",")
 	}
 	if from {
-		return relationship.From
+		dataset, fields = relationship.FromDataset, relationship.FromFields
+	} else {
+		dataset, fields = relationship.ToDataset, relationship.ToFields
 	}
-	return relationship.To
+	if dataset == "" && len(fields) == 0 {
+		return "<missing>"
+	}
+	return dataset + "." + strings.Join(fields, ",")
 }
 
 // RelationshipEndpoint returns the ordered physical tuple for one side of a
@@ -981,15 +990,6 @@ func relationshipEndpointDisplay(relationship Relationship, from bool) string {
 // way to the query planner; callers must not select a single field.
 func RelationshipEndpoint(relationship Relationship, from bool) (string, []string, error) {
 	return relationshipEndpoint(relationship, from)
-}
-
-func relationshipID(relationship Relationship, index int) string {
-	from := strings.ReplaceAll(relationship.From, ".", "_")
-	to := strings.ReplaceAll(relationship.To, ".", "_")
-	if from == "" || to == "" {
-		return fmt.Sprintf("relationship_%d", index+1)
-	}
-	return from + "__" + to
 }
 
 func defaultString(value, fallback string) string {

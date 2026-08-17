@@ -120,6 +120,21 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 		dependencies[binding.Field] = struct{}{}
 		addPathDependencies(dependencies, binding.Path)
 	}
+	for _, metric := range aggregates {
+		if len(metric.WhereFilters) == 0 {
+			continue
+		}
+		whereFilters := scopeMetricWhereFilters(metric.WhereFilters, fact)
+		whereBindings, err := p.factFilterFields(whereFilters, resolutions[0], fact)
+		if err != nil {
+			return BundlePlan{}, err
+		}
+		bindings = append(bindings, whereBindings...)
+		for _, binding := range whereBindings {
+			dependencies[binding.Field] = struct{}{}
+			addPathDependencies(dependencies, binding.Path)
+		}
+	}
 	aliases, err := p.aliasesForFact(fact, bindings)
 	if err != nil {
 		return BundlePlan{}, err
@@ -157,14 +172,12 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 	for i, name := range metricNames {
 		metric := aggregates[name]
 		metricColumns[name] = fmt.Sprintf("__m%d", i)
-		if metric.Aggregation != "count" {
-			raw, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
-			if err != nil {
-				return BundlePlan{}, err
-			}
-			baseSelects = append(baseSelects, raw+fmt.Sprintf(" AS __v%d", i))
+		raw, err := rawAggregateMetricExpr(p.Model, metric, factAliases)
+		if err != nil {
+			return BundlePlan{}, err
 		}
-		if len(metric.Filters) > 0 {
+		baseSelects = append(baseSelects, raw+fmt.Sprintf(" AS __v%d", i))
+		if len(metric.Filters) > 0 || len(metric.WhereFilters) > 0 {
 			parts := []string{}
 			for _, filter := range metric.Filters {
 				physical, err := p.Model.ResolveDimension(filter.Field)
@@ -180,6 +193,16 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 					return BundlePlan{}, err
 				}
 				part, args, err := filterSQL(filterExpr, Filter{Operator: filter.Operator, Values: filter.Values})
+				if err != nil {
+					return BundlePlan{}, err
+				}
+				if part != "" {
+					parts = append(parts, part)
+					baseArgs = append(baseArgs, args...)
+				}
+			}
+			for _, filter := range scopeMetricWhereFilters(metric.WhereFilters, fact) {
+				part, args, err := p.factFilterPart(filter, resolutions[0], fact, aliases)
 				if err != nil {
 					return BundlePlan{}, err
 				}
@@ -246,7 +269,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 		expr := ""
 		switch metric.Aggregation {
 		case "count":
-			expr = "COUNT(*)"
+			expr = "COUNT(" + input + ")"
 		case "count_distinct":
 			expr = "COUNT(DISTINCT " + input + ")"
 		case "sum", "avg", "min", "max":
@@ -263,7 +286,7 @@ func (p *Planner) PlanBundle(requests []BundleRequest) (BundlePlan, error) {
 			}
 		}
 		filterParts := []string{integerPredicate("__bundle_group", groups)}
-		if len(metric.Filters) > 0 {
+		if len(metric.Filters) > 0 || len(metric.WhereFilters) > 0 {
 			filterParts = append(filterParts, fmt.Sprintf("__f%d", i))
 		}
 		expr += " FILTER (WHERE " + strings.Join(filterParts, " AND ") + ")"

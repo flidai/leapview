@@ -8,8 +8,8 @@ import (
 func TestSemanticGraphRejectsDuplicateStructuredRelationshipEndpoints(t *testing.T) {
 	m := relationshipMatrixModel()
 	m.Relationships = []Relationship{
-		{ID: "z_duplicate", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
-		{ID: "a_duplicate", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
+		{ID: "z_duplicate", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+		{ID: "a_duplicate", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
 	}
 	err := m.validateSemanticGraph()
 	if err == nil || !strings.Contains(err.Error(), `duplicate relationship definition`) || !strings.Contains(err.Error(), `"a_duplicate"`) {
@@ -20,9 +20,9 @@ func TestSemanticGraphRejectsDuplicateStructuredRelationshipEndpoints(t *testing
 func TestSemanticGraphRejectsDirectionalRelationshipCycle(t *testing.T) {
 	m := relationshipMatrixModel()
 	m.Relationships = []Relationship{
-		{ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"},
-		{ID: "customers_profiles", From: "customers.customer_id", To: "profiles.customer_id", Cardinality: "many_to_one"},
-		{ID: "profiles_orders", From: "profiles.customer_id", To: "orders.order_id", Cardinality: "many_to_one"},
+		{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+		{ID: "customers_profiles", FromDataset: "customers", FromFields: []string{"customer_id"}, ToDataset: "profiles", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"},
+		{ID: "profiles_orders", FromDataset: "profiles", FromFields: []string{"customer_id"}, ToDataset: "orders", ToFields: []string{"order_id"}, Cardinality: "many_to_one"},
 	}
 	err := m.validateSemanticGraph()
 	if err == nil || !strings.Contains(err.Error(), "relationship cycle detected in directional graph") || !strings.Contains(err.Error(), "customers -> profiles -> orders -> customers") {
@@ -35,7 +35,7 @@ func TestMetricWhereRecursesFilterPathsPerAggregateRoot(t *testing.T) {
 	customers := m.Tables["customers"]
 	customers.Dimensions["state"] = MetricDimension{Type: "string", Datatype: DataTypeString}
 	m.Tables["customers"] = customers
-	m.Relationships = []Relationship{{ID: "orders_customers", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"}}
+	m.Relationships = []Relationship{{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}}
 	m.Dimensions = map[string]SemanticDimension{}
 	m.Filters = map[string]SemanticFilterSpec{
 		"nested": {All: []SemanticFilterSpec{{Any: []SemanticFilterSpec{{Not: &SemanticFilterSpec{Field: "customers.state", Operator: "equals", Value: "CA"}}}}}},
