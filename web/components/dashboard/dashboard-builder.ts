@@ -840,7 +840,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderFieldPane(builder: DashboardBuilderSignal) {
-    const datasets = this.filteredDatasets(builder.semanticModel.datasets)
+    const datasets = this.filteredDatasets(builder.semanticModel.datasets ?? [])
     return html`
       <aside class="pane fields" aria-label="Semantic model fields">
         <div class="pane-header">
@@ -1040,7 +1040,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     if (!page) return
     const visual = this.selectedVisual(page, builder)
-    const field = builder.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((item) => item.id === fieldID)
+    const field = (builder.semanticModel.datasets ?? []).flatMap((dataset) => dataset.fields).find((item) => item.id === fieldID)
     if (!field || !visual) return
     this.emitCommand('assign_field', { pageId: page.id, visualId: visual.id, fieldId: field.id, role: field.kind })
   }
