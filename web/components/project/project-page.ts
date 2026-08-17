@@ -277,7 +277,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private renderAssetPage(page: ResourceAssetPageSignal) {
     return html`
-      <section class="asset-page" aria-label="Project asset detail">
+      <section class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}`} aria-label="Project asset detail">
         <header class="breadcrumb-header">
           <nav aria-label="Breadcrumb">
             <ol>
@@ -641,6 +641,13 @@ const projectStyles = css`
     margin-inline: 0;
     padding: 0;
     overflow: visible;
+  }
+
+  .asset-page.data-asset-page {
+    height: 100svh;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
   }
 
   .connection-detail-route {
@@ -1105,6 +1112,11 @@ const projectStyles = css`
     grid-template-rows: auto auto;
   }
 
+  .data-asset-page .asset-body {
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
   .asset-body > .tabs {
     padding-inline: var(--base-size-16);
   }
@@ -1120,7 +1132,7 @@ const projectStyles = css`
   }
 
   .data-body {
-    min-height: 32rem;
+    min-height: 0;
     overflow: hidden;
     padding: 0;
   }
@@ -1309,6 +1321,12 @@ const projectStyles = css`
       overflow: visible;
     }
 
+    .asset-page.data-asset-page {
+      height: 100svh;
+      min-height: 0;
+      overflow: hidden;
+    }
+
     .connection-detail-route {
       width: 100%;
       padding: var(--base-size-16);
@@ -1321,6 +1339,10 @@ const projectStyles = css`
 
     .section-body {
       overflow: visible;
+    }
+
+    .data-asset-page .section-body {
+      overflow: hidden;
     }
 
     .graph-details-body {

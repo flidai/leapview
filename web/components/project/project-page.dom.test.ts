@@ -109,7 +109,7 @@ test('semantic model asset details use the Waypoints SVG identity', async () => 
 })
 
 test('asset data section embeds the shared explorer without a duplicate route header', async () => {
-  const page = await browser.newPage()
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {
     await page.goto(`${baseURL}/?root=model-data`)
     await page.waitForFunction(() => customElements.get('lv-project-asset-page') && customElements.get('lv-data-explorer'))
@@ -117,6 +117,13 @@ test('asset data section embeds the shared explorer without a duplicate route he
       await element.updateComplete
       const explorer = element.shadowRoot?.querySelector('lv-data-explorer') as any
       await explorer?.updateComplete
+      const preview = explorer?.shadowRoot?.querySelector('lv-data-preview-table') as any
+      await preview?.updateComplete
+      const table = preview?.shadowRoot?.querySelector('lv-windowed-table') as any
+      await table?.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await table?.updateComplete
+      const scrollport = table?.shadowRoot?.querySelector('.scrollport') as HTMLElement | null
       explorer?.emitCommand({ objectKey: 'orders' })
       return {
         embedded: explorer?.hasAttribute('embedded') ?? false,
@@ -124,6 +131,10 @@ test('asset data section embeds the shared explorer without a duplicate route he
         visibleRouteHeaders: Array.from(explorer?.shadowRoot?.querySelectorAll('.header') ?? []).filter((node: any) => getComputedStyle(node).display !== 'none').length,
         browserVisible: getComputedStyle(explorer?.shadowRoot?.querySelector('.browser') as Element).display !== 'none',
         pathname: window.location.pathname,
+        assetHeight: Math.round(element.getBoundingClientRect().height),
+        viewportHeight: scrollport?.clientHeight ?? 0,
+        renderedRows: table?.shadowRoot?.querySelectorAll('.canvas > .row').length ?? 0,
+        windowHeight: window.innerHeight,
       }
     })
     expect(data.embedded).toBe(true)
@@ -131,6 +142,10 @@ test('asset data section embeds the shared explorer without a duplicate route he
     expect(data.visibleRouteHeaders).toBe(0)
     expect(data.browserVisible).toBe(false)
     expect(data.pathname).toBe('/')
+    expect(data.assetHeight).toBeLessThanOrEqual(data.windowHeight)
+    expect(data.viewportHeight).toBeGreaterThan(0)
+    expect(data.viewportHeight).toBeLessThan(data.windowHeight)
+    expect(data.renderedRows).toBeLessThan(100)
   } finally {
     await page.close()
   }
@@ -182,7 +197,8 @@ function testDocument(rootName: string): string {
     kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
   const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'detail' || rootName === 'semantic-detail' || rootName === 'model-data' ? 'lv-project-asset-page' : 'lv-project-page'
-  const dataExplorer = { objects: [{ key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }], selectedKey: 'orders', selectedObject: { key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }, preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, totalRowLabel: '0', sort: {}, sql: '', error: '' }, explore: { command: { modelId: '', datasetId: '', dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, command: { mode: 'browse', objectKey: 'orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }, warnings: [] }
+  const previewRows = Array.from({ length: 100 }, (_, index) => ({ customer_id: `customer-${index + 1}`, city: 'Example' }))
+  const dataExplorer = { objects: [{ key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }], selectedKey: 'orders', selectedObject: { key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }, preview: { columns: [{ key: 'customer_id', label: 'Customer ID', type: 'string' }, { key: 'city', label: 'City', type: 'string' }], totalRows: 99441, availableRows: 99441, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: previewRows } }, totalRowLabel: '99441', sort: {}, sql: '', error: '' }, explore: { command: { modelId: '', datasetId: '', dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, command: { mode: 'browse', objectKey: 'orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }, warnings: [] }
   return `<!doctype html><html><body><main data-signals="${escapeHTML(JSON.stringify({ page, dataExplorer, connectionAdmin: { command: {}, status: { loading: false, error: '', message: '' } } }))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script>${rootName === 'model-data' ? '<script type="module" src="/data-explorer-under-test.js"></script>' : ''}<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
