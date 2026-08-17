@@ -284,7 +284,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		for _, value := range filter.Values {
 			values = append(values, value)
 		}
-		filters = append(filters, dataquery.Filter{Field: filter.Field, Fact: projectsignals.ValueOrZero(filter.Dataset), Operator: filter.Operator, Values: values})
+		filters = append(filters, dataquery.Filter{Field: filter.Field, Dataset: projectsignals.ValueOrZero(filter.Dataset), Operator: filter.Operator, Values: values})
 	}
 	sortSpec := make([]dataquery.Sort, 0, len(command.Sort))
 	for _, sortSignal := range command.Sort {
@@ -292,7 +292,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	}
 	// A metric with multiple physical roots is not owned by the selected
 	// browser dataset. Leave the target unscoped so the governed planner can
-	// infer all metric facts and validate the selected qualified dimensions.
+	// infer all metric datasets and validate the selected qualified dimensions.
 	queryTarget := datasetID
 	if clearTarget {
 		queryTarget = ""

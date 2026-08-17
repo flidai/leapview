@@ -8,8 +8,46 @@ import (
 	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
+func TestPlanIRScalarExpressionPreservesAuthoredNumberKinds(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		kinds  []planir.NumberKind
+	}{
+		{name: "integer", source: "1 + 1", kinds: []planir.NumberKind{planir.NumberInteger, planir.NumberInteger}},
+		{name: "Decimal", source: "1.0 + 1", kinds: []planir.NumberKind{planir.NumberDecimal, planir.NumberInteger}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			expression, err := semanticmodel.ParseExpression(test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			converted, err := planIRScalarExpression(expression)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for index, child := range converted.Children {
+				if child.Kind != planir.ScalarLiteral || child.Literal.NumberKind != test.kinds[index] {
+					t.Fatalf("child = %#v, want %s literal", child, test.kinds[index])
+				}
+			}
+		})
+	}
+}
+
+func TestPlanIRScalarExpressionRejectsExponentLiteral(t *testing.T) {
+	// The public parser rejects this first; the lowering guard also protects
+	// callers that carry a pre-existing expression tree across the boundary.
+	if _, err := semanticmodel.ParseExpression("1e-3"); err == nil {
+		t.Fatal("ParseExpression accepted exponent notation")
+	}
+}
+
 func TestAggregatePlanIRPreservesIndependentRootsAndTypedComputations(t *testing.T) {
-	planner, err := NewCompiledPlanner(planIRTestModel())
+	model := planIRTestModel()
+	populateFixtureTableModelNames(model)
+	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +116,9 @@ func TestAggregatePlanIRPreservesIndependentRootsAndTypedComputations(t *testing
 }
 
 func TestAggregatePlanIRCarriesTraverseAndFilterBranches(t *testing.T) {
-	planner, err := NewCompiledPlanner(planIRFilteredModel())
+	model := planIRFilteredModel()
+	populateFixtureTableModelNames(model)
+	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +147,50 @@ func TestAggregatePlanIRCarriesTraverseAndFilterBranches(t *testing.T) {
 	}
 }
 
+func TestAggregatePlanIRValidatesSemanticDimensionPhysicalNameCollision(t *testing.T) {
+	model := planIRFilteredModel()
+	populateFixtureTableModelNames(model)
+	orders := model.Tables["orders"]
+	orders.Dimensions["state"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeString}
+	model.Tables["orders"] = orders
+	model.Dimensions["state"] = semanticmodel.SemanticDimension{
+		Type: "string", Datatype: semanticmodel.DataTypeString,
+		Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.state"}},
+	}
+	metric := model.Metrics["order_count"]
+	metric.Input = &semanticmodel.MetricInput{Field: "orders.state"}
+	model.Metrics["order_count"] = metric
+	planner, err := NewCompiledPlanner(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planner.Plan(Request{Dataset: "orders", Dimensions: []Field{{Field: "state"}}, Metrics: []Field{{Field: "order_count"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.IR.Validate(); err != nil {
+		t.Fatalf("PlanIR validation: %v", err)
+	}
+	scan, ok := plan.IR.Nodes["scan_0"]
+	if !ok {
+		t.Fatal("scan node missing")
+	}
+	foundInputLineage := false
+	for _, lineage := range scan.Meta().PhysicalLineage {
+		if lineage.Logical == "orders.state" {
+			foundInputLineage = true
+			break
+		}
+	}
+	if !foundInputLineage {
+		t.Fatalf("scan lineage omitted qualified metric input: %#v", scan.Meta().PhysicalLineage)
+	}
+}
+
 func TestAggregatePlanIRRolePlayingPathsRemainDistinct(t *testing.T) {
-	planner, err := NewCompiledPlanner(planIRRolePlayingModel())
+	model := planIRRolePlayingModel()
+	populateFixtureTableModelNames(model)
+	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +215,9 @@ func TestAggregatePlanIRRolePlayingPathsRemainDistinct(t *testing.T) {
 }
 
 func TestAggregatePlanIRTopologicallyOrdersTwoHopPath(t *testing.T) {
-	planner, err := NewCompiledPlanner(singleFactFanoutModel())
+	model := singleDatasetFanoutModel()
+	populateFixtureTableModelNames(model)
+	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
 	}

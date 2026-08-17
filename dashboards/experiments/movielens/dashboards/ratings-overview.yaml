@@ -242,7 +242,7 @@ spec:
       title: Movie ratings
       type: table
       query:
-        table: ratings
+        dataset: ratings
         fields:
           - movies.title
           - movies.release_year

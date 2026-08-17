@@ -62,7 +62,7 @@ Test policies with representative users, including aggregates. Row filtering can
 ### Policy composition
 
 LeapView composes every applicable policy before planning a raw, aggregate,
-spatial, or multi-fact query. The composition rules are independent of query
+spatial, or multi-dataset query. The composition rules are independent of query
 surface and repository traversal order:
 
 | Applicable policies | Effective restriction |

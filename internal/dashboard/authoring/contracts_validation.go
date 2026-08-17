@@ -151,8 +151,8 @@ func (d *Dashboard) validateTabularContract(name, visualType string, table Table
 	}
 	switch visualType {
 	case "table":
-		if table.Query.Table == "" {
-			return fmt.Errorf("table %q type table requires query.table", name)
+		if table.Query.Dataset == "" {
+			return fmt.Errorf("table %q type table requires query.dataset", name)
 		}
 		if len(table.Query.Fields) == 0 && len(table.Query.Columns) == 0 {
 			return fmt.Errorf("table %q type table requires query.fields or query.columns", name)

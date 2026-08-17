@@ -13,8 +13,8 @@ func compiledSelectionInteractions(id string, selection dashboardauthoring.Selec
 	for _, mapping := range selection.Mappings {
 		value := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: mapping.Value}
 		item := visualizationir.VisualizationInteractionMapping{Source: value, TargetFieldID: mapping.Field}
-		if mapping.Fact != "" {
-			item.TargetDatasetID = &mapping.Fact
+		if mapping.Dataset != "" {
+			item.TargetDatasetID = &mapping.Dataset
 		}
 		if mapping.Grain != "" {
 			item.Grain = &mapping.Grain

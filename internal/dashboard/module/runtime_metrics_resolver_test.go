@@ -8,6 +8,7 @@ import (
 	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
@@ -19,6 +20,21 @@ import (
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
+
+func TestRuntimeMetricsPlannerAdaptsConsumerPlannerPort(t *testing.T) {
+	planner := &semanticquery.Planner{}
+	runtime := &resolverTestRuntime{planner: planner}
+	provider := &resolverTestProvider{runtime: runtime, stateID: "state-1"}
+	metrics := NewRuntimeMetrics(RuntimeMetricsOptions{Provider: provider, ProjectID: "project_1"})
+
+	got, ok := metrics.(runtimeMetrics).Planner("sales_model")
+	if !ok || got != planner {
+		t.Fatalf("planner = %p, ok=%v, want %p", got, ok, planner)
+	}
+	if provider.acquires != 1 || provider.lease == nil || provider.lease.releases != 1 {
+		t.Fatalf("lease counts acquire=%d release=%d", provider.acquires, provider.lease.releases)
+	}
+}
 
 func TestRuntimeMetricsResolverPublishedSuccessUsesOneLease(t *testing.T) {
 	compiled := moduleCompiledRevision(t, "project_1", "published", "state-1")
@@ -247,6 +263,7 @@ func (l *resolverTestLease) Release()                        { l.releases++ }
 
 type resolverTestRuntime struct {
 	model                        *semanticmodel.Model
+	planner                      consumer.Planner
 	resolveCalls                 int
 	modelCalls                   int
 	nativePageCalls              int
@@ -282,6 +299,9 @@ func (r *resolverTestRuntime) SemanticModelByID(projectgraph.ResourceID) (*seman
 	return r.model, r.model != nil
 }
 func (r *resolverTestRuntime) DefaultFilters(string) dashboard.Filters { return dashboard.Filters{} }
+func (r *resolverTestRuntime) Planner(string) (consumer.Planner, bool) {
+	return r.planner, r.planner != nil
+}
 
 func (r *resolverTestRuntime) QueryDashboardPage(context.Context, string, string, dashboard.Filters) (dashboard.Patch, error) {
 	r.nativePageCalls++

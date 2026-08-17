@@ -347,9 +347,9 @@ func assignField(document *Dashboard, payload AssignFieldPayload) error {
 		// assigned. The application resolves this table from the active semantic
 		// model and carries it as non-transport metadata; never infer it from an
 		// unvalidated client payload here. Existing table targets remain stable so
-		// related-table dimensions can be assigned without changing the fact.
-		if strings.TrimSpace(visual.Tabular.Query.Table) == "" && strings.TrimSpace(payload.ResolvedTable) != "" {
-			visual.Tabular.Query.Table = strings.TrimSpace(payload.ResolvedTable)
+		// related-table dimensions can be assigned without changing the dataset.
+		if strings.TrimSpace(visual.Tabular.Query.Dataset) == "" && strings.TrimSpace(payload.ResolvedTable) != "" {
+			visual.Tabular.Query.Dataset = strings.TrimSpace(payload.ResolvedTable)
 		}
 		switch payload.Role {
 		case FieldRoleMetric:

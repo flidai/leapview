@@ -12,9 +12,9 @@ import (
 // buildFlatPlanIR lowers row/raw/count reads into the same closed PlanIR
 // source/filter/projection boundary as aggregate reads. Raw SQL builders may
 // remain equivalence oracles in tests, but are not production execution paths.
-func (p *Planner) buildFlatPlanIR(fact string, dimensions, metrics []Field, filters []Filter, sorts []Sort, limit, offset int) (*planir.Graph, error) {
-	if fact == "" {
-		return nil, fmt.Errorf("plan IR fact is required")
+func (p *Planner) buildFlatPlanIR(dataset string, dimensions, metrics []Field, filters []Filter, sorts []Sort, limit, offset int) (*planir.Graph, error) {
+	if dataset == "" {
+		return nil, fmt.Errorf("plan IR dataset is required")
 	}
 	fields := []planir.Field{}
 	lineage := []planir.PhysicalLineage{}
@@ -23,12 +23,13 @@ func (p *Planner) buildFlatPlanIR(fact string, dimensions, metrics []Field, filt
 		if ref == "" {
 			return nil
 		}
-		physical, path, err := p.flatPhysicalField(fact, ref)
+		physical, path, err := p.flatPhysicalField(dataset, ref)
 		if err != nil {
 			return err
 		}
-		fields = appendPlanIRField(fields, planir.Field{Name: ref, Type: physical.Type})
-		fields = appendPlanIRField(fields, planir.Field{Name: physical.Field, Type: physical.Type})
+		fieldType := planIRLogicalType(physical.Datatype, physical.Type)
+		fields = appendPlanIRField(fields, planir.Field{Name: ref, Type: fieldType})
+		fields = appendPlanIRField(fields, planir.Field{Name: physical.Field, Type: fieldType})
 		paths[ref] = path
 		lineage = append(lineage, planir.PhysicalLineage{Logical: ref, Dataset: physical.Table, Field: physical.Field, Route: flatRouteNames(path)})
 		return nil
@@ -40,18 +41,28 @@ func (p *Planner) buildFlatPlanIR(fact string, dimensions, metrics []Field, filt
 	}
 	for _, field := range metrics {
 		metric, ok := p.compiled.metric(field.Field)
-		if !ok || metric.Type != "aggregate" {
+		if !ok || metric.Aggregate == nil {
 			return nil, fmt.Errorf("metric %q is not a raw aggregate", field.Field)
 		}
-		if err := addRef(metric.InputField); err != nil {
+		if err := addRef(metric.Aggregate.InputField); err != nil {
 			return nil, err
 		}
-		fields = appendPlanIRField(fields, planir.Field{Name: field.Field, Type: "decimal"})
-		physical, path, _ := p.flatPhysicalField(fact, metric.InputField)
+		metricType := "decimal"
+		aggregation := strings.ToUpper(metric.Aggregate.Aggregation)
+		if aggregation == "COUNT" || aggregation == "COUNT_DISTINCT" || aggregation == "COUNT_STAR" || aggregation == "COUNT_DISTINCT_PAIR" {
+			metricType = "integer"
+		} else if physical, _, resolveErr := p.flatPhysicalField(dataset, metric.Aggregate.InputField); resolveErr == nil {
+			metricType = planIRLogicalType(physical.Datatype, physical.Type)
+			if aggregation == "AVG" && metricType == "integer" {
+				metricType = "decimal"
+			}
+		}
+		fields = appendPlanIRField(fields, planir.Field{Name: field.Field, Type: metricType})
+		physical, path, _ := p.flatPhysicalField(dataset, metric.Aggregate.InputField)
 		lineage = append(lineage, planir.PhysicalLineage{Logical: field.Field, Dataset: physical.Table, Field: physical.Field, Route: flatRouteNames(path)})
 	}
 	if len(dimensions) == 0 && len(metrics) == 0 && len(fields) == 0 {
-		if table, ok := p.model.Tables[fact]; ok {
+		if table, ok := p.datasetTable(dataset); ok {
 			names := make([]string, 0, len(table.Dimensions))
 			for name := range table.Dimensions {
 				names = append(names, name)
@@ -59,13 +70,21 @@ func (p *Planner) buildFlatPlanIR(fact string, dimensions, metrics []Field, filt
 			sort.Strings(names)
 			if len(names) > 0 {
 				fields = append(fields, planir.Field{Name: names[0], Type: table.Dimensions[names[0]].Type})
-				lineage = append(lineage, planir.PhysicalLineage{Logical: names[0], Dataset: fact, Field: names[0]})
+				lineage = append(lineage, planir.PhysicalLineage{Logical: names[0], Dataset: dataset, Field: names[0]})
 			}
 		}
 	}
 	var walkFilters func([]Filter) error
 	walkFilters = func(values []Filter) error {
 		for _, filter := range values {
+			if filter.Spatial != nil {
+				if err := addRef(filter.Spatial.LatitudeField); err != nil {
+					return err
+				}
+				if err := addRef(filter.Spatial.LongitudeField); err != nil {
+					return err
+				}
+			}
 			if filter.Field != "" {
 				if err := addRef(filter.Field); err != nil {
 					return err
@@ -89,13 +108,16 @@ func (p *Planner) buildFlatPlanIR(fact string, dimensions, metrics []Field, filt
 	}
 
 	graph := &planir.Graph{Nodes: map[string]planir.Node{}}
-	relation, err := p.physicalTable(fact)
+	relation, err := p.physicalTable(dataset)
 	if err != nil {
 		return nil, err
 	}
-	routes := flatRoutes(paths, fact, p)
-	meta := planir.NodeMeta{NodeID: "scan", AvailableFields: fields, RootDatasets: []string{fact}, FilterPhase: planir.FilterPhaseScan, PhysicalLineage: lineage, RelationshipRoutes: routes}
-	graph.Nodes["scan"] = planir.ScanDataset{NodeMeta: meta, Dataset: fact, Relation: relation}
+	routes, err := flatRoutes(paths, dataset, p)
+	if err != nil {
+		return nil, err
+	}
+	meta := planir.NodeMeta{NodeID: "scan", AvailableFields: fields, RootDatasets: []string{dataset}, FilterPhase: planir.FilterPhaseScan, PhysicalLineage: lineage, RelationshipRoutes: routes}
+	graph.Nodes["scan"] = planir.ScanDataset{NodeMeta: meta, Dataset: dataset, Relation: relation}
 	graph.Roots = []string{"scan"}
 	input := "scan"
 	root, relationship := flatFilterPhases(filters, paths)
@@ -107,13 +129,24 @@ func (p *Planner) buildFlatPlanIR(fact string, dimensions, metrics []Field, filt
 		m := meta
 		m.NodeID = "filter_scan"
 		m.PhysicalLineage = append([]planir.PhysicalLineage(nil), lineage...)
-		graph.Nodes[m.NodeID] = planir.FilterRows{NodeMeta: m, Input: input, Predicate: predicate, Source: planir.FilterSourceRequest, Fields: predicateFields(predicate), MatchGuard: flatFilterNeedsMatchGuard(root), FieldRoutes: flatFilterFieldRoutes(root, paths, fact, p)}
+		fieldRoutes, err := flatFilterFieldRoutes(root, paths, dataset, p)
+		if err != nil {
+			return nil, err
+		}
+		graph.Nodes[m.NodeID] = planir.FilterRows{NodeMeta: m, Input: input, Predicate: predicate, Source: planir.FilterSourceRequest, Fields: predicateFields(predicate), MatchGuard: flatFilterNeedsMatchGuard(root), FieldRoutes: fieldRoutes}
 		input = m.NodeID
 	}
-	ordered := flatOrderedRelationships(paths, fact)
+	ordered := flatOrderedRelationships(paths, dataset)
 	for index, path := range ordered {
-		path.FromRelation, _ = p.physicalTable(path.FromDataset)
-		path.ToRelation, _ = p.physicalTable(path.ToDataset)
+		fromRelation, err := p.physicalTable(path.FromDataset)
+		if err != nil {
+			return nil, err
+		}
+		toRelation, err := p.physicalTable(path.ToDataset)
+		if err != nil {
+			return nil, err
+		}
+		path.FromRelation, path.ToRelation = fromRelation, toRelation
 		m := meta
 		m.NodeID = fmt.Sprintf("traverse_%d", index)
 		m.FilterPhase = planir.FilterPhaseRelationship
@@ -128,7 +161,11 @@ func (p *Planner) buildFlatPlanIR(fact string, dimensions, metrics []Field, filt
 		m := meta
 		m.NodeID = "filter_relationship"
 		m.FilterPhase = planir.FilterPhaseRelationship
-		graph.Nodes[m.NodeID] = planir.FilterRows{NodeMeta: m, Input: input, Predicate: predicate, Source: planir.FilterSourceRequest, Fields: predicateFields(predicate), MatchGuard: flatFilterNeedsMatchGuard(relationship), FieldRoutes: flatFilterFieldRoutes(relationship, paths, fact, p)}
+		fieldRoutes, err := flatFilterFieldRoutes(relationship, paths, dataset, p)
+		if err != nil {
+			return nil, err
+		}
+		graph.Nodes[m.NodeID] = planir.FilterRows{NodeMeta: m, Input: input, Predicate: predicate, Source: planir.FilterSourceRequest, Fields: predicateFields(predicate), MatchGuard: flatFilterNeedsMatchGuard(relationship), FieldRoutes: fieldRoutes}
 		input = m.NodeID
 	}
 	projection := []planir.Projection{}
@@ -186,24 +223,37 @@ func (p *Planner) buildFlatPlanIR(fact string, dimensions, metrics []Field, filt
 	return graph, nil
 }
 
-func (p *Planner) flatPhysicalField(fact, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
+func planIRLogicalType(datatype semanticmodel.LogicalDataType, fallback string) string {
+	switch datatype {
+	case semanticmodel.DataTypeInteger:
+		return "integer"
+	case semanticmodel.DataTypeDecimal:
+		return "decimal"
+	case semanticmodel.DataTypeFloat:
+		return "float"
+	default:
+		return fallback
+	}
+}
+
+func (p *Planner) flatPhysicalField(dataset, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
 	if semantic, ok := p.model.Dimensions[ref]; ok {
-		binding, ok := semantic.Bindings[fact]
+		binding, ok := semantic.Bindings[dataset]
 		if !ok {
-			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for fact %q", ref, fact)
+			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for dataset %q", ref, dataset)
 		}
-		physical, err := p.model.ResolveDimension(binding.Field)
+		physical, err := p.resolveDimension(binding.Field)
 		if err != nil {
 			return semanticmodel.MetricDimension{}, nil, err
 		}
-		path, err := p.model.ResolveBindingPath(fact, binding)
+		path, err := p.resolveBindingPath(dataset, binding)
 		return physical, path, err
 	}
-	physical, err := p.model.ResolveDimension(ref)
+	physical, err := p.resolveDimension(ref)
 	if err != nil {
 		return semanticmodel.MetricDimension{}, nil, err
 	}
-	path, err := p.relationshipPath(fact, physical.Table)
+	path, err := p.relationshipPath(dataset, physical.Table)
 	return physical, path, err
 }
 
@@ -214,7 +264,7 @@ func flatRouteNames(path []semanticmodel.Relationship) []string {
 	}
 	return out
 }
-func flatRoutes(paths map[string][]semanticmodel.Relationship, fact string, p *Planner) []planir.RelationshipRoute {
+func flatRoutes(paths map[string][]semanticmodel.Relationship, dataset string, p *Planner) ([]planir.RelationshipRoute, error) {
 	seen := map[string]bool{}
 	out := []planir.RelationshipRoute{}
 	for _, path := range paths {
@@ -224,20 +274,27 @@ func flatRoutes(paths map[string][]semanticmodel.Relationship, fact string, p *P
 		edges := []planir.RelationshipPath{}
 		for _, rel := range path {
 			edge := planIRRelationshipPath(rel)
-			edge.FromRelation, _ = p.physicalTable(edge.FromDataset)
-			edge.ToRelation, _ = p.physicalTable(edge.ToDataset)
+			fromRelation, err := p.physicalTable(edge.FromDataset)
+			if err != nil {
+				return nil, err
+			}
+			toRelation, err := p.physicalTable(edge.ToDataset)
+			if err != nil {
+				return nil, err
+			}
+			edge.FromRelation, edge.ToRelation = fromRelation, toRelation
 			edges = append(edges, edge)
 		}
 		key := strings.Join(flatRouteNames(path), "/")
 		if !seen[key] {
 			seen[key] = true
-			out = append(out, planir.RelationshipRoute{RootDataset: fact, Edges: edges})
+			out = append(out, planir.RelationshipRoute{RootDataset: dataset, Edges: edges})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return strings.Join(flatRouteNamesSemantic(out[i]), "/") < strings.Join(flatRouteNamesSemantic(out[j]), "/")
 	})
-	return out
+	return out, nil
 }
 func flatRouteNamesSemantic(route planir.RelationshipRoute) []string {
 	out := make([]string, len(route.Edges))
@@ -246,8 +303,8 @@ func flatRouteNamesSemantic(route planir.RelationshipRoute) []string {
 	}
 	return out
 }
-func flatOrderedRelationships(paths map[string][]semanticmodel.Relationship, fact string) []planir.RelationshipPath {
-	_ = fact
+func flatOrderedRelationships(paths map[string][]semanticmodel.Relationship, dataset string) []planir.RelationshipPath {
+	_ = dataset
 	byID := map[string]planir.RelationshipPath{}
 	routes := make([][]planir.RelationshipPath, 0, len(paths))
 	for _, path := range paths {
@@ -265,14 +322,32 @@ func flatOrderedRelationships(paths map[string][]semanticmodel.Relationship, fac
 }
 func flatFilterPhases(filters []Filter, paths map[string][]semanticmodel.Relationship) (root, relationship []Filter) {
 	for _, filter := range filters {
-		path := paths[filter.Field]
-		if len(path) > 0 {
+		if flatFilterHasRelationship(filter, paths) {
 			relationship = append(relationship, filter)
 		} else {
 			root = append(root, filter)
 		}
 	}
 	return
+}
+
+func flatFilterHasRelationship(filter Filter, paths map[string][]semanticmodel.Relationship) bool {
+	if filter.Spatial != nil {
+		if len(paths[filter.Spatial.LatitudeField]) > 0 || len(paths[filter.Spatial.LongitudeField]) > 0 {
+			return true
+		}
+	}
+	if filter.Field != "" && len(paths[filter.Field]) > 0 {
+		return true
+	}
+	for _, group := range filter.Groups {
+		for _, child := range group.Filters {
+			if flatFilterHasRelationship(child, paths) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func flatFilterNeedsMatchGuard(filters []Filter) bool {
@@ -289,22 +364,60 @@ func flatFilterNeedsMatchGuard(filters []Filter) bool {
 	return false
 }
 
-func flatFilterFieldRoutes(filters []Filter, paths map[string][]semanticmodel.Relationship, fact string, p *Planner) map[string][]planir.RelationshipRoute {
+func flatFilterFieldRoutes(filters []Filter, paths map[string][]semanticmodel.Relationship, dataset string, p *Planner) (map[string][]planir.RelationshipRoute, error) {
 	out := map[string][]planir.RelationshipRoute{}
+	var routeErr error
 	var walk func([]Filter)
 	walk = func(values []Filter) {
+		if routeErr != nil {
+			return
+		}
 		for _, filter := range values {
+			if filter.Spatial != nil {
+				for _, field := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
+					path := paths[field]
+					if len(path) == 0 {
+						continue
+					}
+					edges := make([]planir.RelationshipPath, 0, len(path))
+					for _, relation := range path {
+						edge := planIRRelationshipPath(relation)
+						fromRelation, err := p.physicalTable(edge.FromDataset)
+						if err != nil {
+							routeErr = err
+							return
+						}
+						toRelation, err := p.physicalTable(edge.ToDataset)
+						if err != nil {
+							routeErr = err
+							return
+						}
+						edge.FromRelation, edge.ToRelation = fromRelation, toRelation
+						edges = append(edges, edge)
+					}
+					out[field] = []planir.RelationshipRoute{{RootDataset: dataset, Edges: edges}}
+				}
+			}
 			if filter.Field != "" {
 				path := paths[filter.Field]
 				if len(path) > 0 {
 					edges := make([]planir.RelationshipPath, 0, len(path))
 					for _, relation := range path {
 						edge := planIRRelationshipPath(relation)
-						edge.FromRelation, _ = p.physicalTable(edge.FromDataset)
-						edge.ToRelation, _ = p.physicalTable(edge.ToDataset)
+						fromRelation, err := p.physicalTable(edge.FromDataset)
+						if err != nil {
+							routeErr = err
+							return
+						}
+						toRelation, err := p.physicalTable(edge.ToDataset)
+						if err != nil {
+							routeErr = err
+							return
+						}
+						edge.FromRelation, edge.ToRelation = fromRelation, toRelation
 						edges = append(edges, edge)
 					}
-					out[filter.Field] = []planir.RelationshipRoute{{RootDataset: fact, Edges: edges}}
+					out[filter.Field] = []planir.RelationshipRoute{{RootDataset: dataset, Edges: edges}}
 				}
 			}
 			for _, group := range filter.Groups {
@@ -313,7 +426,7 @@ func flatFilterFieldRoutes(filters []Filter, paths map[string][]semanticmodel.Re
 		}
 	}
 	walk(filters)
-	return out
+	return out, routeErr
 }
 func flatAndPredicate(filters []Filter) (planir.Predicate, error) {
 	children := make([]planir.Predicate, 0, len(filters))

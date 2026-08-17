@@ -430,14 +430,14 @@ func compiledSelections(spec ir.VisualizationSpec, entries []dashboard.Interacti
 			}
 			matched := false
 			for _, selected := range entry.Mappings {
-				fact, grain := "", ""
+				dataset, grain := "", ""
 				if mapping.TargetDatasetID != nil {
-					fact = *mapping.TargetDatasetID
+					dataset = *mapping.TargetDatasetID
 				}
 				if mapping.Grain != nil {
 					grain = *mapping.Grain
 				}
-				if selected.Field == mapping.TargetFieldID && selected.Fact == fact && selected.Grain == grain {
+				if selected.Field == mapping.TargetFieldID && selected.Dataset == dataset && selected.Grain == grain {
 					identity[mapping.Source.Field] = selected.Value
 					matched = true
 					break

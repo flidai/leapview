@@ -1,9 +1,12 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/analytics/semanticnumeric"
 )
 
 // CoerceSemanticLiteral validates and normalizes a canonical filter literal
@@ -17,7 +20,9 @@ func CoerceSemanticLiteral(value any, dimension MetricDimension) (any, error) {
 	switch typeName {
 	case "integer", "int", "bigint":
 		return coerceInteger(value)
-	case "decimal", "float", "number", "numeric", "double", "real":
+	case "decimal":
+		return coerceDecimal(value)
+	case "float", "number", "numeric", "double", "real":
 		return coerceFloat(value)
 	case "boolean", "bool":
 		if boolean, ok := value.(bool); ok {
@@ -69,6 +74,29 @@ func CoerceSemanticLiteral(value any, dimension MetricDimension) (any, error) {
 		return nil, fmt.Errorf("opaque fields cannot be compared")
 	default:
 		return value, nil
+	}
+}
+
+func coerceDecimal(value any) (json.Number, error) {
+	switch value.(type) {
+	case float32, float64:
+		return "", fmt.Errorf("value %v is binary floating point; Decimal literals must use a precision-safe string or integer", value)
+	case string, json.Number,
+		int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		number, err := semanticnumeric.FromValue(value)
+		if err != nil {
+			return "", fmt.Errorf("value %v is not decimal: %w", value, err)
+		}
+		switch normalized := number.Value().(type) {
+		case int64:
+			return json.Number(fmt.Sprint(normalized)), nil
+		case string:
+			return json.Number(normalized), nil
+		default:
+			return "", fmt.Errorf("value %v is not an exact Decimal", value)
+		}
+	default:
+		return "", fmt.Errorf("value %v is not decimal", value)
 	}
 }
 

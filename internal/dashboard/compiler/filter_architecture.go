@@ -278,7 +278,7 @@ func resolveBindingTargets(d *dashboardauthoring.Dashboard, model *semanticmodel
 			continue
 		}
 		applies, err := reportmodel.FieldAppliesToTarget(
-			d, model, definition.Field, definition.Fact, "visual", candidate.component.Visual,
+			d, model, definition.Field, definition.Dataset, "visual", candidate.component.Visual,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("target %q: %w", authoredTarget, err)

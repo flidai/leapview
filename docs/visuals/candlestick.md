@@ -17,7 +17,7 @@ visuals:
     description: Shows monthly open, close, low, and high values.
     type: candlestick
     query:
-      table: market_ohlc
+      dataset: market_ohlc
       dimensions:
         month: market_ohlc.month
       metrics:

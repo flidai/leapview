@@ -49,6 +49,14 @@ func snapshotTables(values map[string]Table) map[string]Table {
 	return clone
 }
 
+// CloneTable returns a detached executable copy suitable for immutable
+// serving-state accessors. It intentionally shares the same deep-copy rules as
+// ExecutionSnapshot without requiring callers to construct a temporary Model.
+func CloneTable(value Table) Table {
+	clone := snapshotTables(map[string]Table{"_": value})
+	return clone["_"]
+}
+
 func snapshotDatasets(values map[string]SemanticDatasetSpec) map[string]SemanticDatasetSpec {
 	if values == nil {
 		return nil
@@ -71,9 +79,9 @@ func snapshotSemanticDimensions(values map[string]SemanticDimension) map[string]
 		value.Grains = append([]string(nil), value.Grains...)
 		bindings := value.Bindings
 		value.Bindings = make(map[string]DimensionBinding, len(bindings))
-		for fact, binding := range bindings {
+		for dataset, binding := range bindings {
 			binding.Path = append([]string(nil), binding.Path...)
-			value.Bindings[fact] = binding
+			value.Bindings[dataset] = binding
 		}
 		clone[name] = value
 	}

@@ -14,9 +14,84 @@ type Planner struct {
 	tableRelation TableRelation
 }
 
-// TableRelation resolves a validated semantic table name to the physical SQL
-// relation used by a serving plan. Adapters use it to bind immutable storage
-// versions without teaching the semantic planner about a storage engine.
+// datasetTable resolves a semantic alias through the compiled serving
+// binding. It is the only runtime path from a semantic alias to executable
+// table metadata.
+func (p *Planner) datasetTable(alias string) (semanticmodel.Table, bool) {
+	if p == nil || p.compiled == nil {
+		return semanticmodel.Table{}, false
+	}
+	dataset, ok := p.compiled.dataset(alias)
+	if !ok {
+		return semanticmodel.Table{}, false
+	}
+	return dataset.table, true
+}
+
+func (p *Planner) resolveDimension(ref string) (semanticmodel.MetricDimension, error) {
+	parts := strings.Split(ref, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return semanticmodel.MetricDimension{}, fmt.Errorf("field %q must be qualified as dataset.field", ref)
+	}
+	table, ok := p.datasetTable(parts[0])
+	if !ok {
+		return semanticmodel.MetricDimension{}, fmt.Errorf("unknown dataset %q", parts[0])
+	}
+	dimension, ok := table.Dimensions[parts[1]]
+	if !ok {
+		return semanticmodel.MetricDimension{}, fmt.Errorf("unknown field %q on dataset %q", parts[1], parts[0])
+	}
+	dimension.Field = ref
+	dimension.Table = parts[0]
+	dimension.Name = parts[1]
+	return dimension, nil
+}
+
+func (p *Planner) resolveBindingPath(dataset string, binding semanticmodel.DimensionBinding) ([]semanticmodel.Relationship, error) {
+	dimension, err := p.resolveDimension(binding.Field)
+	if err != nil {
+		return nil, err
+	}
+	if len(binding.Path) == 0 {
+		return p.relationshipPath(dataset, dimension.Table)
+	}
+	current := dataset
+	visited := map[string]struct{}{dataset: {}}
+	path := make([]semanticmodel.Relationship, 0, len(binding.Path))
+	for _, id := range binding.Path {
+		relationship, ok := p.model.RelationshipByID(id)
+		if !ok {
+			return nil, fmt.Errorf("unknown relationship %q", id)
+		}
+		from, _, fromErr := semanticmodel.RelationshipEndpoint(relationship, true)
+		to, _, toErr := semanticmodel.RelationshipEndpoint(relationship, false)
+		if fromErr != nil || toErr != nil {
+			return nil, fmt.Errorf("relationship %q has invalid endpoint", id)
+		}
+		switch {
+		case current == from:
+			current = to
+		case relationship.Cardinality == "one_to_one" && current == to:
+			current = from
+		default:
+			return nil, fmt.Errorf("relationship %q does not safely continue from %q", id, current)
+		}
+		if _, exists := visited[current]; exists {
+			return nil, fmt.Errorf("relationship path revisits dataset %q", current)
+		}
+		visited[current] = struct{}{}
+		path = append(path, relationship)
+	}
+	if current != dimension.Table {
+		return nil, fmt.Errorf("relationship path ends at %q, field belongs to %q", current, dimension.Table)
+	}
+	return path, nil
+}
+
+// TableRelation resolves a validated backing physical Model table name to the
+// physical SQL relation used by a serving plan. Planner callers provide
+// semantic dataset aliases; the planner translates aliases before invoking
+// this callback.
 type TableRelation func(table string) (string, error)
 
 // IsCompiled reports whether the planner owns an activated immutable semantic
@@ -32,7 +107,7 @@ type tableAlias struct {
 }
 
 type queryView struct {
-	Fact       string
+	Dataset    string
 	Dimensions map[string]semanticmodel.MetricDimension
 	Metrics    map[string]resolvedAggregateMetric
 	// Paths is keyed by the caller's semantic reference first. The physical
@@ -44,14 +119,20 @@ type queryView struct {
 }
 
 func (p *Planner) physicalTable(table string) (string, error) {
-	identifier, err := quoteIdent(table)
-	if err != nil {
-		return "", err
+	if dataset, ok := p.compiled.dataset(table); ok {
+		table = dataset.ModelName()
 	}
 	if p == nil || p.tableRelation == nil {
+		identifier, err := quoteIdent(table)
+		if err != nil {
+			return "", err
+		}
 		return "model." + identifier, nil
 	}
-	relation, err := p.tableRelation(identifier)
+	if strings.TrimSpace(table) == "" {
+		return "", fmt.Errorf("physical table name is required")
+	}
+	relation, err := p.tableRelation(table)
 	if err != nil {
 		return "", err
 	}
@@ -73,10 +154,16 @@ func (p *Planner) metricExpression(name string) (semanticmodel.Expression, error
 		return semanticmodel.Expression{}, fmt.Errorf("planner is not compiled")
 	}
 	if node, ok := p.compiled.metric(name); ok {
-		if node.Type == "aggregate" {
+		if node.Derived != nil {
+			return node.Derived.Expression, nil
+		}
+		if node.Aggregate != nil {
 			return semanticmodel.Expression{}, fmt.Errorf("metric %q is aggregate", name)
 		}
-		return node.Expression, nil
+		if node.Ratio != nil {
+			return semanticmodel.Expression{}, fmt.Errorf("metric %q is ratio; use its typed numerator and denominator", name)
+		}
+		return semanticmodel.Expression{}, fmt.Errorf("metric %q has no compiled payload", name)
 	}
 	return semanticmodel.Expression{}, fmt.Errorf("unknown metric %q", name)
 }
@@ -86,32 +173,33 @@ func (p *Planner) resolvedAggregateMetric(name string) (resolvedAggregateMetric,
 		return resolvedAggregateMetric{}, fmt.Errorf("planner is not compiled")
 	}
 	node, ok := p.compiled.metric(name)
-	if !ok || node.Type != "aggregate" {
+	if !ok || node.Aggregate == nil {
 		if ok {
 			return resolvedAggregateMetric{}, fmt.Errorf("metric %q is not aggregate", name)
 		}
 		return resolvedAggregateMetric{}, fmt.Errorf("unknown aggregate metric %q", name)
 	}
+	aggregate := node.Aggregate
 	return resolvedAggregateMetric{
 		Field:         node.Name,
 		Name:          node.Name,
 		Label:         node.Label,
 		Description:   node.Description,
-		Fact:          node.Dataset,
-		Aggregation:   node.Aggregation,
-		InputField:    node.InputField,
-		Empty:         node.Empty,
+		Dataset:       aggregate.Dataset,
+		Aggregation:   aggregate.Aggregation,
+		InputField:    aggregate.InputField,
+		Empty:         aggregate.Empty,
 		Unit:          node.Unit,
 		Format:        node.Format,
-		TimeDimension: node.TimeDimension,
-		NamedFilters:  cloneCompiledNamedFilters(node.NamedFilters),
+		TimeDimension: aggregate.TimeDimension,
+		NamedFilters:  cloneCompiledNamedFilters(aggregate.NamedFilters),
 	}, nil
 }
 
 type AggregateAnalysis struct {
-	Facts         []string
+	Datasets      []string
 	AtomicMetrics []string
-	MultiFact     bool
+	MultiDataset  bool
 }
 
 // AnalyzeAggregate exposes the normalized semantic dependencies used by
@@ -128,21 +216,21 @@ func (p *Planner) AnalyzeAggregate(request Request) (AggregateAnalysis, error) {
 	}
 	sort.Strings(metrics)
 	return AggregateAnalysis{
-		Facts:         append([]string{}, resolved.Facts...),
+		Datasets:      append([]string{}, resolved.Datasets...),
 		AtomicMetrics: metrics,
-		MultiFact:     resolved.MultiFact,
+		MultiDataset:  resolved.MultiDataset,
 	}, nil
 }
 
 func (p *Planner) queryView(request Request) (*queryView, error) {
-	return p.semanticView(request.Table, request.Dimensions, request.Metrics, request.Filters, request.Time.Field)
+	return p.semanticView(request.Dataset, request.Dimensions, request.Metrics, request.Filters, request.Time.Field)
 }
 
 func (p *Planner) rowView(request RowRequest) (*queryView, error) {
-	if request.Table == "" && len(request.Metrics) == 0 {
-		return nil, fmt.Errorf("row query requires table when no metric is selected")
+	if request.Dataset == "" && len(request.Metrics) == 0 {
+		return nil, fmt.Errorf("row query requires dataset when no metric is selected")
 	}
-	return p.semanticView(request.Table, request.Dimensions, request.Metrics, request.Filters, "")
+	return p.semanticView(request.Dataset, request.Dimensions, request.Metrics, request.Filters, "")
 }
 
 func (p *Planner) rawValueView(request RawValueRequest) (*queryView, error) {
@@ -150,48 +238,47 @@ func (p *Planner) rawValueView(request RawValueRequest) (*queryView, error) {
 	if request.Metric.Field != "" {
 		metrics = append(metrics, request.Metric)
 	}
-	return p.semanticView(request.Table, request.Dimensions, metrics, request.Filters, "")
+	return p.semanticView(request.Dataset, request.Dimensions, metrics, request.Filters, "")
 }
 
 func (p *Planner) countView(request CountRequest) (*queryView, error) {
-	if request.Table == "" {
-		return nil, fmt.Errorf("count query requires table")
+	if request.Dataset == "" {
+		return nil, fmt.Errorf("count query requires dataset")
 	}
-	return p.semanticView(request.Table, nil, nil, request.Filters, "")
+	return p.semanticView(request.Dataset, nil, nil, request.Filters, "")
 }
 
-func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field, filters []Filter, timeField string) (*queryView, error) {
+func (p *Planner) semanticView(dataset string, dimensions []Field, metrics []Field, filters []Filter, timeField string) (*queryView, error) {
 	if p.model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
-	fact := table
 	resolvedMetrics := map[string]resolvedAggregateMetric{}
 	for _, item := range metrics {
 		resolved, err := p.resolvedAggregateMetric(item.Field)
 		if err != nil {
 			return nil, err
 		}
-		if fact == "" {
-			fact = resolved.Fact
+		if dataset == "" {
+			dataset = resolved.Dataset
 		}
-		if resolved.Fact != fact {
-			return nil, fmt.Errorf("cross-fact metrics are not supported")
+		if resolved.Dataset != dataset {
+			return nil, fmt.Errorf("cross-dataset metrics are not supported")
 		}
 		resolvedMetrics[item.Field] = resolved
 	}
-	if fact == "" {
-		return nil, fmt.Errorf("query requires a fact table")
+	if dataset == "" {
+		return nil, fmt.Errorf("query requires a dataset")
 	}
-	if _, ok := p.model.Tables[fact]; !ok {
-		return nil, fmt.Errorf("unknown table %q", fact)
+	if _, ok := p.compiled.dataset(dataset); !ok {
+		return nil, fmt.Errorf("unknown dataset %q", dataset)
 	}
-	if err := validateSingleFactFilterScope(fact, filters); err != nil {
+	if err := validateSingleDatasetFilterScope(dataset, filters); err != nil {
 		return nil, err
 	}
 	resolvedDimensions := map[string]semanticmodel.MetricDimension{}
 	paths := map[string][]semanticmodel.Relationship{}
 	for _, item := range dimensions {
-		dimension, path, err := p.resolveViewDimension(fact, item.Field)
+		dimension, path, err := p.resolveViewDimension(dataset, item.Field)
 		if err != nil {
 			return nil, err
 		}
@@ -202,12 +289,12 @@ func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field
 			paths[dimension.Field] = path
 		}
 	}
-	view := &queryView{Fact: fact, Dimensions: resolvedDimensions, Metrics: resolvedMetrics, Paths: paths}
+	view := &queryView{Dataset: dataset, Dimensions: resolvedDimensions, Metrics: resolvedMetrics, Paths: paths}
 	if err := p.exposeViewFilters(view, filters); err != nil {
 		return nil, err
 	}
 	if timeField != "" {
-		dimension, path, err := p.resolveViewDimension(fact, timeField)
+		dimension, path, err := p.resolveViewDimension(dataset, timeField)
 		if err != nil {
 			return nil, err
 		}
@@ -221,37 +308,37 @@ func (p *Planner) semanticView(table string, dimensions []Field, metrics []Field
 	return view, nil
 }
 
-func (p *Planner) resolveViewDimension(fact, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
+func (p *Planner) resolveViewDimension(dataset, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
 	if semanticDimension, ok := p.model.Dimensions[ref]; ok {
-		binding, ok := semanticDimension.Bindings[fact]
+		binding, ok := semanticDimension.Bindings[dataset]
 		if !ok {
-			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for fact %q", ref, fact)
+			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for dataset %q", ref, dataset)
 		}
-		dimension, err := p.model.ResolveDimension(binding.Field)
+		dimension, err := p.resolveDimension(binding.Field)
 		if err != nil {
 			return semanticmodel.MetricDimension{}, nil, err
 		}
-		path, err := p.model.ResolveBindingPath(fact, binding)
+		path, err := p.resolveBindingPath(dataset, binding)
 		return dimension, path, err
 	}
-	dimension, err := p.model.ResolveDimension(ref)
+	dimension, err := p.resolveDimension(ref)
 	if err != nil {
 		return semanticmodel.MetricDimension{}, nil, err
 	}
-	path, err := p.relationshipPath(fact, dimension.Table)
+	path, err := p.relationshipPath(dataset, dimension.Table)
 	return dimension, path, err
 }
 
-func validateSingleFactFilterScope(fact string, filters []Filter) error {
+func validateSingleDatasetFilterScope(dataset string, filters []Filter) error {
 	for _, filter := range filters {
-		if filter.Fact != "" && filter.Fact != fact {
-			return fmt.Errorf("filter fact %q does not match query fact %q", filter.Fact, fact)
+		if filter.Dataset != "" && filter.Dataset != dataset {
+			return fmt.Errorf("filter dataset %q does not match query dataset %q", filter.Dataset, dataset)
 		}
-		if filter.Spatial != nil && filter.Spatial.Fact != "" && filter.Spatial.Fact != fact {
-			return fmt.Errorf("spatial filter fact %q does not match query fact %q", filter.Spatial.Fact, fact)
+		if filter.Spatial != nil && filter.Spatial.Dataset != "" && filter.Spatial.Dataset != dataset {
+			return fmt.Errorf("spatial filter dataset %q does not match query dataset %q", filter.Spatial.Dataset, dataset)
 		}
 		for _, group := range filter.Groups {
-			if err := validateSingleFactFilterScope(fact, group.Filters); err != nil {
+			if err := validateSingleDatasetFilterScope(dataset, group.Filters); err != nil {
 				return err
 			}
 		}
@@ -285,7 +372,7 @@ func (p *Planner) exposeViewFilters(view *queryView, filters []Filter) error {
 			)
 		}
 		for _, ref := range refs {
-			dimension, path, err := p.resolveViewFilterDimension(view.Fact, ref.field, ref.path)
+			dimension, path, err := p.resolveViewFilterDimension(view.Dataset, ref.field, ref.path)
 			if err != nil {
 				return err
 			}
@@ -313,31 +400,31 @@ func (p *Planner) exposeViewFilters(view *queryView, filters []Filter) error {
 	return nil
 }
 
-func (p *Planner) resolveViewFilterDimension(fact, ref string, explicitPath []string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
+func (p *Planner) resolveViewFilterDimension(dataset, ref string, explicitPath []string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
 	if semanticDimension, ok := p.model.Dimensions[ref]; ok {
-		binding, ok := semanticDimension.Bindings[fact]
+		binding, ok := semanticDimension.Bindings[dataset]
 		if !ok {
-			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for fact %q", ref, fact)
+			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for dataset %q", ref, dataset)
 		}
 		if len(explicitPath) > 0 {
 			binding.Path = append([]string(nil), explicitPath...)
 		}
-		dimension, err := p.model.ResolveDimension(binding.Field)
+		dimension, err := p.resolveDimension(binding.Field)
 		if err != nil {
 			return semanticmodel.MetricDimension{}, nil, err
 		}
-		path, err := p.model.ResolveBindingPath(fact, binding)
+		path, err := p.resolveBindingPath(dataset, binding)
 		return dimension, path, err
 	}
-	dimension, err := p.model.ResolveDimension(ref)
+	dimension, err := p.resolveDimension(ref)
 	if err != nil {
 		return semanticmodel.MetricDimension{}, nil, err
 	}
 	var path []semanticmodel.Relationship
 	if len(explicitPath) > 0 {
-		path, err = p.model.ResolveBindingPath(fact, semanticmodel.DimensionBinding{Field: ref, Path: append([]string(nil), explicitPath...)})
+		path, err = p.resolveBindingPath(dataset, semanticmodel.DimensionBinding{Field: ref, Path: append([]string(nil), explicitPath...)})
 	} else {
-		path, err = p.relationshipPath(fact, dimension.Table)
+		path, err = p.relationshipPath(dataset, dimension.Table)
 	}
 	return dimension, path, err
 }

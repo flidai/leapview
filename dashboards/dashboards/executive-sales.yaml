@@ -104,7 +104,7 @@ spec:
       title: Orders
       type: table
       query:
-        table: sales_orders
+        dataset: sales_orders
         fields:
           - sales_orders.order_id
           - sales_orders.purchase_date

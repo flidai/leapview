@@ -155,7 +155,7 @@ func (s *VisualizationDataService) matrixTableRows(ctx context.Context, runtime 
 		sorts = []reportdef.QuerySort{{Field: request.Sort.Key, Direction: request.Sort.Direction}}
 	}
 	rows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
-		Table:      table.Table,
+		Dataset:    table.Table,
 		Dimensions: dimensions,
 		Metrics:    metrics,
 		Filters:    queryFilters,
@@ -258,7 +258,7 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 		sorts = append(sorts, reportdef.QuerySort{Field: dimension.Alias, Direction: "asc"})
 	}
 	rawRows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
-		Table:      table.Table,
+		Dataset:    table.Table,
 		Dimensions: dimensions,
 		Metrics:    metrics,
 		Filters:    queryFilters,
@@ -597,15 +597,16 @@ func (s *VisualizationDataService) tableRowRequest(ctx context.Context, runtime 
 	if sortKey != "order_id" && tableHasQueryAlias(table.DataColumns, "order_id") {
 		sorts = append(sorts, reportdef.QuerySort{Field: "order_id", Direction: "asc"})
 	}
-	return reportdef.RowQuery{
-		Table:      table.Table,
+	rowQuery := reportdef.RowQuery{
+		Dataset:    table.Table,
 		Dimensions: dimensions,
 		Metrics:    metrics,
 		Filters:    queryFilters,
 		Sort:       sorts,
 		Limit:      count,
 		Offset:     start,
-	}, nil
+	}
+	return rowQuery, nil
 }
 
 func tableSortKey(table tablePlan, key string) string {

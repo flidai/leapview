@@ -49,7 +49,7 @@ func cloneFilters(input []Filter) []Filter {
 	output := make([]Filter, len(input))
 	for i, filter := range input {
 		output[i] = Filter{
-			Field: filter.Field, Fact: filter.Fact, Operator: filter.Operator,
+			Field: filter.Field, Dataset: filter.Dataset, Operator: filter.Operator,
 			Values: append([]any(nil), filter.Values...),
 			Groups: cloneFilterGroups(filter.Groups),
 		}
@@ -85,7 +85,7 @@ type ColumnMask struct {
 
 type Filter struct {
 	Field    string
-	Fact     string
+	Dataset  string `json:"dataset,omitempty"`
 	Operator string
 	Values   []any
 	Groups   []FilterGroup
@@ -100,7 +100,7 @@ type SpatialFilter struct {
 	Kind           string
 	LatitudeField  string
 	LongitudeField string
-	Fact           string
+	Dataset        string `json:"dataset,omitempty"`
 	West           float64
 	South          float64
 	East           float64
@@ -224,7 +224,7 @@ func compileRowFilter(id string, value expression) (RowFilter, error) {
 }
 
 func normalizeFilter(id, path string, filter Filter) (Filter, error) {
-	for label, value := range map[string]string{"field": filter.Field, "fact": filter.Fact, "operator": filter.Operator} {
+	for label, value := range map[string]string{"field": filter.Field, "dataset": filter.Dataset, "operator": filter.Operator} {
 		if err := validateCanonicalLiteral(value, fmt.Sprintf("%s.%s", path, label)); err != nil {
 			return Filter{}, compileError(id, "%v", err)
 		}
@@ -242,8 +242,8 @@ func normalizeFilter(id, path string, filter Filter) (Filter, error) {
 		return Filter{}, compileError(id, "%s must contain exactly one of field, groups, or spatial", path)
 	}
 	if hasGroups {
-		if filter.Fact != "" || filter.Operator != "" || len(filter.Values) != 0 {
-			return Filter{}, compileError(id, "%s group cannot contain fact, operator, or values", path)
+		if filter.Dataset != "" || filter.Operator != "" || len(filter.Values) != 0 {
+			return Filter{}, compileError(id, "%s group cannot contain dataset, operator, or values", path)
 		}
 		groups := make([]FilterGroup, len(filter.Groups))
 		for groupIndex, group := range filter.Groups {
@@ -263,11 +263,11 @@ func normalizeFilter(id, path string, filter Filter) (Filter, error) {
 		return Filter{Groups: groups}, nil
 	}
 	if hasSpatial {
-		if filter.Fact != "" || filter.Operator != "" || len(filter.Values) != 0 {
+		if filter.Dataset != "" || filter.Operator != "" || len(filter.Values) != 0 {
 			return Filter{}, compileError(id, "%s spatial filter cannot contain scalar fields", path)
 		}
 		spatial := *filter.Spatial
-		for label, value := range map[string]string{"kind": spatial.Kind, "latitudeField": spatial.LatitudeField, "longitudeField": spatial.LongitudeField, "fact": spatial.Fact} {
+		for label, value := range map[string]string{"kind": spatial.Kind, "latitudeField": spatial.LatitudeField, "longitudeField": spatial.LongitudeField, "dataset": spatial.Dataset} {
 			if err := validateCanonicalLiteral(value, fmt.Sprintf("%s.spatial.%s", path, label)); err != nil {
 				return Filter{}, compileError(id, "%v", err)
 			}

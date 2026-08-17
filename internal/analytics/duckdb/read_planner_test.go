@@ -62,14 +62,19 @@ func TestPlanModelTableCompilesDirectSourceFromColumns(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"raw_order_id", "gross_revenue", "status"},
 	}, semanticmodel.Table{
-		Source:   "orders",
-		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Source:    "orders",
+		ModelName: "orders",
+		Entities:  map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Columns: map[string]semanticmodel.ModelColumn{
 			"order_id": {SourceField: "raw_order_id", Datatype: semanticmodel.DataTypeString},
 			"revenue":  {SourceField: "gross_revenue", Datatype: semanticmodel.DataTypeFloat},
 			"status":   {Datatype: semanticmodel.DataTypeString},
 		},
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}, "status": {Label: "Status", Datatype: semanticmodel.DataTypeString}},
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
+			"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
+			"status":   {Label: "Status", Datatype: semanticmodel.DataTypeString},
+		},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 

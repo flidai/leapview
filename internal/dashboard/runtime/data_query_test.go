@@ -21,7 +21,7 @@ func TestReportAggregateDataQueryDefaultsToDashboardCacheOperation(t *testing.T)
 
 func TestReportCountDataQueryPreservesAuthorizationProjection(t *testing.T) {
 	request := reportRowDataQuery("sales", reportdef.RowQuery{
-		Table: "orders",
+		Dataset: "orders",
 		Dimensions: []reportdef.QueryField{
 			{Field: "orders.order_id", Alias: "order_id"},
 			{Field: "orders.customer_email", Alias: "email"},

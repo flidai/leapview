@@ -342,16 +342,18 @@ func (r *Runtime) VerifyEntityClaims(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("entity verification: open database session: %w", err)
 	}
-	tableNames := make([]string, 0, len(r.model.Tables))
-	for tableName := range r.model.Tables {
-		tableNames = append(tableNames, tableName)
+	if r.planner == nil || r.planner.CompiledModel() == nil {
+		return fmt.Errorf("entity verification: compiled dataset bindings are unavailable")
 	}
-	sort.Strings(tableNames)
-	for _, tableName := range tableNames {
+	for _, tableName := range r.planner.CompiledModel().DatasetNames() {
 		if err := queryCtx.Err(); err != nil {
 			return err
 		}
-		table := r.model.Tables[tableName]
+		dataset, ok := r.planner.Dataset(tableName)
+		if !ok {
+			return fmt.Errorf("entity verification table %q: compiled dataset is unavailable", tableName)
+		}
+		table := dataset.Table()
 		relation, err := r.physicalModelTable(tableName)
 		if err != nil {
 			return fmt.Errorf("entity verification table %q: %w", tableName, err)
@@ -540,7 +542,7 @@ func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, e
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate:
 		return planner.Plan(semanticquery.Request{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
+			Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
@@ -550,7 +552,7 @@ func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, e
 			return semanticquery.Plan{}, fmt.Errorf("native Arrow row queries do not include an auxiliary total")
 		}
 		return planner.PlanRows(semanticquery.RowRequest{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
+			Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
 		})
@@ -1052,7 +1054,7 @@ func dataQueryFilters(filters []dataquery.Filter) []semanticquery.Filter {
 		}
 		out = append(out, semanticquery.Filter{
 			Field:    filter.Field,
-			Fact:     filter.Fact,
+			Dataset:  filter.Dataset,
 			Operator: filter.Operator,
 			Values:   append([]any{}, filter.Values...),
 			Groups:   groups,

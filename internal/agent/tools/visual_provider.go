@@ -318,7 +318,7 @@ func agentVisualFilters(filters []agentVisualFilter) []reportdef.QueryFilter {
 			groups = append(groups, reportdef.QueryFilterGroup{Filters: agentVisualFilters(group.Filters)})
 		}
 		out = append(out, reportdef.QueryFilter{
-			Field: filter.Field, Fact: filter.Dataset, Operator: filter.Operator, Values: values, Groups: groups,
+			Field: filter.Field, Dataset: filter.Dataset, Operator: filter.Operator, Values: values, Groups: groups,
 		})
 	}
 	return out
@@ -621,7 +621,7 @@ func agentReportVisual(input agentVisualInput) dashboardauthoring.Visual {
 	}
 	return dashboardauthoring.Visual{
 		Title: firstNonEmpty(input.Title, "Agent visual"), Type: input.Type, Presentation: input.Presentation,
-		Query:        dashboardauthoring.VisualQuery{Table: input.Dataset, Dimensions: dimensions, Series: series, Metrics: metrics, Limit: input.Limit},
+		Query:        dashboardauthoring.VisualQuery{Dataset: input.Dataset, Dimensions: dimensions, Series: series, Metrics: metrics, Limit: input.Limit},
 		Calculations: input.Calculations,
 	}
 }
@@ -654,7 +654,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 		}
 		binCount = max(5, min(60, binCount))
 		bins, err := p.Histogram(ctx, projectID, input.Model, reportdef.RawValueQuery{
-			Table: input.Dataset, Metric: reportdef.QueryField{Field: input.Metrics[0].Field, Alias: "value"},
+			Dataset: input.Dataset, Metric: reportdef.QueryField{Field: input.Metrics[0].Field, Alias: "value"},
 			Filters: filters,
 		}, binCount)
 		if err != nil {
@@ -671,7 +671,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 			return nil, fmt.Errorf("distribution query provider is not configured")
 		}
 		rows, err := p.Distribution(ctx, projectID, input.Model, reportdef.RawValueQuery{
-			Table:      input.Dataset,
+			Dataset:    input.Dataset,
 			Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
 			Metric:     reportdef.QueryField{Field: input.Metrics[0].Field, Alias: "value"},
 			Filters:    filters,
@@ -683,7 +683,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 	}
 	if shape == "single_value" {
 		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table:   input.Dataset,
+			Dataset: input.Dataset,
 			Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
 			Filters: filters,
 			Limit:   1,
@@ -705,7 +705,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 				metrics[index] = reportdef.QueryField{Field: metric.Field, Alias: aliases[index]}
 			}
 			rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-				Table: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
+				Dataset: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
 				Metrics: metrics, Filters: filters,
 				Sort: agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Metrics), Limit: input.Limit,
 			})
@@ -714,7 +714,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 		out := []dashboard.Datum{}
 		for _, metricRef := range input.Metrics {
 			rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-				Table:      input.Dataset,
+				Dataset:    input.Dataset,
 				Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
 				Metrics:    []reportdef.QueryField{{Field: metricRef.Field, Alias: "value"}},
 				Filters:    filters,
@@ -741,7 +741,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 			dimensions[index] = reportdef.QueryField{Field: dimension.Field, Alias: fmt.Sprintf("level_%d", index)}
 		}
 		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table: input.Dataset, Dimensions: dimensions, Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
+			Dataset: input.Dataset, Dimensions: dimensions, Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
 			Filters: filters, Limit: input.Limit,
 		})
 		if err != nil {
@@ -765,7 +765,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 			left, right = "source", "target"
 		}
 		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table:      input.Dataset,
+			Dataset:    input.Dataset,
 			Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: left}, {Field: input.Dimensions[1].Field, Alias: right}},
 			Metrics:    []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
 			Filters:    filters, Limit: input.Limit,
@@ -774,7 +774,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 	}
 	if shape == "geo" {
 		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "name"}},
+			Dataset: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "name"}},
 			Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
 			Filters: filters, Limit: input.Limit,
 		})
@@ -785,7 +785,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 		dimensions = append(dimensions, reportdef.QueryField{Field: input.Series.Field, Alias: "series"})
 	}
 	rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-		Table:      input.Dataset,
+		Dataset:    input.Dataset,
 		Dimensions: dimensions,
 		Metrics:    []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
 		Filters:    filters,
@@ -867,7 +867,7 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 			return agentVisualResult{}, fmt.Errorf("aggregate query provider is not configured")
 		}
 		rows, err = p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table:      input.Dataset,
+			Dataset:    input.Dataset,
 			Dimensions: dimensions,
 			Metrics:    metrics,
 			Filters:    agentVisualFilters(input.Filters),
@@ -879,7 +879,7 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 			return agentVisualResult{}, fmt.Errorf("preview query provider is not configured")
 		}
 		rows, err = p.PreviewRows(ctx, projectID, input.Model, reportdef.RowQuery{
-			Table:      input.Dataset,
+			Dataset:    input.Dataset,
 			Dimensions: dimensions,
 			Metrics:    metrics,
 			Filters:    agentVisualFilters(input.Filters),
@@ -899,7 +899,7 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 	if len(input.Sort) > 0 {
 		sortSpec = dashboard.TableSort{Key: agentFieldAlias(input.Sort[0].Field), Direction: normalizedSortDirection(input.Sort[0].Direction)}
 	}
-	authored := dashboardauthoring.TableVisual{Title: title, DefaultSort: sortSpec, Style: dashboard.TableStyle{}.WithDefaults(), Columns: columns, Query: dashboardauthoring.TableQuery{Table: input.Dataset}, Calculations: input.Calculations}
+	authored := dashboardauthoring.TableVisual{Title: title, DefaultSort: sortSpec, Style: dashboard.TableStyle{}.WithDefaults(), Columns: columns, Query: dashboardauthoring.TableQuery{Dataset: input.Dataset}, Calculations: input.Calculations}
 	for _, field := range fields {
 		authored.DataColumns = append(authored.DataColumns, dashboardauthoring.FieldRef{Field: field.Field, Alias: agentFieldAliasForRef(field)})
 	}

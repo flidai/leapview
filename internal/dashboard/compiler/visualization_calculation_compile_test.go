@@ -112,7 +112,7 @@ func TestCompiledHiddenTableCalculationRemainsAvailableWithoutDisplayColumn(t *t
 		ID: "sales", SemanticModel: "sales",
 		Visuals: map[string]dashboardauthoring.AuthoringVisualization{
 			"orders": dashboardauthoring.TabularVisualization("table", dashboardauthoring.TableVisual{
-				Query:   dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"month", "revenue"}},
+				Query:   dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"month", "revenue"}},
 				Columns: nil,
 				Calculations: []dashboardauthoring.VisualCalculation{{
 					ID: "running_revenue", Template: "running_total", Source: "revenue", Hidden: true,

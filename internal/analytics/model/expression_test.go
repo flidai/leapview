@@ -2,7 +2,10 @@ package model
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/flidai/leapview/internal/analytics/semanticnumeric"
 )
 
 func TestExpressionParsesReferencesAndSafeDivide(t *testing.T) {
@@ -27,6 +30,20 @@ func TestExpressionRejectsAggregateSQLAndBareIdentifiers(t *testing.T) {
 		if _, err := ParseExpression(input); err == nil {
 			t.Fatalf("ParseExpression(%q) succeeded", input)
 		}
+	}
+}
+
+func TestExpressionRejectsExponentAndNonCanonicalNumberLiterals(t *testing.T) {
+	for _, input := range []string{"1e-3", "1.2e3", ".5", "1.", "01"} {
+		t.Run(input, func(t *testing.T) {
+			_, err := ParseExpression(input)
+			if err == nil {
+				t.Fatalf("ParseExpression(%q) succeeded", input)
+			}
+			if strings.Contains(input, "e") && !strings.Contains(err.Error(), "exponent") {
+				t.Fatalf("ParseExpression(%q) error = %v, want exponent rejection", input, err)
+			}
+		})
 	}
 }
 
@@ -82,8 +99,8 @@ func TestExpressionEvaluateMetricArithmeticAndNullSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value != 0.375 {
-		t.Fatalf("value = %#v, want 0.375", value)
+	if value != semanticnumeric.Decimal("0.375") {
+		t.Fatalf("value = %#v, want exact Decimal 0.375", value)
 	}
 
 	nullValue, err := expression.Evaluate(func(ref string) (any, error) {
@@ -94,5 +111,21 @@ func TestExpressionEvaluateMetricArithmeticAndNullSemantics(t *testing.T) {
 	}
 	if nullValue != nil {
 		t.Fatalf("division by zero = %#v, want nil", nullValue)
+	}
+}
+
+func TestExpressionEvaluatePreservesExactDecimalBeyondFloatPrecision(t *testing.T) {
+	expression, err := ParseExpression("${amount} + 0.001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := expression.Evaluate(func(string) (any, error) {
+		return "9007199254740993.125", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != semanticnumeric.Decimal("9007199254740993.126") {
+		t.Fatalf("value = %#v, want exact Decimal 9007199254740993.126", value)
 	}
 }

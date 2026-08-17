@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 )
 
 func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
@@ -13,12 +14,13 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		Description: "Sales model",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				ModelName: "orders",
+				Entities:  map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"status": {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
-			"customers": {Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
+			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Dataset: "orders", Aggregation: "count"},
@@ -32,7 +34,11 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		Relationships: []semanticmodel.Relationship{{ID: "orders_customer", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}},
 	}
 
-	payload := SemanticModelAssetPayload(model)
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := SemanticModelAssetPayload(model, compiled)
 	datasets, ok := payload["Datasets"].(map[string]any)
 	if !ok || len(datasets) != 2 {
 		t.Fatalf("datasets = %#v, want two projected datasets", payload["Datasets"])
@@ -55,5 +61,23 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	orders, ok := datasetDetails["orders"].(map[string]any)
 	if !ok || orders["GrainEntity"] != "order_id" {
 		t.Fatalf("orders dataset = %#v, want grain entity", datasets["orders"])
+	}
+}
+
+func TestSemanticModelAssetPayloadRejectsMismatchedCompiledBindings(t *testing.T) {
+	model := &semanticmodel.Model{
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
+	}
+	other := &semanticmodel.Model{
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"customers": {Model: "customers"}},
+		Tables: map[string]semanticmodel.Table{"customers": {ModelName: "customers"}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload := SemanticModelAssetPayload(model, compiled); payload != nil {
+		t.Fatalf("payload = %#v, want nil for mismatched activation binding", payload)
 	}
 }

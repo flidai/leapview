@@ -14,7 +14,7 @@ import (
 func TestDashboardVisualizationDescriptionContainsOnlyCompiledContract(t *testing.T) {
 	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 		ID: "sales", SemanticModel: "sales",
-		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"revenue": {Type: "line", Title: "Revenue", Query: dashboardauthoring.VisualQuery{Table: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "orders.revenue"}}}}}),
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"revenue": {Type: "line", Title: "Revenue", Query: dashboardauthoring.VisualQuery{Dataset: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "orders.revenue"}}}}}),
 	})
 	if err != nil {
 		t.Fatalf("compile definitions: %v", err)
@@ -46,7 +46,7 @@ func TestDashboardGridJSONUsesVisualizationEnvelope(t *testing.T) {
 		Cardinality: dashboard.ExactCardinality(1), AvailableRows: 1,
 		Blocks: map[string]dashboard.TableBlock{"a": {Rows: []map[string]any{{"order_id": "A-1"}}}},
 	}
-	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{ID: "sales", SemanticModel: "sales", Visuals: dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"orders": {Title: "Orders", Columns: table.Columns, Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"order_id"}}}})})
+	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{ID: "sales", SemanticModel: "sales", Visuals: dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"orders": {Title: "Orders", Columns: table.Columns, Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"order_id"}}}})})
 	if err != nil {
 		t.Fatalf("compile table definition: %v", err)
 	}

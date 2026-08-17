@@ -32,7 +32,7 @@ func dimensionLabel(name, label string) string {
 	return name
 }
 
-func measureLabel(name, label string) string {
+func metricLabel(name, label string) string {
 	if label != "" {
 		return label
 	}

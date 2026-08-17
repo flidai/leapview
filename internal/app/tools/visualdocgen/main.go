@@ -584,7 +584,7 @@ func buildVisualDocumentReference(examples []visualExample) (visualDocumentRefer
 	if len(examples) > 0 && examples[0].Tabular != nil {
 		return visualDocumentReference{
 			Kind: "visual", Renderer: "tabular", Shapes: []string{examples[0].Type},
-			QueryFields: []string{"table", "fields", "rows", "columns", "metrics"},
+			QueryFields: []string{"dataset", "fields", "rows", "columns", "metrics"},
 			Fields: []visualdocs.FieldReference{
 				{Path: "type", Type: "string", AllowedValues: []string{"table", "matrix", "pivot"}, Description: "Selects the tabular visual behavior."},
 				{Path: "query", Type: "tabular query", Description: "Selects record fields or grouped row, column, and metric fields."},
@@ -646,8 +646,8 @@ func buildVisualDocumentReference(examples []visualExample) (visualDocumentRefer
 }
 
 func collectQueryFields(query dashboardauthoring.VisualQuery, fields map[string]struct{}) {
-	if query.Table != "" {
-		fields["table"] = struct{}{}
+	if query.Dataset != "" {
+		fields["dataset"] = struct{}{}
 	}
 	if len(query.Dimensions) > 0 {
 		fields["dimensions"] = struct{}{}
@@ -678,7 +678,7 @@ func visualKeyFields(previous *dashboardauthoring.Visual, visual dashboardauthor
 		name string
 		get  func(dashboardauthoring.VisualQuery) any
 	}{
-		{"table", func(query dashboardauthoring.VisualQuery) any { return query.Table }},
+		{"dataset", func(query dashboardauthoring.VisualQuery) any { return query.Dataset }},
 		{"dimensions", func(query dashboardauthoring.VisualQuery) any { return query.Dimensions }},
 		{"series", func(query dashboardauthoring.VisualQuery) any { return query.Series }},
 		{"metrics", func(query dashboardauthoring.VisualQuery) any { return query.Metrics }},

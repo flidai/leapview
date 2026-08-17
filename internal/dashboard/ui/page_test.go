@@ -64,12 +64,12 @@ func TestPageInitialSignalsArePageScoped(t *testing.T) {
 			},
 		},
 		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"active_chart":   {Title: "Active", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.status", Fact: "orders", Value: "label"}}, Targets: []string{"orders"}}}},
+			"active_chart":   {Title: "Active", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.status", Dataset: "orders", Value: "label"}}, Targets: []string{"orders"}}}},
 			"active_kpi":     {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: fieldRefs("order_count")}, Presentation: dashboardauthoring.VisualPresentation{Note: "Filtered", Tone: "ink"}},
 			"off_page_chart": {Title: "Off Page", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}},
 		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"orders":   {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Interaction: dashboardauthoring.Interaction{RowSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.order_id", Fact: "orders", Value: "order_id"}}, Targets: []string{"active_chart"}}}, Style: dashboard.TableStyle{Density: "compact", Grid: "full"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order", Width: 220, Format: "text"}}},
-			"off_page": {Title: "Off Page", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
+			"orders":   {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id"}}, Interaction: dashboardauthoring.Interaction{RowSelection: dashboardauthoring.SelectionInteraction{Mappings: []dashboardauthoring.SelectionMapping{{Field: "orders.order_id", Dataset: "orders", Value: "order_id"}}, Targets: []string{"active_chart"}}}, Style: dashboard.TableStyle{Density: "compact", Grid: "full"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order", Width: 220, Format: "text"}}},
+			"off_page": {Title: "Off Page", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
 		}), dashboardauthoring.TabularVisualizations("matrix", map[string]dashboardauthoring.TableVisual{
 			"matrix": {Title: "Matrix", Query: dashboardauthoring.TableQuery{Rows: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Columns: []dashboard.TableColumn{{Key: "status", Label: "Status"}}},
 		}), dashboardauthoring.TabularVisualizations("pivot", map[string]dashboardauthoring.TableVisual{
@@ -113,16 +113,17 @@ func TestPageInitialSignalsArePageScoped(t *testing.T) {
 		},
 	}
 	model := &semanticmodel.Model{
-		Name:  "test",
-		Title: "Test",
+		Name:     "test",
+		Title:    "Test",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Source: "orders", ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Type: "string"},
-					"status":   {Type: "string"},
-					"state":    {Type: "string"},
-					"category": {Type: "string"},
+					"order_id": {Field: "orders.order_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"status":   {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"state":    {Field: "orders.state", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"category": {Field: "orders.category", Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 		},

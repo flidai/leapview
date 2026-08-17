@@ -16,7 +16,7 @@ type resolvedAggregateMetric struct {
 	Name          string
 	Label         string
 	Description   string
-	Fact          string
+	Dataset       string
 	Aggregation   string
 	InputField    string
 	Filters       []metricFilter
@@ -41,7 +41,7 @@ type Time struct {
 
 type Filter struct {
 	Field        string
-	Fact         string
+	Dataset      string
 	Operator     string
 	Values       []any
 	Path         []string
@@ -56,7 +56,7 @@ type SpatialFilter struct {
 	Kind           string
 	LatitudeField  string
 	LongitudeField string
-	Fact           string
+	Dataset        string
 	West           float64
 	South          float64
 	East           float64
@@ -86,7 +86,7 @@ type ColumnMask struct {
 }
 
 type Request struct {
-	Table       string
+	Dataset     string
 	Dimensions  []Field
 	Metrics     []Field
 	Time        Time
@@ -109,7 +109,7 @@ type SpatialBucket struct {
 }
 
 type SpatialTileRequest struct {
-	Table        string
+	Dataset      string
 	Metrics      []Field
 	Filters      []Filter
 	ColumnMasks  []ColumnMask
@@ -125,7 +125,7 @@ type SpatialTileRequest struct {
 }
 
 type SpatialTileRawRequest struct {
-	Table        string
+	Dataset      string
 	Dimensions   []Field
 	Metrics      []Field
 	Identity     []Field
@@ -143,7 +143,7 @@ type SpatialTileRawRequest struct {
 }
 
 type SpatialTileBudgetRequest struct {
-	Table        string
+	Dataset      string
 	Dimensions   []Field
 	Metrics      []Field
 	Identity     []Field
@@ -159,7 +159,7 @@ type SpatialTileBudgetRequest struct {
 }
 
 type SpatialMetadataRequest struct {
-	Table          string
+	Dataset        string
 	Metrics        []Field
 	Filters        []Filter
 	ColumnMasks    []ColumnMask
@@ -171,7 +171,7 @@ type SpatialMetadataRequest struct {
 }
 
 type RowRequest struct {
-	Table       string
+	Dataset     string
 	Dimensions  []Field
 	Metrics     []Field
 	Filters     []Filter
@@ -182,7 +182,7 @@ type RowRequest struct {
 }
 
 type RawValueRequest struct {
-	Table       string
+	Dataset     string
 	Dimensions  []Field
 	Metric      Field
 	Filters     []Filter
@@ -192,7 +192,7 @@ type RawValueRequest struct {
 }
 
 type CountRequest struct {
-	Table   string
+	Dataset string
 	Filters []Filter
 }
 
@@ -201,7 +201,7 @@ type Plan struct {
 	Args                 []any
 	Columns              []string
 	Mode                 string
-	Facts                []string
+	Datasets             []string
 	StitchDimensions     []string
 	PhysicalDependencies []string
 	RelationshipPaths    []string
@@ -225,7 +225,7 @@ func (p Plan) Explain() (string, error) {
 }
 
 // BundleRequest is one independently shaped aggregate in a shared governed
-// single-fact scan. ID is an opaque consumer key and must be unique in a
+// single-dataset scan. ID is an opaque consumer key and must be unique in a
 // bundle.
 type BundleRequest struct {
 	ID      string

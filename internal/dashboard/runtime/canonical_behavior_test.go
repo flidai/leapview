@@ -11,8 +11,10 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	materializeruntime "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/report"
@@ -27,6 +29,7 @@ type canonicalDataRuntime struct {
 	rows       []dataquery.Row
 	failTarget string
 	queries    *[]dataquery.Query
+	planner    *semanticquery.Planner
 }
 
 type verifyingCanonicalDataRuntime struct {
@@ -77,18 +80,38 @@ func (r *canonicalDataRuntime) ExecuteDataQuery(_ context.Context, query dataque
 	}
 	return result, nil
 }
-func (r *canonicalDataRuntime) Refresh(context.Context) error { return nil }
-func (r *canonicalDataRuntime) Close() error                  { return nil }
-func (r *canonicalDataRuntime) LastRefresh() time.Time        { return time.Now() }
+func (r *canonicalDataRuntime) Refresh(context.Context) error             { return nil }
+func (r *canonicalDataRuntime) Close() error                              { return nil }
+func (r *canonicalDataRuntime) LastRefresh() time.Time                    { return time.Now() }
+func (r *canonicalDataRuntime) setPlanner(planner *semanticquery.Planner) { r.planner = planner }
+func (r *canonicalDataRuntime) Planner() consumer.Planner                 { return r.planner }
 
 type canonicalFactory struct {
 	runtime DataRuntime
 	err     error
 }
 
-func (f canonicalFactory) OpenDashboardProjectDataRuntimes(context.Context, ProjectDataRuntimeConfig) (map[graph.ResourceID]DataRuntime, error) {
+func (f canonicalFactory) OpenDashboardProjectDataRuntimes(_ context.Context, config ProjectDataRuntimeConfig) (map[graph.ResourceID]DataRuntime, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	if setter, ok := f.runtime.(interface{ setPlanner(*semanticquery.Planner) }); ok && config.Definition != nil {
+		models := config.Definition.Models()
+		model := models[graph.ResourceID("model_1")]
+		if model != nil {
+			for alias, dataset := range model.Datasets {
+				table, exists := model.Tables[alias]
+				if exists {
+					table.ModelName = dataset.Model
+					model.Tables[alias] = table
+				}
+			}
+			planner, err := semanticquery.NewCompiledPlanner(model)
+			if err != nil {
+				return nil, err
+			}
+			setter.setPlanner(planner)
+		}
 	}
 	return map[graph.ResourceID]DataRuntime{"model_1": f.runtime}, nil
 }
@@ -96,14 +119,22 @@ func (f canonicalFactory) OpenDashboardProjectDataRuntimes(context.Context, Proj
 func canonicalBehaviorDefinition(t *testing.T, withTable bool) (*ProjectDefinition, dashboarddefinition.Definition) {
 	t.Helper()
 	model := &semanticmodel.Model{
-		Name: "model_1",
-		Tables: map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
-			"status":   {Field: "orders.status", Type: "string"},
-			"order_id": {Field: "orders.order_id", Type: "string"},
-		}}},
+		Name:     "model_1",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Tables: map[string]semanticmodel.Table{"orders": {
+			ModelName:   "orders",
+			GrainEntity: "order_id",
+			Entities: map[string]semanticmodel.ModelEntitySpec{
+				"order_id": {Type: "primary", Fields: []string{"order_id"}},
+			},
+			Dimensions: map[string]semanticmodel.MetricDimension{
+				"status":   {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
+				"order_id": {Field: "orders.order_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+			},
+		}},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"status":   {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}},
-			"order_id": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
+			"status":   {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}},
+			"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}},
 	}
@@ -117,7 +148,7 @@ func canonicalBehaviorDefinition(t *testing.T, withTable bool) (*ProjectDefiniti
 	})
 	if withTable {
 		visuals = dashboardauthoring.MergeVisualizations(visuals, dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.status"}}},
+			"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id", "orders.status"}}},
 		}))
 	}
 	authored := dashboardauthoring.Dashboard{ID: "dashboard_1", Title: "Dashboard", SemanticModel: "model_1", Visuals: visuals,
@@ -254,7 +285,7 @@ func TestCanonicalTableRowsRespectInteractiveCap(t *testing.T) {
 }
 
 func TestCanonicalPowerFiltersTranslateComparisonAndRangePredicates(t *testing.T) {
-	definition := dashboardfilter.Definition{Field: "orders.category", Fact: "orders"}
+	definition := dashboardfilter.Definition{Field: "orders.category", Dataset: "orders"}
 	contains, err := semanticFiltersForExpression(definition, dashboardfilter.Expression{
 		Kind: dashboardfilter.ExpressionComparison, Operator: dashboardfilter.OperatorContains,
 		Value: &dashboardfilter.Value{Kind: dashboardfilter.ValueString, Value: "watch"},

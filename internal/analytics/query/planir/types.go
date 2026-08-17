@@ -6,6 +6,7 @@ package planir
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -26,6 +27,8 @@ const (
 	KindComputeDerived       Kind = "ComputeDerived"
 	KindSortLimit            Kind = "SortLimit"
 	KindBundleBranches       Kind = "BundleBranches"
+	KindSpatialEnvelope      Kind = "SpatialEnvelope"
+	KindAnalyticalEnvelope   Kind = "AnalyticalEnvelope"
 )
 
 // FilterPhase identifies where a filter is evaluated.  A filter may not move
@@ -121,6 +124,7 @@ type Metric struct {
 // Its tagged representation avoids interface{} and keeps serialization and
 // renderer parameter binding deterministic.
 type LiteralKind string
+type NumberKind string
 
 const (
 	LiteralString LiteralKind = "string"
@@ -129,21 +133,49 @@ const (
 	LiteralNull   LiteralKind = "null"
 )
 
+const (
+	NumberInteger NumberKind = "integer"
+	NumberDecimal NumberKind = "decimal"
+	NumberFloat   NumberKind = "float"
+)
+
+func (k NumberKind) valid() bool {
+	return k == NumberInteger || k == NumberDecimal || k == NumberFloat
+}
+
 type Literal struct {
 	Kind       LiteralKind `json:"kind"`
 	String     string      `json:"string,omitempty"`
 	NumberText string      `json:"number_text,omitempty"`
+	NumberKind NumberKind  `json:"number_kind,omitempty"`
 	Bool       bool        `json:"bool,omitempty"`
 }
 
-var exactNumber = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
+// Decimal literals use canonical fixed-point tokens at the PlanIR boundary.
+// Float literals may use exponent notation because they are intentionally
+// approximate; integer and Decimal tokens never reinterpret an exponent as a
+// scale in a renderer.
+var (
+	integerNumber = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)$`)
+	decimalNumber = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`)
+	floatNumber   = regexp.MustCompile(`^[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
+)
 
 func (l Literal) valid() bool {
 	switch l.Kind {
 	case LiteralString, LiteralBool, LiteralNull:
 		return true
 	case LiteralNumber:
-		return exactNumber.MatchString(l.NumberText)
+		switch l.NumberKind {
+		case NumberInteger:
+			return integerNumber.MatchString(l.NumberText)
+		case NumberDecimal:
+			return decimalNumber.MatchString(l.NumberText)
+		case NumberFloat:
+			return floatNumber.MatchString(l.NumberText)
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -160,16 +192,47 @@ const (
 	PredicateAnd     PredicateKind = "and"
 	PredicateOr      PredicateKind = "or"
 	PredicateNot     PredicateKind = "not"
+	PredicateSpatial PredicateKind = "spatial"
 )
 
+// SpatialPoint is a validated geographic coordinate in decimal degrees.
+type SpatialPoint struct {
+	Longitude float64 `json:"longitude"`
+	Latitude  float64 `json:"latitude"`
+}
+
+// SpatialPredicate is the closed geometry vocabulary accepted by PlanIR.
+// Coordinates are values, never authored SQL. The renderer owns the
+// equivalent DuckDB arithmetic for each shape.
+type SpatialPredicate struct {
+	Kind         string         `json:"kind"`
+	Latitude     string         `json:"latitude"`
+	Longitude    string         `json:"longitude"`
+	West         float64        `json:"west,omitempty"`
+	South        float64        `json:"south,omitempty"`
+	East         float64        `json:"east,omitempty"`
+	North        float64        `json:"north,omitempty"`
+	Points       []SpatialPoint `json:"points,omitempty"`
+	Center       SpatialPoint   `json:"center,omitempty"`
+	RadiusMeters float64        `json:"radius_meters,omitempty"`
+}
+
+// Validate checks that a spatial predicate contains a supported, finite
+// geometry. Coordinate field availability is validated by Predicate.Validate
+// because it depends on the graph's governed field set.
+func (s SpatialPredicate) Validate() error {
+	return validateSpatial(s)
+}
+
 type Predicate struct {
-	Kind     PredicateKind `json:"kind"`
-	Field    string        `json:"field,omitempty"`
-	Operator string        `json:"operator,omitempty"`
-	Value    Literal       `json:"value,omitempty"`
-	Values   []Literal     `json:"values,omitempty"`
-	Children []Predicate   `json:"children,omitempty"`
-	Negated  bool          `json:"negated,omitempty"` // only used by is_null
+	Kind     PredicateKind     `json:"kind"`
+	Field    string            `json:"field,omitempty"`
+	Operator string            `json:"operator,omitempty"`
+	Value    Literal           `json:"value,omitempty"`
+	Values   []Literal         `json:"values,omitempty"`
+	Children []Predicate       `json:"children,omitempty"`
+	Negated  bool              `json:"negated,omitempty"` // only used by is_null
+	Spatial  *SpatialPredicate `json:"spatial,omitempty"`
 }
 
 // ScalarKind is a closed scalar expression algebra for derived metrics.
@@ -252,6 +315,22 @@ func (p Predicate) validate(fields, metrics map[string]bool) error {
 		if err := p.Children[0].validate(fields, metrics); err != nil {
 			return err
 		}
+	case PredicateSpatial:
+		if p.Spatial == nil {
+			return fmt.Errorf("spatial predicate payload is required")
+		}
+		if p.Field != "" || p.Operator != "" || p.Value.Kind != "" || len(p.Values) != 0 || len(p.Children) != 0 || p.Negated {
+			return fmt.Errorf("spatial predicate has unexpected operands")
+		}
+		if p.Spatial.Latitude == "" || !available(p.Spatial.Latitude) {
+			return fmt.Errorf("spatial latitude field %q is unavailable", p.Spatial.Latitude)
+		}
+		if p.Spatial.Longitude == "" || !available(p.Spatial.Longitude) {
+			return fmt.Errorf("spatial longitude field %q is unavailable", p.Spatial.Longitude)
+		}
+		if err := p.Spatial.Validate(); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unsupported predicate kind %q", p.Kind)
 	}
@@ -317,6 +396,10 @@ func (p Predicate) fields() []string {
 		if value.Field != "" {
 			seen[value.Field] = true
 		}
+		if value.Spatial != nil {
+			seen[value.Spatial.Latitude] = true
+			seen[value.Spatial.Longitude] = true
+		}
 		for _, child := range value.Children {
 			walk(child)
 		}
@@ -328,6 +411,48 @@ func (p Predicate) fields() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func validateSpatial(value SpatialPredicate) error {
+	finite := func(number float64) bool { return !math.IsNaN(number) && !math.IsInf(number, 0) }
+	validPoint := func(point SpatialPoint) bool {
+		return finite(point.Longitude) && finite(point.Latitude) && point.Longitude >= -180 && point.Longitude <= 180 && point.Latitude >= -90 && point.Latitude <= 90
+	}
+	switch value.Kind {
+	case "box":
+		if !finite(value.West) || !finite(value.South) || !finite(value.East) || !finite(value.North) || value.West < -180 || value.West > 180 || value.East < -180 || value.East > 180 || value.South < -90 || value.South > 90 || value.North < -90 || value.North > 90 || value.South >= value.North || value.West == value.East {
+			return fmt.Errorf("invalid spatial bounds")
+		}
+	case "lasso":
+		if len(value.Points) < 3 || len(value.Points) > 256 {
+			return fmt.Errorf("spatial lasso requires between 3 and 256 points")
+		}
+		west, east := math.Inf(1), math.Inf(-1)
+		south, north := math.Inf(1), math.Inf(-1)
+		for _, point := range value.Points {
+			if !validPoint(point) {
+				return fmt.Errorf("invalid spatial coordinate")
+			}
+			west, east = math.Min(west, point.Longitude), math.Max(east, point.Longitude)
+			south, north = math.Min(south, point.Latitude), math.Max(north, point.Latitude)
+		}
+		if east-west >= 180 {
+			return fmt.Errorf("spatial lasso may not cross the antimeridian")
+		}
+		if south == north || west == east {
+			return fmt.Errorf("spatial lasso must enclose a non-zero area")
+		}
+	case "radius":
+		if !validPoint(value.Center) {
+			return fmt.Errorf("invalid spatial radius center")
+		}
+		if !finite(value.RadiusMeters) || value.RadiusMeters <= 0 || value.RadiusMeters > 5_000_000 {
+			return fmt.Errorf("spatial radius must be greater than zero and at most 5000000 meters")
+		}
+	default:
+		return fmt.Errorf("unsupported spatial filter kind %q", value.Kind)
+	}
+	return nil
 }
 
 // MetricSpec is an aggregate or computed metric introduced by a node.
@@ -668,6 +793,88 @@ func (n BundleBranches) Inputs() []string {
 	return inputs
 }
 func (BundleBranches) nodeMarker() {}
+
+// SpatialEnvelopeOperation identifies a closed, renderer-owned spatial
+// presentation envelope. It deliberately carries semantic references and
+// bounded numeric options only; the DuckDB renderer owns all SQL used to
+// encode vector tiles and revision metadata.
+type SpatialEnvelopeOperation string
+
+const (
+	SpatialEnvelopeTileAggregate SpatialEnvelopeOperation = "tile_aggregate"
+	SpatialEnvelopeTileRaw       SpatialEnvelopeOperation = "tile_raw"
+	SpatialEnvelopeTileBudget    SpatialEnvelopeOperation = "tile_budget"
+	SpatialEnvelopeMetadata      SpatialEnvelopeOperation = "metadata"
+)
+
+// SpatialProperty is a typed source-to-property projection for raw MVT
+// envelopes. Type is the semantic logical type used by the renderer when it
+// chooses a stable MVT value representation.
+type SpatialProperty struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+	Type   string `json:"type,omitempty"`
+}
+
+type SpatialEnvelope struct {
+	NodeMeta
+	Operation        SpatialEnvelopeOperation `json:"operation"`
+	Input            string                   `json:"input,omitempty"`
+	InputsList       []string                 `json:"inputs,omitempty"`
+	Latitude         string                   `json:"latitude,omitempty"`
+	Longitude        string                   `json:"longitude,omitempty"`
+	Metrics          []string                 `json:"metrics,omitempty"`
+	MetricProperties []SpatialProperty        `json:"metric_properties,omitempty"`
+	Properties       []SpatialProperty        `json:"properties,omitempty"`
+	Identity         []string                 `json:"identity,omitempty"`
+	Zoom             int                      `json:"zoom,omitempty"`
+	TargetZoom       int                      `json:"target_zoom,omitempty"`
+	CellPixels       int                      `json:"cell_pixels,omitempty"`
+	Buffer           int                      `json:"buffer,omitempty"`
+	FeatureCap       int                      `json:"feature_cap,omitempty"`
+	MaximumBytes     int64                    `json:"maximum_bytes,omitempty"`
+	RawMinimumZoom   int                      `json:"raw_minimum_zoom,omitempty"`
+	MaximumZoom      int                      `json:"maximum_zoom,omitempty"`
+}
+
+func (SpatialEnvelope) Kind() Kind       { return KindSpatialEnvelope }
+func (n SpatialEnvelope) Meta() NodeMeta { return n.NodeMeta }
+func (n SpatialEnvelope) Inputs() []string {
+	if len(n.InputsList) > 0 {
+		return append([]string(nil), n.InputsList...)
+	}
+	if n.Input != "" {
+		return []string{n.Input}
+	}
+	return nil
+}
+func (SpatialEnvelope) nodeMarker() {}
+
+// AnalyticalEnvelopeOperation identifies a bounded analytical presentation
+// derived from one governed raw-value relation.
+type AnalyticalEnvelopeOperation string
+
+const (
+	AnalyticalEnvelopeHistogram    AnalyticalEnvelopeOperation = "histogram"
+	AnalyticalEnvelopeDistribution AnalyticalEnvelopeOperation = "distribution"
+)
+
+type AnalyticalEnvelope struct {
+	NodeMeta
+	Operation AnalyticalEnvelopeOperation `json:"operation"`
+	Input     string                      `json:"input"`
+	Value     string                      `json:"value"`
+	ValueType string                      `json:"value_type"`
+	Group     string                      `json:"group,omitempty"`
+	BinCount  int                         `json:"bin_count,omitempty"`
+	Sort      []SortKey                   `json:"sort,omitempty"`
+	Limit     int                         `json:"limit,omitempty"`
+}
+
+func (AnalyticalEnvelope) Kind() Kind         { return KindAnalyticalEnvelope }
+func (n AnalyticalEnvelope) Meta() NodeMeta   { return n.NodeMeta }
+func (n AnalyticalEnvelope) Inputs() []string { return []string{n.Input} }
+func (AnalyticalEnvelope) nodeMarker()        {}
 
 // Graph is a DAG of typed nodes. Nodes is keyed by NodeMeta.NodeID. Output is
 // the node whose result is returned; Roots is optional and, when present,

@@ -354,6 +354,26 @@ preserve that distinction. A Decimal value or operation must not be routed
 through binary floating point when doing so can change its governed value,
 comparison, null behavior, or result type.
 
+Decimal literals must retain their canonical base-10 token until semantic type
+resolution. A decoder may preserve that token directly or accept a quoted
+canonical decimal string; it must reject a Decimal literal that has already
+been materialized as a binary floating-point value. Lossless integer literals
+remain valid Decimal inputs.
+
+Governed Decimal quotients (`safe_divide`, ratio metrics, and derived division)
+use one fixed result contract across evaluators and renderers: DECIMAL(38,18)
+with round-half-even rounding. Null operands and zero denominators produce
+null. A quotient whose integer or fractional digits cannot fit that contract
+fails closed; it must never widen through binary floating point or silently
+truncate. The v1 renderer also requires every exact mantissa and scaled
+intermediate used to form the quotient to fit its DECIMAL(38,0)/HUGEINT
+working bound. Therefore an operand pair can fail closed when its mathematical
+quotient would fit DECIMAL(38,18) but an exact 38-digit intermediate would not;
+this deterministic bound is part of the governed contract until a wider exact
+DuckDB execution type is available. Addition, subtraction, and multiplication
+retain the wider exact Decimal precision contract and are not implicitly
+quantized to scale 18.
+
 Temporal type and temporal role remain separate. A queryable time dimension
 declares its native grain, allowed rollups, calendar, and effective timezone
 where applicable:

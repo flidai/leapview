@@ -8,7 +8,7 @@ import (
 
 func (p *Planner) spatialAggregatePlanIR(request SpatialTileRequest, filters []Filter) (*planir.Graph, error) {
 	semantic := Request{
-		Table:         request.Table,
+		Dataset:       request.Dataset,
 		Dimensions:    []Field{{Field: request.Latitude.Field, Alias: request.Latitude.Alias}, {Field: request.Longitude.Field, Alias: request.Longitude.Alias}},
 		Metrics:       request.Metrics,
 		Filters:       filters,
@@ -30,7 +30,7 @@ func (p *Planner) spatialAggregatePlanIR(request SpatialTileRequest, filters []F
 }
 
 func (p *Planner) spatialMetadataPlanIR(request SpatialMetadataRequest, filters []Filter, coordinate Plan) (*planir.Graph, error) {
-	coordinateRequest := Request{Table: request.Table, Dimensions: []Field{request.Latitude, request.Longitude}, Metrics: request.Metrics, Filters: filters, ColumnMasks: request.ColumnMasks}
+	coordinateRequest := Request{Dataset: request.Dataset, Dimensions: []Field{request.Latitude, request.Longitude}, Metrics: request.Metrics, Filters: filters, ColumnMasks: request.ColumnMasks}
 	coordinateResolved, err := p.resolveAggregate(coordinateRequest)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (p *Planner) spatialMetadataPlanIR(request SpatialMetadataRequest, filters 
 	if len(request.Metrics) == 0 {
 		return coordinate.IR, nil
 	}
-	totalsRequest := Request{Table: request.Table, Metrics: request.Metrics, Filters: filters, ColumnMasks: request.ColumnMasks}
+	totalsRequest := Request{Dataset: request.Dataset, Metrics: request.Metrics, Filters: filters, ColumnMasks: request.ColumnMasks}
 	totalsResolved, err := p.resolveAggregate(totalsRequest)
 	if err != nil {
 		return nil, err

@@ -24,9 +24,9 @@ func compileSecondaryQueryBindings(ctx compileContext, authored dashboardauthori
 	sort.Strings(datasetIDs)
 	for _, datasetID := range datasetIDs {
 		query := authored.Datasets[datasetID]
-		tableID := query.Table
+		tableID := query.Dataset
 		if tableID == "" {
-			tableID = authored.Query.Table
+			tableID = authored.Query.Dataset
 		}
 		limit := query.Limit
 		if limit <= 0 {
@@ -62,7 +62,7 @@ func compileVisualizationQueryBinding(ctx compileContext, authored dashboardauth
 		Kind: visualizationdefinition.QueryAggregate, ResultShape: resultShape, ModelID: ctx.modelID, DatasetID: ctx.datasetID,
 		Identity: compiledVisualizationIdentity(authored),
 		Aggregate: &visualizationdefinition.AggregateQueryBinding{
-			TableID: authored.Query.Table, Dimensions: compiledFields(authored.Query.Dimensions), Metrics: compiledFields(authored.Query.Metrics),
+			TableID: authored.Query.Dataset, Dimensions: compiledFields(authored.Query.Dimensions), Metrics: compiledFields(authored.Query.Metrics),
 			Series: compiledOptionalField(authored.Query.Series), Time: compiledTime(authored.Query.Time), Sort: compiledSort(authored.Query.Sort), Limit: limit,
 		},
 	}
@@ -135,7 +135,7 @@ func compiledSpatialBinding(modelID string, authored dashboardauthoring.Visual, 
 		limit = 0
 	}
 	spatial := &visualizationdefinition.SpatialQueryBinding{
-		TableID: authored.Query.Table, Dimensions: compiledFields(authored.Query.Dimensions), Metrics: compiledFields(authored.Query.Metrics),
+		TableID: authored.Query.Dataset, Dimensions: compiledFields(authored.Query.Dimensions), Metrics: compiledFields(authored.Query.Metrics),
 		Series: compiledOptionalField(authored.Query.Series), Time: compiledTime(authored.Query.Time), Sort: compiledSort(authored.Query.Sort), Limit: limit,
 	}
 	if tiled {
@@ -160,7 +160,7 @@ func compiledSpatialBinding(modelID string, authored dashboardauthoring.Visual, 
 			}
 		}
 		if spatial.TableID == "" {
-			return visualizationdefinition.QueryBinding{}, fmt.Errorf("tiled geographic visual must set query.table when its coordinate fields do not resolve to one fact table")
+			return visualizationdefinition.QueryBinding{}, fmt.Errorf("tiled geographic visual must set query.dataset when its coordinate fields do not resolve to one semantic dataset")
 		}
 		spatial.Tiles = &visualizationdefinition.SpatialTileBinding{
 			Latitude: latitude, Longitude: longitude,
@@ -315,13 +315,13 @@ func compiledTableBinding(modelID, visualType string, authored dashboardauthorin
 		binding.Kind = visualizationdefinition.QueryMatrix
 		binding.ResultShape = visualizationdefinition.ResultMatrixWindow
 		binding.Matrix = &visualizationdefinition.MatrixQueryBinding{
-			TableID: authored.Query.Table, Rows: compiledFields(authored.Query.Rows), Columns: compiledFields(authored.Query.Columns), Metrics: compiledFields(authored.Query.Metrics), Limit: dashboard.TableInteractiveRowCap,
+			TableID: authored.Query.Dataset, Rows: compiledFields(authored.Query.Rows), Columns: compiledFields(authored.Query.Columns), Metrics: compiledFields(authored.Query.Metrics), Limit: dashboard.TableInteractiveRowCap,
 		}
 	case "pivot":
 		binding.Kind = visualizationdefinition.QueryPivot
 		binding.ResultShape = visualizationdefinition.ResultPivotWindow
 		binding.Pivot = &visualizationdefinition.PivotQueryBinding{
-			TableID: authored.Query.Table, Rows: compiledFields(authored.Query.Rows), Columns: compiledFields(authored.Query.Columns), Metrics: compiledFields(authored.Query.Metrics), Limit: dashboard.TableInteractiveRowCap,
+			TableID: authored.Query.Dataset, Rows: compiledFields(authored.Query.Rows), Columns: compiledFields(authored.Query.Columns), Metrics: compiledFields(authored.Query.Metrics), Limit: dashboard.TableInteractiveRowCap,
 		}
 	default:
 		sort := []visualizationdefinition.Sort{}
@@ -331,7 +331,7 @@ func compiledTableBinding(modelID, visualType string, authored dashboardauthorin
 		binding.Kind = visualizationdefinition.QueryDetail
 		binding.ResultShape = visualizationdefinition.ResultDetailWindow
 		binding.Detail = &visualizationdefinition.DetailQueryBinding{
-			TableID: authored.Query.Table, Fields: compiledTableFields(authored), DefaultSort: sort, Limit: dashboard.TableInteractiveRowCap,
+			TableID: authored.Query.Dataset, Fields: compiledTableFields(authored), DefaultSort: sort, Limit: dashboard.TableInteractiveRowCap,
 		}
 	}
 	return binding

@@ -19,8 +19,8 @@ func (p *Planner) bundleScopeFingerprint(request Request, resolved aggregateReso
 		return "", err
 	}
 	scope := &planir.Graph{Nodes: map[string]planir.Node{}}
-	for factIndex, fact := range resolved.Facts {
-		aggregateID := fmt.Sprintf("aggregate_%d", factIndex)
+	for datasetIndex, dataset := range resolved.Datasets {
+		aggregateID := fmt.Sprintf("aggregate_%d", datasetIndex)
 		aggregate, ok := full.Nodes[aggregateID]
 		if !ok {
 			return "", fmt.Errorf("aggregate %q missing from plan IR", aggregateID)
@@ -28,7 +28,7 @@ func (p *Planner) bundleScopeFingerprint(request Request, resolved aggregateReso
 		inputID := aggregate.Inputs()[0]
 		chain := planIRInputChain(full, inputID)
 		requiredEdges := map[string]bool{}
-		bindings, err := p.factFilterFields(request.Filters, resolved, fact)
+		bindings, err := p.datasetFilterFields(request.Filters, resolved, dataset)
 		if err != nil {
 			return "", err
 		}
@@ -57,7 +57,7 @@ func (p *Planner) bundleScopeFingerprint(request Request, resolved aggregateReso
 				mapped[oldID] = mapped[traverse.Input]
 				continue
 			}
-			id := fmt.Sprintf("scope_%d_%d", factIndex, chainIndex)
+			id := fmt.Sprintf("scope_%d_%d", datasetIndex, chainIndex)
 			meta := planIRScopeMeta(node.Meta(), id, fields, planIRScopeRoutes(full, chain, requiredEdges))
 			switch value := node.(type) {
 			case planir.ScanDataset:
@@ -111,23 +111,23 @@ func (p *Planner) bundleScopeFingerprint(request Request, resolved aggregateReso
 			return "", fmt.Errorf("scope aggregate input %q is missing", inputID)
 		}
 		metricInput := fields[0].Name
-		aggID := fmt.Sprintf("scope_aggregate_%d", factIndex)
-		aggMeta := planir.NodeMeta{NodeID: aggID, OutputGrain: planir.Grain{}, AvailableFields: nil, AvailableMetrics: []planir.Metric{{Name: "__scope_count", Type: "integer"}}, RootDatasets: []string{fact}, FilterPhase: planir.FilterPhaseAggregate, RelationshipRoutes: planIRScopeRoutes(full, chain, requiredEdges)}
+		aggID := fmt.Sprintf("scope_aggregate_%d", datasetIndex)
+		aggMeta := planir.NodeMeta{NodeID: aggID, OutputGrain: planir.Grain{}, AvailableFields: nil, AvailableMetrics: []planir.Metric{{Name: "__scope_count", Type: "integer"}}, RootDatasets: []string{dataset}, FilterPhase: planir.FilterPhaseAggregate, RelationshipRoutes: planIRScopeRoutes(full, chain, requiredEdges)}
 		scope.Nodes[aggID] = planir.AggregateMetrics{NodeMeta: aggMeta, Input: mappedInput, Metrics: []planir.MetricSpec{{Name: "__scope_count", Type: "integer", Aggregation: "COUNT", Input: metricInput}}}
 	}
 
-	aggregateIDs := make([]string, 0, len(resolved.Facts))
-	for factIndex := range resolved.Facts {
-		aggregateIDs = append(aggregateIDs, fmt.Sprintf("scope_aggregate_%d", factIndex))
+	aggregateIDs := make([]string, 0, len(resolved.Datasets))
+	for datasetIndex := range resolved.Datasets {
+		aggregateIDs = append(aggregateIDs, fmt.Sprintf("scope_aggregate_%d", datasetIndex))
 	}
 	if len(aggregateIDs) == 1 {
 		scope.Output = aggregateIDs[0]
 		scope.NodeMeta = scope.Nodes[scope.Output].Meta()
 	} else {
-		meta := planir.NodeMeta{NodeID: "scope_bundle", OutputGrain: planir.Grain{}, RootDatasets: append([]string(nil), resolved.Facts...), FilterPhase: planir.FilterPhaseAggregate}
+		meta := planir.NodeMeta{NodeID: "scope_bundle", OutputGrain: planir.Grain{}, RootDatasets: append([]string(nil), resolved.Datasets...), FilterPhase: planir.FilterPhaseAggregate}
 		branches := make([]planir.BundleBranch, len(aggregateIDs))
 		for i, input := range aggregateIDs {
-			branches[i] = planir.BundleBranch{ID: resolved.Facts[i], Ordinal: i, Input: input}
+			branches[i] = planir.BundleBranch{ID: resolved.Datasets[i], Ordinal: i, Input: input}
 		}
 		scope.Nodes["scope_bundle"] = planir.BundleBranches{NodeMeta: meta, Branches: branches}
 		scope.Output = "scope_bundle"

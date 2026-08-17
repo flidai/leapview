@@ -41,9 +41,9 @@ func ValidateAndNormalizeDashboard(d *dashboardauthoring.Dashboard, models map[s
 			continue
 		}
 		visual := *authored.Chart
-		if visual.Query.Table != "" {
-			if _, ok := model.Tables[visual.Query.Table]; !ok {
-				return nil, fmt.Errorf("visual %q query.table references unknown table %q", name, visual.Query.Table)
+		if visual.Query.Dataset != "" {
+			if _, ok := model.Tables[visual.Query.Dataset]; !ok {
+				return nil, fmt.Errorf("visual %q query.dataset references unknown dataset %q", name, visual.Query.Dataset)
 			}
 		}
 		for _, dimension := range visual.Query.Dimensions {
@@ -139,7 +139,7 @@ func validateVisualQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmod
 			dimensions = append(dimensions, reportFieldRefToQueryField(query.Series))
 		}
 		_, err := planner.Plan(semanticquery.Request{
-			Table:      query.Table,
+			Dataset:    query.Dataset,
 			Dimensions: dimensions,
 			Metrics:    reportFieldRefsToQueryFields(query.Metrics),
 			Time: semanticquery.Time{
@@ -158,8 +158,8 @@ func validateVisualQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmod
 	}
 	for _, datasetID := range sortedMapKeys(visual.Datasets) {
 		query := visual.Datasets[datasetID]
-		if query.Table == "" {
-			query.Table = visual.Query.Table
+		if query.Dataset == "" {
+			query.Dataset = visual.Query.Dataset
 		}
 		if err := plan(query); err != nil {
 			return fmt.Errorf("visual %q context dataset %q query is invalid: %w", name, datasetID, err)
@@ -179,7 +179,7 @@ func validateTableQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmode
 		dimensions := reportFieldRefsToQueryFields(table.Query.Rows)
 		dimensions = append(dimensions, reportFieldRefsToQueryFields(table.Query.Columns)...)
 		_, err = planner.Plan(semanticquery.Request{
-			Table:      table.Query.Table,
+			Dataset:    table.Query.Dataset,
 			Dimensions: dimensions,
 			Metrics:    reportFieldRefsToQueryFields(table.Query.Metrics),
 			Filters:    filters,
@@ -195,7 +195,7 @@ func validateTableQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmode
 			metrics = append(metrics, reportFieldRefToQueryField(column))
 		}
 		_, err = planner.PlanRows(semanticquery.RowRequest{
-			Table:      table.Query.Table,
+			Dataset:    table.Query.Dataset,
 			Dimensions: dimensions,
 			Metrics:    metrics,
 			Filters:    filters,

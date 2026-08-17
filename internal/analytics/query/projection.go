@@ -2,8 +2,9 @@ package query
 
 import (
 	"fmt"
-	"math"
 	"sort"
+
+	"github.com/flidai/leapview/internal/analytics/semanticnumeric"
 )
 
 // ProjectScalarFromGrouped resolves a grouped result against an already
@@ -19,10 +20,10 @@ func (p *Planner) ProjectScalarFromGrouped(grouped, scalar Request, rows Rows, c
 	if len(scalar.Dimensions) != 0 || scalar.Time.Field != "" || len(scalar.Metrics) != 1 {
 		return nil, false, nil
 	}
-	if grouped.Table != scalar.Table {
+	if grouped.Dataset != scalar.Dataset {
 		return nil, false, nil
 	}
-	groupedScope, scalarScope := grouped.Table, scalar.Table
+	groupedScope, scalarScope := grouped.Dataset, scalar.Dataset
 	var err error
 	if len(grouped.Filters) != 0 || len(scalar.Filters) != 0 {
 		groupedResolved, resolveErr := p.resolveAggregate(grouped)
@@ -66,7 +67,7 @@ func (p *Planner) ProjectScalarFromGrouped(grouped, scalar Request, rows Rows, c
 	aliases := make(map[string]string, len(grouped.Metrics))
 	for _, member := range grouped.Metrics {
 		node, atomic := p.compiled.metric(member.Field)
-		if !atomic || node.Type != "aggregate" {
+		if !atomic || node.Aggregate == nil {
 			continue
 		}
 		if member.Alias == "" {
@@ -86,10 +87,10 @@ func (p *Planner) ProjectScalarFromGrouped(grouped, scalar Request, rows Rows, c
 	values := make(map[string]any, len(dependencies))
 	for dependency := range dependencies {
 		node, exists := p.compiled.metric(dependency)
-		if !exists || node.Type != "aggregate" {
+		if !exists || node.Aggregate == nil {
 			return nil, false, fmt.Errorf("unknown additive aggregate metric %q", dependency)
 		}
-		value, err := recombineAdditive(rows, aliases[dependency], node.Empty)
+		value, err := recombineAdditive(rows, aliases[dependency], node.Aggregate.Empty)
 		if err != nil {
 			return nil, false, err
 		}
@@ -117,8 +118,8 @@ func (p *Planner) AdditiveMetricDependencies(member string) ([]string, bool, err
 	var visit func(string) (bool, error)
 	visit = func(name string) (bool, error) {
 		node, ok := p.compiled.metric(name)
-		if ok && node.Type == "aggregate" {
-			if node.Aggregation != "count" && node.Aggregation != "sum" {
+		if ok && node.Aggregate != nil {
+			if node.Aggregate.Aggregation != "count" && node.Aggregate.Aggregation != "sum" {
 				return false, nil
 			}
 			dependencies[name] = struct{}{}
@@ -158,21 +159,8 @@ func (p *Planner) AdditiveMetricDependencies(member string) ([]string, bool, err
 }
 
 func recombineAdditive(rows Rows, alias, empty string) (any, error) {
-	var integerTotal int64
-	var floatTotal float64
-	integer := true
+	var total semanticnumeric.Number
 	seen := false
-	addInteger := func(value int64) error {
-		if integer {
-			if value > 0 && integerTotal > math.MaxInt64-value || value < 0 && integerTotal < math.MinInt64-value {
-				return fmt.Errorf("grouped aggregate column %q overflows int64", alias)
-			}
-			integerTotal += value
-		} else {
-			floatTotal += float64(value)
-		}
-		return nil
-	}
 	for _, row := range rows {
 		value, exists := row[alias]
 		if !exists {
@@ -181,74 +169,18 @@ func recombineAdditive(rows Rows, alias, empty string) (any, error) {
 		if value == nil {
 			continue
 		}
-		seen = true
-		switch typed := value.(type) {
-		case int:
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case int8:
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case int16:
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case int32:
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case int64:
-			if err := addInteger(typed); err != nil {
-				return nil, err
-			}
-		case uint:
-			if uint64(typed) > math.MaxInt64 {
-				return nil, fmt.Errorf("grouped aggregate column %q overflows int64", alias)
-			}
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case uint8:
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case uint16:
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case uint32:
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case uint64:
-			if typed > uint64(^uint64(0)>>1) {
-				return nil, fmt.Errorf("grouped aggregate column %q overflows int64", alias)
-			}
-			if err := addInteger(int64(typed)); err != nil {
-				return nil, err
-			}
-		case float32:
-			if integer {
-				floatTotal = float64(integerTotal)
-				integer = false
-			}
-			floatTotal += float64(typed)
-		case float64:
-			if integer {
-				floatTotal = float64(integerTotal)
-				integer = false
-			}
-			floatTotal += typed
-		case interface{ Float64() float64 }:
-			if integer {
-				floatTotal = float64(integerTotal)
-				integer = false
-			}
-			floatTotal += typed.Float64()
-		default:
-			return nil, fmt.Errorf("grouped aggregate column %q has non-numeric value %T", alias, value)
+		number, err := semanticnumeric.FromValue(value)
+		if err != nil {
+			return nil, fmt.Errorf("grouped aggregate column %q: %w", alias, err)
+		}
+		if !seen {
+			total = number
+			seen = true
+			continue
+		}
+		total, err = total.Add(number)
+		if err != nil {
+			return nil, fmt.Errorf("grouped aggregate column %q: %w", alias, err)
 		}
 	}
 	if !seen {
@@ -257,15 +189,12 @@ func recombineAdditive(rows Rows, alias, empty string) (any, error) {
 		}
 		return nil, nil
 	}
-	if integer {
-		return integerTotal, nil
-	}
-	return floatTotal, nil
+	return total.Value(), nil
 }
 
 func evaluateCompiledAggregateMember(compiled *CompiledModel, member string, values map[string]any, visiting map[string]bool) (any, error) {
 	node, ok := compiled.metric(member)
-	if ok && node.Type == "aggregate" {
+	if ok && node.Aggregate != nil {
 		return values[member], nil
 	}
 	if !ok {
@@ -276,7 +205,10 @@ func evaluateCompiledAggregateMember(compiled *CompiledModel, member string, val
 	}
 	visiting[member] = true
 	defer delete(visiting, member)
-	return node.Expression.Evaluate(func(ref string) (any, error) {
+	if node.Derived == nil {
+		return nil, fmt.Errorf("metric %q is not a derived expression", member)
+	}
+	return node.Derived.Expression.Evaluate(func(ref string) (any, error) {
 		return evaluateCompiledAggregateMember(compiled, ref, values, visiting)
 	})
 }

@@ -27,12 +27,12 @@ func (m *Model) SafeRelationshipPath(base, target string) ([]Relationship, error
 	}
 }
 
-func (m *Model) CanReachField(fact, field string) error {
+func (m *Model) CanReachField(dataset, field string) error {
 	dimension, err := m.ResolveDimension(field)
 	if err != nil {
 		return err
 	}
-	_, err = m.SafeRelationshipPath(fact, dimension.Table)
+	_, err = m.SafeRelationshipPath(dataset, dimension.Table)
 	return err
 }
 

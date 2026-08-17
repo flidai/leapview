@@ -56,7 +56,7 @@ func testGridDefinition(t *testing.T, id string, table dashboard.Table) visualiz
 	for index, column := range table.Columns {
 		fields[index] = column.Key
 	}
-	authored := dashboardauthoring.TableVisual{Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style, Query: dashboardauthoring.TableQuery{Table: "table", Fields: fields}}
+	authored := dashboardauthoring.TableVisual{Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style, Query: dashboardauthoring.TableQuery{Dataset: "table", Fields: fields}}
 	if visualType != "table" {
 		authored.Query.Fields = nil
 		for _, column := range table.Columns {
@@ -104,15 +104,15 @@ func TestFrameFromRecordsUsesCompiledDatasetOrdering(t *testing.T) {
 }
 
 func TestEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
-	fact := "orders"
+	dataset := "orders"
 	fields := testCartesianFields()
 	fields[0].Role = ir.VisualizationFieldRoleIdentity
 	interaction := ir.VisualizationInteraction{
 		ID: "point_selection", Kind: ir.VisualizationInteractionKindSelect, Mode: ir.VisualizationSelectionModeSingle, RequiresStableIdentity: true,
-		Mappings: []ir.VisualizationInteractionMapping{{Source: ir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, TargetFieldID: "orders.status", TargetDatasetID: &fact}},
+		Mappings: []ir.VisualizationInteractionMapping{{Source: ir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, TargetFieldID: "orders.status", TargetDatasetID: &dataset}},
 	}
 	definition := testCartesianDefinition(t, "orders", fields, []ir.VisualizationInteraction{interaction})
-	selection := []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: "orders.status", Fact: "orders", Value: "delivered"}}, Label: "Delivered"}}
+	selection := []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: "orders.status", Dataset: "orders", Value: "delivered"}}, Label: "Delivered"}}
 	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 42}}}, selection, 8, 3)
 	if err != nil {
 		t.Fatal(err)

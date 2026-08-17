@@ -152,7 +152,7 @@ func DashboardFilterContractFromDefinition(definition dashboarddefinition.Defini
 		}
 		definitions[id] = DashboardCompiledFilterDefinition{
 			ID: id, Label: item.Label, Description: optionalValue(item.Description), Field: item.Field,
-			Dataset: optionalValue(item.Fact), ValueKind: string(item.ValueKind), Predicates: predicates,
+			Dataset: optionalValue(item.Dataset), ValueKind: string(item.ValueKind), Predicates: predicates,
 			Options:       DashboardFilterOptionSource{Kind: optionKind, Limit: int32(item.Options.Limit), Values: staticOptions},
 			FormatPattern: optionalValue(item.Formatting.Pattern), FormatUnit: optionalValue(item.Formatting.Unit),
 			Timezone: item.Time.Timezone, Calendar: item.Time.Calendar, WeekStart: item.Time.WeekStart,
@@ -184,7 +184,7 @@ func DashboardInteractionCommandFromDashboard(value dashboard.InteractionCommand
 	mappings := make([]DashboardInteractionCommandMapping, len(value.Mappings))
 	for index, mapping := range value.Mappings {
 		mappings[index] = DashboardInteractionCommandMapping{
-			Field: mapping.Field, Dataset: optionalValue(mapping.Fact), Grain: optionalValue(mapping.Grain),
+			Field: mapping.Field, Dataset: optionalValue(mapping.Dataset), Grain: optionalValue(mapping.Grain),
 			Value: mapping.Value, Label: optionalValue(mapping.Label),
 		}
 	}
@@ -283,7 +283,7 @@ func dashboardInteractionSelectionEntries(values []dashboard.InteractionSelectio
 		mappings := make([]DashboardInteractionSelectionMapping, len(value.Mappings))
 		for mappingIndex, mapping := range value.Mappings {
 			mappings[mappingIndex] = DashboardInteractionSelectionMapping{
-				Field: mapping.Field, Dataset: optionalValue(mapping.Fact), Grain: optionalValue(mapping.Grain),
+				Field: mapping.Field, Dataset: optionalValue(mapping.Dataset), Grain: optionalValue(mapping.Grain),
 				Value: mapping.Value, Label: optionalValue(mapping.Label),
 			}
 		}

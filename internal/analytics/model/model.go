@@ -342,15 +342,55 @@ func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]st
 		if ref.Namespace != "model" {
 			continue
 		}
-		if ref.Name == tableName {
+		dependency, err := m.resolveModelDependency(ref.Name)
+		if err != nil {
+			return nil, fmt.Errorf("model table %q SQL references %w", tableName, err)
+		}
+		currentPhysical := strings.TrimSpace(table.ModelName)
+		if ref.Name == tableName || (currentPhysical != "" && dependency == currentPhysical) {
 			return nil, fmt.Errorf("model table %q cannot read itself", tableName)
 		}
-		if _, ok := m.Tables[ref.Name]; !ok {
-			return nil, fmt.Errorf("model table %q SQL references unknown model table %q", tableName, ref.Name)
-		}
-		seen[ref.Name] = struct{}{}
+		seen[dependency] = struct{}{}
 	}
 	return sortedStringSet(seen), nil
+}
+
+// resolveModelDependency resolves the physical relation name emitted by a
+// model transform. Transform SQL is authored in the global physical Model
+// namespace; semantic dataset aliases are intentionally not an alternate
+// dependency syntax. After semantic lowering, validate only against bound
+// physical ModelNames (deduplicating aliases that share one Model).
+func (m *Model) resolveModelDependency(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("unknown model table %q", name)
+	}
+	if len(m.Datasets) == 0 {
+		if _, ok := m.Tables[name]; !ok {
+			return "", fmt.Errorf("unknown model table %q", name)
+		}
+		return name, nil
+	}
+
+	physicalFound := false
+	for alias, spec := range m.Datasets {
+		if strings.TrimSpace(spec.Model) != name {
+			continue
+		}
+		table, ok := m.Tables[alias]
+		if !ok {
+			continue
+		}
+		if table.ModelName != "" && table.ModelName != name {
+			continue
+		}
+		physicalFound = true
+		break
+	}
+	if physicalFound {
+		return name, nil
+	}
+	return "", fmt.Errorf("unknown model table %q", name)
 }
 
 func (m *Model) modelSQLSourceRefs(sql string) ([]string, []string, []string) {

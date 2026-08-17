@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
@@ -20,6 +21,7 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
+				ModelName: "orders",
 				Entities: map[string]semanticmodel.ModelEntitySpec{
 					"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
 					"customer":   {Type: "foreign", Fields: []string{"customer_id"}},
@@ -32,7 +34,7 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 					"status":      {Label: "Status"},
 				},
 			},
-			"customers": {Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
+			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Dataset: "orders", Aggregation: "count_distinct", Label: "Orders", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
@@ -48,9 +50,13 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 			ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one",
 		}},
 	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	asset := projectview.DevelopAssetView{
 		ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales",
-		Payload: projectview.SemanticModelAssetPayload(model),
+		Payload: projectview.SemanticModelAssetPayload(model, compiled),
 	}
 	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
 	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
@@ -134,6 +140,7 @@ func TestSemanticModelGraphProjectsCompiledEntityAndCompositeEndpoints(t *testin
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
+				ModelName: "orders",
 				Entities: map[string]semanticmodel.ModelEntitySpec{
 					"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
 					"customer":   {Type: "foreign", Fields: []string{"customer_id", "customer_region"}},
@@ -145,6 +152,7 @@ func TestSemanticModelGraphProjectsCompiledEntityAndCompositeEndpoints(t *testin
 				},
 			},
 			"customers": {
+				ModelName:   "customers",
 				Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id", "customer_region"}}},
 				GrainEntity: "customer",
 				Dimensions: map[string]semanticmodel.MetricDimension{
@@ -166,9 +174,13 @@ func TestSemanticModelGraphProjectsCompiledEntityAndCompositeEndpoints(t *testin
 			ToDataset: "customers", ToFields: []string{"customer_id", "customer_region"}, Cardinality: "one_to_one",
 		}},
 	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	asset := projectview.DevelopAssetView{
 		ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales",
-		Payload: projectview.SemanticModelAssetPayload(model),
+		Payload: projectview.SemanticModelAssetPayload(model, compiled),
 	}
 	details := projectAssetDetailsSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil)
 	if details.SemanticModelGraph == nil || len(details.SemanticModelGraph.Edges) != 1 {

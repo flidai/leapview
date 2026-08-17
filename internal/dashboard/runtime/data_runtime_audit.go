@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -21,6 +22,21 @@ func newGovernedDataRuntime(projectID projectgraph.ResourceID, modelID projectgr
 	wrapped := &governedDataRuntime{DataRuntime: runtime, projectID: projectID}
 	wrapped.service = reportdef.NewDataQueryService(projectID, modelID.String(), wrapped)
 	return wrapped
+}
+
+// Planner forwards the activation-owned planner through the governed runtime
+// wrapper. Embedding DataRuntime alone does not promote optional capability
+// methods from the wrapped dynamic value, so retain this narrow forwarding
+// method for Service.Planner and composition adapters.
+func (r *governedDataRuntime) Planner() consumer.Planner {
+	if r == nil || r.DataRuntime == nil {
+		return nil
+	}
+	port, ok := r.DataRuntime.(DataRuntimePlanner)
+	if !ok {
+		return nil
+	}
+	return port.Planner()
 }
 
 func (r *governedDataRuntime) bindProject(request dataquery.Query) (dataquery.Query, error) {
@@ -106,7 +122,7 @@ func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, reques
 	}
 	audit := boundRequests[0].Query
 	fieldSet := map[string]bool{}
-	measureSet := map[string]bool{}
+	metricSet := map[string]bool{}
 	for i := range boundRequests {
 		ids[i] = boundRequests[i].ID
 		for _, field := range boundRequests[i].Query.Fields {
@@ -118,8 +134,8 @@ func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, reques
 		}
 		for _, metric := range boundRequests[i].Query.Metrics {
 			key := metric.Field + "\x00" + metric.Alias
-			if !measureSet[key] {
-				measureSet[key] = true
+			if !metricSet[key] {
+				metricSet[key] = true
 				audit.Metrics = append(audit.Metrics, metric)
 			}
 		}

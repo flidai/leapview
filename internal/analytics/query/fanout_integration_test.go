@@ -9,7 +9,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
-func TestFanoutMatrixSafeRelationshipPathsPreserveFactGrain(t *testing.T) {
+func TestFanoutMatrixSafeRelationshipPathsPreserveDatasetGrain(t *testing.T) {
 	db := openFanoutDatabase(t, []string{
 		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, revenue DOUBLE)",
 		"INSERT INTO model.orders VALUES ('o1', 'a', 10), ('o2', 'a', 20), ('o3', 'b', 30)",
@@ -20,7 +20,7 @@ func TestFanoutMatrixSafeRelationshipPathsPreserveFactGrain(t *testing.T) {
 	})
 	defer db.Close()
 
-	planner := mustNewCompiledPlanner(t, singleFactFanoutModel())
+	planner := mustNewCompiledPlanner(t, singleDatasetFanoutModel())
 	plan, err := planner.Plan(Request{
 		Dimensions: []Field{{Field: "region"}, {Field: "tier"}},
 		Metrics:    []Field{{Field: "order_count"}, {Field: "revenue"}},
@@ -94,7 +94,7 @@ func TestFanoutMatrixSafeRelationshipPathsPreserveFactGrain(t *testing.T) {
 	}
 }
 
-func TestFanoutMatrixMultiFactPlansAggregateBeforeStitching(t *testing.T) {
+func TestFanoutMatrixMultiDatasetPlansAggregateBeforeStitching(t *testing.T) {
 	db := openFanoutDatabase(t, []string{
 		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR)",
 		"INSERT INTO model.orders VALUES ('o1', 'a'), ('o2', 'a'), ('o3', 'b')",
@@ -107,14 +107,14 @@ func TestFanoutMatrixMultiFactPlansAggregateBeforeStitching(t *testing.T) {
 	})
 	defer db.Close()
 
-	planner := mustNewCompiledPlanner(t, multiFactFanoutModel())
+	planner := mustNewCompiledPlanner(t, multiDatasetFanoutModel())
 	tests := []struct {
 		name    string
 		metrics []Field
 		want    map[string][]int
 	}{
 		{
-			name:    "two facts",
+			name:    "two datasets",
 			metrics: []Field{{Field: "order_count"}, {Field: "return_count"}},
 			want: map[string][]int{
 				"north": {2, 2},
@@ -122,7 +122,7 @@ func TestFanoutMatrixMultiFactPlansAggregateBeforeStitching(t *testing.T) {
 			},
 		},
 		{
-			name:    "three facts",
+			name:    "three datasets",
 			metrics: []Field{{Field: "order_count"}, {Field: "return_count"}, {Field: "click_count"}},
 			want: map[string][]int{
 				"north": {2, 2, 4},
@@ -141,8 +141,8 @@ func TestFanoutMatrixMultiFactPlansAggregateBeforeStitching(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.Mode != "multi_fact" {
-				t.Fatalf("plan mode = %q, want multi_fact", plan.Mode)
+			if plan.Mode != "multi_dataset" {
+				t.Fatalf("plan mode = %q, want multi_dataset", plan.Mode)
 			}
 			rows, err := db.Query(plan.SQL, plan.Args...)
 			if err != nil {
@@ -193,9 +193,9 @@ func openFanoutDatabase(t *testing.T, statements []string) *sql.DB {
 	return db
 }
 
-func singleFactFanoutModel() *semanticmodel.Model {
+func singleDatasetFanoutModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
-		Name: "single_fact_fanout",
+		Name: "single_dataset_fanout",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
@@ -240,9 +240,9 @@ func singleFactFanoutModel() *semanticmodel.Model {
 	}
 }
 
-func multiFactFanoutModel() *semanticmodel.Model {
+func multiDatasetFanoutModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
-		Name: "multi_fact_fanout",
+		Name: "multi_dataset_fanout",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",

@@ -230,7 +230,7 @@ type Table struct {
 	// ModelName is populated only on lowered semantic execution tables. It
 	// preserves the project Model binding after the runtime table is keyed by
 	// its semantic dataset alias; authored Model resources do not expose it.
-	ModelName          string                     `yaml:"-" json:"-"`
+	ModelName          string                     `yaml:"-" json:"modelName,omitempty"`
 	Source             string                     `yaml:"source"`
 	AIContext          *AIContext                 `yaml:"aiContext,omitempty" json:"-"`
 	Sources            []string                   `yaml:"sources"`

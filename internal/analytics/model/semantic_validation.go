@@ -88,7 +88,7 @@ func containsTimeGrain(values []string, target string) bool {
 	return false
 }
 
-func (m *Model) FactNames() []string {
+func (m *Model) DatasetNames() []string {
 	seen := map[string]struct{}{}
 	for _, metric := range m.Metrics {
 		if metric.Type == "aggregate" && metric.Dataset != "" {
@@ -96,8 +96,8 @@ func (m *Model) FactNames() []string {
 		}
 	}
 	out := make([]string, 0, len(seen))
-	for fact := range seen {
-		out = append(out, fact)
+	for dataset := range seen {
+		out = append(out, dataset)
 	}
 	sort.Strings(out)
 	return out
@@ -154,9 +154,9 @@ func (m *Model) validateSemanticDefinitions() error {
 			return err
 		}
 	}
-	facts := map[string]struct{}{}
-	for _, fact := range m.FactNames() {
-		facts[fact] = struct{}{}
+	datasets := map[string]struct{}{}
+	for _, dataset := range m.DatasetNames() {
+		datasets[dataset] = struct{}{}
 	}
 	dimensionNames := make([]string, 0, len(m.Dimensions))
 	for name := range m.Dimensions {
@@ -240,28 +240,28 @@ func (m *Model) validateSemanticDefinitions() error {
 		if len(dimension.Bindings) == 0 {
 			return fmt.Errorf("semantic dimension %q requires bindings", name)
 		}
-		bindingFacts := make([]string, 0, len(dimension.Bindings))
-		for fact := range dimension.Bindings {
-			bindingFacts = append(bindingFacts, fact)
+		bindingDatasets := make([]string, 0, len(dimension.Bindings))
+		for dataset := range dimension.Bindings {
+			bindingDatasets = append(bindingDatasets, dataset)
 		}
-		sort.Strings(bindingFacts)
-		for _, fact := range bindingFacts {
-			binding := dimension.Bindings[fact]
-			if err := validateSemanticIdentifier(fact); err != nil {
-				return fmt.Errorf("semantic dimension %q binding fact %q is invalid: %w", name, fact, err)
+		sort.Strings(bindingDatasets)
+		for _, dataset := range bindingDatasets {
+			binding := dimension.Bindings[dataset]
+			if err := validateSemanticIdentifier(dataset); err != nil {
+				return fmt.Errorf("semantic dimension %q binding dataset %q is invalid: %w", name, dataset, err)
 			}
-			if _, ok := facts[fact]; !ok {
-				return fmt.Errorf("semantic dimension %q binding references non-fact table %q", name, fact)
+			if _, ok := datasets[dataset]; !ok {
+				return fmt.Errorf("semantic dimension %q binding references non-dataset table %q", name, dataset)
 			}
 			physical, err := m.ResolveDimension(binding.Field)
 			if err != nil {
-				return fmt.Errorf("semantic dimension %q binding for fact %q: %w", name, fact, err)
+				return fmt.Errorf("semantic dimension %q binding for dataset %q: %w", name, dataset, err)
 			}
 			if !compatibleConformedBindingTypes(dimension, physical) {
 				return fmt.Errorf("semantic dimension %q logical datatype %q is incompatible with binding %q logical datatype %q", name, dimension.Datatype, binding.Field, physical.Datatype)
 			}
-			if _, err := m.ResolveBindingPath(fact, binding); err != nil {
-				return fmt.Errorf("semantic dimension %q binding for fact %q: %w", name, fact, err)
+			if _, err := m.ResolveBindingPath(dataset, binding); err != nil {
+				return fmt.Errorf("semantic dimension %q binding for dataset %q: %w", name, dataset, err)
 			}
 		}
 		m.Dimensions[name] = dimension
@@ -434,7 +434,7 @@ func semanticFilterValues(value any) ([]any, bool) {
 }
 
 // compatibleConformedBindingTypes requires the portable logical datatype to
-// match exactly across every fact binding of a conformed dimension.
+// match exactly across every dataset binding of a conformed dimension.
 func compatibleConformedBindingTypes(dimension SemanticDimension, physical MetricDimension) bool {
 	return dimension.Datatype != "" && physical.Datatype != "" && dimension.Datatype == physical.Datatype
 }
@@ -640,16 +640,16 @@ func (m *Model) validateMetricFilterReachability(metricName, root, filterName st
 	return nil
 }
 
-func (m *Model) ResolveBindingPath(fact string, binding DimensionBinding) ([]Relationship, error) {
+func (m *Model) ResolveBindingPath(dataset string, binding DimensionBinding) ([]Relationship, error) {
 	dimension, err := m.ResolveDimension(binding.Field)
 	if err != nil {
 		return nil, err
 	}
 	if len(binding.Path) == 0 {
-		return m.SafeRelationshipPath(fact, dimension.Table)
+		return m.SafeRelationshipPath(dataset, dimension.Table)
 	}
-	current := fact
-	visited := map[string]struct{}{fact: {}}
+	current := dataset
+	visited := map[string]struct{}{dataset: {}}
 	path := make([]Relationship, 0, len(binding.Path))
 	for _, id := range binding.Path {
 		relationship, ok := m.RelationshipByID(id)

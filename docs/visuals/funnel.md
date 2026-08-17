@@ -19,7 +19,7 @@ visuals:
     presentation:
       labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 24, minimum_spacing: 6, tooltip_fallback: true}
     query:
-      table: conversion_stages
+      dataset: conversion_stages
       dimensions:
         stage: conversion_stages.stage
       metrics:

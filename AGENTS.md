@@ -8,7 +8,7 @@ LeapView is a dashboards-as-code BI monolith. Go owns configuration compilation,
 - `internal/project/compiler/` loads, validates, and compiles the complete resource graph into deployable serving-state artifacts.
 - `internal/deployment/`, `internal/servingstate/`, and `internal/runtimehost/` prepare immutable serving-state generations, activate the graph for the instance-bound environment, lease DuckLake snapshots, and drain readers safely during cutover.
 - `internal/manageddata/` implements local and S3-backed ingestion, revisions, upload protocols, runtime views, retention, and binding resolution.
-- `internal/analytics/model/` defines semantic models. `internal/analytics/query/` plans governed single- and multi-fact queries. `internal/analytics/materialize/` and `internal/analytics/duckdb/` execute and cache them.
+- `internal/analytics/model/` defines semantic models. `internal/analytics/query/` plans governed single- and multi-dataset queries. `internal/analytics/materialize/` and `internal/analytics/duckdb/` execute and cache them.
 - `internal/access/` owns principals, authentication credentials, RBAC, grants, data policies, groups, SCIM, sessions, service principals, and access auditing.
 - `internal/app/` is the composition root and top-level HTTP router. Feature handlers live beside their domains under packages such as `internal/dashboard/http`, `internal/project/http`, and `internal/agent/http`.
 - `github.com/Yacobolo/toolbelt/pagestream` provides the shared Datastar page/SSE transport, signal history, broker, tracing, and escaped action construction.

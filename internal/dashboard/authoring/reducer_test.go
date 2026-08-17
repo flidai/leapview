@@ -21,7 +21,7 @@ func reducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
 		SemanticModel: "sales_model",
 		Visuals: map[string]AuthoringVisualization{
 			"revenue": ChartVisualization(Visual{Title: "Revenue", Type: "line", Query: VisualQuery{Dimensions: []FieldRef{{Field: "month", Alias: "month"}}, Metrics: []FieldRef{{Field: "revenue", Alias: "revenue"}}}}),
-			"orders":  TabularVisualization("table", TableVisual{Title: "Orders", Query: TableQuery{Table: "orders", Fields: []string{"order_id"}}}),
+			"orders":  TabularVisualization("table", TableVisual{Title: "Orders", Query: TableQuery{Dataset: "orders", Fields: []string{"order_id"}}}),
 		},
 		Pages: []dashboardmodel.Page{{
 			ID: "overview", Title: "Overview", Canvas: dashboardmodel.PageCanvas{Width: 1200, Height: 800}, Grid: dashboardmodel.PageGrid{Columns: 12, RowHeight: 40, Gap: 8, Padding: 8},

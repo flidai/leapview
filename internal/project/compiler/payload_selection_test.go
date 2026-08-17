@@ -57,15 +57,15 @@ func TestVisualPayloadIncludesPointSelectionContract(t *testing.T) {
 
 func TestTablePayloadIncludesFactLocalRowSelectionContract(t *testing.T) {
 	dashboardDefinition := &dashboardauthoring.Dashboard{SemanticModel: "model", Visuals: dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-		"source": {Title: "Source", Query: dashboardauthoring.TableQuery{Table: "ratings", Fields: []string{"ratings.rating_bucket"}}, Columns: []dashboard.TableColumn{{Key: "rating_bucket", Label: "Rating"}}, Interaction: dashboardauthoring.Interaction{RowSelection: dashboardauthoring.SelectionInteraction{
+		"source": {Title: "Source", Query: dashboardauthoring.TableQuery{Dataset: "ratings", Fields: []string{"ratings.rating_bucket"}}, Columns: []dashboard.TableColumn{{Key: "rating_bucket", Label: "Rating"}}, Interaction: dashboardauthoring.Interaction{RowSelection: dashboardauthoring.SelectionInteraction{
 			Mappings: []dashboardauthoring.SelectionMapping{{
-				Field: "ratings.rating_bucket",
-				Fact:  "ratings",
-				Value: "rating_bucket",
+				Field:   "ratings.rating_bucket",
+				Dataset: "ratings",
+				Value:   "rating_bucket",
 			}},
 			Targets: []string{"tags_per_rating"},
 		}}},
-		"tags_per_rating": {Title: "Tags", Query: dashboardauthoring.TableQuery{Table: "ratings", Fields: []string{"ratings.rating_bucket"}}, Columns: []dashboard.TableColumn{{Key: "rating_bucket", Label: "Rating"}}},
+		"tags_per_rating": {Title: "Tags", Query: dashboardauthoring.TableQuery{Dataset: "ratings", Fields: []string{"ratings.rating_bucket"}}, Columns: []dashboard.TableColumn{{Key: "rating_bucket", Label: "Rating"}}},
 	})}
 
 	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(dashboardDefinition)
@@ -86,11 +86,11 @@ func TestTablePayloadIncludesFactLocalRowSelectionContract(t *testing.T) {
 func TestGeographicVisualCompilesTiledCoordinateLayers(t *testing.T) {
 	dashboardDefinition := &dashboardauthoring.Dashboard{SemanticModel: "model", Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
 		"detail": {
-			Type: "bar", Query: dashboardauthoring.VisualQuery{Table: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.state", Alias: "state"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "orders.revenue", Alias: "revenue"}}},
+			Type: "bar", Query: dashboardauthoring.VisualQuery{Dataset: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.state", Alias: "state"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "orders.revenue", Alias: "revenue"}}},
 		},
 		"locations": {
 			Type: "map", Title: "Locations", Query: dashboardauthoring.VisualQuery{
-				Table: "orders",
+				Dataset: "orders",
 				Dimensions: []dashboardauthoring.FieldRef{
 					{Field: "orders.state", Alias: "state"},
 					{Field: "orders.latitude", Alias: "latitude"},
@@ -110,19 +110,19 @@ func TestGeographicVisualCompilesTiledCoordinateLayers(t *testing.T) {
 			Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{
 				Toggle: true,
 				Mappings: []dashboardauthoring.SelectionMapping{
-					{Field: "orders.state", Fact: "orders", Value: "state", Label: "state"},
-					{Field: "orders.latitude", Fact: "orders", Value: "latitude", Label: "revenue"},
+					{Field: "orders.state", Dataset: "orders", Value: "state", Label: "state"},
+					{Field: "orders.latitude", Dataset: "orders", Value: "latitude", Label: "revenue"},
 				},
 				Targets: []string{"detail", "summary"},
 			}, SpatialSelection: dashboardauthoring.SpatialSelectionInteraction{
 				Gestures:  []string{"box", "lasso", "radius"},
-				Latitude:  dashboardauthoring.SpatialSelectionMapping{Source: "latitude", Field: "orders.latitude", Fact: "orders"},
-				Longitude: dashboardauthoring.SpatialSelectionMapping{Source: "longitude", Field: "orders.longitude", Fact: "orders"},
+				Latitude:  dashboardauthoring.SpatialSelectionMapping{Source: "latitude", Field: "orders.latitude", Dataset: "orders"},
+				Longitude: dashboardauthoring.SpatialSelectionMapping{Source: "longitude", Field: "orders.longitude", Dataset: "orders"},
 				Targets:   []string{"detail", "summary"},
 			}},
 		},
 		"summary": {
-			Type: "bar", Query: dashboardauthoring.VisualQuery{Table: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.state", Alias: "state"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "orders.revenue", Alias: "revenue"}}},
+			Type: "bar", Query: dashboardauthoring.VisualQuery{Dataset: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.state", Alias: "state"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "orders.revenue", Alias: "revenue"}}},
 		},
 	})}
 
@@ -215,7 +215,7 @@ func TestGeographicVisualCompilesTiledCoordinateLayers(t *testing.T) {
 func TestGeographicVisualRejectsMixedTiledAndInlineDataLayers(t *testing.T) {
 	dashboardDefinition := &dashboardauthoring.Dashboard{SemanticModel: "model", Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"locations": {
 		Type: "map",
-		Query: dashboardauthoring.VisualQuery{Table: "orders", Dimensions: []dashboardauthoring.FieldRef{
+		Query: dashboardauthoring.VisualQuery{Dataset: "orders", Dimensions: []dashboardauthoring.FieldRef{
 			{Field: "orders.state", Alias: "state"},
 			{Field: "orders.latitude", Alias: "latitude"},
 			{Field: "orders.longitude", Alias: "longitude"},
@@ -242,7 +242,7 @@ func TestGeographicVisualRejectsAuthoredRowBudgetsWhenTiled(t *testing.T) {
 		{name: "data budget", mutate: func(visual *dashboardauthoring.Visual) { visual.DataBudget.MaxRows = 20_000 }, want: "must not set data_budget.max_rows"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			visual := dashboardauthoring.Visual{Type: "map", Query: dashboardauthoring.VisualQuery{Table: "orders", Dimensions: []dashboardauthoring.FieldRef{
+			visual := dashboardauthoring.Visual{Type: "map", Query: dashboardauthoring.VisualQuery{Dataset: "orders", Dimensions: []dashboardauthoring.FieldRef{
 				{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"},
 			}}, Geo: dashboardauthoring.VisualGeo{Layers: []dashboardauthoring.VisualGeoLayer{{ID: "stores", Kind: "point", Latitude: "latitude", Longitude: "longitude"}}}}
 			test.mutate(&visual)
@@ -257,7 +257,7 @@ func TestGeographicVisualRejectsAuthoredRowBudgetsWhenTiled(t *testing.T) {
 func TestGeographicVisualCanExplicitlyDisableTheDefaultBasemap(t *testing.T) {
 	dashboardDefinition := &dashboardauthoring.Dashboard{SemanticModel: "model", Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"locations": {
 		Type: "map", Query: dashboardauthoring.VisualQuery{
-			Table: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "orders.revenue", Alias: "revenue"}},
+			Dataset: "orders", Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "orders.revenue", Alias: "revenue"}},
 		},
 		Geo: dashboardauthoring.VisualGeo{Basemap: "blank", Layers: []dashboardauthoring.VisualGeoLayer{{ID: "stores", Kind: "point", Latitude: "latitude", Longitude: "longitude"}}},
 	}})}

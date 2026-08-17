@@ -302,11 +302,11 @@ func interactionConfig(kind string, selection dashboardauthoring.SelectionIntera
 	mappings := make([]dashboard.InteractionConfigMapping, 0, len(selection.Mappings))
 	for _, mapping := range selection.Mappings {
 		mappings = append(mappings, dashboard.InteractionConfigMapping{
-			Field: mapping.Field,
-			Fact:  mapping.Fact,
-			Grain: mapping.Grain,
-			Value: mapping.Value,
-			Label: mapping.Label,
+			Field:   mapping.Field,
+			Dataset: mapping.Dataset,
+			Grain:   mapping.Grain,
+			Value:   mapping.Value,
+			Label:   mapping.Label,
 		})
 	}
 	return dashboard.InteractionConfig{
@@ -320,9 +320,9 @@ func interactionConfig(kind string, selection dashboardauthoring.SelectionIntera
 func compiledInteractionConfig(interaction visualizationir.VisualizationInteraction) dashboard.InteractionConfig {
 	mappings := make([]dashboard.InteractionConfigMapping, 0, len(interaction.Mappings))
 	for _, mapping := range interaction.Mappings {
-		fact, grain, label := "", "", ""
+		dataset, grain, label := "", "", ""
 		if mapping.TargetDatasetID != nil {
-			fact = *mapping.TargetDatasetID
+			dataset = *mapping.TargetDatasetID
 		}
 		if mapping.Grain != nil {
 			grain = *mapping.Grain
@@ -330,7 +330,7 @@ func compiledInteractionConfig(interaction visualizationir.VisualizationInteract
 		if mapping.Label != nil {
 			label = mapping.Label.Field
 		}
-		mappings = append(mappings, dashboard.InteractionConfigMapping{Field: mapping.TargetFieldID, Fact: fact, Grain: grain, Value: mapping.Source.Field, Label: label})
+		mappings = append(mappings, dashboard.InteractionConfigMapping{Field: mapping.TargetFieldID, Dataset: dataset, Grain: grain, Value: mapping.Source.Field, Label: label})
 	}
 	targets := make([]string, 0, len(interaction.Targets))
 	for _, target := range interaction.Targets {
@@ -375,7 +375,7 @@ func selectedHighlights(runtime *modelRuntime, report *dashboarddefinition.Defin
 			next := visualizationir.VisualizationHighlightEntry{Mappings: []visualizationir.VisualizationHighlightMapping{}, Label: entry.Label}
 			for _, mapping := range entry.Mappings {
 				next.Mappings = append(next.Mappings, visualizationir.VisualizationHighlightMapping{
-					TargetFieldID: mapping.Field, TargetDatasetID: optionalRuntimeString(mapping.Fact),
+					TargetFieldID: mapping.Field, TargetDatasetID: optionalRuntimeString(mapping.Dataset),
 					Grain: optionalRuntimeString(mapping.Grain), Value: mapping.Value, Label: optionalRuntimeString(mapping.Label),
 				})
 			}

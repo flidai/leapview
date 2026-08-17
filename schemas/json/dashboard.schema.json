@@ -3262,6 +3262,9 @@
         "columns": {
           "$ref": "#/$defs/%23FieldRefs"
         },
+        "dataset": {
+          "$ref": "#/$defs/%23Identifier"
+        },
         "fields": {
           "items": {
             "$ref": "#/$defs/%23FieldRef"
@@ -3273,9 +3276,6 @@
         },
         "rows": {
           "$ref": "#/$defs/%23FieldRefs"
-        },
-        "table": {
-          "$ref": "#/$defs/%23Identifier"
         }
       },
       "type": "object"
@@ -3715,6 +3715,9 @@
     "#VisualQuery": {
       "additionalProperties": false,
       "properties": {
+        "dataset": {
+          "$ref": "#/$defs/%23Identifier"
+        },
         "dimensions": {
           "$ref": "#/$defs/%23FieldRefs"
         },
@@ -3732,9 +3735,6 @@
             "$ref": "#/$defs/%23Sort"
           },
           "type": "array"
-        },
-        "table": {
-          "$ref": "#/$defs/%23Identifier"
         },
         "time": {
           "additionalProperties": false,

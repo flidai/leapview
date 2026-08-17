@@ -27,7 +27,6 @@ var assetPresentationByType = map[string]assetPresentation{
 	"page_item":      assetPresentationFor(lucide.Component, "page"),
 	"relationship":   assetPresentationFor(lucide.Workflow, "dimension"),
 	"semantic_model": assetPresentationFor(lucide.Waypoints, "semantic-model"),
-	"semantic_table": assetPresentationFor(lucide.TableProperties, "model-table"),
 	"source":         assetPresentationFor(lucide.Cable, "source"),
 	"table":          assetPresentationFor(lucide.Table2, "table"),
 	"visual":         assetPresentationFor(lucide.ChartColumn, "visual"),

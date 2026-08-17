@@ -436,7 +436,7 @@ spec:
       description: Summarizes delivery-day distribution by speed bucket.
       type: boxplot
       query:
-        table: orders
+        dataset: orders
         dimensions:
           delivery_bucket: orders.delivery_bucket
         metrics:
@@ -589,7 +589,7 @@ spec:
       presentation:
         histogram_bins: 16
       query:
-        table: orders
+        dataset: orders
         metrics:
           delivery_days: null
     status_radar:
@@ -1310,7 +1310,7 @@ spec:
       description: Exercises viewport aggregation over exactly one million deterministic points while rendering at most 5,000 features.
       type: map
       query:
-        table: spatial_load_points
+        dataset: spatial_load_points
         dimensions:
           point_id: spatial_load_points.point_id
           city: spatial_load_points.city
@@ -1427,7 +1427,7 @@ spec:
       title: Review score distribution
       type: boxplot
       query:
-        table: orders
+        dataset: orders
         dimensions:
           status: orders.status
         metrics:
@@ -1441,7 +1441,7 @@ spec:
       presentation:
         data_zoom: true
       query:
-        table: orders
+        dataset: orders
         dimensions:
           category: orders.category
         metrics:
@@ -1517,7 +1517,7 @@ spec:
       presentation:
         histogram_bins: 18
       query:
-        table: orders
+        dataset: orders
         metrics:
           revenue: null
     review_histogram:
@@ -1527,7 +1527,7 @@ spec:
         histogram_bins: 10
         labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 12, minimum_spacing: 6, tooltip_fallback: true}
       query:
-        table: orders
+        dataset: orders
         metrics:
           review_score: null
     delivery_radar:
@@ -1685,7 +1685,7 @@ spec:
           revenue: orders.revenue
           review_score: orders.review_score
           delivery_days: orders.delivery_days
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.purchase_date
@@ -1736,7 +1736,7 @@ spec:
           state: customers.state
           revenue: orders.revenue
           review_score: orders.review_score
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.status
@@ -1784,7 +1784,7 @@ spec:
           category: orders.category
           revenue: orders.revenue
           delivery_days: orders.delivery_days
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.purchase_date
@@ -1837,7 +1837,7 @@ spec:
           category: orders.category
           revenue: orders.revenue
           delivery_days: orders.delivery_days
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.status
@@ -1918,7 +1918,7 @@ spec:
           revenue: orders.revenue
           review_score: orders.review_score
           delivery_days: orders.delivery_days
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.status

@@ -67,7 +67,7 @@ func TestRolePlayingDimensionPathsExecuteWithIndependentAliases(t *testing.T) {
 	}
 }
 
-func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *testing.T) {
+func TestMultiDatasetPlanExecutesWithoutDatasetFanoutAndPreservesOneSidedGroups(t *testing.T) {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 		}
 	}
 
-	model := executableMultiFactModel()
+	model := executableMultiDatasetModel()
 	planner := mustNewCompiledPlanner(t, model)
 	scalar, err := planner.Plan(Request{Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "click_count"}, {Field: "tags_per_order"}}})
 	if err != nil {
@@ -118,16 +118,16 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 
 	local, err := planner.Plan(Request{
 		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}, {Field: "tags_per_order"}},
-		Filters: []Filter{{Field: "orders.segment", Fact: "orders", Operator: "equals", Values: []any{"business"}}},
+		Filters: []Filter{{Field: "orders.segment", Dataset: "orders", Operator: "equals", Values: []any{"business"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(local.SQL, local.Args...).Scan(&orderCount, &tagCount, &ratio); err != nil {
-		t.Fatalf("execute fact-local selection plan:\n%s\n%v", local.SQL, err)
+		t.Fatalf("execute dataset-local selection plan:\n%s\n%v", local.SQL, err)
 	}
 	if orderCount != 1 || tagCount != 3 || ratio != 3 {
-		t.Fatalf("fact-local selection = orders %d tags %d ratio %v", orderCount, tagCount, ratio)
+		t.Fatalf("dataset-local selection = orders %d tags %d ratio %v", orderCount, tagCount, ratio)
 	}
 
 	multiSelect, err := planner.Plan(Request{
@@ -188,7 +188,7 @@ func TestMultiFactPlanExecutesWithoutFactFanoutAndPreservesOneSidedGroups(t *tes
 	}
 }
 
-func executableMultiFactModel() *semanticmodel.Model {
+func executableMultiDatasetModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Name: "executable",
 		Tables: map[string]semanticmodel.Table{

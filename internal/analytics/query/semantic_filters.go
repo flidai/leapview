@@ -100,10 +100,10 @@ func compileNamedSemanticFilters(model *semanticmodel.Model, names []string) ([]
 	return filters, nil
 }
 
-func scopeMetricWhereFilters(filters []Filter, fact string) []Filter {
+func scopeMetricWhereFilters(filters []Filter, dataset string) []Filter {
 	out := make([]Filter, len(filters))
 	for index, filter := range filters {
-		out[index] = scopeMetricWhereFilter(filter, fact)
+		out[index] = scopeMetricWhereFilter(filter, dataset)
 	}
 	return out
 }
@@ -116,13 +116,13 @@ func namedMetricFilters(filters []CompiledNamedFilter) []Filter {
 	return out
 }
 
-func scopeMetricWhereFilter(filter Filter, fact string) Filter {
-	if filter.Field != "" && filter.Fact == "" {
-		filter.Fact = fact
+func scopeMetricWhereFilter(filter Filter, dataset string) Filter {
+	if filter.Field != "" && filter.Dataset == "" {
+		filter.Dataset = dataset
 	}
 	for index, group := range filter.Groups {
 		for childIndex, child := range group.Filters {
-			group.Filters[childIndex] = scopeMetricWhereFilter(child, fact)
+			group.Filters[childIndex] = scopeMetricWhereFilter(child, dataset)
 		}
 		filter.Groups[index] = group
 	}

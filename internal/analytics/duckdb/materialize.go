@@ -479,15 +479,12 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		// bind every planner relation through that alias map in both snapshot
 		// and live execution modes.
 		tableRelation := func(table string) (string, error) {
-			physical, err := physicalTableName(model, table)
-			if err != nil {
-				return "", err
+			physical := strings.TrimSpace(table)
+			if err := validateIdentifier(physical); err != nil {
+				return "", fmt.Errorf("physical table %q: %w", physical, err)
 			}
 			if config.SnapshotID > 0 {
 				return analyticsducklake.QualifiedSnapshotRelation(config.SnapshotID, physical)
-			}
-			if err := validateIdentifier(physical); err != nil {
-				return "", fmt.Errorf("physical table %q: %w", physical, err)
 			}
 			return "model." + physical, nil
 		}
@@ -801,8 +798,12 @@ func ProjectModelTableDependencyOrder(models map[string]*semanticmodel.Model, se
 			if semantic == nil {
 				continue
 			}
-			if dataset, ok := semantic.Datasets[selectedTable]; ok && strings.TrimSpace(dataset.Model) != "" {
-				matches[strings.TrimSpace(dataset.Model)] = struct{}{}
+			compiled, compileErr := semanticquery.CompileDatasetBindings(semantic)
+			if compileErr != nil {
+				return nil, fmt.Errorf("semantic model %q dataset bindings: %w", modelID, compileErr)
+			}
+			if dataset, ok := compiled.Dataset(selectedTable); ok && strings.TrimSpace(dataset.ModelName()) != "" {
+				matches[strings.TrimSpace(dataset.ModelName())] = struct{}{}
 			}
 		}
 		if len(matches) == 1 {
@@ -816,9 +817,9 @@ func ProjectModelTableDependencyOrder(models map[string]*semanticmodel.Model, se
 	return analyticsmaterialize.ModelTableDependencyOrder(model, selectedTable)
 }
 
-// physicalTableName resolves a semantic dataset alias to the authored Model
-// table that is materialized in the project catalog. Models constructed by
-// older callers without dataset metadata retain their table name.
+// physicalTableName resolves a semantic dataset alias to the authored backing
+// Model table that is materialized in the project catalog. Missing dataset
+// bindings are activation errors and are never inferred at runtime.
 func physicalTableName(model *semanticmodel.Model, table string) (string, error) {
 	if model == nil {
 		return "", fmt.Errorf("semantic model is required")
@@ -827,14 +828,14 @@ func physicalTableName(model *semanticmodel.Model, table string) (string, error)
 	if table == "" {
 		return "", fmt.Errorf("model table is required")
 	}
-	if dataset, ok := model.Datasets[table]; ok {
-		physical := strings.TrimSpace(dataset.Model)
-		if physical == "" {
-			return "", fmt.Errorf("semantic dataset %q has no Model reference", table)
-		}
-		return physical, nil
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		return "", err
 	}
-	return table, nil
+	if dataset, ok := compiled.Dataset(table); ok {
+		return dataset.ModelName(), nil
+	}
+	return "", fmt.Errorf("unknown semantic dataset %q", table)
 }
 
 func physicalTableNames(model *semanticmodel.Model, tables []string) ([]string, error) {
@@ -1048,16 +1049,18 @@ func physicalProjectModel(models map[string]*semanticmodel.Model) (*semanticmode
 		// A semantic model exposes dataset aliases, but project materialization
 		// must emit one physical table per authored Model. Resolve aliases before
 		// merging so two semantic datasets can safely reuse one Model table.
-		tableNames := sortedKeys(model.Tables)
+		compiled, err := semanticquery.CompileDatasetBindings(model)
+		if err != nil {
+			return nil, fmt.Errorf("semantic model %q dataset bindings: %w", modelID, err)
+		}
+		tableNames := compiled.DatasetNames()
 		for _, name := range tableNames {
-			table := model.Tables[name]
-			physicalName, err := physicalTableName(model, name)
-			if err != nil {
-				return nil, fmt.Errorf("semantic model %q table %q: %w", modelID, name, err)
-			}
+			dataset, _ := compiled.Dataset(name)
+			table := dataset.Table()
+			physicalName := dataset.ModelName()
 			table.ModelDependencies = append([]string(nil), table.ModelDependencies...)
 			for index, dependency := range table.ModelDependencies {
-				physicalDependency, err := physicalTableName(model, dependency)
+				physicalDependency, err := compiled.ResolvePhysicalModelName(dependency)
 				if err != nil {
 					return nil, fmt.Errorf("semantic model %q table %q dependency %q: %w", modelID, name, dependency, err)
 				}

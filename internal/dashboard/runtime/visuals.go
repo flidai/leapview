@@ -162,7 +162,7 @@ func (s *VisualizationDataService) contextFrames(ctx context.Context, runtime *m
 			sorts[index] = reportdef.QuerySort{Field: value.FieldID, Direction: value.Direction}
 		}
 		data, err := s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-			Table: query.TableID, Dimensions: dimensions, Metrics: metrics, Time: queryTime,
+			Dataset: query.TableID, Dimensions: dimensions, Metrics: metrics, Time: queryTime,
 			Filters: queryFilters, Sort: sorts, Limit: int(query.Limit),
 		})
 		if err != nil {
@@ -338,7 +338,7 @@ func (s *VisualizationDataService) bundleAggregateRequest(ctx context.Context, r
 		if len(dimensions) == 0 {
 			sorts = nil
 		}
-		return reportdef.AggregateQuery{Table: visual.Table, Dimensions: dimensions, Metrics: []reportdef.QueryField{queryFieldRef(visual.Metrics[0], "value")}, Filters: queryFilters, Sort: sorts, Limit: visual.Limit}, nil
+		return reportdef.AggregateQuery{Dataset: visual.Table, Dimensions: dimensions, Metrics: []reportdef.QueryField{queryFieldRef(visual.Metrics[0], "value")}, Filters: queryFilters, Sort: sorts, Limit: visual.Limit}, nil
 	case visualizationdefinition.ResultCategoryValue, visualizationdefinition.ResultCategorySeriesValue:
 		dimensions, queryTime := categoryDimension(visual, "label")
 		if visual.Series != nil {
@@ -348,14 +348,14 @@ func (s *VisualizationDataService) bundleAggregateRequest(ctx context.Context, r
 		if len(visual.Sort) == 0 {
 			sorts = []reportdef.QuerySort{{Field: "label", Direction: "asc"}}
 		}
-		return reportdef.AggregateQuery{Table: visual.Table, Dimensions: dimensions, Metrics: []reportdef.QueryField{queryFieldRef(visual.Metrics[0], "value")}, Time: queryTime, Filters: queryFilters, Sort: sorts, Limit: visual.Limit}, nil
+		return reportdef.AggregateQuery{Dataset: visual.Table, Dimensions: dimensions, Metrics: []reportdef.QueryField{queryFieldRef(visual.Metrics[0], "value")}, Time: queryTime, Filters: queryFilters, Sort: sorts, Limit: visual.Limit}, nil
 	case visualizationdefinition.ResultCategoryMultiMeasure:
 		dimensions, queryTime := categoryDimension(visual, "label")
 		metrics := make([]reportdef.QueryField, 0, len(visual.Metrics))
 		for index, metric := range visual.Metrics {
 			metrics = append(metrics, queryFieldRef(metric, fmt.Sprintf("value_%d", index)))
 		}
-		return reportdef.AggregateQuery{Table: visual.Table, Dimensions: dimensions, Metrics: metrics, Time: queryTime, Filters: queryFilters, Sort: visualSorts(visual), Limit: visual.Limit}, nil
+		return reportdef.AggregateQuery{Dataset: visual.Table, Dimensions: dimensions, Metrics: metrics, Time: queryTime, Filters: queryFilters, Sort: visualSorts(visual), Limit: visual.Limit}, nil
 	default:
 		return reportdef.AggregateQuery{}, &dataquery.BundleIncompatibleError{Err: fmt.Errorf("visual %q result shape %q is not bundleable", visualID, visual.ResultShape())}
 	}
@@ -445,7 +445,7 @@ func (s *VisualizationDataService) batchedSingleValueData(ctx context.Context, r
 			metrics = append(metrics, queryFieldRef(metric, alias))
 		}
 		rows, err := s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-			Table:   items[0].visual.Table,
+			Dataset: items[0].visual.Table,
 			Metrics: metrics,
 			Filters: items[0].filters,
 			Limit:   items[0].visual.Limit,
@@ -558,7 +558,7 @@ func (s *VisualizationDataService) pointData(ctx context.Context, runtime *model
 		}
 	}
 	rows, err := s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-		Table: visual.Table, Dimensions: dimensions, Metrics: metrics, Time: queryTime,
+		Dataset: visual.Table, Dimensions: dimensions, Metrics: metrics, Time: queryTime,
 		Filters: queryFilters, Sort: sorts, Limit: visual.Limit,
 	})
 	if err != nil {
@@ -598,7 +598,7 @@ func (s *VisualizationDataService) categoryData(ctx context.Context, runtime *mo
 		sorts = []reportdef.QuerySort{{Field: dimensionAlias, Direction: "asc"}}
 	}
 	data, err := s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-		Table:      visual.Table,
+		Dataset:    visual.Table,
 		Dimensions: dimensions,
 		Metrics:    []reportdef.QueryField{queryFieldRef(visual.Metrics[0], metricAlias)},
 		Time:       queryTime,
@@ -642,7 +642,7 @@ func (s *VisualizationDataService) categoryMultiMeasureData(ctx context.Context,
 		metrics = append(metrics, queryFieldRef(metric, fmt.Sprintf("value_%d", index)))
 	}
 	rows, err := s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-		Table:      visual.Table,
+		Dataset:    visual.Table,
 		Dimensions: dimensions,
 		Metrics:    metrics,
 		Time:       queryTime,
@@ -686,7 +686,7 @@ func (s *VisualizationDataService) binnedMeasureData(ctx context.Context, runtim
 		return nil, err
 	}
 	bins, err := runtime.data.Histogram(ctx, reportdef.RawValueQuery{
-		Table:   visual.Table,
+		Dataset: visual.Table,
 		Metric:  queryFieldRef(visual.Metrics[0], "value"),
 		Filters: queryFilters,
 	}, visual.HistogramBins())
@@ -724,7 +724,7 @@ func (s *VisualizationDataService) hierarchyData(ctx context.Context, runtime *m
 		levelAliases = append(levelAliases, alias)
 	}
 	rows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
-		Table:      visual.Table,
+		Dataset:    visual.Table,
 		Dimensions: dimensions,
 		Time:       queryTime,
 		Metrics:    []reportdef.QueryField{queryFieldRef(visual.Metrics[0], "value")},
@@ -858,7 +858,7 @@ func (s *VisualizationDataService) singleValueData(ctx context.Context, runtime 
 		sorts = nil
 	}
 	data, err := s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-		Table:      visual.Table,
+		Dataset:    visual.Table,
 		Dimensions: dimensions,
 		Metrics:    []reportdef.QueryField{queryFieldRef(metricRef, "value")},
 		Filters:    queryFilters,
@@ -895,7 +895,7 @@ func (s *VisualizationDataService) dimensionPairData(ctx context.Context, runtim
 		return nil, err
 	}
 	data, err := s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-		Table: visual.Table,
+		Dataset: visual.Table,
 		Dimensions: []reportdef.QueryField{
 			fieldRef(visual.Dimensions[0].FieldID, leftAlias),
 			fieldRef(visual.Dimensions[1].FieldID, rightSQLAlias),
@@ -923,7 +923,7 @@ func (s *VisualizationDataService) geoData(ctx context.Context, runtime *modelRu
 		return nil, err
 	}
 	data, err := s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-		Table: visual.Table, Dimensions: aliasedQueryFields(visual.Dimensions), Metrics: aliasedQueryFields(visual.Metrics),
+		Dataset: visual.Table, Dimensions: aliasedQueryFields(visual.Dimensions), Metrics: aliasedQueryFields(visual.Metrics),
 		Filters: queryFilters, Sort: aliasedVisualSorts(visual), Limit: visual.Limit,
 	})
 	if err != nil {
@@ -968,7 +968,7 @@ func (s *VisualizationDataService) ohlcData(ctx context.Context, runtime *modelR
 		return nil, err
 	}
 	return s.querySemanticDatums(ctx, runtime, reportdef.AggregateQuery{
-		Table:      visual.Table,
+		Dataset:    visual.Table,
 		Dimensions: []reportdef.QueryField{fieldRef(visual.Dimensions[0].FieldID, "label")},
 		Metrics: []reportdef.QueryField{
 			queryFieldRef(visual.Metrics[0], "open"),
@@ -988,7 +988,7 @@ func (s *VisualizationDataService) distributionData(ctx context.Context, runtime
 		return nil, err
 	}
 	return s.queryDistributionDatums(ctx, runtime, reportdef.RawValueQuery{
-		Table:      visual.Table,
+		Dataset:    visual.Table,
 		Dimensions: []reportdef.QueryField{fieldRef(visual.Dimensions[0].FieldID, "label")},
 		Metric:     queryFieldRef(visual.Metrics[0], "value"),
 		Filters:    queryFilters,

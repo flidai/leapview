@@ -5,14 +5,16 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
 
 func TestExplorerDatasetsProjectsCompositeAndUniqueGrains(t *testing.T) {
-	model := &semanticmodel.Model{Tables: map[string]semanticmodel.Table{
+	model := &semanticmodel.Model{Name: "inventory", Tables: map[string]semanticmodel.Table{
 		"order_lines": {
+			ModelName: "order_lines",
 			Entities: map[string]semanticmodel.ModelEntitySpec{
 				"order_line":   {Type: "primary", Fields: []string{"order_id", "line_number"}},
 				"customer_ref": {Type: "unique", Fields: []string{"customer_id", "region_code"}},
@@ -20,14 +22,21 @@ func TestExplorerDatasetsProjectsCompositeAndUniqueGrains(t *testing.T) {
 			GrainEntity: "order_line",
 		},
 		"customer_snapshots": {
+			ModelName: "customer_snapshots",
 			Entities: map[string]semanticmodel.ModelEntitySpec{
 				"external_key": {Type: "unique", Fields: []string{"tenant_id", "customer_id"}},
 			},
 			GrainEntity: "external_key",
 		},
+	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+		"order_lines": {Model: "order_lines"}, "customer_snapshots": {Model: "customer_snapshots"},
 	}}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	datasets := explorerDatasets(model)
+	datasets := explorerDatasets(model, compiled)
 	if len(datasets) != 2 {
 		t.Fatalf("datasets = %#v, want two datasets", datasets)
 	}
@@ -61,7 +70,8 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 		Title: "Sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Description: "Orders table",
+				ModelName: "orders",
+				Entities:  map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Description: "Orders table",
 				Columns: map[string]semanticmodel.ModelColumn{
 					"order_id": {Name: "order_id", Type: "integer"},
 					"status":   {Name: "status", Type: "string", Description: "Order status"},
@@ -74,6 +84,7 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Type: "aggregate", Dataset: "orders", Label: "Orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
 		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 	}
 	project := projectmanifest.Project{
 		Sources: map[string]semanticmodel.Source{
@@ -90,7 +101,7 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
-	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{})
+	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, compiledProjectionModels(t, project))
 	if len(projection.Models) != 1 || projection.Models[0].ID != "semantic:sales" {
 		t.Fatalf("models = %#v, want only authorized semantic model", projection.Models)
 	}
@@ -124,10 +135,11 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
-			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{"region": {Label: "Region"}}},
+			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Label: "Region"}}},
 		},
-		Metrics: map[string]semanticmodel.Metric{"revenue": {Type: "aggregate", Dataset: "orders", Label: "Revenue", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}}},
+		Metrics:  map[string]semanticmodel.Metric{"revenue": {Type: "aggregate", Dataset: "orders", Label: "Revenue", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
 	}
 	project := projectmanifest.Project{
 		Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"]},
@@ -139,7 +151,7 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
 		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
-	}, project, command)
+	}, project, command, compiledProjectionModels(t, project))
 	if projection.SelectedDataset == nil || projection.SelectedDataset.ID != "customers" {
 		t.Fatalf("selected dataset = %#v, want customers", projection.SelectedDataset)
 	}
@@ -165,12 +177,14 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
+				ModelName: "orders",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"customer_id": {Field: "orders.customer_id", Table: "orders"},
 					"status":      {Field: "orders.status", Table: "orders"},
 				},
 			},
 			"customers": {
+				ModelName: "customers",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"customer_id": {Field: "customers.customer_id", Table: "customers"},
 					"region":      {Field: "customers.region", Table: "customers"},
@@ -180,6 +194,7 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 		Relationships: []semanticmodel.Relationship{{
 			ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one",
 		}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
 	}
 	project := projectmanifest.Project{
 		Models: map[string]semanticmodel.Table{
@@ -200,7 +215,7 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 	customersProjection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
 		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
 		Dimensions: []string{"customers.region"},
-	})
+	}, compiledProjectionModels(t, project))
 	foundOrdersStatus := false
 	for _, field := range customersProjection.Fields {
 		if field.ID == "orders.status" {
@@ -214,7 +229,7 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 		t.Fatal("orders status field was not projected")
 	}
 
-	projection := BuildDataExplorerProjection(assets, project, command)
+	projection := BuildDataExplorerProjection(assets, project, command, compiledProjectionModels(t, project))
 
 	if projection.SelectedDataset == nil || projection.SelectedDataset.ID != "orders" {
 		t.Fatalf("selected dataset = %#v, want safely inferred orders base", projection.SelectedDataset)
@@ -230,15 +245,53 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 func TestBuildDataExplorerProjectionDoesNotUseGraphPayloadAsSchema(t *testing.T) {
 	project := projectmanifest.Project{
 		Models:         map[string]semanticmodel.Table{"model:orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Type: "integer"}}}},
-		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Type: "integer"}}}}}},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", Columns: map[string]semanticmodel.ModelColumn{"id": {Type: "integer"}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
 	}
 	projection := BuildDataExplorerProjection([]projectview.DevelopAssetView{
 		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders", Payload: map[string]any{"kind": "model"}},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales", Payload: map[string]any{"kind": "semantic_model"}},
-	}, project, projectsignals.DataExploreCommand{})
+	}, project, projectsignals.DataExploreCommand{}, compiledProjectionModels(t, project))
 	if len(projection.Objects) != 1 || projection.Objects[0].ColumnCount != 1 {
 		t.Fatalf("objects = %#v, want one manifest-backed object", projection.Objects)
+	}
+}
+
+func TestBuildDataExplorerProjectionFailsClosedWhenCompiledBindingsUnavailable(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	project := projectmanifest.Project{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
+	assets := []projectview.DevelopAssetView{{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"}}
+	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, nil)
+	if len(projection.Datasets) != 0 || len(projection.Fields) != 0 {
+		t.Fatalf("projection exposed uncompiled semantic metadata: %#v", projection)
+	}
+	if len(projection.Warnings) != 1 || projection.Warnings[0] != "Compiled semantic dataset bindings are unavailable for the active serving generation." {
+		t.Fatalf("warnings = %#v, want compiled-binding unavailability", projection.Warnings)
+	}
+}
+
+func TestBuildDataExplorerProjectionRejectsUnavailableActivationBindings(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "wrong_orders"},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	project := projectmanifest.Project{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
+	assets := []projectview.DevelopAssetView{{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"}}
+	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, nil)
+	if len(projection.Datasets) != 0 || len(projection.Fields) != 0 {
+		t.Fatalf("projection exposed invalid authoring bindings: %#v", projection)
+	}
+	if len(projection.Warnings) != 1 || projection.Warnings[0] != "Compiled semantic dataset bindings are unavailable for the active serving generation." {
+		t.Fatalf("warnings = %#v, want activation-binding unavailability", projection.Warnings)
 	}
 }
 
@@ -246,8 +299,8 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Order ID"}}},
-			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Customer ID"}}},
+			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Order ID"}}},
+			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Label: "Customer ID"}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count":    {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}},
@@ -255,6 +308,7 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 			"order_rate":     {Type: "derived", Expression: "${order_count} * 2"},
 			"order_share":    {Type: "ratio", Numerator: "order_count", Denominator: "customer_count"},
 		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
 	}
 	project := projectmanifest.Project{
 		Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"], "model:customers": model.Tables["customers"]},
@@ -268,7 +322,7 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 	}
 	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
 		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
-	})
+	}, compiledProjectionModels(t, project))
 	fields := map[string]projectsignals.DataExploreFieldSignal{}
 	for _, field := range projection.Fields {
 		fields[field.ID] = field
@@ -282,4 +336,20 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 			t.Fatalf("multi-root metric %q = %#v, want visible without false ownership", name, got)
 		}
 	}
+}
+
+func compiledProjectionModels(t *testing.T, project projectmanifest.Project) map[string]*semanticquery.CompiledModel {
+	t.Helper()
+	compiled := make(map[string]*semanticquery.CompiledModel, len(project.SemanticModels))
+	for id, model := range project.SemanticModels {
+		if model == nil {
+			continue
+		}
+		value, err := semanticquery.CompileDatasetBindings(model)
+		if err != nil {
+			t.Fatalf("compile semantic model %q: %v", id, err)
+		}
+		compiled[id] = value
+	}
+	return compiled
 }

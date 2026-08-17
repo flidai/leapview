@@ -13,7 +13,7 @@ import (
 type Dependencies struct {
 	LogicalFields      []string
 	MetricDependencies []string
-	Facts              []string
+	Datasets           []string
 	PhysicalFields     []string
 	RelationshipPaths  []string
 }
@@ -25,7 +25,6 @@ func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
 	if p == nil || p.compiled == nil || p.model == nil {
 		return Dependencies{}, fmt.Errorf("planner is not compiled")
 	}
-	model := p.model
 	resolved, err := p.resolveAggregate(request)
 	if err != nil {
 		return Dependencies{}, err
@@ -36,14 +35,14 @@ func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
 	paths := map[string]struct{}{}
 	for _, dimension := range resolved.Dimensions {
 		logical[dimension.Name] = struct{}{}
-		for _, fact := range resolved.Facts {
-			field, path, err := p.aggregateDimensionBinding(fact, dimension)
+		for _, dataset := range resolved.Datasets {
+			field, path, err := p.aggregateDimensionBinding(dataset, dimension)
 			if err != nil {
 				return Dependencies{}, err
 			}
 			physical[field] = struct{}{}
 			if signature := relationshipPathSignature(path); signature != "" {
-				paths[fact+":"+signature] = struct{}{}
+				paths[dataset+":"+signature] = struct{}{}
 			}
 			for _, relationship := range path {
 				for _, field := range relationshipPhysicalFields(relationship) {
@@ -56,16 +55,16 @@ func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
 		logical[name] = struct{}{}
 		for _, field := range aggregateMetricPhysicalFields(metric) {
 			physical[field] = struct{}{}
-			resolvedField, err := model.ResolveDimension(field)
+			resolvedField, err := p.resolveDimension(field)
 			if err != nil {
 				return Dependencies{}, err
 			}
-			path, err := model.SafeRelationshipPath(metric.Fact, resolvedField.Table)
+			path, err := p.model.SafeRelationshipPath(metric.Dataset, resolvedField.Table)
 			if err != nil {
 				return Dependencies{}, err
 			}
 			if signature := relationshipPathSignature(path); signature != "" {
-				paths[metric.Fact+":"+signature] = struct{}{}
+				paths[metric.Dataset+":"+signature] = struct{}{}
 			}
 			for _, relationship := range path {
 				for _, field := range relationshipPhysicalFields(relationship) {
@@ -80,8 +79,8 @@ func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
 			metricDependencies[ref] = struct{}{}
 		}
 	}
-	for _, fact := range resolved.Facts {
-		bindings, err := p.factFilterFields(request.Filters, resolved, fact)
+	for _, dataset := range resolved.Datasets {
+		bindings, err := p.datasetFilterFields(request.Filters, resolved, dataset)
 		if err != nil {
 			return Dependencies{}, err
 		}
@@ -89,7 +88,7 @@ func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
 			physical[binding.Field] = struct{}{}
 			path := binding.Path
 			if signature := relationshipPathSignature(path); signature != "" {
-				paths[fact+":"+signature] = struct{}{}
+				paths[dataset+":"+signature] = struct{}{}
 			}
 			for _, relationship := range path {
 				for _, field := range relationshipPhysicalFields(relationship) {
@@ -104,7 +103,7 @@ func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
 	return Dependencies{
 		LogicalFields:      sortedSet(logical),
 		MetricDependencies: sortedSet(metricDependencies),
-		Facts:              append([]string{}, resolved.Facts...),
+		Datasets:           append([]string{}, resolved.Datasets...),
 		PhysicalFields:     sortedSet(physical),
 		RelationshipPaths:  sortedSet(paths),
 	}, nil

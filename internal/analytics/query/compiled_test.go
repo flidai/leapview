@@ -8,6 +8,7 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
 // mustNewCompiledPlanner is test-only shorthand for the activation API. The
@@ -15,11 +16,33 @@ import (
 // NewPlanner helper.
 func mustNewCompiledPlanner(t testing.TB, model *semanticmodel.Model, options ...PlannerOption) *Planner {
 	t.Helper()
+	populateFixtureTableModelNames(model)
 	planner, err := NewCompiledPlanner(model, options...)
 	if err != nil {
 		t.Fatalf("NewCompiledPlanner() error = %v", err)
 	}
 	return planner
+}
+
+// populateFixtureTableModelNames mirrors the authored dataset-to-model
+// lowering used by test fixtures. Runtime validation intentionally requires
+// this binding to be explicit; production code must never infer it.
+func populateFixtureTableModelNames(model *semanticmodel.Model) {
+	if model == nil {
+		return
+	}
+	for alias, dataset := range model.Datasets {
+		modelName := dataset.Model
+		if modelName == "" {
+			modelName = alias
+		}
+		table, ok := model.Tables[modelName]
+		if !ok {
+			continue
+		}
+		table.ModelName = dataset.Model
+		model.Tables[modelName] = table
+	}
 }
 
 func TestCompileModelBuildsReusableMetricDependencyMetadata(t *testing.T) {
@@ -34,6 +57,7 @@ func TestCompileModelBuildsReusableMetricDependencyMetadata(t *testing.T) {
 	orders := model.Tables["orders"]
 	orders.Dimensions["discount"] = semanticmodel.MetricDimension{Type: "number", Datatype: semanticmodel.DataTypeDecimal}
 	model.Tables["orders"] = orders
+	populateFixtureTableModelNames(model)
 
 	compiled, err := CompileModel(model)
 	if err != nil {
@@ -44,17 +68,42 @@ func TestCompileModelBuildsReusableMetricDependencyMetadata(t *testing.T) {
 		t.Fatalf("nested metric roots = %#v", nested.RootDatasets)
 	}
 	tagsPerOrder, ok := compiled.metric("tags_per_order")
-	if !ok || len(tagsPerOrder.Expression.References()) == 0 {
+	if !ok || tagsPerOrder.Derived == nil || len(tagsPerOrder.Derived.Expression.References()) == 0 {
 		t.Fatal("metric expression was not compiled")
+	}
+	if tagsPerOrder.Aggregate != nil || tagsPerOrder.Ratio != nil {
+		t.Fatal("derived metric has more than one typed payload")
 	}
 }
 
-func TestCompileModelRetainsAggregateMetricFactMetadata(t *testing.T) {
+func TestCompiledDatasetTableGetterReturnsDetachedMetadata(t *testing.T) {
+	model := testModel()
+	populateFixtureTableModelNames(model)
+	compiled, err := CompileModel(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataset, ok := compiled.Dataset("orders")
+	if !ok {
+		t.Fatal("orders dataset missing")
+	}
+	detached := dataset.Table()
+	detached.Dimensions["order_id"] = semanticmodel.MetricDimension{Label: "mutated"}
+	detached.Entities["order"] = semanticmodel.ModelEntitySpec{Type: "unique", Fields: []string{"status"}}
+	detached.Description = "mutated"
+	current := dataset.Table()
+	if current.Dimensions["order_id"].Label == "mutated" || current.Entities["order"].Type != "primary" || current.Description == "mutated" {
+		t.Fatal("CompiledDataset.Table() exposed mutable serving metadata")
+	}
+}
+
+func TestCompileModelRetainsAggregateMetricDatasetMetadata(t *testing.T) {
 	model := testModel()
 	model.Metrics["gross_revenue"] = semanticmodel.Metric{
 		Type: "aggregate", Dataset: "orders", Aggregation: "sum",
 		Input: &semanticmodel.MetricInput{Field: "orders.revenue"},
 	}
+	populateFixtureTableModelNames(model)
 	compiled, err := CompileModel(model)
 	if err != nil {
 		t.Fatal(err)
@@ -63,8 +112,60 @@ func TestCompileModelRetainsAggregateMetricFactMetadata(t *testing.T) {
 	if !ok || !reflect.DeepEqual(metric.RootDatasets, []string{"orders"}) {
 		t.Fatalf("aggregate metric roots = %#v, want [orders]", metric.RootDatasets)
 	}
-	if len(metric.Expression.References()) != 0 {
-		t.Fatal("aggregate metric was incorrectly converted to an expression")
+	if metric.Aggregate == nil || metric.Derived != nil || metric.Ratio != nil {
+		t.Fatal("aggregate metric payload is not closed")
+	}
+}
+
+func TestCompileModelRetainsRatioPayloadWithoutExpression(t *testing.T) {
+	model := testModel()
+	model.Metrics["conversion"] = semanticmodel.Metric{Type: "ratio", Numerator: "tags_per_order", Denominator: "order_count"}
+	populateFixtureTableModelNames(model)
+	compiled, err := CompileModel(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metric, ok := compiled.metric("conversion")
+	if !ok || metric.Ratio == nil || metric.Ratio.Numerator != "tags_per_order" || metric.Ratio.Denominator != "order_count" {
+		t.Fatalf("ratio payload = %#v", metric.Ratio)
+	}
+	if metric.Aggregate != nil || metric.Derived != nil {
+		t.Fatal("ratio metric has more than one typed payload")
+	}
+}
+
+func TestCompiledMetricRejectsMultipleTypedPayloads(t *testing.T) {
+	node := CompiledMetric{
+		Name: "invalid", Type: "ratio",
+		Derived: &CompiledDerivedMetric{}, Ratio: &CompiledRatioMetric{Numerator: "a", Denominator: "b"},
+	}
+	if err := node.validatePayload(); err == nil || !strings.Contains(err.Error(), "exactly one typed payload") {
+		t.Fatalf("invalid payload error = %v", err)
+	}
+}
+
+func TestPlannerLowersRatioPayloadAsComputeRatio(t *testing.T) {
+	model := testModel()
+	model.Metrics["tag_ratio"] = semanticmodel.Metric{Type: "ratio", Numerator: "tag_count", Denominator: "order_count"}
+	planner := mustNewCompiledPlanner(t, model)
+	node, ok := planner.compiled.metric("tag_ratio")
+	if !ok || node.Ratio == nil || node.Derived != nil || node.Aggregate != nil {
+		t.Fatalf("compiled ratio payload = %#v", node)
+	}
+	plan, err := planner.Plan(Request{Metrics: []Field{{Field: "tag_ratio"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ratio *planir.ComputeRatio
+	for _, candidate := range plan.IR.Nodes {
+		if value, ok := candidate.(planir.ComputeRatio); ok && value.Output == "tag_ratio" {
+			copy := value
+			ratio = &copy
+			break
+		}
+	}
+	if ratio == nil || ratio.Numerator != "tag_count" || ratio.Denominator != "order_count" {
+		t.Fatalf("ratio PlanIR node = %#v", ratio)
 	}
 }
 
@@ -72,6 +173,7 @@ func TestPlannerLowersCanonicalAggregateMetricsWithoutMetricsDualWrite(t *testin
 	model := testModel()
 	model.Metrics["order_count"] = semanticmodel.Metric{Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"}
 	model.Metrics["revenue"] = semanticmodel.Metric{Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Empty: "zero"}
+	populateFixtureTableModelNames(model)
 	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatalf("NewCompiledPlanner() error = %v", err)
@@ -80,8 +182,12 @@ func TestPlannerLowersCanonicalAggregateMetricsWithoutMetricsDualWrite(t *testin
 	if err != nil {
 		t.Fatalf("canonical aggregate plan error = %v", err)
 	}
-	if !strings.Contains(plan.SQL, "COUNT(t0.order_id)") || !strings.Contains(plan.SQL, "safe_divide") && !strings.Contains(plan.SQL, "NULLIF") {
-		t.Fatalf("canonical aggregate SQL = %s", plan.SQL)
+	explain, err := plan.Explain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(explain, "[AggregateMetrics]") || !strings.Contains(explain, "[ComputeDerived]") || strings.Contains(explain, "Measure") {
+		t.Fatalf("canonical aggregate PlanIR = %s", explain)
 	}
 }
 
@@ -111,6 +217,7 @@ func TestPlannerRendersCompositeRelationshipJoinTuple(t *testing.T) {
 		ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id", "order_id"},
 		ToDataset: "customers", ToFields: []string{"customer_id", "order_id"}, Cardinality: "many_to_one",
 	}
+	populateFixtureTableModelNames(model)
 	planner, err := NewCompiledPlanner(model, WithTableRelation(func(table string) (string, error) { return "model." + table, nil }))
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +226,7 @@ func TestPlannerRendersCompositeRelationshipJoinTuple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("composite relationship planner error = %v", err)
 	}
-	if !strings.Contains(plan.SQL, "t0.customer_id = t1.customer_id AND t0.order_id = t1.order_id") {
+	if !strings.Contains(plan.SQL, `"r0"."customer_id" = "r2"."customer_id" AND "r0"."order_id" = "r2"."order_id"`) {
 		t.Fatalf("composite relationship join = %s", plan.SQL)
 	}
 	rows, err := db.Query(plan.SQL, plan.Args...)

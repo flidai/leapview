@@ -26,7 +26,7 @@ func TestBundlePipelineCancellationBoundariesReleaseArrowOwnership(t *testing.T)
 	for _, stage := range stages {
 		t.Run(string(stage), func(t *testing.T) {
 			database := &bundleCountingDatabase{}
-			runtime := bundleCacheRuntime(database)
+			runtime := bundleCacheRuntime(t, database)
 			before := arrowresult.Stats()
 			ctx, cancel := context.WithCancel(context.Background())
 			ctx = withBundleStageObserver(ctx, func(current bundleStage) {
@@ -44,7 +44,7 @@ func TestBundlePipelineCancellationBoundariesReleaseArrowOwnership(t *testing.T)
 
 func TestBundlePipelineTransformFailureIsBranchAttributedAndReleasesArrowOwnership(t *testing.T) {
 	database := &bundleCountingDatabase{}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	before := arrowresult.Stats()
 	want := errors.New("transform failed")
 	governor := failingTransformGovernor{err: want}
@@ -62,7 +62,7 @@ func TestBundlePipelineExecutionFailureRemainsPrimaryWhenTransformAlsoFails(t *t
 	executeErr := errors.New("execution failed")
 	transformErr := errors.New("transform failed")
 	database := &bundleExecutionFailureDatabase{err: executeErr}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	defer runtime.CloseView()
 
 	_, err := runtime.ExecuteDataQueryBundle(
@@ -75,7 +75,7 @@ func TestBundlePipelineExecutionFailureRemainsPrimaryWhenTransformAlsoFails(t *t
 
 func TestBundlePipelineCanceledSingleMissDoesNotExposeSuccessfulResultToTransform(t *testing.T) {
 	database := &bundleCountingDatabase{}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	defer runtime.CloseView()
 	requests := bundleCacheRequests()
 	require.NoError(t, primeBundleBranch(runtime, requests[0]))
@@ -94,7 +94,7 @@ func TestBundlePipelineCanceledSingleMissDoesNotExposeSuccessfulResultToTransfor
 
 func TestBundlePipelineAdmitsAndObservesOnePhysicalQuery(t *testing.T) {
 	database := &bundleCountingDatabase{}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	defer runtime.CloseView()
 	observations := []dataquery.PhysicalQueryObservation{}
 	ctx := dataquery.WithPhysicalQueryObserver(context.Background(), func(observation dataquery.PhysicalQueryObservation) {

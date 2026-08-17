@@ -16,7 +16,7 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
-func TestSemanticFiltersTranslateConformedAndFactLocalSelections(t *testing.T) {
+func TestSemanticFiltersTranslateConformedAndDatasetLocalSelections(t *testing.T) {
 	report, model := selectionFilterFixture()
 	runtime := &modelRuntime{model: model}
 	service := &FilterService{}
@@ -25,19 +25,19 @@ func TestSemanticFiltersTranslateConformedAndFactLocalSelections(t *testing.T) {
 		name      string
 		selection dashboard.InteractionSelection
 		wantField string
-		wantFact  string
+		wantDataset  string
 		wantValue any
 		wantOp    string
 	}{
 		{
-			name:      "conformed propagates without fact",
+			name:      "conformed propagates without dataset",
 			selection: filterSelection("decades", dashboard.InteractionSelectionMapping{Field: "release_decade", Value: "1990s"}),
 			wantField: "release_decade", wantValue: "1990s", wantOp: "equals",
 		},
 		{
-			name:      "local remains fact scoped",
-			selection: filterSelection("buckets", dashboard.InteractionSelectionMapping{Field: "ratings.rating_bucket", Fact: "ratings", Value: "5"}),
-			wantField: "ratings.rating_bucket", wantFact: "ratings", wantValue: "5", wantOp: "equals",
+			name:      "local remains dataset scoped",
+			selection: filterSelection("buckets", dashboard.InteractionSelectionMapping{Field: "ratings.rating_bucket", Dataset: "ratings", Value: "5"}),
+			wantField: "ratings.rating_bucket", wantDataset: "ratings", wantValue: "5", wantOp: "equals",
 		},
 		{
 			name:      "null uses is null",
@@ -54,7 +54,7 @@ func TestSemanticFiltersTranslateConformedAndFactLocalSelections(t *testing.T) {
 				t.Fatalf("filters = %#v", filters)
 			}
 			got := filters[0]
-			if got.Field != test.wantField || got.Fact != test.wantFact || got.Operator != test.wantOp {
+			if got.Field != test.wantField || got.Dataset != test.wantDataset || got.Operator != test.wantOp {
 				t.Fatalf("filter = %#v", got)
 			}
 			if test.wantOp == "is_null" {
@@ -165,7 +165,7 @@ func TestSemanticFiltersEmitConformedHalfOpenTimeRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(filters) != 2 || filters[0].Field != "activity_date" || filters[0].Fact != "" || filters[1].Fact != "" {
+	if len(filters) != 2 || filters[0].Field != "activity_date" || filters[0].Dataset != "" || filters[1].Dataset != "" {
 		t.Fatalf("conformed time filters = %#v", filters)
 	}
 	if filters[0].Operator != "greater_than_or_equal" || filters[1].Operator != "less_than" {
@@ -248,10 +248,10 @@ func selectionFilterFixture() (*dashboarddefinition.Definition, *semanticmodel.M
 	report := &dashboardauthoring.Dashboard{
 		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
 			"decades": selectionFilterVisual([]dashboardauthoring.FieldRef{{Field: "release_decade", Alias: "label"}}, dashboardauthoring.QueryTime{}, []dashboardauthoring.SelectionMapping{{Field: "release_decade", Value: "label"}}),
-			"buckets": selectionFilterVisual([]dashboardauthoring.FieldRef{{Field: "ratings.rating_bucket", Alias: "label"}}, dashboardauthoring.QueryTime{}, []dashboardauthoring.SelectionMapping{{Field: "ratings.rating_bucket", Fact: "ratings", Value: "label"}}),
+			"buckets": selectionFilterVisual([]dashboardauthoring.FieldRef{{Field: "ratings.rating_bucket", Alias: "label"}}, dashboardauthoring.QueryTime{}, []dashboardauthoring.SelectionMapping{{Field: "ratings.rating_bucket", Dataset: "ratings", Value: "label"}}),
 			"months":  selectionFilterVisual(nil, dashboardauthoring.QueryTime{Field: "activity_date", Grain: "month", Alias: "label"}, []dashboardauthoring.SelectionMapping{{Field: "activity_date", Grain: "month", Value: "label"}}),
 			"cross":   {Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "rating_count"}, {Field: "tag_count"}}}},
-		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"plain_table": {Query: dashboardauthoring.TableQuery{Table: "ratings"}}})),
+		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"plain_table": {Query: dashboardauthoring.TableQuery{Dataset: "ratings"}}})),
 	}
 	return compiledSelectionDashboard(report), model
 }
@@ -262,7 +262,7 @@ func compiledSelectionDashboard(authored *dashboardauthoring.Dashboard) *dashboa
 		if visual.Chart != nil {
 			visualizations[id] = compiledSelectionVisual(id, *visual.Chart)
 		} else if visual.Tabular != nil {
-			visualizations[id] = visualizationdefinition.Definition{ID: id, Query: visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow, Detail: &visualizationdefinition.DetailQueryBinding{TableID: visual.Tabular.Query.Table}}}
+			visualizations[id] = visualizationdefinition.Definition{ID: id, Query: visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow, Detail: &visualizationdefinition.DetailQueryBinding{TableID: visual.Tabular.Query.Dataset}}}
 		}
 	}
 	return &dashboarddefinition.Definition{Visualizations: visualizations}
@@ -293,8 +293,8 @@ func compiledSelectionVisual(id string, authored dashboardauthoring.Visual) visu
 		mappings := make([]visualizationir.VisualizationInteractionMapping, len(selection.Mappings))
 		for index, mapping := range selection.Mappings {
 			item := visualizationir.VisualizationInteractionMapping{Source: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: mapping.Value}, TargetFieldID: mapping.Field}
-			if mapping.Fact != "" {
-				item.TargetDatasetID = &mapping.Fact
+			if mapping.Dataset != "" {
+				item.TargetDatasetID = &mapping.Dataset
 			}
 			if mapping.Grain != "" {
 				item.Grain = &mapping.Grain

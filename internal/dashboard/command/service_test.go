@@ -80,7 +80,7 @@ func (m fakeMetrics) dashboardDefinition(string) (dashboarddefinition.Definition
 			"customer_map": {
 				Type: "map", Title: "Customer map",
 				Query: dashboardauthoring.VisualQuery{
-					Table:      "orders",
+					Dataset:    "orders",
 					Dimensions: []dashboardauthoring.FieldRef{{Field: "latitude", Alias: "latitude"}, {Field: "longitude", Alias: "longitude"}, {Field: "state", Alias: "state"}},
 					Metrics:    []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
 				},
@@ -92,7 +92,7 @@ func (m fakeMetrics) dashboardDefinition(string) (dashboarddefinition.Definition
 					Targets:   []string{"chart", "orders"},
 				}},
 			},
-		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.state"}}}})),
+		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.state"}}}})),
 		Pages: []dashboard.Page{
 			{ID: "overview", Title: "Overview", FilterBindings: map[string]dashboardfilter.Binding{
 				"state": {Filter: "state", Default: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered}},
@@ -104,15 +104,26 @@ func (m fakeMetrics) dashboardDefinition(string) (dashboarddefinition.Definition
 		},
 	}
 	model := &semanticmodel.Model{
-		Name: "model",
-		Tables: map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
-			"state": {Type: "string"}, "active": {Type: "boolean"}, "latitude": {Type: "number"}, "longitude": {Type: "number"},
-		}}},
+		Name:     "model",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Tables: map[string]semanticmodel.Table{"orders": {
+			ModelName:   "orders",
+			GrainEntity: "state",
+			Entities: map[string]semanticmodel.ModelEntitySpec{
+				"state": {Type: "primary", Fields: []string{"state"}},
+			},
+			Dimensions: map[string]semanticmodel.MetricDimension{
+				"state":     {Field: "orders.state", Type: "string", Datatype: semanticmodel.DataTypeString},
+				"active":    {Field: "orders.active", Type: "boolean", Datatype: semanticmodel.DataTypeBoolean},
+				"latitude":  {Field: "orders.latitude", Type: "number", Datatype: semanticmodel.DataTypeFloat},
+				"longitude": {Field: "orders.longitude", Type: "number", Datatype: semanticmodel.DataTypeFloat},
+			},
+		}},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"state":     {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.state"}}},
-			"active":    {Type: "boolean", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.active"}}},
-			"latitude":  {Type: "number", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.latitude"}}},
-			"longitude": {Type: "number", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.longitude"}}},
+			"state":     {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.state"}}},
+			"active":    {Type: "boolean", Datatype: semanticmodel.DataTypeBoolean, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.active"}}},
+			"latitude":  {Type: "number", Datatype: semanticmodel.DataTypeFloat, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.latitude"}}},
+			"longitude": {Type: "number", Datatype: semanticmodel.DataTypeFloat, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.longitude"}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.state"}}},
 	}

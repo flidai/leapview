@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,7 +39,7 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:   "orders",
+				Source: "orders", ModelName: "sales_orders",
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
@@ -87,8 +88,8 @@ func TestPhysicalProjectModelDeduplicatesDatasetAliases(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    table,
-			"purchases": table,
+			"orders":    func() semanticmodel.Table { table.ModelName = "sales_orders"; return table }(),
+			"purchases": func() semanticmodel.Table { table.ModelName = "sales_orders"; return table }(),
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
 			"orders":    {Model: "sales_orders"},
@@ -114,12 +115,12 @@ func TestPhysicalProjectModelDeduplicatesDatasetAliases(t *testing.T) {
 	}
 }
 
-func TestPhysicalProjectModelNormalizesAliasModelDependencies(t *testing.T) {
+func TestPhysicalProjectModelPreservesCanonicalPhysicalDependencies(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":  {Source: "orders", ModelDependencies: nil},
-			"summary": {Transform: semanticmodel.Transform{SQL: "SELECT * FROM orders"}, ModelDependencies: []string{"orders"}},
+			"orders":  {ModelName: "sales_orders", Source: "orders", ModelDependencies: nil},
+			"summary": {ModelName: "sales_summary", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
 			"orders":  {Model: "sales_orders"},
@@ -132,6 +133,53 @@ func TestPhysicalProjectModelNormalizesAliasModelDependencies(t *testing.T) {
 	}
 	if got := physical.Tables["sales_summary"].ModelDependencies; len(got) != 1 || got[0] != "sales_orders" {
 		t.Fatalf("physical dependencies = %#v, want sales_orders", got)
+	}
+}
+
+func TestPhysicalProjectModelResolvesDistinctAliasPhysicalDependencies(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders_alias":  {ModelName: "sales_orders", Source: "orders"},
+			"summary_alias": {ModelName: "sales_summary", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders_alias":  {Model: "sales_orders"},
+			"summary_alias": {Model: "sales_summary"},
+		},
+	}
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	if err != nil {
+		t.Fatalf("physicalProjectModel() error = %v", err)
+	}
+	if got := physical.Tables["sales_summary"].ModelDependencies; len(got) != 1 || got[0] != "sales_orders" {
+		t.Fatalf("physical dependencies = %#v, want sales_orders", got)
+	}
+	order, err := ProjectModelTableDependencyOrder(map[string]*semanticmodel.Model{"sales": model}, "summary_alias")
+	if err != nil {
+		t.Fatalf("ProjectModelTableDependencyOrder() error = %v", err)
+	}
+	if want := []string{"sales_orders", "sales_summary"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("dependency order = %#v, want %#v", order, want)
+	}
+}
+
+func TestPhysicalProjectModelRejectsDatasetAliasAsPhysicalDependency(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"sales_orders":  {ModelName: "sales_summary"},
+			"orders_alias":  {ModelName: "orders_physical"},
+			"derived_alias": {ModelName: "sales_derived", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"sales_orders":  {Model: "sales_summary"},
+			"orders_alias":  {Model: "orders_physical"},
+			"derived_alias": {Model: "sales_derived"},
+		},
+	}
+	if _, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model}); err == nil || !strings.Contains(err.Error(), "unknown model dependency") {
+		t.Fatalf("physicalProjectModel() error = %v, want unknown physical dependency", err)
 	}
 }
 
@@ -152,7 +200,7 @@ func TestDiscoverSchemasIgnoresAttachedDatabaseSchemas(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:   "orders",
+				Source: "orders", ModelName: "orders",
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
@@ -215,7 +263,7 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:   "orders",
+				Source: "orders", ModelName: "orders",
 				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},

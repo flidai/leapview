@@ -214,7 +214,7 @@ func (fakeMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.
 			"orders":       {Title: "Orders", Type: "donut", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
 			"ops_pipeline": {Title: "Ops Pipeline", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
 		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"order_rows": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.revenue"}}, DefaultSort: dashboard.TableSort{Key: "order_id", Direction: "desc"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "metric", Format: "decimal"}}},
+			"order_rows": {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id", "orders.revenue"}}, DefaultSort: dashboard.TableSort{Key: "order_id", Direction: "desc"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "metric", Format: "decimal"}}},
 		})),
 		Pages: fakeMetrics{}.Pages("executive-sales"),
 	}
@@ -246,10 +246,10 @@ func (fakeMetrics) PreviewSemantic(_ context.Context, _ string, request reportde
 func (fakeMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate:
-		rows, err := fakeMetrics{}.QuerySemantic(ctx, request.ModelID, reportdef.AggregateQuery{Table: request.Target, Limit: request.Limit, Offset: request.Offset})
+		rows, err := fakeMetrics{}.QuerySemantic(ctx, request.ModelID, reportdef.AggregateQuery{Dataset: request.Target, Limit: request.Limit, Offset: request.Offset})
 		return fakeDataQueryResult(rows, request.IncludeTotal), err
 	case dataquery.KindSemanticRows:
-		rows, err := fakeMetrics{}.PreviewSemantic(ctx, request.ModelID, reportdef.RowQuery{Table: request.Target, Limit: request.Limit, Offset: request.Offset})
+		rows, err := fakeMetrics{}.PreviewSemantic(ctx, request.ModelID, reportdef.RowQuery{Dataset: request.Target, Limit: request.Limit, Offset: request.Offset})
 		return fakeDataQueryResult(rows, request.IncludeTotal), err
 	case dataquery.KindModelTableRows:
 		return dataquery.Result{Columns: dataquery.ColumnsFromNames([]string{"order_id", "status"}), Rows: []dataquery.Row{{"order_id": "o1", "status": "delivered"}, {"order_id": "o2", "status": "shipped"}}, TotalRows: 2, TotalRowsKnown: request.IncludeTotal, SQL: string(request.Kind) + ": " + request.Target}, nil
@@ -378,6 +378,6 @@ func fieldRefs(fields ...string) []dashboardauthoring.FieldRef {
 	return refs
 }
 
-func pointInteraction(field, fact string, targets ...string) dashboardauthoring.Interaction {
-	return dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Toggle: true, Mappings: []dashboardauthoring.SelectionMapping{{Field: field, Fact: fact, Value: "label", Label: "label"}}, Targets: targets}}
+func pointInteraction(field, dataset string, targets ...string) dashboardauthoring.Interaction {
+	return dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Toggle: true, Mappings: []dashboardauthoring.SelectionMapping{{Field: field, Dataset: dataset, Value: "label", Label: "label"}}, Targets: targets}}
 }

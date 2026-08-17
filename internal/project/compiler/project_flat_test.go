@@ -137,7 +137,7 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
   fields:
     order_id: {datatype: String}
     line_number: {datatype: Integer}
-    revenue: {datatype: Decimal}
+    revenue: {datatype: Float}
     activity_date: {datatype: Date}
 `,
 			"models/customers.yaml": `apiVersion: leapview.dev/v1
@@ -250,6 +250,14 @@ spec:
 	strip := func(model *semanticmodel.Model) semanticmodel.Model {
 		copy := *model
 		copy.AIContext = nil
+		copy.Connections = maps.Clone(model.Connections)
+		for name, connection := range copy.Connections {
+			// Each fixture is compiled in a distinct temporary directory. The
+			// managed connection root is runtime location, not executable
+			// semantic meaning, so exclude it from the AI-context equivalence.
+			connection.Root = ""
+			copy.Connections[name] = connection
+		}
 		copy.Relationships = append([]semanticmodel.Relationship(nil), model.Relationships...)
 		for index := range copy.Relationships {
 			copy.Relationships[index].AIContext = nil
@@ -443,6 +451,10 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales", Connections: map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"},
+			"daily":  {Model: "daily"},
+		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
 			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
@@ -456,6 +468,56 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 	}
 	if got := model.Tables["daily"].ModelDependencies; len(got) != 1 || got[0] != "orders" {
 		t.Fatalf("model dependencies = %#v, want [orders]", got)
+	}
+}
+
+func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T) {
+	modelTable := func(source string) semanticmodel.Table {
+		return semanticmodel.Table{
+			Source:      source,
+			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}},
+			GrainEntity: "order",
+			Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
+		}
+	}
+	base := modelTable("orders")
+	derived := modelTable("")
+	derived.Sources = []string{"orders"}
+	derived.Transform.SQL = "SELECT base.order_id FROM model.base_model AS base JOIN source.orders AS raw ON raw.order_id = base.order_id"
+	project := Project{
+		ID: "project:test", Name: "test",
+		Connections:   map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
+		ConnectionIDs: map[string]string{"warehouse": "connection:warehouse"},
+		Sources:       map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
+		SourceIDs:     map[string]string{"orders": "source:orders"},
+		Models:        map[string]semanticmodel.Table{"base_model": base, "derived_model": derived},
+		ModelIDs:      map[string]string{"base_model": "model:base", "derived_model": "model:derived"},
+		SemanticModels: map[string]projectSemanticModelSpec{"sales": {Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"base_alias": {Model: "base_model"}, "derived_alias": {Model: "derived_model"},
+		}}},
+		SemanticModelIDs: map[string]string{"sales": "semantic:sales"},
+	}
+	manifest, err := projectManifest(project)
+	if err != nil {
+		t.Fatalf("projectManifest() error = %v", err)
+	}
+	model := manifest.SemanticModels["semantic:sales"]
+	if model == nil {
+		t.Fatal("compiled semantic model is missing")
+	}
+	if got, want := model.Tables["derived_alias"].ModelDependencies, []string{"base_model"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("derived alias dependencies = %#v, want %#v", got, want)
+	}
+	invalid := project
+	invalid.Models = map[string]semanticmodel.Table{}
+	for name, table := range project.Models {
+		invalid.Models[name] = table
+	}
+	derived = invalid.Models["derived_model"]
+	derived.Transform.SQL = strings.Replace(derived.Transform.SQL, "model.base_model", "model.base_alias", 1)
+	invalid.Models["derived_model"] = derived
+	if _, err := projectManifest(invalid); err == nil || !strings.Contains(err.Error(), `unknown model table "base_alias"`) {
+		t.Fatalf("dataset alias in transform dependency error = %v, want unknown physical model", err)
 	}
 }
 

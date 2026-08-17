@@ -78,7 +78,7 @@ spec:
       title: Governed order rows
       type: table
       query:
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.purchase_date

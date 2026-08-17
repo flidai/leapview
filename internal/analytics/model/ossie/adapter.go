@@ -1265,7 +1265,7 @@ func exportDocument(value *semanticmodel.Model) (Document, error) {
 	extension := extensionPayload{Version: ExtensionVersion, Description: value.Description, AIContext: value.AIContext, Datasets: value.Datasets, Relationships: structuredRelationships, Filters: value.Filters, Metrics: value.Metrics}
 	// Dimensions are reconstructed into their authored spec form for the
 	// extension. The Ossie core fields intentionally carry only portable field
-	// metadata; bindings/time grains remain fact-relative native semantics.
+	// metadata; bindings/time grains remain dataset-relative native semantics.
 	if len(value.Dimensions) > 0 {
 		extension.Dimensions = make(map[string]semanticmodel.SemanticDimensionSpec, len(value.Dimensions))
 		for name, dimension := range value.Dimensions {

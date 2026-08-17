@@ -95,9 +95,9 @@ func ResolveCompiledSpatialSelectionInteraction(definition *dashboarddefinition.
 }
 
 func resolveCompiledMapping(model *semanticmodel.Model, mapping visualizationir.VisualizationInteractionMapping) (ResolvedSelectionMapping, error) {
-	field, fact, grain := mapping.TargetFieldID, "", ""
+	field, dataset, grain := mapping.TargetFieldID, "", ""
 	if mapping.TargetDatasetID != nil {
-		fact = *mapping.TargetDatasetID
+		dataset = *mapping.TargetDatasetID
 	}
 	if mapping.Grain != nil {
 		grain = *mapping.Grain
@@ -109,15 +109,15 @@ func resolveCompiledMapping(model *semanticmodel.Model, mapping visualizationir.
 		}
 		return ResolvedSelectionMapping{Field: field, Grain: grain, Type: dimension.Type, Scope: SelectionScopeConformed}, nil
 	}
-	if fact == "" {
-		return ResolvedSelectionMapping{}, fmt.Errorf("physical field %q requires fact", field)
+	if dataset == "" {
+		return ResolvedSelectionMapping{}, fmt.Errorf("physical field %q requires dataset", field)
 	}
 	dimension, err := model.ResolveDimension(field)
 	if err != nil {
 		return ResolvedSelectionMapping{}, err
 	}
-	if err := model.CanReachField(fact, field); err != nil {
+	if err := model.CanReachField(dataset, field); err != nil {
 		return ResolvedSelectionMapping{}, err
 	}
-	return ResolvedSelectionMapping{Field: field, Fact: fact, Grain: grain, Type: dimension.Type, Scope: SelectionScopeFactLocal}, nil
+	return ResolvedSelectionMapping{Field: field, Dataset: dataset, Grain: grain, Type: dimension.Type, Scope: SelectionScopeDatasetLocal}, nil
 }

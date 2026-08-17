@@ -8,7 +8,7 @@ import (
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 )
 
-func TestResolveSelectionInteractionConformedAcrossFacts(t *testing.T) {
+func TestResolveSelectionInteractionConformedAcrossDatasets(t *testing.T) {
 	dashboard, model := selectionFixture()
 	dashboard.Visuals["source"] = selectionVisual(
 		[]dashboardauthoring.FieldRef{{Field: "release_decade", Alias: "label"}},
@@ -16,7 +16,7 @@ func TestResolveSelectionInteractionConformedAcrossFacts(t *testing.T) {
 		dashboardauthoring.QueryTime{},
 		dashboardauthoring.SelectionInteraction{
 			Mappings: []dashboardauthoring.SelectionMapping{{Field: "release_decade", Value: "label"}},
-			Targets:  []string{"cross_fact"},
+			Targets:  []string{"cross_dataset"},
 		},
 	)
 
@@ -28,23 +28,23 @@ func TestResolveSelectionInteractionConformedAcrossFacts(t *testing.T) {
 		t.Fatalf("mappings = %#v", resolved.Mappings)
 	}
 	mapping := resolved.Mappings[0]
-	if mapping.Scope != SelectionScopeConformed || mapping.Field != "release_decade" || mapping.Fact != "" || mapping.Type != "string" {
+	if mapping.Scope != SelectionScopeConformed || mapping.Field != "release_decade" || mapping.Dataset != "" || mapping.Type != "string" {
 		t.Fatalf("mapping = %#v", mapping)
 	}
-	if len(resolved.Targets) != 1 || strings.Join(resolved.Targets[0].Facts, ",") != "ratings,tags" {
+	if len(resolved.Targets) != 1 || strings.Join(resolved.Targets[0].Datasets, ",") != "ratings,tags" {
 		t.Fatalf("targets = %#v", resolved.Targets)
 	}
 }
 
-func TestResolveSelectionInteractionFactLocal(t *testing.T) {
+func TestResolveSelectionInteractionDatasetLocal(t *testing.T) {
 	dashboard, model := selectionFixture()
 	dashboard.Visuals["source"] = selectionVisual(
 		[]dashboardauthoring.FieldRef{{Field: "ratings.rating_bucket", Alias: "label"}},
 		[]dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}},
 		dashboardauthoring.QueryTime{},
 		dashboardauthoring.SelectionInteraction{
-			Mappings: []dashboardauthoring.SelectionMapping{{Field: "ratings.rating_bucket", Fact: "ratings", Value: "label"}},
-			Targets:  []string{"cross_fact"},
+			Mappings: []dashboardauthoring.SelectionMapping{{Field: "ratings.rating_bucket", Dataset: "ratings", Value: "label"}},
+			Targets:  []string{"cross_dataset"},
 		},
 	)
 
@@ -52,20 +52,20 @@ func TestResolveSelectionInteractionFactLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSelectionInteraction() error = %v", err)
 	}
-	if got := resolved.Mappings[0]; got.Scope != SelectionScopeFactLocal || got.Fact != "ratings" || got.Type != "string" {
+	if got := resolved.Mappings[0]; got.Scope != SelectionScopeDatasetLocal || got.Dataset != "ratings" || got.Type != "string" {
 		t.Fatalf("mapping = %#v", got)
 	}
 }
 
-func TestResolveSelectionInteractionFactLocalThroughSafeRelationship(t *testing.T) {
+func TestResolveSelectionInteractionDatasetLocalThroughSafeRelationship(t *testing.T) {
 	dashboard, model := selectionFixture()
 	dashboard.Visuals["source"] = selectionVisual(
 		[]dashboardauthoring.FieldRef{{Field: "movies.release_decade", Alias: "label"}},
 		[]dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}},
 		dashboardauthoring.QueryTime{},
 		dashboardauthoring.SelectionInteraction{
-			Mappings: []dashboardauthoring.SelectionMapping{{Field: "movies.release_decade", Fact: "ratings", Value: "label"}},
-			Targets:  []string{"cross_fact"},
+			Mappings: []dashboardauthoring.SelectionMapping{{Field: "movies.release_decade", Dataset: "ratings", Value: "label"}},
+			Targets:  []string{"cross_dataset"},
 		},
 	)
 
@@ -73,7 +73,7 @@ func TestResolveSelectionInteractionFactLocalThroughSafeRelationship(t *testing.
 	if err != nil {
 		t.Fatalf("ResolveSelectionInteraction() error = %v", err)
 	}
-	if got := resolved.Mappings[0]; got.Scope != SelectionScopeFactLocal || got.Fact != "ratings" {
+	if got := resolved.Mappings[0]; got.Scope != SelectionScopeDatasetLocal || got.Dataset != "ratings" {
 		t.Fatalf("mapping = %#v", got)
 	}
 
@@ -94,7 +94,7 @@ func TestResolveSelectionInteractionGrainedTime(t *testing.T) {
 		dashboardauthoring.QueryTime{Field: "activity_date", Grain: "month", Alias: "label"},
 		dashboardauthoring.SelectionInteraction{
 			Mappings: []dashboardauthoring.SelectionMapping{{Field: "activity_date", Grain: "month", Value: "label"}},
-			Targets:  []string{"cross_fact"},
+			Targets:  []string{"cross_dataset"},
 		},
 	)
 
@@ -129,7 +129,7 @@ func TestResolvedSelectionInteractionCanonicalizesCompleteTuple(t *testing.T) {
 		want     string
 	}{
 		{name: "incomplete", incoming: []SelectionMappingIdentity{{Field: "release_decade"}}, want: "want 2"},
-		{name: "forged fact", incoming: []SelectionMappingIdentity{{Field: "release_decade", Fact: "ratings"}, {Field: "activity_date", Grain: "month"}}, want: "unknown mapping identity"},
+		{name: "forged dataset", incoming: []SelectionMappingIdentity{{Field: "release_decade", Dataset: "ratings"}, {Field: "activity_date", Grain: "month"}}, want: "unknown mapping identity"},
 		{name: "duplicate", incoming: []SelectionMappingIdentity{{Field: "release_decade"}, {Field: "release_decade"}}, want: "duplicate mapping identity"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -151,20 +151,20 @@ func TestResolveSelectionInteractionRejectsInvalidMappings(t *testing.T) {
 		want       string
 	}{
 		{name: "unknown semantic dimension", dimensions: refs("missing"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "missing", Value: "label"}), want: `unknown semantic dimension "missing"`},
-		{name: "fact on conformed", dimensions: refs("release_decade"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "release_decade", Fact: "ratings", Value: "label"}), want: `semantic dimension "release_decade" must not specify fact`},
-		{name: "missing local fact", dimensions: refs("ratings.rating_bucket"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Value: "label"}), want: `physical field "ratings.rating_bucket" requires fact`},
-		{name: "unknown fact", dimensions: refs("ratings.rating_bucket"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Fact: "unknown", Value: "label"}), want: `references unknown fact "unknown"`},
-		{name: "unsafe local path", dimensions: refs("movies.release_decade"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "movies.release_decade", Fact: "tags", Value: "label"}), want: `no safe relationship path`},
+		{name: "dataset on conformed", dimensions: refs("release_decade"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "release_decade", Dataset: "ratings", Value: "label"}), want: `semantic dimension "release_decade" must not specify dataset`},
+		{name: "missing local dataset", dimensions: refs("ratings.rating_bucket"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Value: "label"}), want: `physical field "ratings.rating_bucket" requires dataset`},
+		{name: "unknown dataset", dimensions: refs("ratings.rating_bucket"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Dataset: "unknown", Value: "label"}), want: `references unknown dataset "unknown"`},
+		{name: "unsafe local path", dimensions: refs("movies.release_decade"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "movies.release_decade", Dataset: "tags", Value: "label"}), want: `no safe relationship path`},
 		{name: "source missing field", dimensions: refs("release_decade"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "activity_date", Grain: "month", Value: "label"}), want: `is not exposed by the source query`},
 		{name: "missing grain", time: dashboardauthoring.QueryTime{Field: "activity_date", Grain: "month", Alias: "label"}, mappings: mappings(dashboardauthoring.SelectionMapping{Field: "activity_date", Value: "label"}), want: `requires grain "month"`},
 		{name: "wrong grain", time: dashboardauthoring.QueryTime{Field: "activity_date", Grain: "month", Alias: "label"}, mappings: mappings(dashboardauthoring.SelectionMapping{Field: "activity_date", Grain: "year", Value: "label"}), want: `requires grain "month"`},
 		{name: "unsupported semantic grain", time: dashboardauthoring.QueryTime{Field: "activity_date", Grain: "day", Alias: "label"}, mappings: mappings(dashboardauthoring.SelectionMapping{Field: "activity_date", Grain: "day", Value: "label"}), want: `does not support grain "day"`},
 		{name: "grain outside time", dimensions: refs("activity_date"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "activity_date", Grain: "month", Value: "label"}), want: `grain is only valid for a grained query time field`},
-		{name: "mixed scopes", dimensions: refs("release_decade", "ratings.rating_bucket"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "release_decade", Value: "label"}, dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Fact: "ratings", Value: "series"}), want: `must be entirely conformed or fact-local to one fact`},
-		{name: "different local facts", dimensions: refs("ratings.rating_bucket", "tags.tag"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Fact: "ratings", Value: "label"}, dashboardauthoring.SelectionMapping{Field: "tags.tag", Fact: "tags", Value: "series"}), want: `must be entirely conformed or fact-local to one fact`},
+		{name: "mixed scopes", dimensions: refs("release_decade", "ratings.rating_bucket"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "release_decade", Value: "label"}, dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Dataset: "ratings", Value: "series"}), want: `must be entirely conformed or dataset-local to one dataset`},
+		{name: "different local datasets", dimensions: refs("ratings.rating_bucket", "tags.tag"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Dataset: "ratings", Value: "label"}, dashboardauthoring.SelectionMapping{Field: "tags.tag", Dataset: "tags", Value: "series"}), want: `must be entirely conformed or dataset-local to one dataset`},
 		{name: "duplicate identity", dimensions: refs("release_decade"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "release_decade", Value: "label"}, dashboardauthoring.SelectionMapping{Field: "release_decade", Value: "series"}), want: `contains duplicate mapping identity`},
-		{name: "target missing binding", dimensions: refs("ratings_only"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings_only", Value: "label"}), targets: []string{"cross_fact"}, want: `has no binding for target fact "tags"`},
-		{name: "target missing local fact", dimensions: refs("ratings.rating_bucket"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Fact: "ratings", Value: "label"}), targets: []string{"tags_only"}, want: `target "tags_only" does not participate in fact "ratings"`},
+		{name: "target missing binding", dimensions: refs("ratings_only"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings_only", Value: "label"}), targets: []string{"cross_dataset"}, want: `has no binding for target dataset "tags"`},
+		{name: "target missing local dataset", dimensions: refs("ratings.rating_bucket"), mappings: mappings(dashboardauthoring.SelectionMapping{Field: "ratings.rating_bucket", Dataset: "ratings", Value: "label"}), targets: []string{"tags_only"}, want: `target "tags_only" does not participate in dataset "ratings"`},
 	}
 
 	for _, test := range tests {
@@ -219,7 +219,7 @@ func selectionFixture() (*dashboardauthoring.Dashboard, *semanticmodel.Model) {
 		},
 	}
 	dashboard := &dashboardauthoring.Dashboard{Visuals: map[string]dashboardauthoring.AuthoringVisualization{
-		"cross_fact": selectionVisual(refs("release_decade"), []dashboardauthoring.FieldRef{{Field: "rating_count"}, {Field: "tag_count"}}, dashboardauthoring.QueryTime{}, dashboardauthoring.SelectionInteraction{}),
+		"cross_dataset": selectionVisual(refs("release_decade"), []dashboardauthoring.FieldRef{{Field: "rating_count"}, {Field: "tag_count"}}, dashboardauthoring.QueryTime{}, dashboardauthoring.SelectionInteraction{}),
 		"tags_only":  selectionVisual(refs("tags.tag"), []dashboardauthoring.FieldRef{{Field: "tag_count"}}, dashboardauthoring.QueryTime{}, dashboardauthoring.SelectionInteraction{}),
 	}}
 	return dashboard, model

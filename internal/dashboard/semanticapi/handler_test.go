@@ -19,11 +19,16 @@ import (
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
+	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestWorkloadRejectionsMapToStableOverloadProblems(t *testing.T) {
@@ -121,21 +126,31 @@ func TestSemanticQueryResponsePreservesNullAndEmptyStringAsDistinctCells(t *test
 func TestSemanticQueryColumnsUseModelMetadataInsteadOfPageValues(t *testing.T) {
 	nullable := false
 	model := &semanticmodel.Model{
+		Name: "commerce",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "created_at", Nullable: &nullable}}},
+				ModelName: "orders",
+				Schema:    semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "created_at", Nullable: &nullable}, {Name: "order_id", Nullable: &nullable}}},
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"created_at": {Label: "Created at", Type: "timestamp"},
+					"created_at": {Label: "Created at", Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
+					"order_id":   {Label: "Order ID", Type: "integer", Datatype: semanticmodel.DataTypeInteger},
 				},
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"created_at"}}}, GrainEntity: "order",
 			},
 		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Metrics: map[string]semanticmodel.Metric{
-			"order_count": {Label: "Orders", Dataset: "orders", Aggregation: "count", Empty: "zero", Unit: "orders", Format: "integer"},
-			"return_rate": {Label: "Return rate", Unit: "percent", Format: "percent_1"},
+			"order_count": {Type: "aggregate", Label: "Orders", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Unit: "orders", Format: "integer"},
+			"return_rate": {Type: "derived", Label: "Return rate", Expression: "${order_count}", Unit: "percent", Format: "percent_1"},
 		},
 	}
-	columns := semanticQueryColumns(
+	compiled, err := semanticquery.NewCompiledPlanner(model, semanticquery.WithTableRelation(func(table string) (string, error) { return "model." + table, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := semanticQueryColumnsCompiled(
 		"commerce", model,
+		compiled.CompiledModel(),
 		[]api.QueryColumn{
 			{Name: "created", Type: "string", Nullable: true},
 			{Name: "order_count", Type: "string", Nullable: true},
@@ -156,6 +171,52 @@ func TestSemanticQueryColumnsUseModelMetadataInsteadOfPageValues(t *testing.T) {
 	if columns[2].Type != "decimal" || !columns[2].Nullable || columns[2].Kind != "metric" ||
 		columns[2].Unit != "percent" || columns[2].Format != "percent_1" {
 		t.Fatalf("metric column = %#v", columns[2])
+	}
+}
+
+func TestSemanticQueryColumnsCompiledWithoutActivationLeavesColumnsUntouched(t *testing.T) {
+	columns := []api.QueryColumn{{Name: "order_count", Type: "string", Nullable: true}}
+	got := semanticQueryColumnsCompiled(
+		"commerce", &semanticmodel.Model{}, nil, columns,
+		[]reportdef.QueryField{{Field: "orders.state"}},
+		[]reportdef.QueryField{{Field: "order_count"}}, nil,
+	)
+	if !reflect.DeepEqual(got, columns) {
+		t.Fatalf("columns = %#v, want unchanged %#v", got, columns)
+	}
+}
+
+type semanticProjectionMetrics struct {
+	model       *semanticmodel.Model
+	catalog     dashboard.Catalog
+	planner     *semanticquery.Planner
+	plannerOkay bool
+}
+
+func (m semanticProjectionMetrics) Catalog() dashboard.Catalog { return m.catalog }
+func (m semanticProjectionMetrics) ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error) {
+	return dataquery.Result{}, nil
+}
+func (m semanticProjectionMetrics) Pages(string) []dashboard.Page        { return nil }
+func (m semanticProjectionMetrics) Resolver() dashboardresolver.Resolver { return nil }
+func (m semanticProjectionMetrics) SemanticModel(string) (*semanticmodel.Model, bool) {
+	return m.model, m.model != nil
+}
+func (m semanticProjectionMetrics) Planner(string) (consumer.Planner, bool) {
+	return m.planner, m.plannerOkay
+}
+
+func TestGetSemanticModelReturnsServiceUnavailableWhenActivationPlannerMissing(t *testing.T) {
+	model := &semanticmodel.Model{Name: "sales"}
+	metrics := semanticProjectionMetrics{model: model, catalog: dashboard.Catalog{Models: []dashboard.CatalogModel{{ID: "semantic:sales"}}}}
+	handler := Handler{Metrics: metrics, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }}
+	route := chi.NewRouteContext()
+	route.URLParams.Add("model", "semantic:sales")
+	request := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(context.WithValue(context.Background(), chi.RouteCtxKey, route))
+	recorder := httptest.NewRecorder()
+	handler.GetSemanticModel(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want service unavailable; body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

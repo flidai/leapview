@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
 )
@@ -53,22 +54,25 @@ func modelTableOrder(model *semanticmodel.Model) ([]string, error) {
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		return nil, err
+	}
 	// Semantic dataset names are aliases. Refresh execution is project-scoped
 	// and therefore orders the physical authored Model tables, deduplicating
 	// aliases that point at the same Model.
 	physicalTables := map[string]semanticmodel.Table{}
-	for _, name := range model.TableNames() {
-		physical := name
-		if dataset, ok := model.Datasets[name]; ok && dataset.Model != "" {
-			physical = dataset.Model
-		}
-		table := model.Tables[name]
+	for _, name := range compiled.DatasetNames() {
+		dataset, _ := compiled.Dataset(name)
+		physical := dataset.ModelName()
+		table := dataset.Table()
 		table.ModelDependencies = append([]string(nil), table.ModelDependencies...)
 		for index, dependency := range table.ModelDependencies {
-			if dataset, ok := model.Datasets[dependency]; ok && dataset.Model != "" {
-				dependency = dataset.Model
+			physical, err := compiled.ResolvePhysicalModelName(dependency)
+			if err != nil {
+				return nil, fmt.Errorf("dataset %q dependency %q: %w", name, dependency, err)
 			}
-			table.ModelDependencies[index] = dependency
+			table.ModelDependencies[index] = physical
 		}
 		if existing, ok := physicalTables[physical]; ok {
 			// Equivalent aliases are expected to share one authored Model. Keep
@@ -83,7 +87,7 @@ func modelTableOrder(model *semanticmodel.Model) ([]string, error) {
 	}
 	temporary := map[string]bool{}
 	permanent := map[string]bool{}
-	order := make([]string, 0, len(model.Tables))
+	order := make([]string, 0, len(physicalTables))
 	var visit func(string) error
 	visit = func(name string) error {
 		if permanent[name] {

@@ -13,6 +13,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticscontract "github.com/flidai/leapview/internal/analytics/runtime"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -144,7 +145,7 @@ func (r projectRuntime) LastRefresh() time.Time    { return r.runtime.LastRefres
 func (r projectRuntime) DuckLakeSnapshotID() int64 { return r.runtime.DuckLakeSnapshotID() }
 func (r projectRuntime) ReadConcurrency() int      { return r.runtime.ReadConcurrency() }
 
-func (r projectRuntime) Planner() *semanticquery.Planner {
+func (r projectRuntime) Planner() consumer.Planner {
 	provider, ok := r.runtime.(interface {
 		Planner(string) (*semanticquery.Planner, bool)
 	})

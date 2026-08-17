@@ -413,7 +413,7 @@ type InteractionInput = {
     interactionKind: string
     action: 'replace'
     toggle: false
-    mappings: Array<{ field: string; fact?: string; grain?: string; value: string | number | boolean | null; label: string }>
+    mappings: Array<{ field: string; dataset?: string; grain?: string; value: string | number | boolean | null; label: string }>
   }
   targets: string[]
 }
@@ -457,7 +457,7 @@ async function interactionInput(page: Page, visualId: string, datumOffset: numbe
       const labelValue = mapping.label ? datum[mapping.label.field] : value
       return {
         field: mapping.targetFieldID,
-        ...(mapping.targetDatasetID !== undefined ? { fact: mapping.targetDatasetID } : {}),
+        ...(mapping.targetDatasetID !== undefined ? { dataset: mapping.targetDatasetID } : {}),
         ...(mapping.grain !== undefined ? { grain: mapping.grain } : {}),
         value,
         label: labelValue === null ? '' : String(labelValue),
@@ -546,11 +546,11 @@ async function installPerformanceObserver(page: Page): Promise<void> {
         const envelope = source?.envelope
         const interaction = envelope?.spec?.interactions?.find((candidate: any) => candidate.kind === 'select')
         const selected = (envelope?.selection ?? []).flatMap((entry: any) => (interaction?.mappings ?? []).map((mapping: any) => ({
-          field: mapping.targetFieldID, fact: mapping.targetDatasetID, grain: mapping.grain, value: entry.datum?.identity?.[mapping.source.field],
+          field: mapping.targetFieldID, dataset: mapping.targetDatasetID, grain: mapping.grain, value: entry.datum?.identity?.[mapping.source.field],
         })))
         const matches = active.expectedMappings.every((expected: any) => selected.some((actual: any) =>
           actual.field === expected.field
-          && (actual.fact ?? '') === (expected.fact ?? '')
+          && (actual.dataset ?? '') === (expected.dataset ?? '')
           && (actual.grain ?? '') === (expected.grain ?? '')
           && Object.is(actual.value, expected.value),
         ))
@@ -659,11 +659,11 @@ async function runRapidToggle(page: Page, visualId: string): Promise<RapidToggle
       const envelope = host?.envelope
       const interaction = envelope?.spec?.interactions?.find((candidate: any) => candidate.kind === 'select')
       const selected = (envelope?.selection ?? []).flatMap((entry: any) => (interaction?.mappings ?? []).map((mapping: any) => ({
-        field: mapping.targetFieldID, fact: mapping.targetDatasetID, grain: mapping.grain, value: entry.datum?.identity?.[mapping.source.field],
+        field: mapping.targetFieldID, dataset: mapping.targetDatasetID, grain: mapping.grain, value: entry.datum?.identity?.[mapping.source.field],
       })))
       return expected.command.mappings.every((mapping: any) => selected.some((candidate: any) =>
         candidate.field === mapping.field
-        && (candidate.fact ?? '') === (mapping.fact ?? '')
+        && (candidate.dataset ?? '') === (mapping.dataset ?? '')
         && (candidate.grain ?? '') === (mapping.grain ?? '')
         && Object.is(candidate.value, mapping.value)
         && (candidate.value === null ? 'null' : typeof candidate.value) === (mapping.value === null ? 'null' : typeof mapping.value),

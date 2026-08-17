@@ -1017,7 +1017,7 @@ package contracts
 })
 
 #VisualQuery: close({
-	table?:      #Identifier
+	dataset?:    #Identifier
 	dimensions?: #FieldRefs
 	series?:     #FieldRefObject
 	metrics?:    #MetricRefs
@@ -1089,7 +1089,7 @@ package contracts
 })
 
 #TableQuery: close({
-	table?: #Identifier
+	dataset?: #Identifier
 	fields?: [...#FieldRef]
 	columns?:  #FieldRefs
 	rows?:     #FieldRefs

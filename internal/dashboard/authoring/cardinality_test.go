@@ -13,7 +13,7 @@ func TestDashboardRejectsUnknownTableCardinalityPolicy(t *testing.T) {
 		Title:         "Commerce",
 		SemanticModel: "commerce",
 		Visuals: map[string]AuthoringVisualization{
-			"orders": TabularVisualization("table", TableVisual{Title: "Orders", Cardinality: "automatic", Query: TableQuery{Table: "orders", Fields: []string{"order_id"}}}),
+			"orders": TabularVisualization("table", TableVisual{Title: "Orders", Cardinality: "automatic", Query: TableQuery{Dataset: "orders", Fields: []string{"order_id"}}}),
 		},
 		Pages: []dashboard.Page{{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{{Kind: "visual", Visual: "orders"}}}},
 	}
@@ -37,7 +37,7 @@ func TestDashboardRejectsLegacyPageComponentKinds(t *testing.T) {
 				Title:         "Commerce",
 				SemanticModel: "commerce",
 				Visuals: map[string]AuthoringVisualization{
-					"orders": TabularVisualization("table", TableVisual{Title: "Orders", Query: TableQuery{Table: "orders", Fields: []string{"order_id"}}}),
+					"orders": TabularVisualization("table", TableVisual{Title: "Orders", Query: TableQuery{Dataset: "orders", Fields: []string{"order_id"}}}),
 				},
 				Pages: []dashboard.Page{{
 					ID: "overview", Title: "Overview",

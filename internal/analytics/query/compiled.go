@@ -1,6 +1,9 @@
 package query
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -33,36 +36,125 @@ type CompiledLineageEntry struct {
 	Path      []semanticmodel.Relationship
 }
 
-// CompiledMetric is one immutable node in the metric evaluation DAG.  A node
-// is tagged with its canonical semantic type and contains all request-invariant
-// metadata needed by the current planner and future typed planning stages.
-type CompiledMetric struct {
-	Name          string
-	Type          string
-	Label         string
-	Description   string
-	Hidden        bool
-	Expression    semanticmodel.Expression
-	Dependencies  []string
-	RootDatasets  []string
+// CompiledAggregateMetric is the closed payload for an aggregate metric.
+// Dataset, input, population filters, and empty-value behavior are all kept in
+// this payload so a compiled metric cannot accidentally combine aggregate
+// fields with a derived or ratio definition.
+type CompiledAggregateMetric struct {
 	Dataset       string
 	Aggregation   string
 	InputField    string
 	NamedFilters  []CompiledNamedFilter
 	Empty         string
 	TimeDimension string
-	Numerator     string
-	Denominator   string
-	Unit          string
-	Format        string
-	Lineage       CompiledMetricLineage
+}
+
+// CompiledDerivedMetric is the closed payload for a derived metric. The
+// expression is parsed exactly once during activation.
+type CompiledDerivedMetric struct {
+	Expression semanticmodel.Expression
+}
+
+// CompiledRatioMetric is the closed payload for a ratio metric. Ratios retain
+// numerator and denominator identity all the way to PlanIR; they are not
+// represented as a synthesized scalar expression.
+type CompiledRatioMetric struct {
+	Numerator   string
+	Denominator string
+}
+
+// CompiledMetric is one immutable node in the metric evaluation DAG. Type is
+// the canonical semantic tag, and exactly one of Aggregate, Derived, or Ratio
+// is populated. The remaining fields are common metadata shared by all metric
+// kinds and are request-invariant after activation.
+type CompiledMetric struct {
+	Name         string
+	Type         string
+	Label        string
+	Description  string
+	Hidden       bool
+	Dependencies []string
+	RootDatasets []string
+	Unit         string
+	Format       string
+	Lineage      CompiledMetricLineage
+
+	Aggregate *CompiledAggregateMetric
+	Derived   *CompiledDerivedMetric
+	Ratio     *CompiledRatioMetric
+}
+
+// CompiledDataset is the immutable serving binding for one semantic alias.
+// The physical project model name is retained separately from the detached
+// executable table so aliases never become physical relation names by
+// accident. Table returns a detached copy on every call.
+type CompiledDataset struct {
+	alias                string
+	modelName            string
+	table                semanticmodel.Table
+	defaultTimeDimension string
+	displayName          string
+	description          string
+}
+
+func (d CompiledDataset) Alias() string                { return d.alias }
+func (d CompiledDataset) ModelName() string            { return d.modelName }
+func (d CompiledDataset) DefaultTimeDimension() string { return d.defaultTimeDimension }
+func (d CompiledDataset) DisplayName() string          { return d.displayName }
+func (d CompiledDataset) Description() string          { return d.description }
+
+// Table returns a deep copy, preserving the read-only serving boundary.
+func (d CompiledDataset) Table() semanticmodel.Table {
+	if d.alias == "" {
+		return semanticmodel.Table{}
+	}
+	return semanticmodel.CloneTable(d.table)
+}
+
+func (m CompiledMetric) validatePayload() error {
+	count := 0
+	if m.Aggregate != nil {
+		count++
+	}
+	if m.Derived != nil {
+		count++
+	}
+	if m.Ratio != nil {
+		count++
+	}
+	if count != 1 {
+		return fmt.Errorf("metric %q requires exactly one typed payload (got %d)", m.Name, count)
+	}
+	switch m.Type {
+	case "aggregate":
+		if m.Aggregate == nil {
+			return fmt.Errorf("metric %q aggregate payload is missing", m.Name)
+		}
+	case "derived":
+		if m.Derived == nil {
+			return fmt.Errorf("metric %q derived payload is missing", m.Name)
+		}
+	case "ratio":
+		if m.Ratio == nil {
+			return fmt.Errorf("metric %q ratio payload is missing", m.Name)
+		}
+	default:
+		return fmt.Errorf("metric %q has unsupported type %q", m.Name, m.Type)
+	}
+	return nil
 }
 
 // CompiledModel is immutable semantic metadata shared by every query in a
 // serving-state runtime. Expressions, named predicates, defaults, and metric
 // lineage are compiled once during activation.
 type CompiledModel struct {
-	model *semanticmodel.Model
+	model    *semanticmodel.Model
+	datasets map[string]CompiledDataset
+	// sourceFingerprint binds the immutable executable graph to the complete
+	// semantic definition used during activation. Consumers can use it to
+	// reject a stale planner paired with a different manifest without
+	// recompiling that definition.
+	sourceFingerprint string
 
 	// The DAG is intentionally private. Returning detached nodes prevents a
 	// consumer from mutating serving-state metadata after activation.
@@ -78,6 +170,7 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
+	sourceFingerprint := semanticModelFingerprint(model)
 	validated := model.ExecutionSnapshot()
 	if validated == nil {
 		return nil, fmt.Errorf("semantic model snapshot is required")
@@ -86,8 +179,12 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		return nil, fmt.Errorf("validate semantic graph: %w", err)
 	}
 	model = validated
+	datasets, err := compileDatasets(model)
+	if err != nil {
+		return nil, err
+	}
 	compiled := &CompiledModel{
-		model:   model,
+		model: model, datasets: datasets, sourceFingerprint: sourceFingerprint,
 		metrics: make(map[string]CompiledMetric, len(model.Metrics)),
 	}
 
@@ -97,6 +194,9 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		metric.Name = name
 		node, err := compileMetricNode(model, name, metric)
 		if err != nil {
+			return nil, err
+		}
+		if err := node.validatePayload(); err != nil {
 			return nil, err
 		}
 		compiled.metrics[name] = node
@@ -141,8 +241,8 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 	for _, name := range order {
 		node := compiled.metrics[name]
 		roots := map[string]struct{}{}
-		if node.Type == "aggregate" {
-			roots[node.Dataset] = struct{}{}
+		if node.Aggregate != nil {
+			roots[node.Aggregate.Dataset] = struct{}{}
 		}
 		for _, dependency := range node.Dependencies {
 			dependencyNode := compiled.metrics[dependency]
@@ -161,7 +261,210 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		node.Lineage.Entries = cloneLineageEntries(node.Lineage.Entries)
 		compiled.metrics[name] = node
 	}
+	// The authoring maps are intentionally discarded from the runtime graph;
+	// all semantic alias resolution goes through datasets above.
+	compiled.model.Tables = nil
+	compiled.model.Datasets = nil
 	return compiled, nil
+}
+
+func compileDatasets(model *semanticmodel.Model) (map[string]CompiledDataset, error) {
+	if model == nil {
+		return nil, fmt.Errorf("semantic model is required")
+	}
+	if len(model.Datasets) == 0 {
+		return nil, fmt.Errorf("semantic model %q has no datasets", model.Name)
+	}
+	if len(model.Tables) != len(model.Datasets) {
+		return nil, fmt.Errorf("semantic model %q dataset/table bindings must be one-to-one", model.Name)
+	}
+	datasets := make(map[string]CompiledDataset, len(model.Datasets))
+	for alias, spec := range model.Datasets {
+		table, ok := model.Tables[alias]
+		if !ok {
+			return nil, fmt.Errorf("semantic dataset %q has no matching runtime table", alias)
+		}
+		modelName := strings.TrimSpace(spec.Model)
+		if modelName == "" {
+			return nil, fmt.Errorf("semantic dataset %q model is required", alias)
+		}
+		if table.ModelName != modelName {
+			return nil, fmt.Errorf("semantic dataset %q model binding %q does not match runtime table model %q", alias, modelName, table.ModelName)
+		}
+		copyModel := (&semanticmodel.Model{Tables: map[string]semanticmodel.Table{alias: table}}).ExecutionSnapshot()
+		datasets[alias] = CompiledDataset{
+			alias: alias, modelName: modelName, table: copyModel.Tables[alias],
+			defaultTimeDimension: spec.DefaultTimeDimension, displayName: spec.DisplayName,
+			description: spec.Description,
+		}
+	}
+	return datasets, nil
+}
+
+// CompileDatasetBindings compiles only the executable dataset binding. It is
+// used by read-model projections that receive a lightweight model fixture but
+// do not need the metric DAG; serving planners should use CompileModel.
+func CompileDatasetBindings(model *semanticmodel.Model) (*CompiledModel, error) {
+	if model == nil {
+		return nil, fmt.Errorf("semantic model is required")
+	}
+	snapshot := model.ExecutionSnapshot()
+	datasets, err := compileDatasets(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.Tables = nil
+	snapshot.Datasets = nil
+	return &CompiledModel{model: snapshot, datasets: datasets, sourceFingerprint: semanticModelFingerprint(model)}, nil
+}
+
+// MatchesModel reports whether this activation-owned compiled graph was built
+// from the supplied semantic definition. The comparison uses a deterministic
+// fingerprint of the full execution snapshot, including datasets, tables,
+// relationships, dimensions, filters, metrics, types, and time metadata. It
+// does not compile or mutate the supplied model.
+func (c *CompiledModel) MatchesModel(model *semanticmodel.Model) bool {
+	if c == nil || model == nil || c.sourceFingerprint == "" {
+		return false
+	}
+	return c.sourceFingerprint == semanticModelFingerprint(model)
+}
+
+// SourceFingerprint returns the deterministic semantic definition fingerprint
+// retained by this activation-owned graph.
+func (c *CompiledModel) SourceFingerprint() string {
+	if c == nil {
+		return ""
+	}
+	return c.sourceFingerprint
+}
+
+// SemanticModelFingerprint returns the deterministic fingerprint used to bind
+// an activation-owned compiled graph to its source definition. It performs no
+// query compilation and does not mutate model.
+func SemanticModelFingerprint(model *semanticmodel.Model) string {
+	return semanticModelFingerprint(model)
+}
+
+func semanticModelFingerprint(model *semanticmodel.Model) string {
+	if model == nil {
+		return ""
+	}
+	snapshot := model.ExecutionSnapshot()
+	if snapshot == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func (c *CompiledModel) dataset(name string) (CompiledDataset, bool) {
+	if c == nil {
+		return CompiledDataset{}, false
+	}
+	dataset, ok := c.datasets[name]
+	return dataset, ok
+}
+
+// Dataset resolves one semantic alias to its immutable compiled binding.
+func (c *CompiledModel) Dataset(name string) (CompiledDataset, bool) {
+	return c.dataset(name)
+}
+
+// ResolveDimension resolves a qualified field through its compiled dataset
+// binding and returns a detached dimension descriptor.
+func (c *CompiledModel) ResolveDimension(ref string) (semanticmodel.MetricDimension, error) {
+	parts := strings.Split(ref, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return semanticmodel.MetricDimension{}, fmt.Errorf("field %q must be qualified as dataset.field", ref)
+	}
+	dataset, ok := c.dataset(parts[0])
+	if !ok {
+		return semanticmodel.MetricDimension{}, fmt.Errorf("unknown dataset %q", parts[0])
+	}
+	table := dataset.table
+	dimension, ok := table.Dimensions[parts[1]]
+	if !ok {
+		return semanticmodel.MetricDimension{}, fmt.Errorf("unknown field %q on dataset %q", parts[1], parts[0])
+	}
+	dimension.Field, dimension.Table, dimension.Name = ref, parts[0], parts[1]
+	return dimension, nil
+}
+
+// DatasetNames returns semantic aliases in stable order.
+func (c *CompiledModel) DatasetNames() []string {
+	if c == nil {
+		return nil
+	}
+	names := make([]string, 0, len(c.datasets))
+	for name := range c.datasets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// ResolvePhysicalModelName validates a model transform dependency against the
+// compiled physical Model namespace. Semantic dataset aliases are not accepted
+// here: aliases are only valid for selecting a dataset, while transform SQL
+// must retain global physical Model identity.
+func (c *CompiledModel) ResolvePhysicalModelName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("model dependency is required")
+	}
+	if c == nil {
+		return "", fmt.Errorf("compiled model is required")
+	}
+
+	found := false
+	for _, aliasName := range c.DatasetNames() {
+		dataset, _ := c.dataset(aliasName)
+		if dataset.ModelName() != name {
+			continue
+		}
+		// Multiple aliases bound to one physical ModelName are intentionally
+		// equivalent and therefore remain one valid physical dependency.
+		found = true
+	}
+	if found {
+		return name, nil
+	}
+	return "", fmt.Errorf("unknown model dependency %q", name)
+}
+
+// ForEachDataset iterates detached compiled bindings in stable alias order.
+func (c *CompiledModel) ForEachDataset(fn func(CompiledDataset) error) error {
+	if fn == nil {
+		return fmt.Errorf("dataset iterator is required")
+	}
+	for _, name := range c.DatasetNames() {
+		dataset, _ := c.dataset(name)
+		if err := fn(dataset); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CompiledModel returns the activation-owned immutable semantic graph.
+func (p *Planner) CompiledModel() *CompiledModel {
+	if p == nil {
+		return nil
+	}
+	return p.compiled
+}
+
+// Dataset resolves a semantic alias through the activation-owned planner.
+func (p *Planner) Dataset(name string) (CompiledDataset, bool) {
+	if p == nil {
+		return CompiledDataset{}, false
+	}
+	return p.compiled.Dataset(name)
 }
 
 func (c *CompiledModel) metric(name string) (CompiledMetric, bool) {
@@ -190,12 +493,18 @@ func (c *CompiledModel) metricNames() []string {
 func cloneCompiledMetric(node CompiledMetric) CompiledMetric {
 	node.Dependencies = append([]string(nil), node.Dependencies...)
 	node.RootDatasets = append([]string(nil), node.RootDatasets...)
-	if node.NamedFilters != nil {
-		original := node.NamedFilters
-		node.NamedFilters = make([]CompiledNamedFilter, len(node.NamedFilters))
-		for index, filter := range original {
-			node.NamedFilters[index] = CompiledNamedFilter{Name: filter.Name, Filter: cloneFilters([]Filter{filter.Filter})[0]}
-		}
+	if node.Aggregate != nil {
+		aggregate := *node.Aggregate
+		aggregate.NamedFilters = cloneCompiledNamedFilters(aggregate.NamedFilters)
+		node.Aggregate = &aggregate
+	}
+	if node.Derived != nil {
+		derived := *node.Derived
+		node.Derived = &derived
+	}
+	if node.Ratio != nil {
+		ratio := *node.Ratio
+		node.Ratio = &ratio
 	}
 	node.Lineage.Entries = cloneLineageEntries(node.Lineage.Entries)
 	return node
@@ -255,11 +564,9 @@ func sortedKeys(values map[string]struct{}) []string {
 func compileMetricNode(model *semanticmodel.Model, name string, metric semanticmodel.Metric) (CompiledMetric, error) {
 	metricType := metric.Type
 	node := CompiledMetric{
-		Name: name, Type: metricType, Dataset: metric.Dataset,
-		Numerator: metric.Numerator, Denominator: metric.Denominator,
+		Name: name, Type: metricType,
 		Unit: metric.Unit, Format: metric.Format,
 		Label: metric.Label, Description: metric.Description, Hidden: metric.Hidden,
-		Aggregation: metric.Aggregation, Empty: metric.Empty,
 		Lineage: CompiledMetricLineage{},
 	}
 	switch metricType {
@@ -282,28 +589,32 @@ func compileMetricNode(model *semanticmodel.Model, name string, metric semanticm
 		if input.Table != metric.Dataset {
 			return CompiledMetric{}, fmt.Errorf("metric %q aggregate input field %q is not owned by dataset %q", name, metric.Input.Field, metric.Dataset)
 		}
-		node.InputField = metric.Input.Field
-		node.TimeDimension = metric.TimeDimension
-		if node.TimeDimension == "" {
+		aggregate := &CompiledAggregateMetric{
+			Dataset: metric.Dataset, Aggregation: metric.Aggregation,
+			InputField: metric.Input.Field, Empty: metric.Empty,
+			TimeDimension: metric.TimeDimension,
+		}
+		node.Aggregate = aggregate
+		if aggregate.TimeDimension == "" {
 			if dataset, ok := model.Datasets[metric.Dataset]; ok {
-				node.TimeDimension = dataset.DefaultTimeDimension
+				aggregate.TimeDimension = dataset.DefaultTimeDimension
 			}
 		}
-		if node.TimeDimension != "" {
-			if err := validateMetricTimeDimension(model, name, metric.Dataset, node.TimeDimension); err != nil {
+		if aggregate.TimeDimension != "" {
+			if err := validateMetricTimeDimension(model, name, metric.Dataset, aggregate.TimeDimension); err != nil {
 				return CompiledMetric{}, err
 			}
-			dimension := model.Dimensions[node.TimeDimension]
+			dimension := model.Dimensions[aggregate.TimeDimension]
 			binding := dimension.Bindings[metric.Dataset]
 			timeDimension, err := model.ResolveDimension(binding.Field)
 			if err != nil {
-				return CompiledMetric{}, fmt.Errorf("metric %q time dimension %q binding: %w", name, node.TimeDimension, err)
+				return CompiledMetric{}, fmt.Errorf("metric %q time dimension %q binding: %w", name, aggregate.TimeDimension, err)
 			}
 			timePath, err := model.ResolveBindingPath(metric.Dataset, binding)
 			if err != nil {
-				return CompiledMetric{}, fmt.Errorf("metric %q time dimension %q path: %w", name, node.TimeDimension, err)
+				return CompiledMetric{}, fmt.Errorf("metric %q time dimension %q path: %w", name, aggregate.TimeDimension, err)
 			}
-			node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "time", Reference: node.TimeDimension, Field: timeDimension.Field, Path: timePath})
+			node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "time", Reference: aggregate.TimeDimension, Field: timeDimension.Field, Path: timePath})
 		}
 		inputPath := []semanticmodel.Relationship(nil)
 		inputPath, err = model.SafeRelationshipPath(metric.Dataset, input.Table)
@@ -311,7 +622,7 @@ func compileMetricNode(model *semanticmodel.Model, name string, metric semanticm
 			return CompiledMetric{}, fmt.Errorf("metric %q aggregate input path: %w", name, err)
 		}
 		node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "input", Reference: "input:" + name, Field: metric.Input.Field, Path: inputPath})
-		if err := compileMetricWhere(model, name, metric.Dataset, metric.Where, &node); err != nil {
+		if err := compileMetricWhere(model, name, metric.Dataset, metric.Where, aggregate, &node); err != nil {
 			return CompiledMetric{}, err
 		}
 	case "derived":
@@ -323,18 +634,14 @@ func compileMetricNode(model *semanticmodel.Model, name string, metric semanticm
 		if len(refs) == 0 {
 			return CompiledMetric{}, fmt.Errorf("metric %q has no root dataset", name)
 		}
-		node.Expression = expression
+		node.Derived = &CompiledDerivedMetric{Expression: expression}
 		node.Dependencies = sortedUnique(refs)
 	case "ratio":
 		if strings.TrimSpace(metric.Numerator) == "" || strings.TrimSpace(metric.Denominator) == "" {
 			return CompiledMetric{}, fmt.Errorf("metric %q ratio requires numerator and denominator", name)
 		}
+		node.Ratio = &CompiledRatioMetric{Numerator: metric.Numerator, Denominator: metric.Denominator}
 		node.Dependencies = sortedUnique([]string{metric.Numerator, metric.Denominator})
-		expression, err := semanticmodel.ParseExpression(metricExecutableExpression(metric))
-		if err != nil {
-			return CompiledMetric{}, fmt.Errorf("metric %q: %w", name, err)
-		}
-		node.Expression = expression
 	default:
 		return CompiledMetric{}, fmt.Errorf("metric %q has unsupported type %q", name, metric.Type)
 	}
@@ -355,7 +662,7 @@ func validateMetricTimeDimension(model *semanticmodel.Model, metric, dataset, na
 	return nil
 }
 
-func compileMetricWhere(model *semanticmodel.Model, metric, dataset string, names []string, node *CompiledMetric) error {
+func compileMetricWhere(model *semanticmodel.Model, metric, dataset string, names []string, aggregate *CompiledAggregateMetric, node *CompiledMetric) error {
 	if names != nil && len(names) == 0 {
 		return fmt.Errorf("metric %q aggregate where requires a non-empty list", metric)
 	}
@@ -374,9 +681,9 @@ func compileMetricWhere(model *semanticmodel.Model, metric, dataset string, name
 		}
 		filters = append(filters, filter)
 	}
-	node.NamedFilters = make([]CompiledNamedFilter, len(filters))
+	aggregate.NamedFilters = make([]CompiledNamedFilter, len(filters))
 	for index, filter := range filters {
-		node.NamedFilters[index] = CompiledNamedFilter{Name: names[index], Filter: cloneFilters([]Filter{filter})[0]}
+		aggregate.NamedFilters[index] = CompiledNamedFilter{Name: names[index], Filter: cloneFilters([]Filter{filter})[0]}
 	}
 	return nil
 }
@@ -497,16 +804,6 @@ func cloneFilters(values []Filter) []Filter {
 		}
 	}
 	return out
-}
-
-// metricExecutableExpression is a planner-boundary adapter. Canonical ratio
-// metrics retain numerator/denominator fields in the model; only the existing
-// expression evaluator receives the governed safe_divide form.
-func metricExecutableExpression(metric semanticmodel.Metric) string {
-	if metric.Type == "ratio" {
-		return fmt.Sprintf("safe_divide(${%s}, ${%s})", metric.Numerator, metric.Denominator)
-	}
-	return metric.Expression
 }
 
 type PlannerOption func(*Planner) error

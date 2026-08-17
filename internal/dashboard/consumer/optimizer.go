@@ -33,14 +33,23 @@ type Plan struct {
 }
 
 type Optimizer struct {
-	planner *semanticquery.Planner
+	planner Planner
+}
+
+// Planner is the activation-owned semantic planning capability consumed by
+// dashboard batching. Keeping this narrow port in the dashboard consumer
+// package lets runtime orchestration depend on the capability without owning
+// the analytics planner implementation or compiling a second one.
+type Planner interface {
+	IsCompiled() bool
+	AnalyzeAggregate(semanticquery.Request) (semanticquery.AggregateAnalysis, error)
 }
 
 // NewOptimizerFromPlanner binds the dashboard consumer optimizer to the
 // planner compiled for the active serving generation. The planner is shared
 // with governed execution and authorization; this constructor deliberately
 // does not compile or copy semantic metadata.
-func NewOptimizerFromPlanner(planner *semanticquery.Planner) (*Optimizer, error) {
+func NewOptimizerFromPlanner(planner Planner) (*Optimizer, error) {
 	if planner == nil || !planner.IsCompiled() {
 		return nil, fmt.Errorf("compiled semantic planner is required")
 	}
@@ -51,7 +60,7 @@ type analyzedQuery struct {
 	logical   LogicalQuery
 	index     int
 	scope     string
-	facts     string
+	datasets  string
 	scalar    bool
 	grouped   bool
 	aggregate bool
@@ -62,14 +71,14 @@ func (o *Optimizer) Optimize(queries []LogicalQuery) (Plan, error) {
 }
 
 // OptimizeForConcurrency chooses between one heterogeneous shared projection
-// and independent fact-signature bundles. A serial executor benefits from one
-// governed fact scan; concurrent readers can execute the smaller bundles in
+// and independent dataset-signature bundles. A serial executor benefits from one
+// governed dataset scan; concurrent readers can execute the smaller bundles in
 // parallel without paying projection materialization on the critical path.
 func (o *Optimizer) OptimizeForConcurrency(queries []LogicalQuery, concurrency int) (Plan, error) {
 	return o.optimize(queries, concurrency <= 1)
 }
 
-func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool) (Plan, error) {
+func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousDatasets bool) (Plan, error) {
 	planner := o.planner
 	if !planner.IsCompiled() {
 		return Plan{}, fmt.Errorf("compiled semantic planner is required")
@@ -86,7 +95,7 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 			item.aggregate = true
 			item.scalar = len(logical.Query.Fields) == 0 && logical.Query.Time.Field == ""
 			item.grouped = !item.scalar
-			item.facts = strings.Join(analysis.Facts, ",")
+			item.datasets = strings.Join(analysis.Datasets, ",")
 		}
 		scope, err := physicalScopeKey(logical.Query)
 		if err != nil {
@@ -111,7 +120,7 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 			if candidateIndex == sourceIndex || assigned[candidateIndex] || !candidate.aggregate || candidate.scope != source.scope {
 				continue
 			}
-			if !fuseHeterogeneousFacts && candidate.facts != source.facts {
+			if !fuseHeterogeneousDatasets && candidate.datasets != source.datasets {
 				continue
 			}
 			members = append(members, candidateIndex)
@@ -128,7 +137,7 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 	}
 
 	// Scalar aggregates with the same governed scope can be combined into one
-	// model-scoped multi-member query even when their fact sets differ.
+	// model-scoped multi-member query even when their dataset sets differ.
 	for index, source := range analyzed {
 		if assigned[index] || !source.aggregate || !source.scalar {
 			continue
@@ -159,7 +168,7 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 		members := []int{index}
 		for candidateIndex := index + 1; candidateIndex < len(analyzed); candidateIndex++ {
 			candidate := analyzed[candidateIndex]
-			if assigned[candidateIndex] || !candidate.aggregate || candidate.scope != source.scope || candidate.facts != source.facts {
+			if assigned[candidateIndex] || !candidate.aggregate || candidate.scope != source.scope || candidate.datasets != source.datasets {
 				continue
 			}
 			members = append(members, candidateIndex)
@@ -223,7 +232,7 @@ func semanticRequest(query dataquery.Query) semanticquery.Request {
 		filters[index] = semanticFilter(filter)
 	}
 	return semanticquery.Request{
-		Table:      query.Target,
+		Dataset:    query.Target,
 		Dimensions: dimensions,
 		Metrics:    metrics,
 		Time:       semanticquery.Time{Field: query.Time.Field, Grain: query.Time.Grain, Alias: query.Time.Alias},
@@ -241,7 +250,7 @@ func semanticFilter(filter dataquery.Filter) semanticquery.Filter {
 			groups[groupIndex].Filters[filterIndex] = semanticFilter(child)
 		}
 	}
-	return semanticquery.Filter{Field: filter.Field, Fact: filter.Fact, Operator: filter.Operator, Values: append([]any{}, filter.Values...), Groups: groups}
+	return semanticquery.Filter{Field: filter.Field, Dataset: filter.Dataset, Operator: filter.Operator, Values: append([]any{}, filter.Values...), Groups: groups}
 }
 
 func consumerKindPriority(kind Kind) int {

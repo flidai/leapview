@@ -115,7 +115,10 @@ type semanticArrowQueryRuntime interface {
 }
 
 type semanticPlannerRuntime interface {
-	Planner(modelID string) (*semanticquery.Planner, bool)
+	// Planner returns the narrow dashboard consumer port exposed by an active
+	// runtime. Runtime metrics keeps the concrete planner return type for the
+	// semantic explain APIs below, so Planner adapts that port at this boundary.
+	Planner(modelID string) (consumer.Planner, bool)
 }
 
 func SupportsNativeArrow(metrics Metrics) bool {
@@ -285,7 +288,7 @@ func (m runtimeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, boo
 	return port.SemanticModel(modelID)
 }
 
-func (m runtimeMetrics) Planner(modelID string) (*semanticquery.Planner, bool) {
+func (m runtimeMetrics) Planner(modelID string) (consumer.Planner, bool) {
 	runtime, release, err := m.active(context.Background())
 	if err != nil {
 		return nil, false
@@ -295,7 +298,16 @@ func (m runtimeMetrics) Planner(modelID string) (*semanticquery.Planner, bool) {
 	if !ok {
 		return nil, false
 	}
-	return port.Planner(modelID)
+	plannerPort, ok := port.Planner(modelID)
+	if !ok {
+		return nil, false
+	}
+	return plannerPort, plannerPort != nil
+}
+
+func concretePlanner(value consumer.Planner) (*semanticquery.Planner, bool) {
+	planner, ok := value.(*semanticquery.Planner)
+	return planner, ok && planner != nil
 }
 
 func (m runtimeMetrics) DefaultFilters(dashboardID string) dashboard.Filters {
@@ -557,16 +569,18 @@ func (m runtimeMetrics) PreviewSemantic(ctx context.Context, modelID string, req
 }
 
 func (m runtimeMetrics) ExplainSemanticQuery(modelID string, request reportdef.AggregateQuery) (semanticquery.Plan, error) {
-	planner, ok := m.Planner(modelID)
-	if !ok || planner == nil {
+	value, ok := m.Planner(modelID)
+	planner, concrete := concretePlanner(value)
+	if !ok || !concrete {
 		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
 	}
 	return planner.Plan(reportdef.SemanticAggregateRequest(request))
 }
 
 func (m runtimeMetrics) ExplainSemanticPreview(modelID string, request reportdef.RowQuery) (semanticquery.Plan, error) {
-	planner, ok := m.Planner(modelID)
-	if !ok || planner == nil {
+	value, ok := m.Planner(modelID)
+	planner, concrete := concretePlanner(value)
+	if !ok || !concrete {
 		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
 	}
 	return planner.PlanRows(reportdef.SemanticRowRequest(request))

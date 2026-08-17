@@ -70,8 +70,8 @@ func (planner *Planner) PrepareRepresentativePlans(model *semanticmodel.Model) (
 		if err := add("metric:"+metricName, Request{Metrics: []Field{{Field: metricName}}}); err != nil {
 			return nil, err
 		}
-		for _, dimensionName := range sortedDimensionNames(model) {
-			if !dimensionCompatibleWithFacts(model, dimensionName, analysis.Facts) {
+		for _, dimensionName := range planner.sortedDimensionNames() {
+			if !planner.dimensionCompatibleWithDatasets(dimensionName, analysis.Datasets) {
 				continue
 			}
 			if err := add("metric:"+metricName+"/dimension:"+dimensionName, Request{
@@ -86,21 +86,21 @@ func (planner *Planner) PrepareRepresentativePlans(model *semanticmodel.Model) (
 	// route cannot remain unplanned simply because no dashboard selected it yet.
 	for _, dimensionName := range sortedSemanticDimensionNames(model) {
 		dimension := model.Dimensions[dimensionName]
-		facts := make([]string, 0, len(dimension.Bindings))
-		for fact := range dimension.Bindings {
-			facts = append(facts, fact)
+		datasets := make([]string, 0, len(dimension.Bindings))
+		for dataset := range dimension.Bindings {
+			datasets = append(datasets, dataset)
 		}
-		sort.Strings(facts)
-		for _, fact := range facts {
-			if err := add("binding:"+dimensionName+"@"+fact, Request{
-				Table: fact, Dimensions: []Field{{Field: dimensionName}},
+		sort.Strings(datasets)
+		for _, dataset := range datasets {
+			if err := add("binding:"+dimensionName+"@"+dataset, Request{
+				Dataset: dataset, Dimensions: []Field{{Field: dimensionName}},
 			}); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	// Every reusable filter is compiled and planned against each fact from
+	// Every reusable filter is compiled and planned against each dataset from
 	// which its validated route is reachable. A filter can therefore fail
 	// deployment even when it is not currently referenced by a metric.
 	filterNames := make([]string, 0, len(model.Filters))
@@ -108,13 +108,12 @@ func (planner *Planner) PrepareRepresentativePlans(model *semanticmodel.Model) (
 		filterNames = append(filterNames, name)
 	}
 	sort.Strings(filterNames)
-	facts := model.FactNames()
-	sort.Strings(facts)
-	metricFacts := map[string][]string{}
+	datasets := planner.compiled.DatasetNames()
+	metricDatasets := map[string][]string{}
 	for _, metricName := range metricNames {
 		analysis, analysisErr := planner.AnalyzeAggregate(Request{Metrics: []Field{{Field: metricName}}})
 		if analysisErr == nil {
-			metricFacts[metricName] = analysis.Facts
+			metricDatasets[metricName] = analysis.Datasets
 		}
 	}
 	for _, filterName := range filterNames {
@@ -124,34 +123,34 @@ func (planner *Planner) PrepareRepresentativePlans(model *semanticmodel.Model) (
 			return nil, fmt.Errorf("semantic verification filter %q: %w", filterName, err)
 		}
 		planned := false
-		for _, fact := range facts {
-			if !semanticFilterReachable(model, spec, fact) {
+		for _, dataset := range datasets {
+			if !planner.semanticFilterReachable(spec, dataset) {
 				continue
 			}
-			request := Request{Table: fact, Filters: []Filter{compiled}}
+			request := Request{Dataset: dataset, Filters: []Filter{compiled}}
 			for _, metricName := range metricNames {
-				if len(metricFacts[metricName]) == 1 && containsString(metricFacts[metricName], fact) {
+				if len(metricDatasets[metricName]) == 1 && containsString(metricDatasets[metricName], dataset) {
 					request.Metrics = []Field{{Field: metricName}}
 					break
 				}
 			}
 			if len(request.Metrics) == 0 {
 				// A deterministic local grain dimension keeps this route a
-				// governed aggregate even when no metric is rooted in the fact.
-				for _, dimensionName := range sortedDimensionNames(model) {
-					if strings.HasPrefix(dimensionName, fact+".") {
+				// governed aggregate even when no metric is rooted in the dataset.
+				for _, dimensionName := range planner.sortedDimensionNames() {
+					if strings.HasPrefix(dimensionName, dataset+".") {
 						request.Dimensions = []Field{{Field: dimensionName}}
 						break
 					}
 				}
 			}
-			if err := add("filter:"+filterName+"@"+fact, request); err != nil {
+			if err := add("filter:"+filterName+"@"+dataset, request); err != nil {
 				return nil, err
 			}
 			planned = true
 		}
 		if !planned {
-			return nil, fmt.Errorf("semantic verification filter %q has no reachable fact route", filterName)
+			return nil, fmt.Errorf("semantic verification filter %q has no reachable dataset route", filterName)
 		}
 	}
 
@@ -164,15 +163,22 @@ func (planner *Planner) PrepareRepresentativePlans(model *semanticmodel.Model) (
 			continue
 		}
 		field := relationship.ToDataset + "." + relationship.ToFields[0]
-		if _, err := model.ResolveDimension(field); err != nil {
+		if _, err := planner.resolveDimension(field); err != nil {
 			// Entity-only endpoints have no authored semantic field to plan;
 			// entity validation below still covers their key claims.
 			continue
 		}
-		if _, err := model.ResolveBindingPath(relationship.FromDataset, semanticmodel.DimensionBinding{Field: field, Path: []string{relationship.ID}}); err != nil {
+		if _, err := planner.resolveBindingPath(relationship.FromDataset, semanticmodel.DimensionBinding{Field: field, Path: []string{relationship.ID}}); err != nil {
 			return nil, fmt.Errorf("semantic verification relationship %q path: %w", relationship.ID, err)
 		}
-		plan, err := planner.Plan(Request{Table: relationship.FromDataset, Dimensions: []Field{{Field: field}}})
+		plan, err := prepareExplicitRelationshipPlan(
+			model,
+			planner.TableRelation(),
+			relationship.FromDataset,
+			relationship.ToDataset,
+			relationship.ToFields[0],
+			[]semanticmodel.Relationship{relationship},
+		)
 		if err != nil {
 			return nil, fmt.Errorf("semantic verification route relationship:%s: %w", relationship.ID, err)
 		}
@@ -191,9 +197,15 @@ func prepareExplicitRelationshipPlan(model *semanticmodel.Model, relation TableR
 	// Add a temporary physical dimension for entity-only endpoints so this
 	// verification query still exercises the exact relationship path without
 	// changing the authored model.
+	compiled, err := CompileDatasetBindings(model)
+	if err != nil {
+		return Plan{}, err
+	}
 	candidate := *model
-	tables := make(map[string]semanticmodel.Table, len(model.Tables))
-	for name, table := range model.Tables {
+	tables := make(map[string]semanticmodel.Table, len(compiled.DatasetNames()))
+	for _, name := range compiled.DatasetNames() {
+		dataset, _ := compiled.Dataset(name)
+		table := dataset.Table()
 		tableCopy := table
 		tableCopy.Dimensions = make(map[string]semanticmodel.MetricDimension, len(table.Dimensions)+1)
 		for dimensionName, dimension := range table.Dimensions {
@@ -223,7 +235,7 @@ func prepareExplicitRelationshipPlan(model *semanticmodel.Model, relation TableR
 	if err != nil {
 		return Plan{}, err
 	}
-	return planner.Plan(Request{Table: from, Dimensions: []Field{{Field: dimensionName}}})
+	return planner.Plan(Request{Dataset: from, Dimensions: []Field{{Field: dimensionName}}})
 }
 
 func relationshipIDs(path []semanticmodel.Relationship) []string {
@@ -234,14 +246,14 @@ func relationshipIDs(path []semanticmodel.Relationship) []string {
 	return ids
 }
 
-func semanticFilterReachable(model *semanticmodel.Model, spec semanticmodel.SemanticFilterSpec, fact string) bool {
+func (p *Planner) semanticFilterReachable(spec semanticmodel.SemanticFilterSpec, dataset string) bool {
 	for _, child := range spec.All {
-		if !semanticFilterReachable(model, child, fact) {
+		if !p.semanticFilterReachable(child, dataset) {
 			return false
 		}
 	}
 	for _, child := range spec.Any {
-		if semanticFilterReachable(model, child, fact) {
+		if p.semanticFilterReachable(child, dataset) {
 			return true
 		}
 	}
@@ -249,20 +261,20 @@ func semanticFilterReachable(model *semanticmodel.Model, spec semanticmodel.Sema
 		return false
 	}
 	if spec.Not != nil {
-		return semanticFilterReachable(model, *spec.Not, fact)
+		return p.semanticFilterReachable(*spec.Not, dataset)
 	}
 	if spec.Field == "" {
 		return true
 	}
-	dimension, err := model.ResolveDimension(spec.Field)
+	dimension, err := p.resolveDimension(spec.Field)
 	if err != nil {
 		return false
 	}
 	if len(spec.Path) > 0 {
-		_, err = model.ResolveBindingPath(fact, semanticmodel.DimensionBinding{Field: spec.Field, Path: append([]string(nil), spec.Path...)})
+		_, err = p.resolveBindingPath(dataset, semanticmodel.DimensionBinding{Field: spec.Field, Path: append([]string(nil), spec.Path...)})
 		return err == nil
 	}
-	_, err = model.SafeRelationshipPath(fact, dimension.Table)
+	_, err = p.relationshipPath(dataset, dimension.Table)
 	return err == nil
 }
 
@@ -282,12 +294,14 @@ func sortedMetricNames(model *semanticmodel.Model) []string {
 	return names
 }
 
-func sortedDimensionNames(model *semanticmodel.Model) []string {
+func (p *Planner) sortedDimensionNames() []string {
 	seen := map[string]struct{}{}
-	for name := range model.Dimensions {
+	for name := range p.model.Dimensions {
 		seen[name] = struct{}{}
 	}
-	for tableName, table := range model.Tables {
+	for _, tableName := range p.compiled.DatasetNames() {
+		dataset, _ := p.compiled.Dataset(tableName)
+		table := dataset.Table()
 		for field := range table.Dimensions {
 			seen[tableName+"."+field] = struct{}{}
 		}
@@ -309,29 +323,29 @@ func sortedSemanticDimensionNames(model *semanticmodel.Model) []string {
 	return names
 }
 
-func dimensionCompatibleWithFacts(model *semanticmodel.Model, name string, facts []string) bool {
-	if dimension, ok := model.Dimensions[name]; ok {
-		for _, fact := range facts {
-			binding, bound := dimension.Bindings[fact]
+func (p *Planner) dimensionCompatibleWithDatasets(name string, datasets []string) bool {
+	if dimension, ok := p.model.Dimensions[name]; ok {
+		for _, dataset := range datasets {
+			binding, bound := dimension.Bindings[dataset]
 			if !bound {
 				return false
 			}
-			if _, err := model.ResolveBindingPath(fact, binding); err != nil {
+			if _, err := p.resolveBindingPath(dataset, binding); err != nil {
 				return false
 			}
 		}
 		return true
 	}
-	for _, fact := range facts {
-		dimension, err := model.ResolveDimension(name)
+	for _, dataset := range datasets {
+		dimension, err := p.resolveDimension(name)
 		if err != nil {
 			return false
 		}
-		if _, err := model.SafeRelationshipPath(fact, dimension.Table); err != nil {
+		if _, err := p.relationshipPath(dataset, dimension.Table); err != nil {
 			return false
 		}
 	}
-	return len(facts) > 0
+	return len(datasets) > 0
 }
 
 func sortedRelationships(relationships []semanticmodel.Relationship) []semanticmodel.Relationship {

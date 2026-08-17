@@ -1,14 +1,67 @@
 package query
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 )
 
+func TestPlannerTableRelationReceivesBackingModelName(t *testing.T) {
+	model := testModel()
+	populateFixtureTableModelNames(model)
+	orders := model.Tables["orders"]
+	orders.ModelName = "sales_orders"
+	model.Tables["orders"] = orders
+	dataset := model.Datasets["orders"]
+	dataset.Model = "sales_orders"
+	model.Datasets["orders"] = dataset
+	var received []string
+	planner, err := NewCompiledPlanner(model, WithTableRelation(func(table string) (string, error) {
+		received = append(received, table)
+		return "model." + table, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planner.Plan(Request{Metrics: []Field{{Field: "order_count"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range received {
+		if table == "orders" {
+			t.Fatalf("TableRelation received semantic alias %q; calls = %#v", table, received)
+		}
+	}
+	found := false
+	for _, table := range received {
+		if table == "sales_orders" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("TableRelation did not receive backing model name; calls = %#v", received)
+	}
+}
+
+func TestPlannerPropagatesTableRelationError(t *testing.T) {
+	model := testModel()
+	populateFixtureTableModelNames(model)
+	want := errors.New("relation unavailable")
+	planner, err := NewCompiledPlanner(model, WithTableRelation(func(string) (string, error) { return "", want }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planner.Plan(Request{Metrics: []Field{{Field: "order_count"}}}); !errors.Is(err, want) {
+		t.Fatalf("Plan() error = %v, want relation error %v", err, want)
+	}
+}
+
 func TestPlannerQualifiesEveryPhysicalRelationWithSnapshot(t *testing.T) {
 	const snapshotID = int64(42)
-	planner, err := NewCompiledPlanner(testModel(), WithTableRelation(func(table string) (string, error) {
+	model := testModel()
+	populateFixtureTableModelNames(model)
+	planner, err := NewCompiledPlanner(model, WithTableRelation(func(table string) (string, error) {
 		return fmt.Sprintf("(FROM lake.model.%s AT (VERSION => %d))", table, snapshotID), nil
 	}))
 	if err != nil {
@@ -35,7 +88,9 @@ func TestPlannerQualifiesEveryPhysicalRelationWithSnapshot(t *testing.T) {
 }
 
 func TestBundlePlannerQualifiesEveryPhysicalRelationWithSnapshot(t *testing.T) {
-	planner, err := NewCompiledPlanner(executableMultiFactModel(), WithTableRelation(func(table string) (string, error) {
+	model := executableMultiDatasetModel()
+	populateFixtureTableModelNames(model)
+	planner, err := NewCompiledPlanner(model, WithTableRelation(func(table string) (string, error) {
 		return "(FROM lake.model." + table + " AT (VERSION => 7))", nil
 	}))
 	if err != nil {

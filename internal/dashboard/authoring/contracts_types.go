@@ -513,7 +513,7 @@ type VisualGeoLineStyle struct {
 }
 
 type VisualQuery struct {
-	Table      string     `yaml:"table" json:"table,omitempty"`
+	Dataset    string     `yaml:"dataset" json:"dataset,omitempty"`
 	Dimensions []FieldRef `yaml:"dimensions" json:"dimensions,omitempty"`
 	Series     FieldRef   `yaml:"series" json:"series,omitempty"`
 	Metrics    []FieldRef `yaml:"metrics" json:"metrics,omitempty"`
@@ -562,8 +562,8 @@ func (q *VisualQuery) UnmarshalYAML(value *yaml.Node) error {
 		key := value.Content[index].Value
 		item := value.Content[index+1]
 		switch key {
-		case "table":
-			if err := item.Decode(&out.Table); err != nil {
+		case "dataset":
+			if err := item.Decode(&out.Dataset); err != nil {
 				return err
 			}
 		case "metric_view":
@@ -709,11 +709,11 @@ type SelectionInteraction struct {
 }
 
 type SelectionMapping struct {
-	Field string `yaml:"field" json:"field"`
-	Fact  string `yaml:"dataset" json:"dataset,omitempty"`
-	Grain string `yaml:"grain" json:"grain,omitempty"`
-	Value string `yaml:"value" json:"value"`
-	Label string `yaml:"label" json:"label,omitempty"`
+	Field   string `yaml:"field" json:"field"`
+	Dataset string `yaml:"dataset" json:"dataset,omitempty"`
+	Grain   string `yaml:"grain" json:"grain,omitempty"`
+	Value   string `yaml:"value" json:"value"`
+	Label   string `yaml:"label" json:"label,omitempty"`
 }
 
 type SpatialSelectionInteraction struct {
@@ -726,9 +726,9 @@ type SpatialSelectionInteraction struct {
 }
 
 type SpatialSelectionMapping struct {
-	Source string `yaml:"source" json:"source"`
-	Field  string `yaml:"field" json:"field"`
-	Fact   string `yaml:"dataset" json:"dataset,omitempty"`
+	Source  string `yaml:"source" json:"source"`
+	Field   string `yaml:"field" json:"field"`
+	Dataset string `yaml:"dataset" json:"dataset,omitempty"`
 }
 
 func (s SpatialSelectionInteraction) IsZero() bool {
@@ -874,11 +874,11 @@ func (t TableVisual) CardinalityOrDefault() string {
 }
 
 type TableQuery struct {
-	Table   string     `yaml:"table"`
-	Fields  []string   `yaml:"fields"`
-	Columns []FieldRef `yaml:"columns"`
-	Rows    []FieldRef `yaml:"rows"`
-	Metrics []FieldRef `yaml:"metrics"`
+	Dataset string     `yaml:"dataset" json:"dataset,omitempty"`
+	Fields  []string   `yaml:"fields" json:"fields,omitempty"`
+	Columns []FieldRef `yaml:"columns" json:"columns,omitempty"`
+	Rows    []FieldRef `yaml:"rows" json:"rows,omitempty"`
+	Metrics []FieldRef `yaml:"metrics" json:"metrics,omitempty"`
 }
 
 func (q *TableQuery) UnmarshalYAML(value *yaml.Node) error {
@@ -893,8 +893,8 @@ func (q *TableQuery) UnmarshalYAML(value *yaml.Node) error {
 		switch key {
 		case "metric_view":
 			return fmt.Errorf("metric_view is not supported; use dashboard semantic_model")
-		case "table":
-			if err := item.Decode(&out.Table); err != nil {
+		case "dataset":
+			if err := item.Decode(&out.Dataset); err != nil {
 				return err
 			}
 		case "fields":

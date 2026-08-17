@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/semanticnumeric"
 )
 
 func TestProjectScalarFromCompleteGroupedAtomicMetrics(t *testing.T) {
@@ -35,9 +36,22 @@ func TestProjectScalarFromCompleteGroupedAtomicMetrics(t *testing.T) {
 	if !ok {
 		t.Fatal("projection was rejected")
 	}
-	want := Rows{{"value": 0.4}}
+	want := Rows{{"value": semanticnumeric.Decimal("0.4")}}
 	if !reflect.DeepEqual(projected, want) {
 		t.Fatalf("projected = %#v, want %#v", projected, want)
+	}
+}
+
+func TestRecombineAdditivePreservesExactDecimal(t *testing.T) {
+	value, err := recombineAdditive(Rows{
+		{"amount": "9007199254740993.125"},
+		{"amount": "0.001"},
+	}, "amount", "null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != semanticnumeric.Decimal("9007199254740993.126") {
+		t.Fatalf("recombined Decimal = %#v", value)
 	}
 }
 

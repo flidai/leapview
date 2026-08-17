@@ -74,7 +74,7 @@ func TestOptimizerKeepsDifferentGovernedScopesSeparate(t *testing.T) {
 	}
 }
 
-func TestOptimizerBatchesScalarConsumersAcrossFacts(t *testing.T) {
+func TestOptimizerBatchesScalarConsumersAcrossDatasets(t *testing.T) {
 	plan, err := mustTestOptimizer(t, optimizerTestModel()).Optimize([]LogicalQuery{
 		{Target: Target{Kind: KindVisual, ID: "orders"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "order_count"}}}},
 		{Target: Target{Kind: KindVisual, ID: "tags"}, Query: dataquery.Query{Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "tag_count"}}}},
@@ -84,11 +84,11 @@ func TestOptimizerBatchesScalarConsumersAcrossFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(plan.Jobs) != 1 || plan.Jobs[0].Strategy != StrategyBatch || len(plan.Jobs[0].Queries) != 3 {
-		t.Fatalf("cross-fact scalar plan = %#v", plan)
+		t.Fatalf("cross-dataset scalar plan = %#v", plan)
 	}
 }
 
-func TestOptimizerBundlesSameFactNonAdditiveScalarWithGroupedConsumers(t *testing.T) {
+func TestOptimizerBundlesSameDatasetNonAdditiveScalarWithGroupedConsumers(t *testing.T) {
 	plan, err := mustTestOptimizer(t, optimizerTestModel()).Optimize([]LogicalQuery{
 		{
 			Target: Target{Kind: KindVisual, ID: "orders_by_customer"},
@@ -117,11 +117,11 @@ func TestOptimizerBundlesSameFactNonAdditiveScalarWithGroupedConsumers(t *testin
 		t.Fatal(err)
 	}
 	if len(plan.Jobs) != 1 || plan.Jobs[0].Strategy != StrategyBundle || len(plan.Jobs[0].Queries) != 3 {
-		t.Fatalf("same-fact non-additive plan = %#v, want one exact grouping-set bundle", plan)
+		t.Fatalf("same-dataset non-additive plan = %#v, want one exact grouping-set bundle", plan)
 	}
 }
 
-func TestOptimizerBundlesGroupedConsumersAcrossFactSignatures(t *testing.T) {
+func TestOptimizerBundlesGroupedConsumersAcrossDatasetSignatures(t *testing.T) {
 	queries := []LogicalQuery{
 		{
 			Target: Target{Kind: KindVisual, ID: "orders_by_customer"},
@@ -154,27 +154,54 @@ func TestOptimizerBundlesGroupedConsumersAcrossFactSignatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(plan.Jobs) != 1 || plan.Jobs[0].Strategy != StrategyBundle || len(plan.Jobs[0].Queries) != 2 {
-		t.Fatalf("heterogeneous fact plan = %#v, want one shared-scan bundle", plan)
+		t.Fatalf("heterogeneous dataset plan = %#v, want one shared-scan bundle", plan)
 	}
 	plan, err = optimizer.OptimizeForConcurrency(queries, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(plan.Jobs) != 2 {
-		t.Fatalf("concurrent heterogeneous fact plan = %#v, want independent fact-signature bundles", plan)
+		t.Fatalf("concurrent heterogeneous dataset plan = %#v, want independent dataset-signature bundles", plan)
 	}
 }
 
 func optimizerTestModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Name: "commerce",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"},
+			"tags":   {Model: "tags"},
+		},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"customer": {Field: "orders.customer_id", Table: "orders", Name: "customer"}, "segment": {Field: "orders.segment", Table: "orders", Name: "segment"}, "amount": {Field: "orders.amount", Table: "orders", Name: "amount"}}},
-			"tags":   {Dimensions: map[string]semanticmodel.MetricDimension{"customer": {Field: "tags.customer_id", Table: "tags", Name: "customer"}, "segment": {Field: "tags.segment", Table: "tags", Name: "segment"}}},
+			"orders": {
+				ModelName:   "orders",
+				GrainEntity: "customer",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"customer": {Type: "primary", Fields: []string{"customer"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer":    {Field: "orders.customer_id", Table: "orders", Name: "customer", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"customer_id": {Field: "orders.customer_id", Table: "orders", Name: "customer_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"segment":     {Field: "orders.segment", Table: "orders", Name: "segment", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"amount":      {Field: "orders.amount", Table: "orders", Name: "amount", Type: "number", Datatype: semanticmodel.DataTypeFloat},
+				},
+			},
+			"tags": {
+				ModelName:   "tags",
+				GrainEntity: "customer",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"customer": {Type: "primary", Fields: []string{"customer"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer":    {Field: "tags.customer_id", Table: "tags", Name: "customer", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"customer_id": {Field: "tags.customer_id", Table: "tags", Name: "customer_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"segment":     {Field: "tags.segment", Table: "tags", Name: "segment", Type: "string", Datatype: semanticmodel.DataTypeString},
+				},
+			},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"customer": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.customer_id"}, "tags": {Field: "tags.customer_id"}}},
-			"segment":  {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.segment"}, "tags": {Field: "tags.segment"}}},
+			"customer": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.customer_id"}, "tags": {Field: "tags.customer_id"}}},
+			"segment":  {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.segment"}, "tags": {Field: "tags.segment"}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count":         {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.customer"}, Empty: "zero"},

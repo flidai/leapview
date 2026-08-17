@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -125,6 +126,38 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 	if _, ok := wire["identity"]; ok {
 		t.Fatalf("project artifact retained serving identity: %#v", wire)
+	}
+}
+
+func TestProjectArtifactRoundTripPreservesLoweredSemanticModelBinding(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.SemanticModels["semantic:sales"] = &semanticmodel.Model{
+		Name: "sales",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"sales_orders": {Model: "orders_model"},
+		},
+		Tables: map[string]semanticmodel.Table{
+			"sales_orders": {ModelName: "orders_model"},
+		},
+	}
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(project.Canonical())
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := decoded.Models()["semantic:sales"]
+	if got := model.Tables["sales_orders"].ModelName; got != "orders_model" {
+		t.Fatalf("lowered ModelName = %q, want orders_model after artifact round trip", got)
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatalf("CompileDatasetBindings() after artifact round trip: %v", err)
+	}
+	if dataset, ok := compiled.Dataset("sales_orders"); !ok || dataset.ModelName() != "orders_model" {
+		t.Fatalf("compiled dataset = %#v, ok=%v, want sales_orders bound to orders_model", dataset, ok)
 	}
 }
 

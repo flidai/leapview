@@ -161,7 +161,7 @@ func validateMeta(meta NodeMeta, where string, requireID bool) error {
 
 func validateNode(node Node, nodes map[string]Node) error {
 	// Pointers are convenient when callers build a graph incrementally; the
-	// IR remains closed because all pointer forms still resolve to the nine
+	// IR remains closed because all pointer forms still resolve to the eleven
 	// concrete node types below.
 	switch value := node.(type) {
 	case *ScanDataset:
@@ -205,6 +205,16 @@ func validateNode(node Node, nodes map[string]Node) error {
 		}
 		return validateNode(*value, nodes)
 	case *BundleBranches:
+		if value == nil {
+			return fmt.Errorf("node is nil")
+		}
+		return validateNode(*value, nodes)
+	case *SpatialEnvelope:
+		if value == nil {
+			return fmt.Errorf("node is nil")
+		}
+		return validateNode(*value, nodes)
+	case *AnalyticalEnvelope:
 		if value == nil {
 			return fmt.Errorf("node is nil")
 		}
@@ -494,11 +504,6 @@ func validateNode(node Node, nodes map[string]Node) error {
 			return fmt.Errorf("limit and offset cannot be negative")
 		}
 		sourceFields, sourceMetrics := availableFields(inputMeta(n.Input)), availableMetrics(inputMeta(n.Input))
-		for _, key := range n.Sort {
-			if !sourceFields[key.Field] && !sourceMetrics[key.Field] {
-				return fmt.Errorf("sort field %q is unavailable", key.Field)
-			}
-		}
 		seenProjection := map[string]bool{}
 		for _, projection := range n.Projection {
 			if projection.Name == "" || projection.Source == "" {
@@ -512,6 +517,14 @@ func validateNode(node Node, nodes map[string]Node) error {
 				return fmt.Errorf("projection source %q is unavailable", projection.Source)
 			}
 		}
+		// Sort keys are evaluated before the projection is rendered, but the
+		// renderer orders by the projected output alias. Permit a key that is
+		// one of those unique aliases while still rejecting unknown names.
+		for _, key := range n.Sort {
+			if !sourceFields[key.Field] && !sourceMetrics[key.Field] && !seenProjection[key.Field] {
+				return fmt.Errorf("sort field %q is unavailable", key.Field)
+			}
+		}
 	case BundleBranches:
 		if err := validateBundleEnvelope(n, nodes); err != nil {
 			return err
@@ -523,8 +536,167 @@ func validateNode(node Node, nodes map[string]Node) error {
 		if err := validateBundleEnvelope(*n, nodes); err != nil {
 			return err
 		}
+	case SpatialEnvelope:
+		return validateSpatialEnvelope(n, nodes)
+	case AnalyticalEnvelope:
+		return validateAnalyticalEnvelope(n, nodes)
 	default:
 		return fmt.Errorf("unsupported node kind %q", node.Kind())
+	}
+	return nil
+}
+
+func validateSpatialEnvelope(n SpatialEnvelope, nodes map[string]Node) error {
+	inputs := n.Inputs()
+	if len(inputs) == 0 {
+		return fmt.Errorf("spatial envelope input is required")
+	}
+	if n.Operation == SpatialEnvelopeMetadata {
+		if len(inputs) > 2 {
+			return fmt.Errorf("spatial metadata envelope accepts at most two inputs")
+		}
+	} else if len(inputs) != 1 {
+		return fmt.Errorf("spatial envelope operation %q requires one input", n.Operation)
+	}
+	switch n.Operation {
+	case SpatialEnvelopeTileAggregate:
+		if n.Zoom < 0 || n.Zoom > 30 || n.TargetZoom <= n.Zoom || n.TargetZoom > 30 || n.CellPixels <= 0 || n.Buffer < 0 || n.Buffer > 4096 {
+			return fmt.Errorf("spatial aggregate envelope options are invalid")
+		}
+		if n.Latitude == "" || n.Longitude == "" || (len(n.Metrics) == 0 && len(n.MetricProperties) == 0) {
+			return fmt.Errorf("spatial aggregate envelope coordinates and metrics are required")
+		}
+	case SpatialEnvelopeTileRaw:
+		if n.Zoom < 0 || n.Zoom > 30 || n.Buffer < 0 || n.Buffer > 4096 || n.FeatureCap <= 0 {
+			return fmt.Errorf("spatial raw envelope options are invalid")
+		}
+		if n.Latitude == "" || n.Longitude == "" || len(n.Properties) == 0 {
+			return fmt.Errorf("spatial raw envelope coordinates and properties are required")
+		}
+	case SpatialEnvelopeTileBudget:
+		if n.Zoom < 0 || n.Zoom > 30 || n.Buffer < 0 || n.Buffer > 4096 || n.FeatureCap <= 0 || n.MaximumBytes <= 0 {
+			return fmt.Errorf("spatial budget envelope options are invalid")
+		}
+		if n.Latitude == "" || n.Longitude == "" || len(n.Properties) == 0 {
+			return fmt.Errorf("spatial budget envelope coordinates and properties are required")
+		}
+	case SpatialEnvelopeMetadata:
+		if n.Latitude == "" || n.Longitude == "" || n.FeatureCap <= 0 || n.RawMinimumZoom < 0 || n.MaximumZoom < n.RawMinimumZoom || n.MaximumZoom > 30 {
+			return fmt.Errorf("spatial metadata envelope options are invalid")
+		}
+	default:
+		return fmt.Errorf("unsupported spatial envelope operation %q", n.Operation)
+	}
+	for _, input := range inputs {
+		parent, ok := nodes[input]
+		if !ok || parent == nil {
+			return fmt.Errorf("spatial envelope input %q is unavailable", input)
+		}
+		available := map[string]bool{}
+		for _, field := range parent.Meta().AvailableFields {
+			available[field.Name] = true
+		}
+		for _, metric := range parent.Meta().AvailableMetrics {
+			available[metric.Name] = true
+		}
+		if n.Operation == SpatialEnvelopeMetadata && input == inputs[0] {
+			if !available[n.Latitude] || !available[n.Longitude] {
+				return fmt.Errorf("spatial metadata coordinates are unavailable")
+			}
+			for _, metric := range n.Metrics {
+				if !available[metric] {
+					return fmt.Errorf("spatial metadata metric %q is unavailable", metric)
+				}
+			}
+		}
+		if n.Operation == SpatialEnvelopeMetadata && input != inputs[0] {
+			for _, metric := range n.Metrics {
+				if !available[metric] {
+					return fmt.Errorf("spatial metadata total metric %q is unavailable", metric)
+				}
+			}
+		}
+		if n.Operation != SpatialEnvelopeMetadata {
+			if !available[n.Latitude] || !available[n.Longitude] {
+				return fmt.Errorf("spatial envelope coordinates are unavailable")
+			}
+		}
+		if n.Operation == SpatialEnvelopeTileAggregate {
+			for _, metric := range n.Metrics {
+				if !available[metric] {
+					return fmt.Errorf("spatial aggregate metric %q is unavailable", metric)
+				}
+			}
+			for _, metric := range n.MetricProperties {
+				if metric.Name == "" || metric.Source == "" || !available[metric.Source] {
+					return fmt.Errorf("spatial aggregate metric property %q is unavailable", metric.Name)
+				}
+				if metric.Type != "decimal" && metric.Type != "integer" && metric.Type != "float" {
+					return fmt.Errorf("spatial aggregate metric property %q has unsupported type %q", metric.Name, metric.Type)
+				}
+			}
+		}
+		if n.Operation == SpatialEnvelopeTileRaw || n.Operation == SpatialEnvelopeTileBudget {
+			for _, property := range n.Properties {
+				if !available[property.Source] {
+					return fmt.Errorf("spatial property source %q is unavailable", property.Source)
+				}
+			}
+		}
+	}
+	for _, property := range n.Properties {
+		if property.Name == "" || property.Source == "" {
+			return fmt.Errorf("spatial property name and source are required")
+		}
+	}
+	return nil
+}
+
+func validateAnalyticalEnvelope(n AnalyticalEnvelope, nodes map[string]Node) error {
+	if n.Input == "" {
+		return fmt.Errorf("analytical envelope input is required")
+	}
+	parent, ok := nodes[n.Input]
+	if !ok || parent == nil {
+		return fmt.Errorf("analytical envelope input %q is unavailable", n.Input)
+	}
+	if n.Value == "" {
+		return fmt.Errorf("analytical envelope value is required")
+	}
+	available := map[string]bool{}
+	for _, field := range parent.Meta().AvailableFields {
+		available[field.Name] = true
+	}
+	for _, metric := range parent.Meta().AvailableMetrics {
+		available[metric.Name] = true
+	}
+	if !available[n.Value] {
+		return fmt.Errorf("analytical envelope value %q is unavailable", n.Value)
+	}
+	if n.ValueType != "decimal" && n.ValueType != "integer" && n.ValueType != "float" {
+		return fmt.Errorf("analytical envelope value type %q is unsupported", n.ValueType)
+	}
+	switch n.Operation {
+	case AnalyticalEnvelopeHistogram:
+		if n.BinCount <= 0 {
+			return fmt.Errorf("histogram bin count must be positive")
+		}
+	case AnalyticalEnvelopeDistribution:
+		if n.Group == "" || !available[n.Group] {
+			return fmt.Errorf("distribution group %q is unavailable", n.Group)
+		}
+		if n.Limit < 0 {
+			return fmt.Errorf("distribution limit cannot be negative")
+		}
+		for _, key := range n.Sort {
+			switch key.Field {
+			case "label", "min", "q1", "median", "q3", "max":
+			default:
+				return fmt.Errorf("unsupported distribution sort field %q", key.Field)
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported analytical envelope operation %q", n.Operation)
 	}
 	return nil
 }
@@ -641,7 +813,7 @@ func nodeDatasets(id string, nodes map[string]Node, visiting map[string]bool) ma
 	return result
 }
 
-// validateComputeInput ensures calculations begin only after every fact root
+// validateComputeInput ensures calculations begin only after every dataset root
 // has been reduced. Chaining calculations is allowed, but a calculation may
 // never consume a scan, relationship traversal, or row filter directly.
 func validateComputeInput(id string, nodes map[string]Node) error {
@@ -821,6 +993,16 @@ func canonicalData(node Node) (json.RawMessage, error) {
 			return nil, fmt.Errorf("node is nil")
 		}
 		return canonicalData(*n)
+	case *SpatialEnvelope:
+		if n == nil {
+			return nil, fmt.Errorf("node is nil")
+		}
+		return canonicalData(*n)
+	case *AnalyticalEnvelope:
+		if n == nil {
+			return nil, fmt.Errorf("node is nil")
+		}
+		return canonicalData(*n)
 	case ScanDataset:
 		value = struct {
 			Dataset  string `json:"dataset"`
@@ -887,6 +1069,38 @@ func canonicalData(node Node) (json.RawMessage, error) {
 		value = struct {
 			Branches []BundleBranch `json:"branches"`
 		}{append([]BundleBranch(nil), n.Branches...)}
+	case SpatialEnvelope:
+		value = struct {
+			Operation        SpatialEnvelopeOperation `json:"operation"`
+			Input            string                   `json:"input,omitempty"`
+			Inputs           []string                 `json:"inputs,omitempty"`
+			Latitude         string                   `json:"latitude,omitempty"`
+			Longitude        string                   `json:"longitude,omitempty"`
+			Metrics          []string                 `json:"metrics,omitempty"`
+			MetricProperties []SpatialProperty        `json:"metric_properties,omitempty"`
+			Properties       []SpatialProperty        `json:"properties,omitempty"`
+			Identity         []string                 `json:"identity,omitempty"`
+			Zoom             int                      `json:"zoom,omitempty"`
+			TargetZoom       int                      `json:"target_zoom,omitempty"`
+			CellPixels       int                      `json:"cell_pixels,omitempty"`
+			Buffer           int                      `json:"buffer,omitempty"`
+			FeatureCap       int                      `json:"feature_cap,omitempty"`
+			MaximumBytes     int64                    `json:"maximum_bytes,omitempty"`
+			RawMinimumZoom   int                      `json:"raw_minimum_zoom,omitempty"`
+			MaximumZoom      int                      `json:"maximum_zoom,omitempty"`
+		}{n.Operation, n.Input, append([]string(nil), n.InputsList...), n.Latitude, n.Longitude, append([]string(nil), n.Metrics...), append([]SpatialProperty(nil), n.MetricProperties...), append([]SpatialProperty(nil), n.Properties...), append([]string(nil), n.Identity...), n.Zoom, n.TargetZoom, n.CellPixels, n.Buffer, n.FeatureCap, n.MaximumBytes, n.RawMinimumZoom, n.MaximumZoom}
+	case AnalyticalEnvelope:
+		sortKeys := append([]SortKey(nil), n.Sort...)
+		value = struct {
+			Operation AnalyticalEnvelopeOperation `json:"operation"`
+			Input     string                      `json:"input"`
+			Value     string                      `json:"value"`
+			ValueType string                      `json:"value_type"`
+			Group     string                      `json:"group,omitempty"`
+			BinCount  int                         `json:"bin_count,omitempty"`
+			Sort      []SortKey                   `json:"sort,omitempty"`
+			Limit     int                         `json:"limit,omitempty"`
+		}{n.Operation, n.Input, n.Value, n.ValueType, n.Group, n.BinCount, sortKeys, n.Limit}
 	default:
 		return nil, fmt.Errorf("unsupported node kind %q", node.Kind())
 	}
@@ -950,6 +1164,11 @@ func canonicalMetricSpecs(metrics []MetricSpec) []MetricSpec {
 
 func canonicalPredicate(predicate Predicate) Predicate {
 	out := predicate
+	if predicate.Spatial != nil {
+		spatial := *predicate.Spatial
+		spatial.Points = append([]SpatialPoint(nil), predicate.Spatial.Points...)
+		out.Spatial = &spatial
+	}
 	out.Values = append([]Literal(nil), predicate.Values...)
 	if predicate.Kind == PredicateIn {
 		sort.Slice(out.Values, func(i, j int) bool { return literalKey(out.Values[i]) < literalKey(out.Values[j]) })
@@ -1194,6 +1413,13 @@ func (g *Graph) Explain() (string, error) {
 			fmt.Fprintf(&b, " sort=%v limit=%d offset=%d", value.Sort, value.Limit, value.Offset)
 		case BundleBranches:
 			fmt.Fprintf(&b, " branches=%v", value.Branches)
+		case SpatialEnvelope:
+			fmt.Fprintf(&b, " operation=%s", value.Operation)
+			if value.Latitude != "" || value.Longitude != "" {
+				fmt.Fprintf(&b, " coordinates=%s/%s", value.Latitude, value.Longitude)
+			}
+		case AnalyticalEnvelope:
+			fmt.Fprintf(&b, " operation=%s value=%s", value.Operation, value.Value)
 		}
 		b.WriteByte('\n')
 	}
@@ -1255,6 +1481,10 @@ func predicateExplain(predicate Predicate) string {
 	case PredicateNot:
 		if len(predicate.Children) == 1 {
 			return "NOT (" + predicateExplain(predicate.Children[0]) + ")"
+		}
+	case PredicateSpatial:
+		if predicate.Spatial != nil {
+			return predicate.Spatial.Kind + "(" + predicate.Spatial.Latitude + "," + predicate.Spatial.Longitude + ")"
 		}
 	}
 	return "<invalid-predicate>"

@@ -16,7 +16,7 @@ visuals:
     description: Recent order records.
     cardinality: bounded
     query:
-      table: orders
+      dataset: orders
       fields:
         - orders.order_id
         - orders.purchase_date

@@ -215,7 +215,7 @@ agent.ToolDefinition{
 		return agent.ToolResult{
 			Content: map[string]any{
 				"model_id": input.ModelID,
-				"tables":   []string{"orders", "customers"},
+				"datasets": []string{"orders", "customers"},
 			},
 		}, nil
 	}),

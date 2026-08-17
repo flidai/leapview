@@ -133,7 +133,7 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 		id := "table_" + string(rune('a'+i))
 		tables[id] = dashboardauthoring.TableVisual{
 			Title: "Benchmark Table " + string(rune('A'+i)),
-			Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.status", "orders.state", "orders.category"}},
+			Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id", "orders.status", "orders.state", "orders.category"}},
 			Style: dashboard.TableStyle{Density: "compact", Grid: "full", Zebra: &zebra},
 			Columns: []dashboard.TableColumn{
 				{Key: "order_id", Label: "Order", Width: 180, Format: "text"},
@@ -160,19 +160,20 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 		}},
 	}
 	model := &semanticmodel.Model{
-		Name:  "benchmark",
-		Title: "Benchmark Semantic Model",
+		Name:     "benchmark",
+		Title:    "Benchmark Semantic Model",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:      "orders",
+				Source: "orders", ModelName: "orders",
 				Entities:    map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
 				GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Type: "string"},
-					"status":   {Type: "string"},
-					"state":    {Type: "string"},
-					"category": {Type: "string"},
-					"channel":  {Type: "string"},
+					"order_id": {Field: "orders.order_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"status":   {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"state":    {Field: "orders.state", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"category": {Field: "orders.category", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"channel":  {Field: "orders.channel", Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 		},

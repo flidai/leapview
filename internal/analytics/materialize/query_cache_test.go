@@ -25,6 +25,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// activatedCacheRuntime upgrades lightweight cache fixtures to the same
+// immutable semantic planner contract used by serving runtimes. Test doubles
+// intentionally remain explicit about their dataset/model and grain metadata.
+func activatedCacheRuntime(t testing.TB, runtime *Runtime) *Runtime {
+	t.Helper()
+	if runtime == nil || runtime.model == nil {
+		return runtime
+	}
+	for alias, spec := range runtime.model.Datasets {
+		table, ok := runtime.model.Tables[alias]
+		if !ok {
+			continue
+		}
+		table.ModelName = spec.Model
+		if table.Dimensions == nil {
+			table.Dimensions = map[string]semanticmodel.MetricDimension{}
+		}
+		for name, column := range table.Columns {
+			if _, exists := table.Dimensions[name]; !exists {
+				table.Dimensions[name] = semanticmodel.MetricDimension{Name: name, Type: column.Type, Datatype: column.Datatype}
+			}
+		}
+		if len(table.Dimensions) == 0 {
+			table.Dimensions["__row"] = semanticmodel.MetricDimension{Name: "__row", Type: "integer", Datatype: semanticmodel.DataTypeInteger}
+		}
+		if len(table.Entities) == 0 {
+			field := ""
+			for name := range table.Dimensions {
+				field = name
+				break
+			}
+			table.Entities = map[string]semanticmodel.ModelEntitySpec{"row": {Type: "primary", Fields: []string{field}}}
+			table.GrainEntity = "row"
+		} else if table.GrainEntity == "" {
+			for name, entity := range table.Entities {
+				if entity.Type == "primary" || entity.Type == "unique" {
+					table.GrainEntity = name
+					break
+				}
+			}
+		}
+		runtime.model.Tables[alias] = table
+	}
+	planner, err := semanticquery.NewCompiledPlanner(runtime.model, semanticquery.WithTableRelation(func(table string) (string, error) {
+		return "model." + table, nil
+	}))
+	if err != nil {
+		t.Fatalf("activate cache fixture: %v", err)
+	}
+	runtime.planner = planner
+	return runtime
+}
+
 // The row-shaped helpers below exist only to preserve cache-policy tests while
 // production cache storage is Arrow-only.
 func (c *queryResultCache) execute(ctx context.Context, request dataquery.Query, execute func() (dataquery.Result, error)) (dataquery.Result, error) {
@@ -122,14 +175,14 @@ func (c *queryResultCache) get(key string) (dataquery.Result, bool) {
 
 func TestRuntimeCachesOwnedArrowAndRebuildsRequestTimingOnHit(t *testing.T) {
 	database := &arrowCountingRuntimeDatabase{}
-	runtime := &Runtime{
+	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
-	}
+	})
 	request := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows, ModelID: "sales", Kind: dataquery.KindModelTableRows, Target: "orders", Fields: []dataquery.Field{{Field: "id"}}, Limit: 1}
 	first, err := runtime.ExecuteDataQuery(context.Background(), request)
 	require.NoError(t, err)
@@ -487,14 +540,14 @@ func TestObserveQueryCacheOutcomeReportsSuccessAndError(t *testing.T) {
 }
 
 func TestRuntimeCountsFilterOptionCacheMissAsPhysicalAndHitAsZero(t *testing.T) {
-	runtime := &Runtime{
+	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         cacheRuntimeDatabase{},
 		queryCache: newQueryResultCache(256, ""),
-	}
+	})
 	physicalQueries := 0
 	cacheOutcomes := []string{}
 	ctx := dataquery.WithPhysicalQueryObserver(context.Background(), func(observation dataquery.PhysicalQueryObservation) {
@@ -527,7 +580,7 @@ func TestRuntimeCountsFilterOptionCacheMissAsPhysicalAndHitAsZero(t *testing.T) 
 
 func TestRuntimeCachesGovernedDashboardQueriesAndToggleBackExecutesZeroSQL(t *testing.T) {
 	database := &countingCacheRuntimeDatabase{}
-	runtime := &Runtime{
+	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {
@@ -537,7 +590,7 @@ func TestRuntimeCachesGovernedDashboardQueriesAndToggleBackExecutesZeroSQL(t *te
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
-	}
+	})
 	base := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate,
 		ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
@@ -575,7 +628,7 @@ func TestRuntimeCachesGovernedDashboardQueriesAndToggleBackExecutesZeroSQL(t *te
 
 func TestRuntimeReauthorizesBeforeCacheLookupAndRejectsRevocation(t *testing.T) {
 	database := &countingCacheRuntimeDatabase{}
-	runtime := &Runtime{
+	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {
@@ -585,7 +638,7 @@ func TestRuntimeReauthorizesBeforeCacheLookupAndRejectsRevocation(t *testing.T) 
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
-	}
+	})
 	governor := &revocableCacheGovernor{fingerprint: "sha256:policy-one"}
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate,
@@ -636,7 +689,7 @@ func (governor *revocableCacheGovernor) GovernDataQuery(
 
 func TestRuntimeBundleCacheAllHitExecutesZeroAdditionalSQL(t *testing.T) {
 	database := &bundleCountingDatabase{}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	requests := bundleCacheRequests()
 	if _, err := runtime.ExecuteDataQueryBundle(context.Background(), requests); err != nil {
 		t.Fatal(err)
@@ -651,7 +704,7 @@ func TestRuntimeBundleCacheAllHitExecutesZeroAdditionalSQL(t *testing.T) {
 
 func TestRuntimeBundleChargesLogicalRowsOnceOnCacheMiss(t *testing.T) {
 	database := &budgetConsumingBundleDatabase{}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	runtime.resultLimits = dataquery.ResultLimits{MaxRows: 2, MaxBytes: 1 << 20}
 
 	result, err := runtime.ExecuteDataQueryBundle(context.Background(), bundleCacheRequests())
@@ -682,7 +735,7 @@ func (d *budgetConsumingBundleDatabase) Query(ctx context.Context, plan semantic
 
 func TestRuntimeBundleRejectsNonDashboardBranchesBeforeFlightCoalescing(t *testing.T) {
 	database := &bundleCountingDatabase{}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	requests := bundleCacheRequests()
 	for i := range requests {
 		requests[i].Query.Surface = dataquery.SurfaceAPI
@@ -699,7 +752,7 @@ func TestRuntimeBundleRejectsNonDashboardBranchesBeforeFlightCoalescing(t *testi
 
 func TestRuntimeBundleCacheMixedHitExecutesOnlyLoneMiss(t *testing.T) {
 	database := &bundleCountingDatabase{}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	requests := bundleCacheRequests()
 	if _, err := runtime.ExecuteDataQuery(context.Background(), requests[0].Query); err != nil {
 		t.Fatal(err)
@@ -719,7 +772,7 @@ func TestRuntimeBundleCanceledExecutionDoesNotCacheOrAuditSuccess(t *testing.T) 
 		started: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	governor := &bundleAuditGovernor{}
 	ctx, cancel := context.WithCancel(dataquery.WithGovernor(context.Background(), governor))
 	done := make(chan error, 1)
@@ -834,7 +887,7 @@ func (d *cancelIgnoringBundleDatabase) QueryArrow(ctx context.Context, plan sema
 
 func TestRuntimeBundleGovernsEveryBranchAndFailsClosedOnMask(t *testing.T) {
 	database := &bundleCountingDatabase{}
-	runtime := bundleCacheRuntime(database)
+	runtime := bundleCacheRuntime(t, database)
 	governor := &bundleMaskGovernor{}
 	_, err := runtime.ExecuteDataQueryBundle(dataquery.WithGovernor(context.Background(), governor), bundleCacheRequests())
 	if err == nil || !dataquery.IsBundleIncompatible(err) {
@@ -857,15 +910,15 @@ func (g *bundleMaskGovernor) GovernDataQuery(_ context.Context, request dataquer
 	return request, nil, nil
 }
 
-func bundleCacheRuntime(database Database) *Runtime {
-	return &Runtime{modelID: "sales", model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {
+func bundleCacheRuntime(t testing.TB, database Database) *Runtime {
+	return activatedCacheRuntime(t, &Runtime{modelID: "sales", model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {
 		Dimensions: map[string]semanticmodel.MetricDimension{
 			"id": {Type: "number", Datatype: semanticmodel.DataTypeInteger},
 		},
 	}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Metrics: map[string]semanticmodel.Metric{
 		"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
 		"event_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
-	}}, db: database, queryCache: newQueryResultCache(256, "bundle-test")}
+	}}, db: database, queryCache: newQueryResultCache(256, "bundle-test")})
 }
 
 func bundleCacheRequests() []dataquery.BundleRequest {
@@ -913,7 +966,7 @@ func (d *bundleCountingDatabase) QueryArrow(ctx context.Context, plan semanticqu
 
 func TestRuntimeDoesNotCacheNonDashboardQueries(t *testing.T) {
 	database := &countingCacheRuntimeDatabase{}
-	runtime := &Runtime{
+	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {
@@ -923,7 +976,7 @@ func TestRuntimeDoesNotCacheNonDashboardQueries(t *testing.T) {
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
-	}
+	})
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceAPI, Operation: dataquery.OperationAPIQuery,
 		ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
@@ -940,13 +993,13 @@ func TestRuntimeDoesNotCacheNonDashboardQueries(t *testing.T) {
 }
 
 func TestRuntimeCountFailsClosedForMaskedAuthorizationProjection(t *testing.T) {
-	runtime := &Runtime{
+	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"email": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db: cacheRuntimeDatabase{}, queryCache: newQueryResultCache(256, ""),
-	}
+	})
 	_, err := runtime.ExecuteDataQuery(context.Background(), dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardCount,
 		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders", IncludeTotal: true,
@@ -960,7 +1013,7 @@ func TestRuntimeCountFailsClosedForMaskedAuthorizationProjection(t *testing.T) {
 
 func TestRuntimeDashboardCacheHitDoesNotConsumeReadPermit(t *testing.T) {
 	database := &countingCacheRuntimeDatabase{}
-	runtime := &Runtime{
+	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {
@@ -970,7 +1023,7 @@ func TestRuntimeDashboardCacheHitDoesNotConsumeReadPermit(t *testing.T) {
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
 		queryCache: newQueryResultCache(256, ""),
-	}
+	})
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate,
 		ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
@@ -1285,13 +1338,13 @@ func (d *countingCacheRuntimeDatabase) QueryArrow(ctx context.Context, plan sema
 }
 
 func TestRuntimeSeparatesConnectionWaitFromDatabaseExecution(t *testing.T) {
-	runtime := &Runtime{
+	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db: timingRuntimeDatabase{},
-	}
+	})
 	result, err := runtime.ExecuteDataQuery(context.Background(), dataquery.Query{
 		ModelID: "sales", Kind: dataquery.KindModelTableRows, Target: "orders",
 		Operation: dataquery.OperationDashboardRows,

@@ -142,7 +142,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate:
 		planned.plan, err = planner.Plan(semanticquery.Request{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
+			Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
@@ -154,11 +154,11 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 				break
 			}
 			planned.countOnly = true
-			planned.plan, err = planner.PlanCount(semanticquery.CountRequest{Table: request.Target, Filters: dataQueryFilters(request.Filters)})
+			planned.plan, err = planner.PlanCount(semanticquery.CountRequest{Dataset: request.Target, Filters: dataQueryFilters(request.Filters)})
 			break
 		}
 		planned.plan, err = planner.PlanRows(semanticquery.RowRequest{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
+			Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
 		})
@@ -166,7 +166,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 			planned.plan, err = rowPlanWithTotal(planned.plan)
 			planned.totalFromData = true
 			if err == nil {
-				count, countErr := planner.PlanCount(semanticquery.CountRequest{Table: request.Target, Filters: dataQueryFilters(request.Filters)})
+				count, countErr := planner.PlanCount(semanticquery.CountRequest{Dataset: request.Target, Filters: dataQueryFilters(request.Filters)})
 				if countErr != nil {
 					err = countErr
 				} else {
@@ -186,9 +186,9 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 			}
 		}
 	case dataquery.KindSemanticHistogram:
-		planned.plan, err = planner.PlanHistogram(semanticquery.RawValueRequest{Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metric: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, request.BinCount)
+		planned.plan, err = planner.PlanHistogram(semanticquery.RawValueRequest{Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metric: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, request.BinCount)
 	case dataquery.KindSemanticDistribution:
-		planned.plan, err = planner.PlanDistribution(semanticquery.RawValueRequest{Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metric: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, dataQuerySorts(request.Sort), request.Limit)
+		planned.plan, err = planner.PlanDistribution(semanticquery.RawValueRequest{Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metric: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, dataQuerySorts(request.Sort), request.Limit)
 	case dataquery.KindSemanticSpatialTile:
 		if request.SpatialTile == nil {
 			err = fmt.Errorf("semantic spatial tile query requires tile coordinates")
@@ -197,7 +197,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 		tile := request.SpatialTile
 		if tile.Precision == dataquery.SpatialTilePrecisionRaw {
 			planned.plan, err = planner.PlanSpatialTileRaw(semanticquery.SpatialTileRawRequest{
-				Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Identity: dataQueryFields(tile.Identity),
+				Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Identity: dataQueryFields(tile.Identity),
 				Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 				Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
 				Latitude: semanticquery.Field{Field: tile.Latitude.Field, Alias: tile.Latitude.Alias}, Longitude: semanticquery.Field{Field: tile.Longitude.Field, Alias: tile.Longitude.Alias},
@@ -205,7 +205,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 			})
 		} else {
 			planned.plan, err = planner.PlanSpatialTileAggregate(semanticquery.SpatialTileRequest{
-				Table: request.Target, Metrics: dataQueryFields(request.Metrics), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+				Dataset: request.Target, Metrics: dataQueryFields(request.Metrics), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
 				Latitude: semanticquery.Field{Field: tile.Latitude.Field, Alias: tile.Latitude.Alias}, Longitude: semanticquery.Field{Field: tile.Longitude.Field, Alias: tile.Longitude.Alias},
 				Zoom: tile.Zoom, TargetZoom: tile.TargetZoom, MetatileX: tile.MetatileX, MetatileY: tile.MetatileY, MetatileSize: tile.MetatileSize, CellPixels: tile.CellPixels, Buffer: tile.Buffer,
 			})
@@ -217,7 +217,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 		}
 		budget := request.SpatialTileBudget
 		planned.plan, err = planner.PlanSpatialTileBudget(semanticquery.SpatialTileBudgetRequest{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Identity: dataQueryFields(budget.Identity),
+			Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Identity: dataQueryFields(budget.Identity),
 			Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 			Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
 			Latitude: semanticquery.Field{Field: budget.Latitude.Field, Alias: budget.Latitude.Alias}, Longitude: semanticquery.Field{Field: budget.Longitude.Field, Alias: budget.Longitude.Alias},
@@ -229,7 +229,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 			break
 		}
 		planned.plan, err = planner.PlanSpatialMetadata(semanticquery.SpatialMetadataRequest{
-			Table: request.Target, Metrics: dataQueryFields(request.Metrics), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
+			Dataset: request.Target, Metrics: dataQueryFields(request.Metrics), Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks),
 			Latitude: semanticquery.Field{Field: request.SpatialMetadata.Latitude.Field, Alias: request.SpatialMetadata.Latitude.Alias}, Longitude: semanticquery.Field{Field: request.SpatialMetadata.Longitude.Field, Alias: request.SpatialMetadata.Longitude.Alias},
 			FeatureCap: request.SpatialMetadata.FeatureCap, RawMinimumZoom: request.SpatialMetadata.RawMinimumZoom, MaximumZoom: request.SpatialMetadata.MaximumZoom,
 		})

@@ -133,7 +133,7 @@ func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request
 	response := map[string]any{
 		"definition": map[string]any{
 			"id": binding.Filter, "label": filter.Label, "description": filter.Description,
-			"field": filter.Field, "dataset": filter.Fact, "valueKind": filter.ValueKind,
+			"field": filter.Field, "dataset": filter.Dataset, "valueKind": filter.ValueKind,
 			"predicates": filter.Predicates, "options": filter.Options,
 			"formatPattern": filter.Formatting.Pattern, "formatUnit": filter.Formatting.Unit,
 			"timezone": filter.Time.Timezone, "calendar": filter.Time.Calendar, "weekStart": filter.Time.WeekStart,
@@ -425,7 +425,7 @@ func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp
 			}
 		}
 		result, err := queryMetrics.QueryCompiledFilterOptions(r.Context(), dashboardID, dashboardfilter.OptionQuery{
-			Field: definition.Field, Fact: definition.Fact, ValueKind: definition.ValueKind,
+			Field: definition.Field, Dataset: definition.Dataset, ValueKind: definition.ValueKind,
 			Dependencies: dependencies, Limit: 200,
 		})
 		if err != nil {

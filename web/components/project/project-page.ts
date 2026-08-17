@@ -552,7 +552,6 @@ function assetIconNode(type: string): IconNode {
     case 'metric':
       return Sigma
     case 'model_table':
-    case 'semantic_table':
       return TableProperties
     case 'page':
       return PanelTop
@@ -590,7 +589,6 @@ function assetPresentationToken(type: string): string {
     case 'metric':
       return 'metric'
     case 'model_table':
-    case 'semantic_table':
       return 'model-table'
     case 'page':
     case 'page_item':

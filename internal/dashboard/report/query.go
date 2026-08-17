@@ -14,7 +14,7 @@ type QueryField struct {
 
 type QueryFilter struct {
 	Field    string
-	Fact     string
+	Dataset  string
 	Operator string
 	Values   []any
 	Groups   []QueryFilterGroup
@@ -25,7 +25,7 @@ type SpatialFilter struct {
 	Kind           string
 	LatitudeField  string
 	LongitudeField string
-	Fact           string
+	Dataset        string
 	West           float64
 	South          float64
 	East           float64
@@ -50,7 +50,7 @@ type QuerySort struct {
 }
 
 type AggregateQuery struct {
-	Table      string
+	Dataset    string
 	Dimensions []QueryField
 	Metrics    []QueryField
 	Time       dashboardauthoring.QueryTime
@@ -61,7 +61,7 @@ type AggregateQuery struct {
 }
 
 type RowQuery struct {
-	Table      string
+	Dataset    string
 	Dimensions []QueryField
 	Metrics    []QueryField
 	Filters    []QueryFilter
@@ -79,14 +79,14 @@ type ModelTableQuery struct {
 }
 
 type RawValueQuery struct {
-	Table      string
+	Dataset    string
 	Dimensions []QueryField
 	Metric     QueryField
 	Filters    []QueryFilter
 }
 
 type CountQuery struct {
-	Table   string
+	Dataset string
 	Filters []QueryFilter
 }
 
@@ -111,7 +111,7 @@ type DataService interface {
 
 func SemanticAggregateRequest(request AggregateQuery) semanticquery.Request {
 	return semanticquery.Request{
-		Table:      request.Table,
+		Dataset:    request.Dataset,
 		Dimensions: queryFields(request.Dimensions),
 		Metrics:    queryFields(request.Metrics),
 		Time:       semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
@@ -124,7 +124,7 @@ func SemanticAggregateRequest(request AggregateQuery) semanticquery.Request {
 
 func SemanticRowRequest(request RowQuery) semanticquery.RowRequest {
 	return semanticquery.RowRequest{
-		Table:      request.Table,
+		Dataset:    request.Dataset,
 		Dimensions: queryFields(request.Dimensions),
 		Metrics:    queryFields(request.Metrics),
 		Filters:    queryFilters(request.Filters),
@@ -154,7 +154,7 @@ func queryFilters(filters []QueryFilter) []semanticquery.Filter {
 	for i, filter := range filters {
 		result[i] = semanticquery.Filter{
 			Field:    filter.Field,
-			Fact:     filter.Fact,
+			Dataset:  filter.Dataset,
 			Operator: filter.Operator,
 			Values:   append([]any{}, filter.Values...),
 			Groups:   queryFilterGroups(filter.Groups),
@@ -173,7 +173,7 @@ func semanticSpatialFilter(value *SpatialFilter) *semanticquery.SpatialFilter {
 		points[index] = semanticquery.SpatialPoint{Longitude: point.Longitude, Latitude: point.Latitude}
 	}
 	return &semanticquery.SpatialFilter{
-		Kind: value.Kind, LatitudeField: value.LatitudeField, LongitudeField: value.LongitudeField, Fact: value.Fact,
+		Kind: value.Kind, LatitudeField: value.LatitudeField, LongitudeField: value.LongitudeField, Dataset: value.Dataset,
 		West: value.West, South: value.South, East: value.East, North: value.North, Points: points,
 		Center: semanticquery.SpatialPoint{Longitude: value.Center.Longitude, Latitude: value.Center.Latitude}, RadiusMeters: value.RadiusMeters,
 	}

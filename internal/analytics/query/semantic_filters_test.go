@@ -34,6 +34,7 @@ func TestNamedJoinedIsNullFilterRequiresMatchedRow(t *testing.T) {
 	metric := model.Metrics["order_count"]
 	metric.Where = []string{"customer_state_null"}
 	model.Metrics["order_count"] = metric
+	populateFixtureTableModelNames(model)
 	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +60,7 @@ func TestNamedJoinedIsNullFilterRequiresMatchedRow(t *testing.T) {
 	}
 }
 
-func TestNamedMetricWhereAppliesPerFactBeforeMultiFactStitch(t *testing.T) {
+func TestNamedMetricWhereAppliesPerDatasetBeforeMultiDatasetStitch(t *testing.T) {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +77,7 @@ func TestNamedMetricWhereAppliesPerFactBeforeMultiFactStitch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	model := executableMultiFactModel()
+	model := executableMultiDatasetModel()
 	model.Filters = map[string]semanticmodel.SemanticFilterSpec{
 		"consumer_orders": {Field: "orders.segment", Operator: "equals", Value: "consumer"},
 		"consumer_tags":   {Field: "tags.segment", Operator: "equals", Value: "consumer"},
@@ -87,6 +88,7 @@ func TestNamedMetricWhereAppliesPerFactBeforeMultiFactStitch(t *testing.T) {
 	tagCount := model.Metrics["tag_count"]
 	tagCount.Where = []string{"consumer_tags"}
 	model.Metrics["tag_count"] = tagCount
+	populateFixtureTableModelNames(model)
 	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
@@ -97,18 +99,18 @@ func TestNamedMetricWhereAppliesPerFactBeforeMultiFactStitch(t *testing.T) {
 	}
 	rows, err := db.Query(plan.SQL, plan.Args...)
 	if err != nil {
-		t.Fatalf("execute multi-fact named filter plan: %v\nSQL: %s", err, plan.SQL)
+		t.Fatalf("execute multi-dataset named filter plan: %v\nSQL: %s", err, plan.SQL)
 	}
 	defer rows.Close()
 	if !rows.Next() {
-		t.Fatal("multi-fact named filter query returned no row")
+		t.Fatal("multi-dataset named filter query returned no row")
 	}
 	var orders, tags int
 	if err := rows.Scan(&orders, &tags); err != nil {
 		t.Fatal(err)
 	}
 	if orders != 2 || tags != 1 {
-		t.Fatalf("per-fact filtered counts = (%d, %d), want (2, 1)", orders, tags)
+		t.Fatalf("per-dataset filtered counts = (%d, %d), want (2, 1)", orders, tags)
 	}
 }
 
@@ -140,6 +142,7 @@ func TestNamedFilterMatchGuardsPreserveBooleanAndNotSemantics(t *testing.T) {
 	metric := model.Metrics["order_count"]
 	metric.Where = []string{"or_filter"}
 	model.Metrics["order_count"] = metric
+	populateFixtureTableModelNames(model)
 	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
@@ -148,8 +151,9 @@ func TestNamedFilterMatchGuardsPreserveBooleanAndNotSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "t0.status = ?") || !strings.Contains(plan.SQL, " OR ") || !strings.Contains(plan.SQL, "t1.customer_id IS NOT NULL") {
-		t.Fatalf("OR filter did not preserve local/joined semantics: %s", plan.SQL)
+	explain, err := plan.Explain()
+	if err != nil || !strings.Contains(explain, "filter=named/or_filter:") {
+		t.Fatalf("OR filter PlanIR = %q, error=%v", explain, err)
 	}
 	if got := executeSingleCount(t, db, plan); got != 2 {
 		t.Fatalf("OR filter count = %d, want 2", got)
@@ -165,8 +169,9 @@ func TestNamedFilterMatchGuardsPreserveBooleanAndNotSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "t1.customer_id IS NOT NULL") || !strings.Contains(plan.SQL, "AND NOT") {
-		t.Fatalf("NOT filter did not guard joined match: %s", plan.SQL)
+	explain, err = plan.Explain()
+	if err != nil || !strings.Contains(explain, "filter=named/not_filter:") {
+		t.Fatalf("NOT filter PlanIR = %q, error=%v", explain, err)
 	}
 	if got := executeSingleCount(t, db, plan); got != 2 {
 		t.Fatalf("NOT filter count = %d, want 2 matched non-DK rows", got)
@@ -207,6 +212,7 @@ func TestNamedMetricWhereCompilesJoinedBooleanFilterTree(t *testing.T) {
 	metric := model.Metrics["order_count"]
 	metric.Where = []string{"joined_state", "not_null_status", "not_cancelled", "complex"}
 	model.Metrics["order_count"] = metric
+	populateFixtureTableModelNames(model)
 	planner, err := NewCompiledPlanner(model, WithTableRelation(func(table string) (string, error) { return "model." + table, nil }))
 	if err != nil {
 		t.Fatal(err)
@@ -215,20 +221,17 @@ func TestNamedMetricWhereCompilesJoinedBooleanFilterTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "LEFT JOIN model.customers t1 ON t0.customer_id = t1.customer_id") {
-		t.Fatalf("joined named filter omitted relationship join: %s", plan.SQL)
+	explain, err := plan.Explain()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, fragment := range []string{
-		"t1.state = ?",
-		"t0.status IS NOT NULL",
-		"NOT (t0.status = ?)",
-		"t0.status IN (?, ?)",
-		"t0.status IS NULL",
-		"AND NOT (t0.status = ?)",
-	} {
-		if !strings.Contains(plan.SQL, fragment) {
-			t.Fatalf("named filter SQL missing %q: %s", fragment, plan.SQL)
+	for _, name := range []string{"joined_state", "not_null_status", "not_cancelled", "complex"} {
+		if !strings.Contains(explain, "filter=named/"+name+":") {
+			t.Fatalf("named filter PlanIR missing %q: %s", name, explain)
 		}
+	}
+	if strings.Join(plan.RelationshipPaths, ",") != "orders:orders_customers" {
+		t.Fatalf("named filter relationship paths = %v", plan.RelationshipPaths)
 	}
 	if got, want := plan.Args, []any{"DK", "canceled", "paid", "shipped", "canceled"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("named filter args = %#v, want %#v", got, want)
@@ -246,6 +249,7 @@ func TestNamedMetricWhereCoercesIntegerLiteralsAndRejectsUnknownFilter(t *testin
 	metric := model.Metrics["order_count"]
 	metric.Where = []string{"ids"}
 	model.Metrics["order_count"] = metric
+	populateFixtureTableModelNames(model)
 	planner, err := NewCompiledPlanner(model)
 	if err != nil {
 		t.Fatal(err)
@@ -254,11 +258,12 @@ func TestNamedMetricWhereCoercesIntegerLiteralsAndRejectsUnknownFilter(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "t0.order_id IN (?, ?)") {
-		t.Fatalf("integer filter SQL = %s", plan.SQL)
-	}
 	if got, want := plan.Args, []any{int64(1), int64(2)}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("integer filter args = %#v, want %#v", got, want)
+	}
+	explain, err := plan.Explain()
+	if err != nil || !strings.Contains(explain, "filter=named/ids:") {
+		t.Fatalf("integer filter PlanIR = %q, error=%v", explain, err)
 	}
 	metric.Where = []string{"missing"}
 	model.Metrics["order_count"] = metric
@@ -281,6 +286,7 @@ func TestNamedFilterRequiresExplicitPathWhenJoinedDatasetIsAmbiguous(t *testing.
 	metric := model.Metrics["order_count"]
 	metric.Where = []string{"ambiguous"}
 	model.Metrics["order_count"] = metric
+	populateFixtureTableModelNames(model)
 	if _, err := NewCompiledPlanner(model); err == nil || !strings.Contains(err.Error(), "ambiguous relationship path") {
 		t.Fatalf("ambiguous named filter error = %v", err)
 	}

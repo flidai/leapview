@@ -282,7 +282,7 @@ spec:
       title: Orders
       cardinality: bounded
       query:
-        table: orders
+        dataset: orders
         fields: [orders.order_id, orders.revenue]
     state_status:
       type: matrix

@@ -12,9 +12,9 @@ var queryFieldReferences = map[string]visualdocs.FieldReference{
 		Type:        "named query mapping",
 		Description: "Declares bounded comparison, goal, trend, and decision-context queries that inherit the visual's active semantic filters.",
 	},
-	"table": {
+	"dataset": {
 		Type:        "string",
-		Description: "Selects the fact table when the semantic model cannot infer one from the referenced fields.",
+		Description: "Selects the semantic dataset when the semantic model cannot infer one from the referenced fields.",
 	},
 	"dimensions": {
 		Type:        "field mapping",

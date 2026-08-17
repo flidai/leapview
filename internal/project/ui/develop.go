@@ -3105,8 +3105,6 @@ func assetTypeLabel(typ string) string {
 	switch typ {
 	case "semantic_model":
 		return "Semantic model"
-	case "semantic_table":
-		return "Semantic table"
 	case "model_table":
 		return "Model table"
 	case "page_item":
@@ -3136,8 +3134,6 @@ func labelFromKey(key string) string {
 		return "Uses metric"
 	case "uses_semantic_model":
 		return "Uses semantic model"
-	case "uses_semantic_table":
-		return "Uses semantic table"
 	case "uses_table":
 		return "Uses table"
 	case "uses_visual":

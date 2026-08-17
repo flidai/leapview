@@ -12,6 +12,12 @@ func TestPrepareRepresentativePlansCoversMetricDependenciesAndBindings(t *testin
 		Name:    "sales",
 		Sources: map[string]semanticmodel.Source{"orders_source": {Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "BIGINT"}, {Name: "revenue", PhysicalType: "DECIMAL(12,2)"}}}}},
 		Tables: map[string]semanticmodel.Table{"orders": {
+			GrainEntity: "order",
+			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}},
+			Columns: map[string]semanticmodel.ModelColumn{
+				"order_id": {SourceField: "order_id", Datatype: semanticmodel.DataTypeInteger},
+				"revenue":  {SourceField: "revenue", Datatype: semanticmodel.DataTypeDecimal},
+			},
 			Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id": {Type: "number", Datatype: semanticmodel.DataTypeInteger},
 				"revenue":  {Type: "number", Datatype: semanticmodel.DataTypeDecimal},
@@ -28,6 +34,7 @@ func TestPrepareRepresentativePlansCoversMetricDependenciesAndBindings(t *testin
 			"average":     {Type: "ratio", Numerator: "revenue", Denominator: "order_count"},
 		},
 	}
+	populateFixtureTableModelNames(model)
 	plans, err := PrepareRepresentativePlans(model, func(table string) (string, error) { return "model." + table, nil })
 	if err != nil {
 		t.Fatalf("PrepareRepresentativePlans() error = %v", err)
@@ -59,6 +66,7 @@ func TestPrepareRepresentativePlansReportsDeterministicSchemaFailure(t *testing.
 
 func TestPrepareRepresentativePlansForcesEachExplicitRelationshipAndComposedFilter(t *testing.T) {
 	model := verificationRouteModel()
+	populateFixtureTableModelNames(model)
 	plans, err := PrepareRepresentativePlans(model, func(table string) (string, error) { return "model." + table, nil })
 	if err != nil {
 		t.Fatalf("PrepareRepresentativePlans() error = %v", err)
@@ -80,7 +88,7 @@ func TestPrepareRepresentativePlansForcesEachExplicitRelationshipAndComposedFilt
 		t.Fatalf("composed filter route was not prepared: %v", byRoute)
 	}
 	if _, ok := byRoute["metric:combined"]; !ok {
-		t.Fatalf("multi-fact derived metric route was not prepared: %v", byRoute)
+		t.Fatalf("multi-dataset derived metric route was not prepared: %v", byRoute)
 	}
 }
 

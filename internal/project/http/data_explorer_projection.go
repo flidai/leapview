@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
@@ -32,10 +33,11 @@ type DataExplorerProjection struct {
 }
 
 // BuildDataExplorerProjection projects authorized serving assets together
-// with the active compiled project manifest.  Asset visibility is authoritative
-// for every output: manifest entries that do not have a visible serving asset
-// are never exposed to the browser.
-func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.Project, command projectsignals.DataExploreCommand) DataExplorerProjection {
+// with one coherent active-generation manifest and its activation-owned
+// compiled semantic bindings. Asset visibility is authoritative for every
+// output: manifest entries that do not have a visible serving asset are never
+// exposed to the browser.
+func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.Project, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel) DataExplorerProjection {
 	visible := make(map[string]projectview.DevelopAssetView, len(assets))
 	for _, asset := range assets {
 		if strings.TrimSpace(asset.ID) == "" {
@@ -54,6 +56,8 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 
 	models := make([]projectsignals.DataExploreModelSignal, 0, len(semanticIDs))
 	modelByID := make(map[string]*semanticmodel.Model, len(semanticIDs))
+	compiledByID := make(map[string]*semanticquery.CompiledModel, len(semanticIDs))
+	bindingUnavailable := false
 	for _, id := range semanticIDs {
 		model := project.SemanticModels[id]
 		if model == nil {
@@ -61,11 +65,17 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		}
 		modelByID[id] = model
 		asset := visible[id]
+		compiled, ok := compiledModels[id]
+		if !ok || compiled == nil || len(compiled.DatasetNames()) == 0 {
+			bindingUnavailable = true
+			compiled = &semanticquery.CompiledModel{}
+		}
+		compiledByID[id] = compiled
 		models = append(models, projectsignals.DataExploreModelSignal{
 			ID:          id,
 			Title:       firstExplorerNonEmpty(model.Title, model.Name, asset.Title, id),
 			Description: projectsignals.Optional(firstExplorerNonEmpty(model.Description, asset.Description)),
-			Datasets:    explorerDatasets(model),
+			Datasets:    explorerDatasets(model, compiled),
 		})
 	}
 
@@ -75,7 +85,9 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	semanticForTable := make(map[string][]string)
 	for _, semanticID := range semanticIDs {
 		model := modelByID[semanticID]
-		for tableName := range model.Tables {
+		compiled := compiledByID[semanticID]
+		for _, datasetTable := range explorerDatasetTableMap(model, compiled) {
+			tableName := datasetTable.ModelName
 			modelID := project.NameIndex.Models[tableName]
 			if modelID == "" {
 				modelID = explorerModelIDByName(visible, tableName)
@@ -144,7 +156,11 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	if selectedModelIndex < 0 && len(models) > 0 {
 		selectedModelIndex = 0
 	}
-	result := DataExplorerProjection{Objects: objects, Models: models, Command: command, Warnings: []string{}}
+	warnings := []string(nil)
+	if bindingUnavailable {
+		warnings = append(warnings, "Compiled semantic dataset bindings are unavailable for the active serving generation.")
+	}
+	result := DataExplorerProjection{Objects: objects, Models: models, Command: command, Warnings: warnings}
 	if selectedModelIndex < 0 {
 		return result
 	}
@@ -170,7 +186,8 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		command.DatasetID = projectsignals.Optional(baseTable)
 	}
 	model := modelByID[selectedModel.ID]
-	if resolvedBase, changed := resolveExplorerBase(model, baseTable, command); changed {
+	compiled := compiledByID[selectedModel.ID]
+	if resolvedBase, changed := resolveExplorerBase(model, baseTable, command, compiled); changed {
 		previousBase := baseTable
 		baseTable = resolvedBase
 		command.DatasetID = projectsignals.Optional(baseTable)
@@ -184,29 +201,30 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		result.Warnings = append(result.Warnings, "Grain changed from "+explorerLabel(previousBase)+" to "+explorerLabel(baseTable)+" to support the selected fields.")
 	}
 	result.Command = command
-	result.Fields = explorerFields(model, baseTable, command)
+	result.Fields = explorerFields(model, baseTable, command, compiled)
 	return result
 }
 
-func explorerDatasets(model *semanticmodel.Model) []projectsignals.DataExploreDatasetSignal {
+func explorerDatasets(model *semanticmodel.Model, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreDatasetSignal {
 	if model == nil {
 		return []projectsignals.DataExploreDatasetSignal{}
 	}
-	names := make([]string, 0, len(model.Tables))
-	for name := range model.Tables {
+	tables := explorerDatasetTableMap(model, compiled)
+	names := make([]string, 0, len(tables))
+	for name := range tables {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	out := make([]projectsignals.DataExploreDatasetSignal, 0, len(names))
 	for _, name := range names {
-		table := model.Tables[name]
+		table := tables[name]
 		entities, grainEntity, grainFields := explorerDatasetEntities(table)
 		fieldCount := len(table.Dimensions)
 		for metricName, metric := range model.Metrics {
 			if metric.Hidden {
 				continue
 			}
-			for _, root := range explorerMetricRootFacts(model, metricName) {
+			for _, root := range explorerMetricRootDatasets(model, metricName) {
 				if root == name {
 					fieldCount++
 					break
@@ -219,6 +237,21 @@ func explorerDatasets(model *semanticmodel.Model) []projectsignals.DataExploreDa
 		})
 	}
 	return out
+}
+
+func explorerDatasetTableMap(model *semanticmodel.Model, compiled *semanticquery.CompiledModel) map[string]semanticmodel.Table {
+	result := map[string]semanticmodel.Table{}
+	if model == nil {
+		return result
+	}
+	if compiled == nil {
+		return result
+	}
+	for _, name := range compiled.DatasetNames() {
+		dataset, _ := compiled.Dataset(name)
+		result[name] = dataset.Table()
+	}
+	return result
 }
 
 // explorerDatasetEntities preserves the semantic entity contract in the
@@ -247,20 +280,21 @@ func explorerDatasetEntities(table semanticmodel.Table) ([]projectsignals.Semant
 	return entities, grainEntity, grainFields
 }
 
-func explorerFields(model *semanticmodel.Model, baseTable string, command projectsignals.DataExploreCommand) []projectsignals.DataExploreFieldSignal {
+func explorerFields(model *semanticmodel.Model, baseTable string, command projectsignals.DataExploreCommand, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreFieldSignal {
 	if model == nil {
 		return []projectsignals.DataExploreFieldSignal{}
 	}
 	selectedDimensions := explorerStringSet(command.Dimensions)
 	selectedMetrics := explorerStringSet(command.Metrics)
-	tableNames := make([]string, 0, len(model.Tables))
-	for name := range model.Tables {
+	tables := explorerDatasetTableMap(model, compiled)
+	tableNames := make([]string, 0, len(tables))
+	for name := range tables {
 		tableNames = append(tableNames, name)
 	}
 	sort.Strings(tableNames)
 	out := make([]projectsignals.DataExploreFieldSignal, 0)
 	for _, tableName := range tableNames {
-		table := model.Tables[tableName]
+		table := tables[tableName]
 		fieldNames := make([]string, 0, len(table.Dimensions))
 		for name := range table.Dimensions {
 			fieldNames = append(fieldNames, name)
@@ -273,7 +307,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 			compatible, reason, path := explorerFieldCompatibility(model, baseTable, tableName)
 			rebaseDatasetID := ""
 			if !compatible {
-				rebaseDatasetID = explorerFieldRebase(model, command, baseTable, id, "dimension")
+				rebaseDatasetID = explorerFieldRebase(model, command, baseTable, id, "dimension", compiled)
 				if rebaseDatasetID != "" {
 					reason = "Select " + firstExplorerNonEmpty(dimension.Label, explorerLabel(fieldName)) + " and change grain from " + explorerLabel(baseTable) + " to " + explorerLabel(rebaseDatasetID) + "."
 				}
@@ -295,7 +329,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 	sort.Strings(metricNames)
 	for _, name := range metricNames {
 		metric := model.Metrics[name]
-		roots := explorerMetricRootFacts(model, name)
+		roots := explorerMetricRootDatasets(model, name)
 		// Aggregate metrics have one root dataset. Derived and ratio metrics
 		// may span multiple roots; keep those visible from every base and let
 		// the governed planner decide whether the selected combination is safe.
@@ -307,7 +341,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 		reason := ""
 		rebaseDatasetID := ""
 		if !compatible {
-			rebaseDatasetID = explorerFieldRebase(model, command, baseTable, name, "metric")
+			rebaseDatasetID = explorerFieldRebase(model, command, baseTable, name, "metric", compiled)
 			if rebaseDatasetID != "" {
 				reason = "Select " + firstExplorerNonEmpty(metric.Label, explorerLabel(name)) + " and change grain from " + explorerLabel(baseTable) + " to " + explorerLabel(rebaseDatasetID) + "."
 			} else {
@@ -339,18 +373,18 @@ func explorerFieldCompatibility(model *semanticmodel.Model, baseTable, table str
 	return true, "", ids
 }
 
-func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command projectsignals.DataExploreCommand) (string, bool) {
+func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command projectsignals.DataExploreCommand, compiled *semanticquery.CompiledModel) (string, bool) {
 	currentBase = strings.TrimSpace(currentBase)
 	if model == nil {
 		return currentBase, false
 	}
-	targets, metricFacts := explorerCommandTargets(model, command)
-	if explorerBaseScore(model, currentBase, targets, metricFacts) >= 0 {
+	targets, metricDatasets := explorerCommandTargets(model, command)
+	if explorerBaseScore(model, currentBase, targets, metricDatasets, compiled) >= 0 {
 		return currentBase, false
 	}
 	bestBase, bestScore, tied := "", -1, false
-	for candidate := range model.Tables {
-		score := explorerBaseScore(model, candidate, targets, metricFacts)
+	for candidate := range explorerDatasetTableMap(model, compiled) {
+		score := explorerBaseScore(model, candidate, targets, metricDatasets, compiled)
 		if score < 0 {
 			continue
 		}
@@ -367,12 +401,12 @@ func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command
 	return bestBase, true
 }
 
-// explorerMetricRootFacts resolves the physical dataset roots for a metric.
+// explorerMetricRootDatasets resolves the physical dataset roots for a metric.
 // Aggregate metrics have one direct root; derived and ratio metrics recurse
 // through their metric dependencies. Validation rejects cycles, but the
 // visiting guard keeps this browser projection defensive for an incomplete
 // or stale manifest.
-func explorerMetricRootFacts(model *semanticmodel.Model, name string) []string {
+func explorerMetricRootDatasets(model *semanticmodel.Model, name string) []string {
 	if model == nil {
 		return nil
 	}
@@ -445,9 +479,9 @@ func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.D
 	for _, id := range command.Metrics {
 		metric := strings.TrimSpace(id)
 		if resolved, err := model.ResolveMetric(metric); err == nil && !resolved.Hidden {
-			roots := explorerMetricRootFacts(model, metric)
+			roots := explorerMetricRootDatasets(model, metric)
 			// A base can be constrained safely only when a metric has one root
-			// fact. Multi-fact derived/ratio metrics remain unconstrained here
+			// dataset. Multi-dataset derived/ratio metrics remain unconstrained here
 			// so they are not misrepresented as belonging to one table.
 			if len(roots) == 1 {
 				metricSet[roots[0]] = true
@@ -458,24 +492,24 @@ func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.D
 	for table := range targetSet {
 		targets = append(targets, table)
 	}
-	metricFacts := make([]string, 0, len(metricSet))
-	for fact := range metricSet {
-		metricFacts = append(metricFacts, fact)
+	metricDatasets := make([]string, 0, len(metricSet))
+	for dataset := range metricSet {
+		metricDatasets = append(metricDatasets, dataset)
 	}
 	sort.Strings(targets)
-	sort.Strings(metricFacts)
-	return targets, metricFacts
+	sort.Strings(metricDatasets)
+	return targets, metricDatasets
 }
 
-func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, metricFacts []string) int {
+func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, metricDatasets []string, compiled *semanticquery.CompiledModel) int {
 	if model == nil {
 		return -1
 	}
-	if _, ok := model.Tables[candidate]; !ok {
+	if _, ok := explorerDatasetTableMap(model, compiled)[candidate]; !ok {
 		return -1
 	}
-	for _, fact := range metricFacts {
-		if fact != candidate {
+	for _, dataset := range metricDatasets {
+		if dataset != candidate {
 			return -1
 		}
 	}
@@ -493,14 +527,14 @@ func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, me
 	return score
 }
 
-func explorerFieldRebase(model *semanticmodel.Model, command projectsignals.DataExploreCommand, currentBase, fieldID, kind string) string {
+func explorerFieldRebase(model *semanticmodel.Model, command projectsignals.DataExploreCommand, currentBase, fieldID, kind string, compiled *semanticquery.CompiledModel) string {
 	hypothetical := command
 	if kind == "metric" {
 		hypothetical.Metrics = appendUniqueExplorerValue(hypothetical.Metrics, fieldID)
 	} else {
 		hypothetical.Dimensions = appendUniqueExplorerValue(hypothetical.Dimensions, fieldID)
 	}
-	base, changed := resolveExplorerBase(model, currentBase, hypothetical)
+	base, changed := resolveExplorerBase(model, currentBase, hypothetical, compiled)
 	if !changed {
 		return ""
 	}

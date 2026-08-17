@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Delivery distribution
 
-Set `query.table` and select a numeric metric so LeapView can derive the quartiles, median, whiskers, and outliers from raw delivery values.
+Set `query.dataset` and select a numeric metric so LeapView can derive the quartiles, median, whiskers, and outliers from raw delivery values.
 
 {{< visual id="delivery_distribution" >}}
 
@@ -17,7 +17,7 @@ visuals:
     description: Summarizes delivery-day distribution by speed bucket.
     type: boxplot
     query:
-      table: orders
+      dataset: orders
       dimensions:
         delivery_bucket: orders.delivery_bucket
       metrics:
@@ -39,7 +39,7 @@ visuals:
     title: Review score distribution
     type: boxplot
     query:
-      table: orders
+      dataset: orders
       dimensions:
         status: orders.status
       metrics:
@@ -63,7 +63,7 @@ visuals:
     presentation:
       data_zoom: true
     query:
-      table: orders
+      dataset: orders
       dimensions:
         category: orders.category
       metrics:

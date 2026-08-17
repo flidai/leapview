@@ -6,41 +6,68 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/duckdb/duckdb-go/v2"
+	duckdb "github.com/duckdb/duckdb-go/v2"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
-func TestPlanBundleUsesOneStatementAndGroupingSetsForDifferentShapes(t *testing.T) {
-	bundle, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "kpi", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count", Alias: "value"}}, Filters: bundleConsumerFilter()}},
-		{ID: "by_customer", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Filters: bundleConsumerFilter(), Sort: []Sort{{Field: "label", Direction: "asc"}}, Limit: 10}},
+func TestPlanBundleUsesOneStatementAndSharedMaterializedScanForDifferentShapes(t *testing.T) {
+	bundle, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{
+		{ID: "kpi", Request: Request{Dataset: "orders", Metrics: []Field{{Field: "order_count", Alias: "value"}}, Filters: bundleConsumerFilter()}},
+		{ID: "by_customer", Request: Request{Dataset: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Filters: bundleConsumerFilter(), Sort: []Sort{{Field: "label", Direction: "asc"}}, Limit: 10}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sql := bundle.Plan.SQL
 	if got := strings.Count(sql, "FROM model.orders"); got != 1 {
-		t.Fatalf("fact scans = %d, want 1:\n%s", got, sql)
+		t.Fatalf("dataset scans = %d, want 1:\n%s", got, sql)
 	}
-	if !strings.Contains(sql, "CROSS JOIN UNNEST([0, 1])") {
-		t.Fatalf("missing one-pass expanded grouping sets:\n%s", sql)
+	if strings.Count(sql, "AS MATERIALIZED") != 1 || strings.Contains(sql, "CREATE TEMP") {
+		t.Fatalf("bundle did not use one statement-local materialized scan:\n%s", sql)
 	}
-	if !strings.Contains(sql, "COUNT(__v0) FILTER (WHERE __bundle_group = 0)") || !strings.Contains(sql, "SUM(__v1) FILTER (WHERE __bundle_group = 1)") {
-		t.Fatalf("aggregates are not pruned to their consumer groups:\n%s", sql)
+	explain, err := bundle.Plan.Explain()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(sql, "CREATE TEMP") || strings.Contains(sql, "MATERIALIZED") {
-		t.Fatalf("bundle persists the governed fact:\n%s", sql)
+	for _, want := range []string{"[BundleBranches]", "limit=10", "branches=[{kpi 0", "{by_customer 1"} {
+		if !strings.Contains(explain, want) {
+			t.Fatalf("bundle PlanIR missing %q:\n%s", want, explain)
+		}
 	}
-	if !strings.Contains(sql, "ORDER BY __d0 ASC") || !strings.Contains(sql, "LIMIT 10") {
-		t.Fatalf("branch lost sort/limit:\n%s", sql)
-	}
-	if len(bundle.Plan.Args) != 1 || bundle.Plan.Args[0] != "consumer" {
+	if len(bundle.Plan.Args) != 2 || bundle.Plan.Args[0] != "consumer" || bundle.Plan.Args[1] != "consumer" {
 		t.Fatalf("args = %#v", bundle.Plan.Args)
 	}
 }
 
-func TestBundleAppliesNamedMetricWhereFiltersSingleFact(t *testing.T) {
-	model := executableMultiFactModel()
+func exactDecimalEqual(value any, want string) bool {
+	var text string
+	switch typed := value.(type) {
+	case duckdb.Decimal:
+		text = typed.String()
+	case *duckdb.Decimal:
+		if typed == nil {
+			return false
+		}
+		text = typed.String()
+	default:
+		return false
+	}
+	normalize := func(input string) string {
+		if !strings.Contains(input, ".") {
+			return input
+		}
+		input = strings.TrimRight(input, "0")
+		input = strings.TrimRight(input, ".")
+		if input == "-0" {
+			return "0"
+		}
+		return input
+	}
+	return normalize(text) == normalize(want)
+}
+
+func TestBundleAppliesNamedMetricWhereFiltersSingleDataset(t *testing.T) {
+	model := executableMultiDatasetModel()
 	model.Filters = map[string]semanticmodel.SemanticFilterSpec{
 		"business_customers": {Field: "customers.state", Operator: "equals", Value: "business"},
 	}
@@ -65,8 +92,8 @@ func TestBundleAppliesNamedMetricWhereFiltersSingleFact(t *testing.T) {
 		}
 	}
 	bundle, err := mustNewCompiledPlanner(t, model).PlanBundle([]BundleRequest{
-		{ID: "filtered_total", Request: Request{Table: "orders", Metrics: []Field{{Field: "business_revenue", Alias: "value"}}}},
-		{ID: "all_by_segment", Request: Request{Table: "orders", Dimensions: []Field{{Field: "segment", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
+		{ID: "filtered_total", Request: Request{Dataset: "orders", Metrics: []Field{{Field: "business_revenue", Alias: "value"}}}},
+		{ID: "all_by_segment", Request: Request{Dataset: "orders", Dimensions: []Field{{Field: "segment", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -92,8 +119,8 @@ func TestBundleAppliesNamedMetricWhereFiltersSingleFact(t *testing.T) {
 	}
 }
 
-func TestBundleAppliesNamedMetricWhereFiltersMultiFact(t *testing.T) {
-	model := executableMultiFactModel()
+func TestBundleAppliesNamedMetricWhereFiltersMultiDataset(t *testing.T) {
+	model := executableMultiDatasetModel()
 	model.Filters = map[string]semanticmodel.SemanticFilterSpec{
 		"vip_customer": {Field: "customers.state", Operator: "equals", Value: "vip"},
 	}
@@ -127,8 +154,8 @@ func TestBundleAppliesNamedMetricWhereFiltersMultiFact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.Plan.Mode != "multi_fact" {
-		t.Fatalf("bundle mode = %q, want multi_fact", bundle.Plan.Mode)
+	if bundle.Plan.Mode != "multi_dataset" {
+		t.Fatalf("bundle mode = %q, want multi_dataset", bundle.Plan.Mode)
 	}
 	rows, err := queryBundlePlan(db, bundle)
 	if err != nil {
@@ -155,17 +182,17 @@ func TestBundleAppliesNamedMetricWhereFiltersMultiFact(t *testing.T) {
 }
 
 func TestPlanBundleRejectsDifferentGovernedScopes(t *testing.T) {
-	_, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "a", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count"}}, Filters: bundleConsumerFilter()}},
-		{ID: "b", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count"}}, Filters: []Filter{{Field: "orders.segment", Fact: "orders", Operator: "equals", Values: []any{"business"}}}}},
+	_, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{
+		{ID: "a", Request: Request{Dataset: "orders", Metrics: []Field{{Field: "order_count"}}, Filters: bundleConsumerFilter()}},
+		{ID: "b", Request: Request{Dataset: "orders", Metrics: []Field{{Field: "order_count"}}, Filters: []Filter{{Field: "orders.segment", Dataset: "orders", Operator: "equals", Values: []any{"business"}}}}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "governed scope") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestPlanBundleScansEachFactOnceForMultiFactBranches(t *testing.T) {
-	bundle, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{
+func TestPlanBundleScansEachDatasetOnceForMultiDatasetBranches(t *testing.T) {
+	bundle, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{
 		{ID: "by_customer", Request: Request{Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "tags_per_order", Alias: "value"}}}},
 		{ID: "by_segment", Request: Request{Dimensions: []Field{{Field: "segment", Alias: "label"}}, Metrics: []Field{{Field: "tags_per_order", Alias: "value"}}}},
 	})
@@ -173,16 +200,23 @@ func TestPlanBundleScansEachFactOnceForMultiFactBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Count(bundle.Plan.SQL, "FROM model.orders") != 1 || strings.Count(bundle.Plan.SQL, "FROM model.tags") != 1 {
-		t.Fatalf("multi-fact bundle does not scan each fact once:\n%s", bundle.Plan.SQL)
+		t.Fatalf("multi-dataset bundle does not scan each dataset once:\n%s", bundle.Plan.SQL)
 	}
-	for _, want := range []string{"bundle_fact_0", "bundle_fact_1", "FULL OUTER JOIN", "IS NOT DISTINCT FROM", "__bundle_group"} {
+	for _, want := range []string{"AS MATERIALIZED", "FULL OUTER JOIN", "IS NOT DISTINCT FROM"} {
 		if !strings.Contains(bundle.Plan.SQL, want) {
-			t.Fatalf("multi-fact bundle missing %q:\n%s", want, bundle.Plan.SQL)
+			t.Fatalf("multi-dataset bundle missing %q:\n%s", want, bundle.Plan.SQL)
 		}
+	}
+	explain, err := bundle.Plan.Explain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(explain, "[StitchAggregates]") != 2 || !strings.Contains(explain, "[BundleBranches]") {
+		t.Fatalf("multi-root bundle PlanIR =\n%s", explain)
 	}
 }
 
-func TestPlanBundleSharesFactScansAcrossSingleAndMultiFactBranches(t *testing.T) {
+func TestPlanBundleSharesDatasetScansAcrossSingleAndMultiDatasetBranches(t *testing.T) {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -200,11 +234,11 @@ func TestPlanBundleSharesFactScansAcrossSingleAndMultiFactBranches(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	bundle, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{
+	bundle, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{
 		{
 			ID: "orders_by_local_segment",
 			Request: Request{
-				Table:      "orders",
+				Dataset:    "orders",
 				Dimensions: []Field{{Field: "orders.segment", Alias: "label"}},
 				Metrics:    []Field{{Field: "revenue", Alias: "value"}},
 				Sort:       []Sort{{Field: "label", Direction: "asc"}},
@@ -213,7 +247,7 @@ func TestPlanBundleSharesFactScansAcrossSingleAndMultiFactBranches(t *testing.T)
 		{
 			ID: "orders_by_customer",
 			Request: Request{
-				Table:      "orders",
+				Dataset:    "orders",
 				Dimensions: []Field{{Field: "customer", Alias: "label"}},
 				Metrics:    []Field{{Field: "revenue", Alias: "value"}},
 				Sort:       []Sort{{Field: "label", Direction: "asc"}},
@@ -250,19 +284,19 @@ func TestPlanBundleSharesFactScansAcrossSingleAndMultiFactBranches(t *testing.T)
 	}
 	segments := decoded["orders_by_local_segment"]
 	if len(segments) != 2 || segments[0]["label"] != "business" || segments[0]["value"] != float64(30) || segments[1]["label"] != "consumer" || segments[1]["value"] != float64(30) {
-		t.Fatalf("single-fact local branch = %#v", segments)
+		t.Fatalf("single-dataset local branch = %#v", segments)
 	}
 	orderCustomers := decoded["orders_by_customer"]
 	if len(orderCustomers) != 2 || orderCustomers[0]["label"] != "a" || orderCustomers[0]["value"] != float64(30) || orderCustomers[1]["label"] != "b" || orderCustomers[1]["value"] != float64(30) {
-		t.Fatalf("single-fact conformed branch leaked multi-fact-only groups: %#v", orderCustomers)
+		t.Fatalf("single-dataset conformed branch leaked multi-dataset-only groups: %#v", orderCustomers)
 	}
 	customers := decoded["ratio_by_customer"]
-	if len(customers) != 3 || customers[0]["label"] != "a" || customers[0]["value"] != 0.5 || customers[1]["label"] != "b" || customers[1]["value"] != 0.0 || customers[2]["label"] != "c" || customers[2]["value"] != nil {
-		t.Fatalf("multi-fact branch = %#v", customers)
+	if len(customers) != 3 || customers[0]["label"] != "a" || !exactDecimalEqual(customers[0]["value"], "0.5") || customers[1]["label"] != "b" || !exactDecimalEqual(customers[1]["value"], "0") || customers[2]["label"] != "c" || customers[2]["value"] != nil {
+		t.Fatalf("multi-dataset branch = %#v", customers)
 	}
 }
 
-func TestMultiFactBundleScalarCountOnlyExecutesAcrossThreeFacts(t *testing.T) {
+func TestMultiDatasetBundleScalarCountOnlyExecutesAcrossThreeDatasets(t *testing.T) {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -280,7 +314,7 @@ func TestMultiFactBundleScalarCountOnlyExecutesAcrossThreeFacts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	bundle, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{{
+	bundle, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{{
 		ID: "totals",
 		Request: Request{Metrics: []Field{
 			{Field: "order_count", Alias: "orders"},
@@ -292,7 +326,7 @@ func TestMultiFactBundleScalarCountOnlyExecutesAcrossThreeFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(bundle.Plan.SQL, "SELECT \n") {
-		t.Fatalf("count-only fact emitted an empty SELECT list:\n%s", bundle.Plan.SQL)
+		t.Fatalf("count-only dataset emitted an empty SELECT list:\n%s", bundle.Plan.SQL)
 	}
 	rows, err := queryBundlePlan(db, bundle)
 	if err != nil {
@@ -304,11 +338,11 @@ func TestMultiFactBundleScalarCountOnlyExecutesAcrossThreeFacts(t *testing.T) {
 	}
 	got := decoded["totals"]
 	if len(got) != 1 || got[0]["orders"] != int64(2) || got[0]["tags"] != int64(3) || got[0]["clicks"] != int64(0) {
-		t.Fatalf("three-fact scalar = %#v", got)
+		t.Fatalf("three-dataset scalar = %#v", got)
 	}
 }
 
-func TestMultiFactBundleExecutesExactOuterStitchAcrossGroupingSets(t *testing.T) {
+func TestMultiDatasetBundleExecutesExactOuterStitchAcrossGroupingSets(t *testing.T) {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -327,7 +361,7 @@ func TestMultiFactBundleExecutesExactOuterStitchAcrossGroupingSets(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	bundle, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{
+	bundle, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{
 		{ID: "by_customer", Request: Request{Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "tags_per_order", Alias: "value"}, {Field: "click_count", Alias: "clicks"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
 		{ID: "by_segment", Request: Request{Dimensions: []Field{{Field: "segment", Alias: "label"}}, Metrics: []Field{{Field: "tags_per_order", Alias: "value"}, {Field: "click_count", Alias: "clicks"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
 	})
@@ -348,7 +382,7 @@ func TestMultiFactBundleExecutesExactOuterStitchAcrossGroupingSets(t *testing.T)
 		customers[row["label"].(string)] = row["value"]
 		customerClicks[row["label"].(string)] = row["clicks"]
 	}
-	if customers["a"] != 0.5 || customers["b"] != 0.0 || customers["c"] != nil || customers["d"] != nil {
+	if !exactDecimalEqual(customers["a"], "0.5") || !exactDecimalEqual(customers["b"], "0") || customers["c"] != nil || customers["d"] != nil {
 		t.Fatalf("customers = %#v", customers)
 	}
 	if customerClicks["a"] != int64(1) || customerClicks["b"] != int64(0) || customerClicks["c"] != int64(0) || customerClicks["d"] != int64(2) {
@@ -360,7 +394,7 @@ func TestMultiFactBundleExecutesExactOuterStitchAcrossGroupingSets(t *testing.T)
 		segments[row["label"].(string)] = row["value"]
 		segmentClicks[row["label"].(string)] = row["clicks"]
 	}
-	if segments["consumer"] != 1.5 || segments["business"] != 0.0 {
+	if !exactDecimalEqual(segments["consumer"], "1.5") || !exactDecimalEqual(segments["business"], "0") {
 		t.Fatalf("segments = %#v", segments)
 	}
 	if segmentClicks["consumer"] != int64(1) || segmentClicks["business"] != int64(2) {
@@ -394,10 +428,10 @@ func queryBundlePlan(db *sql.DB, bundle BundlePlan) (Rows, error) {
 }
 
 func TestPlanBundleFailsClosedForColumnMasks(t *testing.T) {
-	_, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{{
+	_, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{{
 		ID: "masked",
 		Request: Request{
-			Table:       "orders",
+			Dataset:     "orders",
 			Dimensions:  []Field{{Field: "customer"}},
 			Metrics:     []Field{{Field: "order_count"}},
 			ColumnMasks: []ColumnMask{{Field: "orders.customer_id", Mask: "redact"}},
@@ -409,15 +443,15 @@ func TestPlanBundleFailsClosedForColumnMasks(t *testing.T) {
 }
 
 func TestPlanBundleRejectsDuplicateBranchOutputAliases(t *testing.T) {
-	_, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{{
+	_, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{{
 		ID: "duplicate",
 		Request: Request{
-			Table:      "orders",
+			Dataset:    "orders",
 			Dimensions: []Field{{Field: "customer", Alias: "value"}},
 			Metrics:    []Field{{Field: "order_count", Alias: "value"}},
 		},
 	}})
-	if err == nil || !strings.Contains(err.Error(), "duplicate output alias") {
+	if err == nil || !strings.Contains(err.Error(), "duplicated") {
 		t.Fatalf("error = %v, want duplicate output alias", err)
 	}
 }
@@ -439,9 +473,9 @@ func TestBundleExecutesOneStatementAndDecodesExactTypedBranches(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	bundle, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "kpi", Request: Request{Table: "orders", Metrics: []Field{{Field: "order_count", Alias: "value"}}}},
-		{ID: "customer", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
+	bundle, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{
+		{ID: "kpi", Request: Request{Dataset: "orders", Metrics: []Field{{Field: "order_count", Alias: "value"}}}},
+		{ID: "customer", Request: Request{Dataset: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -516,9 +550,9 @@ func TestBundleDecodePreservesDeterministicAuthoredBranchOrdering(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	bundle, err := mustNewCompiledPlanner(t, executableMultiFactModel()).PlanBundle([]BundleRequest{
-		{ID: "descending", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "desc"}}, Limit: 2}},
-		{ID: "ascending", Request: Request{Table: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}, Limit: 2}},
+	bundle, err := mustNewCompiledPlanner(t, executableMultiDatasetModel()).PlanBundle([]BundleRequest{
+		{ID: "descending", Request: Request{Dataset: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "desc"}}, Limit: 2}},
+		{ID: "ascending", Request: Request{Dataset: "orders", Dimensions: []Field{{Field: "customer", Alias: "label"}}, Metrics: []Field{{Field: "revenue", Alias: "value"}}, Sort: []Sort{{Field: "label", Direction: "asc"}}, Limit: 2}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -567,5 +601,5 @@ func TestBundleDecodePreservesDeterministicAuthoredBranchOrdering(t *testing.T) 
 }
 
 func bundleConsumerFilter() []Filter {
-	return []Filter{{Field: "orders.segment", Fact: "orders", Operator: "equals", Values: []any{"consumer"}}}
+	return []Filter{{Field: "orders.segment", Dataset: "orders", Operator: "equals", Values: []any{"consumer"}}}
 }

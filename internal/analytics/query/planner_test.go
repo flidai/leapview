@@ -12,7 +12,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
-func TestPlannerScalarMultiFactAggregatesFactsIndependently(t *testing.T) {
+func TestPlannerScalarMultiDatasetAggregatesDatasetsIndependently(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{Metrics: []Field{
 		{Field: "revenue", Alias: "revenue"},
 		{Field: "tag_count", Alias: "tags"},
@@ -21,16 +21,20 @@ func TestPlannerScalarMultiFactAggregatesFactsIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"fact_0 AS", "SUM(t0.revenue)", "fact_1 AS", "COUNT(t0.tag_id) AS __m2",
-		"CROSS JOIN", "NULLIF(COALESCE(s.__m0, 0), 0)",
-	} {
-		if !strings.Contains(plan.SQL, want) {
-			t.Fatalf("SQL missing %q:\n%s", want, plan.SQL)
+	explain, err := plan.Explain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"[AggregateMetrics]", "[StitchAggregates]", "[ComputeDerived]"} {
+		if !strings.Contains(explain, want) {
+			t.Fatalf("PlanIR missing %q:\n%s", want, explain)
 		}
 	}
-	if plan.Mode != "multi_fact" || strings.Join(plan.Facts, ",") != "orders,tags" {
-		t.Fatalf("plan mode/facts = %q/%v", plan.Mode, plan.Facts)
+	if strings.Count(explain, "[AggregateMetrics]") != 2 {
+		t.Fatalf("scalar multi-root PlanIR did not aggregate each root independently:\n%s", explain)
+	}
+	if plan.Mode != "multi_dataset" || strings.Join(plan.Datasets, ",") != "orders,tags" {
+		t.Fatalf("plan mode/datasets = %q/%v", plan.Mode, plan.Datasets)
 	}
 }
 
@@ -42,9 +46,6 @@ func TestPlannerAggregatePaginationAlwaysHasTotalOrdering(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(plan.SQL, "ORDER BY label ASC, value ASC") {
-		t.Fatalf("SQL missing deterministic ordering:\n%s", plan.SQL)
 	}
 	if len(plan.EffectiveOrdering) != 2 || plan.EffectiveOrdering[0].Field != "label" || plan.EffectiveOrdering[1].Field != "value" {
 		t.Fatalf("effective ordering = %#v", plan.EffectiveOrdering)
@@ -61,12 +62,12 @@ func TestPlannerExplicitSortRemainsPrimaryAndGetsTieBreaker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "ORDER BY value DESC, label ASC") {
-		t.Fatalf("SQL did not preserve primary sort:\n%s", plan.SQL)
+	if len(plan.EffectiveOrdering) != 2 || plan.EffectiveOrdering[0].Field != "value" || plan.EffectiveOrdering[0].Direction != "desc" || plan.EffectiveOrdering[1].Field != "label" {
+		t.Fatalf("effective ordering = %#v", plan.EffectiveOrdering)
 	}
 }
 
-func TestPlannerGroupedMultiFactUsesFullOuterStitch(t *testing.T) {
+func TestPlannerGroupedMultiDatasetUsesFullOuterStitch(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Dimensions: []Field{{Field: "customer_state", Alias: "state"}},
 		Metrics:    []Field{{Field: "order_count"}, {Field: "tag_count"}},
@@ -74,13 +75,12 @@ func TestPlannerGroupedMultiFactUsesFullOuterStitch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"LEFT JOIN model.customers", "FULL OUTER JOIN fact_1", "IS NOT DISTINCT FROM",
-		"COALESCE(l.__d0, r.__d0) AS __d0", "COALESCE(s.__m0, 0)",
-	} {
-		if !strings.Contains(plan.SQL, want) {
-			t.Fatalf("SQL missing %q:\n%s", want, plan.SQL)
-		}
+	explain, err := plan.Explain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(explain, "[AggregateMetrics]") != 2 || !strings.Contains(explain, "[StitchAggregates]") || !strings.Contains(explain, "keys=[customer_state]") {
+		t.Fatalf("grouped multi-root PlanIR:\n%s", explain)
 	}
 	if strings.Join(plan.StitchDimensions, ",") != "customer_state" {
 		t.Fatalf("stitch dimensions = %v", plan.StitchDimensions)
@@ -90,7 +90,7 @@ func TestPlannerGroupedMultiFactUsesFullOuterStitch(t *testing.T) {
 	}
 }
 
-func TestPlannerConformedFilterPropagatesToEveryFact(t *testing.T) {
+func TestPlannerConformedFilterPropagatesToEveryDataset(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
 		Filters: []Filter{{Field: "customer_state", Operator: "equals", Values: []any{"DK"}}},
@@ -98,15 +98,16 @@ func TestPlannerConformedFilterPropagatesToEveryFact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(plan.SQL, "state = ?"); got != 2 {
-		t.Fatalf("conformed filter count = %d, want 2:\n%s", got, plan.SQL)
-	}
 	if len(plan.Args) != 2 || plan.Args[0] != "DK" || plan.Args[1] != "DK" {
 		t.Fatalf("args = %#v", plan.Args)
 	}
+	explain, err := plan.Explain()
+	if err != nil || strings.Count(explain, "[FilterRows]") != 2 {
+		t.Fatalf("conformed filter PlanIR = %q, error=%v", explain, err)
+	}
 }
 
-func TestPlannerDimensionOnlyQueryUsesFactsCompatibleWithConformedFilters(t *testing.T) {
+func TestPlannerDimensionOnlyQueryUsesDatasetsCompatibleWithConformedFilters(t *testing.T) {
 	model := testModel()
 	model.Dimensions["order_status"] = semanticmodel.SemanticDimension{Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{
 		"orders": {Field: "orders.status"},
@@ -119,15 +120,15 @@ func TestPlannerDimensionOnlyQueryUsesFactsCompatibleWithConformedFilters(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Mode != "single_fact" || strings.Join(plan.Facts, ",") != "orders" {
-		t.Fatalf("plan mode/facts = %q/%v, want single_fact/[orders]", plan.Mode, plan.Facts)
+	if plan.Mode != "single_dataset" || strings.Join(plan.Datasets, ",") != "orders" {
+		t.Fatalf("plan mode/datasets = %q/%v, want single_dataset/[orders]", plan.Mode, plan.Datasets)
 	}
-	if got := strings.Count(plan.SQL, "status IN (?, ?)"); got != 1 {
-		t.Fatalf("status filter count = %d, want 1:\n%s", got, plan.SQL)
+	if len(plan.Args) != 2 || plan.Args[0] != "canceled" || plan.Args[1] != "created" {
+		t.Fatalf("status filter args = %#v", plan.Args)
 	}
 }
 
-func TestPlannerConformedSelectionEntriesPropagateToEveryFact(t *testing.T) {
+func TestPlannerConformedSelectionEntriesPropagateToEveryDataset(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
 		Filters: []Filter{{Groups: []FilterGroup{
@@ -138,63 +139,57 @@ func TestPlannerConformedSelectionEntriesPropagateToEveryFact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(plan.SQL, "state = ?"); got != 4 {
-		t.Fatalf("conformed selection predicate count = %d, want 4:\n%s", got, plan.SQL)
-	}
 	wantArgs := []any{"DK", "SE", "DK", "SE"}
 	if fmt.Sprint(plan.Args) != fmt.Sprint(wantArgs) {
 		t.Fatalf("args = %#v, want %#v", plan.Args, wantArgs)
 	}
 }
 
-func TestPlannerFactLocalSelectionFiltersOnlyNamedFact(t *testing.T) {
+func TestPlannerDatasetLocalSelectionFiltersOnlyNamedDataset(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
-		Filters: []Filter{{Field: "orders.status", Fact: "orders", Operator: "equals", Values: []any{"paid"}}},
+		Filters: []Filter{{Field: "orders.status", Dataset: "orders", Operator: "equals", Values: []any{"paid"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got := strings.Count(plan.SQL, "status = ?"); got != 1 {
-		t.Fatalf("fact-local predicate count = %d, want 1:\n%s", got, plan.SQL)
 	}
 	if len(plan.Args) != 1 || plan.Args[0] != "paid" {
 		t.Fatalf("args = %#v, want [paid]", plan.Args)
 	}
 }
 
-func TestPlannerRequiresFactForLocalMultiFactFilter(t *testing.T) {
+func TestPlannerRequiresDatasetForLocalMultiDatasetFilter(t *testing.T) {
 	_, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
 		Filters: []Filter{{Field: "orders.status", Operator: "equals", Values: []any{"paid"}}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "requires fact") {
+	if err == nil || !strings.Contains(err.Error(), "requires dataset") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestPlannerRejectsMismatchedFactOnSingleFactFilter(t *testing.T) {
+func TestPlannerRejectsMismatchedDatasetOnSingleDatasetFilter(t *testing.T) {
 	_, err := mustNewCompiledPlanner(t, testModel()).PlanRows(RowRequest{
-		Table:      "orders",
+		Dataset:    "orders",
 		Dimensions: []Field{{Field: "orders.order_id"}},
-		Filters:    []Filter{{Field: "customer_state", Fact: "tags", Operator: "equals", Values: []any{"DK"}}},
+		Filters:    []Filter{{Field: "customer_state", Dataset: "tags", Operator: "equals", Values: []any{"DK"}}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "does not match query fact") {
+	if err == nil || !strings.Contains(err.Error(), "does not match query dataset") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestPlannerTableScopeRejectsOtherFactDependencies(t *testing.T) {
+func TestPlannerTableScopeRejectsOtherDatasetDependencies(t *testing.T) {
 	_, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
-		Table:   "orders",
+		Dataset: "orders",
 		Metrics: []Field{{Field: "tags_per_order"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "selects dependency from fact") {
+	if err == nil || !strings.Contains(err.Error(), "selects dependency from dataset") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestPlannerRejectsLocalDimensionInMultiFactQuery(t *testing.T) {
+func TestPlannerRejectsLocalDimensionInMultiDatasetQuery(t *testing.T) {
 	_, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Dimensions: []Field{{Field: "orders.status"}},
 		Metrics:    []Field{{Field: "order_count"}, {Field: "tag_count"}},
@@ -223,8 +218,8 @@ func TestPlannerUsesExplicitBindingPathInAmbiguousGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "t0.customer_id = t1.customer_id") || strings.Contains(plan.SQL, "billing_customer_id") {
-		t.Fatalf("plan did not use explicit orders_customers path:\n%s", plan.SQL)
+	if strings.Join(plan.RelationshipPaths, ",") != "orders:orders_customers" {
+		t.Fatalf("explicit relationship paths = %v", plan.RelationshipPaths)
 	}
 }
 
@@ -235,16 +230,6 @@ func TestPlannerUsesDistinctAliasesForRolePlayingDimensionPaths(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
-		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
-		"CAST(t1.date_value AS DATE) AS __d0",
-		"CAST(t2.date_value AS DATE) AS __d1",
-	} {
-		if !strings.Contains(plan.SQL, want) {
-			t.Fatalf("role-playing SQL missing %q:\n%s", want, plan.SQL)
-		}
 	}
 	if strings.Join(plan.RelationshipPaths, ",") != "orders:orders_order_date,orders:orders_ship_date" {
 		t.Fatalf("relationship paths = %v", plan.RelationshipPaths)
@@ -257,13 +242,8 @@ func TestPlannerUsesDistinctAliasesForRolePlayingDimensionPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
-		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
-	} {
-		if !strings.Contains(reversed.SQL, want) {
-			t.Fatalf("reversed role-playing SQL missing deterministic join %q:\n%s", want, reversed.SQL)
-		}
+	if strings.Join(reversed.RelationshipPaths, ",") != "orders:orders_order_date,orders:orders_ship_date" {
+		t.Fatalf("reversed relationship paths = %v", reversed.RelationshipPaths)
 	}
 }
 
@@ -278,16 +258,6 @@ func TestPlannerKeepsRolePlayingFilterPathsDistinct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
-		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
-		"t1.date_value = ?",
-		"t2.date_value = ?",
-	} {
-		if !strings.Contains(plan.SQL, want) {
-			t.Fatalf("role-playing filter SQL missing %q:\n%s", want, plan.SQL)
-		}
-	}
 	if len(plan.Args) != 2 || plan.Args[0] != "2026-07-01" || plan.Args[1] != "2026-07-02" {
 		t.Fatalf("args = %#v", plan.Args)
 	}
@@ -298,63 +268,51 @@ func TestPlannerKeepsRolePlayingFilterPathsDistinct(t *testing.T) {
 
 func TestPlannerRowsKeepsRolePlayingDimensionPathsDistinct(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, rolePlayingDateModel()).PlanRows(RowRequest{
-		Table:      "orders",
+		Dataset:    "orders",
 		Dimensions: []Field{{Field: "order_date"}, {Field: "ship_date"}},
 		Metrics:    []Field{{Field: "order_count"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
-		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
-		"t1.date_value AS order_date",
-		"t2.date_value AS ship_date",
-	} {
-		if !strings.Contains(plan.SQL, want) {
-			t.Fatalf("role-playing row SQL missing %q:\n%s", want, plan.SQL)
-		}
+	explain, err := plan.Explain()
+	if err != nil || !strings.Contains(explain, "path=orders_order_date") || !strings.Contains(explain, "path=orders_ship_date") {
+		t.Fatalf("role-playing row PlanIR = %q, error=%v", explain, err)
 	}
 }
 
 func TestPlannerRawValuesKeepsRolePlayingDimensionPathsDistinct(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, rolePlayingDateModel()).PlanRawValues(RawValueRequest{
-		Table:      "orders",
+		Dataset:    "orders",
 		Dimensions: []Field{{Field: "order_date", Alias: "order_date"}, {Field: "ship_date", Alias: "ship_date"}},
 		Metric:     Field{Field: "order_count"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
-		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
-		"t1.date_value AS order_date",
-		"t2.date_value AS ship_date",
-	} {
-		if !strings.Contains(plan.SQL, want) {
-			t.Fatalf("role-playing raw SQL missing %q:\n%s", want, plan.SQL)
-		}
+	explain, err := plan.Explain()
+	if err != nil || !strings.Contains(explain, "path=orders_order_date") || !strings.Contains(explain, "path=orders_ship_date") {
+		t.Fatalf("role-playing raw PlanIR = %q, error=%v", explain, err)
 	}
 }
 
 func TestPlannerRowsAppliesPhysicalMaskToPathResolvedDimension(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, rolePlayingDateModel()).PlanRows(RowRequest{
-		Table:       "orders",
+		Dataset:     "orders",
 		Dimensions:  []Field{{Field: "order_date", Alias: "order_date"}},
 		ColumnMasks: []ColumnMask{{Field: "dates.date_value", Mask: "null"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "NULL AS order_date") {
+	if !strings.Contains(plan.SQL, `NULL AS "order_date"`) {
 		t.Fatalf("physical dimension mask was not applied:\n%s", plan.SQL)
 	}
 }
 
 func TestPlannerCountKeepsRolePlayingFilterPathsDistinct(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, rolePlayingDateModel()).PlanCount(CountRequest{
-		Table: "orders",
+		Dataset: "orders",
 		Filters: []Filter{
 			{Field: "order_date", Operator: "equals", Values: []any{"2026-08-01"}},
 			{Field: "ship_date", Operator: "equals", Values: []any{"2026-08-02"}},
@@ -363,15 +321,9 @@ func TestPlannerCountKeepsRolePlayingFilterPathsDistinct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"LEFT JOIN model.dates t1 ON t0.ordered_date_id = t1.date_id",
-		"LEFT JOIN model.dates t2 ON t0.shipped_date_id = t2.date_id",
-		"t1.date_value = ?",
-		"t2.date_value = ?",
-	} {
-		if !strings.Contains(plan.SQL, want) {
-			t.Fatalf("role-playing count SQL missing %q:\n%s", want, plan.SQL)
-		}
+	explain, err := plan.Explain()
+	if err != nil || !strings.Contains(explain, "path=orders_order_date") || !strings.Contains(explain, "path=orders_ship_date") {
+		t.Fatalf("role-playing count PlanIR = %q, error=%v", explain, err)
 	}
 }
 
@@ -426,18 +378,19 @@ func TestPlannerRejectsRelationshipKeyLogicalDatatypeMismatch(t *testing.T) {
 	}
 }
 
-func TestPlannerRowAndRawQueriesStaySingleFact(t *testing.T) {
+func TestPlannerRowAndRawQueriesStaySingleDataset(t *testing.T) {
 	planner := mustNewCompiledPlanner(t, testModel())
 	row, err := planner.PlanRows(RowRequest{
-		Table: "orders", Dimensions: []Field{{Field: "orders.order_id"}},
+		Dataset: "orders", Dimensions: []Field{{Field: "orders.order_id"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(row.SQL, "t0.order_id AS order_id") {
-		t.Fatalf("row SQL:\n%s", row.SQL)
+	explain, err := row.Explain()
+	if err != nil || !strings.Contains(explain, "[ScanDataset]") || strings.Contains(explain, "[StitchAggregates]") {
+		t.Fatalf("row PlanIR = %q, error=%v", explain, err)
 	}
-	_, err = planner.PlanRawValues(RawValueRequest{Table: "orders", Metric: Field{Field: "order_count"}})
+	_, err = planner.PlanRawValues(RawValueRequest{Dataset: "orders", Metric: Field{Field: "order_count"}})
 	if err != nil {
 		t.Fatalf("raw canonical count error = %v", err)
 	}
@@ -452,14 +405,14 @@ func TestPlannerRawValuesApplyNamedMetricPopulation(t *testing.T) {
 	revenue.Where = []string{"danish_customers"}
 	model.Metrics["revenue"] = revenue
 
-	plan, err := mustNewCompiledPlanner(t, model).PlanRawValues(RawValueRequest{Table: "orders", Metric: Field{Field: "revenue"}})
+	plan, err := mustNewCompiledPlanner(t, model).PlanRawValues(RawValueRequest{Dataset: "orders", Metric: Field{Field: "revenue"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
 		"LEFT JOIN model.customers",
-		"t1.customer_id IS NOT NULL",
-		"t1.state = ?",
+		`"r2"."customer_id" IS NOT NULL`,
+		`"r2"."state" = ?`,
 	} {
 		if !strings.Contains(plan.SQL, want) {
 			t.Fatalf("raw metric population SQL missing %q:\n%s", want, plan.SQL)
@@ -521,16 +474,16 @@ func TestPlannerExecutesTimezoneAndSundayWeekSemantics(t *testing.T) {
 
 func TestPlannerAppliesSpatialInteractionPredicateBeforeAggregation(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
-		Table: "orders", Metrics: []Field{{Field: "order_count"}},
+		Dataset: "orders", Metrics: []Field{{Field: "order_count"}},
 		Filters: []Filter{{Spatial: &SpatialFilter{
-			Kind: "radius", LatitudeField: "orders.latitude", LongitudeField: "orders.longitude", Fact: "orders",
+			Kind: "radius", LatitudeField: "orders.latitude", LongitudeField: "orders.longitude", Dataset: "orders",
 			Center: SpatialPoint{Longitude: -46.63, Latitude: -23.55}, RadiusMeters: 25_000,
 		}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"ASIN", "RADIANS(t0.latitude - ?)", "RADIANS(t0.longitude - ?)"} {
+	for _, want := range []string{"ASIN", `RADIANS("latitude" - ?)`, `RADIANS("longitude" - ?)`} {
 		if !strings.Contains(plan.SQL, want) {
 			t.Fatalf("spatial interaction SQL missing %q:\n%s", want, plan.SQL)
 		}

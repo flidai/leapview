@@ -11,7 +11,6 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -51,7 +50,7 @@ type DataRuntimeSemanticVerifier interface {
 // serving generation. Dashboard optimization must consume this port instead
 // of compiling a second planner from the model projection.
 type DataRuntimePlanner interface {
-	Planner() *semanticquery.Planner
+	Planner() consumer.Planner
 }
 
 type setupRequiredError interface {
@@ -253,7 +252,7 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 }
 
 // Planner returns the activation-owned planner for one semantic model.
-func (m *Service) Planner(modelID string) (*semanticquery.Planner, bool) {
+func (m *Service) Planner(modelID string) (consumer.Planner, bool) {
 	if m == nil {
 		return nil, false
 	}

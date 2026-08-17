@@ -17,6 +17,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -50,14 +51,21 @@ type Metrics struct {
 // Planner forwards the activation-owned planner exposed by the active runtime.
 // Authorization uses the same compiled semantic graph as execution and
 // dashboard optimization; it never compiles a request-local planner.
-func (m Metrics) Planner(modelID string) (*semanticquery.Planner, bool) {
+func (m Metrics) Planner(modelID string) (consumer.Planner, bool) {
 	provider, ok := m.Metrics.(interface {
-		Planner(string) (*semanticquery.Planner, bool)
+		Planner(string) (consumer.Planner, bool)
 	})
 	if !ok {
 		return nil, false
 	}
-	return provider.Planner(modelID)
+	planner, available := provider.Planner(modelID)
+	return planner, available && planner != nil
+}
+
+func (m Metrics) concretePlanner(modelID string) (*semanticquery.Planner, bool) {
+	value, ok := m.Planner(modelID)
+	planner, ok := value.(*semanticquery.Planner)
+	return planner, ok && planner != nil
 }
 
 type DeniedError struct {
@@ -460,7 +468,7 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 	dimensions := dataFieldsToSemanticFields(request.Fields)
 	metrics := dataFieldsToSemanticFields(request.Metrics)
 	for _, field := range request.AuthorizationFields {
-		if semanticFieldIsMeasure(model, field.Field) {
+		if semanticFieldIsMetric(model, field.Field) {
 			metrics = append(metrics, semanticquery.Field{Field: field.Field, Alias: field.Alias})
 		} else {
 			dimensions = append(dimensions, semanticquery.Field{Field: field.Field, Alias: field.Alias})
@@ -468,22 +476,22 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 	}
 	if request.Value.Field != "" {
 		field := semanticquery.Field{Field: request.Value.Field, Alias: request.Value.Alias}
-		if semanticFieldIsMeasure(model, request.Value.Field) {
+		if semanticFieldIsMetric(model, request.Value.Field) {
 			metrics = append(metrics, field)
 		} else {
 			dimensions = append(dimensions, field)
 		}
 	}
 	queryRequest := semanticquery.Request{
-		Table:      request.Target,
+		Dataset:    request.Target,
 		Dimensions: dimensions,
 		Metrics:    metrics,
 		Time:       semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 		Filters:    dataFiltersToSemanticFilters(request.Filters),
 		Sort:       dataSortToSemanticSort(request.Sort),
 	}
-	planner, ok := m.Planner(request.ModelID)
-	if !ok || planner == nil {
+	planner, ok := m.concretePlanner(request.ModelID)
+	if !ok {
 		return nil, nil, fmt.Errorf("compiled semantic planner for model %q is unavailable", request.ModelID)
 	}
 	dependencies, err := planner.ResolveDependencies(queryRequest)
@@ -501,14 +509,14 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 		}
 		semanticObjects = append(semanticObjects, modelObject)
 	}
-	physicalObjects := make([]access.ResourceRef, 0, len(dependencies.Facts)+len(dependencies.PhysicalFields))
+	physicalObjects := make([]access.ResourceRef, 0, len(dependencies.Datasets)+len(dependencies.PhysicalFields))
 	datasets := map[string]access.ResourceRef{}
-	for _, fact := range dependencies.Facts {
-		dataset, ok := resourceIndex.byName(fact, projectgraph.KindModel)
+	for _, datasetName := range dependencies.Datasets {
+		dataset, ok := resourceIndex.byName(datasetName, projectgraph.KindModel)
 		if !ok {
 			continue
 		}
-		datasets[fact] = dataset
+		datasets[datasetName] = dataset
 		physicalObjects = append(physicalObjects, dataset)
 	}
 	for _, field := range dependencies.PhysicalFields {
@@ -532,7 +540,7 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 	return semanticObjects, physicalObjects, nil
 }
 
-func semanticFieldIsMeasure(model *semanticmodel.Model, field string) bool {
+func semanticFieldIsMetric(model *semanticmodel.Model, field string) bool {
 	if model == nil {
 		return false
 	}
@@ -569,7 +577,7 @@ func dataFiltersToSemanticFilters(filters []dataquery.Filter) []semanticquery.Fi
 		for _, group := range filter.Groups {
 			groups = append(groups, semanticquery.FilterGroup{Filters: dataFiltersToSemanticFilters(group.Filters)})
 		}
-		out = append(out, semanticquery.Filter{Field: filter.Field, Fact: filter.Fact, Operator: filter.Operator, Values: append([]any{}, filter.Values...), Groups: groups, Spatial: dataSpatialFilterToSemantic(filter.Spatial)})
+		out = append(out, semanticquery.Filter{Field: filter.Field, Dataset: filter.Dataset, Operator: filter.Operator, Values: append([]any{}, filter.Values...), Groups: groups, Spatial: dataSpatialFilterToSemantic(filter.Spatial)})
 	}
 	return out
 }
@@ -583,7 +591,7 @@ func dataSpatialFilterToSemantic(value *dataquery.SpatialFilter) *semanticquery.
 		points[index] = semanticquery.SpatialPoint{Longitude: point.Longitude, Latitude: point.Latitude}
 	}
 	return &semanticquery.SpatialFilter{
-		Kind: value.Kind, LatitudeField: value.LatitudeField, LongitudeField: value.LongitudeField, Fact: value.Fact,
+		Kind: value.Kind, LatitudeField: value.LatitudeField, LongitudeField: value.LongitudeField, Dataset: value.Dataset,
 		West: value.West, South: value.South, East: value.East, North: value.North, Points: points,
 		Center: semanticquery.SpatialPoint{Longitude: value.Center.Longitude, Latitude: value.Center.Latitude}, RadiusMeters: value.RadiusMeters,
 	}
@@ -651,7 +659,7 @@ func semanticAggregateDataQuery(modelID string, request reportdef.AggregateQuery
 	return dataquery.Query{
 		ModelID: modelID,
 		Kind:    dataquery.KindSemanticAggregate,
-		Target:  request.Table,
+		Target:  request.Dataset,
 		Fields:  queryFieldsToDataFields(request.Dimensions),
 		Metrics: queryFieldsToDataFields(request.Metrics),
 		Time:    dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
@@ -666,7 +674,7 @@ func semanticRowsDataQuery(modelID string, request reportdef.RowQuery) dataquery
 	return dataquery.Query{
 		ModelID: modelID,
 		Kind:    dataquery.KindSemanticRows,
-		Target:  request.Table,
+		Target:  request.Dataset,
 		Fields:  queryFieldsToDataFields(request.Dimensions),
 		Metrics: queryFieldsToDataFields(request.Metrics),
 		Filters: queryFiltersToDataFilters(request.Filters),
@@ -696,7 +704,7 @@ func queryFiltersToDataFilters(filters []reportdef.QueryFilter) []dataquery.Filt
 		}
 		out = append(out, dataquery.Filter{
 			Field:    filter.Field,
-			Fact:     filter.Fact,
+			Dataset:  filter.Dataset,
 			Operator: filter.Operator,
 			Values:   append([]any{}, filter.Values...),
 			Groups:   groups,
@@ -784,7 +792,7 @@ func (m Metrics) applyDataPolicies(ctx context.Context, request dataquery.Query,
 	if err != nil {
 		return request, nil, err
 	}
-	policyFilters, err := m.resolvePolicyFilterFacts(request, composition.Filters)
+	policyFilters, err := m.resolvePolicyFilterDatasets(request, composition.Filters)
 	if err != nil {
 		return request, nil, err
 	}
@@ -797,7 +805,7 @@ func (m Metrics) applyDataPolicies(ctx context.Context, request dataquery.Query,
 	return request, policies.all(), nil
 }
 
-func (m Metrics) resolvePolicyFilterFacts(request dataquery.Query, filters []dataquery.Filter) ([]dataquery.Filter, error) {
+func (m Metrics) resolvePolicyFilterDatasets(request dataquery.Query, filters []dataquery.Filter) ([]dataquery.Filter, error) {
 	if request.Kind != dataquery.KindSemanticAggregate || request.Target != "" {
 		return filters, nil
 	}
@@ -805,8 +813,8 @@ func (m Metrics) resolvePolicyFilterFacts(request dataquery.Query, filters []dat
 	if !ok || model == nil {
 		return filters, nil
 	}
-	planner, ok := m.Planner(request.ModelID)
-	if !ok || planner == nil {
+	planner, ok := m.concretePlanner(request.ModelID)
+	if !ok {
 		return nil, fmt.Errorf("compiled semantic planner for model %q is unavailable", request.ModelID)
 	}
 	dependencies, err := planner.ResolveDependencies(semanticquery.Request{
@@ -814,11 +822,11 @@ func (m Metrics) resolvePolicyFilterFacts(request dataquery.Query, filters []dat
 		Time: semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("resolve policy filter facts: %w", err)
+		return nil, fmt.Errorf("resolve policy filter datasets: %w", err)
 	}
 	out := make([]dataquery.Filter, 0, len(filters))
 	for _, filter := range filters {
-		resolved, err := resolvePolicyFilterFact(model, dependencies.Facts, filter)
+		resolved, err := resolvePolicyFilterDataset(model, dependencies.Datasets, filter)
 		if err != nil {
 			return nil, err
 		}
@@ -827,14 +835,14 @@ func (m Metrics) resolvePolicyFilterFacts(request dataquery.Query, filters []dat
 	return out, nil
 }
 
-func resolvePolicyFilterFact(model *semanticmodel.Model, facts []string, filter dataquery.Filter) ([]dataquery.Filter, error) {
+func resolvePolicyFilterDataset(model *semanticmodel.Model, datasets []string, filter dataquery.Filter) ([]dataquery.Filter, error) {
 	if len(filter.Groups) > 0 {
 		resolved := filter
 		resolved.Groups = make([]dataquery.FilterGroup, len(filter.Groups))
 		for groupIndex, group := range filter.Groups {
 			children := make([]dataquery.Filter, 0, len(group.Filters))
 			for _, child := range group.Filters {
-				resolvedChildren, err := resolvePolicyFilterFact(model, facts, child)
+				resolvedChildren, err := resolvePolicyFilterDataset(model, datasets, child)
 				if err != nil {
 					return nil, err
 				}
@@ -844,13 +852,13 @@ func resolvePolicyFilterFact(model *semanticmodel.Model, facts []string, filter 
 		}
 		return []dataquery.Filter{resolved}, nil
 	}
-	if filter.Fact != "" || (filter.Field == "" && filter.Spatial == nil) {
+	if filter.Dataset != "" || (filter.Field == "" && filter.Spatial == nil) {
 		return []dataquery.Filter{filter}, nil
 	}
 
 	refs := []string{filter.Field}
 	if filter.Spatial != nil {
-		if filter.Spatial.Fact != "" {
+		if filter.Spatial.Dataset != "" {
 			return []dataquery.Filter{filter}, nil
 		}
 		refs = []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField}
@@ -870,11 +878,11 @@ func resolvePolicyFilterFact(model *semanticmodel.Model, facts []string, filter 
 		return []dataquery.Filter{filter}, nil
 	}
 
-	resolved := make([]dataquery.Filter, 0, len(facts))
-	for _, fact := range facts {
+	resolved := make([]dataquery.Filter, 0, len(datasets))
+	for _, dataset := range datasets {
 		compatible := true
 		for table := range tables {
-			if _, err := model.SafeRelationshipPath(fact, table); err != nil {
+			if _, err := model.SafeRelationshipPath(dataset, table); err != nil {
 				compatible = false
 				break
 			}
@@ -885,15 +893,15 @@ func resolvePolicyFilterFact(model *semanticmodel.Model, facts []string, filter 
 		copy := filter
 		if copy.Spatial != nil {
 			spatial := *copy.Spatial
-			spatial.Fact = fact
+			spatial.Dataset = dataset
 			copy.Spatial = &spatial
 		} else {
-			copy.Fact = fact
+			copy.Dataset = dataset
 		}
 		resolved = append(resolved, copy)
 	}
 	if len(resolved) == 0 {
-		return nil, fmt.Errorf("policy filter fields %s are not reachable from participating facts %s", strings.Join(refs, ", "), strings.Join(facts, ", "))
+		return nil, fmt.Errorf("policy filter fields %s are not reachable from participating datasets %s", strings.Join(refs, ", "), strings.Join(datasets, ", "))
 	}
 	return resolved, nil
 }
@@ -1265,7 +1273,7 @@ func (m Metrics) persistCanonicalAudit(ctx context.Context, snapshot accesssnaps
 
 // projectResourceIndex is the immutable identity bridge used while governing a
 // query. Graph IDs identify canonical resources (for example ModelID), while
-// executable table/fact references are symbolic names (for example Target or
+// executable table/dataset references are symbolic names (for example Target or
 // a resolver dependency). Keeping those lookups separate prevents an opaque
 // graph ID from leaking into the planner's executable table name.
 type projectResourceIndex struct {

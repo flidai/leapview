@@ -26,8 +26,8 @@ func validateVisualQueryShape(name string, visual Visual) error {
 		return nil
 	}
 	shape := visual.ResultShape()
-	if (shape == "binned_measure" || shape == "distribution") && strings.TrimSpace(visual.Query.Table) == "" {
-		return fmt.Errorf("visual %q shape %s requires query.table", name, shape)
+	if (shape == "binned_measure" || shape == "distribution") && strings.TrimSpace(visual.Query.Dataset) == "" {
+		return fmt.Errorf("visual %q shape %s requires query.dataset", name, shape)
 	}
 	switch shape {
 	case "point":
@@ -211,7 +211,7 @@ func validatePointVisual(name string, visual Visual) error {
 			return fmt.Errorf("visual %q point.size references unknown query alias %q", name, point.Size)
 		}
 		if !metrics.Contains(point.Size) {
-		return fmt.Errorf("visual %q point.size field %q must reference a metric", name, point.Size)
+			return fmt.Errorf("visual %q point.size field %q must reference a metric", name, point.Size)
 		}
 	}
 	for _, channel := range []struct {
@@ -380,7 +380,7 @@ func validateSpatialSelectionInteraction(name string, visual Visual) error {
 	if selection.Latitude.Source == "" || selection.Latitude.Field == "" || selection.Longitude.Source == "" || selection.Longitude.Field == "" {
 		return fmt.Errorf("visual %q spatial_selection latitude and longitude require source and field", name)
 	}
-	if selection.Latitude.Field == selection.Longitude.Field && selection.Latitude.Fact == selection.Longitude.Fact {
+	if selection.Latitude.Field == selection.Longitude.Field && selection.Latitude.Dataset == selection.Longitude.Dataset {
 		return fmt.Errorf("visual %q spatial_selection latitude and longitude target fields must differ", name)
 	}
 	stableAliases := payloadKeySet{}
@@ -394,11 +394,11 @@ func validateSpatialSelectionInteraction(name string, visual Visual) error {
 		if !stableAliases.Contains(mapping.Source) {
 			return fmt.Errorf("visual %q spatial_selection %s references unknown stable query alias %q", name, axis, mapping.Source)
 		}
-		if strings.Contains(mapping.Field, ".") && mapping.Fact == "" {
-			return fmt.Errorf("visual %q spatial_selection %s physical field %q requires fact", name, axis, mapping.Field)
+		if strings.Contains(mapping.Field, ".") && mapping.Dataset == "" {
+			return fmt.Errorf("visual %q spatial_selection %s physical field %q requires dataset", name, axis, mapping.Field)
 		}
-		if !strings.Contains(mapping.Field, ".") && mapping.Fact != "" {
-			return fmt.Errorf("visual %q spatial_selection %s semantic field %q must not specify fact", name, axis, mapping.Field)
+		if !strings.Contains(mapping.Field, ".") && mapping.Dataset != "" {
+			return fmt.Errorf("visual %q spatial_selection %s semantic field %q must not specify dataset", name, axis, mapping.Field)
 		}
 	}
 	coordinateLayer := false

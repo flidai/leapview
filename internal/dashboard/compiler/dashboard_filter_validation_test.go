@@ -9,14 +9,34 @@ import (
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 )
 
-func TestValidateDashboardPreservesFactOnLocalFilterForMultiFactTarget(t *testing.T) {
+func TestValidateDashboardPreservesDatasetOnLocalFilterForMultiDatasetTarget(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "model",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"ratings": {Model: "ratings"},
+			"tags":    {Model: "tags"},
+		},
 		Tables: map[string]semanticmodel.Table{
-			"ratings": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"rating_bucket": {Type: "number"},
-			}},
-			"tags": {Dimensions: map[string]semanticmodel.MetricDimension{"tag_id": {Type: "string"}}},
+			"ratings": {
+				ModelName:   "ratings",
+				GrainEntity: "rating_bucket",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"rating_bucket": {Type: "primary", Fields: []string{"rating_bucket"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"rating_bucket": {Field: "ratings.rating_bucket", Type: "number", Datatype: semanticmodel.DataTypeFloat},
+				},
+			},
+			"tags": {
+				ModelName:   "tags",
+				GrainEntity: "tag_id",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"tag_id": {Type: "primary", Fields: []string{"tag_id"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"tag_id": {Field: "tags.tag_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+				},
+			},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"rating_count":    {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "ratings.rating_bucket"}, Empty: "zero"},
@@ -28,7 +48,7 @@ func TestValidateDashboardPreservesFactOnLocalFilterForMultiFactTarget(t *testin
 		ID: "dashboard", Title: "Dashboard", SemanticModel: "model",
 		FilterDefinitions: map[string]dashboardfilter.Definition{
 			"rating_bucket": {
-				Label: "Rating", Field: "ratings.rating_bucket", Fact: "ratings",
+				Label: "Rating", Field: "ratings.rating_bucket", Dataset: "ratings",
 				Predicates: []dashboardfilter.PredicatePolicy{{
 					Kind: dashboardfilter.ExpressionSet, Operators: []dashboardfilter.Operator{dashboardfilter.OperatorIn},
 				}},

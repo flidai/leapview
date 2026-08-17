@@ -328,9 +328,7 @@ func TestExecuteIntentAssignFieldInfersTableAndCompilesTableVisual(t *testing.T)
 	repository.revisions[current.ID] = current
 
 	model := previewModel()
-	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
-		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
-	}}
+	addCustomersTable(model)
 	lease := newFakeLease(t, "project", &previewRuntime{model: model})
 	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-customers-field", &authoring.AssignFieldPayload{
@@ -342,7 +340,7 @@ func TestExecuteIntentAssignFieldInfersTableAndCompilesTableVisual(t *testing.T)
 	}
 	updated := repository.revisions[result.Revision.RevisionID].Document
 	visual := updated.Visuals["orders"]
-	if visual.Tabular == nil || visual.Tabular.Query.Table != "customers" || len(visual.Tabular.Query.Columns) != 1 || visual.Tabular.Query.Columns[0].Field != "customers.customer_id" {
+	if visual.Tabular == nil || visual.Tabular.Query.Dataset != "customers" || len(visual.Tabular.Query.Columns) != 1 || visual.Tabular.Query.Columns[0].Field != "customers.customer_id" {
 		t.Fatalf("assigned table visual = %#v", visual)
 	}
 	if _, err := dashboardcompiler.Compile(updated, map[string]*semanticmodel.Model{"sales": model}); err != nil {
@@ -375,9 +373,7 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 	repository.lifecycles[lifecycle.ID] = lifecycle
 	repository.revisions[current.ID] = current
 	model := previewModel()
-	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
-		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
-	}}
+	addCustomersTable(model)
 	lease := newFakeLease(t, "project", &previewRuntime{model: model})
 	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 
@@ -427,12 +423,10 @@ func TestBuilderIntentServerIDsExportCanonicalDraft(t *testing.T) {
 	}
 }
 
-func TestExecuteIntentAssignFieldDoesNotRewriteExistingFactForAnotherGovernedTable(t *testing.T) {
+func TestExecuteIntentAssignFieldDoesNotRewriteExistingDatasetForAnotherGovernedTable(t *testing.T) {
 	repository, lifecycle, current := previewRepository(t)
 	model := previewModel()
-	model.Tables["customers"] = semanticmodel.Table{Dimensions: map[string]semanticmodel.MetricDimension{
-		"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string"},
-	}}
+	addCustomersTable(model)
 	lease := newFakeLease(t, "project", &previewRuntime{model: model})
 	app := newApplication(t, repository, &recordingAuthorizer{}, func(context.Context) (runtimehost.Lease, error) { return lease, nil })
 	command := intentCommandForApplication(current, lifecycle.Draft.ID, "intent-cross-table-field", &authoring.AssignFieldPayload{
@@ -443,8 +437,8 @@ func TestExecuteIntentAssignFieldDoesNotRewriteExistingFactForAnotherGovernedTab
 		t.Fatal(err)
 	}
 	visual := repository.revisions[result.Revision.RevisionID].Document.Visuals["orders"]
-	if visual.Tabular == nil || visual.Tabular.Query.Table != "orders" || len(visual.Tabular.Query.Columns) != 1 || visual.Tabular.Query.Columns[0].Field != "customers.customer_id" {
-		t.Fatalf("cross-table assignment rewrote fact: %#v", visual)
+	if visual.Tabular == nil || visual.Tabular.Query.Dataset != "orders" || len(visual.Tabular.Query.Columns) != 1 || visual.Tabular.Query.Columns[0].Field != "customers.customer_id" {
+		t.Fatalf("cross-table assignment rewrote dataset: %#v", visual)
 	}
 }
 
@@ -624,7 +618,7 @@ func authoredDocumentWithField(id, title, measureField string) authoring.Dashboa
 	return authoring.Dashboard{
 		ID: projectgraph.ResourceID(id), Title: title, SemanticModel: "sales",
 		Visuals: authoring.TabularVisualizations("table", map[string]authoring.TableVisual{
-			"orders": {Title: "Orders", Query: authoring.TableQuery{Table: "orders", Fields: []string{"orders.status"}, Metrics: []authoring.FieldRef{{Field: strings.TrimPrefix(measureField, "orders."), Alias: "order_count"}}}},
+			"orders": {Title: "Orders", Query: authoring.TableQuery{Dataset: "orders", Fields: []string{"orders.status"}, Metrics: []authoring.FieldRef{{Field: strings.TrimPrefix(measureField, "orders."), Alias: "order_count"}}}},
 		}),
 		Pages: []dashboard.Page{page},
 	}
@@ -633,10 +627,36 @@ func authoredDocumentWithField(id, title, measureField string) authoring.Dashboa
 func previewModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Name: "sales",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"},
+		},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string"}}},
+			"orders": {
+				ModelName:   "orders",
+				GrainEntity: "status",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"status": {Type: "primary", Fields: []string{"status"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
+				},
+			},
 		},
 		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}},
+	}
+}
+
+func addCustomersTable(model *semanticmodel.Model) {
+	model.Datasets["customers"] = semanticmodel.SemanticDatasetSpec{Model: "customers"}
+	model.Tables["customers"] = semanticmodel.Table{
+		ModelName:   "customers",
+		GrainEntity: "customer_id",
+		Entities: map[string]semanticmodel.ModelEntitySpec{
+			"customer_id": {Type: "primary", Fields: []string{"customer_id"}},
+		},
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"customer_id": {Field: "customers.customer_id", Table: "customers", Name: "customer_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+		},
 	}
 }
 

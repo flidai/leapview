@@ -116,7 +116,7 @@ type Time struct {
 
 type Filter struct {
 	Field    string
-	Fact     string
+	Dataset  string
 	Operator string
 	Values   []any
 	Groups   []FilterGroup
@@ -127,7 +127,7 @@ type SpatialFilter struct {
 	Kind           string
 	LatitudeField  string
 	LongitudeField string
-	Fact           string
+	Dataset        string
 	West           float64
 	South          float64
 	East           float64

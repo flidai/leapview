@@ -222,11 +222,11 @@ type InteractionSelectionEntry struct {
 type InteractionSelectionValue any
 
 type InteractionSelectionMapping struct {
-	Field string                    `json:"field"`
-	Fact  string                    `json:"dataset,omitempty"`
-	Grain string                    `json:"grain,omitempty"`
-	Value InteractionSelectionValue `json:"value"`
-	Label string                    `json:"label,omitempty"`
+	Field   string                    `json:"field"`
+	Dataset string                    `json:"dataset,omitempty"`
+	Grain   string                    `json:"grain,omitempty"`
+	Value   InteractionSelectionValue `json:"value"`
+	Label   string                    `json:"label,omitempty"`
 
 	decodedFromJSON bool
 	valuePresent    bool
@@ -270,11 +270,11 @@ type InteractionCommand struct {
 const UIRowSelectionField = "__leapview.rowKey"
 
 type InteractionCommandMapping struct {
-	Field string                    `json:"field"`
-	Fact  string                    `json:"dataset,omitempty"`
-	Grain string                    `json:"grain,omitempty"`
-	Value InteractionSelectionValue `json:"value"`
-	Label string                    `json:"label,omitempty"`
+	Field   string                    `json:"field"`
+	Dataset string                    `json:"dataset,omitempty"`
+	Grain   string                    `json:"grain,omitempty"`
+	Value   InteractionSelectionValue `json:"value"`
+	Label   string                    `json:"label,omitempty"`
 
 	decodedFromJSON bool
 	valuePresent    bool
@@ -529,11 +529,11 @@ func interactionSelectionEntry(incoming []InteractionCommandMapping) Interaction
 	mappings := make([]InteractionSelectionMapping, 0, len(incoming))
 	for _, mapping := range incoming {
 		mappings = append(mappings, InteractionSelectionMapping{
-			Field: mapping.Field,
-			Fact:  mapping.Fact,
-			Grain: mapping.Grain,
-			Value: mapping.Value,
-			Label: defaultString(mapping.Label, interactionSelectionValueLabel(mapping.Value)),
+			Field:   mapping.Field,
+			Dataset: mapping.Dataset,
+			Grain:   mapping.Grain,
+			Value:   mapping.Value,
+			Label:   defaultString(mapping.Label, interactionSelectionValueLabel(mapping.Value)),
 		})
 	}
 	entry := InteractionSelectionEntry{Mappings: mappings}
@@ -573,7 +573,7 @@ func selectionMappingKey(mapping InteractionSelectionMapping) string {
 	if err != nil {
 		value = []byte(fmt.Sprintf("%T:%v", mapping.Value, mapping.Value))
 	}
-	return mapping.Field + "\x00" + mapping.Fact + "\x00" + mapping.Grain + "\x00" + string(value)
+	return mapping.Field + "\x00" + mapping.Dataset + "\x00" + mapping.Grain + "\x00" + string(value)
 }
 
 func copySelectionEntry(entry InteractionSelectionEntry) InteractionSelectionEntry {
@@ -685,11 +685,11 @@ type InteractionConfig struct {
 }
 
 type InteractionConfigMapping struct {
-	Field string `json:"field"`
-	Fact  string `json:"dataset,omitempty"`
-	Grain string `json:"grain,omitempty"`
-	Value string `json:"value"`
-	Label string `json:"label,omitempty"`
+	Field   string `json:"field"`
+	Dataset string `json:"dataset,omitempty"`
+	Grain   string `json:"grain,omitempty"`
+	Value   string `json:"value"`
+	Label   string `json:"label,omitempty"`
 }
 
 type TableRequest struct {

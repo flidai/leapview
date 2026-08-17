@@ -43,6 +43,17 @@ func TestValidateValidPlanAndDuckDBRender(t *testing.T) {
 	}
 }
 
+func TestDuckDBRenderRejectsUnavailableGroupField(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.GroupBy = []string{"missing"}
+	graph.Nodes["aggregate"] = aggregate
+
+	if _, err := RenderDuckDB(graph); err == nil || !strings.Contains(err.Error(), `group-by field "missing" is unavailable`) {
+		t.Fatalf("RenderDuckDB() error = %v, want unavailable group field", err)
+	}
+}
+
 func TestValidateRejectsInvalidTopology(t *testing.T) {
 	graph := validPlan()
 	filter := graph.Nodes["filter"].(FilterRows)
@@ -60,6 +71,53 @@ func TestValidateRejectsCycle(t *testing.T) {
 	graph.Nodes["filter"] = a
 	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("Validate() error = %v, want cycle", err)
+	}
+}
+
+func TestSortLimitAcceptsProjectedAliasForQualifiedSource(t *testing.T) {
+	graph := validPlan()
+	delete(graph.Nodes, "filter")
+	delete(graph.Nodes, "aggregate")
+	scan := graph.Nodes["scan"].(ScanDataset)
+	scan.AvailableFields = append(scan.AvailableFields, Field{Name: "orders.revenue", Type: "decimal"})
+	scan.PhysicalLineage = append(scan.PhysicalLineage, PhysicalLineage{Logical: "orders.revenue", Dataset: "orders", Field: "revenue"})
+	graph.Nodes["scan"] = scan
+	sortMeta := scan.NodeMeta
+	sortMeta.NodeID = "sort"
+	sortMeta.FilterPhase = FilterPhasePostAggregate
+	sortMeta.AvailableFields = []Field{{Name: "revenue", Type: "decimal"}}
+	sortMeta.PhysicalLineage = nil
+	graph.Nodes["sort"] = SortLimit{
+		NodeMeta: sortMeta, Input: "scan",
+		Sort:       []SortKey{{Field: "revenue"}},
+		Projection: []Projection{{Name: "revenue", Source: "orders.revenue"}},
+	}
+	graph.Output = "sort"
+	graph.NodeMeta = sortMeta
+	if err := graph.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestSortLimitRejectsUnknownSortAlias(t *testing.T) {
+	graph := validPlan()
+	delete(graph.Nodes, "filter")
+	delete(graph.Nodes, "aggregate")
+	scan := graph.Nodes["scan"].(ScanDataset)
+	sortMeta := scan.NodeMeta
+	sortMeta.NodeID = "sort"
+	sortMeta.FilterPhase = FilterPhasePostAggregate
+	sortMeta.AvailableFields = []Field{{Name: "revenue", Type: "decimal"}}
+	sortMeta.PhysicalLineage = nil
+	graph.Nodes["sort"] = SortLimit{
+		NodeMeta: sortMeta, Input: "scan",
+		Sort:       []SortKey{{Field: "missing"}},
+		Projection: []Projection{{Name: "revenue", Source: "amount"}},
+	}
+	graph.Output = "sort"
+	graph.NodeMeta = sortMeta
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), `sort field "missing" is unavailable`) {
+		t.Fatalf("Validate() error = %v, want unavailable sort alias", err)
 	}
 }
 
@@ -288,7 +346,7 @@ func TestCountRequiresTypedInput(t *testing.T) {
 
 func TestScalarFunctionUnaryAndExactNumberAreTyped(t *testing.T) {
 	expression := ScalarExpr{Kind: ScalarFunction, Function: "coalesce", Children: []ScalarExpr{
-		{Kind: ScalarNeg, Children: []ScalarExpr{{Kind: ScalarLiteral, Literal: Literal{Kind: LiteralNumber, NumberText: "9007199254740993.125"}}}},
+		{Kind: ScalarNeg, Children: []ScalarExpr{{Kind: ScalarLiteral, Literal: Literal{Kind: LiteralNumber, NumberKind: NumberDecimal, NumberText: "9007199254740993.125"}}}},
 		{Kind: ScalarMetricRef, Metric: "revenue"},
 	}}
 	if err := expression.validate(map[string]bool{"revenue": true}); err != nil {
@@ -299,7 +357,7 @@ func TestScalarFunctionUnaryAndExactNumberAreTyped(t *testing.T) {
 	}
 	graph := validPlan()
 	filter := graph.Nodes["filter"].(FilterRows)
-	filter.Predicate.Value = Literal{Kind: LiteralNumber, NumberText: "9007199254740993.125"}
+	filter.Predicate.Value = Literal{Kind: LiteralNumber, NumberKind: NumberDecimal, NumberText: "9007199254740993.125"}
 	graph.Nodes["filter"] = filter
 	canonical, err := graph.Canonical()
 	if err != nil {

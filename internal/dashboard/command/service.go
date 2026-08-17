@@ -172,7 +172,7 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 		return command, nil
 	}
 	if wantKind == "row_selection" && semanticMappingCount == 0 {
-		if len(command.Mappings) != 1 || command.Mappings[0].Field != dashboard.UIRowSelectionField || command.Mappings[0].Fact != "" || command.Mappings[0].Grain != "" || !dashboard.IsInteractionSelectionScalar(command.Mappings[0].Value) {
+		if len(command.Mappings) != 1 || command.Mappings[0].Field != dashboard.UIRowSelectionField || command.Mappings[0].Dataset != "" || command.Mappings[0].Grain != "" || !dashboard.IsInteractionSelectionScalar(command.Mappings[0].Value) {
 			return dashboard.InteractionCommand{}, fmt.Errorf("table %q without semantic selection mappings accepts only the UI row key", command.SourceID)
 		}
 		return command, nil
@@ -193,7 +193,7 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 		if !dashboard.IsInteractionSelectionScalar(mapping.Value) {
 			return dashboard.InteractionCommand{}, fmt.Errorf("mapping %d value must be a JSON scalar", index)
 		}
-		identity := reportmodel.SelectionMappingIdentity{Field: mapping.Field, Fact: mapping.Fact, Grain: mapping.Grain}
+		identity := reportmodel.SelectionMappingIdentity{Field: mapping.Field, Dataset: mapping.Dataset, Grain: mapping.Grain}
 		identities[index] = identity
 		incoming[identity] = mapping
 	}
@@ -203,7 +203,7 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 	}
 	command.Mappings = make([]dashboard.InteractionCommandMapping, 0, len(canonical))
 	for _, mapping := range canonical {
-		identity := reportmodel.SelectionMappingIdentity{Field: mapping.Field, Fact: mapping.Fact, Grain: mapping.Grain}
+		identity := reportmodel.SelectionMappingIdentity{Field: mapping.Field, Dataset: mapping.Dataset, Grain: mapping.Grain}
 		value := incoming[identity]
 		if !dashboard.InteractionSelectionValueMatchesType(value.Value, mapping.Type, mapping.Grain) {
 			return dashboard.InteractionCommand{}, fmt.Errorf("mapping field %q value type %T does not match semantic type %q", mapping.Field, value.Value, mapping.Type)

@@ -145,13 +145,13 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	return nil
 }
 
-// resolvedTableForField returns a fact/table identity only when the governed
+// resolvedTableForField returns a dataset/table identity only when the governed
 // semantic field has one unambiguous physical owner. Semantic dimensions may
-// bind to multiple facts, so they deliberately leave the table unset and let
+// bind to multiple datasets, so they deliberately leave the table unset and let
 // the existing compiler relationship validation decide whether the authored
 // query is valid.
 func resolvedTableForField(model *semanticmodel.Model, authored authoring.AuthoringVisualization, field authoring.AssignFieldPayload) string {
-	if authored.Tabular == nil || strings.TrimSpace(authored.Tabular.Query.Table) != "" {
+	if authored.Tabular == nil || strings.TrimSpace(authored.Tabular.Query.Dataset) != "" {
 		return ""
 	}
 	switch field.Role {

@@ -19,7 +19,7 @@ visuals:
     presentation:
       labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
     query:
-      table: revenue_bridge
+      dataset: revenue_bridge
       dimensions:
         component: revenue_bridge.component
       metrics:
