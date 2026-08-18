@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/release"
@@ -196,17 +197,24 @@ func TestEvaluateEvidenceNeverSerializesSourceSecretsOrLocations(t *testing.T) {
 
 func TestEvaluateSourceObservationFailuresProduceCanonicalEvidence(t *testing.T) {
 	for _, test := range []struct {
-		name    string
-		failure string
-		outcome release.GateOutcome
+		name      string
+		failure   analyticsmaterialize.ObservationFailure
+		expected  release.GateObservationFailure
+		outcome   release.GateOutcome
+		freshness bool
 	}{
-		{name: "unavailable", failure: "unavailable", outcome: release.GateUnavailable},
-		{name: "timeout", failure: "timeout", outcome: release.GateTimeout},
-		{name: "bounds", failure: "bounds", outcome: release.GateUnavailable},
+		{name: "unavailable", failure: analyticsmaterialize.ObservationUnavailable, expected: release.GateObservationFailureUnavailable, outcome: release.GateUnavailable},
+		{name: "timeout", failure: analyticsmaterialize.ObservationTimeout, expected: release.GateObservationFailureTimeout, outcome: release.GateTimeout},
+		{name: "bounds", failure: analyticsmaterialize.ObservationBounds, expected: release.GateObservationFailureBounds, outcome: release.GateUnavailable},
+		{name: "freshness-bounds", failure: analyticsmaterialize.ObservationBounds, expected: release.GateObservationFailureBounds, outcome: release.GateUnavailable, freshness: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			source := observedSource()
-			source.SchemaFailure = test.failure
+			if test.freshness {
+				source.FreshnessFailure = test.failure
+			} else {
+				source.SchemaFailure = test.failure
+			}
 			evidence, err := Evaluate(context.Background(), Input{CandidateID: "candidate-1", SourceDigest: testDigest, BindingGeneration: testBinding, RuntimeVersion: "runtime-1", DuckDBVersion: "duckdb-1", Now: time.Unix(1_700_000_000, 0), Sources: []SourceInput{source}, Query: rowsQuery(nil)})
 			var evaluationErr *EvaluationError
 			if !errors.As(err, &evaluationErr) || evaluationErr.Outcome != test.outcome {
@@ -214,6 +222,13 @@ func TestEvaluateSourceObservationFailuresProduceCanonicalEvidence(t *testing.T)
 			}
 			if evidence.Digest == "" || evidence.Outcome != test.outcome {
 				t.Fatalf("failure evidence=%#v", evidence)
+			}
+			if test.freshness {
+				if got := evidence.Sources[0].FreshnessFailure; got != test.expected {
+					t.Fatalf("freshness failure indicator=%q, want %q", got, test.expected)
+				}
+			} else if got := evidence.Sources[0].SchemaFailure; got != test.expected {
+				t.Fatalf("schema failure indicator=%q, want %q", got, test.expected)
 			}
 			if err := evidence.Validate(); err != nil {
 				t.Fatalf("failure evidence validation=%v", err)

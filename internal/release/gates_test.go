@@ -34,6 +34,11 @@ func TestGateEvidenceRejectsDuplicateAndClosedVocabulary(t *testing.T) {
 	if err := evidence.Validate(); err == nil {
 		t.Fatal("duplicate observed column was accepted")
 	}
+	evidence = validGateEvidenceForTest()
+	evidence.Sources[0].SchemaFailure = GateObservationFailure("driver-error-with-secret")
+	if err := evidence.Validate(); err == nil {
+		t.Fatal("unknown source observation failure was accepted")
+	}
 }
 
 func TestGateEvidenceRejectsAggregateTampering(t *testing.T) {

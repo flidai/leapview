@@ -24,6 +24,18 @@ const (
 	GateTimeout     GateOutcome = "timeout"
 )
 
+// GateObservationFailure identifies why live source observation did not
+// produce evidence. It is deliberately closed so persisted gate evidence can
+// distinguish a query bound from an unavailable source without carrying raw
+// database errors or connection details.
+type GateObservationFailure string
+
+const (
+	GateObservationFailureUnavailable GateObservationFailure = "unavailable"
+	GateObservationFailureTimeout     GateObservationFailure = "timeout"
+	GateObservationFailureBounds      GateObservationFailure = "bounds"
+)
+
 type GateBounds struct {
 	MaxRows    int64 `json:"maxRows"`
 	MaxQueries int   `json:"maxQueries"`
@@ -48,10 +60,12 @@ type GateSourceEvidence struct {
 	ObservedSchema     []semanticmodel.ColumnSchema `json:"observedSchema,omitempty"`
 	SchemaDigest       string                       `json:"schemaDigest,omitempty"`
 	SchemaOutcome      GateOutcome                  `json:"schemaOutcome"`
+	SchemaFailure      GateObservationFailure       `json:"schemaFailure,omitempty"`
 	ObservationQueries int                          `json:"observationQueries"`
 	ObservationRows    int64                        `json:"observationRows"`
 	ObservationMillis  int64                        `json:"observationMillis"`
 	FreshnessOutcome   GateOutcome                  `json:"freshnessOutcome,omitempty"`
+	FreshnessFailure   GateObservationFailure       `json:"freshnessFailure,omitempty"`
 	FreshnessAgeMillis int64                        `json:"freshnessAgeMillis,omitempty"`
 	ObservationDigest  string                       `json:"observationDigest,omitempty"`
 	ObservedAt         time.Time                    `json:"observedAt,omitempty"`
@@ -113,6 +127,14 @@ func (e GateEvidence) Validate() error {
 		default:
 			return fmt.Errorf("invalid gate schema outcome %q", source.SchemaOutcome)
 		}
+		switch source.SchemaFailure {
+		case "", GateObservationFailureUnavailable, GateObservationFailureTimeout, GateObservationFailureBounds:
+		default:
+			return fmt.Errorf("invalid gate schema observation failure %q", source.SchemaFailure)
+		}
+		if err := validateObservationFailureOutcome(source.SchemaFailure, source.SchemaOutcome, "schema"); err != nil {
+			return err
+		}
 		if source.SchemaDigest != "" && platformdigest.ValidateSHA256Identity(source.SchemaDigest) != nil {
 			return fmt.Errorf("invalid gate schema digest")
 		}
@@ -136,6 +158,14 @@ func (e GateEvidence) Validate() error {
 		case "", GateSuccess, GateWarning, GateBlocking, GateUnavailable, GateEmpty, GateTimeout:
 		default:
 			return fmt.Errorf("invalid gate freshness outcome %q", source.FreshnessOutcome)
+		}
+		switch source.FreshnessFailure {
+		case "", GateObservationFailureUnavailable, GateObservationFailureTimeout, GateObservationFailureBounds:
+		default:
+			return fmt.Errorf("invalid gate freshness observation failure %q", source.FreshnessFailure)
+		}
+		if err := validateObservationFailureOutcome(source.FreshnessFailure, source.FreshnessOutcome, "freshness"); err != nil {
+			return err
 		}
 	}
 	seenChecks := make(map[string]struct{}, len(e.Checks))
@@ -188,6 +218,22 @@ func (e GateEvidence) Validate() error {
 		encoded, _ := json.Marshal(canonical)
 		if platformdigest.ValidateSHA256Identity(e.Digest) != nil || e.Digest != platformDigest(encoded) {
 			return fmt.Errorf("gate evidence digest mismatch")
+		}
+	}
+	return nil
+}
+
+func validateObservationFailureOutcome(failure GateObservationFailure, outcome GateOutcome, dimension string) error {
+	switch failure {
+	case "":
+		return nil
+	case GateObservationFailureTimeout:
+		if outcome != GateTimeout {
+			return fmt.Errorf("%s observation timeout must have timeout outcome", dimension)
+		}
+	case GateObservationFailureUnavailable, GateObservationFailureBounds:
+		if outcome != GateUnavailable {
+			return fmt.Errorf("%s observation %q must have unavailable outcome", dimension, failure)
 		}
 	}
 	return nil

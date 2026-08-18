@@ -37,12 +37,20 @@ type SourceObservation struct {
 	RevisionObserved   time.Time
 	FreshnessObserved  time.Time
 	FreshnessEmpty     bool
-	SchemaFailure      string
-	FreshnessFailure   string
+	SchemaFailure      ObservationFailure
+	FreshnessFailure   ObservationFailure
 	ObservationQueries int
 	ObservationRows    int64
 	ObservationMillis  int64
 }
+
+type ObservationFailure string
+
+const (
+	ObservationUnavailable ObservationFailure = "unavailable"
+	ObservationTimeout     ObservationFailure = "timeout"
+	ObservationBounds      ObservationFailure = "bounds"
+)
 
 type observationBudgetKey struct{}
 

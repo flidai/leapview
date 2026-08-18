@@ -398,9 +398,9 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 	queries := 0
 	for _, id := range ids {
 		if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
-			failure := "bounds"
+			failure := analyticsmaterialize.ObservationBounds
 			if budget.MaxMillis > 0 && (ctx.Err() != nil || time.Since(started).Milliseconds() >= budget.MaxMillis) {
-				failure = "timeout"
+				failure = analyticsmaterialize.ObservationTimeout
 			}
 			for _, remaining := range ids[len(result):] {
 				result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: failure})
@@ -413,7 +413,7 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 		source := p.model.Sources[id]
 		relation := p.relationQueries[id]
 		if relation == "" {
-			result = append(result, analyticsmaterialize.SourceObservation{ID: id, SchemaFailure: "unavailable"})
+			result = append(result, analyticsmaterialize.SourceObservation{ID: id, SchemaFailure: analyticsmaterialize.ObservationUnavailable})
 			continue
 		}
 		// Re-describe the prepared relation on this still-live session. The
@@ -425,7 +425,7 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 			failure := sourceObservationFailure(ctx, budget, err)
 			queries++
 			result = append(result, analyticsmaterialize.SourceObservation{ID: id, SchemaFailure: failure, ObservationQueries: 1, ObservationMillis: time.Since(sourceStarted).Milliseconds()})
-			if failure == "timeout" || failure == "bounds" {
+			if failure == analyticsmaterialize.ObservationTimeout || failure == analyticsmaterialize.ObservationBounds {
 				for _, remaining := range ids[len(result):] {
 					result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: failure})
 				}
@@ -452,15 +452,15 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 		} else if source.Freshness != nil && source.Freshness.Basis == "field" {
 			field := source.Freshness.Field
 			if relation == "" || field == "" {
-				observation.FreshnessFailure = "unavailable"
+				observation.FreshnessFailure = analyticsmaterialize.ObservationUnavailable
 				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
 				result = append(result, observation)
 				continue
 			}
 			if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
-				failure := "bounds"
+				failure := analyticsmaterialize.ObservationBounds
 				if budget.MaxMillis > 0 && (ctx.Err() != nil || time.Since(started).Milliseconds() >= budget.MaxMillis) {
-					failure = "timeout"
+					failure = analyticsmaterialize.ObservationTimeout
 				}
 				observation.FreshnessFailure = failure
 				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
@@ -493,14 +493,11 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 	return result, nil
 }
 
-func sourceObservationFailure(ctx context.Context, budget analyticsmaterialize.ObservationBudget, err error) string {
+func sourceObservationFailure(ctx context.Context, budget analyticsmaterialize.ObservationBudget, err error) analyticsmaterialize.ObservationFailure {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || budget.MaxMillis > 0 && ctx.Err() != nil {
-		return "timeout"
+		return analyticsmaterialize.ObservationTimeout
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "bound exceeded") {
-		return "bounds"
-	}
-	return "unavailable"
+	return analyticsmaterialize.ObservationUnavailable
 }
 
 func sourceObservationTime(value any) time.Time {

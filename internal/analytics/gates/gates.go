@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/release"
@@ -68,8 +69,8 @@ type SourceInput struct {
 	// value is preferred over running another query after that session closes.
 	FreshnessObserved  time.Time
 	FreshnessEmpty     bool
-	SchemaFailure      string
-	FreshnessFailure   string
+	SchemaFailure      analyticsmaterialize.ObservationFailure
+	FreshnessFailure   analyticsmaterialize.ObservationFailure
 	ObservationQueries int
 	ObservationRows    int64
 	ObservationMillis  int64
@@ -287,7 +288,10 @@ func evaluateSource(ctx context.Context, now time.Time, state *budget, source So
 	result.ObservedSchema = observed
 	if source.SchemaFailure != "" {
 		result.SchemaOutcome = observationFailureOutcome(source.SchemaFailure)
-		result.ObservationDigest = digest(struct{ Failure string }{source.SchemaFailure})
+		result.SchemaFailure = observationFailureEvidence(source.SchemaFailure)
+		result.ObservationDigest = digest(struct {
+			Failure release.GateObservationFailure
+		}{result.SchemaFailure})
 		return result, gateError(result.ID+":schema", result.SchemaOutcome, failureCause(result.SchemaOutcome), nil)
 	}
 	if len(observed) == 0 {
@@ -317,7 +321,10 @@ func evaluateSource(ctx context.Context, now time.Time, state *budget, source So
 	result.SchemaDigest = digest(observed)
 	if source.FreshnessFailure != "" {
 		result.FreshnessOutcome = observationFailureOutcome(source.FreshnessFailure)
-		result.ObservationDigest = digest(struct{ Failure string }{source.FreshnessFailure})
+		result.FreshnessFailure = observationFailureEvidence(source.FreshnessFailure)
+		result.ObservationDigest = digest(struct {
+			Failure release.GateObservationFailure
+		}{result.FreshnessFailure})
 		return result, gateError(result.ID+":freshness", result.FreshnessOutcome, failureCause(result.FreshnessOutcome), nil)
 	}
 	if source.Source.Freshness != nil {
@@ -337,14 +344,27 @@ func evaluateSource(ctx context.Context, now time.Time, state *budget, source So
 	return result, nil
 }
 
-func observationFailureOutcome(value string) release.GateOutcome {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "timeout":
+func observationFailureOutcome(value analyticsmaterialize.ObservationFailure) release.GateOutcome {
+	switch value {
+	case analyticsmaterialize.ObservationTimeout:
 		return release.GateTimeout
-	case "bounds", "unavailable":
+	case analyticsmaterialize.ObservationBounds, analyticsmaterialize.ObservationUnavailable:
 		return release.GateUnavailable
 	default:
 		return release.GateUnavailable
+	}
+}
+
+func observationFailureEvidence(value analyticsmaterialize.ObservationFailure) release.GateObservationFailure {
+	switch value {
+	case analyticsmaterialize.ObservationTimeout:
+		return release.GateObservationFailureTimeout
+	case analyticsmaterialize.ObservationBounds:
+		return release.GateObservationFailureBounds
+	case analyticsmaterialize.ObservationUnavailable:
+		return release.GateObservationFailureUnavailable
+	default:
+		return release.GateObservationFailureUnavailable
 	}
 }
 
@@ -472,6 +492,19 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 			if !ok {
 				result.Outcome = release.GateUnavailable
 				return result, gateError(identity, release.GateUnavailable, ErrGateUnavailable, nil)
+			}
+			// The bounded count is the useful observation, while the query
+			// itself returns one scalar row. Replace that scalar in the shared
+			// row budget with the bounded count so aggregate evidence accounts
+			// for the same rows as this check without double-counting it.
+			state.Rows += count - int64(len(rows))
+			if state.Rows < 0 {
+				state.Rows = 0
+			}
+			if state.Rows > state.Bounds.MaxRows {
+				state.RowsExceeded = true
+				result.Outcome = release.GateUnavailable
+				return result, gateError(identity, release.GateUnavailable, ErrGateBounds, nil)
 			}
 			result.ObservedRows = count
 			result.ObservationDigest = digest(rows)
