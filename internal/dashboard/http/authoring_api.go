@@ -147,27 +147,73 @@ func (h AuthoringAPI) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request)
 }
 
 func catalogDashboardResponse(value catalog.Dashboard) (dashboardgen.DashboardAuthoringSummary, error) {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return dashboardgen.DashboardAuthoringSummary{}, err
+	response := dashboardgen.DashboardAuthoringSummary{
+		Id:            value.ID.String(),
+		StableId:      value.StableID,
+		ProjectId:     value.ProjectID.String(),
+		Title:         value.Title,
+		SemanticModel: value.SemanticModel.String(),
+		Source:        string(value.Source),
+		Origin:        string(value.Origin),
+		Status:        string(value.Status),
+		Visibility:    string(value.Visibility),
 	}
-	var wire map[string]any
-	if err := json.Unmarshal(encoded, &wire); err != nil {
-		return dashboardgen.DashboardAuthoringSummary{}, err
+	if value.Description != "" {
+		description := value.Description
+		response.Description = &description
 	}
-	if value.ServingIdentity == (projectgraph.ServingIdentity{}) {
-		delete(wire, "servingIdentity")
-	} else if err := value.ServingIdentity.Validate(); err != nil {
-		return dashboardgen.DashboardAuthoringSummary{}, fmt.Errorf("catalog serving identity: %w", err)
+	if value.Owner != "" {
+		owner := value.Owner
+		response.Owner = &owner
 	}
-	var response dashboardgen.DashboardAuthoringSummary
-	if err := decodeGeneratedProjection(wire, &response); err != nil {
-		return dashboardgen.DashboardAuthoringSummary{}, err
+	if len(value.Tags) > 0 {
+		tags := append([]string(nil), value.Tags...)
+		response.Tags = &tags
+	}
+	if value.SourcePath != "" {
+		sourcePath := value.SourcePath
+		response.SourcePath = &sourcePath
+	}
+	if value.ServingIdentity != (projectgraph.ServingIdentity{}) {
+		if err := value.ServingIdentity.Validate(); err != nil {
+			return dashboardgen.DashboardAuthoringSummary{}, fmt.Errorf("catalog serving identity: %w", err)
+		}
+		response.ServingIdentity = &dashboardgen.DashboardAuthoringServingIdentity{
+			ProjectId:    value.ServingIdentity.ProjectID.String(),
+			Environment:  value.ServingIdentity.Environment,
+			GenerationId: value.ServingIdentity.GenerationID,
+		}
+	}
+	if value.Revision != nil {
+		revision, err := catalogRevisionEvidenceResponse(*value.Revision)
+		if err != nil {
+			return dashboardgen.DashboardAuthoringSummary{}, err
+		}
+		response.Revision = &revision
+	}
+	if value.Publication != nil {
+		publication, err := catalogPublicationEvidenceResponse(*value.Publication)
+		if err != nil {
+			return dashboardgen.DashboardAuthoringSummary{}, err
+		}
+		response.Publication = &publication
 	}
 	return response, nil
 }
 
 func catalogListResponse(value catalog.ListResult) (dashboardgen.DashboardAuthoringCatalogResponse, error) {
+	count, err := catalogCountResponse(value.Count)
+	if err != nil {
+		return dashboardgen.DashboardAuthoringCatalogResponse{}, err
+	}
+	instanceCount, err := catalogCountResponse(value.InstanceCount)
+	if err != nil {
+		return dashboardgen.DashboardAuthoringCatalogResponse{}, err
+	}
+	projectCount, err := catalogCountResponse(value.ProjectCount)
+	if err != nil {
+		return dashboardgen.DashboardAuthoringCatalogResponse{}, err
+	}
 	items := make([]dashboardgen.DashboardAuthoringSummary, 0, len(value.Items))
 	for _, item := range value.Items {
 		converted, err := catalogDashboardResponse(item)
@@ -176,7 +222,53 @@ func catalogListResponse(value catalog.ListResult) (dashboardgen.DashboardAuthor
 		}
 		items = append(items, converted)
 	}
-	return dashboardgen.DashboardAuthoringCatalogResponse{Items: items, Count: int32(value.Count), InstanceCount: int32(value.InstanceCount), ProjectCount: int32(value.ProjectCount)}, nil
+	return dashboardgen.DashboardAuthoringCatalogResponse{Items: items, Count: count, InstanceCount: instanceCount, ProjectCount: projectCount}, nil
+}
+
+func catalogCountResponse(value int) (int32, error) {
+	if value < 0 || int64(value) > int64(1<<31-1) {
+		return 0, fmt.Errorf("catalog count %d does not fit generated int32 response", value)
+	}
+	return int32(value), nil
+}
+
+func catalogRevisionEvidenceResponse(value catalog.RevisionEvidence) (dashboardgen.DashboardAuthoringRevisionEvidence, error) {
+	if value.Number > uint64(1<<63-1) {
+		return dashboardgen.DashboardAuthoringRevisionEvidence{}, fmt.Errorf("catalog revision number %d does not fit generated int64 response", value.Number)
+	}
+	response := dashboardgen.DashboardAuthoringRevisionEvidence{Id: value.ID, Number: int64(value.Number), ContentHash: value.ContentHash}
+	if !value.CreatedAt.IsZero() {
+		createdAt := value.CreatedAt.UTC().Format(time.RFC3339Nano)
+		response.CreatedAt = &createdAt
+	}
+	return response, nil
+}
+
+func catalogPublicationEvidenceResponse(value catalog.PublicationEvidence) (dashboardgen.DashboardAuthoringPublicationEvidence, error) {
+	revision, err := catalogRevisionEvidenceResponse(value.Revision)
+	if err != nil {
+		return dashboardgen.DashboardAuthoringPublicationEvidence{}, err
+	}
+	if err := value.SemanticIdentity.Validate(); err != nil {
+		return dashboardgen.DashboardAuthoringPublicationEvidence{}, fmt.Errorf("catalog publication semantic identity: %w", err)
+	}
+	response := dashboardgen.DashboardAuthoringPublicationEvidence{
+		Revision: revision,
+		SemanticIdentity: dashboardgen.DashboardAuthoringServingIdentity{
+			ProjectId:    value.SemanticIdentity.ProjectID.String(),
+			Environment:  value.SemanticIdentity.Environment,
+			GenerationId: value.SemanticIdentity.GenerationID,
+		},
+	}
+	if value.DefinitionHash != "" {
+		definitionHash := value.DefinitionHash
+		response.DefinitionHash = &definitionHash
+	}
+	if !value.PublishedAt.IsZero() {
+		publishedAt := value.PublishedAt.UTC().Format(time.RFC3339Nano)
+		response.PublishedAt = &publishedAt
+	}
+	return response, nil
 }
 
 func draftResponse(read application.DraftRead) (dashboardgen.DashboardAuthoringDraftResponse, error) {

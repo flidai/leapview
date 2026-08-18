@@ -8,13 +8,15 @@ namespace LeapViewAPI.Dashboard;
 
 model DashboardAuthoringRevisionToken {
   revisionId: string;
-  number: uint64;
+  @minValue(0)
+  number: int64;
   contentHash: string;
 }
 
 model DashboardAuthoringRevisionEvidence {
   id: string;
-  number: uint64;
+  @minValue(0)
+  number: int64;
   contentHash: string;
   createdAt?: utcDateTime;
 }
@@ -340,7 +342,8 @@ model DashboardAuthoringPreviewRequest {
 model DashboardAuthoringPreviewFilters {
   selections: DashboardAuthoringPreviewSelection[];
   spatialSelections: DashboardAuthoringPreviewSpatialSelection[];
-  interactionRevision: uint64;
+  @minValue(0)
+  interactionRevision: int64;
 }
 
 model DashboardAuthoringPreviewSelection {

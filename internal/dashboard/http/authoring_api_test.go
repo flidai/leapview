@@ -9,8 +9,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/dashboard"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
@@ -18,6 +20,10 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -236,12 +242,105 @@ func TestAuthoringGeneratedRevisionProjectionRejectsUint64Overflow(t *testing.T)
 	}
 }
 
+func TestAuthoringCatalogProjectionPreservesTypedNumbersAndRejectsOverflow(t *testing.T) {
+	projectID, err := projectgraph.NewResourceID("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	semanticModel, err := projectgraph.NewResourceID("sales-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := catalog.Dashboard{
+		ID: projectID, StableID: "project:project", ProjectID: projectID,
+		Title: "Sales", SemanticModel: semanticModel, Source: catalog.SourceProject,
+		Origin: authoring.OriginFile, Status: authoring.LifecycleStatusPublished, Visibility: authoring.VisibilityOrganization,
+		ServingIdentity: identity,
+		Revision:        &catalog.RevisionEvidence{ID: "revision", Number: uint64(1)<<53 + 1, ContentHash: strings.Repeat("a", 64), CreatedAt: time.Unix(0, 0).UTC()},
+	}
+	response, err := catalogDashboardResponse(value)
+	if err != nil {
+		t.Fatalf("catalog projection: %v", err)
+	}
+	if response.Revision == nil || response.Revision.Number != int64(uint64(1)<<53+1) {
+		t.Fatalf("revision number = %#v, want exact value", response.Revision)
+	}
+	if response.ServingIdentity == nil || response.ServingIdentity.GenerationId != "generation" {
+		t.Fatalf("serving identity = %#v", response.ServingIdentity)
+	}
+	if _, err := catalogDashboardResponse(func() catalog.Dashboard {
+		copy := value
+		overflow := *value.Revision
+		overflow.Number = uint64(1) << 63
+		copy.Revision = &overflow
+		return copy
+	}()); err == nil {
+		t.Fatal("catalog revision number overflow was accepted")
+	}
+	if _, err := catalogListResponse(catalog.ListResult{Count: int(^uint(0) >> 1)}); err == nil {
+		t.Fatal("catalog count overflow was accepted")
+	}
+}
+
 func TestAuthoringPreviewFiltersRejectObjectAndArraySelectionValues(t *testing.T) {
 	for _, invalid := range []any{map[string]any{"nested": true}, []any{"nested"}} {
 		filters := &dashboardgen.DashboardAuthoringPreviewFilters{Selections: []dashboardgen.DashboardAuthoringPreviewSelection{{Entries: []dashboardgen.DashboardAuthoringPreviewSelectionEntry{{Mappings: []dashboardgen.DashboardAuthoringPreviewSelectionMapping{{Field: "country", Value: invalid}}}}}}}
 		if _, err := filtersFromAPIGen(filters); err == nil {
 			t.Fatalf("preview filter accepted non-scalar value %#v", invalid)
 		}
+	}
+}
+
+func TestAuthoringPreviewProjectionRoundTripPreservesFullRuntimeShape(t *testing.T) {
+	projectID, err := projectgraph.NewResourceID("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress := 42.5
+	result := preview.Preview{
+		Revision: authoring.RevisionToken{RevisionID: "revision", Number: 7, ContentHash: strings.Repeat("a", 64)},
+		Definition: dashboarddefinition.Definition{
+			ID: "dashboard", Title: "Sales", Description: "Revenue", SemanticModel: "sales-model",
+			FilterApplication: dashboardfilter.ApplicationPolicy{}.WithDefaults(),
+			Pages:             []dashboard.Page{},
+			Visualizations:    map[string]visualizationdefinition.Definition{},
+		},
+		PagePatch: dashboard.Patch{
+			Filters: dashboard.Filters{Selections: []dashboard.InteractionSelection{}, SpatialSelections: []dashboard.SpatialInteractionSelection{}, InteractionRevision: 3},
+			Status:  dashboard.Status{Loading: true, Error: "", RefreshID: "refresh", Generation: 4, LastUpdated: "2026-08-18T00:00:00Z", SetupRequired: false, ProgressPercent: &progress},
+			Visuals: map[string]visualizationir.VisualizationEnvelope{},
+		},
+		SemanticEvidence: preview.SemanticServingStateEvidence{SemanticModel: "sales-model", RuntimeModel: "runtime-sales", Identity: identity, DuckLakeSnapshotID: 99},
+	}
+	var projected dashboardgen.DashboardAuthoringPreviewResponse
+	if err := decodeGeneratedProjection(result, &projected); err != nil {
+		t.Fatalf("full preview projection rejected runtime shape: %v", err)
+	}
+	encodedResult, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedProjection, err := json.Marshal(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want, got map[string]any
+	if err := json.Unmarshal(encodedResult, &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encodedProjection, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("full preview projection changed shape:\n got %s\nwant %s", encodedProjection, encodedResult)
 	}
 }
 
