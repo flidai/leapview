@@ -390,6 +390,13 @@ func canonicalVisualTypeSupported(value document.DashboardVisualType) bool {
 	}
 }
 
+// CanonicalVisualTypeSupported reports whether a generated dashboard visual
+// type is accepted by the authoring reducer. Transport adapters use this same
+// predicate so the API and persisted canonical document cannot drift.
+func CanonicalVisualTypeSupported(value document.DashboardVisualType) bool {
+	return canonicalVisualTypeSupported(value)
+}
+
 func defaultCanonicalVisual(kind, title string) document.DashboardVisual {
 	visualType := document.DashboardVisualType(kind)
 	query := document.DashboardQuery{}

@@ -755,27 +755,10 @@ func addVisualPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringA
 	if value == nil {
 		return nil, nil
 	}
-	if !validDashboardVisualType(value.Type) {
+	if !authoring.CanonicalVisualTypeSupported(value.Type) {
 		return nil, fmt.Errorf("%w: unsupported visual type %q", authoring.ErrInvalidPayload, value.Type)
 	}
 	return &authoring.AddVisualPayload{PageID: value.PageId, VisualID: derefString(value.VisualId), ComponentID: derefString(value.ComponentId), Type: string(value.Type), Title: derefString(value.Title)}, nil
-}
-
-func validDashboardVisualType(value document.DashboardVisualType) bool {
-	switch value {
-	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar,
-		document.DashboardVisualTypeColumn, document.DashboardVisualTypePie, document.DashboardVisualTypeDonut,
-		document.DashboardVisualTypeScatter, document.DashboardVisualTypeFunnel, document.DashboardVisualTypeTreemap,
-		document.DashboardVisualTypeGauge, document.DashboardVisualTypeHeatmap, document.DashboardVisualTypeSankey,
-		document.DashboardVisualTypeGraph, document.DashboardVisualTypeMap, document.DashboardVisualTypeCandlestick,
-		document.DashboardVisualTypeBoxplot, document.DashboardVisualTypeCombo, document.DashboardVisualTypeWaterfall,
-		document.DashboardVisualTypeHistogram, document.DashboardVisualTypeRadar, document.DashboardVisualTypeTree,
-		document.DashboardVisualTypeSunburst, document.DashboardVisualTypeKpi, document.DashboardVisualTypeTable,
-		document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
-		return true
-	default:
-		return false
-	}
 }
 
 func assignFieldPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringAssignFieldIntent) *authoring.AssignFieldPayload {
