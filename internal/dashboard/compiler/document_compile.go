@@ -52,7 +52,7 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 	if err != nil {
 		return DocumentResult{}, fmt.Errorf("compile dashboard filters: %w", err)
 	}
-	layout, err := CompileCanonicalDashboardLayout(doc.Spec)
+	layout, err := CompileDashboardLayout(doc.Spec)
 	if err != nil {
 		return DocumentResult{}, fmt.Errorf("compile dashboard layout: %w", err)
 	}

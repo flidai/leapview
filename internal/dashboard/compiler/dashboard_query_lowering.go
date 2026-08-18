@@ -309,12 +309,6 @@ func pointerValue(value *float64) float64 {
 	return *value
 }
 
-// LowerCanonicalDashboardQuery is an explicit alias for callers at the
-// generated-document boundary.
-func LowerCanonicalDashboardQuery(query document.DashboardQuery, model *semanticmodel.Model, modelID string) (LoweredDashboardQuery, error) {
-	return LowerDashboardQuery(query, model, modelID)
-}
-
 func lowerCanonicalAggregate(query document.AggregateDashboardQuery, model *semanticmodel.Model, modelID string) (LoweredDashboardQuery, error) {
 	dimensions, fields, err := canonicalDimensions(query.Dimensions, model)
 	if err != nil {

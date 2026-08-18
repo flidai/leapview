@@ -60,11 +60,6 @@ func CompileDashboardLayout(spec document.DashboardSpec) (CompiledDashboardLayou
 	return compiled, nil
 }
 
-// CompileCanonicalDashboardLayout is an explicit generated-document alias.
-func CompileCanonicalDashboardLayout(spec document.DashboardSpec) (CompiledDashboardLayout, error) {
-	return CompileDashboardLayout(spec)
-}
-
 // AttachDashboardLayout compiles canonical layout state and attaches it to a
 // copy of an immutable definition. Existing Definition.Pages are replaced by
 // the compiler-produced responsive pages; no second pages/components tree is

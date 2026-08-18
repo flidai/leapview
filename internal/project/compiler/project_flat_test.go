@@ -18,7 +18,6 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -43,7 +42,7 @@ func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
 			Pages: []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{}}},
 		},
 	}
-	encoded, err := ExportDashboard(document, dashboardauthoring.DashboardExportMetadata{Name: "sales_dashboard"})
+	encoded, err := ExportDashboard(document)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,9 +104,15 @@ spec:
 	if source.Metadata.Domain != "revenue" {
 		t.Fatalf("compiled dashboard source domain = %q, want revenue", source.Metadata.Domain)
 	}
-	encoded, err := ExportDashboard(source.Document, dashboardauthoring.DashboardExportMetadata{
-		Name: source.Metadata.Name, Title: source.Metadata.Title, Description: source.Metadata.Description,
-		Owner: source.Metadata.Owner, Domain: source.Metadata.Domain, Tags: source.Metadata.Tags,
+	displayName := source.Metadata.Title
+	domain := source.Metadata.Domain
+	encoded, err := ExportDashboard(dashboarddocument.DashboardDocument{
+		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
+		Kind:       dashboarddocument.DashboardResourceKindDashboard,
+		Metadata: dashboarddocument.DashboardMetadata{
+			ID: "dashboard:sales", Name: source.Metadata.Name, DisplayName: &displayName, Domain: &domain,
+		},
+		Spec: dashboarddocument.DashboardSpec{SemanticModel: "sales", Filters: []dashboarddocument.DashboardFilter{}, Visuals: map[string]dashboarddocument.DashboardVisual{}, Pages: []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{}}}},
 	})
 	if err != nil {
 		t.Fatalf("ExportDashboard() error = %v", err)

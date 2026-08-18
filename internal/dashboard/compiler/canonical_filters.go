@@ -127,21 +127,10 @@ func CompileCanonicalDashboardFilters(doc document.DashboardDocument, model *sem
 	return result, nil
 }
 
-// CompileCanonicalFilters is a short alias used by project/compiler seams.
-func CompileCanonicalFilters(doc document.DashboardDocument, model *semanticmodel.Model) (CanonicalFilterCompilation, error) {
-	return CompileCanonicalDashboardFilters(doc, model)
-}
-
 // CompileCanonicalDashboardFilterDefinition compiles one DTO filter. It is
 // exported for focused compiler tests and for the LEA-426 document cutover.
 func CompileCanonicalDashboardFilterDefinition(authored document.DashboardFilter, model *semanticmodel.Model) (dashboardfilter.Definition, dashboardfilter.Binding, error) {
 	return compileCanonicalFilter(authored, model, "canonical", 0)
-}
-
-// CompileCanonicalDashboardFilter is the singular spelling retained for
-// callers compiling a filter incrementally during document cutover.
-func CompileCanonicalDashboardFilter(authored document.DashboardFilter, model *semanticmodel.Model) (dashboardfilter.Definition, dashboardfilter.Binding, error) {
-	return CompileCanonicalDashboardFilterDefinition(authored, model)
 }
 
 func compileCanonicalFilter(authored document.DashboardFilter, model *semanticmodel.Model, dashboardID string, order int) (dashboardfilter.Definition, dashboardfilter.Binding, error) {
@@ -453,7 +442,7 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 				return fmt.Errorf("page %q component %q references unknown visual %q", page.ID, component.ID, component.Visual)
 			}
 			var datasets []string
-			if lowered, err := LowerCanonicalDashboardQuery(visual.Query, model, model.Name); err == nil {
+			if lowered, err := LowerDashboardQuery(visual.Query, model, model.Name); err == nil {
 				datasets = append(datasets, lowered.Plan.Datasets...)
 				if len(datasets) == 0 {
 					datasets, err = canonicalQueryDatasets(visual.Query, model)

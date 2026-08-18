@@ -68,15 +68,15 @@ func TestLoadDashboardDocumentUsesCanonicalGeneratedDTO(t *testing.T) {
 	}
 }
 
-func TestExportDashboardDocumentRoundTripsGeneratedDTO(t *testing.T) {
+func TestExportDashboardRoundTripsGeneratedDTO(t *testing.T) {
 	path := filepath.Join("..", "..", "dashboard", "document", "testdata", "canonical.yaml")
 	want, err := LoadDashboardDocument(path)
 	if err != nil {
 		t.Fatalf("LoadDashboardDocument() error = %v", err)
 	}
-	encoded, err := ExportDashboardDocument(want)
+	encoded, err := ExportDashboard(want)
 	if err != nil {
-		t.Fatalf("ExportDashboardDocument() error = %v", err)
+		t.Fatalf("ExportDashboard() error = %v", err)
 	}
 	var got document.DashboardDocument
 	if err := configschema.DecodeResource(configschema.KindDashboard, "roundtrip.yaml", encoded, &got); err != nil {
@@ -90,7 +90,7 @@ func TestExportDashboardDocumentRoundTripsGeneratedDTO(t *testing.T) {
 	}
 }
 
-func TestExportDashboardDocumentPreservesZeroDomainAndEmptyFilters(t *testing.T) {
+func TestExportDashboardPreservesZeroDomainAndEmptyFilters(t *testing.T) {
 	path := filepath.Join("..", "..", "dashboard", "document", "testdata", "canonical.yaml")
 	value, err := LoadDashboardDocument(path)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestExportDashboardDocumentPreservesZeroDomainAndEmptyFilters(t *testing.T)
 		Query:        document.DashboardQuery{Value: &document.HistogramDashboardQuery{Type: "histogram", Field: document.DashboardMetricSelection{String: &metric}, Bins: 10, NullPolicy: document.DashboardHistogramNullPolicyOmit, Approximation: document.DashboardHistogramApproximationExact, Domain: &document.DashboardHistogramDomain{Minimum: &minimum, Maximum: &maximum}}},
 		Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian"}},
 	}}
-	encoded, err := ExportDashboardDocument(value)
+	encoded, err := ExportDashboard(value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestCanonicalDashboardYAMLJSONFingerprintMatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := ExportDashboardDocument(want)
+	encoded, err := ExportDashboard(want)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,5 +137,31 @@ func TestCanonicalDashboardYAMLJSONFingerprintMatches(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("canonical document changed across YAML/JSON boundary:\n got=%#v\nwant=%#v", got, want)
+	}
+}
+
+func TestExportDashboardReliesOnCanonicalSchemaForEnvelopeAndName(t *testing.T) {
+	path := filepath.Join("..", "..", "dashboard", "document", "testdata", "canonical.yaml")
+	value, err := LoadDashboardDocument(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*document.DashboardDocument){
+		"kind": func(value *document.DashboardDocument) {
+			value.Kind = document.DashboardResourceKind("NotDashboard")
+		},
+		"visualType": func(value *document.DashboardDocument) {
+			visual := value.Spec.Visuals["revenue"]
+			visual.Type = document.DashboardVisualType("unsupported")
+			value.Spec.Visuals["revenue"] = visual
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := value
+			mutate(&invalid)
+			if _, err := ExportDashboard(invalid); err == nil {
+				t.Fatal("ExportDashboard accepted an invalid generated document")
+			}
+		})
 	}
 }
