@@ -21,7 +21,7 @@ visuals:
       roam: true
       curveness: 0.24
       focus: adjacency
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
     query:
       dimensions:
         status: orders.status

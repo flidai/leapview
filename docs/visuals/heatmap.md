@@ -65,7 +65,7 @@ visuals:
     title: Labeled category status heatmap
     type: heatmap
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 12, minimum_spacing: 4, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 12, minimumSpacing: 4, tooltipFallback: true}
     query:
       dimensions:
         category: orders.category

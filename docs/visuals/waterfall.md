@@ -17,7 +17,8 @@ visuals:
     description: Explains positive and negative contributions to net revenue growth.
     type: waterfall
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
+      type: cartesian
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
     query:
       dataset: revenue_bridge
       dimensions:
@@ -53,7 +54,7 @@ visuals:
 
 ## Labels and zoom
 
-Use `presentation.labels` for exact contributions and `data_zoom` when many categories make the running sequence dense. Automatic collision handling keeps compact cards readable.
+Use `presentation.labels` for exact contributions and `dataZoom` when many categories make the running sequence dense. Automatic collision handling keeps compact cards readable.
 
 {{< visual id="revenue_waterfall_labeled" >}}
 
@@ -63,8 +64,9 @@ visuals:
     title: Labeled revenue waterfall
     type: waterfall
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
-      data_zoom: true
+      type: cartesian
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
+      dataZoom: true
     query:
       dimensions:
         category: orders.category

@@ -33,7 +33,7 @@ visuals:
 
 ## Revenue range
 
-Change the metric to revenue and enable `presentation.data_zoom` so dense monthly ranges remain explorable without changing the OHLC contract.
+Change the metric to revenue and enable `presentation.dataZoom` so dense monthly ranges remain explorable without changing the OHLC contract.
 
 {{< visual id="revenue_candlestick" >}}
 
@@ -43,7 +43,8 @@ visuals:
     title: Revenue OHLC by month
     type: candlestick
     presentation:
-      data_zoom: true
+      type: cartesian
+      dataZoom: true
     query:
       dimensions:
         purchase_month: orders.purchase_month

@@ -17,12 +17,14 @@ visuals:
     description: Tracks monthly revenue over the selected period.
     type: area
     presentation:
-      labels: {density: hidden, priority: [], max_characters: 24, minimum_spacing: 0, tooltip_fallback: true}
+      type: cartesian
+      labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+        - purchase_month
       metrics:
-        revenue: null
+        - revenue
       sort:
         - field: purchase_month
           direction: asc
@@ -31,7 +33,7 @@ visuals:
 
 ## Stacked series
 
-Map `query.series` to status and enable `presentation.stacked` to show how each status contributes to the monthly total.
+Add status as a second semantic dimension and set `presentation.stacking` to `normal` to show how each status contributes to the monthly total.
 
 {{< visual id="revenue_area_status" >}}
 
@@ -41,15 +43,15 @@ visuals:
     title: Stacked revenue area
     type: area
     presentation:
-      stacked: true
+      type: cartesian
+      stacking: normal
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
-      series:
-        field: orders.status
-        alias: status
+        - purchase_month
+        - status
       metrics:
-        revenue: null
+        - revenue
       sort:
         - field: purchase_month
           direction: asc
@@ -58,7 +60,7 @@ visuals:
 
 ## Smoothed line
 
-Enable `presentation.smooth` to interpolate the boundary, hide symbols to reduce clutter, and add `data_zoom` when the ordered range grows.
+Enable `presentation.smooth` to interpolate the boundary, hide symbols to reduce clutter, and add `dataZoom` when the ordered range grows.
 
 {{< visual id="revenue_area_smooth" >}}
 
@@ -68,14 +70,16 @@ visuals:
     title: Smooth revenue area
     type: area
     presentation:
+      type: cartesian
       smooth: true
-      show_symbols: false
-      data_zoom: true
+      showSymbols: false
+      dataZoom: true
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+        - purchase_month
       metrics:
-        revenue: null
+        - revenue
       sort:
         - field: purchase_month
           direction: asc

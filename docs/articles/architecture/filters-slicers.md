@@ -1,36 +1,36 @@
 # Filter and slicer target architecture
 
-LeapView models filtering as governed semantic state. A filter definition describes which predicates are legal, a binding gives that definition scope and targets, and one or more presentations let a reader inspect or change the same bound state. The right-side Filters pane and on-page slicers therefore share behavior without becoming the same layout object.
+LeapView models filtering as governed semantic state. A filter definition describes which predicates are legal, its optional targets scope the effect, and one or more presentations let a reader inspect or change the same state. The right-side Filters pane and page filter components therefore share behavior without becoming the same layout object.
 
 This design follows the useful part of the Power BI mental model: filters are scoped state, the Filters pane is a centralized editor, and slicers make selected filters prominent on the report canvas. LeapView intentionally uses a smaller, typed, deterministic contract instead of reproducing every Power BI filter category or authoring exception.
 
 ## Status and scope
 
-This architecture is the current filter contract. Dashboard configuration, compiled serving state, commands, option requests, and browser signals use the typed definitions and bindings described here. Older compiled artifacts are rejected and must be redeployed. Saved reader views remain a follow-up built on the versioned applied-state contract.
+This architecture is the current filter contract. Dashboard configuration, compiled serving state, commands, option requests, and browser signals use the typed definitions described here. Older compiled artifacts are rejected and must be redeployed. Saved reader views remain a follow-up built on the versioned applied-state contract.
 
 The target covers:
 
 - Semantic filter definitions and typed predicates.
-- Report- and page-scoped bindings with optional component target sets.
-- Filters pane and slicer presentations.
+- Dashboard filters with optional component target sets.
+- Filters pane and page filter presentations.
 - Canonical applied state, optional shared draft state, defaults, clear, reset, and apply.
 - URL state and future saved reader views.
 - Static and governed dynamic option sources.
 - Target resolution, cascading options, query execution, cancellation, and stale-result protection.
 - Generated server/browser contracts, accessibility, authorization, observability, and testing.
 
-Cross-filtering and cross-highlighting from chart, map, or table selections remain interaction features. They can compose with filter bindings, but they do not become filter definitions or slicers.
+Cross-filtering and cross-highlighting from chart, map, or table selections remain interaction features. They can compose with filters, but they do not become filter definitions or page components.
 
 ## Goals
 
-- Give the Filters pane and canvas slicers one semantic state model and one mutation protocol.
+- Give the Filters pane and page filter components one semantic state model and one mutation protocol.
 - Separate predicate meaning, scope, targeting, state, and presentation.
 - Make pane-only, slicer-only, hidden, locked, and multiply presented filters explicit.
 - Preserve field types from the semantic model through URLs, commands, queries, options, and browser controls.
 - Compile all implicit applicability into deterministic target sets.
 - Keep option loading bounded and usable for both low- and high-cardinality fields.
 - Make rapid changes cancel or supersede obsolete work.
-- Allow page scope first without preventing report scope, synchronized presentations, or deferred apply.
+- Allow component targeting without preventing synchronized presentations or deferred apply.
 - Ensure every visible state can be explained, cleared when allowed, and reset to its authored default.
 
 ## Non-goals
@@ -39,9 +39,9 @@ Cross-filtering and cross-highlighting from chart, map, or table selections rema
 - Do not automatically expose every field used by a visual as an editable filter card.
 - Do not make renderer configuration, DOM selectors, or component-private events part of filter semantics.
 - Do not treat hidden filters as a security mechanism.
-- Do not let slicers construct unrestricted semantic queries.
-- Do not use canvas placement to determine whether a filter applies.
-- Do not maintain independent filter implementations or state envelopes for the pane and canvas.
+- Do not let filter components construct unrestricted semantic queries.
+- Do not use page placement to determine whether a filter applies.
+- Do not maintain independent filter implementations or state envelopes for the pane and page.
 - Do not make cross-highlighting a filter operation.
 
 ## Terminology
@@ -49,11 +49,11 @@ Cross-filtering and cross-highlighting from chart, map, or table selections rema
 | Term | Meaning |
 | --- | --- |
 | Filter definition | Reusable semantic predicate policy: field, value type, legal predicate shapes, and option source. |
-| Filter binding | An instance of a definition with report or page scope, compiled targets, defaults, URL identity, edit policy, and canonical state identity. |
-| Filter state | Typed applied values for a binding plus optional pending draft values and revision metadata. |
-| Filter presentation | A reader-facing editor bound to filter state, either a pane card or a canvas slicer. |
-| Slicer | An on-page presentation of a filter binding. It is a page component, not a separate predicate system. |
-| Filters pane | A centralized presentation of report bindings, active-page bindings, and explicitly component-targeted page bindings exposed to the reader. |
+| Filter | A semantic definition with a field, legal operators, control, option source, and optional targets. |
+| Filter state | Typed applied values for a filter plus optional pending draft values and revision metadata. |
+| Filter presentation | A reader-facing editor bound to filter state, either a pane card or a page filter component. |
+| Page filter component | An on-page presentation of a filter. It is a page component, not a separate predicate system. |
+| Filters pane | A centralized presentation of dashboard filters exposed to the reader. |
 | Option domain | The authorized, context-sensitive values available to a categorical control. |
 | Clear | Replace one binding with its unfiltered identity, when the binding is editable. |
 | Reset | Restore authored defaults for the requested binding, page, or dashboard scope. |
@@ -62,11 +62,11 @@ Cross-filtering and cross-highlighting from chart, map, or table selections rema
 ## Architectural invariants
 
 1. A filter definition has semantic meaning but no page layout.
-2. A binding establishes applicability independently of whether any presentation is visible.
-3. A slicer and pane card bound to the same binding always show the same applied and pending state.
+2. A filter establishes applicability independently of whether any presentation is visible.
+3. A page filter component and pane card bound to the same filter always show the same applied and pending state.
 4. Presentation components emit typed mutations; they never replace the complete dashboard filter envelope.
 5. The route-level filter controller is the only browser owner that projects optimistic filter mutations; server state remains canonical.
-6. The server validates every binding, value, operator, target, revision, and option request.
+6. The server validates every filter, value, operator, target, revision, and option request.
 7. The project compiler resolves semantic field types and produces exact compatible target sets.
 8. Explicitly targeted incompatible components fail compilation; implicit scope excludes incompatible components deterministically.
 9. Applied filter state, interaction selections, and spatial selections are independent roots and cannot erase one another.
@@ -142,35 +142,20 @@ The compiler restricts variants and operators by semantic type. For example, `co
 
 The server canonicalizes equivalent expressions before revisioning, URL serialization, caching, or query planning. An empty `Set`, a `Range` without bounds, and an omitted control normalize to `Unfiltered`; set values are typed, deduplicated, and deterministically ordered. A relative period preserves its relative rule for sharing and future report loads, but the server resolves it once per accepted filter revision to an absolute `Range`. Every option and visual query for that revision uses the same resolved range, evaluation instant, compiled timezone, and calendar. `fixed` requires a compatible `anchorValue`; data-relative anchors resolve against the same serving-state snapshot and incoming option-dependency context, excluding the binding itself.
 
-### Filter bindings
+### Filter targeting
 
-A binding owns state identity and applicability:
+A filter owns state identity and applicability through its stable ID, semantic dimension, optional default, URL parameter, and optional target component IDs. An omitted target list means every semantically compatible consumer in dashboard scope. The compiler resolves those IDs to an exact target set; targeting one component does not introduce a second filter state.
 
-- Stable binding ID.
-- Referenced definition ID.
-- Scope: report or page.
-- Included or excluded component targets.
-- Authored default expression.
-- Stable URL parameter identity and encoding policy.
-- State constraints such as single or multiple set selection and a maximum selected-value count.
-- Reader editability and lock policy shared by every presentation.
-- Pane visibility, order, and optional reader-facing label override.
-- Optional binding-to-binding option interaction overrides.
-
-Targets on a page binding use page-local component IDs. Targets on a report binding use qualified `pageID/componentID` identities. The compiler resolves both forms to canonical qualified runtime consumers and records an exact target set. An omitted target list means all semantically compatible consumers within scope, not every consumer unconditionally. A binding targeting one component is the LeapView equivalent of a visual-level filter; it does not introduce a third state scope.
-
-Authored page-binding IDs are local to their page; report-binding IDs are local to the dashboard. The compiler issues every binding an opaque, stable `bindingKey` containing its resolved scope identity. Generated contracts and runtime state use that key rather than concatenating or parsing author-facing IDs. Presentations and authored option-interaction overrides use typed binding references that the compiler resolves to keys. This allows several pages to use a local binding ID such as `state` without colliding in report-wide state.
-
-A report binding can be presented by slicers on several pages without duplicating state. Each presentation keeps its own placement and visual formatting. Hiding a slicer on one page does not remove the binding or its effect.
+The same filter can be presented in the Filters pane and by page components without duplicating state. Each presentation keeps its own placement and visual formatting. Hiding a page component does not remove the filter or its effect.
 
 ### Presentations
 
-Pane cards and slicers reference a binding. They may configure presentation-only behavior:
+Pane cards and page filter components reference a filter. They may configure presentation-only behavior:
 
 - Style: dropdown, list, buttons, input, numeric range, date range, or relative period.
 - Search, visibility of a semantically valid select-all action, option counts, and summary display.
 - Title, description, and accessibility text.
-- Page placement for slicers.
+- Page placement for filter components.
 
 Presentation configuration cannot broaden allowed operators, change selection cardinality, change reader editability, change the semantic field, override security, or alter compiled targets.
 
@@ -180,38 +165,26 @@ The following is accepted dashboard configuration syntax:
 
 ```yaml
 filters:
-  state:
+  - id: state
     label: State
-    field: customer_state
-    predicates:
-      - kind: set
-        operators: [in, not_in]
-    options: {kind: distinct, limit: 50}
-
-filter_application: {mode: immediate}
+    dimension: customer_state
+    control:
+      type: multiSelect
+      maxSelectedValues: 50
+      options: {type: distinct, dataset: orders, limit: 50}
+    operators: [in, notIn]
+    urlParameter: state
 
 pages:
   - id: overview
-    filter_bindings:
-      state:
-        filter: state
-        targets: {include: [revenue, orders]}
-        default: {kind: unfiltered}
-        selection: {mode: multiple, max_selected_values: 50}
-        reader_editable: true
-        url: {param: state, encoding: typed_v1}
-        pane: {visible: true, order: 10}
     components:
       - id: state-slicer
-        kind: slicer
-        binding: {scope: page, id: state}
-        presentation:
-          style: dropdown
-          search: true
-        placement: {col: 1, row: 1, col_span: 3, row_span: 2}
+        type: filter
+        filter: state
+        placement: {column: 1, row: 1, columnSpan: 3, rowSpan: 2}
 ```
 
-The binding exists even if `state-slicer` is absent. Conversely, the pane can hide `state` while its slicer remains visible.
+The filter exists even if `state-slicer` is absent. Conversely, the pane can hide `state` while its page component remains visible.
 
 ## Canonical state
 

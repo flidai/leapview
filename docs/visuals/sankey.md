@@ -20,7 +20,7 @@ visuals:
       orientation: horizontal
       node_gap: 16
       curveness: 0.36
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
     query:
       dimensions:
         status: orders.status

@@ -17,7 +17,7 @@ visuals:
     description: Compares monthly revenue and order volume together.
     type: combo
     presentation:
-      labels: {density: hidden, priority: [], max_characters: 24, minimum_spacing: 0, tooltip_fallback: true}
+      labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
       dual_axis: true
       series_types:
         Revenue: line

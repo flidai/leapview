@@ -17,7 +17,7 @@ visuals:
     description: Shows progression from product visits to completed orders.
     type: funnel
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 24, minimum_spacing: 6, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true}
     query:
       dataset: conversion_stages
       dimensions:
@@ -64,7 +64,7 @@ visuals:
     presentation:
       align: left
       sort: ascending
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 20, minimum_spacing: 6, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 20, minimumSpacing: 6, tooltipFallback: true}
     query:
       dimensions:
         status: orders.status

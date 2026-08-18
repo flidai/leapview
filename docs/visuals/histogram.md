@@ -56,7 +56,7 @@ visuals:
     type: histogram
     presentation:
       histogram_bins: 10
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 12, minimum_spacing: 6, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 12, minimumSpacing: 6, tooltipFallback: true}
     query:
       dataset: orders
       metrics:

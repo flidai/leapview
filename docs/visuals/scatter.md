@@ -83,7 +83,7 @@ visuals:
     title: Labeled revenue by purchase time
     type: scatter
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 16, minimum_spacing: 6, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 16, minimumSpacing: 6, tooltipFallback: true}
     query:
       dimensions:
         order_id: orders.order_id

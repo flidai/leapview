@@ -51,7 +51,7 @@ visuals:
 
 ## Zoomable distribution
 
-Use revenue as the raw metric and enable `presentation.data_zoom` when the range contains values that benefit from closer inspection.
+Use revenue as the raw metric and enable `presentation.dataZoom` when the range contains values that benefit from closer inspection.
 
 {{< visual id="revenue_distribution" >}}
 
@@ -61,7 +61,8 @@ visuals:
     title: Revenue distribution
     type: boxplot
     presentation:
-      data_zoom: true
+      type: cartesian
+      dataZoom: true
     query:
       dataset: orders
       dimensions:

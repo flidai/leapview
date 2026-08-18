@@ -20,7 +20,7 @@ visuals:
       orientation: horizontal
       initial_depth: 2
       roam: true
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
     query:
       dataset: service_teams
       dimensions:
@@ -70,7 +70,7 @@ visuals:
     presentation:
       orientation: vertical
       initial_depth: 2
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 16, minimum_spacing: 6, tooltip_fallback: true}
+      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 16, minimumSpacing: 6, tooltipFallback: true}
     query:
       dimensions:
         category: orders.category
