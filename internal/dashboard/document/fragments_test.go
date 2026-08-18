@@ -229,6 +229,15 @@ func TestExpandDashboardFragmentsReportsSequenceDuplicateOrigins(t *testing.T) {
 	if _, err := ExpandDashboardFragments(input, dashboardPath, root); err == nil || !strings.Contains(err.Error(), "component-two.yaml") || !strings.Contains(err.Error(), "duplicated") {
 		t.Fatalf("duplicate component diagnostic = %v, want second fragment origin", err)
 	}
+	scoped := "components:\n  local:\n    - type: visual\n      id: mixed-duplicate\n      visual: local\n      placement: {column: 1, row: 1, columnSpan: 1, rowSpan: 1}\n"
+	unscoped := "- type: visual\n  id: mixed-duplicate\n  visual: local\n  placement: {column: 1, row: 1, columnSpan: 1, rowSpan: 1}\n"
+	write("scoped.yaml", scoped)
+	write("unscoped.yaml", unscoped)
+	input = fragmentTestDocument(&DashboardIncludes{Components: ptrStrings("scoped.yaml", "unscoped.yaml")})
+	input.Spec.Pages = []DashboardPage{{ID: "local", Title: "Local", Components: []DashboardPageComponent{{Value: &VisualDashboardPageComponent{DashboardPageComponentBase: DashboardPageComponentBase{ID: "mixed-duplicate", Type: "visual", Placement: DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 1, RowSpan: 1}}, Type: "visual", Visual: "local"}}}}}
+	if _, err := ExpandDashboardFragments(input, dashboardPath, root); err == nil || !strings.Contains(err.Error(), "scoped.yaml") || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("mixed component diagnostic = %v, want scoped second origin", err)
+	}
 }
 
 func canonicalTestVisual() DashboardVisual {

@@ -77,6 +77,7 @@ type fragmentState struct {
 	components            map[string][]DashboardPageComponent
 	componentOrigins      map[string][]idOrigin
 	localComponentOrigins map[string][]idOrigin
+	finalComponentOrigins map[string][]idOrigin
 	unscoped              []DashboardPageComponent
 	unscopedOrigins       []idOrigin
 	active                map[string]struct{}
@@ -128,7 +129,7 @@ func ExpandDashboardFragments(input DashboardDocument, dashboardPath, projectRoo
 		return FragmentExpansion{}, fmt.Errorf("dashboard path %q resolves outside project boundary", dashboardPath)
 	}
 	state := &fragmentState{
-		visuals: make(map[string]DashboardVisual), visualOrigins: make(map[string]idOrigin), components: make(map[string][]DashboardPageComponent), componentOrigins: make(map[string][]idOrigin), localComponentOrigins: make(map[string][]idOrigin),
+		visuals: make(map[string]DashboardVisual), visualOrigins: make(map[string]idOrigin), components: make(map[string][]DashboardPageComponent), componentOrigins: make(map[string][]idOrigin), localComponentOrigins: make(map[string][]idOrigin), finalComponentOrigins: make(map[string][]idOrigin),
 		active: make(map[string]struct{}), projectRoot: root, dashboardDir: filepath.Dir(canonicalDashboard), dashboardPath: filepath.ToSlash(relativeDashboard),
 	}
 	if document.Spec.Includes == nil {
@@ -302,6 +303,9 @@ func (state *fragmentState) expandFile(path, expected string) error {
 		state.pages = append(state.pages, values...)
 		for index := range values {
 			state.pageOrigins = append(state.pageOrigins, idOrigin{path: relativePath, line: collectionSequenceLine(collectionNode, index)})
+			for range values[index].Components {
+				state.localComponentOrigins[values[index].ID] = append(state.localComponentOrigins[values[index].ID], idOrigin{path: relativePath, line: collectionSequenceLine(collectionNode, index)})
+			}
 		}
 	case "components":
 		var shape any
@@ -366,6 +370,15 @@ func attachComponents(document *DashboardDocument, state *fragmentState) error {
 		}
 		document.Spec.Pages[0].Components = append(append([]DashboardPageComponent(nil), state.unscoped...), document.Spec.Pages[0].Components...)
 	}
+	for _, page := range document.Spec.Pages {
+		origins := make([]idOrigin, 0, len(page.Components))
+		if len(state.unscoped) > 0 && len(document.Spec.Pages) == 1 {
+			origins = append(origins, state.unscopedOrigins...)
+		}
+		origins = append(origins, state.componentOrigins[page.ID]...)
+		origins = append(origins, state.localComponentOrigins[page.ID]...)
+		state.finalComponentOrigins[page.ID] = origins
+	}
 	return nil
 }
 
@@ -429,17 +442,8 @@ func originAt(values []idOrigin, index int) idOrigin {
 }
 
 func componentOriginAt(state *fragmentState, pageID string, index int) idOrigin {
-	if values := state.componentOrigins[pageID]; index >= 0 && index < len(values) {
+	if values := state.finalComponentOrigins[pageID]; index >= 0 && index < len(values) {
 		return values[index]
-	}
-	if len(state.unscopedOrigins) > 0 && index < len(state.unscopedOrigins) {
-		return state.unscopedOrigins[index]
-	}
-	if included := len(state.componentOrigins[pageID]); index >= included {
-		localIndex := index - included
-		if values := state.localComponentOrigins[pageID]; localIndex >= 0 && localIndex < len(values) {
-			return values[localIndex]
-		}
 	}
 	return idOrigin{}
 }
