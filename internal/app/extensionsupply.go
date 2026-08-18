@@ -19,6 +19,8 @@ import (
 	"github.com/flidai/leapview/internal/extension"
 )
 
+const maxExtensionSupplyDocumentBytes = 1 << 20
+
 // loadExtensionSupply is the only application composition point for the
 // target-owned extension supply. The document digest is checked before JSON
 // decoding, and the resulting admission/preparation object is shared by the
@@ -140,9 +142,17 @@ func readSupplyDocument(path string) ([]byte, error) {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: duckdb extension supply document must be a regular non-symlink file", extension.ErrExtensionConfiguration)
 	}
-	payload, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("%w: read duckdb extension supply document", extension.ErrExtensionConfiguration)
+	}
+	defer file.Close()
+	payload, err := io.ReadAll(io.LimitReader(file, maxExtensionSupplyDocumentBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: read duckdb extension supply document", extension.ErrExtensionConfiguration)
+	}
+	if len(payload) > maxExtensionSupplyDocumentBytes {
+		return nil, fmt.Errorf("%w: duckdb extension supply document exceeds %d bytes", extension.ErrExtensionConfiguration, maxExtensionSupplyDocumentBytes)
 	}
 	return payload, nil
 }
