@@ -518,21 +518,10 @@ func canonicalRecordFields(values []document.DashboardRecordFieldSelection, data
 		if err != nil {
 			return nil, nil, fmt.Errorf("field %d: %w", index, err)
 		}
-		parts := strings.Split(name, ".")
-		fieldName := name
-		qualified := dataset + "." + fieldName
-		if len(parts) == 2 {
-			if parts[0] == dataset {
-				fieldName = parts[1]
-				qualified = dataset + "." + fieldName
-			} else {
-				// A records query may project a governed relationship field from a
-				// related dataset while retaining one root row grain.
-				qualified = name
-			}
-		} else if len(parts) != 1 {
-			return nil, nil, fmt.Errorf("field %q must be a root physical field", name)
+		if strings.Contains(name, ".") {
+			return nil, nil, fmt.Errorf("field %q must be an unqualified root physical field", name)
 		}
+		qualified := dataset + "." + name
 		if _, err := model.ResolveDimension(qualified); err != nil {
 			return nil, nil, fmt.Errorf("field %q is not a safe physical field on dataset %q: %w", name, dataset, err)
 		}

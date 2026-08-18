@@ -94,21 +94,6 @@ func (p Page) WithDefaults() Page {
 	if p.ResponsiveLayout == nil {
 		p.Height = 0
 	}
-	if p.Grid.Columns <= 0 {
-		p.Grid.Columns = 12
-	}
-	if p.Grid.RowHeight <= 0 {
-		p.Grid.RowHeight = 48
-	}
-	if p.Grid.Gap < 0 {
-		p.Grid.Gap = 0
-	}
-	if p.Grid.Gap == 0 {
-		p.Grid.Gap = 16
-	}
-	if p.Grid.Padding < 0 {
-		p.Grid.Padding = 0
-	}
 	return p
 }
 
@@ -124,7 +109,9 @@ func (p Page) PlacedVisuals() []PageVisual {
 }
 
 func (g PageGrid) Rect(canvas PageCanvas, placement PagePlacement) (float64, float64, float64, float64) {
-	g = Page{Canvas: canvas, Grid: g}.WithDefaults().Grid
+	if canvas.Width <= 0 || g.Columns <= 0 || g.RowHeight <= 0 || placement.Col <= 0 || placement.Row <= 0 || placement.ColSpan <= 0 || placement.RowSpan <= 0 {
+		return 0, 0, 0, 0
+	}
 	availableWidth := float64(canvas.Width - (g.Padding * 2) - (g.Gap * (g.Columns - 1)))
 	colWidth := availableWidth / float64(g.Columns)
 	x := float64(g.Padding) + float64(placement.Col-1)*(colWidth+float64(g.Gap))

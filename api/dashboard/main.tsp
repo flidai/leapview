@@ -8,6 +8,46 @@ import "../visualization/main.tsp";
 })
 namespace LeapViewDashboard;
 
+/** Graph resource identity used by dashboard metadata and semantic-model links. */
+@minLength(1)
+@maxLength(128)
+@pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+scalar DashboardResourceID extends string;
+
+/** Human-readable resource name; unlike graph IDs, names cannot begin with a digit. */
+@minLength(1)
+@maxLength(128)
+@pattern("^[A-Za-z_][A-Za-z0-9_.-]*$")
+scalar DashboardResourceName extends string;
+
+/** Stable local identity for dashboard-owned objects and map keys. */
+@minLength(1)
+@maxLength(128)
+@pattern("^[A-Za-z_][A-Za-z0-9_-]*$")
+scalar DashboardLocalIdentifier extends string;
+
+/** Compiled result-frame names used by downstream bindings and sorts. */
+@minLength(1)
+@pattern("^[A-Za-z_][A-Za-z0-9_]*$")
+scalar DashboardResultField extends string;
+
+/** Physical records field on the query's single root dataset. */
+@minLength(1)
+@pattern("^[A-Za-z_][A-Za-z0-9_]*$")
+scalar DashboardRecordField extends string;
+
+/** Friendly URL state parameter (protocol-reserved names remain contextual rules). */
+@minLength(1)
+@maxLength(64)
+@pattern("^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+scalar DashboardURLParameter extends string;
+
+/** Semantic member references are unqualified governed identifiers. */
+scalar DashboardSemanticMember extends DashboardResultField;
+
+/** Dashboard visual, filter, page, component, calculation, and dataset IDs. */
+scalar DashboardObjectIdentifier extends DashboardLocalIdentifier;
+
 /** The only resource version accepted by the canonical dashboard document. */
 enum DashboardApiVersion {
   v1: "leapview.dev/v1",
@@ -41,8 +81,8 @@ enum DashboardAppearanceColor {
 }
 
 model DashboardMetadata {
-  id: string;
-  name: string;
+  id: DashboardResourceID;
+  name: DashboardResourceName;
   displayName?: string;
   description?: string;
   owner?: string;
@@ -67,9 +107,10 @@ model DashboardDocument {
 
 model DashboardSpec {
   appearance?: DashboardAppearance;
-  semanticModel: string;
+  semanticModel: DashboardResourceID;
   layout?: DashboardLayoutDefaults;
   filters: DashboardFilter[];
+  @apigen.propertyNames(DashboardObjectIdentifier)
   visuals: Record<DashboardVisual>;
   pages: DashboardPage[];
   includes?: DashboardIncludes;
@@ -96,36 +137,36 @@ enum DashboardTimeGrain {
 
 /** A semantic dimension reference. Physical dataset fields are not accepted. */
 model DashboardDimensionReference {
-  dimension: string;
+  dimension: DashboardSemanticMember;
   grain?: DashboardTimeGrain;
-  `alias`?: string;
+  `alias`?: DashboardResultField;
 }
 
 /** A semantic metric reference. Metric expressions are never part of this type. */
 model DashboardMetricReference {
-  metric: string;
-  `alias`?: string;
+  metric: DashboardSemanticMember;
+  `alias`?: DashboardResultField;
 }
 
 /** A physical field reference is only valid for a records query root dataset. */
 model DashboardRecordFieldReference {
-  field: string;
-  `alias`?: string;
+  field: DashboardRecordField;
+  `alias`?: DashboardResultField;
 }
 
 /** Unaliased selections can use the compact string form; aliased selections use the closed object form. */
 union DashboardDimensionSelection {
-  name: string,
+  name: DashboardSemanticMember,
   reference: DashboardDimensionReference,
 }
 
 union DashboardMetricSelection {
-  name: string,
+  name: DashboardSemanticMember,
   reference: DashboardMetricReference,
 }
 
 union DashboardRecordFieldSelection {
-  name: string,
+  name: DashboardRecordField,
   reference: DashboardRecordFieldReference,
 }
 
@@ -136,7 +177,7 @@ enum DashboardSortDirection {
 
 model DashboardSort {
   /** A compiled result-frame field name, never a source member or expression. */
-  field: string;
+  field: DashboardResultField;
   direction: DashboardSortDirection;
 }
 
@@ -163,7 +204,7 @@ model AggregateDashboardQuery extends DashboardQuery {
 
 model RecordsDashboardQuery extends DashboardQuery {
   type: "records";
-  dataset: string;
+  dataset: DashboardObjectIdentifier;
   fields: DashboardRecordFieldSelection[];
   sort?: DashboardSort[];
   limit?: int32;
@@ -428,8 +469,8 @@ model DashboardFilterOptions {
 
 model DistinctDashboardFilterOptions extends DashboardFilterOptions {
   type: "distinct";
-  dataset: string;
-  dependsOn?: string[];
+  dataset: DashboardObjectIdentifier;
+  dependsOn?: DashboardObjectIdentifier[];
   limit?: int32;
   includeNull?: boolean;
 }
@@ -445,17 +486,17 @@ model DashboardFilterOption {
 }
 
 model DashboardFilter {
-  id: string;
+  id: DashboardObjectIdentifier;
   label: string;
   description?: string;
-  dimension: string;
+  dimension: DashboardSemanticMember;
   control: DashboardFilterControl;
   operators?: DashboardFilterOperator[];
   default?: DashboardFilterExpression;
   required?: boolean;
   readerEditable?: boolean;
-  targets?: string[];
-  urlParameter?: string;
+  targets?: DashboardObjectIdentifier[];
+  urlParameter?: DashboardURLParameter;
 }
 
 enum DashboardLabelDensity {
@@ -566,8 +607,8 @@ enum DashboardLabelPosition {
 }
 
 model DashboardTextBinding {
-  dataset: string;
-  field: string;
+  dataset: DashboardObjectIdentifier;
+  field: DashboardResultField;
   reducer?: LeapViewVisualization.VisualizationReferenceReducer;
   prefix?: string;
   suffix?: string;
@@ -623,23 +664,23 @@ model DashboardAccessibility {
 }
 
 model DashboardCalculation {
-  id: string;
+  id: DashboardObjectIdentifier;
   label?: string;
   template: LeapViewVisualization.VisualizationCalculationTemplate;
-  source: string;
+  source: DashboardResultField;
   axis?: LeapViewVisualization.VisualizationCalculationAxis;
   orderBy?: DashboardSort[];
-  partitionBy?: string[];
+  partitionBy?: DashboardResultField[];
   reset?: LeapViewVisualization.VisualizationCalculationReset;
   window?: int32;
   offset?: int32;
-  parent?: string;
+  parent?: DashboardObjectIdentifier;
   lookup?: DashboardCalculationLookup;
   hidden?: boolean;
 }
 
 model DashboardCalculationLookup {
-  field: string;
+  field: DashboardResultField;
   value: string;
 }
 
@@ -649,6 +690,7 @@ model DashboardVisual {
   subtitle?: string;
   description?: string;
   query: DashboardQuery;
+  @apigen.propertyNames(DashboardObjectIdentifier)
   datasets?: Record<DashboardQuery>;
   metadata?: DashboardMetadataBindings;
   presentation: DashboardPresentation;
@@ -666,7 +708,7 @@ enum DashboardInteractionType {
 @discriminator("type")
 model DashboardInteraction {
   type: string;
-  targets?: string[];
+  targets?: DashboardObjectIdentifier[];
 }
 
 enum DashboardSelectionMode {
@@ -679,8 +721,8 @@ model SelectionDashboardInteraction extends DashboardInteraction {
   mode: DashboardSelectionMode;
   toggle: boolean;
   mappings: DashboardInteractionMapping[];
-  highlightTargets?: string[];
-  noneTargets?: string[];
+  highlightTargets?: DashboardObjectIdentifier[];
+  noneTargets?: DashboardObjectIdentifier[];
 }
 
 model SpatialSelectionDashboardInteraction extends DashboardInteraction {
@@ -688,8 +730,8 @@ model SpatialSelectionDashboardInteraction extends DashboardInteraction {
   gestures: DashboardSpatialGesture[];
   latitude: DashboardSpatialMapping;
   longitude: DashboardSpatialMapping;
-  highlightTargets?: string[];
-  noneTargets?: string[];
+  highlightTargets?: DashboardObjectIdentifier[];
+  noneTargets?: DashboardObjectIdentifier[];
 }
 
 enum DashboardSpatialGesture {
@@ -699,17 +741,17 @@ enum DashboardSpatialGesture {
 }
 
 model DashboardInteractionMapping {
-  field: string;
-  dataset?: string;
+  field: DashboardResultField;
+  dataset?: DashboardObjectIdentifier;
   grain?: DashboardTimeGrain;
-  value: string;
+  value: DashboardResultField;
   label?: string;
 }
 
 model DashboardSpatialMapping {
-  source: string;
-  field: string;
-  dataset?: string;
+  source: DashboardResultField;
+  field: DashboardResultField;
+  dataset?: DashboardObjectIdentifier;
 }
 
 model DashboardLayoutDefaults {
@@ -741,19 +783,19 @@ enum DashboardPageComponentType {
 
 @discriminator("type")
 model DashboardPageComponent {
-  id: string;
+  id: DashboardObjectIdentifier;
   type: string;
   placement: DashboardPlacement;
 }
 
 model VisualDashboardPageComponent extends DashboardPageComponent {
   type: "visual";
-  visual: string;
+  visual: DashboardObjectIdentifier;
 }
 
 model FilterDashboardPageComponent extends DashboardPageComponent {
   type: "filter";
-  filter: string;
+  filter: DashboardObjectIdentifier;
 }
 
 model HeaderDashboardPageComponent extends DashboardPageComponent {
@@ -763,7 +805,7 @@ model HeaderDashboardPageComponent extends DashboardPageComponent {
 }
 
 model DashboardPage {
-  id: string;
+  id: DashboardObjectIdentifier;
   title: string;
   description?: string;
   layout?: DashboardLayoutOverride;

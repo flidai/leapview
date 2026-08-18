@@ -217,6 +217,9 @@
           "type": "boolean"
         },
         "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "label": {
@@ -236,10 +239,15 @@
           "type": "array"
         },
         "parent": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "partitionBy": {
           "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
             "type": "string"
           },
           "type": "array"
@@ -248,6 +256,8 @@
           "$ref": "#/$defs/VisualizationCalculationReset"
         },
         "source": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "template": {
@@ -269,6 +279,8 @@
     "DashboardCalculationLookup": {
       "properties": {
         "field": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "value": {
@@ -302,9 +314,13 @@
       "description": "A semantic dimension reference. Physical dataset fields are not accepted.",
       "properties": {
         "alias": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "dimension": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "grain": {
@@ -320,6 +336,8 @@
     "DashboardDimensionSelection": {
       "oneOf": [
         {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         {
@@ -389,9 +407,14 @@
           "type": "string"
         },
         "dimension": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "label": {
@@ -411,11 +434,17 @@
         },
         "targets": {
           "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
             "type": "string"
           },
           "type": "array"
         },
         "urlParameter": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
           "type": "string"
         }
       },
@@ -672,6 +701,9 @@
       "properties": {
         "targets": {
           "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
             "type": "string"
           },
           "type": "array"
@@ -688,9 +720,14 @@
     "DashboardInteractionMapping": {
       "properties": {
         "dataset": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "field": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "grain": {
@@ -700,6 +737,8 @@
           "type": "string"
         },
         "value": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         }
       },
@@ -840,9 +879,15 @@
           "type": "string"
         },
         "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
         },
         "name": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
           "type": "string"
         },
         "owner": {
@@ -884,9 +929,13 @@
       "description": "A semantic metric reference. Metric expressions are never part of this type.",
       "properties": {
         "alias": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "metric": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         }
       },
@@ -899,6 +948,8 @@
     "DashboardMetricSelection": {
       "oneOf": [
         {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         {
@@ -925,6 +976,9 @@
           "type": "string"
         },
         "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "layout": {
@@ -958,6 +1012,9 @@
     "DashboardPageComponentBase": {
       "properties": {
         "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "placement": {
@@ -1105,9 +1162,13 @@
       "description": "A physical field reference is only valid for a records query root dataset.",
       "properties": {
         "alias": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "field": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         }
       },
@@ -1120,6 +1181,8 @@
     "DashboardRecordFieldSelection": {
       "oneOf": [
         {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         {
@@ -1177,6 +1240,8 @@
         },
         "field": {
           "description": "A compiled result-frame field name, never a source member or expression.",
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         }
       },
@@ -1205,12 +1270,19 @@
     "DashboardSpatialMapping": {
       "properties": {
         "dataset": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "field": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "source": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         }
       },
@@ -1245,11 +1317,20 @@
           "type": "array"
         },
         "semanticModel": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
         },
         "visuals": {
           "additionalProperties": {
             "$ref": "#/$defs/DashboardVisual"
+          },
+          "propertyNames": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+            "type": "string"
           },
           "type": "object"
         }
@@ -1274,12 +1355,17 @@
     "DashboardTextBinding": {
       "properties": {
         "dataset": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "fallback": {
           "type": "string"
         },
         "field": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "prefix": {
@@ -1329,6 +1415,12 @@
         "datasets": {
           "additionalProperties": {
             "$ref": "#/$defs/DashboardQuery"
+          },
+          "propertyNames": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+            "type": "string"
           },
           "type": "object"
         },
@@ -1477,10 +1569,16 @@
       ],
       "properties": {
         "dataset": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "dependsOn": {
           "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
             "type": "string"
           },
           "type": "array"
@@ -1557,6 +1655,9 @@
       ],
       "properties": {
         "filter": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "type": {
@@ -1961,6 +2062,9 @@
       ],
       "properties": {
         "dataset": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
         "fields": {
@@ -2067,6 +2171,9 @@
       "properties": {
         "highlightTargets": {
           "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
             "type": "string"
           },
           "type": "array"
@@ -2082,6 +2189,9 @@
         },
         "noneTargets": {
           "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
             "type": "string"
           },
           "type": "array"
@@ -2174,6 +2284,9 @@
         },
         "highlightTargets": {
           "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
             "type": "string"
           },
           "type": "array"
@@ -2186,6 +2299,9 @@
         },
         "noneTargets": {
           "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
             "type": "string"
           },
           "type": "array"
@@ -2369,6 +2485,9 @@
           "type": "string"
         },
         "visual": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         }
       },
