@@ -33,7 +33,7 @@ spec:
       SELECT
         order_id,
         try_cast(order_purchase_timestamp AS DATE) AS purchase_date,
-        0::DOUBLE AS revenue
+        CAST(0 AS DECIMAL(38, 2)) AS revenue
       FROM source."olist.orders"
       WHERE order_id IS NOT NULL
 ```

@@ -9,7 +9,6 @@ import (
 )
 
 type Planner struct {
-	model         *semanticmodel.Model
 	compiled      *CompiledModel
 	tableRelation TableRelation
 }
@@ -33,59 +32,24 @@ func (p *Planner) resolveDimension(ref string) (semanticmodel.MetricDimension, e
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return semanticmodel.MetricDimension{}, fmt.Errorf("field %q must be qualified as dataset.field", ref)
 	}
-	table, ok := p.datasetTable(parts[0])
-	if !ok {
+	if p == nil || p.compiled == nil {
+		return semanticmodel.MetricDimension{}, fmt.Errorf("planner is not compiled")
+	}
+	if _, ok := p.compiled.dataset(parts[0]); !ok {
 		return semanticmodel.MetricDimension{}, fmt.Errorf("unknown dataset %q", parts[0])
 	}
-	dimension, ok := table.Dimensions[parts[1]]
+	dimension, ok := p.compiled.PhysicalField(ref)
 	if !ok {
 		return semanticmodel.MetricDimension{}, fmt.Errorf("unknown field %q on dataset %q", parts[1], parts[0])
 	}
-	dimension.Field = ref
-	dimension.Table = parts[0]
-	dimension.Name = parts[1]
 	return dimension, nil
 }
 
 func (p *Planner) resolveBindingPath(dataset string, binding semanticmodel.DimensionBinding) ([]semanticmodel.Relationship, error) {
-	dimension, err := p.resolveDimension(binding.Field)
-	if err != nil {
-		return nil, err
+	if p == nil || p.compiled == nil {
+		return nil, fmt.Errorf("planner is not compiled")
 	}
-	if len(binding.Path) == 0 {
-		return p.relationshipPath(dataset, dimension.Table)
-	}
-	current := dataset
-	visited := map[string]struct{}{dataset: {}}
-	path := make([]semanticmodel.Relationship, 0, len(binding.Path))
-	for _, id := range binding.Path {
-		relationship, ok := p.model.RelationshipByID(id)
-		if !ok {
-			return nil, fmt.Errorf("unknown relationship %q", id)
-		}
-		from, _, fromErr := semanticmodel.RelationshipEndpoint(relationship, true)
-		to, _, toErr := semanticmodel.RelationshipEndpoint(relationship, false)
-		if fromErr != nil || toErr != nil {
-			return nil, fmt.Errorf("relationship %q has invalid endpoint", id)
-		}
-		switch {
-		case current == from:
-			current = to
-		case relationship.Cardinality == "one_to_one" && current == to:
-			current = from
-		default:
-			return nil, fmt.Errorf("relationship %q does not safely continue from %q", id, current)
-		}
-		if _, exists := visited[current]; exists {
-			return nil, fmt.Errorf("relationship path revisits dataset %q", current)
-		}
-		visited[current] = struct{}{}
-		path = append(path, relationship)
-	}
-	if current != dimension.Table {
-		return nil, fmt.Errorf("relationship path ends at %q, field belongs to %q", current, dimension.Table)
-	}
-	return path, nil
+	return p.compiled.ResolveBindingPath(dataset, binding.Field, binding.Path)
 }
 
 // TableRelation resolves a validated backing physical Model table name to the
@@ -94,10 +58,10 @@ func (p *Planner) resolveBindingPath(dataset string, binding semanticmodel.Dimen
 // this callback.
 type TableRelation func(table string) (string, error)
 
-// IsCompiled reports whether the planner owns an activated immutable semantic
-// snapshot. It intentionally does not expose that snapshot to consumers.
+// IsCompiled reports whether the planner owns activation-compiled facts. It
+// intentionally does not expose mutable authoring metadata to consumers.
 func (p *Planner) IsCompiled() bool {
-	return p != nil && p.model != nil && p.compiled != nil
+	return p != nil && p.compiled != nil
 }
 
 type tableAlias struct {
@@ -249,7 +213,7 @@ func (p *Planner) countView(request CountRequest) (*queryView, error) {
 }
 
 func (p *Planner) semanticView(dataset string, dimensions []Field, metrics []Field, filters []Filter, timeField string) (*queryView, error) {
-	if p.model == nil {
+	if p == nil || p.compiled == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
 	resolvedMetrics := map[string]resolvedAggregateMetric{}
@@ -309,17 +273,12 @@ func (p *Planner) semanticView(dataset string, dimensions []Field, metrics []Fie
 }
 
 func (p *Planner) resolveViewDimension(dataset, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
-	if semanticDimension, ok := p.model.Dimensions[ref]; ok {
-		binding, ok := semanticDimension.Bindings[dataset]
+	if _, ok := p.compiled.SemanticDimension(ref); ok {
+		binding, ok := p.compiled.DimensionBinding(ref, dataset)
 		if !ok {
 			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for dataset %q", ref, dataset)
 		}
-		dimension, err := p.resolveDimension(binding.Field)
-		if err != nil {
-			return semanticmodel.MetricDimension{}, nil, err
-		}
-		path, err := p.resolveBindingPath(dataset, binding)
-		return dimension, path, err
+		return binding.Physical, binding.Path, nil
 	}
 	dimension, err := p.resolveDimension(ref)
 	if err != nil {
@@ -401,20 +360,16 @@ func (p *Planner) exposeViewFilters(view *queryView, filters []Filter) error {
 }
 
 func (p *Planner) resolveViewFilterDimension(dataset, ref string, explicitPath []string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
-	if semanticDimension, ok := p.model.Dimensions[ref]; ok {
-		binding, ok := semanticDimension.Bindings[dataset]
+	if _, ok := p.compiled.SemanticDimension(ref); ok {
+		binding, ok := p.compiled.DimensionBinding(ref, dataset)
 		if !ok {
 			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for dataset %q", ref, dataset)
 		}
 		if len(explicitPath) > 0 {
-			binding.Path = append([]string(nil), explicitPath...)
+			path, err := p.compiled.ResolveBindingPath(dataset, binding.Physical.Field, explicitPath)
+			return binding.Physical, path, err
 		}
-		dimension, err := p.resolveDimension(binding.Field)
-		if err != nil {
-			return semanticmodel.MetricDimension{}, nil, err
-		}
-		path, err := p.resolveBindingPath(dataset, binding)
-		return dimension, path, err
+		return binding.Physical, binding.Path, nil
 	}
 	dimension, err := p.resolveDimension(ref)
 	if err != nil {
@@ -422,7 +377,7 @@ func (p *Planner) resolveViewFilterDimension(dataset, ref string, explicitPath [
 	}
 	var path []semanticmodel.Relationship
 	if len(explicitPath) > 0 {
-		path, err = p.resolveBindingPath(dataset, semanticmodel.DimensionBinding{Field: ref, Path: append([]string(nil), explicitPath...)})
+		path, err = p.compiled.ResolveBindingPath(dataset, ref, explicitPath)
 	} else {
 		path, err = p.relationshipPath(dataset, dimension.Table)
 	}
@@ -472,7 +427,10 @@ func (s *queryView) ResolveMetricRef(ref string) (string, resolvedAggregateMetri
 }
 
 func (p *Planner) relationshipPath(base, target string) ([]semanticmodel.Relationship, error) {
-	return p.model.SafeRelationshipPath(base, target)
+	if p == nil || p.compiled == nil {
+		return nil, fmt.Errorf("planner is not compiled")
+	}
+	return p.compiled.RelationshipPath(base, target)
 }
 
 func defaultString(value, fallback string) string {

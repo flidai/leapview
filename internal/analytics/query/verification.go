@@ -296,7 +296,7 @@ func sortedMetricNames(model *semanticmodel.Model) []string {
 
 func (p *Planner) sortedDimensionNames() []string {
 	seen := map[string]struct{}{}
-	for name := range p.model.Dimensions {
+	for name := range p.compiled.semanticDimensions {
 		seen[name] = struct{}{}
 	}
 	for _, tableName := range p.compiled.DatasetNames() {
@@ -324,13 +324,9 @@ func sortedSemanticDimensionNames(model *semanticmodel.Model) []string {
 }
 
 func (p *Planner) dimensionCompatibleWithDatasets(name string, datasets []string) bool {
-	if dimension, ok := p.model.Dimensions[name]; ok {
+	if _, ok := p.compiled.SemanticDimension(name); ok {
 		for _, dataset := range datasets {
-			binding, bound := dimension.Bindings[dataset]
-			if !bound {
-				return false
-			}
-			if _, err := p.resolveBindingPath(dataset, binding); err != nil {
+			if _, bound := p.compiled.DimensionBinding(name, dataset); !bound {
 				return false
 			}
 		}

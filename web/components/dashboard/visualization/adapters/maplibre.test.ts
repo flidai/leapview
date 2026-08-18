@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledRawPrecisionVisible, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -305,6 +305,43 @@ test('MapLibre switches the complete tiled map to one precision family at the gl
 	expect(tiledRawPrecisionVisible(6.999, 7)).toBe(false)
 	expect(tiledRawPrecisionVisible(7, 7)).toBe(true)
 	expect(tiledRawPrecisionVisible(18, 19)).toBe(false)
+})
+
+test('MapLibre replaces the tiled source generation before exposing a new precision family', () => {
+  const previous = 'https://dash.example/tiles/revision-raw/{z}/{x}/{y}.mvt'
+  const next = 'https://dash.example/tiles/revision-aggregate/{z}/{x}/{y}.mvt'
+  expect(tiledSourceTransition(undefined, previous)).toBe('stable')
+  expect(tiledSourceTransition(previous, previous)).toBe('stable')
+  expect(tiledSourceTransition(previous, next)).toBe('replace')
+  expect(tiledSourceLifecycle('replace', true)).toBe('waiting')
+  expect(tiledSourceLifecycle('stable', true)).toBe('stable')
+  expect(tiledSourceLifecycle('replace', false)).toBe('error')
+})
+
+test('MapLibre hides both tiled precision families during replacement and restores exactly one after source readiness', () => {
+  const previous = 'https://dash.example/tiles/revision-raw/{z}/{x}/{y}.mvt'
+  const next = 'https://dash.example/tiles/revision-aggregate/{z}/{x}/{y}.mvt'
+  const visibility = new Map<string, string>()
+  const map = {
+    getLayer: (id: string) => ({ id }),
+    setLayoutProperty: (id: string, property: string, value: string) => visibility.set(`${id}:${property}`, value),
+  }
+  const raw = ['raw-point', 'raw-label']
+  const aggregate = ['aggregate-point', 'aggregate-count']
+  const replacement = tiledSourceLifecycle(tiledSourceTransition(previous, next), true)
+  expect(replacement).toBe('waiting')
+  expect(tiledPrecisionLayerFamily(replacement === 'waiting', 12, 8)).toBe('hidden')
+  applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(replacement === 'waiting', 12, 8))
+  expect([...visibility.values()]).toEqual(['none', 'none', 'none', 'none'])
+  const sourceReady = tiledSourceLifecycle(tiledSourceTransition(previous, next), true) === 'waiting'
+  applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(!sourceReady, 12, 8))
+  expect(raw.map((id) => visibility.get(`${id}:visibility`))).toEqual(['visible', 'visible'])
+  expect(aggregate.map((id) => visibility.get(`${id}:visibility`))).toEqual(['none', 'none'])
+  const stable = tiledSourceLifecycle(tiledSourceTransition(previous, previous), true)
+  expect(stable).toBe('stable')
+  applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(stable === 'waiting', 6, 8))
+  expect(raw.map((id) => visibility.get(`${id}:visibility`))).toEqual(['none', 'none'])
+  expect(aggregate.map((id) => visibility.get(`${id}:visibility`))).toEqual(['visible', 'visible'])
 })
 
 test('MapLibre refreshes tiled paint domains when governed metadata replaces the loading placeholder', () => {

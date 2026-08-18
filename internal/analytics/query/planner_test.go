@@ -128,6 +128,23 @@ func TestPlannerDimensionOnlyQueryUsesDatasetsCompatibleWithConformedFilters(t *
 	}
 }
 
+func TestPlannerDimensionOnlyModelWithoutMetrics(t *testing.T) {
+	model := testModel()
+	model.Metrics = map[string]semanticmodel.Metric{}
+	plan, err := mustNewCompiledPlanner(t, model).Plan(Request{
+		Dimensions: []Field{{Field: "customer_state", Alias: "state"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Mode != "multi_dataset" || strings.Join(plan.Datasets, ",") != "orders,tags" {
+		t.Fatalf("plan mode/datasets = %q/%v, want multi_dataset/[orders tags]", plan.Mode, plan.Datasets)
+	}
+	if plan.IR == nil {
+		t.Fatal("dimension-only metricless plan omitted PlanIR")
+	}
+}
+
 func TestPlannerConformedSelectionEntriesPropagateToEveryDataset(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Metrics: []Field{{Field: "order_count"}, {Field: "tag_count"}},
@@ -483,7 +500,7 @@ func TestPlannerAppliesSpatialInteractionPredicateBeforeAggregation(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"ASIN", `RADIANS("latitude" - ?)`, `RADIANS("longitude" - ?)`} {
+	for _, want := range []string{"ASIN", `RADIANS("orders"."latitude" - ?)`, `RADIANS("orders"."longitude" - ?)`} {
 		if !strings.Contains(plan.SQL, want) {
 			t.Fatalf("spatial interaction SQL missing %q:\n%s", want, plan.SQL)
 		}

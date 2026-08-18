@@ -69750,6 +69750,7 @@ components:
         - boolean
         - integer
         - decimal
+        - float
         - temporal
         - date
         - geographic

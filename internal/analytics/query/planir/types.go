@@ -31,6 +31,7 @@ const (
 	KindBundleBranches       Kind = "BundleBranches"
 	KindSpatialEnvelope      Kind = "SpatialEnvelope"
 	KindAnalyticalEnvelope   Kind = "AnalyticalEnvelope"
+	KindTotalRows            Kind = "TotalRows"
 )
 
 // FilterPhase identifies where a filter is evaluated.  A filter may not move
@@ -120,6 +121,11 @@ type Field struct {
 type Metric struct {
 	Name string `json:"name"`
 	Type string `json:"type,omitempty"`
+	// Empty carries the governed empty-set policy with the metric metadata
+	// emitted by an aggregate node. Consumers such as StitchAggregates need
+	// this policy after the aggregate node has been lowered, when the original
+	// MetricSpec is no longer directly available.
+	Empty string `json:"empty,omitempty"`
 }
 
 // Literal is the only value that may enter a predicate or scalar expression.
@@ -550,6 +556,9 @@ func (m NodeMeta) validate(where string) error {
 		if metric.Name == "" {
 			return fmt.Errorf("%s: available metric has empty name", where)
 		}
+		if metric.Empty != "" && metric.Empty != "zero" && metric.Empty != "null" {
+			return fmt.Errorf("%s: available metric %q has unsupported empty policy %q", where, metric.Name, metric.Empty)
+		}
 		if _, ok := seen[metric.Name]; ok {
 			return fmt.Errorf("%s: duplicate available metric %q", where, metric.Name)
 		}
@@ -769,6 +778,20 @@ func (SortLimit) Kind() Kind         { return KindSortLimit }
 func (n SortLimit) Meta() NodeMeta   { return n.NodeMeta }
 func (n SortLimit) Inputs() []string { return []string{n.Input} }
 func (SortLimit) nodeMarker()        {}
+
+// TotalRows adds the total filtered row population to an already projected
+// SortLimit result. The renderer evaluates the window before the wrapped
+// limit/offset, so pagination never changes the reported total.
+type TotalRows struct {
+	NodeMeta
+	Input      string `json:"input"`
+	TotalField string `json:"total_field"`
+}
+
+func (TotalRows) Kind() Kind         { return KindTotalRows }
+func (n TotalRows) Meta() NodeMeta   { return n.NodeMeta }
+func (n TotalRows) Inputs() []string { return []string{n.Input} }
+func (TotalRows) nodeMarker()        {}
 
 type BundleBranches struct {
 	NodeMeta

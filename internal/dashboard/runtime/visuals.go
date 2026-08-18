@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -14,6 +16,7 @@ import (
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	visualizationdecimal "github.com/flidai/leapview/internal/dashboard/visualization/decimal"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
@@ -669,7 +672,24 @@ func (s *VisualizationDataService) categoryDeltaData(ctx context.Context, runtim
 		return nil, err
 	}
 	cumulative := 0.0
+	exactCumulative := new(big.Rat)
+	exactScale := 0
 	for _, row := range rows {
+		if text, ok := row["value"].(string); ok {
+			value, scale, parseErr := visualizationdecimal.Parse(text)
+			if parseErr != nil {
+				return nil, fmt.Errorf("waterfall value is not canonical Decimal: %w", parseErr)
+			}
+			start := new(big.Rat).Set(exactCumulative)
+			exactCumulative.Add(exactCumulative, value)
+			if scale > exactScale {
+				exactScale = scale
+			}
+			row["start"] = start.FloatString(exactScale)
+			row["end"] = exactCumulative.FloatString(exactScale)
+			row["positive"] = value.Sign() >= 0
+			continue
+		}
 		value := datumFloat(row["value"])
 		start := cumulative
 		cumulative += value
@@ -735,14 +755,33 @@ func (s *VisualizationDataService) hierarchyData(ctx context.Context, runtime *m
 	if err != nil {
 		return nil, err
 	}
-	return flattenHierarchyRows(rows, levelAliases)
+	decimal := hierarchyMetricIsDecimal(visual.Definition.Spec)
+	return flattenHierarchyRowsTyped(rows, levelAliases, decimal)
+}
+
+func hierarchyMetricIsDecimal(spec visualizationir.VisualizationSpec) bool {
+	base, err := visualizationir.SpecificationBase(spec)
+	if err != nil {
+		return false
+	}
+	for _, dataset := range base.Datasets {
+		for _, field := range dataset.Fields {
+			if field.ID == "value" {
+				return field.DataType == visualizationir.VisualizationDataTypeDecimal
+			}
+		}
+	}
+	return false
 }
 
 type hierarchyFrameNode struct {
-	name   string
-	parent any
-	value  float64
-	levels []any
+	name    string
+	parent  any
+	value   float64
+	exact   *big.Rat
+	scale   int
+	decimal bool
+	levels  []any
 }
 
 // flattenHierarchyRows materializes the hierarchy declared by the compiled
@@ -750,14 +789,41 @@ type hierarchyFrameNode struct {
 // which permits the same display label under different parents without making
 // renderer-specific row identities part of the public contract.
 func flattenHierarchyRows(rows reportdef.QueryRows, levelAliases []string) ([]dashboard.Datum, error) {
+	decimal := false
+	for _, row := range rows {
+		if _, ok := row["value"].(string); ok {
+			decimal = true
+			break
+		}
+	}
+	return flattenHierarchyRowsTyped(rows, levelAliases, decimal)
+}
+
+func flattenHierarchyRowsTyped(rows reportdef.QueryRows, levelAliases []string, decimal bool) ([]dashboard.Datum, error) {
 	if len(levelAliases) == 0 {
 		return nil, fmt.Errorf("hierarchy requires at least one level")
 	}
 	nodes := make(map[string]*hierarchyFrameNode)
 	for rowIndex, row := range rows {
-		value, ok := hierarchyNumericValue(normalizeDatumValue(row["value"]))
-		if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
-			return nil, fmt.Errorf("hierarchy row %d has a nonnumeric value", rowIndex)
+		rawValue := normalizeDatumValue(row["value"])
+		value := 0.0
+		ok := true
+		var exact *big.Rat
+		scale := 0
+		if decimal {
+			text, ok := rawValue.(string)
+			if !ok {
+				return nil, fmt.Errorf("hierarchy row %d has a non-decimal value", rowIndex)
+			}
+			exact, scale, ok = hierarchyDecimal(text)
+			if !ok {
+				return nil, fmt.Errorf("hierarchy row %d has a non-canonical decimal value", rowIndex)
+			}
+		} else {
+			value, ok = hierarchyNumericValue(rawValue)
+			if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
+				return nil, fmt.Errorf("hierarchy row %d has a nonnumeric value", rowIndex)
+			}
 		}
 		segments := make([]string, 0, len(levelAliases))
 		levelValues := make([]any, 0, len(levelAliases))
@@ -777,10 +843,20 @@ func flattenHierarchyRows(rows reportdef.QueryRows, levelAliases []string) ([]da
 			}
 			node, exists := nodes[id]
 			if !exists {
-				node = &hierarchyFrameNode{name: name, parent: parent, levels: append([]any(nil), levelValues[:level+1]...)}
+				node = &hierarchyFrameNode{name: name, parent: parent, decimal: decimal, levels: append([]any(nil), levelValues[:level+1]...)}
 				nodes[id] = node
 			}
-			node.value += value
+			if decimal {
+				if node.exact == nil {
+					node.exact = new(big.Rat)
+				}
+				node.exact.Add(node.exact, exact)
+				if scale > node.scale {
+					node.scale = scale
+				}
+			} else {
+				node.value += value
+			}
 		}
 	}
 	ids := make([]string, 0, len(nodes))
@@ -791,7 +867,11 @@ func flattenHierarchyRows(rows reportdef.QueryRows, levelAliases []string) ([]da
 	result := make([]dashboard.Datum, 0, len(ids))
 	for _, id := range ids {
 		node := nodes[id]
-		row := dashboard.Datum{"node": node.name, "parent": node.parent, "value": round(node.value)}
+		var value any = round(node.value)
+		if node.decimal {
+			value = node.exact.FloatString(node.scale)
+		}
+		row := dashboard.Datum{"node": node.name, "parent": node.parent, "value": value}
 		for index, alias := range levelAliases {
 			row[alias] = nil
 			if index < len(node.levels) {
@@ -801,6 +881,14 @@ func flattenHierarchyRows(rows reportdef.QueryRows, levelAliases []string) ([]da
 		result = append(result, row)
 	}
 	return result, nil
+}
+
+func hierarchyDecimal(value string) (*big.Rat, int, bool) {
+	rational, scale, err := visualizationdecimal.Parse(value)
+	if err != nil {
+		return nil, 0, false
+	}
+	return rational, scale, true
 }
 
 func hierarchyPathID(segments []string) string {
@@ -837,6 +925,9 @@ func hierarchyNumericValue(value any) (float64, bool) {
 		return float64(value), true
 	case uint64:
 		return float64(value), true
+	case string:
+		parsed, err := strconv.ParseFloat(value, 64)
+		return parsed, err == nil
 	default:
 		return 0, false
 	}

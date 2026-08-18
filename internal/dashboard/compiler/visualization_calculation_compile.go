@@ -65,8 +65,9 @@ func compileVisualCalculations(spec visualizationir.VisualizationSpec, authored 
 			format = inferredCalculationFormat(calculation.Template, source.Format)
 		}
 		calculationID := calculation.ID
+		dataType := compiledCalculationDataType(calculation.Template, source.DataType)
 		field := visualizationir.VisualizationField{
-			ID: calculation.ID, Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal,
+			ID: calculation.ID, Role: visualizationir.VisualizationFieldRoleMetric, DataType: dataType,
 			Nullable: true, Label: calculation.Label, Format: format,
 			Provenance: &visualizationir.VisualizationFieldProvenance{
 				Kind: visualizationir.VisualizationFieldProvenanceKindVisualCalculation, SourceRefs: []string{calculation.Source.Field}, CalculationID: &calculationID,
@@ -85,6 +86,30 @@ func compileVisualCalculations(spec visualizationir.VisualizationSpec, authored 
 	base.DataBudget.RequiredCompleteness = visualizationir.VisualizationCompletenessPartial
 	base.Calculations = &compiled
 	return nil
+}
+
+func compiledCalculationDataType(template visualizationir.VisualizationCalculationTemplate, source visualizationir.VisualizationDataType) visualizationir.VisualizationDataType {
+	switch template {
+	case visualizationir.VisualizationCalculationTemplateRank:
+		return visualizationir.VisualizationDataTypeInteger
+	case visualizationir.VisualizationCalculationTemplateRunningTotal,
+		visualizationir.VisualizationCalculationTemplateDifference:
+		if source == visualizationir.VisualizationDataTypeInteger || source == visualizationir.VisualizationDataTypeDecimal {
+			return visualizationir.VisualizationDataTypeDecimal
+		}
+		return source
+	case visualizationir.VisualizationCalculationTemplateMovingAverage,
+		visualizationir.VisualizationCalculationTemplatePercentageDifference,
+		visualizationir.VisualizationCalculationTemplatePercentOfParent,
+		visualizationir.VisualizationCalculationTemplatePercentOfGrandTotal,
+		visualizationir.VisualizationCalculationTemplateCumulativeContribution:
+		if source == visualizationir.VisualizationDataTypeFloat {
+			return source
+		}
+		return visualizationir.VisualizationDataTypeDecimal
+	default:
+		return source
+	}
 }
 
 func compileVisualCalculation(kind string, authored dashboardauthoring.VisualCalculation, fields map[string]visualizationir.VisualizationField, calculationIDs map[string]int) (visualizationir.VisualizationCalculation, error) {

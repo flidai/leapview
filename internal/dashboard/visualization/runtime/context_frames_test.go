@@ -57,7 +57,7 @@ func TestEnvelopeFromFramesOrdersAndValidatesContextDatasets(t *testing.T) {
 	}
 	envelope, err := EnvelopeFromFrames(definition, map[string]Frame{
 		"context": {Columns: []string{"region"}, Rows: [][]any{{"EMEA"}}},
-		"primary": {Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", 42.0}}},
+		"primary": {Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "42.0"}}},
 	}, nil, 4, 2)
 	if err != nil {
 		t.Fatalf("EnvelopeFromFrames(): %v", err)

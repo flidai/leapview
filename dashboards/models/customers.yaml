@@ -27,11 +27,11 @@ spec:
       label: City
       description: Customer city supplied by Olist.
     latitude:
-      datatype: Decimal
+      datatype: Float
       label: Latitude
       description: Canonical latitude joined from the Olist ZIP geolocation dataset.
     longitude:
-      datatype: Decimal
+      datatype: Float
       label: Longitude
       description: Canonical longitude joined from the Olist ZIP geolocation dataset.
   transform:

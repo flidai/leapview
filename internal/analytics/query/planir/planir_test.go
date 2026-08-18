@@ -1,6 +1,7 @@
 package planir
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,49 @@ func TestValidateValidPlanAndDuckDBRender(t *testing.T) {
 	}
 	if len(rendered.Args) != 1 || rendered.Args[0] != "paid" {
 		t.Fatalf("Args = %#v, want [paid]", rendered.Args)
+	}
+}
+
+func TestDuckDBRendererAliasesSnapshotScanForQualifiedFields(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		relation string
+		wantFrom string
+		aliased  bool
+	}{
+		{name: "snapshot expression", relation: "(FROM lake.model.orders AT (VERSION => 42))", wantFrom: `FROM (FROM lake.model.orders AT (VERSION => 42)) AS "orders"`, aliased: true},
+		{name: "physical override", relation: "lake.model.orders", wantFrom: `FROM lake.model.orders AS "orders"`, aliased: true},
+		{name: "default relation", wantFrom: `FROM "orders"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			graph := validPlan()
+			scan := graph.Nodes["scan"].(ScanDataset)
+			scan.Relation = tc.relation
+			scan.AvailableFields = append(scan.AvailableFields, Field{Name: "orders.amount", Type: "decimal"})
+			scan.PhysicalLineage = append(scan.PhysicalLineage, PhysicalLineage{Logical: "orders.amount", Dataset: "orders", Field: "amount"})
+			graph.Nodes["scan"] = scan
+			filter := graph.Nodes["filter"].(FilterRows)
+			filter.AvailableFields = append(filter.AvailableFields, Field{Name: "orders.amount", Type: "decimal"})
+			filter.PhysicalLineage = append(filter.PhysicalLineage, PhysicalLineage{Logical: "orders.amount", Dataset: "orders", Field: "amount"})
+			graph.Nodes["filter"] = filter
+			aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+			aggregate.Metrics[0].Input = "orders.amount"
+			graph.Nodes["aggregate"] = aggregate
+
+			if err := graph.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+			rendered, err := RenderDuckDB(graph)
+			if err != nil {
+				t.Fatalf("RenderDuckDB() error = %v", err)
+			}
+			if !strings.Contains(rendered.SQL, tc.wantFrom) {
+				t.Fatalf("SQL does not contain expected relation form: %s", rendered.SQL)
+			}
+			if !tc.aliased && strings.Contains(rendered.SQL, `FROM "orders" AS "orders"`) {
+				t.Fatalf("default relation unexpectedly received an explicit alias: %s", rendered.SQL)
+			}
+		})
 	}
 }
 
@@ -121,6 +165,122 @@ func TestSortLimitRejectsUnknownSortAlias(t *testing.T) {
 	}
 }
 
+func totalRowsPlan() *Graph {
+	graph := validPlan()
+	delete(graph.Nodes, "aggregate")
+	sortMeta := graph.Nodes["filter"].Meta()
+	sortMeta.NodeID = "sort"
+	sortMeta.FilterPhase = FilterPhasePostAggregate
+	sortMeta.AvailableFields = []Field{{Name: "id", Type: "string"}, {Name: "amount", Type: "decimal"}}
+	sortMeta.AvailableMetrics = nil
+	sortMeta.PhysicalLineage = nil
+	graph.Nodes["sort"] = SortLimit{NodeMeta: sortMeta, Input: "filter", Sort: []SortKey{{Field: "id"}}, Projection: []Projection{{Name: "id", Source: "id"}, {Name: "amount", Source: "amount"}}, Limit: 1, Offset: 1}
+	graph.Output = "sort"
+	graph.NodeMeta = sortMeta
+	return graph
+}
+
+func TestWithTotalRowsRendersFilteredPopulationBeforePagination(t *testing.T) {
+	graph := totalRowsPlan()
+	withTotal, err := WithTotalRows(graph, "__leapview_total_rows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if graph.Output != "sort" {
+		t.Fatal("WithTotalRows mutated input graph")
+	}
+	if err := withTotal.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderDuckDB(withTotal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`COUNT(*) OVER () AS "__leapview_total_rows"`,
+		`WHERE "status" = ?`,
+		`ORDER BY "id" ASC`,
+		`LIMIT 1 OFFSET 1`,
+	} {
+		if !strings.Contains(rendered.SQL, want) {
+			t.Fatalf("total rows SQL missing %q:\n%s", want, rendered.SQL)
+		}
+	}
+	if strings.Index(rendered.SQL, `COUNT(*) OVER ()`) > strings.Index(rendered.SQL, `LIMIT 1`) {
+		t.Fatalf("total window occurs after pagination:\n%s", rendered.SQL)
+	}
+	if got, want := rendered.Columns, []string{"id", "amount", "__leapview_total_rows"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rendered columns = %#v, want %#v", got, want)
+	}
+	explain, err := withTotal.Explain()
+	if err != nil || !strings.Contains(explain, "TotalRows") || !strings.Contains(explain, "total_field=__leapview_total_rows") {
+		t.Fatalf("total rows explain = %q, error=%v", explain, err)
+	}
+	fingerprint, err := withTotal.Fingerprint()
+	if err != nil || fingerprint == "" {
+		t.Fatalf("total rows fingerprint = %q, error=%v", fingerprint, err)
+	}
+}
+
+func TestWithTotalRowsRejectsInvalidShape(t *testing.T) {
+	graph := totalRowsPlan()
+	for _, field := range []string{"", "bad field", "id"} {
+		if _, err := WithTotalRows(graph, field); err == nil {
+			t.Fatalf("WithTotalRows(%q) error = nil", field)
+		}
+	}
+	graph.Output = "filter"
+	delete(graph.Nodes, "sort")
+	graph.NodeMeta = graph.Nodes["filter"].Meta()
+	if _, err := WithTotalRows(graph, "__leapview_total_rows"); err == nil || !strings.Contains(err.Error(), "SortLimit") {
+		t.Fatalf("non-sort total rows error = %v", err)
+	}
+}
+
+func TestWithTotalRowsRejectsQualifiedTotalField(t *testing.T) {
+	graph := totalRowsPlan()
+	if _, err := WithTotalRows(graph, "orders.total"); err == nil || !strings.Contains(err.Error(), "unqualified") {
+		t.Fatalf("qualified total field error = %v, want unqualified identifier error", err)
+	}
+
+	withTotal, err := WithTotalRows(graph, "__total_rows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := withTotal.Nodes[withTotal.Output].(TotalRows)
+	total.TotalField = "orders.total"
+	withTotal.Nodes[withTotal.Output] = total
+	if err := withTotal.Validate(); err == nil || !strings.Contains(err.Error(), "unqualified") {
+		t.Fatalf("Validate() error = %v, want unqualified identifier error", err)
+	}
+	if _, err := RenderDuckDB(withTotal); err == nil || !strings.Contains(err.Error(), "unqualified") {
+		t.Fatalf("RenderDuckDB() error = %v, want unqualified identifier error", err)
+	}
+}
+
+func TestWithTotalRowsRejectsSortLimitMetrics(t *testing.T) {
+	graph := totalRowsPlan()
+	sortNode := graph.Nodes[graph.Output].(SortLimit)
+	sortNode.AvailableMetrics = []Metric{{Name: "revenue", Type: "decimal"}}
+	graph.Nodes[graph.Output] = sortNode
+	if _, err := WithTotalRows(graph, "__total_rows"); err == nil || !strings.Contains(err.Error(), "available metrics") {
+		t.Fatalf("WithTotalRows() error = %v, want available metrics invariant", err)
+	}
+
+	// Construct the invalid TotalRows graph directly to ensure Validate also
+	// enforces the invariant for callers that bypass WithTotalRows.
+	totalMeta := sortNode.NodeMeta
+	totalMeta.NodeID = "total"
+	totalMeta.AvailableFields = append(append([]Field(nil), sortNode.AvailableFields...), Field{Name: "__total_rows", Type: "integer"})
+	totalMeta.AvailableMetrics = nil
+	graph.Nodes["total"] = TotalRows{NodeMeta: totalMeta, Input: "sort", TotalField: "__total_rows"}
+	graph.Output = "total"
+	graph.NodeMeta = totalMeta
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "available metrics") {
+		t.Fatalf("Validate() error = %v, want available metrics invariant", err)
+	}
+}
+
 func TestValidateRejectsGrainPhaseAndLineage(t *testing.T) {
 	graph := validPlan()
 	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
@@ -144,6 +304,46 @@ func TestValidateRejectsGrainPhaseAndLineage(t *testing.T) {
 	graph.Nodes["scan"] = scan
 	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "physical lineage") {
 		t.Fatalf("lineage Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsUnknownMetricEmptyPolicy(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.AvailableMetrics[0].Empty = "error"
+	graph.Nodes["aggregate"] = aggregate
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "unsupported empty policy") {
+		t.Fatalf("Validate() error = %v, want unsupported empty policy", err)
+	}
+}
+
+func TestValidateRejectsMetricEmptyPolicyMetadataMismatch(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.Metrics[0].Empty = "zero"
+	graph.Nodes["aggregate"] = aggregate
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "empty policy metadata") {
+		t.Fatalf("Validate() error = %v, want metadata mismatch", err)
+	}
+}
+
+func TestValidateRejectsAggregateMetricMetadataExtras(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.AvailableMetrics = append(aggregate.AvailableMetrics, Metric{Name: "unexpected", Type: "decimal"})
+	graph.Nodes["aggregate"] = aggregate
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "exactly match metric specs") {
+		t.Fatalf("Validate() error = %v, want exact aggregate metadata cardinality", err)
+	}
+}
+
+func TestValidateRejectsMetricTypeMetadataMismatch(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.Metrics[0].Type = "integer"
+	graph.Nodes["aggregate"] = aggregate
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "type metadata") {
+		t.Fatalf("Validate() error = %v, want type metadata mismatch", err)
 	}
 }
 

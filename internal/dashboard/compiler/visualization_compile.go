@@ -95,13 +95,16 @@ func compileAuthoringVisualization(ctx compileContext, authoring dashboardauthor
 		return visualizationdefinition.Definition{}, fmt.Errorf("visualization has no authoring variant")
 	}
 	authored := *authoring.Chart
+	if err := validateVisualizationMetricTypes(authored, ctx.model); err != nil {
+		return visualizationdefinition.Definition{}, err
+	}
 	var (
 		spec visualizationir.VisualizationSpec
 		err  error
 	)
 	switch ctx.capability.Renderer {
 	case visualizationdefinition.RendererMapLibre:
-		spec, err = compileGeographicVisualizationSpec(authored)
+		spec, err = compileGeographicVisualizationSpec(authored, ctx.model)
 	default:
 		spec, err = compileBuiltInVisualizationSpec(ctx.visualID, authored, ctx.model)
 	}

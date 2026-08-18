@@ -35,6 +35,10 @@ type RuntimeConfig struct {
 	Database Database
 	Sources  SourcePreparer
 	Resolver SourcePathResolver
+	// SnapshotOnly binds this view to immutable model.* relations. It skips
+	// authored source-file validation and uses source-free semantic verification
+	// because committed generations may outlive source credentials/files.
+	SnapshotOnly bool
 	// OwnDatabase and OwnQueryCache transfer close ownership to the runtime.
 	// Supplied resources are borrowed by default because project runtimes
 	// commonly share a process database and cache scope.
@@ -61,6 +65,7 @@ type Runtime struct {
 	resultLimits       dataquery.ResultLimits
 	requiredExtensions []string
 	lastRefresh        time.Time
+	snapshotOnly       bool
 	dbOwned            bool
 	closeOnce          sync.Once
 	closeErr           error
@@ -141,8 +146,10 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	if resolver == nil {
 		resolver = defaultSourcePathResolver{}
 	}
-	if err := ValidateFilesWithResolver(config.Model, resolver); err != nil {
-		return nil, err
+	if !config.SnapshotOnly {
+		if err := ValidateFilesWithResolver(config.Model, resolver); err != nil {
+			return nil, err
+		}
 	}
 	plannerOptions := []semanticquery.PlannerOption{}
 	if config.TableRelation != nil {
@@ -174,7 +181,7 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	runtime = &Runtime{
 		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
 		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
-		queryCache: cache, resultLimits: limits, dbOwned: config.OwnDatabase,
+		queryCache: cache, resultLimits: limits, dbOwned: config.OwnDatabase, snapshotOnly: config.SnapshotOnly,
 	}
 	return runtime, nil
 }
@@ -314,7 +321,14 @@ func (r *Runtime) VerifySemantic(ctx context.Context) error {
 	if r.planner == nil {
 		return fmt.Errorf("semantic verification: compiled semantic planner is unavailable")
 	}
-	if _, err := r.planner.PrepareRepresentativePlans(r.model); err != nil {
+	verificationModel := r.model
+	if r.snapshotOnly {
+		// Serving verification is source-free for reopened snapshots. The
+		// execution snapshot preserves discovered model-table schemas while
+		// stripping source/connection state that may no longer be available.
+		verificationModel = r.model.ExecutionSnapshot()
+	}
+	if _, err := r.planner.PrepareRepresentativePlans(verificationModel); err != nil {
 		return err
 	}
 	return r.VerifyEntityClaims(ctx)
@@ -705,16 +719,6 @@ func (r *Runtime) ClearQueryCache() {
 
 const totalRowsColumn = "__leapview_total_rows"
 
-func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
-	from := strings.Index(plan.SQL, "\nFROM ")
-	if from < 0 {
-		return semanticquery.Plan{}, fmt.Errorf("row query plan has no FROM clause")
-	}
-	plan.SQL = plan.SQL[:from] + ", COUNT(*) OVER () AS " + totalRowsColumn + plan.SQL[from:]
-	plan.Columns = append(append([]string{}, plan.Columns...), totalRowsColumn)
-	return plan, nil
-}
-
 func intFromDataQueryValue(value any) int {
 	switch typed := value.(type) {
 	case int:
@@ -812,6 +816,15 @@ func (r *Runtime) modelTableQueryPlan(request ModelTableQuery) (semanticquery.Pl
 }
 
 func (r *Runtime) physicalModelTable(tableName string) (string, error) {
+	// Entity verification iterates semantic dataset aliases, while the
+	// activation table relation is keyed by the backing authored Model name.
+	// Resolve the alias at this boundary just as the governed planner does
+	// before invoking its TableRelation callback.
+	if r != nil && r.planner != nil {
+		if dataset, ok := r.planner.Dataset(tableName); ok {
+			tableName = dataset.ModelName()
+		}
+	}
 	quoted, err := quotedModelTableName(tableName)
 	if err != nil {
 		return "", err

@@ -22,7 +22,7 @@ spec:
       datatype: String
       label: Status
     review_score:
-      datatype: Decimal
+      datatype: Float
       label: Review score
     delivery_days:
       datatype: Integer

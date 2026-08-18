@@ -61,3 +61,17 @@ func TestFlattenHierarchyRowsRejectsInvalidValues(t *testing.T) {
 		})
 	}
 }
+
+func TestFlattenHierarchyRowsPreservesExactDecimalSums(t *testing.T) {
+	rows := reportdef.QueryRows{
+		{"region": "Americas", "city": "Austin", "value": "9007199254740993.125"},
+		{"region": "Americas", "city": "Austin", "value": "0.875"},
+	}
+	got, err := flattenHierarchyRows(rows, []string{"region", "city"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0]["value"] != "9007199254740994.000" {
+		t.Fatalf("exact hierarchy sum = %#v, want canonical decimal", got[0]["value"])
+	}
+}

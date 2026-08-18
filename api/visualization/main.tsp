@@ -19,6 +19,7 @@ enum VisualizationDataType {
   boolean: "boolean",
   integer: "integer",
   decimal: "decimal",
+  float: "float",
   temporal: "temporal",
   date: "date",
   geographic: "geographic",
@@ -1390,7 +1391,7 @@ model VisualizationDiagnostic {
 @apigen.contract(#{ kind: "visualization-envelope", tags: #["visualization", "ir"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "visualization-envelope" })
 model VisualizationEnvelope {
-  `schemaVersion`: 10;
+  `schemaVersion`: 11;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;

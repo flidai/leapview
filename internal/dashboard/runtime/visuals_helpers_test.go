@@ -7,6 +7,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
 func TestAggregateMemberMetadataResolvesMetricPresentation(t *testing.T) {
@@ -33,5 +34,22 @@ func TestCategoryMultiMeasureDatumsDecodesBundledWideRows(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("datums = %#v, want %#v", got, want)
+	}
+}
+
+func TestCrossTabValueFieldsPreservesCalculationDataType(t *testing.T) {
+	dataType := visualizationir.VisualizationDataTypeFloat
+	base := visualizationir.VisualizationSpecBase{
+		Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: []visualizationir.VisualizationField{{
+			ID: "growth", Role: visualizationir.VisualizationFieldRoleMetric, DataType: dataType, Label: "Growth",
+		}}}},
+		Calculations: &[]visualizationir.VisualizationCalculation{{
+			ID: "growth", Dataset: "primary", Label: "Growth", Template: visualizationir.VisualizationCalculationTemplateDifference,
+		}},
+	}
+	table := tablePlan{Definition: visualizationdefinition.Definition{Query: visualizationdefinition.QueryBinding{DatasetID: "primary"}}}
+	fields := crossTabValueFields(table, base, nil)
+	if len(fields) != 1 || fields[0].dataType != dataType {
+		t.Fatalf("calculation value fields = %#v, want Float", fields)
 	}
 }

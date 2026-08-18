@@ -127,9 +127,6 @@
           },
           "type": "array"
         },
-        "sql": {
-          "type": "string"
-        },
         "transform": {
           "additionalProperties": false,
           "properties": {

@@ -3,10 +3,12 @@ package runtime
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
 
+	visualizationdecimal "github.com/flidai/leapview/internal/dashboard/visualization/decimal"
 	"github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -43,7 +45,14 @@ func ApplyVisualCalculations(base ir.VisualizationSpecBase, datasetID string, fr
 	values := make(map[string][]any, len(calculations))
 	for _, calculationIndex := range order {
 		calculation := calculations[calculationIndex]
-		result, evalErr := evaluateCalculation(datasetID, calculation, frame, columnIndex, values)
+		decimalOutput := false
+		for _, field := range schema.Fields {
+			if field.ID == calculation.ID {
+				decimalOutput = field.DataType == ir.VisualizationDataTypeDecimal
+				break
+			}
+		}
+		result, evalErr := evaluateCalculation(datasetID, calculation, frame, columnIndex, values, decimalOutput)
 		if evalErr != nil {
 			return Frame{}, nil, fmt.Errorf("visual calculation %q: %w", calculation.ID, evalErr)
 		}
@@ -169,7 +178,7 @@ func calculationEvaluationOrder(datasetID string, calculations []ir.Visualizatio
 	return order, nil
 }
 
-func evaluateCalculation(datasetID string, calculation ir.VisualizationCalculation, frame Frame, columns map[string]int, calculated map[string][]any) ([]any, error) {
+func evaluateCalculation(datasetID string, calculation ir.VisualizationCalculation, frame Frame, columns map[string]int, calculated map[string][]any, decimalOutput bool) ([]any, error) {
 	if calculation.Source.Dataset != datasetID {
 		return nil, fmt.Errorf("source dataset is %q, want %q", calculation.Source.Dataset, datasetID)
 	}
@@ -194,24 +203,24 @@ func evaluateCalculation(datasetID string, calculation ir.VisualizationCalculati
 		}
 		switch calculation.Template {
 		case ir.VisualizationCalculationTemplateRunningTotal:
-			evaluateRunningTotal(out, source, ordered)
+			evaluateRunningTotal(out, source, ordered, decimalOutput)
 		case ir.VisualizationCalculationTemplateMovingAverage:
 			if calculation.Window == nil || *calculation.Window <= 0 {
 				return nil, fmt.Errorf("moving_average requires a positive window")
 			}
-			evaluateMovingAverage(out, source, ordered, int(*calculation.Window))
+			evaluateMovingAverage(out, source, ordered, int(*calculation.Window), decimalOutput)
 		case ir.VisualizationCalculationTemplateDifference:
-			evaluateDifference(out, source, ordered, calculationOffset(calculation), false)
+			evaluateDifference(out, source, ordered, calculationOffset(calculation), false, decimalOutput)
 		case ir.VisualizationCalculationTemplatePercentageDifference:
-			evaluateDifference(out, source, ordered, calculationOffset(calculation), true)
+			evaluateDifference(out, source, ordered, calculationOffset(calculation), true, decimalOutput)
 		case ir.VisualizationCalculationTemplatePercentOfParent:
-			evaluateShare(out, source, ordered)
+			evaluateShare(out, source, ordered, decimalOutput)
 		case ir.VisualizationCalculationTemplatePercentOfGrandTotal:
-			evaluateShare(out, source, ordered)
+			evaluateShare(out, source, ordered, decimalOutput)
 		case ir.VisualizationCalculationTemplateRank:
 			evaluateRank(out, source, ordered)
 		case ir.VisualizationCalculationTemplateCumulativeContribution:
-			evaluateCumulativeContribution(out, source, ordered)
+			evaluateCumulativeContribution(out, source, ordered, decimalOutput)
 		case ir.VisualizationCalculationTemplateLookup:
 			if calculation.Lookup == nil {
 				return nil, fmt.Errorf("lookup requires a match field and value")
@@ -302,10 +311,9 @@ func calculationPartitions(calculation ir.VisualizationCalculation, frame Frame,
 }
 
 type calculationPartitionKey struct {
-	kind   uint8
-	number uint64
-	text   string
-	value  bool
+	kind  uint8
+	text  string
+	value bool
 }
 
 func typedCalculationPartitionKey(value any) calculationPartitionKey {
@@ -317,11 +325,8 @@ func typedCalculationPartitionKey(value any) calculationPartitionKey {
 	case bool:
 		return calculationPartitionKey{kind: 2, value: typed}
 	default:
-		if number, ok := calculationNumber(value); ok {
-			if number == 0 {
-				number = 0
-			}
-			return calculationPartitionKey{kind: 3, number: math.Float64bits(number)}
+		if numberKey, ok := calculationNumericKey(value); ok {
+			return calculationPartitionKey{kind: 3, text: numberKey}
 		}
 		return calculationPartitionKey{kind: 4, text: fmt.Sprintf("%T:%v", value, value)}
 	}
@@ -336,11 +341,50 @@ func stableCalculationKey(value any) string {
 	case bool:
 		return "b:" + strconv.FormatBool(typed)
 	default:
-		if number, ok := calculationNumber(value); ok {
-			return "f:" + strconv.FormatFloat(number, 'g', -1, 64)
+		if numberKey, ok := calculationNumericKey(value); ok {
+			return "n:" + numberKey
 		}
 		return fmt.Sprintf("%T:%v", value, value)
 	}
+}
+
+func calculationNumericKey(value any) (string, bool) {
+	var number float64
+	switch typed := value.(type) {
+	case int:
+		return strconv.FormatInt(int64(typed), 10), true
+	case int8:
+		return strconv.FormatInt(int64(typed), 10), true
+	case int16:
+		return strconv.FormatInt(int64(typed), 10), true
+	case int32:
+		return strconv.FormatInt(int64(typed), 10), true
+	case int64:
+		return strconv.FormatInt(typed, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(typed), 10), true
+	case uint8:
+		return strconv.FormatUint(uint64(typed), 10), true
+	case uint16:
+		return strconv.FormatUint(uint64(typed), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(typed), 10), true
+	case uint64:
+		return strconv.FormatUint(typed, 10), true
+	case float32:
+		number = float64(typed)
+	case float64:
+		number = typed
+	default:
+		return "", false
+	}
+	if math.IsNaN(number) {
+		return "", false
+	}
+	if number == 0 {
+		return "0", true
+	}
+	return strconv.FormatFloat(number, 'g', -1, 64), true
 }
 
 func orderCalculationRows(calculation ir.VisualizationCalculation, members []int, frame Frame, columns map[string]int, calculated map[string][]any) ([]int, error) {
@@ -384,6 +428,11 @@ func orderCalculationRows(calculation ir.VisualizationCalculation, members []int
 }
 
 func compareCalculationValues(left, right any) int {
+	leftDecimal, _, leftExact := calculationDecimal(left)
+	rightDecimal, _, rightExact := calculationDecimal(right)
+	if leftExact && rightExact {
+		return leftDecimal.Cmp(rightDecimal)
+	}
 	leftNumber, leftNumeric := calculationNumber(left)
 	rightNumber, rightNumeric := calculationNumber(right)
 	if leftNumeric && rightNumeric {
@@ -400,7 +449,33 @@ func compareCalculationValues(left, right any) int {
 	return strings.Compare(leftText, rightText)
 }
 
-func evaluateRunningTotal(out, source []any, ordered []int) {
+func equalCalculationValues(left, right any) bool {
+	leftDecimal, _, leftExact := calculationDecimal(left)
+	rightDecimal, _, rightExact := calculationDecimal(right)
+	if leftExact && rightExact {
+		return leftDecimal.Cmp(rightDecimal) == 0
+	}
+	return fmt.Sprint(left) == fmt.Sprint(right)
+}
+
+func evaluateRunningTotal(out, source []any, ordered []int, decimalOutput bool) {
+	if decimalOutput {
+		total := new(big.Rat)
+		scale := 0
+		for _, rowIndex := range ordered {
+			value, valueScale, ok := calculationDecimal(source[rowIndex])
+			if !ok {
+				out[rowIndex] = nil
+				continue
+			}
+			total.Add(total, value)
+			if valueScale > scale {
+				scale = valueScale
+			}
+			out[rowIndex] = decimalCalculationString(total, scale)
+		}
+		return
+	}
 	total := 0.0
 	for _, rowIndex := range ordered {
 		value, ok := calculationNumber(source[rowIndex])
@@ -413,9 +488,30 @@ func evaluateRunningTotal(out, source []any, ordered []int) {
 	}
 }
 
-func evaluateMovingAverage(out, source []any, ordered []int, window int) {
+func evaluateMovingAverage(out, source []any, ordered []int, window int, decimalOutput bool) {
 	for position, rowIndex := range ordered {
 		start := max(0, position-window+1)
+		if decimalOutput {
+			total := new(big.Rat)
+			count, scale := 0, 0
+			for _, candidate := range ordered[start : position+1] {
+				value, valueScale, ok := calculationDecimal(source[candidate])
+				if !ok {
+					continue
+				}
+				total.Add(total, value)
+				count++
+				if valueScale > scale {
+					scale = valueScale
+				}
+			}
+			if count == 0 {
+				out[rowIndex] = nil
+			} else {
+				out[rowIndex] = decimalCalculationString(new(big.Rat).Quo(total, new(big.Rat).SetInt64(int64(count))), max(scale, 18))
+			}
+			continue
+		}
 		total, count := 0.0, 0
 		for _, candidate := range ordered[start : position+1] {
 			if value, ok := calculationNumber(source[candidate]); ok {
@@ -438,7 +534,7 @@ func calculationOffset(calculation ir.VisualizationCalculation) int {
 	return int(*calculation.Offset)
 }
 
-func evaluateDifference(out, source []any, ordered []int, offset int, percentage bool) {
+func evaluateDifference(out, source []any, ordered []int, offset int, percentage, decimalOutput bool) {
 	if offset <= 0 {
 		return
 	}
@@ -446,6 +542,22 @@ func evaluateDifference(out, source []any, ordered []int, offset int, percentage
 		previous := position - offset
 		if previous < 0 {
 			out[rowIndex] = nil
+			continue
+		}
+		if decimalOutput {
+			current, currentScale, currentOK := calculationDecimal(source[rowIndex])
+			previousValue, previousScale, previousOK := calculationDecimal(source[ordered[previous]])
+			if !currentOK || !previousOK || percentage && previousValue.Sign() == 0 {
+				out[rowIndex] = nil
+				continue
+			}
+			difference := new(big.Rat).Sub(current, previousValue)
+			if percentage {
+				difference.Quo(difference, new(big.Rat).Abs(previousValue))
+				out[rowIndex] = decimalCalculationString(difference, 18)
+			} else {
+				out[rowIndex] = decimalCalculationString(difference, max(currentScale, previousScale))
+			}
 			continue
 		}
 		currentValue, currentOK := calculationNumber(source[rowIndex])
@@ -463,7 +575,24 @@ func evaluateDifference(out, source []any, ordered []int, offset int, percentage
 	}
 }
 
-func evaluateShare(out, source []any, ordered []int) {
+func evaluateShare(out, source []any, ordered []int, decimalOutput bool) {
+	if decimalOutput {
+		total := new(big.Rat)
+		for _, rowIndex := range ordered {
+			if value, _, ok := calculationDecimal(source[rowIndex]); ok {
+				total.Add(total, value)
+			}
+		}
+		for _, rowIndex := range ordered {
+			value, _, ok := calculationDecimal(source[rowIndex])
+			if !ok || total.Sign() == 0 {
+				out[rowIndex] = nil
+			} else {
+				out[rowIndex] = decimalCalculationString(new(big.Rat).Quo(value, total), 18)
+			}
+		}
+		return
+	}
 	total := 0.0
 	for _, rowIndex := range ordered {
 		if value, ok := calculationNumber(source[rowIndex]); ok {
@@ -482,24 +611,44 @@ func evaluateShare(out, source []any, ordered []int) {
 
 func evaluateRank(out, source []any, ordered []int) {
 	rank := 0
-	var previous float64
+	var previous any
 	havePrevious := false
 	for _, rowIndex := range ordered {
-		value, ok := calculationNumber(source[rowIndex])
+		value := source[rowIndex]
+		_, ok := calculationNumber(value)
 		if !ok {
 			out[rowIndex] = nil
 			continue
 		}
-		if !havePrevious || value != previous {
+		if !havePrevious || compareCalculationValues(value, previous) != 0 {
 			rank++
 			previous = value
 			havePrevious = true
 		}
-		out[rowIndex] = float64(rank)
+		out[rowIndex] = int64(rank)
 	}
 }
 
-func evaluateCumulativeContribution(out, source []any, ordered []int) {
+func evaluateCumulativeContribution(out, source []any, ordered []int, decimalOutput bool) {
+	if decimalOutput {
+		total := new(big.Rat)
+		for _, rowIndex := range ordered {
+			if value, _, ok := calculationDecimal(source[rowIndex]); ok {
+				total.Add(total, value)
+			}
+		}
+		running := new(big.Rat)
+		for _, rowIndex := range ordered {
+			value, _, ok := calculationDecimal(source[rowIndex])
+			if !ok || total.Sign() == 0 {
+				out[rowIndex] = nil
+				continue
+			}
+			running.Add(running, value)
+			out[rowIndex] = decimalCalculationString(new(big.Rat).Quo(running, total), 18)
+		}
+		return
+	}
 	total := 0.0
 	for _, rowIndex := range ordered {
 		if value, ok := calculationNumber(source[rowIndex]); ok {
@@ -525,7 +674,7 @@ func evaluateLookup(out, source []any, ordered []int, lookup ir.VisualizationCal
 	}
 	match := -1
 	for _, rowIndex := range ordered {
-		if fmt.Sprint(values[rowIndex]) != lookup.Value {
+		if !equalCalculationValues(values[rowIndex], lookup.Value) {
 			continue
 		}
 		if match >= 0 {
@@ -575,4 +724,45 @@ func calculationNumber(value any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func calculationDecimal(value any) (*big.Rat, int, bool) {
+	if text, ok := value.(string); ok {
+		rational, scale, err := visualizationdecimal.Parse(text)
+		return rational, scale, err == nil
+	}
+	switch typed := value.(type) {
+	case int:
+		return new(big.Rat).SetInt64(int64(typed)), 0, true
+	case int8:
+		return new(big.Rat).SetInt64(int64(typed)), 0, true
+	case int16:
+		return new(big.Rat).SetInt64(int64(typed)), 0, true
+	case int32:
+		return new(big.Rat).SetInt64(int64(typed)), 0, true
+	case int64:
+		return new(big.Rat).SetInt64(typed), 0, true
+	case uint:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(uint64(typed))), 0, true
+	case uint8:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(uint64(typed))), 0, true
+	case uint16:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(uint64(typed))), 0, true
+	case uint32:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(uint64(typed))), 0, true
+	case uint64:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(typed)), 0, true
+	default:
+		return nil, 0, false
+	}
+}
+
+func decimalCalculationString(value *big.Rat, scale int) string {
+	if value == nil || value.Sign() == 0 {
+		return "0"
+	}
+	if scale < 0 {
+		scale = 0
+	}
+	return value.FloatString(scale)
 }

@@ -89,6 +89,31 @@ func TestSemanticGraphAppliesMetricDefaultsAndRejectsCrossTagFields(t *testing.T
 	}
 }
 
+func TestSemanticGraphAcceptsDimensionOnlyDatasetBindings(t *testing.T) {
+	m := strictClosureModel()
+	m.Metrics = map[string]Metric{}
+	m.Dimensions = map[string]SemanticDimension{
+		"order_status": {
+			Type: "string", Datatype: DataTypeString,
+			Bindings: map[string]DimensionBinding{"orders": {Field: "orders.status"}},
+		},
+	}
+	if err := m.ValidateSemanticGraph(); err != nil {
+		t.Fatalf("dimension-only semantic graph rejected: %v", err)
+	}
+	if got := m.DatasetNames(); len(got) != 2 || got[0] != "customers" || got[1] != "orders" {
+		t.Fatalf("DatasetNames() = %#v, want declared aliases", got)
+	}
+}
+
+func TestSemanticGraphRejectsMetricTablesWithoutDatasetBindings(t *testing.T) {
+	m := strictClosureModel()
+	m.Datasets = nil
+	if err := m.ValidateSemanticGraph(); err == nil || !strings.Contains(err.Error(), "requires at least one dataset") {
+		t.Fatalf("metric-backed tables without datasets accepted: %v", err)
+	}
+}
+
 func TestSemanticGraphRejectsFilterBooleanAuthoringContext(t *testing.T) {
 	m := strictClosureModel()
 	m.Filters["owned"] = SemanticFilterSpec{All: []SemanticFilterSpec{{Field: "orders.status", Operator: "equals", Value: "open"}}, AIContext: &AIContext{Instructions: "not executable"}}

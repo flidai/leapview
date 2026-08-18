@@ -60,13 +60,14 @@ sources:
 models:
   orders:
     sources: [olist_orders]
-    sql: |
-      SELECT
-        order_id,
-        customer_id,
-        CAST(order_purchase_timestamp AS TIMESTAMP) AS purchase_timestamp,
-        order_status AS status
-      FROM source.olist_orders
+    transform:
+      sql: |
+        SELECT
+          order_id,
+          customer_id,
+          CAST(order_purchase_timestamp AS TIMESTAMP) AS purchase_timestamp,
+          order_status AS status
+        FROM source.olist_orders
 
 semantic_models:
   olist:

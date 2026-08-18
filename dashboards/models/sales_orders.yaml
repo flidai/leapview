@@ -40,7 +40,7 @@ spec:
   transform:
     sql: |
       WITH revenue AS (
-        SELECT order_id, SUM(try_cast(payment_value AS DOUBLE)) AS revenue
+        SELECT order_id, CAST(SUM(try_cast(payment_value AS DECIMAL(38,2))) AS DECIMAL(38,2)) AS revenue
         FROM source."olist.payments"
         GROUP BY order_id
       ),
@@ -61,7 +61,7 @@ spec:
         strftime(CAST(o.order_purchase_timestamp AS TIMESTAMP), '%Y-%m') AS purchase_month,
         o.order_status AS status,
         COALESCE(category.category, 'uncategorized') AS category,
-        round(COALESCE(revenue.revenue, 0), 2) AS revenue
+        CAST(round(COALESCE(revenue.revenue, CAST(0 AS DECIMAL(38,2))), 2) AS DECIMAL(38,2)) AS revenue
       FROM source."olist.orders" o
       LEFT JOIN revenue ON revenue.order_id = o.order_id
       LEFT JOIN category ON category.order_id = o.order_id

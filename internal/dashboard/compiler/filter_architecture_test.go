@@ -106,6 +106,30 @@ func TestCompileDashboardFilterArchitectureResolvesBindingKeysAndComponentTarget
 	}
 }
 
+func TestFilterValueKindPreservesIntegerLogicalDatatype(t *testing.T) {
+	model := &semanticmodel.Model{
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{
+				"delivery_days": {Field: "orders.delivery_days", Type: "number", Datatype: semanticmodel.DataTypeInteger},
+			}},
+		},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"delivery_days": {
+				Type: "number", Datatype: semanticmodel.DataTypeInteger,
+				Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.delivery_days"}},
+			},
+		},
+	}
+	kind, err := filterValueKind(model, "delivery_days")
+	if err != nil {
+		t.Fatalf("filterValueKind() error = %v", err)
+	}
+	if kind != dashboardfilter.ValueInteger {
+		t.Fatalf("filterValueKind() = %q, want %q", kind, dashboardfilter.ValueInteger)
+	}
+}
+
 func TestValidateDashboardFilterArchitectureRejectsRouteVisibleURLCollision(t *testing.T) {
 	authored := &dashboardauthoring.Dashboard{
 		ID: "sales", Title: "Sales", SemanticModel: "sales",

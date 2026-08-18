@@ -492,6 +492,9 @@ func semanticDefinitionTestModel() *Model {
 			"tags":   {Dimensions: map[string]MetricDimension{"weight": {Type: "number", Datatype: DataTypeDecimal}}},
 			"movies": {Dimensions: map[string]MetricDimension{"movie_id": {Type: "string", Datatype: DataTypeString}, "title": {Type: "string", Datatype: DataTypeString}}},
 		},
+		Datasets: map[string]SemanticDatasetSpec{
+			"movies": {Model: "movies"}, "ratings": {Model: "ratings"}, "tags": {Model: "tags"},
+		},
 		Relationships: []Relationship{{ID: "ratings_movies", FromDataset: "ratings", FromFields: []string{"movie_id"}, ToDataset: "movies", ToFields: []string{"movie_id"}, Cardinality: "many_to_one"}},
 		Metrics: map[string]Metric{
 			"rating_count": {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &MetricInput{Field: "ratings.score"}, Empty: "zero"},

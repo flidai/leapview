@@ -77,7 +77,7 @@ func testGridDefinition(t *testing.T, id string, table dashboard.Table) visualiz
 
 func TestEnvelopeFromFrameKeepsCompiledSpecAndStreamRevision(t *testing.T) {
 	definition := testCartesianDefinition(t, "revenue", testCartesianFields(), nil)
-	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", 10.5}}}, nil, 9, 4)
+	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "10.5"}}}, nil, 9, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,12 +94,26 @@ func TestFrameFromRecordsUsesCompiledDatasetOrdering(t *testing.T) {
 	fields := testCartesianFields()
 	fields[0], fields[1] = fields[1], fields[0]
 	definition := testCartesianDefinition(t, "revenue", fields, nil)
-	frame, err := FrameFromRecords(definition, []map[string]any{{"value": 10.5, "label": "Jan"}})
+	frame, err := FrameFromRecords(definition, []map[string]any{{"value": "10.5", "label": "Jan"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := frame.Columns, []string{"value", "label"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("columns = %#v, want compiled order %#v", got, want)
+	}
+}
+
+func TestNormalizeDecimalFrameUsesColumnIDs(t *testing.T) {
+	frame := Frame{Columns: []string{"value", "label"}, Rows: [][]any{{int64(42), "Jan"}}}
+	fields := []ir.VisualizationField{
+		{ID: "label", DataType: ir.VisualizationDataTypeString},
+		{ID: "value", DataType: ir.VisualizationDataTypeDecimal},
+	}
+	if err := normalizeDecimalFrame(fields, &frame); err != nil {
+		t.Fatalf("normalizeDecimalFrame: %v", err)
+	}
+	if got, want := frame.Rows[0][0], "42"; got != want {
+		t.Fatalf("normalized value = %#v, want %q", got, want)
 	}
 }
 
@@ -113,7 +127,7 @@ func TestEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
 	}
 	definition := testCartesianDefinition(t, "orders", fields, []ir.VisualizationInteraction{interaction})
 	selection := []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: "orders.status", Dataset: "orders", Value: "delivered"}}, Label: "Delivered"}}
-	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 42}}}, selection, 8, 3)
+	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", "42"}}}, selection, 8, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +139,7 @@ func TestEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
 func TestEnvelopeFromFrameUsesColumnarTypedIR(t *testing.T) {
 	t.Parallel()
 	definition := testCartesianDefinition(t, "revenue", testCartesianFields(), nil)
-	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", 10.5}}}, nil, 4, 2)
+	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "10.5"}}}, nil, 4, 2)
 	if err != nil {
 		t.Fatalf("EnvelopeFromFrame: %v", err)
 	}

@@ -2296,10 +2296,7 @@ func modelTableSourceNames(meta map[string]any) []string {
 }
 
 func modelTableSQL(meta map[string]any) string {
-	return firstNonEmpty(
-		metaString(metaMap(meta, "Transform", "transform"), "SQL", "sql"),
-		metaString(meta, "SQL", "sql"),
-	)
+	return metaString(metaMap(meta, "Transform", "transform"), "SQL", "sql")
 }
 
 func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[string]any, assets []projectview.DevelopAssetView) recordTable {

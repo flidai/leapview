@@ -49,3 +49,37 @@ func TestExecutionSnapshotOmitsAuthoringAndConnectionState(t *testing.T) {
 		t.Fatal("snapshot executable state aliases authored model")
 	}
 }
+
+func TestClonePhysicalMetadataOmitsAuthoringContextAndDetachesSlices(t *testing.T) {
+	dimension := MetricDimension{
+		Field:     "orders.customer_id",
+		Table:     "orders",
+		Name:      "customer_id",
+		AIContext: &AIContext{Instructions: "authoring-only"},
+	}
+	clonedDimension := CloneMetricDimension(dimension)
+	if clonedDimension.AIContext != nil {
+		t.Fatal("cloned dimension retained authoring context")
+	}
+
+	relationships := []Relationship{{
+		ID:          "orders_customers",
+		FromDataset: "orders",
+		FromFields:  []string{"customer_id"},
+		ToDataset:   "customers",
+		ToFields:    []string{"id"},
+		AIContext:   &AIContext{Instructions: "authoring-only"},
+	}}
+	clonedRelationships := CloneRelationships(relationships)
+	if len(clonedRelationships) != 1 || clonedRelationships[0].AIContext != nil {
+		t.Fatal("cloned relationship retained authoring context")
+	}
+	if &clonedRelationships[0].FromFields[0] == &relationships[0].FromFields[0] || &clonedRelationships[0].ToFields[0] == &relationships[0].ToFields[0] {
+		t.Fatal("cloned relationship endpoint fields alias source slices")
+	}
+	relationships[0].FromFields[0] = "changed"
+	relationships[0].ToFields[0] = "changed"
+	if clonedRelationships[0].FromFields[0] != "customer_id" || clonedRelationships[0].ToFields[0] != "id" {
+		t.Fatal("cloned relationship endpoint fields changed with source slices")
+	}
+}

@@ -269,7 +269,6 @@ package contracts
 #Model: close({
 	source?: #ResourceID
 	sources?: [...#ResourceID]
-	sql?: string
 	transform?: close({
 		sql?: string
 	})

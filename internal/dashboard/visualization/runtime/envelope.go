@@ -2,10 +2,13 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	visualizationdecimal "github.com/flidai/leapview/internal/dashboard/visualization/decimal"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	"github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
@@ -102,6 +105,9 @@ func EnvelopeFromFrames(definition visualizationdefinition.Definition, frames ma
 		if err != nil {
 			return ir.VisualizationEnvelope{}, err
 		}
+		if err := normalizeDecimalFrame(schema.Fields, &frame); err != nil {
+			return ir.VisualizationEnvelope{}, fmt.Errorf("visualization %q dataset %q: %w", definition.ID, schema.ID, err)
+		}
 		diagnostics = append(diagnostics, calculationDiagnostics...)
 		datasets = append(datasets, ir.VisualizationInlineDataset{
 			ID: schema.ID, SpecRevision: definition.SpecRevision, DataRevision: dataRevision, Generation: generation,
@@ -130,6 +136,73 @@ func EnvelopeFromFrames(definition visualizationdefinition.Definition, frames ma
 		return ir.VisualizationEnvelope{}, fmt.Errorf("compiled visualization %q: %w", definition.ID, err)
 	}
 	return envelope, nil
+}
+
+func normalizeDecimalFrame(fields []ir.VisualizationField, frame *Frame) error {
+	if frame == nil {
+		return nil
+	}
+	decimalFields := make(map[string]struct{})
+	for _, field := range fields {
+		if field.DataType == ir.VisualizationDataTypeDecimal {
+			decimalFields[field.ID] = struct{}{}
+		}
+	}
+	for rowIndex, row := range frame.Rows {
+		for columnIndex, fieldID := range frame.Columns {
+			if _, ok := decimalFields[fieldID]; !ok || columnIndex >= len(row) || row[columnIndex] == nil {
+				continue
+			}
+			value := row[columnIndex]
+			if text, ok := value.(string); ok {
+				if err := visualizationdecimal.Validate(text); err != nil {
+					return fmt.Errorf("row %d column %q: %w", rowIndex, fieldID, err)
+				}
+				continue
+			}
+			if text, ok := decimalIntegerString(value); ok {
+				row[columnIndex] = text
+				continue
+			}
+			return fmt.Errorf("row %d column %q expected canonical decimal string, got %T", rowIndex, fieldID, value)
+		}
+	}
+	return nil
+}
+
+func decimalIntegerString(value any) (string, bool) {
+	switch number := value.(type) {
+	case int:
+		return strconv.FormatInt(int64(number), 10), true
+	case int8:
+		return strconv.FormatInt(int64(number), 10), true
+	case int16:
+		return strconv.FormatInt(int64(number), 10), true
+	case int32:
+		return strconv.FormatInt(int64(number), 10), true
+	case int64:
+		return strconv.FormatInt(number, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(number), 10), true
+	case uint8:
+		return strconv.FormatUint(uint64(number), 10), true
+	case uint16:
+		return strconv.FormatUint(uint64(number), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(number), 10), true
+	case uint64:
+		return strconv.FormatUint(number, 10), true
+	case json.Number:
+		if strings.ContainsAny(string(number), ".eE") {
+			return "", false
+		}
+		if err := visualizationdecimal.Validate(string(number)); err != nil {
+			return "", false
+		}
+		return string(number), true
+	default:
+		return "", false
+	}
 }
 
 func sourceDatasetFields(fields []ir.VisualizationField) []ir.VisualizationField {
@@ -488,6 +561,12 @@ func optional(value string) *string {
 	return &value
 }
 func tableDataType(column dashboard.TableColumn, table dashboard.Table) ir.VisualizationDataType {
+	if column.DataType != "" {
+		switch value := ir.VisualizationDataType(column.DataType); value {
+		case ir.VisualizationDataTypeString, ir.VisualizationDataTypeInteger, ir.VisualizationDataTypeDecimal, ir.VisualizationDataTypeFloat, ir.VisualizationDataTypeBoolean, ir.VisualizationDataTypeDate, ir.VisualizationDataTypeTemporal, ir.VisualizationDataTypeGeographic:
+			return value
+		}
+	}
 	switch column.Format {
 	case "integer", "days":
 		return ir.VisualizationDataTypeInteger
@@ -508,7 +587,7 @@ func tableDataType(column dashboard.TableColumn, table dashboard.Table) ir.Visua
 			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 				return ir.VisualizationDataTypeInteger
 			case float32, float64:
-				return ir.VisualizationDataTypeDecimal
+				return ir.VisualizationDataTypeFloat
 			case string:
 				return ir.VisualizationDataTypeString
 			}

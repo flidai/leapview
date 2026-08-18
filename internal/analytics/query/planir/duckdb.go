@@ -46,7 +46,9 @@ func RenderDuckDB(graph *Graph) (Rendered, error) {
 						if _, sortLimit := asSortLimit(graph.Nodes[graph.Output]); !sortLimit {
 							if _, spatial := asSpatialEnvelope(graph.Nodes[graph.Output]); !spatial {
 								if _, analytical := asAnalyticalEnvelope(graph.Nodes[graph.Output]); !analytical {
-									return Rendered{}, fmt.Errorf("duckdb renderer supports AggregateMetrics output and post-aggregate/bundle outputs, got %s", graph.Nodes[graph.Output].Kind())
+									if _, totalRows := asTotalRows(graph.Nodes[graph.Output]); !totalRows {
+										return Rendered{}, fmt.Errorf("duckdb renderer supports AggregateMetrics output and post-aggregate/bundle outputs, got %s", graph.Nodes[graph.Output].Kind())
+									}
 								}
 							}
 						}
@@ -77,6 +79,8 @@ func RenderDuckDB(graph *Graph) (Rendered, error) {
 		return Rendered{SQL: sql, Args: r.args, Columns: columns}, nil
 	}
 	if _, ok := asSortLimit(output); ok {
+		sql += root
+	} else if _, ok := asTotalRows(output); ok {
 		sql += root
 	} else if _, ok := asSpatialEnvelope(output); ok {
 		sql += root
@@ -236,91 +240,17 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		if !ok {
 			return "", nil, fmt.Errorf("sort-limit node %q is nil", id)
 		}
-		var columns []string
-		from := ""
-		var source *sourceContext
-		if _, aggregate := asAggregate(r.graph.Nodes[n.Input]); !aggregate {
-			if _, stitch := asStitch(r.graph.Nodes[n.Input]); !stitch {
-				if _, computed := asComputeSource(r.graph.Nodes[n.Input]); !computed {
-					ctx, sourceErr := r.source(n.Input)
-					if sourceErr != nil {
-						return "", nil, sourceErr
-					}
-					from = ctx.from
-					source = &ctx
-					columns = nodeColumns(r.graph.Nodes[n.Input])
-				}
-			}
+		return r.renderSortLimit(id, n, "")
+	case TotalRows, *TotalRows:
+		n, ok := asTotalRows(value)
+		if !ok {
+			return "", nil, fmt.Errorf("total-rows node %q is nil", id)
 		}
-		if source == nil {
-			input, renderedColumns, renderErr := r.renderNode(n.Input)
-			if renderErr != nil {
-				return "", nil, renderErr
-			}
-			from = quoteName(input)
-			columns = renderedColumns
+		sortNode, ok := asSortLimit(r.graph.Nodes[n.Input])
+		if !ok {
+			return "", nil, fmt.Errorf("total-rows input %q is not a SortLimit", n.Input)
 		}
-		selectSQL := "*"
-		if len(n.Projection) > 0 {
-			parts := make([]string, 0, len(n.Projection))
-			for _, projection := range n.Projection {
-				if err := validName(projection.Source); err != nil {
-					return "", nil, fmt.Errorf("projection source %q: %w", projection.Source, err)
-				}
-				expr := quoteName(columnName(projection.Source))
-				if source != nil {
-					resolved, resolveErr := r.fieldExpr(projection.Source, *source)
-					if resolveErr != nil {
-						return "", nil, resolveErr
-					}
-					expr = resolved
-				}
-				if projection.Mask != "" {
-					switch strings.ToLower(projection.Mask) {
-					case "null":
-						expr = "NULL"
-					case "redact", "redacted":
-						expr = "'REDACTED'"
-					case "zero":
-						expr = "0"
-					default:
-						return "", nil, fmt.Errorf("unsupported projection mask %q", projection.Mask)
-					}
-				}
-				parts = append(parts, expr+" AS "+quoteName(columnName(projection.Name)))
-			}
-			selectSQL = strings.Join(parts, ", ")
-			columns = projectionColumns(n.Projection)
-		}
-		sql := "SELECT " + selectSQL + " FROM " + from
-		if source != nil && len(source.where) > 0 {
-			sql += " WHERE " + strings.Join(source.where, " AND ")
-		}
-		if len(n.Sort) > 0 {
-			keys := make([]string, len(n.Sort))
-			for i, key := range n.Sort {
-				keys[i] = quoteName(columnName(key.Field))
-				if key.Descending {
-					keys[i] += " DESC"
-				} else {
-					keys[i] += " ASC"
-				}
-			}
-			sql += " ORDER BY " + strings.Join(keys, ", ")
-		}
-		if n.Limit > 0 {
-			sql += fmt.Sprintf(" LIMIT %d", n.Limit)
-		}
-		if n.Offset > 0 {
-			sql += fmt.Sprintf(" OFFSET %d", n.Offset)
-		}
-		if id == r.graph.Output {
-			return sql, columns, nil
-		}
-		name := r.cteName(id)
-		r.ctes = append(r.ctes, name+" AS ("+sql+")")
-		r.names[id] = name
-		return name, columns, nil
+		return r.renderSortLimit(id, sortNode, n.TotalField)
 	case BundleBranches, *BundleBranches:
 		n, ok := asBundle(value)
 		if !ok {
@@ -342,6 +272,105 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 	default:
 		return "", nil, fmt.Errorf("unsupported node kind %q", node.Kind())
 	}
+}
+
+func (r *duckRenderer) renderSortLimit(id string, n SortLimit, totalField string) (string, []string, error) {
+	var columns []string
+	from := ""
+	var source *sourceContext
+	if _, aggregate := asAggregate(r.graph.Nodes[n.Input]); !aggregate {
+		if _, stitch := asStitch(r.graph.Nodes[n.Input]); !stitch {
+			if _, computed := asComputeSource(r.graph.Nodes[n.Input]); !computed {
+				ctx, sourceErr := r.source(n.Input)
+				if sourceErr != nil {
+					return "", nil, sourceErr
+				}
+				from = ctx.from
+				source = &ctx
+				columns = nodeColumns(r.graph.Nodes[n.Input])
+			}
+		}
+	}
+	if source == nil {
+		input, renderedColumns, renderErr := r.renderNode(n.Input)
+		if renderErr != nil {
+			return "", nil, renderErr
+		}
+		from = quoteName(input)
+		columns = renderedColumns
+	}
+	selectSQL := "*"
+	if len(n.Projection) > 0 {
+		parts := make([]string, 0, len(n.Projection))
+		for _, projection := range n.Projection {
+			if err := validName(projection.Source); err != nil {
+				return "", nil, fmt.Errorf("projection source %q: %w", projection.Source, err)
+			}
+			expr := quoteName(columnName(projection.Source))
+			if source != nil {
+				resolved, resolveErr := r.fieldExpr(projection.Source, *source)
+				if resolveErr != nil {
+					return "", nil, resolveErr
+				}
+				expr = resolved
+			}
+			if projection.Mask != "" {
+				switch strings.ToLower(projection.Mask) {
+				case "null":
+					expr = "NULL"
+				case "redact", "redacted":
+					expr = "'REDACTED'"
+				case "zero":
+					expr = "0"
+				default:
+					return "", nil, fmt.Errorf("unsupported projection mask %q", projection.Mask)
+				}
+			}
+			parts = append(parts, expr+" AS "+quoteName(columnName(projection.Name)))
+		}
+		selectSQL = strings.Join(parts, ", ")
+		columns = projectionColumns(n.Projection)
+	}
+	if totalField != "" {
+		if err := validUnqualifiedName(totalField); err != nil {
+			return "", nil, fmt.Errorf("total field %q: %w", totalField, err)
+		}
+		if selectSQL == "*" {
+			selectSQL = "*, COUNT(*) OVER () AS " + quoteName(totalField)
+		} else {
+			selectSQL += ", COUNT(*) OVER () AS " + quoteName(totalField)
+		}
+		columns = append(columns, totalField)
+	}
+	sql := "SELECT " + selectSQL + " FROM " + from
+	if source != nil && len(source.where) > 0 {
+		sql += " WHERE " + strings.Join(source.where, " AND ")
+	}
+	if len(n.Sort) > 0 {
+		keys := make([]string, len(n.Sort))
+		for i, key := range n.Sort {
+			keys[i] = quoteName(columnName(key.Field))
+			if key.Descending {
+				keys[i] += " DESC"
+			} else {
+				keys[i] += " ASC"
+			}
+		}
+		sql += " ORDER BY " + strings.Join(keys, ", ")
+	}
+	if n.Limit > 0 {
+		sql += fmt.Sprintf(" LIMIT %d", n.Limit)
+	}
+	if n.Offset > 0 {
+		sql += fmt.Sprintf(" OFFSET %d", n.Offset)
+	}
+	if id == r.graph.Output {
+		return sql, columns, nil
+	}
+	name := r.cteName(id)
+	r.ctes = append(r.ctes, name+" AS ("+sql+")")
+	r.names[id] = name
+	return name, columns, nil
 }
 
 func isFloatMetricType(typ string) bool {
@@ -514,15 +543,26 @@ func (r *duckRenderer) scanContext(id string, n ScanDataset) sourceContext {
 	if relation == "" {
 		relation = quoteName(n.Dataset)
 	}
+	aliases := map[string][]string{n.Dataset: nil}
+	// An explicit relation is a physical table expression (which may be a
+	// parenthesized snapshot query), so bind it to the semantic dataset alias.
+	// This keeps qualified semantic fields such as `orders.amount` bindable
+	// regardless of the physical relation's SQL shape. The empty relation
+	// retains the compact quoted-table form above.
+	if strings.TrimSpace(n.Relation) != "" {
+		relation += " AS " + quoteName(n.Dataset)
+		aliases[n.Dataset] = []string{n.Dataset}
+	}
 	if r.useCount[id] > 1 {
 		name := r.cteName(id)
 		if !r.done[id] {
 			r.ctes = append(r.ctes, name+" AS MATERIALIZED (SELECT * FROM "+relation+")")
 			r.done[id] = true
 		}
-		relation = name
+		relation = name + " AS " + quoteName(n.Dataset)
+		aliases[n.Dataset] = []string{n.Dataset}
 	}
-	return sourceContext{from: relation, root: n.Dataset, aliases: map[string][]string{n.Dataset: nil}, pathAliases: map[string]string{"": ""}, lineage: append([]PhysicalLineage(nil), n.PhysicalLineage...)}
+	return sourceContext{from: relation, root: n.Dataset, aliases: aliases, pathAliases: map[string]string{"": ""}, lineage: append([]PhysicalLineage(nil), n.PhysicalLineage...)}
 }
 
 func (r *duckRenderer) sourceFilter(n FilterRows) (sourceContext, error) {
@@ -690,14 +730,18 @@ func (r *duckRenderer) renderStitch(id string, n StitchAggregates) (string, []st
 		for _, metric := range n.AvailableMetrics {
 			if available[metric.Name] {
 				value := "l." + quoteName(columnName(metric.Name))
-				value = "COALESCE(" + value + ", 0)"
+				if metric.Empty == "zero" {
+					value = "COALESCE(" + value + ", 0)"
+				}
 				selects = append(selects, value+" AS "+quoteName(columnName(metric.Name)))
 				continue
 			}
 			for _, candidate := range rightMeta.AvailableMetrics {
 				if candidate.Name == metric.Name {
 					value := "r." + quoteName(columnName(metric.Name))
-					value = "COALESCE(" + value + ", 0)"
+					if candidate.Empty == "zero" {
+						value = "COALESCE(" + value + ", 0)"
+					}
 					selects = append(selects, value+" AS "+quoteName(columnName(metric.Name)))
 					available[metric.Name] = true
 					break
@@ -710,19 +754,6 @@ func (r *duckRenderer) renderStitch(id string, n StitchAggregates) (string, []st
 	}
 	r.names[id] = leftName
 	return leftName, nodeColumns(n), nil
-}
-
-func stitchMetricZero(node Node, name string) bool {
-	aggregate, ok := asAggregate(node)
-	if !ok {
-		return false
-	}
-	for _, metric := range aggregate.Metrics {
-		if metric.Name == name {
-			return metric.Empty == "zero" || strings.EqualFold(metric.Aggregation, "COUNT") || strings.EqualFold(metric.Aggregation, "COUNT_DISTINCT")
-		}
-	}
-	return false
 }
 
 func (r *duckRenderer) renderCompute(id, input, output, expression string) (string, []string, error) {
@@ -915,6 +946,17 @@ func asSortLimit(node Node) (SortLimit, bool) {
 		}
 	}
 	return SortLimit{}, false
+}
+func asTotalRows(node Node) (TotalRows, bool) {
+	switch value := node.(type) {
+	case TotalRows:
+		return value, true
+	case *TotalRows:
+		if value != nil {
+			return *value, true
+		}
+	}
+	return TotalRows{}, false
 }
 func asComputeSource(node Node) (Node, bool) {
 	switch node.(type) {
@@ -1153,6 +1195,17 @@ func validName(name string) error {
 	}
 	return nil
 }
+
+func validUnqualifiedName(name string) error {
+	if err := validName(name); err != nil {
+		return err
+	}
+	if strings.Contains(name, ".") {
+		return fmt.Errorf("identifier must be unqualified")
+	}
+	return nil
+}
+
 func quoteName(name string) string {
 	parts := strings.Split(name, ".")
 	for i := range parts {

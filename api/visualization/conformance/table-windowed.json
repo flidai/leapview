@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 10,
+  "schemaVersion": 11,
   "visualID": "orders",
   "rendererID": "tanstack",
   "specRevision": "sha256:4292a3ea86a734f1e67ff95c4388c36ca4d74e43a2ddce853398fd1a71b4ade4",
@@ -114,11 +114,11 @@
         "direction": "descending"
       }
     ],
-    "blocks": {
+        "blocks": {
       "0:2": {
         "id": "0:2",
         "start": 0,
-        "rows": [["order_2", 210.0], ["order_1", 125.5]],
+        "rows": [["order_2", "210.0"], ["order_1", "125.5"]],
         "requestSeq": 8,
         "resetVersion": 2,
         "sort": [

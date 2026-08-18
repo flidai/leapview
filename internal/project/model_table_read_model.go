@@ -15,7 +15,6 @@ type ModelTableAssetReadModel struct {
 	Source             string                                   `json:"Source,omitempty"`
 	Sources            []string                                 `json:"Sources,omitempty"`
 	SourceReads        map[string][]string                      `json:"SourceReads,omitempty"`
-	SQL                string                                   `json:"SQL,omitempty"`
 	Transform          semanticmodel.Transform                  `json:"Transform,omitempty"`
 	Columns            map[string]semanticmodel.ModelColumn     `json:"Columns,omitempty"`
 	Entities           map[string]semanticmodel.ModelEntitySpec `json:"Entities,omitempty"`
@@ -36,7 +35,6 @@ func ModelTableAssetPayload(table semanticmodel.Table) map[string]any {
 		Source:             table.Source,
 		Sources:            append([]string(nil), table.Sources...),
 		SourceReads:        cloneStringSliceMap(table.SourceReads),
-		SQL:                table.SQL,
 		Transform:          table.Transform,
 		Columns:            cloneModelColumns(table.Columns),
 		Entities:           cloneModelEntities(table.Entities),

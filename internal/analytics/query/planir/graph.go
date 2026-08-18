@@ -204,6 +204,11 @@ func validateNode(node Node, nodes map[string]Node) error {
 			return fmt.Errorf("node is nil")
 		}
 		return validateNode(*value, nodes)
+	case *TotalRows:
+		if value == nil {
+			return fmt.Errorf("node is nil")
+		}
+		return validateNode(*value, nodes)
 	case *BundleBranches:
 		if value == nil {
 			return fmt.Errorf("node is nil")
@@ -344,6 +349,22 @@ func validateNode(node Node, nodes map[string]Node) error {
 				return fmt.Errorf("metric names must be non-empty and unique")
 			}
 			seen[metric.Name] = true
+			var metadata *Metric
+			for index := range meta.AvailableMetrics {
+				if meta.AvailableMetrics[index].Name == metric.Name {
+					metadata = &meta.AvailableMetrics[index]
+					break
+				}
+			}
+			if metadata == nil {
+				return fmt.Errorf("metric %q is missing from aggregate available metrics", metric.Name)
+			}
+			if metadata.Empty != metric.Empty {
+				return fmt.Errorf("metric %q empty policy metadata %q does not match spec %q", metric.Name, metadata.Empty, metric.Empty)
+			}
+			if metric.Type != "" && metadata.Type != metric.Type {
+				return fmt.Errorf("metric %q type metadata %q does not match spec %q", metric.Name, metadata.Type, metric.Type)
+			}
 			if metric.Input != "" && !sourceFields[metric.Input] && !sourceMetrics[metric.Input] {
 				return fmt.Errorf("metric %q input %q is unavailable", metric.Name, metric.Input)
 			}
@@ -397,6 +418,9 @@ func validateNode(node Node, nodes map[string]Node) error {
 					return fmt.Errorf("metric %q filter %q fields do not match predicate references", metric.Name, filter.Name)
 				}
 			}
+		}
+		if len(meta.AvailableMetrics) != len(n.Metrics) {
+			return fmt.Errorf("aggregate available metrics must exactly match metric specs")
 		}
 		if len(meta.OutputGrain.Fields) != len(n.GroupBy) || !sameOrdered(meta.OutputGrain.Fields, n.GroupBy) {
 			return fmt.Errorf("output grain must equal group-by fields")
@@ -524,6 +548,46 @@ func validateNode(node Node, nodes map[string]Node) error {
 			if !sourceFields[key.Field] && !sourceMetrics[key.Field] && !seenProjection[key.Field] {
 				return fmt.Errorf("sort field %q is unavailable", key.Field)
 			}
+		}
+	case TotalRows:
+		if n.Input == "" || n.TotalField == "" {
+			return fmt.Errorf("input and total field are required")
+		}
+		if err := validUnqualifiedName(n.TotalField); err != nil {
+			return fmt.Errorf("total field %q: %w", n.TotalField, err)
+		}
+		input, ok := nodes[n.Input]
+		if !ok || input == nil {
+			return fmt.Errorf("input %q is unavailable", n.Input)
+		}
+		sortInput, ok := asSortLimit(input)
+		if !ok {
+			return fmt.Errorf("input %q must be a SortLimit", n.Input)
+		}
+		inputMeta := sortInput.Meta()
+		if err := validateTotalRowsSortInput(sortInput); err != nil {
+			return err
+		}
+		if n.FilterPhase != FilterPhasePostAggregate {
+			return fmt.Errorf("total rows must use post-aggregate phase")
+		}
+		if !n.OutputGrain.equal(inputMeta.OutputGrain) {
+			return fmt.Errorf("total rows output grain must match input")
+		}
+		if len(n.AvailableMetrics) != 0 {
+			return fmt.Errorf("total rows must not declare available metrics")
+		}
+		if len(n.AvailableFields) != len(inputMeta.AvailableFields)+1 {
+			return fmt.Errorf("total rows available fields must append exactly one field")
+		}
+		for index, field := range inputMeta.AvailableFields {
+			if n.AvailableFields[index] != field {
+				return fmt.Errorf("total rows field %q does not match input field %q", n.AvailableFields[index].Name, field.Name)
+			}
+		}
+		last := n.AvailableFields[len(n.AvailableFields)-1]
+		if last.Name != n.TotalField || last.Type != "integer" {
+			return fmt.Errorf("total rows field metadata must be integer %q", n.TotalField)
 		}
 	case BundleBranches:
 		if err := validateBundleEnvelope(n, nodes); err != nil {
@@ -921,6 +985,62 @@ type canonicalNode struct {
 	Data json.RawMessage `json:"data"`
 }
 
+// WithTotalRows returns a detached graph whose output is a typed TotalRows
+// operation wrapping the existing SortLimit output. The input graph is never
+// mutated; only the node map and output metadata are copied and updated.
+func WithTotalRows(graph *Graph, totalField string) (*Graph, error) {
+	if graph == nil {
+		return nil, fmt.Errorf("plan graph is nil")
+	}
+	if err := graph.Validate(); err != nil {
+		return nil, err
+	}
+	sortNode, ok := asSortLimit(graph.Nodes[graph.Output])
+	if !ok {
+		return nil, fmt.Errorf("total rows requires SortLimit output, got %s", graph.Nodes[graph.Output].Kind())
+	}
+	if err := validUnqualifiedName(totalField); err != nil {
+		return nil, fmt.Errorf("total field %q: %w", totalField, err)
+	}
+	if err := validateTotalRowsSortInput(sortNode); err != nil {
+		return nil, err
+	}
+	for _, field := range sortNode.AvailableFields {
+		if field.Name == totalField {
+			return nil, fmt.Errorf("total field %q already exists", totalField)
+		}
+	}
+	totalID := graph.Output + "_total_rows"
+	if _, exists := graph.Nodes[totalID]; exists {
+		return nil, fmt.Errorf("total rows node %q already exists", totalID)
+	}
+	meta := sortNode.NodeMeta
+	meta.NodeID = totalID
+	meta.AvailableFields = append(append([]Field(nil), sortNode.AvailableFields...), Field{Name: totalField, Type: "integer"})
+	meta.AvailableMetrics = nil
+	meta.PhysicalLineage = nil
+	meta.RelationshipRoutes = nil
+	copyGraph := *graph
+	copyGraph.Nodes = make(map[string]Node, len(graph.Nodes)+1)
+	for id, node := range graph.Nodes {
+		copyGraph.Nodes[id] = node
+	}
+	copyGraph.Nodes[totalID] = TotalRows{NodeMeta: meta, Input: graph.Output, TotalField: totalField}
+	copyGraph.Output = totalID
+	copyGraph.NodeMeta = meta
+	if err := copyGraph.Validate(); err != nil {
+		return nil, err
+	}
+	return &copyGraph, nil
+}
+
+func validateTotalRowsSortInput(sortNode SortLimit) error {
+	if len(sortNode.AvailableMetrics) != 0 {
+		return fmt.Errorf("total rows requires a row/field SortLimit input without available metrics")
+	}
+	return nil
+}
+
 // Canonical returns a stable JSON representation. All map-like collections
 // are sorted before encoding, making this suitable for cache keys and plan
 // fingerprints.
@@ -984,6 +1104,11 @@ func canonicalData(node Node) (json.RawMessage, error) {
 		}
 		return canonicalData(*n)
 	case *SortLimit:
+		if n == nil {
+			return nil, fmt.Errorf("node is nil")
+		}
+		return canonicalData(*n)
+	case *TotalRows:
 		if n == nil {
 			return nil, fmt.Errorf("node is nil")
 		}
@@ -1065,6 +1190,11 @@ func canonicalData(node Node) (json.RawMessage, error) {
 			Limit      int          `json:"limit,omitempty"`
 			Offset     int          `json:"offset,omitempty"`
 		}{n.Input, append([]SortKey(nil), n.Sort...), append([]Projection(nil), n.Projection...), n.Limit, n.Offset}
+	case TotalRows:
+		value = struct {
+			Input      string `json:"input"`
+			TotalField string `json:"total_field"`
+		}{n.Input, n.TotalField}
 	case BundleBranches:
 		value = struct {
 			Branches []BundleBranch `json:"branches"`
@@ -1213,6 +1343,9 @@ func canonicalMeta(meta NodeMeta) NodeMeta {
 	out.AvailableMetrics = append([]Metric(nil), meta.AvailableMetrics...)
 	sort.Slice(out.AvailableMetrics, func(i, j int) bool {
 		if out.AvailableMetrics[i].Name == out.AvailableMetrics[j].Name {
+			if out.AvailableMetrics[i].Type == out.AvailableMetrics[j].Type {
+				return out.AvailableMetrics[i].Empty < out.AvailableMetrics[j].Empty
+			}
 			return out.AvailableMetrics[i].Type < out.AvailableMetrics[j].Type
 		}
 		return out.AvailableMetrics[i].Name < out.AvailableMetrics[j].Name
@@ -1411,6 +1544,8 @@ func (g *Graph) Explain() (string, error) {
 			fmt.Fprintf(&b, " derived=%s", value.Output)
 		case SortLimit:
 			fmt.Fprintf(&b, " sort=%v limit=%d offset=%d", value.Sort, value.Limit, value.Offset)
+		case TotalRows:
+			fmt.Fprintf(&b, " total_field=%s", value.TotalField)
 		case BundleBranches:
 			fmt.Fprintf(&b, " branches=%v", value.Branches)
 		case SpatialEnvelope:
@@ -1447,11 +1582,14 @@ func explainFields(fields []Field) []string {
 func explainMetrics(metrics []Metric) []string {
 	out := make([]string, 0, len(metrics))
 	for _, m := range metrics {
-		if m.Type == "" {
-			out = append(out, m.Name)
-		} else {
-			out = append(out, m.Name+":"+m.Type)
+		value := m.Name
+		if m.Type != "" {
+			value += ":" + m.Type
 		}
+		if m.Empty != "" {
+			value += "[empty=" + m.Empty + "]"
+		}
+		out = append(out, value)
 	}
 	sort.Strings(out)
 	return out

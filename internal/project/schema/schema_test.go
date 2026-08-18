@@ -189,6 +189,23 @@ spec:
 	}
 }
 
+func TestCanonicalModelRejectsTopLevelSQLAlias(t *testing.T) {
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:sales_orders, name: sales_orders}
+spec:
+  sql: SELECT order_id FROM source.orders
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`))
+	if err == nil {
+		t.Fatal("Model accepted removed top-level spec.sql alias")
+	}
+	assertDiagnostic(t, err, "schema.unknown_field", "sql")
+}
+
 func TestCanonicalDatasetModelUsesAuthoringName(t *testing.T) {
 	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`
 apiVersion: leapview.dev/v1

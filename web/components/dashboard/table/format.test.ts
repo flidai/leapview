@@ -11,5 +11,6 @@ test('table cells use the visualization formatting contract when supplied by the
   expect(formatCell('', { key: 'pivot_revenue', label: 'Revenue', role: 'metric', visualizationFormat: { kind: 'currency', currency: 'BRL' } })).toBe('—')
   expect(formatCell('-', { key: 'pivot_orders', label: 'Orders', role: 'metric', visualizationFormat: { kind: 'number' } })).toBe('—')
   expect(formatCell('—', { key: 'pivot_orders', label: 'Orders', role: 'metric', visualizationFormat: { kind: 'number' } })).toBe('—')
-  expect(() => formatCell('12', { key: 'orders', label: 'Orders', role: 'metric', visualizationFormat: { kind: 'number' } })).toThrow(/numeric string/)
+  expect(formatCell('12', { key: 'orders', label: 'Orders', role: 'metric', visualizationFormat: { kind: 'number' } })).toBe('12')
+  expect(() => formatCell('1e3', { key: 'orders', label: 'Orders', role: 'metric', visualizationFormat: { kind: 'number' } })).toThrow(/canonical decimal string/)
 })

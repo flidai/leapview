@@ -1,6 +1,7 @@
 package query
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,10 +10,85 @@ import (
 	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
+// flatPlanFilter keeps the governed provenance of a predicate while it is
+// lowered into the row-oriented source/filter boundary. Request filters have
+// no name; metric populations retain the compiled named-filter identity.
+type flatPlanFilter struct {
+	Filter Filter
+	Source planir.FilterSource
+	Name   string
+}
+
+func requestFlatPlanFilters(filters []Filter) []flatPlanFilter {
+	out := make([]flatPlanFilter, 0, len(filters))
+	for _, filter := range filters {
+		out = append(out, flatPlanFilter{Filter: filter, Source: planir.FilterSourceRequest})
+	}
+	return out
+}
+
+func filterSignature(filter Filter) (string, error) {
+	// The encoded Filter is activation-owned and includes explicit route/path,
+	// match-guard, and phase-relevant fields. The caller combines it with the
+	// compiled named-filter identity when comparing complete populations.
+	value, err := json.Marshal(filter)
+	if err != nil {
+		return "", err
+	}
+	return string(value), nil
+}
+
+func flatPlanFilterSignature(filters []CompiledNamedFilter) (string, error) {
+	type entry struct {
+		name string
+		body string
+	}
+	entries := make([]entry, 0, len(filters))
+	for _, named := range filters {
+		body, err := filterSignature(named.Filter)
+		if err != nil {
+			return "", err
+		}
+		entries = append(entries, entry{name: named.Name, body: body})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].name != entries[j].name {
+			return entries[i].name < entries[j].name
+		}
+		return entries[i].body < entries[j].body
+	})
+	parts := make([]string, 0, len(entries))
+	for _, item := range entries {
+		parts = append(parts, item.name+"\x00"+item.body)
+	}
+	return strings.Join(parts, "\x00"), nil
+}
+
+func canonicalCompiledNamedFilters(filters []CompiledNamedFilter) []CompiledNamedFilter {
+	out := append([]CompiledNamedFilter(nil), filters...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func namedFlatPlanFilters(filters []CompiledNamedFilter, dataset string) []flatPlanFilter {
+	out := make([]flatPlanFilter, 0, len(filters))
+	for _, named := range filters {
+		filter := scopeMetricWhereFilter(named.Filter, dataset)
+		out = append(out, flatPlanFilter{Filter: filter, Source: planir.FilterSourceNamed, Name: named.Name})
+	}
+	return out
+}
+
 // buildFlatPlanIR lowers row/raw/count reads into the same closed PlanIR
 // source/filter/projection boundary as aggregate reads. Raw SQL builders may
 // remain equivalence oracles in tests, but are not production execution paths.
 func (p *Planner) buildFlatPlanIR(dataset string, dimensions, metrics []Field, filters []Filter, sorts []Sort, limit, offset int) (*planir.Graph, error) {
+	return p.buildFlatPlanIRWithFilters(dataset, dimensions, metrics, requestFlatPlanFilters(filters), nil, sorts, limit, offset)
+}
+
+func (p *Planner) buildFlatPlanIRWithFilters(dataset string, dimensions, metrics []Field, filterSpecs []flatPlanFilter, pathOverrides map[string][]semanticmodel.Relationship, sorts []Sort, limit, offset int) (*planir.Graph, error) {
 	if dataset == "" {
 		return nil, fmt.Errorf("plan IR dataset is required")
 	}
@@ -26,6 +102,9 @@ func (p *Planner) buildFlatPlanIR(dataset string, dimensions, metrics []Field, f
 		physical, path, err := p.flatPhysicalField(dataset, ref)
 		if err != nil {
 			return err
+		}
+		if override, ok := pathOverrides[ref]; ok {
+			path = append([]semanticmodel.Relationship(nil), override...)
 		}
 		fieldType := planIRLogicalType(physical.Datatype, physical.Type)
 		fields = appendPlanIRField(fields, planir.Field{Name: ref, Type: fieldType})
@@ -74,6 +153,10 @@ func (p *Planner) buildFlatPlanIR(dataset string, dimensions, metrics []Field, f
 			}
 		}
 	}
+	filters := make([]Filter, 0, len(filterSpecs))
+	for _, spec := range filterSpecs {
+		filters = append(filters, spec.Filter)
+	}
 	var walkFilters func([]Filter) error
 	walkFilters = func(values []Filter) error {
 		for _, filter := range values {
@@ -120,20 +203,20 @@ func (p *Planner) buildFlatPlanIR(dataset string, dimensions, metrics []Field, f
 	graph.Nodes["scan"] = planir.ScanDataset{NodeMeta: meta, Dataset: dataset, Relation: relation}
 	graph.Roots = []string{"scan"}
 	input := "scan"
-	root, relationship := flatFilterPhases(filters, paths)
-	if len(root) > 0 {
-		predicate, err := flatAndPredicate(root)
+	rootSpecs, relationshipSpecs := flatFilterSpecPhases(filterSpecs, paths)
+	for index, spec := range rootSpecs {
+		predicate, err := planIRPredicate(spec.Filter)
 		if err != nil {
 			return nil, err
 		}
 		m := meta
-		m.NodeID = "filter_scan"
+		m.NodeID = fmt.Sprintf("filter_scan_%d", index)
 		m.PhysicalLineage = append([]planir.PhysicalLineage(nil), lineage...)
-		fieldRoutes, err := flatFilterFieldRoutes(root, paths, dataset, p)
+		fieldRoutes, err := flatFilterFieldRoutes([]Filter{spec.Filter}, paths, dataset, p)
 		if err != nil {
 			return nil, err
 		}
-		graph.Nodes[m.NodeID] = planir.FilterRows{NodeMeta: m, Input: input, Predicate: predicate, Source: planir.FilterSourceRequest, Fields: predicateFields(predicate), MatchGuard: flatFilterNeedsMatchGuard(root), FieldRoutes: fieldRoutes}
+		graph.Nodes[m.NodeID] = planir.FilterRows{NodeMeta: m, Input: input, Predicate: predicate, Source: spec.Source, Name: spec.Name, Fields: predicateFields(predicate), MatchGuard: flatFilterNeedsMatchGuard([]Filter{spec.Filter}), FieldRoutes: fieldRoutes}
 		input = m.NodeID
 	}
 	ordered := flatOrderedRelationships(paths, dataset)
@@ -153,19 +236,19 @@ func (p *Planner) buildFlatPlanIR(dataset string, dimensions, metrics []Field, f
 		graph.Nodes[m.NodeID] = planir.TraverseRelationship{NodeMeta: m, Input: input, Path: path}
 		input = m.NodeID
 	}
-	if len(relationship) > 0 {
-		predicate, err := flatAndPredicate(relationship)
+	for index, spec := range relationshipSpecs {
+		predicate, err := planIRPredicate(spec.Filter)
 		if err != nil {
 			return nil, err
 		}
 		m := meta
-		m.NodeID = "filter_relationship"
+		m.NodeID = fmt.Sprintf("filter_relationship_%d", index)
 		m.FilterPhase = planir.FilterPhaseRelationship
-		fieldRoutes, err := flatFilterFieldRoutes(relationship, paths, dataset, p)
+		fieldRoutes, err := flatFilterFieldRoutes([]Filter{spec.Filter}, paths, dataset, p)
 		if err != nil {
 			return nil, err
 		}
-		graph.Nodes[m.NodeID] = planir.FilterRows{NodeMeta: m, Input: input, Predicate: predicate, Source: planir.FilterSourceRequest, Fields: predicateFields(predicate), MatchGuard: flatFilterNeedsMatchGuard(relationship), FieldRoutes: fieldRoutes}
+		graph.Nodes[m.NodeID] = planir.FilterRows{NodeMeta: m, Input: input, Predicate: predicate, Source: spec.Source, Name: spec.Name, Fields: predicateFields(predicate), MatchGuard: flatFilterNeedsMatchGuard([]Filter{spec.Filter}), FieldRoutes: fieldRoutes}
 		input = m.NodeID
 	}
 	projection := []planir.Projection{}
@@ -237,17 +320,12 @@ func planIRLogicalType(datatype semanticmodel.LogicalDataType, fallback string) 
 }
 
 func (p *Planner) flatPhysicalField(dataset, ref string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, error) {
-	if semantic, ok := p.model.Dimensions[ref]; ok {
-		binding, ok := semantic.Bindings[dataset]
+	if _, ok := p.compiled.SemanticDimension(ref); ok {
+		binding, ok := p.compiled.DimensionBinding(ref, dataset)
 		if !ok {
 			return semanticmodel.MetricDimension{}, nil, fmt.Errorf("semantic dimension %q has no binding for dataset %q", ref, dataset)
 		}
-		physical, err := p.resolveDimension(binding.Field)
-		if err != nil {
-			return semanticmodel.MetricDimension{}, nil, err
-		}
-		path, err := p.resolveBindingPath(dataset, binding)
-		return physical, path, err
+		return binding.Physical, binding.Path, nil
 	}
 	physical, err := p.resolveDimension(ref)
 	if err != nil {
@@ -326,6 +404,17 @@ func flatFilterPhases(filters []Filter, paths map[string][]semanticmodel.Relatio
 			relationship = append(relationship, filter)
 		} else {
 			root = append(root, filter)
+		}
+	}
+	return
+}
+
+func flatFilterSpecPhases(filters []flatPlanFilter, paths map[string][]semanticmodel.Relationship) (root, relationship []flatPlanFilter) {
+	for _, spec := range filters {
+		if flatFilterHasRelationship(spec.Filter, paths) {
+			relationship = append(relationship, spec)
+		} else {
+			root = append(root, spec)
 		}
 	}
 	return

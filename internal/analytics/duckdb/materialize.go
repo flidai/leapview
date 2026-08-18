@@ -456,9 +456,11 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 	if err != nil {
 		return nil, err
 	}
-	for modelID, model := range config.Models {
-		if err := analyticsmaterialize.ValidateFilesWithResolver(model, sources); err != nil {
-			return nil, fmt.Errorf("semantic model %q: %w", modelID, err)
+	if config.SnapshotID == 0 {
+		for modelID, model := range config.Models {
+			if err := analyticsmaterialize.ValidateFilesWithResolver(model, sources); err != nil {
+				return nil, fmt.Errorf("semantic model %q: %w", modelID, err)
+			}
 		}
 	}
 	runtime := &ProjectRuntime{
@@ -495,6 +497,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 			Database:            db,
 			Sources:             sources,
 			Resolver:            sources,
+			SnapshotOnly:        config.SnapshotID > 0,
 			TableRelation:       tableRelation,
 			QueryCache:          config.QueryCache,
 			ResultLimits:        config.ResultLimits,
@@ -506,6 +509,12 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		runtime.views[modelID] = view
 	}
 	if config.SnapshotID > 0 {
+		// Compile planners from the authored definition first so their source
+		// fingerprints remain stable. Then attach immutable snapshot table
+		// schemas to the runtime models used for source-free verification.
+		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID); err != nil {
+			return nil, errors.Join(err, runtime.Close())
+		}
 		runtime.lastSnapshotID = config.SnapshotID
 	} else if !config.SkipInitialRefresh {
 		if err := runtime.Refresh(ctx); err != nil {
@@ -513,6 +522,68 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		}
 	}
 	return runtime, nil
+}
+
+// discoverSnapshotModelSchemas populates executable table schemas from the
+// immutable DuckLake snapshot. Snapshot activation deliberately does not
+// inspect authored sources: source connections and credentials may no longer
+// be available when a committed serving generation is reopened.
+func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresource.SessionProvider, models map[string]*semanticmodel.Model, snapshotID int64) error {
+	if provider == nil {
+		return fmt.Errorf("snapshot schema discovery requires a DuckDB database")
+	}
+	if snapshotID <= 0 {
+		return fmt.Errorf("snapshot schema discovery requires a positive snapshot id")
+	}
+	leaseProvider, ok := provider.(analyticsresource.Provider)
+	if !ok {
+		return fmt.Errorf("snapshot schema discovery requires an analytical lease provider")
+	}
+	lease, err := leaseProvider.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot schema discovery: acquire database lease: %w", err)
+	}
+	defer lease.Release()
+	queryCtx := lease.Context()
+	session, err := provider.Session(queryCtx)
+	if err != nil {
+		return fmt.Errorf("snapshot schema discovery: open database session: %w", err)
+	}
+	for _, modelID := range sortedKeys(models) {
+		model := models[modelID]
+		if model == nil {
+			return fmt.Errorf("snapshot schema discovery: semantic model %q is required", modelID)
+		}
+		tableNames := make([]string, 0, len(model.Tables))
+		for tableName := range model.Tables {
+			tableNames = append(tableNames, tableName)
+		}
+		sort.Strings(tableNames)
+		for _, tableName := range tableNames {
+			physical, err := physicalTableName(model, tableName)
+			if err != nil {
+				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
+			}
+			relation, err := analyticsducklake.QualifiedSnapshotRelation(snapshotID, physical)
+			if err != nil {
+				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
+			}
+			columns, err := describeRelationSchema(queryCtx, session, relation)
+			if err != nil {
+				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
+			}
+			if len(columns) == 0 {
+				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: relation has no columns", modelID, tableName)
+			}
+			for index := range columns {
+				columns[index].PrimaryKey = false
+			}
+			table := model.Tables[tableName]
+			table.Schema = semanticmodel.TableSchema{Columns: columns}
+			model.Tables[tableName] = table
+		}
+	}
+	return nil
 }
 
 func projectQueryCacheNamespace(config ProjectRuntimeConfig) string {
@@ -1086,7 +1157,6 @@ func sourcePhysicalSignature(source semanticmodel.Source) semanticmodel.Source {
 type tablePhysicalSignatureValue struct {
 	Source             string
 	Sources            []string
-	SQL                string
 	Transform          semanticmodel.Transform
 	Columns            map[string]semanticmodel.ModelColumn
 	Entities           map[string]semanticmodel.ModelEntitySpec
@@ -1099,7 +1169,6 @@ func tablePhysicalSignature(table semanticmodel.Table) tablePhysicalSignatureVal
 	return tablePhysicalSignatureValue{
 		Source:             table.Source,
 		Sources:            append([]string{}, table.Sources...),
-		SQL:                table.SQL,
 		Transform:          table.Transform,
 		Columns:            table.Columns,
 		Entities:           table.Entities,

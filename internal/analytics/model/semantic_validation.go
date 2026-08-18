@@ -89,14 +89,11 @@ func containsTimeGrain(values []string, target string) bool {
 }
 
 func (m *Model) DatasetNames() []string {
-	seen := map[string]struct{}{}
-	for _, metric := range m.Metrics {
-		if metric.Type == "aggregate" && metric.Dataset != "" {
-			seen[metric.Dataset] = struct{}{}
-		}
+	if m == nil {
+		return nil
 	}
-	out := make([]string, 0, len(seen))
-	for dataset := range seen {
+	out := make([]string, 0, len(m.Datasets))
+	for dataset := range m.Datasets {
 		out = append(out, dataset)
 	}
 	sort.Strings(out)

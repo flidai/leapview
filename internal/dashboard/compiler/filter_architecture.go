@@ -95,7 +95,7 @@ func filterValueKind(model *semanticmodel.Model, field string) (dashboardfilter.
 				if err != nil {
 					return "", err
 				}
-				if numericFilterValueKind(physical.Type) == dashboardfilter.ValueDecimal {
+				if numericFilterValueKindForDimension(physical) == dashboardfilter.ValueDecimal {
 					kind = dashboardfilter.ValueDecimal
 				}
 			}
@@ -116,7 +116,7 @@ func filterValueKind(model *semanticmodel.Model, field string) (dashboardfilter.
 	case "timestamp":
 		return dashboardfilter.ValueTimestamp, nil
 	case "number":
-		return numericFilterValueKind(physical.Type), nil
+		return numericFilterValueKindForDimension(physical), nil
 	default:
 		return "", fmt.Errorf("dimension %q has unsupported filter type %q", field, physical.Type)
 	}
@@ -146,6 +146,20 @@ func numericFilterValueKind(value string) dashboardfilter.ValueKind {
 		return dashboardfilter.ValueInteger
 	}
 	return dashboardfilter.ValueDecimal
+}
+
+func numericFilterValueKindForDimension(dimension semanticmodel.MetricDimension) dashboardfilter.ValueKind {
+	// Type is the canonical semantic category ("number") and does not retain
+	// integer-vs-decimal precision. Prefer the authored logical datatype when
+	// available so integer range filters retain their typed contract.
+	switch dimension.Datatype {
+	case semanticmodel.DataTypeInteger:
+		return dashboardfilter.ValueInteger
+	case semanticmodel.DataTypeDecimal, semanticmodel.DataTypeFloat:
+		return dashboardfilter.ValueDecimal
+	default:
+		return numericFilterValueKind(dimension.Type)
+	}
 }
 
 func validatePredicateTypes(definition dashboardfilter.Definition) error {

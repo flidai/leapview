@@ -1371,6 +1371,7 @@ const (
 	VisualizationDataTypeBoolean    VisualizationDataType = "boolean"
 	VisualizationDataTypeInteger    VisualizationDataType = "integer"
 	VisualizationDataTypeDecimal    VisualizationDataType = "decimal"
+	VisualizationDataTypeFloat      VisualizationDataType = "float"
 	VisualizationDataTypeTemporal   VisualizationDataType = "temporal"
 	VisualizationDataTypeDate       VisualizationDataType = "date"
 	VisualizationDataTypeGeographic VisualizationDataType = "geographic"

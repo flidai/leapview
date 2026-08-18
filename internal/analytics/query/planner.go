@@ -28,6 +28,9 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 			return Plan{}, err
 		}
 	}
+	var population []CompiledNamedFilter
+	populationSignature := ""
+	populationSet := false
 	for _, metric := range request.Metrics {
 		field, resolved, err := view.ResolveMetricRef(metric.Field)
 		if err != nil {
@@ -35,6 +38,17 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 		}
 		if resolved.Dataset != view.Dataset {
 			return Plan{}, fmt.Errorf("metric %q is not owned by dataset %q", field, view.Dataset)
+		}
+		signature, err := flatPlanFilterSignature(resolved.NamedFilters)
+		if err != nil {
+			return Plan{}, fmt.Errorf("metric %q population signature: %w", field, err)
+		}
+		if !populationSet {
+			population = canonicalCompiledNamedFilters(resolved.NamedFilters)
+			populationSignature = signature
+			populationSet = true
+		} else if signature != populationSignature {
+			return Plan{}, fmt.Errorf("row query selects metrics with divergent populations")
 		}
 		for _, field := range aggregateMetricPhysicalFields(resolved) {
 			physical, err := p.resolveDimension(field)
@@ -48,13 +62,29 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 			_ = path // relationship validation is retained; lowering is PlanIR-owned
 		}
 	}
+	metricFilters := namedFlatPlanFilters(population, view.Dataset)
+	if len(metricFilters) > 0 {
+		compiledFilters := make([]Filter, 0, len(metricFilters))
+		for _, spec := range metricFilters {
+			compiledFilters = append(compiledFilters, spec.Filter)
+		}
+		if err := p.exposeViewFilters(view, compiledFilters); err != nil {
+			return Plan{}, err
+		}
+	}
 	if _, err := filterFieldBindings(view, request.Filters); err != nil {
 		return Plan{}, err
+	}
+	for _, spec := range metricFilters {
+		if _, err := filterFieldBindings(view, []Filter{spec.Filter}); err != nil {
+			return Plan{}, err
+		}
 	}
 	if len(request.Dimensions) == 0 && len(request.Metrics) == 0 {
 		return Plan{}, fmt.Errorf("row query requires at least one selected field")
 	}
-	irGraph, irErr := p.buildFlatPlanIR(view.Dataset, request.Dimensions, request.Metrics, request.Filters, request.Sort, request.Limit, request.Offset)
+	filterSpecs := append(requestFlatPlanFilters(request.Filters), metricFilters...)
+	irGraph, irErr := p.buildFlatPlanIRWithFilters(view.Dataset, request.Dimensions, request.Metrics, filterSpecs, view.Paths, request.Sort, request.Limit, request.Offset)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("build row plan IR: %w", irErr)
 	}
@@ -111,7 +141,11 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	if masks.matchesMetric(metricField, metric) {
 		return Plan{}, fmt.Errorf("metric %q depends on a masked field", metricField)
 	}
-	metricFilters := scopeMetricWhereFilters(namedMetricFilters(metric.NamedFilters), view.Dataset)
+	metricFilterSpecs := namedFlatPlanFilters(metric.NamedFilters, view.Dataset)
+	metricFilters := make([]Filter, 0, len(metricFilterSpecs))
+	for _, spec := range metricFilterSpecs {
+		metricFilters = append(metricFilters, spec.Filter)
+	}
 	if err := p.exposeViewFilters(view, metricFilters); err != nil {
 		return Plan{}, err
 	}
@@ -139,10 +173,11 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	if _, err := filterFieldBindings(view, metricFilters); err != nil {
 		return Plan{}, err
 	}
-	irFilters := append([]Filter(nil), request.Filters...)
-	irFilters = append(irFilters, metricFilters...)
-	irFilters = append(irFilters, Filter{Field: metric.InputField, Operator: "is_not_null"})
-	irGraph, irErr := p.buildFlatPlanIR(view.Dataset, request.Dimensions, []Field{{Field: metricField, Alias: valueAlias}}, irFilters, request.Sort, request.Limit, 0)
+	filterSpecs := append(requestFlatPlanFilters(request.Filters), metricFilterSpecs...)
+	// The input null guard is a request-local execution constraint, not part of
+	// the compiled named population identity.
+	filterSpecs = append(filterSpecs, flatPlanFilter{Filter: Filter{Field: metric.InputField, Operator: "is_not_null"}, Source: planir.FilterSourceRequest})
+	irGraph, irErr := p.buildFlatPlanIRWithFilters(view.Dataset, request.Dimensions, []Field{{Field: metricField, Alias: valueAlias}}, filterSpecs, view.Paths, request.Sort, request.Limit, 0)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("build raw-value plan IR: %w", irErr)
 	}

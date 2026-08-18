@@ -48,7 +48,7 @@ spec:
       label: Revenue
       description: Total payment revenue attributed to the order.
     review_score:
-      datatype: Decimal
+      datatype: Float
       label: Review
       description: Average customer review score for the order.
     delivery_days:
@@ -66,7 +66,7 @@ spec:
   transform:
     sql: |
       WITH revenue AS (
-        SELECT order_id, SUM(try_cast(payment_value AS DOUBLE)) AS revenue
+        SELECT order_id, CAST(SUM(try_cast(payment_value AS DECIMAL(38,2))) AS DECIMAL(38,2)) AS revenue
         FROM source."olist.payments"
         GROUP BY order_id
       ),
@@ -92,7 +92,7 @@ spec:
         CAST(o.order_purchase_timestamp AS DATE) AS purchase_date,
         o.order_status AS status,
         COALESCE(category.category, 'uncategorized') AS category,
-        round(COALESCE(revenue.revenue, 0), 2) AS revenue,
+        CAST(round(COALESCE(revenue.revenue, CAST(0 AS DECIMAL(38,2))), 2) AS DECIMAL(38,2)) AS revenue,
         round(COALESCE(review.review_score, 0), 2) AS review_score,
         o.order_delivered_customer_date IS NOT NULL AS is_delivered,
         CASE

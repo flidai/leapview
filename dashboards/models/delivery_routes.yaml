@@ -28,11 +28,11 @@ spec:
       label: Point order
       description: Zero for seller origin and one for customer destination
     latitude:
-      datatype: Decimal
+      datatype: Float
       label: Latitude
       description: Latitude of the ordered route vertex
     longitude:
-      datatype: Decimal
+      datatype: Float
       label: Longitude
       description: Longitude of the ordered route vertex
     route_label:
@@ -95,7 +95,7 @@ spec:
           seller_longitude AS longitude,
           seller_city || ' → ' || customer_city AS route_label,
           destination_state,
-          round(allocated_revenue, 2) AS route_revenue
+          CAST(round(allocated_revenue, 2) AS DECIMAL(38,2)) AS route_revenue
         FROM located
         UNION ALL
         SELECT
@@ -107,7 +107,7 @@ spec:
           customer_longitude AS longitude,
           seller_city || ' → ' || customer_city AS route_label,
           destination_state,
-          round(allocated_revenue, 2) AS route_revenue
+          CAST(round(allocated_revenue, 2) AS DECIMAL(38,2)) AS route_revenue
         FROM located
       )
       SELECT * FROM vertices

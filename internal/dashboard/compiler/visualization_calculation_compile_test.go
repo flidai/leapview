@@ -8,6 +8,26 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
+func TestCompiledCalculationDataTypePromotion(t *testing.T) {
+	tests := []struct {
+		template visualizationir.VisualizationCalculationTemplate
+		source   visualizationir.VisualizationDataType
+		want     visualizationir.VisualizationDataType
+	}{
+		{visualizationir.VisualizationCalculationTemplateRunningTotal, visualizationir.VisualizationDataTypeInteger, visualizationir.VisualizationDataTypeDecimal},
+		{visualizationir.VisualizationCalculationTemplateDifference, visualizationir.VisualizationDataTypeDecimal, visualizationir.VisualizationDataTypeDecimal},
+		{visualizationir.VisualizationCalculationTemplateMovingAverage, visualizationir.VisualizationDataTypeInteger, visualizationir.VisualizationDataTypeDecimal},
+		{visualizationir.VisualizationCalculationTemplatePercentageDifference, visualizationir.VisualizationDataTypeDecimal, visualizationir.VisualizationDataTypeDecimal},
+		{visualizationir.VisualizationCalculationTemplatePercentOfParent, visualizationir.VisualizationDataTypeFloat, visualizationir.VisualizationDataTypeFloat},
+		{visualizationir.VisualizationCalculationTemplateRank, visualizationir.VisualizationDataTypeFloat, visualizationir.VisualizationDataTypeInteger},
+	}
+	for _, test := range tests {
+		if got := compiledCalculationDataType(test.template, test.source); got != test.want {
+			t.Errorf("compiledCalculationDataType(%q, %q) = %q, want %q", test.template, test.source, got, test.want)
+		}
+	}
+}
+
 func TestCompiledVisualCalculationAddsGovernedFieldAndVisibleBinding(t *testing.T) {
 	t.Parallel()
 

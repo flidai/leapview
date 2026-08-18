@@ -1,9 +1,8 @@
 package query
 
-// Bundle and spatial plans retain their existing SQL renderer, but also lower
-// their governed relational shape into PlanIR.  This file contains the small
-// amount of graph plumbing needed to share source branches while preserving
-// independently shaped aggregate outputs.
+// Bundle and spatial plans lower their governed relational shape into PlanIR.
+// This file contains the small amount of graph plumbing needed to share source
+// branches while preserving independently shaped aggregate outputs.
 
 import (
 	"encoding/json"

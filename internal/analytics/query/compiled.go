@@ -11,12 +11,44 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
-// CompiledMetricLineage is the physical lineage retained for a metric.  The
-// planner does not use this to emit SQL yet; retaining it here means a later
-// typed planner can consume the serving-state contract without reparsing the
-// semantic model.
+// CompiledMetricLineage is the physical lineage retained for a metric. The
+// typed planner consumes it while lowering PlanIR metadata, so request-time
+// planning does not need to reparse the semantic model.
 type CompiledMetricLineage struct {
 	Entries []CompiledLineageEntry
+}
+
+// CompiledDimensionBinding is one activation-owned semantic dimension
+// binding. It retains the qualified physical field and the complete chosen
+// relationship route so request planning never has to resolve authoring maps.
+type CompiledDimensionBinding struct {
+	Dimension string
+	Dataset   string
+	Physical  semanticmodel.MetricDimension
+	Path      []semanticmodel.Relationship
+}
+
+// CompiledSemanticDimension is the immutable request-time metadata for one
+// authored conformed dimension. Bindings and routes live in
+// CompiledModel.DimensionBinding; this payload carries only the type and
+// temporal contract needed to validate a request.
+type CompiledSemanticDimension struct {
+	Name        string
+	Type        string
+	Datatype    semanticmodel.LogicalDataType
+	NativeGrain string
+	Grains      []string
+	Timezone    string
+	Calendar    string
+	WeekStart   string
+}
+
+// CompiledFieldBinding is an activation-owned direct physical field binding.
+// It covers qualified local fields used by request dimensions and filters.
+type CompiledFieldBinding struct {
+	RootDataset string
+	Physical    semanticmodel.MetricDimension
+	Path        []semanticmodel.Relationship
 }
 
 // CompiledNamedFilter retains authored semantic identity beside its typed
@@ -33,6 +65,7 @@ type CompiledLineageEntry struct {
 	Role      string
 	Reference string
 	Field     string
+	Physical  semanticmodel.MetricDimension
 	Path      []semanticmodel.Relationship
 }
 
@@ -44,6 +77,8 @@ type CompiledAggregateMetric struct {
 	Dataset       string
 	Aggregation   string
 	InputField    string
+	InputPhysical semanticmodel.MetricDimension
+	InputPath     []semanticmodel.Relationship
 	NamedFilters  []CompiledNamedFilter
 	Empty         string
 	TimeDimension string
@@ -148,8 +183,15 @@ func (m CompiledMetric) validatePayload() error {
 // serving-state runtime. Expressions, named predicates, defaults, and metric
 // lineage are compiled once during activation.
 type CompiledModel struct {
-	model    *semanticmodel.Model
 	datasets map[string]CompiledDataset
+	// Dimension and field bindings are detached activation facts. Their maps
+	// are never consulted through the mutable semantic model during planning.
+	dimensionBindings  map[string]map[string]CompiledDimensionBinding
+	fieldBindings      map[string]map[string]CompiledFieldBinding
+	semanticDimensions map[string]CompiledSemanticDimension
+	physicalFields     map[string]semanticmodel.MetricDimension
+	relationships      map[string]semanticmodel.Relationship
+	relationshipPaths  map[string]map[string][]semanticmodel.Relationship
 	// sourceFingerprint binds the immutable executable graph to the complete
 	// semantic definition used during activation. Consumers can use it to
 	// reject a stale planner paired with a different manifest without
@@ -183,9 +225,18 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 	if err != nil {
 		return nil, err
 	}
+	dimensionBindings, fieldBindings, err := compileLineageBindings(model)
+	if err != nil {
+		return nil, err
+	}
+	semanticDimensions := compileSemanticDimensions(model)
+	physicalFields := compilePhysicalFields(model)
+	relationships, relationshipPaths := compileRelationshipFacts(model)
 	compiled := &CompiledModel{
-		model: model, datasets: datasets, sourceFingerprint: sourceFingerprint,
-		metrics: make(map[string]CompiledMetric, len(model.Metrics)),
+		datasets: datasets, dimensionBindings: dimensionBindings, fieldBindings: fieldBindings,
+		semanticDimensions: semanticDimensions, physicalFields: physicalFields, relationships: relationships, relationshipPaths: relationshipPaths,
+		sourceFingerprint: sourceFingerprint,
+		metrics:           make(map[string]CompiledMetric, len(model.Metrics)),
 	}
 
 	names := compiledMetricNames(model.Metrics)
@@ -261,10 +312,6 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 		node.Lineage.Entries = cloneLineageEntries(node.Lineage.Entries)
 		compiled.metrics[name] = node
 	}
-	// The authoring maps are intentionally discarded from the runtime graph;
-	// all semantic alias resolution goes through datasets above.
-	compiled.model.Tables = nil
-	compiled.model.Datasets = nil
 	return compiled, nil
 }
 
@@ -313,9 +360,96 @@ func CompileDatasetBindings(model *semanticmodel.Model) (*CompiledModel, error) 
 	if err != nil {
 		return nil, err
 	}
-	snapshot.Tables = nil
-	snapshot.Datasets = nil
-	return &CompiledModel{model: snapshot, datasets: datasets, sourceFingerprint: semanticModelFingerprint(model)}, nil
+	// This dataset-only projection intentionally does not compile semantic
+	// lineage. Full lineage facts are activation inputs for CompileModel and
+	// serving planners; read-model callers only need executable dataset metadata.
+	return &CompiledModel{datasets: datasets, sourceFingerprint: semanticModelFingerprint(model)}, nil
+}
+
+func compileLineageBindings(model *semanticmodel.Model) (map[string]map[string]CompiledDimensionBinding, map[string]map[string]CompiledFieldBinding, error) {
+	if model == nil {
+		return nil, nil, fmt.Errorf("semantic model is required")
+	}
+	dimensions := make(map[string]map[string]CompiledDimensionBinding, len(model.Dimensions))
+	for name, dimension := range model.Dimensions {
+		byDataset := make(map[string]CompiledDimensionBinding, len(dimension.Bindings))
+		for dataset, binding := range dimension.Bindings {
+			physical, err := model.ResolveDimension(binding.Field)
+			if err != nil {
+				return nil, nil, fmt.Errorf("semantic dimension %q dataset %q binding: %w", name, dataset, err)
+			}
+			path, err := model.ResolveBindingPath(dataset, binding)
+			if err != nil {
+				return nil, nil, fmt.Errorf("semantic dimension %q dataset %q path: %w", name, dataset, err)
+			}
+			byDataset[dataset] = CompiledDimensionBinding{Dimension: name, Dataset: dataset, Physical: semanticmodel.CloneMetricDimension(physical), Path: semanticmodel.CloneRelationships(path)}
+		}
+		dimensions[name] = byDataset
+	}
+	fields := make(map[string]map[string]CompiledFieldBinding, len(model.Datasets))
+	for root := range model.Datasets {
+		byField := make(map[string]CompiledFieldBinding)
+		for tableName, table := range model.Tables {
+			path, err := model.SafeRelationshipPath(root, tableName)
+			if err != nil {
+				// Ambiguous paths are legal until a semantic binding or explicit
+				// request path selects one. Those paths are compiled through the
+				// dimension binding map above instead.
+				continue
+			}
+			for name, dimension := range table.Dimensions {
+				physical := semanticmodel.CloneMetricDimension(dimension)
+				physical.Field, physical.Table, physical.Name = tableName+"."+name, tableName, name
+				byField[physical.Field] = CompiledFieldBinding{RootDataset: root, Physical: physical, Path: semanticmodel.CloneRelationships(path)}
+			}
+		}
+		fields[root] = byField
+	}
+	return dimensions, fields, nil
+}
+
+func compileSemanticDimensions(model *semanticmodel.Model) map[string]CompiledSemanticDimension {
+	compiled := make(map[string]CompiledSemanticDimension, len(model.Dimensions))
+	for name, dimension := range model.Dimensions {
+		compiled[name] = CompiledSemanticDimension{
+			Name: name, Type: dimension.Type, Datatype: dimension.Datatype,
+			NativeGrain: dimension.NativeGrain, Grains: append([]string(nil), dimension.Grains...),
+			Timezone: dimension.Timezone, Calendar: dimension.Calendar, WeekStart: dimension.WeekStart,
+		}
+	}
+	return compiled
+}
+
+func compilePhysicalFields(model *semanticmodel.Model) map[string]semanticmodel.MetricDimension {
+	compiled := make(map[string]semanticmodel.MetricDimension)
+	for tableName, table := range model.Tables {
+		for fieldName, dimension := range table.Dimensions {
+			dimension = semanticmodel.CloneMetricDimension(dimension)
+			dimension.Field, dimension.Table, dimension.Name = tableName+"."+fieldName, tableName, fieldName
+			compiled[dimension.Field] = dimension
+		}
+	}
+	return compiled
+}
+
+func compileRelationshipFacts(model *semanticmodel.Model) (map[string]semanticmodel.Relationship, map[string]map[string][]semanticmodel.Relationship) {
+	relationships := make(map[string]semanticmodel.Relationship, len(model.Relationships))
+	for _, relationship := range model.Relationships {
+		relationships[relationship.ID] = semanticmodel.CloneRelationship(relationship)
+	}
+	paths := make(map[string]map[string][]semanticmodel.Relationship, len(model.Datasets))
+	for root := range model.Datasets {
+		byTarget := make(map[string][]semanticmodel.Relationship, len(model.Tables))
+		for target := range model.Tables {
+			path, err := model.SafeRelationshipPath(root, target)
+			if err != nil {
+				continue
+			}
+			byTarget[target] = semanticmodel.CloneRelationships(path)
+		}
+		paths[root] = byTarget
+	}
+	return relationships, paths
 }
 
 // MatchesModel reports whether this activation-owned compiled graph was built
@@ -375,6 +509,117 @@ func (c *CompiledModel) Dataset(name string) (CompiledDataset, bool) {
 	return c.dataset(name)
 }
 
+// DimensionBinding resolves one semantic dimension through immutable
+// activation facts and returns a detached route.
+func (c *CompiledModel) DimensionBinding(name, dataset string) (CompiledDimensionBinding, bool) {
+	if c == nil {
+		return CompiledDimensionBinding{}, false
+	}
+	binding, ok := c.dimensionBindings[name][dataset]
+	if !ok {
+		return CompiledDimensionBinding{}, false
+	}
+	binding.Physical = semanticmodel.CloneMetricDimension(binding.Physical)
+	binding.Path = semanticmodel.CloneRelationships(binding.Path)
+	return binding, true
+}
+
+// FieldBinding resolves one qualified local field through immutable compiled
+// table metadata and returns a detached route.
+func (c *CompiledModel) FieldBinding(dataset, field string) (CompiledFieldBinding, bool) {
+	if c == nil {
+		return CompiledFieldBinding{}, false
+	}
+	binding, ok := c.fieldBindings[dataset][field]
+	if !ok {
+		return CompiledFieldBinding{}, false
+	}
+	binding.Physical = semanticmodel.CloneMetricDimension(binding.Physical)
+	binding.Path = semanticmodel.CloneRelationships(binding.Path)
+	return binding, true
+}
+
+// SemanticDimension resolves immutable request validation metadata.
+func (c *CompiledModel) SemanticDimension(name string) (CompiledSemanticDimension, bool) {
+	if c == nil {
+		return CompiledSemanticDimension{}, false
+	}
+	dimension, ok := c.semanticDimensions[name]
+	if !ok {
+		return CompiledSemanticDimension{}, false
+	}
+	dimension.Grains = append([]string(nil), dimension.Grains...)
+	return dimension, true
+}
+
+// PhysicalField resolves a qualified physical field independently of the
+// mutable semantic authoring tables.
+func (c *CompiledModel) PhysicalField(ref string) (semanticmodel.MetricDimension, bool) {
+	if c == nil {
+		return semanticmodel.MetricDimension{}, false
+	}
+	field, ok := c.physicalFields[ref]
+	field = semanticmodel.CloneMetricDimension(field)
+	return field, ok
+}
+
+// RelationshipPath returns the activation-selected safe route between two
+// dataset/table names.
+func (c *CompiledModel) RelationshipPath(base, target string) ([]semanticmodel.Relationship, error) {
+	if c == nil {
+		return nil, fmt.Errorf("compiled model is required")
+	}
+	path, ok := c.relationshipPaths[base][target]
+	if !ok {
+		return nil, fmt.Errorf("no safe relationship path from %q to %q", base, target)
+	}
+	return semanticmodel.CloneRelationships(path), nil
+}
+
+// ResolveBindingPath validates an explicit request route against the
+// activation-owned relationship catalog. An empty route uses the compiled
+// default safe path.
+func (c *CompiledModel) ResolveBindingPath(dataset, field string, route []string) ([]semanticmodel.Relationship, error) {
+	physical, ok := c.PhysicalField(field)
+	if !ok {
+		return nil, fmt.Errorf("unknown field %q", field)
+	}
+	if len(route) == 0 {
+		return c.RelationshipPath(dataset, physical.Table)
+	}
+	current := dataset
+	visited := map[string]struct{}{dataset: {}}
+	path := make([]semanticmodel.Relationship, 0, len(route))
+	for _, id := range route {
+		relationship, ok := c.relationships[id]
+		if !ok {
+			return nil, fmt.Errorf("unknown relationship %q", id)
+		}
+		from, _, fromErr := semanticmodel.RelationshipEndpoint(relationship, true)
+		to, _, toErr := semanticmodel.RelationshipEndpoint(relationship, false)
+		if fromErr != nil || toErr != nil {
+			return nil, fmt.Errorf("relationship %q has invalid endpoint", id)
+		}
+		switch {
+		case current == from:
+			current = to
+		case relationship.Cardinality == "one_to_one" && current == to:
+			current = from
+		default:
+			return nil, fmt.Errorf("relationship %q does not safely continue from %q", id, current)
+		}
+		if _, exists := visited[current]; exists {
+			return nil, fmt.Errorf("relationship path revisits dataset %q", current)
+		}
+		visited[current] = struct{}{}
+		path = append(path, relationship)
+	}
+	if current != physical.Table {
+		return nil, fmt.Errorf("relationship path ends at %q, field belongs to %q", current, physical.Table)
+	}
+	return semanticmodel.CloneRelationships(path), nil
+}
+
 // ResolveDimension resolves a qualified field through its compiled dataset
 // binding and returns a detached dimension descriptor.
 func (c *CompiledModel) ResolveDimension(ref string) (semanticmodel.MetricDimension, error) {
@@ -386,12 +631,11 @@ func (c *CompiledModel) ResolveDimension(ref string) (semanticmodel.MetricDimens
 	if !ok {
 		return semanticmodel.MetricDimension{}, fmt.Errorf("unknown dataset %q", parts[0])
 	}
-	table := dataset.table
-	dimension, ok := table.Dimensions[parts[1]]
+	_ = dataset
+	dimension, ok := c.PhysicalField(ref)
 	if !ok {
 		return semanticmodel.MetricDimension{}, fmt.Errorf("unknown field %q on dataset %q", parts[1], parts[0])
 	}
-	dimension.Field, dimension.Table, dimension.Name = ref, parts[0], parts[1]
 	return dimension, nil
 }
 
@@ -478,6 +722,12 @@ func (c *CompiledModel) metric(name string) (CompiledMetric, bool) {
 	return cloneCompiledMetric(node), true
 }
 
+// Metric resolves one activation-owned metric and returns detached lineage and
+// payload facts. Callers cannot mutate the compiled DAG through the result.
+func (c *CompiledModel) Metric(name string) (CompiledMetric, bool) {
+	return c.metric(name)
+}
+
 func (c *CompiledModel) metricNames() []string {
 	if c == nil {
 		return nil
@@ -495,6 +745,8 @@ func cloneCompiledMetric(node CompiledMetric) CompiledMetric {
 	node.RootDatasets = append([]string(nil), node.RootDatasets...)
 	if node.Aggregate != nil {
 		aggregate := *node.Aggregate
+		aggregate.InputPhysical = semanticmodel.CloneMetricDimension(node.Aggregate.InputPhysical)
+		aggregate.InputPath = semanticmodel.CloneRelationships(node.Aggregate.InputPath)
 		aggregate.NamedFilters = cloneCompiledNamedFilters(aggregate.NamedFilters)
 		node.Aggregate = &aggregate
 	}
@@ -516,7 +768,7 @@ func appendLineageEntry(values []CompiledLineageEntry, entry CompiledLineageEntr
 			return values
 		}
 	}
-	entry.Path = cloneRelationships(entry.Path)
+	entry.Path = semanticmodel.CloneRelationships(entry.Path)
 	return append(values, entry)
 }
 
@@ -527,7 +779,8 @@ func cloneLineageEntries(values []CompiledLineageEntry) []CompiledLineageEntry {
 	result := make([]CompiledLineageEntry, len(values))
 	for index, entry := range values {
 		result[index] = entry
-		result[index].Path = cloneRelationships(entry.Path)
+		result[index].Physical = semanticmodel.CloneMetricDimension(entry.Physical)
+		result[index].Path = semanticmodel.CloneRelationships(entry.Path)
 	}
 	return result
 }
@@ -614,14 +867,16 @@ func compileMetricNode(model *semanticmodel.Model, name string, metric semanticm
 			if err != nil {
 				return CompiledMetric{}, fmt.Errorf("metric %q time dimension %q path: %w", name, aggregate.TimeDimension, err)
 			}
-			node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "time", Reference: aggregate.TimeDimension, Field: timeDimension.Field, Path: timePath})
+			node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "time", Reference: aggregate.TimeDimension, Field: timeDimension.Field, Physical: timeDimension, Path: timePath})
 		}
 		inputPath := []semanticmodel.Relationship(nil)
 		inputPath, err = model.SafeRelationshipPath(metric.Dataset, input.Table)
 		if err != nil {
 			return CompiledMetric{}, fmt.Errorf("metric %q aggregate input path: %w", name, err)
 		}
-		node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "input", Reference: "input:" + name, Field: metric.Input.Field, Path: inputPath})
+		aggregate.InputPhysical = input
+		aggregate.InputPath = semanticmodel.CloneRelationships(inputPath)
+		node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "input", Reference: "input:" + name, Field: metric.Input.Field, Physical: input, Path: inputPath})
 		if err := compileMetricWhere(model, name, metric.Dataset, metric.Where, aggregate, &node); err != nil {
 			return CompiledMetric{}, err
 		}
@@ -698,7 +953,7 @@ func compileFilterLineage(model *semanticmodel.Model, metric, root string, filte
 		if err != nil {
 			return fmt.Errorf("metric %q filter field %q path: %w", metric, filter.Field, err)
 		}
-		node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "filter", Reference: reference, Field: filter.Field, Path: path})
+		node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "filter", Reference: reference, Field: filter.Field, Physical: dimension, Path: path})
 		_ = dimension
 	}
 	for groupIndex := range filter.Groups {
@@ -722,7 +977,7 @@ func compileFilterLineage(model *semanticmodel.Model, metric, root string, filte
 			if err != nil {
 				return fmt.Errorf("metric %q filter field %q path: %w", metric, field, err)
 			}
-			node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "filter", Reference: reference, Field: field, Path: path})
+			node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "filter", Reference: reference, Field: field, Physical: dimension, Path: path})
 		}
 	}
 	return nil
@@ -760,16 +1015,6 @@ func appendRelationshipFields(values []string, path []semanticmodel.Relationship
 		}
 	}
 	return values
-}
-
-func cloneRelationships(values []semanticmodel.Relationship) []semanticmodel.Relationship {
-	out := make([]semanticmodel.Relationship, len(values))
-	for index, value := range values {
-		out[index] = value
-		out[index].FromFields = append([]string(nil), value.FromFields...)
-		out[index].ToFields = append([]string(nil), value.ToFields...)
-	}
-	return out
 }
 
 func cloneColumnSchemas(values []semanticmodel.ColumnSchema) []semanticmodel.ColumnSchema {
@@ -823,7 +1068,7 @@ func NewCompiledPlanner(model *semanticmodel.Model, options ...PlannerOption) (*
 	if err != nil {
 		return nil, err
 	}
-	planner := &Planner{model: compiled.model, compiled: compiled}
+	planner := &Planner{compiled: compiled}
 	for _, option := range options {
 		if option == nil {
 			return nil, fmt.Errorf("planner option is required")

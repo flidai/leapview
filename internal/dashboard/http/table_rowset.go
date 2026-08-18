@@ -70,6 +70,8 @@ func visualizationFieldType(value visualizationir.VisualizationDataType) string 
 	case visualizationir.VisualizationDataTypeInteger:
 		return "int64"
 	case visualizationir.VisualizationDataTypeDecimal:
+		return "decimal"
+	case visualizationir.VisualizationDataTypeFloat:
 		return "float64"
 	case visualizationir.VisualizationDataTypeDate, visualizationir.VisualizationDataTypeTemporal:
 		return "timestamp"

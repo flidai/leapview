@@ -97,7 +97,6 @@ type projectModelTableSpec struct {
 	Source      string                                   `yaml:"source"`
 	Sources     []string                                 `yaml:"sources"`
 	SourceReads map[string][]string                      `yaml:"sourceReads"`
-	SQL         string                                   `yaml:"sql"`
 	Transform   semanticmodel.Transform                  `yaml:"transform"`
 	Entities    map[string]semanticmodel.ModelEntitySpec `yaml:"entities"`
 	Grain       semanticmodel.ModelGrainSpec             `yaml:"grain"`

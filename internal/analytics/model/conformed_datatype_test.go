@@ -13,8 +13,9 @@ func TestConformedBindingRequiresExactLogicalDatatype(t *testing.T) {
 	}}
 	base := func(datatype LogicalDataType, field string) *Model {
 		return &Model{
-			Name:   "exact_types",
-			Tables: map[string]Table{"orders": table},
+			Name:     "exact_types",
+			Tables:   map[string]Table{"orders": table},
+			Datasets: map[string]SemanticDatasetSpec{"orders": {Model: "orders"}},
 			Dimensions: map[string]SemanticDimension{
 				"when": {Type: "timestamp", Datatype: datatype, Bindings: map[string]DimensionBinding{"orders": {Field: "orders." + field}}},
 			},

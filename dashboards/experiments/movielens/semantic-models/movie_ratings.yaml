@@ -67,6 +67,7 @@ spec:
       time:
         nativeGrain: second
         grains:
+        - second
         - day
         - week
         - month

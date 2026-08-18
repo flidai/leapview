@@ -57,7 +57,7 @@ spec:
         order_id,
         customer_id,
         try_cast(purchased_at AS DATE) AS purchase_date,
-        round(coalesce(try_cast(amount AS DOUBLE), 0), 2) AS revenue
+        coalesce(try_cast(amount AS DECIMAL(38, 2)), CAST(0 AS DECIMAL(38, 2))) AS revenue
       FROM source."commerce.orders"
       WHERE order_id IS NOT NULL
 ```

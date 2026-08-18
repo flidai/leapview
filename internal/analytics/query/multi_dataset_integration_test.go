@@ -188,6 +188,75 @@ func TestMultiDatasetPlanExecutesWithoutDatasetFanoutAndPreservesOneSidedGroups(
 	}
 }
 
+func TestMultiDatasetStitchPreservesMetricEmptyPolicyAcrossThreeBranches(t *testing.T) {
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		"CREATE SCHEMA model",
+		"CREATE TABLE model.orders(order_id VARCHAR, customer_id VARCHAR, segment VARCHAR, amount DOUBLE)",
+		"INSERT INTO model.orders VALUES ('o1', 'a', 'consumer', 10), ('o2', 'b', 'business', 20)",
+		"CREATE TABLE model.tags(tag_id VARCHAR, customer_id VARCHAR, segment VARCHAR, tag VARCHAR)",
+		"INSERT INTO model.tags VALUES ('t1', 'a', 'consumer', 'new'), ('t2', 'c', 'consumer', 'vip'), ('t3', 'c', 'consumer', 'repeat')",
+		"CREATE TABLE model.clicks(click_id VARCHAR, customer_id VARCHAR, segment VARCHAR)",
+		"INSERT INTO model.clicks VALUES ('c1', 'a', 'consumer'), ('c2', 'd', 'business')",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("execute %q: %v", statement, err)
+		}
+	}
+
+	model := executableMultiDatasetModel()
+	model.Metrics["tag_count_null"] = semanticmodel.Metric{
+		Type: "aggregate", Dataset: "tags", Aggregation: "count",
+		Input: &semanticmodel.MetricInput{Field: "tags.tag_id"}, Empty: "null",
+	}
+	plan, err := mustNewCompiledPlanner(t, model).Plan(Request{
+		Dimensions: []Field{{Field: "customer"}, {Field: "segment"}},
+		Metrics:    []Field{{Field: "order_count"}, {Field: "tag_count_null"}, {Field: "click_count"}},
+		Sort:       []Sort{{Field: "customer", Direction: "asc"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query(plan.SQL, plan.Args...)
+	if err != nil {
+		t.Fatalf("execute three-branch empty-policy plan:\n%s\n%v", plan.SQL, err)
+	}
+	defer rows.Close()
+	type counts struct {
+		orders, tags, clicks sql.NullInt64
+	}
+	got := map[string]counts{}
+	for rows.Next() {
+		var customer, segment string
+		var values counts
+		if err := rows.Scan(&customer, &segment, &values.orders, &values.tags, &values.clicks); err != nil {
+			t.Fatal(err)
+		}
+		got[customer+"/"+segment] = values
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got["a/consumer"].tags.Valid == false || got["a/consumer"].tags.Int64 != 1 {
+		t.Fatalf("present nullable metric = %#v, want 1", got["a/consumer"].tags)
+	}
+	for _, key := range []string{"b/business", "d/business"} {
+		if got[key].tags.Valid {
+			t.Fatalf("missing nullable metric for %q = %#v, want SQL NULL", key, got[key].tags)
+		}
+	}
+	if !got["b/business"].orders.Valid || got["b/business"].orders.Int64 != 1 || !got["b/business"].clicks.Valid || got["b/business"].clicks.Int64 != 0 {
+		t.Fatalf("zero-policy one-sided row = %#v, want orders=1 clicks=0", got["b/business"])
+	}
+	if !got["d/business"].clicks.Valid || got["d/business"].clicks.Int64 != 1 || !got["d/business"].orders.Valid || got["d/business"].orders.Int64 != 0 {
+		t.Fatalf("zero-policy one-sided row = %#v, want orders=0 clicks=1", got["d/business"])
+	}
+}
+
 func executableMultiDatasetModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Name: "executable",

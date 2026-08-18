@@ -8,6 +8,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/arrowresult"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 )
 
@@ -17,6 +18,22 @@ type plannedArrowQuery struct {
 	planningMS    int64
 	countOnly     bool
 	totalFromData bool
+}
+
+func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
+	graph, err := planir.WithTotalRows(plan.IR, totalRowsColumn)
+	if err != nil {
+		return semanticquery.Plan{}, fmt.Errorf("add total rows to row plan: %w", err)
+	}
+	rendered, err := planir.RenderDuckDB(graph)
+	if err != nil {
+		return semanticquery.Plan{}, fmt.Errorf("render total rows plan: %w", err)
+	}
+	plan.IR = graph
+	plan.SQL = rendered.SQL
+	plan.Args = rendered.Args
+	plan.Columns = rendered.Columns
+	return plan, nil
 }
 
 func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dataquery.Query, transform dataquery.ResultTransformer) (dataquery.Result, error) {

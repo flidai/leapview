@@ -57,6 +57,37 @@ func CloneTable(value Table) Table {
 	return clone["_"]
 }
 
+// CloneMetricDimension returns a detached executable copy of one physical
+// dimension. Descriptive authoring context is deliberately omitted because it
+// is not part of the serving contract.
+func CloneMetricDimension(value MetricDimension) MetricDimension {
+	value.AIContext = nil
+	return value
+}
+
+// CloneRelationship returns a detached executable copy of one relationship.
+// Endpoint field slices are copied so callers cannot mutate the source model
+// through a compiled relationship path.
+func CloneRelationship(value Relationship) Relationship {
+	value.AIContext = nil
+	value.FromFields = append([]string(nil), value.FromFields...)
+	value.ToFields = append([]string(nil), value.ToFields...)
+	return value
+}
+
+// CloneRelationships returns detached executable copies of a relationship
+// path, preserving nil input and copying each endpoint field slice.
+func CloneRelationships(values []Relationship) []Relationship {
+	if values == nil {
+		return nil
+	}
+	clone := make([]Relationship, len(values))
+	for index, value := range values {
+		clone[index] = CloneRelationship(value)
+	}
+	return clone
+}
+
 func snapshotDatasets(values map[string]SemanticDatasetSpec) map[string]SemanticDatasetSpec {
 	if values == nil {
 		return nil
@@ -147,8 +178,7 @@ func snapshotMetricDimensions(values map[string]MetricDimension) map[string]Metr
 	}
 	clone := make(map[string]MetricDimension, len(values))
 	for name, value := range values {
-		value.AIContext = nil
-		clone[name] = value
+		clone[name] = CloneMetricDimension(value)
 	}
 	return clone
 }
@@ -179,17 +209,7 @@ func snapshotEntities(values map[string]ModelEntitySpec) map[string]ModelEntityS
 }
 
 func snapshotRelationships(values []Relationship) []Relationship {
-	if values == nil {
-		return nil
-	}
-	clone := make([]Relationship, len(values))
-	for index, value := range values {
-		value.AIContext = nil
-		value.FromFields = append([]string(nil), value.FromFields...)
-		value.ToFields = append([]string(nil), value.ToFields...)
-		clone[index] = value
-	}
-	return clone
+	return CloneRelationships(values)
 }
 
 func snapshotColumnSchemas(values []ColumnSchema) []ColumnSchema {

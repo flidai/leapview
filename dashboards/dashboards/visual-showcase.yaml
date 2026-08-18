@@ -1451,17 +1451,17 @@ spec:
             direction: desc
         limit: 12
     review_delivery_combo:
-      title: Review and delivery by status
+      title: Revenue and delivery by status
       type: combo
       presentation:
         series_types:
-          Review: line
+          Revenue: line
           Delivery days: column
       query:
         dimensions:
           status: orders.status
         metrics:
-          review_score: null
+          revenue: null
           delivery_days: null
         sort:
           - field: status

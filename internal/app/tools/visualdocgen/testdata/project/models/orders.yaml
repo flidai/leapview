@@ -33,7 +33,7 @@ spec:
       datatype: Float
       label: Longitude
     revenue:
-      datatype: Float
+      datatype: Decimal
       label: Revenue
     review_score:
       datatype: Float
@@ -55,7 +55,7 @@ spec:
         state,
         CAST(-33 + (hash(order_id) % 3800) / 100.0 AS DOUBLE) AS latitude,
         CAST(-74 + (hash(order_id || '-longitude') % 4000) / 100.0 AS DOUBLE) AS longitude,
-        CAST(revenue AS DOUBLE) AS revenue,
+        CAST(revenue AS DECIMAL(18, 3)) AS revenue,
         CAST(review_score AS DOUBLE) AS review_score,
         CAST(delivery_days AS DOUBLE) AS delivery_days,
         delivery_bucket

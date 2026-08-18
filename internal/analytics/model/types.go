@@ -65,7 +65,6 @@ type ModelGrainSpec struct {
 type ModelSpec struct {
 	Source      string                     `yaml:"source"`
 	Sources     []string                   `yaml:"sources"`
-	SQL         string                     `yaml:"sql"`
 	Transform   Transform                  `yaml:"transform"`
 	Entities    map[string]ModelEntitySpec `yaml:"entities"`
 	Grain       ModelGrainSpec             `yaml:"grain"`
@@ -235,7 +234,6 @@ type Table struct {
 	AIContext          *AIContext                 `yaml:"aiContext,omitempty" json:"-"`
 	Sources            []string                   `yaml:"sources"`
 	SourceReads        map[string][]string        `yaml:"source_reads"`
-	SQL                string                     `yaml:"sql"`
 	Transform          Transform                  `yaml:"transform"`
 	Columns            map[string]ModelColumn     `yaml:"columns"`
 	Entities           map[string]ModelEntitySpec `yaml:"entities"`

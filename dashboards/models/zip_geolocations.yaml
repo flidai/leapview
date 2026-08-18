@@ -23,11 +23,11 @@ spec:
       label: State
       description: Brazilian state abbreviation associated with the ZIP prefix.
     latitude:
-      datatype: Decimal
+      datatype: Float
       label: Latitude
       description: Median latitude across valid observations for the ZIP prefix.
     longitude:
-      datatype: Decimal
+      datatype: Float
       label: Longitude
       description: Median longitude across valid observations for the ZIP prefix.
   transform:

@@ -202,6 +202,49 @@ func TestRuntimeCachesOwnedArrowAndRebuildsRequestTimingOnHit(t *testing.T) {
 	}
 }
 
+func TestRuntimeSemanticRowsIncludeTotalCountsFilteredPopulationBeforePagination(t *testing.T) {
+	database := &totalRowsRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{
+				"id":     {Name: "id", Type: "integer", Datatype: semanticmodel.DataTypeInteger},
+				"status": {Name: "status", Type: "string", Datatype: semanticmodel.DataTypeString},
+			}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db:         database,
+		queryCache: newQueryResultCache(256, ""),
+	})
+	result, err := runtime.ExecuteDataQuery(context.Background(), dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields:  []dataquery.Field{{Field: "orders.id", Alias: "id"}},
+		Filters: []dataquery.Filter{{Field: "orders.status", Operator: "equals", Values: []any{"paid"}}},
+		Sort:    []dataquery.Sort{{Field: "orders.id", Direction: "asc"}}, Limit: 1, Offset: 1, IncludeTotal: true,
+	})
+	require.NoError(t, err)
+	require.True(t, result.TotalRowsKnown)
+	require.Equal(t, 3, result.TotalRows)
+	require.Equal(t, int64(2), result.Rows[0]["id"])
+	require.Equal(t, []dataquery.Column{{Name: "id"}}, result.Columns)
+	if got := database.queries.Load(); got != 1 {
+		t.Fatalf("physical executions = %d, want one data query with an inline total", got)
+	}
+	for _, want := range []string{
+		`COUNT(*) OVER () AS "__leapview_total_rows"`,
+		`WHERE "orders"."status" = ?`,
+		`ORDER BY "id" ASC`,
+		`LIMIT 1 OFFSET 1`,
+	} {
+		if !strings.Contains(database.plan.SQL, want) {
+			t.Fatalf("rendered total rows SQL missing %q:\n%s", want, database.plan.SQL)
+		}
+	}
+	if strings.Index(database.plan.SQL, `COUNT(*) OVER ()`) > strings.Index(database.plan.SQL, `LIMIT 1`) {
+		t.Fatalf("total window occurs after pagination:\n%s", database.plan.SQL)
+	}
+}
+
 func TestQueryResultCacheUsesGovernedRequestAndReturnsDeepCopies(t *testing.T) {
 	cache := newQueryResultCache(256, "")
 	request := dataquery.Query{
@@ -1183,6 +1226,18 @@ type countingCacheRuntimeDatabase struct {
 type arrowCountingRuntimeDatabase struct {
 	cacheRuntimeDatabase
 	queries atomic.Int32
+}
+
+type totalRowsRuntimeDatabase struct {
+	cacheRuntimeDatabase
+	queries atomic.Int32
+	plan    semanticquery.Plan
+}
+
+func (d *totalRowsRuntimeDatabase) QueryArrow(ctx context.Context, plan semanticquery.Plan, sink arrowquery.Sink) error {
+	d.queries.Add(1)
+	d.plan = plan
+	return writeTestRowsArrow(ctx, plan, semanticquery.Rows{{"id": int64(2), totalRowsColumn: int64(3)}}, sink)
 }
 
 func (d *arrowCountingRuntimeDatabase) QueryArrow(ctx context.Context, plan semanticquery.Plan, sink arrowquery.Sink) error {

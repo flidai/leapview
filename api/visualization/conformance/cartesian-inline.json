@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 10,
+  "schemaVersion": 11,
   "visualID": "monthly_revenue",
   "rendererID": "echarts",
   "specRevision": "sha256:6382f1fca47722d5f278cd7cddbae43b16cfa04c907a889d7896b168a2655ff2",
@@ -91,7 +91,7 @@
         "generation": 3,
         "columns": ["order_month", "revenue"],
         "rows": [
-          ["2026-01-01", 1250.5],
+          ["2026-01-01", "1250.5"],
           ["2026-02-01", null]
         ],
         "completeness": "complete"

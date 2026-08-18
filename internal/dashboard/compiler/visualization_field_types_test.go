@@ -114,10 +114,68 @@ func TestCompiledMultiMeasureValueDoesNotClaimOneMeasureFormat(t *testing.T) {
 	}
 }
 
+func TestCompiledMultiMeasureRejectsDecimalFloatMix(t *testing.T) {
+	model := &semanticmodel.Model{
+		Tables: map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
+			"exact": {Datatype: semanticmodel.DataTypeDecimal}, "approx": {Datatype: semanticmodel.DataTypeFloat}, "count": {Datatype: semanticmodel.DataTypeInteger},
+		}}},
+		Metrics: map[string]semanticmodel.Metric{
+			"exact":  {Type: "aggregate", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.exact"}},
+			"approx": {Type: "aggregate", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.approx"}},
+			"count":  {Type: "aggregate", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.count"}},
+		},
+	}
+	authored := dashboardauthoring.Visual{Type: "combo", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "exact"}, {Field: "approx"}}}}
+	if err := validateVisualizationMetricTypes(authored, model); err == nil || !strings.Contains(err.Error(), "cannot mix Float with exact numeric") {
+		t.Fatalf("validateVisualizationMetricTypes() error = %v, want Decimal/Float rejection", err)
+	}
+
+	authored.Query.Metrics = []dashboardauthoring.FieldRef{{Field: "exact"}, {Field: "count"}}
+	if err := validateVisualizationMetricTypes(authored, model); err != nil {
+		t.Fatalf("Decimal/Integer mix rejected: %v", err)
+	}
+	// Float mixed with Integer is also rejected: a normalized value column
+	// cannot preserve the Integer transport without an explicit series type.
+	authored.Query.Metrics = []dashboardauthoring.FieldRef{{Field: "approx"}, {Field: "count"}}
+	if err := validateVisualizationMetricTypes(authored, model); err == nil || !strings.Contains(err.Error(), "cannot mix Float with exact numeric") {
+		t.Fatalf("Float/Integer mix error = %v, want rejection", err)
+	}
+
+	authored.Query.Metrics = []dashboardauthoring.FieldRef{{Field: "exact"}, {Field: "count"}}
+	spec, err := compileBuiltInVisualizationSpec("combo", authored, model)
+	if err != nil {
+		t.Fatalf("Decimal/Integer combo compile: %v", err)
+	}
+	base, err := visualizationir.SpecificationBase(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range base.Datasets[0].Fields {
+		if field.ID == "value" && field.DataType != visualizationir.VisualizationDataTypeDecimal {
+			t.Fatalf("Decimal/Integer value datatype = %q, want decimal", field.DataType)
+		}
+	}
+
+	authored.Query.Metrics = []dashboardauthoring.FieldRef{{Field: "count"}}
+	spec, err = compileBuiltInVisualizationSpec("combo", authored, model)
+	if err != nil {
+		t.Fatalf("Integer-only multi-measure compile: %v", err)
+	}
+	base, err = visualizationir.SpecificationBase(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range base.Datasets[0].Fields {
+		if field.ID == "value" && field.DataType != visualizationir.VisualizationDataTypeInteger {
+			t.Fatalf("Integer-only value datatype = %q, want integer", field.DataType)
+		}
+	}
+}
+
 func TestCompiledDimensionFormatPreservesSemanticScalarTypes(t *testing.T) {
 	t.Parallel()
 	for semanticType, want := range map[string]string{
-		"string": "", "number": "decimal", "boolean": "boolean", "date": "date", "timestamp": "timestamp",
+		string(semanticmodel.DataTypeString): "", string(semanticmodel.DataTypeInteger): "decimal", string(semanticmodel.DataTypeDecimal): "decimal", string(semanticmodel.DataTypeFloat): "decimal", string(semanticmodel.DataTypeBoolean): "boolean", string(semanticmodel.DataTypeDate): "date", string(semanticmodel.DataTypeDateTime): "timestamp",
 	} {
 		if got := compiledDimensionFormat(semanticType); got != want {
 			t.Errorf("compiledDimensionFormat(%q) = %q, want %q", semanticType, got, want)

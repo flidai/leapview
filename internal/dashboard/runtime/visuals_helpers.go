@@ -159,6 +159,7 @@ type metricMetadata struct {
 	Unit        string
 	Format      string
 	Hidden      bool
+	DataType    visualizationir.VisualizationDataType
 }
 
 func metricLabel(name string, metric metricMetadata) string {
@@ -170,15 +171,41 @@ func metricLabel(name string, metric metricMetadata) string {
 
 func aggregateMemberMetadata(model *semanticmodel.Model, name string) metricMetadata {
 	if model == nil {
-		return metricMetadata{Name: name, Field: name}
+		return metricMetadata{Name: name, Field: name, DataType: visualizationir.VisualizationDataTypeDecimal}
 	}
 	if metric, err := model.ResolveMetric(name); err == nil {
 		return metricMetadata{
 			Name: metric.Name, Field: name, Label: metric.Label, Description: metric.Description,
-			Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden,
+			Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden, DataType: runtimeMetricDataType(model, metric),
 		}
 	}
-	return metricMetadata{Name: name, Field: name}
+	return metricMetadata{Name: name, Field: name, DataType: visualizationir.VisualizationDataTypeDecimal}
+}
+
+func runtimeMetricDataType(model *semanticmodel.Model, metric semanticmodel.Metric) visualizationir.VisualizationDataType {
+	if model == nil {
+		return visualizationir.VisualizationDataTypeDecimal
+	}
+	var dataType semanticmodel.LogicalDataType
+	var err error
+	if strings.TrimSpace(metric.Name) != "" {
+		dataType, err = model.MetricDataType(metric.Name)
+	} else {
+		dataType, err = model.MetricDataTypeFor(metric)
+	}
+	if err != nil {
+		return visualizationir.VisualizationDataTypeDecimal
+	}
+	switch dataType {
+	case semanticmodel.DataTypeInteger:
+		return visualizationir.VisualizationDataTypeInteger
+	case semanticmodel.DataTypeDecimal:
+		return visualizationir.VisualizationDataTypeDecimal
+	case semanticmodel.DataTypeFloat:
+		return visualizationir.VisualizationDataTypeFloat
+	default:
+		return visualizationir.VisualizationDataTypeString
+	}
 }
 
 func optionInt(options map[string]any, key string, fallback, minValue, maxValue int) int {

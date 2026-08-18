@@ -331,6 +331,12 @@ typed predicate, validated, authorized, and rendered without raw SQL or template
 languages. Filter values are typed literals in v1; parameter references require
 a future explicit tagged value contract.
 
+Row and raw projections that expose a selected aggregate metric's input honor
+that metric's named `where` population. A single rowset selecting metrics with
+different named-filter populations fails closed rather than choosing or merging
+one population. A count query without a selected metric has no metric
+population and remains request-filter-only.
+
 The `filters` collection contains governed, reusable semantic definitions. It
 is distinct from ad hoc query or dashboard filter state, which constrains an
 individual request and does not create or modify a semantic member.
@@ -353,6 +359,11 @@ plans, runtime projections, validation helpers, and test evaluators, must
 preserve that distinction. A Decimal value or operation must not be routed
 through binary floating point when doing so can change its governed value,
 comparison, null behavior, or result type.
+
+Exact Decimal remains governed end to end for metric values and query
+projections. Visualization-only derived geometry, such as histogram or bin
+boundaries, may be explicitly typed `Float` and approximate; it is not a
+Decimal metric projection and must never be labeled `Decimal`.
 
 Decimal literals must retain their canonical base-10 token until semantic type
 resolution. A decoder may preserve that token directly or accept a quoted
@@ -586,18 +597,23 @@ unsafe SQL or AI instructions in the meantime.
   filter Boolean composition and null semantics, `where` population, strict
   metric tagged unions, empty-value rules, ratio population and governed
   division, derived-metric dependency acyclicity, time-grain compatibility, and
-  basic unit inference. An implementation-independent expression conformance
-  corpus proves accepted and rejected syntax, metric dependencies, exact
-  numeric values and result types, units, null behavior, governed division,
-  cycle rejection, and generated PlanIR without depending on parser internals.
+  basic unit inference. A declarative, implementation-independent expression
+  conformance corpus exercises the public expression, activation compiler, and
+  PlanIR boundaries. It proves accepted and rejected syntax, metric
+  dependencies, exact numeric values and result types, units, null behavior,
+  governed division, cycle rejection, and generated PlanIR without depending
+  on parser internals; DuckDB renderer execution remains covered by Decimal
+  conformance tests.
 - Architecture tests prove that `aiContext` is not consumed by compiler,
   authorization, planner, or runtime packages. Removing AI context from a
   fixture produces identical compiled plans and authorization artifacts.
 - Planner tests cover root-row preservation, joined filters, single- and
   multi-dataset aggregation, conformed dimensions, explicit selection among
   multiple valid paths, rejection of ambiguous implicit paths, empty results,
-  filtered metrics, ratios, and null-safe pre-aggregate stitching without
-  joining root rows from separate datasets.
+  filtered metrics, row/raw projections preserving selected metric populations,
+  rejection of divergent named-filter populations, request-filter-only counts,
+  ratios, and null-safe pre-aggregate stitching without joining root rows from
+  separate datasets.
 - Deployment validation prepares or explains representative plans for every
   relationship path and metric dependency graph against discovered schemas.
 - Pinned Ossie fixtures validate against the official versioned schema. Native

@@ -162,7 +162,7 @@ function tableFormat(field?: VisualizationField): TableColumn['format'] {
   if (!field) return 'text'
   if (field.format?.kind === 'currency') return 'currency'
   if (field.dataType === 'integer') return 'integer'
-  if (field.dataType === 'decimal') return 'decimal'
+  if (field.dataType === 'decimal' || field.dataType === 'float') return 'decimal'
   return 'text'
 }
 

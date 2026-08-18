@@ -1,9 +1,9 @@
 package query
 
 // This file lowers the already-resolved aggregate request into the closed
-// PlanIR vocabulary.  SQL remains the execution contract for now; the graph
-// is built from the same semantic resolution so it remains aligned with the
-// governed SQL plan and compiled metric dependency DAG.
+// PlanIR vocabulary. The DuckDB renderer is the execution lowering; the graph
+// is validated before rendering and carries the governed metric dependency DAG
+// and physical lineage consumed by downstream execution and audit surfaces.
 
 import (
 	"encoding/json"
@@ -31,7 +31,7 @@ func requestHasSpatialFilter(filters []Filter) bool {
 }
 
 func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolution) (*planir.Graph, error) {
-	if p == nil || p.model == nil || p.compiled == nil {
+	if p == nil || p.compiled == nil {
 		return nil, fmt.Errorf("planner is not compiled")
 	}
 	graph := &planir.Graph{Nodes: map[string]planir.Node{}}
@@ -60,15 +60,11 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 			if metric.Dataset != dataset {
 				continue
 			}
-			physical, err := p.resolveDimension(metric.InputField)
-			if err != nil {
-				return nil, err
+			compiled, ok := p.compiled.metric(metric.Name)
+			if !ok || compiled.Aggregate == nil {
+				return nil, fmt.Errorf("metric %q is missing compiled aggregate lineage", metric.Name)
 			}
-			path, err := p.relationshipPath(dataset, physical.Table)
-			if err != nil {
-				return nil, err
-			}
-			addPlanIRRelationshipPath(datasetRelationships[dataset], datasetRelationshipPaths[dataset], path, dataset)
+			addPlanIRRelationshipPath(datasetRelationships[dataset], datasetRelationshipPaths[dataset], compiled.Aggregate.InputPath, dataset)
 		}
 		bindings, err := p.datasetFilterFields(request.Filters, resolved, dataset)
 		if err != nil {
@@ -107,7 +103,10 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 		if resolved.MultiDataset && len(dimensionNames) == 0 {
 			fields = appendPlanIRField(fields, planir.Field{Name: "__scalar_key", Type: "integer"})
 		}
-		lineage := p.planIRDatasetLineage(dataset, resolved)
+		lineage, err := p.planIRDatasetLineage(dataset, resolved)
+		if err != nil {
+			return nil, fmt.Errorf("dataset %q lineage: %w", dataset, err)
+		}
 		relationshipPaths := sortedPlanIRRelationshipPaths(datasetRelationshipPaths[dataset])
 		relationships := orderedPlanIRRelationships(datasetRelationships[dataset], relationshipPaths)
 		routes := planIRRelationshipRoutes(dataset, relationshipPaths)
@@ -208,8 +207,8 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 			metrics = []planir.MetricSpec{{Name: "__row_count", Type: "integer", Aggregation: "COUNT", Input: input}}
 		}
 		if request.SpatialBucket != nil {
-			centerLongitudeType := p.planIRAverageType(request.SpatialBucket.Longitude.Field)
-			centerLatitudeType := p.planIRAverageType(request.SpatialBucket.Latitude.Field)
+			centerLongitudeType := p.planIRAverageType(dataset, request.SpatialBucket.Longitude.Field)
+			centerLatitudeType := p.planIRAverageType(dataset, request.SpatialBucket.Latitude.Field)
 			// Spatial tile envelopes consume these typed aggregate outputs at the
 			// wrapper boundary. They are part of the governed aggregate graph, not
 			// renderer-specific SQL aliases.
@@ -228,7 +227,7 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 		aggregateFields := planIRGroupFields(fields, groupBy)
 		aggregateMetrics := make([]planir.Metric, 0, len(metrics))
 		for _, metric := range metrics {
-			aggregateMetrics = append(aggregateMetrics, planir.Metric{Name: metric.Name, Type: metric.Type})
+			aggregateMetrics = append(aggregateMetrics, planir.Metric{Name: metric.Name, Type: metric.Type, Empty: metric.Empty})
 		}
 		aggregateLineage := planIRLineageForFields(lineage, aggregateFields)
 		aggregateMeta := planIRMeta(aggregateID, planir.Grain{Fields: groupBy}, aggregateFields, aggregateMetrics, []string{dataset}, planir.FilterPhaseAggregate, aggregateLineage, routes)
@@ -401,9 +400,11 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 	return graph, nil
 }
 
-func (p *Planner) planIRAverageType(field string) string {
-	physical, err := p.resolveDimension(field)
-	if err == nil && physical.Datatype == semanticmodel.DataTypeFloat {
+func (p *Planner) planIRAverageType(dataset, field string) string {
+	if binding, ok := p.compiled.DimensionBinding(field, dataset); ok && binding.Physical.Datatype == semanticmodel.DataTypeFloat {
+		return "float"
+	}
+	if binding, ok := p.compiled.FieldBinding(dataset, field); ok && binding.Physical.Datatype == semanticmodel.DataTypeFloat {
 		return "float"
 	}
 	return "decimal"
@@ -458,8 +459,12 @@ func (p *Planner) planIRDatasetFields(dataset string, resolved aggregateResoluti
 	}
 	for _, dimension := range resolved.Dimensions {
 		fields = appendPlanIRField(fields, planir.Field{Name: dimension.Name, Type: dimension.Type})
-		if physical, err := p.resolveDimension(dimension.Name); err == nil {
-			fields = appendPlanIRField(fields, planir.Field{Name: physical.Field, Type: dimension.Type})
+		if dimension.Semantic {
+			if binding, ok := p.compiled.DimensionBinding(dimension.Name, dataset); ok {
+				fields = appendPlanIRField(fields, planir.Field{Name: binding.Physical.Field, Type: binding.Physical.Type})
+			}
+		} else if dimension.Physical.Field != "" {
+			fields = appendPlanIRField(fields, planir.Field{Name: dimension.Physical.Field, Type: dimension.Physical.Type})
 		}
 	}
 	for _, filter := range filters {
@@ -469,7 +474,8 @@ func (p *Planner) planIRDatasetFields(dataset string, resolved aggregateResoluti
 		if metric.Dataset != dataset {
 			continue
 		}
-		if physical, err := p.resolveDimension(metric.InputField); err == nil {
+		if compiled, ok := p.compiled.metric(metric.Name); ok && compiled.Aggregate != nil {
+			physical := compiled.Aggregate.InputPhysical
 			fields = appendPlanIRField(fields, planir.Field{Name: physical.Field, Type: physical.Type})
 		}
 		if compiled, ok := p.compiled.metric(metric.Name); ok && compiled.Aggregate != nil {
@@ -482,12 +488,12 @@ func (p *Planner) planIRDatasetFields(dataset string, resolved aggregateResoluti
 	return dedupePlanIRFields(fields)
 }
 
-func (p *Planner) planIRDatasetLineage(dataset string, resolved aggregateResolution) []planir.PhysicalLineage {
+func (p *Planner) planIRDatasetLineage(dataset string, resolved aggregateResolution) ([]planir.PhysicalLineage, error) {
 	lineage := []planir.PhysicalLineage{}
 	for _, dimension := range resolved.Dimensions {
 		field, path, err := p.aggregateDimensionBinding(dataset, dimension)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		table, physical := splitPlanIRField(field, dataset)
 		lineage = append(lineage, planir.PhysicalLineage{Logical: dimension.Name, Dataset: table, Field: physical, Route: planIRRouteNames(path)})
@@ -496,29 +502,27 @@ func (p *Planner) planIRDatasetLineage(dataset string, resolved aggregateResolut
 		if metric.Dataset != dataset {
 			continue
 		}
+		compiled, ok := p.compiled.metric(name)
+		if !ok || compiled.Aggregate == nil {
+			return nil, fmt.Errorf("metric %q is missing compiled aggregate lineage", name)
+		}
 		if metric.InputField != "" {
-			table, physical := splitPlanIRField(metric.InputField, dataset)
+			physicalDimension := compiled.Aggregate.InputPhysical
 			// Pre-aggregate nodes expose physical input fields, not the metric
 			// introduced by the AggregateMetrics node. Keeping the metric name in
 			// scan lineage violates the typed invariant that every lineage logical
 			// reference is available on its node; the metric itself is introduced
 			// (and becomes available) only after aggregation.
-			metricPath, _ := p.relationshipPath(dataset, table)
-			lineage = append(lineage, planir.PhysicalLineage{Logical: metric.InputField, Dataset: table, Field: physical, Route: planIRRouteNames(metricPath)})
+			lineage = append(lineage, planir.PhysicalLineage{Logical: metric.InputField, Dataset: physicalDimension.Table, Field: physicalDimension.Name, Route: planIRRouteNames(compiled.Aggregate.InputPath)})
 		}
-		if compiled, ok := p.compiled.metric(name); ok {
-			for _, entry := range compiled.Lineage.Entries {
-				if entry.Role != "filter" || entry.Field == "" {
-					continue
-				}
-				if resolvedField, err := p.resolveDimension(entry.Field); err == nil {
-					path, _ := p.relationshipPath(dataset, resolvedField.Table)
-					lineage = append(lineage, planir.PhysicalLineage{Logical: entry.Field, Dataset: resolvedField.Table, Field: resolvedField.Field, Route: planIRRouteNames(path)})
-				}
+		for _, entry := range compiled.Lineage.Entries {
+			if entry.Role != "filter" || entry.Field == "" || entry.Physical.Field == "" {
+				continue
 			}
+			lineage = append(lineage, planir.PhysicalLineage{Logical: entry.Field, Dataset: entry.Physical.Table, Field: entry.Physical.Name, Route: planIRRouteNames(entry.Path)})
 		}
 	}
-	return dedupePlanIRLineage(lineage)
+	return dedupePlanIRLineage(lineage), nil
 }
 
 func (p *Planner) planIRAggregateMetrics(dataset string, names []string, resolved aggregateResolution, fields []planir.Field) ([]planir.MetricSpec, error) {
@@ -535,7 +539,8 @@ func (p *Planner) planIRAggregateMetrics(dataset string, names []string, resolve
 		// Decimal inputs and is Float only when its input is explicitly Float.
 		if aggregation == "COUNT" || aggregation == "COUNT_STAR" || aggregation == "COUNT_DISTINCT" || aggregation == "COUNT_DISTINCT_PAIR" {
 			typ = "integer"
-		} else if physical, err := p.resolveDimension(metric.InputField); err == nil {
+		} else if compiled, ok := p.compiled.metric(metric.Name); ok && compiled.Aggregate != nil {
+			physical := compiled.Aggregate.InputPhysical
 			switch aggregation {
 			case "AVG":
 				if physical.Datatype == semanticmodel.DataTypeFloat {
@@ -594,47 +599,58 @@ func (p *Planner) planIRAggregateFilters(dataset, metricName string, resolved ag
 		if phase == planir.FilterPhaseRelationship && len(routes) == 0 {
 			return nil, fmt.Errorf("metric %q filter %q has no compiled relationship route", metricName, name)
 		}
-		fieldRoutes := map[string][]planir.RelationshipRoute{}
-		var routeErr error
-		var collectFieldRoutes func(Filter)
-		collectFieldRoutes = func(item Filter) {
-			if routeErr != nil {
-				return
-			}
-			if item.Field != "" {
-				if _, path, ok := p.planIRFilterPhysical(dataset, item.Field); ok && len(path) > 0 {
-					edges := make([]planir.RelationshipPath, 0, len(path))
-					for _, relation := range path {
-						edge := planIRRelationshipPath(relation)
-						fromRelation, err := p.physicalTable(edge.FromDataset)
-						if err != nil {
-							routeErr = err
-							return
-						}
-						toRelation, err := p.physicalTable(edge.ToDataset)
-						if err != nil {
-							routeErr = err
-							return
-						}
-						edge.FromRelation, edge.ToRelation = fromRelation, toRelation
-						edges = append(edges, edge)
-					}
-					fieldRoutes[item.Field] = []planir.RelationshipRoute{{RootDataset: dataset, Edges: edges}}
-				}
-			}
-			for _, group := range item.Groups {
-				for _, child := range group.Filters {
-					collectFieldRoutes(child)
-				}
-			}
-		}
-		collectFieldRoutes(filter)
-		if routeErr != nil {
-			return nil, fmt.Errorf("metric %q filter %q relation: %w", metricName, name, routeErr)
+		fieldRoutes, err := p.planIRCompiledFilterFieldRoutes(node, name, dataset)
+		if err != nil {
+			return nil, fmt.Errorf("metric %q filter %q relation: %w", metricName, name, err)
 		}
 		filters = append(filters, planir.AggregateFilter{Source: planir.FilterSourceNamed, Name: name, Predicate: predicate, Phase: phase, Fields: predicateFields(predicate), RelationshipRoutes: routes, MatchGuard: filter.MatchGuard || filter.RequireMatch, FieldRoutes: fieldRoutes})
 	}
 	return filters, nil
+}
+
+func (p *Planner) planIRCompiledFilterFieldRoutes(node CompiledMetric, name, dataset string) (map[string][]planir.RelationshipRoute, error) {
+	fieldRoutes := map[string][]planir.RelationshipRoute{}
+	prefix := "filter:" + name
+	for _, entry := range node.Lineage.Entries {
+		if entry.Role != "filter" || entry.Field == "" || !strings.HasPrefix(entry.Reference, prefix) || len(entry.Path) == 0 {
+			continue
+		}
+		edges := make([]planir.RelationshipPath, 0, len(entry.Path))
+		current := dataset
+		for _, relationship := range entry.Path {
+			edge := planIRRelationshipPath(relationship)
+			if edge.FromDataset != current && edge.ToDataset == current && relationship.Cardinality == "one_to_one" {
+				edge = reversePlanIRRelationshipPath(edge)
+			}
+			fromRelation, err := p.physicalTable(edge.FromDataset)
+			if err != nil {
+				return nil, err
+			}
+			toRelation, err := p.physicalTable(edge.ToDataset)
+			if err != nil {
+				return nil, err
+			}
+			edge.FromRelation, edge.ToRelation = fromRelation, toRelation
+			edges = append(edges, edge)
+			current = edge.ToDataset
+		}
+		fieldRoutes[entry.Field] = append(fieldRoutes[entry.Field], planir.RelationshipRoute{RootDataset: dataset, Edges: edges})
+	}
+	for field, routes := range fieldRoutes {
+		seen := map[string]planir.RelationshipRoute{}
+		for _, route := range routes {
+			seen[planIRRelationshipSequenceSignature(route.Edges)] = route
+		}
+		deduped := make([]planir.RelationshipRoute, 0, len(seen))
+		for _, route := range seen {
+			deduped = append(deduped, route)
+		}
+		sort.Slice(deduped, func(i, j int) bool {
+			return planIRRelationshipSequenceSignature(deduped[i].Edges) < planIRRelationshipSequenceSignature(deduped[j].Edges)
+		})
+		fieldRoutes[field] = deduped
+	}
+	return fieldRoutes, nil
 }
 
 func (p *Planner) planIRNamedFilterRoutes(node CompiledMetric, name, dataset string) []planir.RelationshipRoute {
@@ -1075,30 +1091,16 @@ func (p *Planner) planIRFilterLineage(dataset string, filters []Filter) []planir
 }
 
 func (p *Planner) planIRFilterPhysical(dataset, field string) (semanticmodel.MetricDimension, []semanticmodel.Relationship, bool) {
-	if semanticDimension, ok := p.model.Dimensions[field]; ok {
-		binding, bound := semanticDimension.Bindings[dataset]
-		if !bound {
-			return semanticmodel.MetricDimension{}, nil, false
-		}
-		physical, err := p.resolveDimension(binding.Field)
-		if err != nil {
-			return semanticmodel.MetricDimension{}, nil, false
-		}
-		path, err := p.resolveBindingPath(dataset, binding)
-		if err != nil {
-			return semanticmodel.MetricDimension{}, nil, false
-		}
-		return physical, path, true
-	}
-	physical, err := p.resolveDimension(field)
-	if err != nil {
+	if p == nil || p.compiled == nil {
 		return semanticmodel.MetricDimension{}, nil, false
 	}
-	path, err := p.relationshipPath(dataset, physical.Table)
-	if err != nil {
-		return semanticmodel.MetricDimension{}, nil, false
+	if binding, ok := p.compiled.DimensionBinding(field, dataset); ok {
+		return binding.Physical, binding.Path, true
 	}
-	return physical, path, true
+	if binding, ok := p.compiled.FieldBinding(dataset, field); ok {
+		return binding.Physical, binding.Path, true
+	}
+	return semanticmodel.MetricDimension{}, nil, false
 }
 
 func planIRAndPredicates(filters []Filter) (planir.Predicate, error) {

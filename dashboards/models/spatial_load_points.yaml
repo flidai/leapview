@@ -24,11 +24,11 @@ spec:
       label: State
       description: Brazilian state containing the generated location.
     latitude:
-      datatype: Decimal
+      datatype: Float
       label: Latitude
       description: Deterministic latitude near the metropolitan center.
     longitude:
-      datatype: Decimal
+      datatype: Float
       label: Longitude
       description: Deterministic longitude near the metropolitan center.
   transform:
@@ -54,8 +54,8 @@ spec:
         printf('olist-geo-%07d', point_number) AS point_id,
         city,
         state,
-        -33.5 + ((point_number - 1) % 1000) * 0.037 AS latitude,
-        -73.5 + floor((point_number - 1) / 1000) * 0.039 AS longitude
+        CAST(-33.5 + ((point_number - 1) % 1000) * 0.037 AS DOUBLE) AS latitude,
+        CAST(-73.5 + floor((point_number - 1) / 1000) * 0.039 AS DOUBLE) AS longitude
       FROM numbered
       WHERE point_number <= 1000000
   entities:

@@ -200,7 +200,7 @@ func (p *Planner) planSpatialRawSource(request spatialRawSourceRequest) (spatial
 		}
 		if dimension, resolveErr := p.resolveDimension(field.Field); resolveErr == nil {
 			types[alias] = spatialLogicalTypeWithFallback(string(dimension.Datatype), dimension.Type)
-		} else if dimension, ok := p.model.Dimensions[field.Field]; ok {
+		} else if dimension, ok := p.compiled.SemanticDimension(field.Field); ok {
 			types[alias] = spatialLogicalTypeWithFallback(string(dimension.Datatype), dimension.Type)
 		}
 	}

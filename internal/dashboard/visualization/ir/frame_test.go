@@ -75,6 +75,50 @@ func TestValidateEnvelopeAcceptsConformanceFixtures(t *testing.T) {
 	}
 }
 
+func TestValidateEnvelopeAcceptsTransportDecimalStrings(t *testing.T) {
+	for _, value := range []string{"252.24", "9007199254740993.125"} {
+		envelope := readEnvelopeFixture(t, "cartesian-inline.json")
+		state := envelope.DataState.Value.(*InlineVisualizationDataState)
+		state.Datasets[0].Rows[0][1] = value
+		if err := ValidateEnvelope(envelope); err != nil {
+			t.Fatalf("ValidateEnvelope rejected canonical decimal transport %q: %v", value, err)
+		}
+	}
+}
+
+func TestValidateEnvelopeRejectsNonCanonicalDecimalStrings(t *testing.T) {
+	for _, value := range []string{"1e3", "+1", "01.2", "-0", "NaN"} {
+		envelope := readEnvelopeFixture(t, "cartesian-inline.json")
+		state := envelope.DataState.Value.(*InlineVisualizationDataState)
+		state.Datasets[0].Rows[0][1] = value
+		if err := ValidateEnvelope(envelope); err == nil {
+			t.Fatalf("ValidateEnvelope accepted non-canonical decimal transport %q", value)
+		}
+	}
+}
+
+func TestValidateEnvelopeFloatUsesFiniteNumberTransport(t *testing.T) {
+	envelope := readEnvelopeFixture(t, "cartesian-inline.json")
+	spec := envelope.Spec.Value.(*CartesianVisualizationSpec)
+	spec.Datasets[0].Fields[1].DataType = VisualizationDataTypeFloat
+	revision, err := ComputeSpecRevision(envelope.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.SpecRevision = revision.String()
+	state := envelope.DataState.Value.(*InlineVisualizationDataState)
+	state.SpecRevision = revision.String()
+	state.Datasets[0].SpecRevision = revision.String()
+	state.Datasets[0].Rows[0][1] = 1.25
+	if err := ValidateEnvelope(envelope); err != nil {
+		t.Fatalf("finite float rejected: %v", err)
+	}
+	state.Datasets[0].Rows[0][1] = "1.25"
+	if err := ValidateEnvelope(envelope); err == nil {
+		t.Fatal("float accepted decimal string transport")
+	}
+}
+
 func TestValidateSpecEnforcesGeographicLayerRequirements(t *testing.T) {
 	base := VisualizationSpecBase{
 		Kind: "geographic", Title: "Stores",
@@ -152,14 +196,14 @@ func TestValidateEnvelopeEnforcesHierarchySemantics(t *testing.T) {
 		{ID: "node", Role: VisualizationFieldRoleIdentity, DataType: VisualizationDataTypeString, Label: "Node"},
 		{ID: "parent", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Nullable: true, Label: "Parent"},
 		{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Value"},
-	}, [][]any{{"Americas", nil, 10.0}, {"Springfield", "Americas", 3.0}, {"Europe", nil, 5.0}, {"Springfield", "Europe", 5.0}})
+	}, [][]any{{"Americas", nil, "10.0"}, {"Springfield", "Americas", "3.0"}, {"Europe", nil, "5.0"}, {"Springfield", "Europe", "5.0"}})
 	if err := ValidateEnvelope(valid); err != nil {
 		t.Fatalf("valid hierarchy: %v", err)
 	}
 
 	tests := map[string][][]any{
-		"duplicate node identity": {{"Americas", nil, 10.0}, {"Americas", nil, 5.0}},
-		"missing parent":          {{"Springfield", "Americas", 3.0}},
+		"duplicate node identity": {{"Americas", nil, "10.0"}, {"Americas", nil, "5.0"}},
+		"missing parent":          {{"Springfield", "Americas", "3.0"}},
 	}
 	for name, rows := range tests {
 		t.Run(name, func(t *testing.T) {

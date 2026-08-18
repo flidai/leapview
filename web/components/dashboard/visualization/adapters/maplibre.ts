@@ -83,6 +83,8 @@ export const adapter: RendererAdapter = {
 }
 
 type RendererFramePresentationTarget = Pick<HTMLElement, 'style' | 'setAttribute' | 'removeAttribute'>
+type TiledPrecisionLayerFamily = 'hidden' | 'raw' | 'aggregate'
+type TiledLayerVisibilityTarget = Pick<MapLibreMap, 'getLayer' | 'setLayoutProperty'>
 
 export function setRendererFramePresented(frame: RendererFramePresentationTarget, presented: boolean): void {
   frame.style.visibility = presented ? 'visible' : 'hidden'
@@ -114,6 +116,8 @@ class MapLibreHandle implements RendererHandle {
   private tiledRawLayerIDs: string[] = []
   private tiledAggregateLayerIDs: string[] = []
   private tiledRawVisible?: boolean
+  private tiledTileTemplate?: string
+  private tiledSourceTransitioning = false
   private selectableLayerIDs: string[] = []
   private tooltipLayerIDs: string[] = []
   private clusterLayerIDs: string[] = []
@@ -192,17 +196,33 @@ class MapLibreHandle implements RendererHandle {
       return
     }
     if ((change & Change.Spec) === 0 && (change & Change.Data) !== 0 && this.tiledSourceID && envelope.dataState.kind === 'spatial_tiled') {
+      const tileTemplate = vectorTileTemplateURL(envelope.dataState.tileURL, location.href)
+      const sourceTransition = tiledSourceTransition(this.tiledTileTemplate, tileTemplate)
+      this.tiledTileTemplate = tileTemplate
+      if (sourceTransition === 'replace') this.hideTiledLayersForSourceTransition()
       const source = this.map.getSource(this.tiledSourceID) as VectorTileSource | undefined
-      source?.setTiles([vectorTileTemplateURL(envelope.dataState.tileURL, location.href)])
+      let sourceUpdated = false
+      try {
+        source?.setTiles([tileTemplate])
+        sourceUpdated = source !== undefined
+      } catch {
+        sourceUpdated = false
+      }
 			this.updateTiledLayerStyles(envelope)
-      this.tiledRawVisible = undefined
-      this.syncTiledPrecisionVisibility()
+      const sourceLifecycle = tiledSourceLifecycle(sourceTransition, sourceUpdated)
+      if (sourceLifecycle === 'error') {
+        this.hideTiledLayersForSourceTransition()
+        this.showMapError()
+      } else if (sourceLifecycle === 'stable') {
+        this.tiledRawVisible = undefined
+        this.syncTiledPrecisionVisibility()
+        this.hideMapError()
+      }
       const fitted = this.initializeViewport(envelope, [])
-      this.hideMapError()
       this.updateLegend(envelope)
-      if (fitted) this.handleMoveEnd()
+      if (fitted && sourceLifecycle !== 'error') this.handleMoveEnd()
       await waitForMapRender(this.map)
-      this.updateAccessibleTiledFeatures(envelope)
+      if (sourceLifecycle === 'stable') this.updateAccessibleTiledFeatures(envelope)
       return
     }
     this.removeOwnedMapData()
@@ -214,6 +234,8 @@ class MapLibreHandle implements RendererHandle {
     this.tiledRawLayerIDs = []
     this.tiledAggregateLayerIDs = []
     this.tiledRawVisible = undefined
+    this.tiledTileTemplate = undefined
+    this.tiledSourceTransitioning = false
     this.clusterLayerIDs = []
     this.clusterSources.clear()
     this.tiledSourceID = undefined
@@ -227,6 +249,7 @@ class MapLibreHandle implements RendererHandle {
       this.map.addSource(id, { type: 'vector', tiles, minzoom: envelope.dataState.minimumZoom, maxzoom: envelope.dataState.maximumZoom, promoteId: '__lv_id' })
       this.sourceIDs.push(id)
       this.tiledSourceID = id
+      this.tiledTileTemplate = tiles[0]
     }
     if (envelope.spec.presentation.basemap) attributions.add(envelope.spec.presentation.basemap.attribution)
     for (const layer of envelope.spec.layers) {
@@ -624,19 +647,20 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private readonly handleMoveEnd = () => {
-		if (!this.envelope || this.envelope.dataState.kind !== 'spatial_tiled') return
-		this.syncTiledPrecisionVisibility()
-		this.updateAccessibleTiledFeatures(this.envelope)
+    if (!this.envelope || this.envelope.dataState.kind !== 'spatial_tiled') return
+    this.syncTiledPrecisionVisibility()
+    this.updateAccessibleTiledFeatures(this.envelope)
   }
 
   private readonly handleZoom = () => { this.syncTiledPrecisionVisibility() }
 
   private syncTiledPrecisionVisibility(): void {
     if (this.envelope?.dataState.kind !== 'spatial_tiled' || !this.tiledSourceID) return
-    const rawVisible = tiledRawPrecisionVisible(this.map.getZoom(), this.envelope.dataState.rawMinimumZoom)
+    const family = tiledPrecisionLayerFamily(this.tiledSourceTransitioning, this.map.getZoom(), this.envelope.dataState.rawMinimumZoom)
+    if (family === 'hidden') return
+    const rawVisible = family === 'raw'
     if (this.tiledRawVisible === rawVisible) return
-    for (const id of this.tiledRawLayerIDs) if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', rawVisible ? 'visible' : 'none')
-    for (const id of this.tiledAggregateLayerIDs) if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', rawVisible ? 'none' : 'visible')
+    applyTiledPrecisionLayerVisibility(this.map, this.tiledRawLayerIDs, this.tiledAggregateLayerIDs, family)
     this.tiledRawVisible = rawVisible
   }
 
@@ -662,15 +686,34 @@ class MapLibreHandle implements RendererHandle {
   private readonly handleSourceData = (event: { sourceId?: string; isSourceLoaded?: boolean }) => {
     if (event.sourceId !== this.tiledSourceID || !event.isSourceLoaded || !this.envelope) return
     this.hideMapError()
+    if (this.tiledSourceTransitioning) {
+      this.tiledSourceTransitioning = false
+      this.tiledRawVisible = undefined
+    }
     this.syncTiledPrecisionVisibility()
     this.updateAccessibleTiledFeatures(this.envelope)
   }
 
+  private hideTiledLayersForSourceTransition(): void {
+    this.tiledSourceTransitioning = true
+    applyTiledPrecisionLayerVisibility(this.map, this.tiledRawLayerIDs, this.tiledAggregateLayerIDs, 'hidden')
+    this.tiledRawVisible = undefined
+  }
+
   private retryTiledSource(): void {
     if (!this.tiledSourceID || this.envelope?.dataState.kind !== 'spatial_tiled') return
-    this.hideMapError()
     const source = this.map.getSource(this.tiledSourceID) as VectorTileSource | undefined
-    source?.setTiles([vectorTileTemplateURL(this.envelope.dataState.tileURL, location.href)])
+    if (!source) {
+      this.showMapError()
+      return
+    }
+    this.hideTiledLayersForSourceTransition()
+    try {
+      source.setTiles([vectorTileTemplateURL(this.envelope.dataState.tileURL, location.href)])
+    } catch {
+      this.showMapError()
+      return
+    }
     this.map.triggerRepaint()
   }
 
@@ -722,6 +765,28 @@ type TiledLayerStyleUpdate = { id: string; paint?: Record<string, unknown>; filt
 
 export function tiledRawPrecisionVisible(zoom: number, rawMinimumZoom: number): boolean {
 	return zoom >= rawMinimumZoom
+}
+
+/** A new tile capability is a new source generation; never reuse rendered tiles across it. */
+export function tiledSourceTransition(previousTileTemplate: string | undefined, nextTileTemplate: string): 'stable' | 'replace' {
+  return previousTileTemplate !== undefined && previousTileTemplate !== nextTileTemplate ? 'replace' : 'stable'
+}
+
+export function tiledSourceLifecycle(transition: 'stable' | 'replace', sourceUpdated: boolean): 'stable' | 'waiting' | 'error' {
+  if (!sourceUpdated) return 'error'
+  return transition === 'replace' ? 'waiting' : 'stable'
+}
+
+export function tiledPrecisionLayerFamily(transitioning: boolean, zoom: number, rawMinimumZoom: number): TiledPrecisionLayerFamily {
+  if (transitioning) return 'hidden'
+  return tiledRawPrecisionVisible(zoom, rawMinimumZoom) ? 'raw' : 'aggregate'
+}
+
+export function applyTiledPrecisionLayerVisibility(target: TiledLayerVisibilityTarget, rawLayerIDs: string[], aggregateLayerIDs: string[], family: TiledPrecisionLayerFamily): void {
+  const rawVisible = family === 'raw'
+  const aggregateVisible = family === 'aggregate'
+  for (const id of rawLayerIDs) if (target.getLayer(id)) target.setLayoutProperty(id, 'visibility', rawVisible ? 'visible' : 'none')
+  for (const id of aggregateLayerIDs) if (target.getLayer(id)) target.setLayoutProperty(id, 'visibility', aggregateVisible ? 'visible' : 'none')
 }
 
 export function tiledLayerPaintUpdates(envelope: VisualizationEnvelope, sourceID: string): TiledLayerStyleUpdate[] {

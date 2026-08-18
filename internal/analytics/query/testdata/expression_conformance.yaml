@@ -1,0 +1,345 @@
+model:
+  name: expression_conformance
+  dataset: values
+  fields:
+    row_id: {datatype: Integer}
+    decimal_value: {datatype: Decimal}
+    revenue: {datatype: Decimal}
+    euro_revenue: {datatype: Decimal}
+    count: {datatype: Integer}
+    float_value: {datatype: Float}
+  metrics:
+    decimal_value:
+      type: aggregate
+      dataset: values
+      aggregation: sum
+      input: values.decimal_value
+      empty: null
+      unit: dimensionless
+    revenue:
+      type: aggregate
+      dataset: values
+      aggregation: sum
+      input: values.revenue
+      empty: null
+      unit: USD
+    euro_revenue:
+      type: aggregate
+      dataset: values
+      aggregation: sum
+      input: values.euro_revenue
+      empty: null
+      unit: EUR
+    count:
+      type: aggregate
+      dataset: values
+      aggregation: count
+      input: values.count
+      empty: zero
+    float_value:
+      type: aggregate
+      dataset: values
+      aggregation: sum
+      input: values.float_value
+      empty: null
+      unit: dimensionless
+    ratio:
+      type: ratio
+      numerator: revenue
+      denominator: count
+      unit: USD
+
+cases:
+  - name: exact_decimal_addition
+    target: derived
+    expression: '${decimal_value} + 0.001'
+    values:
+      decimal_value: {kind: decimal, value: '9007199254740993.125'}
+    expect:
+      accepted: true
+      references: [decimal_value]
+      dependencies: [decimal_value]
+      result: {kind: decimal, value: '9007199254740993.126'}
+      datatype: Decimal
+      unit: dimensionless
+      plan: {node: derived, refs: [decimal_value], literals: ['0.001'], result_type: decimal}
+
+  - name: integer_result_type
+    target: derived
+    expression: '${count} + 1'
+    values:
+      count: {kind: integer, value: '2'}
+    expect:
+      accepted: true
+      references: [count]
+      dependencies: [count]
+      result: {kind: integer, value: '3'}
+      datatype: Decimal
+      unit: dimensionless
+      plan: {node: derived, refs: [count], literals: ['1'], result_type: decimal}
+
+  - name: decimal_result_type
+    target: derived
+    expression: '${count} + 1.0'
+    values:
+      count: {kind: integer, value: '2'}
+    expect:
+      accepted: true
+      references: [count]
+      dependencies: [count]
+      result: {kind: decimal, value: '3'}
+      datatype: Decimal
+      unit: dimensionless
+      plan: {node: derived, refs: [count], literals: ['1.0'], result_type: decimal}
+
+  - name: float_result_type
+    target: derived
+    expression: '${float_value} + 1'
+    values:
+      float_value: {kind: float, value: '1.5'}
+    expect:
+      accepted: true
+      references: [float_value]
+      dependencies: [float_value]
+      result: {kind: float, value: '2.5'}
+      datatype: Float
+      unit: dimensionless
+      plan: {node: derived, refs: [float_value], literals: ['1'], result_type: float}
+
+  - name: safe_divide_exact
+    target: derived
+    expression: safe_divide(${revenue}, ${count})
+    values:
+      revenue: {kind: decimal, value: '3'}
+      count: {kind: integer, value: '8'}
+    expect:
+      accepted: true
+      references: [revenue, count]
+      dependencies: [count, revenue]
+      result: {kind: decimal, value: '0.375'}
+      datatype: Decimal
+      unit: USD
+      plan: {node: derived, function: safe_divide, refs: [revenue, count], result_type: decimal}
+
+  - name: safe_divide_zero_is_null
+    target: derived
+    expression: safe_divide(${revenue}, ${count})
+    values:
+      revenue: {kind: decimal, value: '3'}
+      count: {kind: integer, value: '0'}
+    expect:
+      accepted: true
+      references: [revenue, count]
+      dependencies: [count, revenue]
+      result: {kind: 'null'}
+      datatype: Decimal
+      unit: USD
+      plan: {node: derived, function: safe_divide, refs: [revenue, count], result_type: decimal}
+
+  - name: safe_divide_null_is_null
+    target: derived
+    expression: safe_divide(${revenue}, ${count})
+    values:
+      revenue: {kind: decimal, value: '3'}
+      count: {kind: 'null'}
+    expect:
+      accepted: true
+      references: [revenue, count]
+      dependencies: [count, revenue]
+      result: {kind: 'null'}
+      datatype: Decimal
+      unit: USD
+      plan: {node: derived, function: safe_divide, refs: [revenue, count], result_type: decimal}
+
+  - name: exact_divide_zero_is_null
+    target: derived
+    expression: '${revenue} / ${count}'
+    values:
+      revenue: {kind: decimal, value: '3'}
+      count: {kind: integer, value: '0'}
+    expect:
+      accepted: true
+      references: [revenue, count]
+      dependencies: [count, revenue]
+      result: {kind: 'null'}
+      datatype: Decimal
+      unit: USD
+      plan: {node: derived, refs: [revenue, count], result_type: decimal}
+
+  - name: null_propagation
+    target: derived
+    expression: '${count} + 1'
+    values:
+      count: {kind: 'null'}
+    expect:
+      accepted: true
+      references: [count]
+      dependencies: [count]
+      result: {kind: 'null'}
+      datatype: Decimal
+      unit: dimensionless
+      plan: {node: derived, refs: [count], literals: ['1'], result_type: decimal}
+
+  - name: coalesce_null
+    target: derived
+    expression: coalesce(${count}, 2.50)
+    values:
+      count: {kind: 'null'}
+    expect:
+      accepted: true
+      references: [count]
+      dependencies: [count]
+      result: {kind: decimal, value: '2.5'}
+      datatype: Decimal
+      unit: dimensionless
+      plan: {node: derived, function: coalesce, refs: [count], literals: ['2.50'], result_type: decimal}
+
+  - name: round_decimal
+    target: derived
+    expression: round(${revenue}, 2)
+    values:
+      revenue: {kind: decimal, value: '1.234'}
+    expect:
+      accepted: true
+      references: [revenue]
+      dependencies: [revenue]
+      result: {kind: decimal, value: '1.23'}
+      datatype: Decimal
+      unit: USD
+      plan: {node: derived, function: round, refs: [revenue], literals: ['2'], result_type: decimal}
+
+  - name: abs_decimal
+    target: derived
+    expression: abs(${revenue})
+    values:
+      revenue: {kind: decimal, value: '-1.25'}
+    expect:
+      accepted: true
+      references: [revenue]
+      dependencies: [revenue]
+      result: {kind: decimal, value: '1.25'}
+      datatype: Decimal
+      unit: USD
+      plan: {node: derived, function: abs, refs: [revenue], result_type: decimal}
+
+  - name: repeated_reference_is_one_dependency
+    target: derived
+    expression: '${count} + ${count}'
+    values:
+      count: {kind: integer, value: '2'}
+    expect:
+      accepted: true
+      references: [count]
+      dependencies: [count]
+      result: {kind: integer, value: '4'}
+      datatype: Decimal
+      unit: dimensionless
+      plan: {node: derived, refs: [count, count], result_type: decimal}
+
+  - name: ratio_plan_preserves_governed_division
+    target: ratio
+    expect:
+      accepted: true
+      dependencies: [count, revenue]
+      datatype: Decimal
+      unit: USD
+      plan: {node: ratio, numerator: revenue, denominator: count, result_type: decimal}
+
+  - name: incompatible_additive_units
+    target: derived
+    expression: '${revenue} + ${euro_revenue}'
+    expect:
+      accepted: false
+      failure_at: compile
+      error: incompatible additive units
+
+  - name: contradictory_authored_unit
+    target: derived
+    expression: '${revenue} + ${revenue}'
+    unit: EUR
+    expect:
+      accepted: false
+      failure_at: compile
+      error: contradicts inferred unit
+
+  - name: unknown_dependency
+    target: derived
+    expression: '${missing_metric} + 1'
+    expect:
+      accepted: false
+      failure_at: compile
+      error: unknown metric
+
+  - name: dependency_cycle
+    target: cycle_a
+    metrics:
+      cycle_a: {type: derived, expression: '${cycle_b} + 1'}
+      cycle_b: {type: derived, expression: '${cycle_a} + 1'}
+    expect:
+      accepted: false
+      failure_at: compile
+      error: cycle
+
+  - name: unsupported_aggregate_sql
+    target: derived
+    expression: 'SUM(${revenue})'
+    expect:
+      accepted: false
+      failure_at: parse
+      error: unsupported expression function
+
+  - name: bare_identifier
+    target: derived
+    expression: 'revenue + 1'
+    expect:
+      accepted: false
+      failure_at: parse
+      error: bare identifier
+
+  - name: malformed_number
+    target: derived
+    expression: '${count} + 1.2.3'
+    expect:
+      accepted: false
+      failure_at: parse
+      error: unexpected token
+
+  - name: exponent_notation
+    target: derived
+    expression: '${count} + 1e3'
+    expect:
+      accepted: false
+      failure_at: parse
+      error: exponent notation
+
+  - name: leading_zero
+    target: derived
+    expression: '${count} + 01'
+    expect:
+      accepted: false
+      failure_at: parse
+      error: leading zeroes
+
+  - name: leading_plus
+    target: derived
+    expression: '${count} + +1'
+    expect:
+      accepted: false
+      failure_at: parse
+      error: leading plus
+
+  - name: negative_zero
+    target: derived
+    expression: '${count} + -0'
+    expect:
+      accepted: false
+      failure_at: parse
+      error: negative zero
+
+  - name: wrong_function_arity
+    target: derived
+    expression: safe_divide(${revenue})
+    expect:
+      accepted: false
+      failure_at: parse
+      error: expects 2..2 arguments

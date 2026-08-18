@@ -10,7 +10,6 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	table := semanticmodel.Table{
 		Source:             "olist.geolocation",
 		Sources:            []string{"olist.geolocation"},
-		SQL:                "SELECT * FROM source.\"olist.geolocation\"",
 		Transform:          semanticmodel.Transform{SQL: "SELECT * FROM source.\"olist.geolocation\""},
 		Columns:            map[string]semanticmodel.ModelColumn{"zip_prefix": {Type: "string", SourceField: "geolocation_zip_code_prefix"}},
 		Entities:           map[string]semanticmodel.ModelEntitySpec{"location": {Type: "primary", Fields: []string{"zip_prefix", "city"}}},
@@ -36,8 +35,8 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	if !ok || entity["Fields"] == nil {
 		t.Fatalf("payload composite entity = %#v", entities["location"])
 	}
-	if payload["SQL"] != table.SQL {
-		t.Fatalf("payload SQL = %#v, want %q", payload["SQL"], table.SQL)
+	if _, ok := payload["SQL"]; ok {
+		t.Fatalf("payload retains removed top-level SQL alias: %#v", payload)
 	}
 	transform, ok := payload["Transform"].(map[string]any)
 	if !ok || transform["SQL"] != table.Transform.SQL {

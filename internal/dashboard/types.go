@@ -880,6 +880,7 @@ type TableColumn struct {
 	ColumnValue string                `json:"columnValue,omitempty" yaml:"column_value,omitempty"`
 	Width       int                   `json:"width,omitempty" yaml:"width,omitempty"`
 	Format      string                `json:"format,omitempty" yaml:"format,omitempty"`
+	DataType    string                `json:"dataType,omitempty" yaml:"-"`
 	Formatting  []TableFormattingRule `json:"formatting,omitempty" yaml:"formatting,omitempty"`
 }
 

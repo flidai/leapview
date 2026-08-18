@@ -437,8 +437,11 @@ func validateFlatProject(project Project) error {
 		if model.Source != "" {
 			refs = append(refs, model.Source)
 		}
-		if len(refs) == 0 {
-			return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec.sources", "Model %q requires source or sources", name)
+		// A transform may derive solely from upstream model tables. ValidateAuthored
+		// already resolved those physical dependencies before this project-level
+		// source lineage check.
+		if len(refs) == 0 && len(model.ModelDependencies) == 0 {
+			return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec.sources", "Model %q requires source, sources, or a model dependency", name)
 		}
 		for _, ref := range refs {
 			if _, err := resolver.resolve(ref, projectgraph.KindSource); err != nil {

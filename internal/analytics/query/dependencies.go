@@ -22,7 +22,7 @@ type Dependencies struct {
 // planner. Serving request paths must retain and use this planner so semantic
 // metadata is never compiled outside serving-state activation.
 func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
-	if p == nil || p.compiled == nil || p.model == nil {
+	if p == nil || p.compiled == nil {
 		return Dependencies{}, fmt.Errorf("planner is not compiled")
 	}
 	resolved, err := p.resolveAggregate(request)
@@ -53,20 +53,31 @@ func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
 	}
 	for name, metric := range resolved.Aggregates {
 		logical[name] = struct{}{}
+		compiled, ok := p.compiled.metric(name)
+		if !ok || compiled.Aggregate == nil {
+			return Dependencies{}, fmt.Errorf("metric %q is missing compiled aggregate lineage", name)
+		}
 		for _, field := range aggregateMetricPhysicalFields(metric) {
 			physical[field] = struct{}{}
-			resolvedField, err := p.resolveDimension(field)
-			if err != nil {
-				return Dependencies{}, err
+		}
+		path := compiled.Aggregate.InputPath
+		if signature := relationshipPathSignature(path); signature != "" {
+			paths[metric.Dataset+":"+signature] = struct{}{}
+		}
+		for _, relationship := range path {
+			for _, field := range relationshipPhysicalFields(relationship) {
+				physical[field] = struct{}{}
 			}
-			path, err := p.model.SafeRelationshipPath(metric.Dataset, resolvedField.Table)
-			if err != nil {
-				return Dependencies{}, err
+		}
+		for _, entry := range compiled.Lineage.Entries {
+			if entry.Role != "filter" || entry.Physical.Field == "" {
+				continue
 			}
-			if signature := relationshipPathSignature(path); signature != "" {
+			physical[entry.Physical.Field] = struct{}{}
+			if signature := relationshipPathSignature(entry.Path); signature != "" {
 				paths[metric.Dataset+":"+signature] = struct{}{}
 			}
-			for _, relationship := range path {
+			for _, relationship := range entry.Path {
 				for _, field := range relationshipPhysicalFields(relationship) {
 					physical[field] = struct{}{}
 				}

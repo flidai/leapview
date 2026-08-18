@@ -19,7 +19,7 @@ spec:
       label: Rating count
       description: Number of ratings submitted by the user.
     average_rating:
-      datatype: Decimal
+      datatype: Float
       label: Average rating
       description: User-level average rating value.
     tag_count:

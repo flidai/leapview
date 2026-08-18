@@ -128,7 +128,7 @@ func (p *Planner) renderAggregatePlanIR(request Request, resolved aggregateResol
 }
 
 func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error) {
-	if p == nil || p.model == nil || p.compiled == nil {
+	if p == nil || p.compiled == nil {
 		return aggregateResolution{}, fmt.Errorf("planner is not compiled")
 	}
 	masks, err := columnMaskMap(request.ColumnMasks)
@@ -274,7 +274,7 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		if request.Time.Field != "" && index == len(dimensionFields)-1 {
 			grain = request.Time.Grain
 		}
-		if dimension, ok := p.model.Dimensions[item.Field]; ok {
+		if dimension, ok := p.compiled.SemanticDimension(item.Field); ok {
 			if grain != "" && !containsString(dimension.Grains, grain) {
 				return aggregateResolution{}, fmt.Errorf("semantic dimension %q does not support grain %q", item.Field, grain)
 			}
@@ -306,7 +306,7 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 					compatible = false
 					break
 				}
-				if _, ok := p.model.Dimensions[dimension.Name].Bindings[dataset]; !ok {
+				if _, ok := p.compiled.DimensionBinding(dimension.Name, dataset); !ok {
 					compatible = false
 					break
 				}
@@ -337,9 +337,8 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 			}
 			continue
 		}
-		semanticDimension := p.model.Dimensions[dimension.Name]
 		for _, dataset := range resolved.Datasets {
-			if _, ok := semanticDimension.Bindings[dataset]; !ok {
+			if _, ok := p.compiled.DimensionBinding(dimension.Name, dataset); !ok {
 				return aggregateResolution{}, fmt.Errorf("semantic dimension %q has no binding for dataset %q", dimension.Name, dataset)
 			}
 		}
@@ -356,16 +355,16 @@ func (p *Planner) datasetSupportsInferredFilters(filters []Filter, dataset strin
 	var supports func(Filter) bool
 	supports = func(filter Filter) bool {
 		if filter.Field != "" && filter.Dataset == "" {
-			if dimension, ok := p.model.Dimensions[filter.Field]; ok {
-				if _, bound := dimension.Bindings[dataset]; !bound {
+			if _, ok := p.compiled.SemanticDimension(filter.Field); ok {
+				if _, bound := p.compiled.DimensionBinding(filter.Field, dataset); !bound {
 					return false
 				}
 			}
 		}
 		if filter.Spatial != nil && filter.Spatial.Dataset == "" {
 			for _, field := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
-				if dimension, ok := p.model.Dimensions[field]; ok {
-					if _, bound := dimension.Bindings[dataset]; !bound {
+				if _, ok := p.compiled.SemanticDimension(field); ok {
+					if _, bound := p.compiled.DimensionBinding(field, dataset); !bound {
 						return false
 					}
 				}
@@ -396,7 +395,7 @@ func (p *Planner) validateAggregateFilters(filters []Filter, resolved aggregateR
 	for _, filter := range filters {
 		scopes := []string{}
 		collectField := func(field, filterDataset string) error {
-			if _, semantic := p.model.Dimensions[field]; semantic && filterDataset == "" {
+			if _, semantic := p.compiled.SemanticDimension(field); semantic && filterDataset == "" {
 				scopes = append(scopes, "conformed")
 				return nil
 			}
@@ -495,19 +494,19 @@ func (p *Planner) datasetFilterFields(filters []Filter, resolved aggregateResolu
 }
 
 func (p *Planner) resolveDatasetFilterField(filter Filter, resolved aggregateResolution, dataset string) (string, []semanticmodel.Relationship, bool, error) {
-	if semanticDimension, ok := p.model.Dimensions[filter.Field]; ok {
+	if _, ok := p.compiled.SemanticDimension(filter.Field); ok {
 		if filter.Dataset != "" && filter.Dataset != dataset {
 			return "", nil, false, nil
 		}
-		binding, ok := semanticDimension.Bindings[dataset]
+		binding, ok := p.compiled.DimensionBinding(filter.Field, dataset)
 		if !ok {
 			return "", nil, false, fmt.Errorf("semantic dimension %q has no binding for dataset %q", filter.Field, dataset)
 		}
 		if len(filter.Path) > 0 {
-			binding.Path = append([]string(nil), filter.Path...)
+			path, err := p.compiled.ResolveBindingPath(dataset, binding.Physical.Field, filter.Path)
+			return binding.Physical.Field, path, true, err
 		}
-		path, err := p.resolveBindingPath(dataset, binding)
-		return binding.Field, path, true, err
+		return binding.Physical.Field, binding.Path, true, nil
 	}
 	target := filter.Dataset
 	if target == "" {
@@ -525,7 +524,7 @@ func (p *Planner) resolveDatasetFilterField(filter Filter, resolved aggregateRes
 	}
 	var path []semanticmodel.Relationship
 	if len(filter.Path) > 0 {
-		path, err = p.resolveBindingPath(dataset, semanticmodel.DimensionBinding{Field: filter.Field, Path: append([]string(nil), filter.Path...)})
+		path, err = p.compiled.ResolveBindingPath(dataset, filter.Field, filter.Path)
 	} else {
 		path, err = p.relationshipPath(dataset, physical.Table)
 	}
@@ -534,15 +533,22 @@ func (p *Planner) resolveDatasetFilterField(filter Filter, resolved aggregateRes
 
 func (p *Planner) aggregateDimensionBinding(dataset string, dimension aggregateDimension) (string, []semanticmodel.Relationship, error) {
 	if !dimension.Semantic {
-		path, err := p.relationshipPath(dataset, dimension.Physical.Table)
-		return dimension.Name, path, err
+		if p == nil || p.compiled == nil {
+			return "", nil, fmt.Errorf("planner is not compiled")
+		}
+		if binding, ok := p.compiled.FieldBinding(dataset, dimension.Name); ok {
+			return binding.Physical.Field, binding.Path, nil
+		}
+		return "", nil, fmt.Errorf("compiled field binding for %q from dataset %q is missing", dimension.Name, dataset)
 	}
-	binding, ok := p.model.Dimensions[dimension.Name].Bindings[dataset]
+	if p == nil || p.compiled == nil {
+		return "", nil, fmt.Errorf("planner is not compiled")
+	}
+	binding, ok := p.compiled.DimensionBinding(dimension.Name, dataset)
 	if !ok {
 		return "", nil, fmt.Errorf("semantic dimension %q has no binding for dataset %q", dimension.Name, dataset)
 	}
-	path, err := p.resolveBindingPath(dataset, binding)
-	return binding.Field, path, err
+	return binding.Physical.Field, binding.Path, nil
 }
 
 func (p *Planner) aliasesForDataset(dataset string, bindings []physicalFieldBinding) (pathAliasSet, error) {

@@ -23,7 +23,6 @@ func projectModelTable(spec projectModelTableSpec) semanticmodel.Table {
 		Source:      spec.Source,
 		Sources:     append([]string{}, spec.Sources...),
 		SourceReads: copyStringSliceMap(spec.SourceReads),
-		SQL:         spec.SQL,
 		Transform:   spec.Transform,
 		Entities:    spec.Entities,
 		GrainEntity: spec.Grain.Entity,
@@ -419,7 +418,6 @@ func translatedTablesForRuntime(in map[string]semanticmodel.Table, sourceAliases
 				table.Sources[index] = alias
 			}
 		}
-		table.SQL = rewriteSourceSQLForRuntime(table.SQL, sourceAliases)
 		table.Transform.SQL = rewriteSourceSQLForRuntime(table.Transform.SQL, sourceAliases)
 		out[name] = table
 	}

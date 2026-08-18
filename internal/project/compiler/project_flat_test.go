@@ -521,6 +521,92 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 	}
 }
 
+func TestFlatProjectAllowsModelOnlyTransform(t *testing.T) {
+	projectPath := writeFlatProjectFixture(t, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {kind: managed}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec: {connection: warehouse, format: csv, path: orders.csv}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders_model}
+spec:
+  sources: [orders]
+  transform: {sql: SELECT order_id FROM source.orders}
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`,
+		"models/order_labels.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:order_labels, name: order_labels}
+spec:
+  transform:
+    sql: SELECT order_id FROM model.orders_model
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`,
+	})
+	project, err := LoadProject(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProject() model-only transform: %v", err)
+	}
+	derived, ok := project.Models["order_labels"]
+	if !ok {
+		t.Fatal("model-only table is missing")
+	}
+	if len(derived.SourceDependencies) != 0 {
+		t.Fatalf("model-only source dependencies = %#v, want none", derived.SourceDependencies)
+	}
+	if !reflect.DeepEqual(derived.ModelDependencies, []string{"orders_model"}) {
+		t.Fatalf("model-only model dependencies = %#v, want [orders_model]", derived.ModelDependencies)
+	}
+	foundEdge := false
+	for _, edge := range project.Graph.Edges() {
+		if edge.From == "model:order_labels" && edge.To == "model:orders" && edge.Relation == "uses_model" {
+			foundEdge = true
+			break
+		}
+	}
+	if !foundEdge {
+		t.Fatalf("project graph edges = %#v, want model-only uses_model edge", project.Graph.Edges())
+	}
+}
+
+func TestFlatProjectRejectsTopLevelModelSQLAlias(t *testing.T) {
+	projectPath := writeFlatProjectFixture(t, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {kind: managed}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec: {connection: warehouse, format: csv, path: orders.csv}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  sql: SELECT order_id FROM source.orders
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`,
+	})
+	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "spec.sql: field not allowed") {
+		t.Fatalf("LoadProject() accepted removed top-level Model sql alias: %v", err)
+	}
+}
+
 func TestFlatProjectPreservesStableIDForPunctuatedSourceName(t *testing.T) {
 	projectPath := writeFlatProjectFixture(t, map[string]string{
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1

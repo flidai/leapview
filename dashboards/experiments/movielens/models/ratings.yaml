@@ -22,7 +22,7 @@ spec:
       label: Movie ID
       description: MovieLens movie identifier.
     rating:
-      datatype: Decimal
+      datatype: Float
       label: Rating
       description: Rating value on the MovieLens 0.5 to 5.0 scale.
     rating_bucket:

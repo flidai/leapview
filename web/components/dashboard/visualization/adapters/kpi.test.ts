@@ -151,6 +151,21 @@ test('KPI sparkline geometry is deterministic and handles a flat trend', () => {
   ])).toBe('M0,14 L100,14')
 })
 
+test('KPI trend accepts canonical Decimal tokens for approximate geometry', () => {
+  const input = envelope(110, 100, 120)
+  if (input.dataState.kind !== 'inline') throw new Error('test fixture must be inline')
+  input.dataState.datasets.find((dataset) => dataset.id === 'trend')!.rows = [
+    ['2026-01-01', '9007199254740993.125'],
+    ['2026-02-01', '9007199254740996.125'],
+  ]
+  const state = resolveKPIState(input, defaultRendererContext)
+  expect(state.trend).toEqual([
+    { label: '2026-01-01', value: 9007199254740994 },
+    { label: '2026-02-01', value: 9007199254740996 },
+  ])
+  expect(kpiSparklinePath(state.trend)).toMatch(/^M0,28 L100,0$/)
+})
+
 test('KPI bullet geometry separates the value, goal, and qualitative bands', () => {
   const geometry = bulletGeometry(80, 100, [
     { maximum: 60, label: 'Behind', tone: 'danger' },
@@ -167,4 +182,21 @@ test('KPI bullet geometry separates the value, goal, and qualitative bands', () 
     { start: 60 / 110, end: 90 / 110, label: 'On track', tone: 'warning' },
     { start: 90 / 110, end: 1, label: 'Ahead', tone: 'success' },
   ])
+})
+
+test('KPI Decimal reducers preserve exact values beyond the safe integer range', () => {
+  const input = envelope(0, 0, 0)
+  if (input.spec.kind !== 'kpi' || input.dataState.kind !== 'inline') throw new Error('test fixture must be a KPI')
+  input.spec.presentation.delta = 'absolute'
+  input.spec.comparison!.reducer = 'maximum'
+  input.spec.goal!.reducer = 'mean'
+  input.dataState.datasets.find((dataset) => dataset.id === 'primary')!.rows = [['9007199254740993.125']]
+  input.dataState.datasets.find((dataset) => dataset.id === 'comparison')!.rows = [['9007199254740993.125'], ['9007199254740995.125']]
+  input.dataState.datasets.find((dataset) => dataset.id === 'goal')!.rows = [['9007199254740993.125'], ['9007199254740995.125']]
+
+  const state = resolveKPIState(input, defaultRendererContext)
+  expect(state.current).toBe('9007199254740993.125')
+  expect(state.comparison).toBe('9007199254740995.125')
+  expect(state.goal).toBe('9007199254740994.125')
+  expect(state.delta).toBe('-2')
 })

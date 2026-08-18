@@ -73,9 +73,6 @@ func (m *Model) validate(authored bool) error {
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("model table %q has invalid name: %w", name, err)
 		}
-		if table.SQL != "" && table.Transform.SQL == "" {
-			table.Transform.SQL = table.SQL
-		}
 		if table.Source == "" && table.Transform.SQL == "" {
 			return fmt.Errorf("model table %q requires source or transform.sql", name)
 		}
@@ -177,9 +174,6 @@ func (m *Model) validate(authored bool) error {
 
 func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]string, error) {
 	sql := strings.TrimSpace(table.Transform.SQL)
-	if sql == "" {
-		sql = strings.TrimSpace(table.SQL)
-	}
 	hasSQL := sql != ""
 	if hasSQL {
 		if table.Source != "" {
@@ -331,9 +325,6 @@ func validateRequiredModelColumns(tableName string, table Table, columns map[str
 
 func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]string, error) {
 	sql := strings.TrimSpace(table.Transform.SQL)
-	if sql == "" {
-		sql = strings.TrimSpace(table.SQL)
-	}
 	if sql == "" {
 		return nil, nil
 	}

@@ -140,7 +140,7 @@ func (s *VisualizationDataService) matrixTableRows(ctx context.Context, runtime 
 		metric := aggregateMemberMetadata(runtime.model, metricName)
 		key := metricBinding.Alias
 		metrics = append(metrics, fieldRef(metricName, key))
-		column := dashboard.TableColumn{Key: key, Label: metricLabel(key, metric), Align: "right", Role: "metric", Metric: key, Format: tableMetricFormat(metric), Formatting: tableMetricFormatting(table, metricName)}
+		column := dashboard.TableColumn{Key: key, Label: metricLabel(key, metric), Align: "right", Role: "metric", Metric: key, Format: tableMetricFormat(metric), DataType: string(metric.DataType), Formatting: tableMetricFormatting(table, metricName)}
 		columns = append(columns, mergeTableColumn(column, tableColumnOverride(table, metricBinding.Alias)))
 	}
 	queryFilters, err := s.filters.semanticFilters(ctx, runtime, report, filters, "visual", request.Table)
@@ -341,6 +341,7 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 					Metric:      metricKey,
 					ColumnValue: label,
 					Format:      valueField.format,
+					DataType:    string(valueField.dataType),
 					Formatting:  valueField.formatting,
 				}
 				columns = append(columns, mergeTableColumn(column, tableColumnOverride(table, metricKey)))
@@ -361,6 +362,7 @@ type crossTabValueField struct {
 	label      string
 	format     string
 	formatting []dashboard.TableFormattingRule
+	dataType   visualizationir.VisualizationDataType
 }
 
 func crossTabValueFields(table tablePlan, base visualizationir.VisualizationSpecBase, model *semanticmodel.Model) []crossTabValueField {
@@ -369,7 +371,7 @@ func crossTabValueFields(table tablePlan, base visualizationir.VisualizationSpec
 		metric := aggregateMemberMetadata(model, binding.FieldID)
 		fields = append(fields, crossTabValueField{
 			key: binding.Alias, label: metricLabel(binding.Alias, metric),
-			format: tableMetricFormat(metric), formatting: tableMetricFormatting(table, binding.FieldID),
+			format: tableMetricFormat(metric), dataType: metric.DataType, formatting: tableMetricFormatting(table, binding.FieldID),
 		})
 	}
 	schemaFields := map[string]visualizationir.VisualizationField{}
@@ -393,7 +395,7 @@ func crossTabValueFields(table tablePlan, base visualizationir.VisualizationSpec
 			}
 			fields = append(fields, crossTabValueField{
 				key: calculation.ID, label: label,
-				format: dashboardCalculationFormat(field.Format),
+				format: dashboardCalculationFormat(field.Format), dataType: field.DataType,
 			})
 		}
 	}

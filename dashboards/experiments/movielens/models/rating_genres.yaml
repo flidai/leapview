@@ -32,7 +32,7 @@ spec:
       label: Genre
       description: Single genre assigned to the rated movie.
     rating:
-      datatype: Decimal
+      datatype: Float
       label: Rating
       description: Rating value on the MovieLens scale.
     rating_bucket:

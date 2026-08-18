@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"fmt"
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -10,6 +11,12 @@ import (
 )
 
 func compiledGridDataType(column dashboard.TableColumn) visualizationir.VisualizationDataType {
+	if column.DataType != "" {
+		switch visualizationir.VisualizationDataType(column.DataType) {
+		case visualizationir.VisualizationDataTypeString, visualizationir.VisualizationDataTypeInteger, visualizationir.VisualizationDataTypeDecimal, visualizationir.VisualizationDataTypeFloat, visualizationir.VisualizationDataTypeBoolean, visualizationir.VisualizationDataTypeDate, visualizationir.VisualizationDataTypeTemporal, visualizationir.VisualizationDataTypeGeographic:
+			return visualizationir.VisualizationDataType(column.DataType)
+		}
+	}
 	switch column.Format {
 	case "integer", "days":
 		return visualizationir.VisualizationDataTypeInteger
@@ -81,18 +88,21 @@ func compiledDashboardTableColumns(visualType string, authored dashboardauthorin
 		if model != nil {
 			if dimension, err := model.ResolveDimension(binding.FieldID); err == nil {
 				column.Role = "row_header"
-				column.Format = compiledPhysicalFieldFormat(model, binding.FieldID, dimension.Type)
+				column.DataType = string(compiledDimensionDataType(dimension))
+				column.Format = compiledPhysicalFieldFormat(model, binding.FieldID, string(dimension.Datatype))
 				if dimension.Label != "" {
 					column.Label = dimension.Label
 				}
 			} else if metric, ok := model.Metrics[binding.FieldID]; ok {
 				column.Role, column.Align, column.Metric = "metric", "right", binding.Alias
+				column.DataType = string(compiledMetricDataType(model, metric))
 				if metric.Label != "" {
 					column.Label = metric.Label
 				}
 				column.Format = compiledMetricFormat(metric.Format)
 			} else if metric, err := model.ResolveMetric(binding.FieldID); err == nil {
 				column.Role, column.Align, column.Metric = "metric", "right", binding.Alias
+				column.DataType = string(compiledMetricDataType(model, metric))
 				if metric.Label != "" {
 					column.Label = metric.Label
 				}
@@ -112,13 +122,13 @@ func compiledDashboardTableColumns(visualType string, authored dashboardauthorin
 
 func compiledDimensionFormat(semanticType string) string {
 	switch semanticType {
-	case "number":
+	case string(semanticmodel.DataTypeInteger), string(semanticmodel.DataTypeDecimal), string(semanticmodel.DataTypeFloat):
 		return "decimal"
-	case "boolean":
+	case string(semanticmodel.DataTypeBoolean):
 		return "boolean"
-	case "date":
+	case string(semanticmodel.DataTypeDate):
 		return "date"
-	case "timestamp":
+	case string(semanticmodel.DataTypeTime), string(semanticmodel.DataTypeDateTime), string(semanticmodel.DataTypeDateTimeTZ):
 		return "timestamp"
 	default:
 		return ""
@@ -240,8 +250,52 @@ func applyBuiltInFieldSemantics(fields []visualizationir.VisualizationField, sha
 		for _, id := range []string{"value", "start", "end", "binStart", "binEnd"} {
 			decorate(id, metric)
 		}
+		if shape == "binned_measure" {
+			// Histogram boundaries are renderer geometry produced by binning;
+			// they are intentionally approximate even when the source metric is
+			// transported as exact Decimal.
+			for _, id := range []string{"binStart", "binEnd"} {
+				if field := byID[id]; field != nil {
+					field.DataType = visualizationir.VisualizationDataTypeFloat
+					field.Format = nil
+				}
+			}
+		}
+	} else if valueField := byID["value"]; valueField != nil {
+		// A heterogeneous value column must use one transport type for all
+		// governed metrics. Integer values are promoted to Decimal strings at
+		// frame construction; Float/Decimal mixtures are rejected above.
+		hasFloat, hasDecimal, hasInteger := false, false, false
+		for _, binding := range authored.Query.Metrics {
+			if resolved, err := model.ResolveMetric(binding.Field); err == nil {
+				switch compiledMetricDataType(model, resolved) {
+				case visualizationir.VisualizationDataTypeFloat:
+					hasFloat = true
+				case visualizationir.VisualizationDataTypeDecimal:
+					hasDecimal = true
+				case visualizationir.VisualizationDataTypeInteger:
+					hasInteger = true
+				}
+			}
+		}
+		if hasFloat && !hasDecimal && !hasInteger {
+			valueField.DataType = visualizationir.VisualizationDataTypeFloat
+		} else if hasInteger && !hasDecimal && !hasFloat {
+			valueField.DataType = visualizationir.VisualizationDataTypeInteger
+		}
 	}
 	if shape == "ohlc" || shape == "distribution" {
+		// Distribution quantiles are all derived from the one raw metric. Carry
+		// its semantic numeric type across every output statistic so Float does
+		// not regress to the shape's Decimal defaults.
+		if shape == "distribution" && len(authored.Query.Metrics) == 1 {
+			binding := authored.Query.Metrics[0]
+			for _, alias := range []string{"min", "q1", "median", "q3", "max"} {
+				if byID[alias] != nil {
+					decorate(alias, binding)
+				}
+			}
+		}
 		for index, binding := range authored.Query.Metrics {
 			alias := binding.Alias
 			if alias == "" {
@@ -272,15 +326,15 @@ func applySemanticField(field *visualizationir.VisualizationField, source string
 		if dimension.Label != "" {
 			field.Label = dimension.Label
 		}
-		field.DataType = compiledDimensionDataType(dimension.Type)
-		field.Format = compiledVisualizationFormat(compiledDimensionFormat(dimension.Type), "")
+		field.DataType = compiledDimensionDataType(dimension)
+		field.Format = compiledVisualizationFormat(compiledDimensionFormat(string(dimension.Datatype)), "")
 		return
 	}
 	if metric, err := model.ResolveMetric(source); err == nil {
 		if metric.Label != "" {
 			field.Label = metric.Label
 		}
-		field.DataType = compiledMetricDataType(metric.Format)
+		field.DataType = compiledMetricDataType(model, metric)
 		field.Format = compiledVisualizationFormat(metric.Format, metric.Unit)
 		return
 	}
@@ -288,32 +342,57 @@ func applySemanticField(field *visualizationir.VisualizationField, source string
 		if metric.Label != "" {
 			field.Label = metric.Label
 		}
-		field.DataType = compiledMetricDataType(metric.Format)
+		field.DataType = compiledMetricDataType(model, metric)
 		field.Format = compiledVisualizationFormat(metric.Format, metric.Unit)
 	}
 }
 
-func compiledDimensionDataType(dimensionType string) visualizationir.VisualizationDataType {
-	switch dimensionType {
-	case "boolean":
+func compiledDimensionDataType(dimension semanticmodel.MetricDimension) visualizationir.VisualizationDataType {
+	switch dimension.Datatype {
+	case semanticmodel.DataTypeBoolean:
 		return visualizationir.VisualizationDataTypeBoolean
-	case "date":
+	case semanticmodel.DataTypeDate:
 		return visualizationir.VisualizationDataTypeDate
-	case "timestamp":
+	case semanticmodel.DataTypeTime, semanticmodel.DataTypeDateTime, semanticmodel.DataTypeDateTimeTZ:
 		return visualizationir.VisualizationDataTypeTemporal
-	case "number":
+	case semanticmodel.DataTypeInteger:
+		return visualizationir.VisualizationDataTypeInteger
+	case semanticmodel.DataTypeDecimal:
 		return visualizationir.VisualizationDataTypeDecimal
+	case semanticmodel.DataTypeFloat:
+		return visualizationir.VisualizationDataTypeFloat
+	case semanticmodel.DataTypeString:
+		return visualizationir.VisualizationDataTypeString
+	case semanticmodel.DataTypeOpaque:
+		return visualizationir.VisualizationDataTypeString
+	}
+	return visualizationir.VisualizationDataTypeString
+}
+
+func compiledMetricDataType(model *semanticmodel.Model, metric semanticmodel.Metric) visualizationir.VisualizationDataType {
+	if model == nil {
+		return visualizationir.VisualizationDataTypeDecimal
+	}
+	var dataType semanticmodel.LogicalDataType
+	var err error
+	if strings.TrimSpace(metric.Name) != "" {
+		dataType, err = model.MetricDataType(metric.Name)
+	} else {
+		dataType, err = model.MetricDataTypeFor(metric)
+	}
+	if err != nil {
+		return visualizationir.VisualizationDataTypeDecimal
+	}
+	switch dataType {
+	case semanticmodel.DataTypeInteger:
+		return visualizationir.VisualizationDataTypeInteger
+	case semanticmodel.DataTypeDecimal:
+		return visualizationir.VisualizationDataTypeDecimal
+	case semanticmodel.DataTypeFloat:
+		return visualizationir.VisualizationDataTypeFloat
 	default:
 		return visualizationir.VisualizationDataTypeString
 	}
-
-}
-
-func compiledMetricDataType(format string) visualizationir.VisualizationDataType {
-	if format == "integer" {
-		return visualizationir.VisualizationDataTypeInteger
-	}
-	return visualizationir.VisualizationDataTypeDecimal
 }
 
 func compiledVisualizationFormat(format, unit string) *visualizationir.VisualizationFormat {
@@ -336,4 +415,29 @@ func compiledVisualizationFormat(format, unit string) *visualizationir.Visualiza
 		return nil
 	}
 	return &value
+}
+
+func validateVisualizationMetricTypes(authored dashboardauthoring.Visual, model *semanticmodel.Model) error {
+	if model == nil || authored.ResultShape() != "category_multi_measure" {
+		return nil
+	}
+	hasFloat, hasDecimal, hasInteger := false, false, false
+	for _, binding := range authored.Query.Metrics {
+		metric, err := model.ResolveMetric(binding.Field)
+		if err != nil {
+			continue
+		}
+		switch compiledMetricDataType(model, metric) {
+		case visualizationir.VisualizationDataTypeFloat:
+			hasFloat = true
+		case visualizationir.VisualizationDataTypeDecimal:
+			hasDecimal = true
+		case visualizationir.VisualizationDataTypeInteger:
+			hasInteger = true
+		}
+	}
+	if hasFloat && (hasDecimal || hasInteger) {
+		return fmt.Errorf("category_multi_measure cannot mix Float with exact numeric metrics in one value column")
+	}
+	return nil
 }
