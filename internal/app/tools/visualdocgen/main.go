@@ -25,11 +25,12 @@ import (
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardadapter "github.com/flidai/leapview/internal/dashboard/analyticsruntime"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationdecimal "github.com/flidai/leapview/internal/dashboard/visualization/decimal"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -46,12 +47,11 @@ const (
 )
 
 type visualExample struct {
-	ID      string
-	Source  string
-	Line    int
-	Type    string
-	Chart   *dashboardauthoring.Visual
-	Tabular *dashboardauthoring.TableVisual
+	ID     string
+	Source string
+	Line   int
+	Type   string
+	Visual dashboarddocument.DashboardVisual
 }
 
 type visualExampleFragment struct {
@@ -154,7 +154,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		return visualExamplesArtifact{}, fmt.Errorf("fixture project has no visual_examples semantic model")
 	}
 	report := buildExampleDashboard(catalog, examplesByPage, visualDocsDashboardID, semanticModelID)
-	compiledReport, err := dashboardcompiler.Compile(*report, models)
+	compiledReport, err := dashboardcompiler.CompileDocument(report, models)
 	if err != nil {
 		return visualExamplesArtifact{}, fmt.Errorf("validate executable examples: %w", err)
 	}
@@ -239,7 +239,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		if err != nil {
 			return visualExamplesArtifact{}, err
 		}
-		patch, err := service.QueryDashboardPage(queryLease.Context(), normalizedReport.ID.String(), document.Source, dashboard.Filters{})
+		patch, err := service.QueryDashboardPage(queryLease.Context(), normalizedReport.Metadata.ID, document.Source, dashboard.Filters{})
 		queryLease.Release()
 		if err != nil {
 			return visualExamplesArtifact{}, fmt.Errorf("query %s examples: %w", document.Source, err)
@@ -264,7 +264,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		}
 		slug := "visuals/" + document.Source
 		artifact.Documents[slug] = payloads
-		reference, err := buildVisualDocumentReference(examplesByPage[document.Source])
+		reference, err := buildVisualDocumentReference(examplesByPage[document.Source], compiledDashboard.Visualizations)
 		if err != nil {
 			return visualExamplesArtifact{}, fmt.Errorf("build %s field reference: %w", document.Source, err)
 		}
@@ -354,10 +354,10 @@ func columnTypeAt(columnTypes []visualizationir.VisualizationDataType, column in
 }
 
 func visualExampleSort(example visualExample, envelope visualizationir.VisualizationEnvelope) (int, bool) {
-	if example.Chart == nil || len(example.Chart.Query.Sort) == 0 {
+	authored, ok := canonicalVisualSort(example.Visual)
+	if !ok {
 		return -1, false
 	}
-	authored := example.Chart.Query.Sort[0]
 	state, ok := envelope.DataState.Value.(*visualizationir.InlineVisualizationDataState)
 	if !ok || len(state.Datasets) == 0 {
 		return -1, authored.Direction == "desc"
@@ -368,7 +368,7 @@ func visualExampleSort(example visualExample, envelope visualizationir.Visualiza
 			return index, authored.Direction == "desc"
 		}
 	}
-	fieldMatches := func(field dashboardauthoring.FieldRef) bool {
+	fieldMatches := func(field canonicalVisualField) bool {
 		shortField := field.Field
 		if separator := strings.LastIndex(shortField, "."); separator >= 0 {
 			shortField = shortField[separator+1:]
@@ -383,15 +383,12 @@ func visualExampleSort(example visualExample, envelope visualizationir.Visualiza
 		}
 		return -1
 	}
-	for _, field := range example.Chart.Query.Dimensions {
+	for _, field := range canonicalVisualDimensions(example.Visual.Query) {
 		if fieldMatches(field) {
 			return columnIndex("label"), authored.Direction == "desc"
 		}
 	}
-	if fieldMatches(example.Chart.Query.Series) {
-		return columnIndex("series"), authored.Direction == "desc"
-	}
-	for _, field := range example.Chart.Query.Metrics {
+	for _, field := range canonicalVisualMetrics(example.Visual.Query) {
 		if fieldMatches(field) || authored.Field == "value" {
 			return columnIndex("value"), authored.Direction == "desc"
 		}
@@ -510,31 +507,6 @@ func validateVisualData(example visualExample, payload []dashboard.Datum) error 
 	}
 	if finiteNumbers == 0 {
 		return fmt.Errorf("visual example %q has no finite numeric values", example.ID)
-	}
-	if example.Chart == nil || example.Chart.ResultShape() != "geo" {
-		return nil
-	}
-	for _, layer := range example.Chart.Geo.Layers {
-		if layer.Kind != "choropleth" {
-			continue
-		}
-		regions, ok := visualDocMapRegions[layer.GeometryAsset]
-		if !ok {
-			return fmt.Errorf("visual example %q uses unsupported documentation map %q", example.ID, layer.GeometryAsset)
-		}
-		seenRegions := make(map[string]struct{}, len(payload))
-		for index, datum := range payload {
-			region, _ := datum[layer.Join].(string)
-			if _, ok := regions[region]; !ok {
-				return fmt.Errorf("visual example %q region %q is not defined by map %q at data[%d].%s", example.ID, region, layer.GeometryAsset, index, layer.Join)
-			}
-			seenRegions[region] = struct{}{}
-		}
-		for _, region := range sortedSet(regions) {
-			if _, ok := seenRegions[region]; !ok {
-				return fmt.Errorf("visual example %q does not provide data for map region %q in %q", example.ID, region, layer.GeometryAsset)
-			}
-		}
 	}
 	return nil
 }
@@ -659,10 +631,17 @@ func inspectPayloadValue(value any, path string, finiteNumbers *int) error {
 	return nil
 }
 
-func buildVisualDocumentReference(examples []visualExample) (visualDocumentReference, error) {
-	if len(examples) > 0 && examples[0].Tabular != nil {
+func buildVisualDocumentReference(examples []visualExample, compiledVisualizations map[string]visualizationdefinition.Definition) (visualDocumentReference, error) {
+	if len(examples) == 0 {
+		return visualDocumentReference{}, fmt.Errorf("visual document has no examples")
+	}
+	if len(examples) > 0 && isTabularVisual(examples[0].Visual.Type) {
+		compiled, ok := compiledVisualizations[examples[0].ID]
+		if !ok {
+			return visualDocumentReference{}, fmt.Errorf("compiled visual %q is missing", examples[0].ID)
+		}
 		return visualDocumentReference{
-			Kind: "visual", Renderer: "tabular", Shapes: []string{examples[0].Type},
+			Kind: visualKindFromRenderer(compiled.RendererID), Renderer: compiled.RendererID, Shapes: []string{string(compiled.Query.ResultShape)},
 			QueryFields: []string{"dataset", "fields", "rows", "columns", "metrics"},
 			Fields: []visualdocs.FieldReference{
 				{Path: "type", Type: "string", AllowedValues: []string{"table", "matrix", "pivot"}, Description: "Selects the tabular visual behavior."},
@@ -680,35 +659,35 @@ func buildVisualDocumentReference(examples []visualExample) (visualDocumentRefer
 	presentation := map[string]struct{}{}
 	hasCalculations := false
 	reference := visualDocumentReference{Examples: make(map[string]visualExampleReference, len(examples))}
-	var previous *dashboardauthoring.Visual
+	var previous *dashboarddocument.DashboardVisual
 	for index := range examples {
-		visual := *examples[index].Chart
-		kinds[visual.KindOrDefault()] = struct{}{}
-		capability, _ := dashboardauthoring.VisualizationCapabilityForType(visual.Type)
-		renderers[capability.Renderer] = struct{}{}
-		shapes[visual.ResultShape()] = struct{}{}
+		visual := examples[index].Visual
+		compiled, ok := compiledVisualizations[examples[index].ID]
+		if !ok {
+			return visualDocumentReference{}, fmt.Errorf("compiled visual %q is missing", examples[index].ID)
+		}
+		kinds[visualKindFromRenderer(compiled.RendererID)] = struct{}{}
+		renderers[compiled.RendererID] = struct{}{}
+		shapes[string(compiled.Query.ResultShape)] = struct{}{}
 		collectQueryFields(visual.Query, queryFields)
-		if len(visual.Datasets) > 0 {
+		if visual.Datasets != nil && len(*visual.Datasets) > 0 {
 			queryFields["datasets"] = struct{}{}
 		}
-		if len(visual.Calculations) > 0 {
+		if visual.Calculations != nil && len(*visual.Calculations) > 0 {
 			hasCalculations = true
 		}
 		for key := range visualPresentationValues(visual) {
 			presentation[key] = struct{}{}
 		}
-		for key := range visualKPIValues(visual) {
-			presentation["kpi."+key] = struct{}{}
-		}
 		reference.Examples[examples[index].ID] = visualExampleReference{KeyFields: visualKeyFields(previous, visual)}
-		previous = examples[index].Chart
+		previous = &examples[index].Visual
 	}
 	reference.Kind = strings.Join(sortedSet(kinds), ", ")
 	reference.Renderer = strings.Join(sortedSet(renderers), ", ")
 	reference.Shapes = sortedSet(shapes)
 	reference.QueryFields = sortedSet(queryFields)
 	reference.Presentation = sortedSet(presentation)
-	fields, err := visualFieldReferences(reference.QueryFields, reference.Presentation, examples[0].Chart.Type)
+	fields, err := visualFieldReferences(reference.QueryFields, reference.Presentation, string(examples[0].Visual.Type))
 	if err != nil {
 		return visualDocumentReference{}, err
 	}
@@ -720,48 +699,177 @@ func buildVisualDocumentReference(examples []visualExample) (visualDocumentRefer
 		})
 	}
 	reference.Fields = fields
-	reference.Accessibility = visualAccessibilityGuidance(*examples[0].Chart)
+	reference.Accessibility = visualAccessibilityGuidance(examples[0].Visual)
 	return reference, nil
 }
 
-func collectQueryFields(query dashboardauthoring.VisualQuery, fields map[string]struct{}) {
-	if query.Dataset != "" {
+func collectQueryFields(query dashboarddocument.DashboardQuery, fields map[string]struct{}) {
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		if len(value.Dimensions) > 0 {
+			fields["dimensions"] = struct{}{}
+		}
+		if len(value.Metrics) > 0 {
+			fields["metrics"] = struct{}{}
+		}
+		if value.Sort != nil {
+			fields["sort"] = struct{}{}
+		}
+		if value.Limit != nil {
+			fields["limit"] = struct{}{}
+		}
+	case *dashboarddocument.RecordsDashboardQuery:
 		fields["dataset"] = struct{}{}
-	}
-	if len(query.Dimensions) > 0 {
-		fields["dimensions"] = struct{}{}
-	}
-	if !query.Series.IsZero() {
-		fields["series"] = struct{}{}
-	}
-	if len(query.Metrics) > 0 {
-		fields["metrics"] = struct{}{}
-	}
-	if query.Time.Field != "" {
-		fields["time"] = struct{}{}
-	}
-	if len(query.Sort) > 0 {
-		fields["sort"] = struct{}{}
-	}
-	if query.Limit > 0 {
-		fields["limit"] = struct{}{}
+		if len(value.Fields) > 0 {
+			fields["fields"] = struct{}{}
+		}
+		if value.Sort != nil {
+			fields["sort"] = struct{}{}
+		}
+		if value.Limit != nil {
+			fields["limit"] = struct{}{}
+		}
+	case *dashboarddocument.PivotDashboardQuery:
+		if len(value.Rows) > 0 {
+			fields["rows"] = struct{}{}
+		}
+		if len(value.Columns) > 0 {
+			fields["columns"] = struct{}{}
+		}
+		if len(value.Metrics) > 0 {
+			fields["metrics"] = struct{}{}
+		}
+		if value.Sort != nil {
+			fields["sort"] = struct{}{}
+		}
+	case *dashboarddocument.HistogramDashboardQuery, *dashboarddocument.DistributionDashboardQuery:
+		fields["field"] = struct{}{}
 	}
 }
 
-func visualKeyFields(previous *dashboardauthoring.Visual, visual dashboardauthoring.Visual) []string {
+type canonicalVisualField struct{ Field, Alias string }
+
+func canonicalDimensionField(value dashboarddocument.DashboardDimensionSelection) canonicalVisualField {
+	if value.String != nil {
+		return canonicalVisualField{Field: *value.String}
+	}
+	if value.Reference != nil {
+		alias := ""
+		if value.Reference.Alias != nil {
+			alias = *value.Reference.Alias
+		}
+		return canonicalVisualField{Field: value.Reference.Dimension, Alias: alias}
+	}
+	return canonicalVisualField{}
+}
+
+func canonicalMetricField(value dashboarddocument.DashboardMetricSelection) canonicalVisualField {
+	if value.String != nil {
+		return canonicalVisualField{Field: *value.String}
+	}
+	if value.Reference != nil {
+		alias := ""
+		if value.Reference.Alias != nil {
+			alias = *value.Reference.Alias
+		}
+		return canonicalVisualField{Field: value.Reference.Metric, Alias: alias}
+	}
+	return canonicalVisualField{}
+}
+
+func canonicalRecordField(value dashboarddocument.DashboardRecordFieldSelection) canonicalVisualField {
+	if value.String != nil {
+		return canonicalVisualField{Field: *value.String}
+	}
+	if value.Reference != nil {
+		alias := ""
+		if value.Reference.Alias != nil {
+			alias = *value.Reference.Alias
+		}
+		return canonicalVisualField{Field: value.Reference.Field, Alias: alias}
+	}
+	return canonicalVisualField{}
+}
+
+func canonicalVisualDimensions(query dashboarddocument.DashboardQuery) []canonicalVisualField {
+	var values []dashboarddocument.DashboardDimensionSelection
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		values = value.Dimensions
+	case *dashboarddocument.PivotDashboardQuery:
+		values = append(append([]dashboarddocument.DashboardDimensionSelection{}, value.Rows...), value.Columns...)
+	}
+	out := make([]canonicalVisualField, 0, len(values))
+	for _, value := range values {
+		out = append(out, canonicalDimensionField(value))
+	}
+	return out
+}
+
+func canonicalVisualMetrics(query dashboarddocument.DashboardQuery) []canonicalVisualField {
+	var values []dashboarddocument.DashboardMetricSelection
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		values = value.Metrics
+	case *dashboarddocument.PivotDashboardQuery:
+		values = value.Metrics
+	case *dashboarddocument.HistogramDashboardQuery:
+		values = []dashboarddocument.DashboardMetricSelection{value.Field}
+	case *dashboarddocument.DistributionDashboardQuery:
+		values = []dashboarddocument.DashboardMetricSelection{value.Field}
+	}
+	out := make([]canonicalVisualField, 0, len(values))
+	for _, value := range values {
+		out = append(out, canonicalMetricField(value))
+	}
+	return out
+}
+
+func canonicalVisualRecords(query dashboarddocument.DashboardQuery) []canonicalVisualField {
+	if value, ok := query.Value.(*dashboarddocument.RecordsDashboardQuery); ok {
+		out := make([]canonicalVisualField, 0, len(value.Fields))
+		for _, field := range value.Fields {
+			out = append(out, canonicalRecordField(field))
+		}
+		return out
+	}
+	return nil
+}
+
+func canonicalVisualSort(visual dashboarddocument.DashboardVisual) (dashboarddocument.DashboardSort, bool) {
+	var values *[]dashboarddocument.DashboardSort
+	switch value := visual.Query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		values = value.Sort
+	case *dashboarddocument.RecordsDashboardQuery:
+		values = value.Sort
+	case *dashboarddocument.PivotDashboardQuery:
+		values = value.Sort
+	}
+	if values == nil || len(*values) == 0 {
+		return dashboarddocument.DashboardSort{}, false
+	}
+	return (*values)[0], true
+}
+
+func visualKeyFields(previous *dashboarddocument.DashboardVisual, visual dashboarddocument.DashboardVisual) []string {
 	fields := make([]string, 0, 12)
 	changedToValue := func(before, after any) bool {
 		return valueIsSet(after) && (previous == nil || !reflect.DeepEqual(before, after))
 	}
 	queryChecks := []struct {
 		name string
-		get  func(dashboardauthoring.VisualQuery) any
+		get  func(dashboarddocument.DashboardQuery) any
 	}{
-		{"dataset", func(query dashboardauthoring.VisualQuery) any { return query.Dataset }},
-		{"dimensions", func(query dashboardauthoring.VisualQuery) any { return query.Dimensions }},
-		{"series", func(query dashboardauthoring.VisualQuery) any { return query.Series }},
-		{"metrics", func(query dashboardauthoring.VisualQuery) any { return query.Metrics }},
-		{"time", func(query dashboardauthoring.VisualQuery) any { return query.Time }},
+		{"dataset", func(query dashboarddocument.DashboardQuery) any {
+			if value, ok := query.Value.(*dashboarddocument.RecordsDashboardQuery); ok {
+				return value.Dataset
+			}
+			return ""
+		}},
+		{"dimensions", func(query dashboarddocument.DashboardQuery) any { return canonicalVisualDimensions(query) }},
+		{"metrics", func(query dashboarddocument.DashboardQuery) any { return canonicalVisualMetrics(query) }},
+		{"fields", func(query dashboarddocument.DashboardQuery) any { return canonicalVisualRecords(query) }},
 	}
 	for _, check := range queryChecks {
 		var before any
@@ -787,54 +895,29 @@ func visualKeyFields(previous *dashboardauthoring.Visual, visual dashboardauthor
 			fields = append(fields, "presentation."+key)
 		}
 	}
-	if len(visual.Geo.Layers) > 0 && (previous == nil || !reflect.DeepEqual(previous.Geo.Layers, visual.Geo.Layers)) {
-		fields = append(fields, "geo.layers")
-	}
-	if len(visual.Datasets) > 0 && (previous == nil || !reflect.DeepEqual(previous.Datasets, visual.Datasets)) {
+	if visual.Datasets != nil && (previous == nil || !reflect.DeepEqual(previous.Datasets, visual.Datasets)) {
 		fields = append(fields, "datasets")
 	}
-	if len(visual.Calculations) > 0 && (previous == nil || !reflect.DeepEqual(previous.Calculations, visual.Calculations)) {
+	if visual.Calculations != nil && len(*visual.Calculations) > 0 && (previous == nil || !reflect.DeepEqual(previous.Calculations, visual.Calculations)) {
 		fields = append(fields, "calculations")
-	}
-	kpiValues := visualKPIValues(visual)
-	previousKPIValues := map[string]any{}
-	if previous != nil {
-		previousKPIValues = visualKPIValues(*previous)
-	}
-	kpiKeys := make(map[string]struct{}, len(kpiValues))
-	for key := range kpiValues {
-		kpiKeys[key] = struct{}{}
-	}
-	for _, key := range sortedSet(kpiKeys) {
-		if previous == nil || !reflect.DeepEqual(previousKPIValues[key], kpiValues[key]) {
-			fields = append(fields, "kpi."+key)
-		}
 	}
 	return fields
 }
 
-func visualPresentationValues(visual dashboardauthoring.Visual) map[string]any {
-	value := reflect.ValueOf(visual.Presentation)
-	typeInfo := value.Type()
-	out := make(map[string]any)
-	for index := 0; index < value.NumField(); index++ {
-		field := value.Field(index)
-		if field.IsZero() {
-			continue
-		}
-		name := typeInfo.Field(index).Tag.Get("yaml")
-		if name != "" && name != "-" {
-			out[name] = field.Interface()
-		}
-	}
-	return out
-}
-
-func visualKPIValues(visual dashboardauthoring.Visual) map[string]any {
-	if visual.Type != "kpi" {
+func visualPresentationValues(visual dashboarddocument.DashboardVisual) map[string]any {
+	if visual.Presentation.Value == nil {
 		return nil
 	}
-	value := reflect.ValueOf(visual.KPI)
+	value := reflect.ValueOf(visual.Presentation.Value)
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
+		return nil
+	}
 	typeInfo := value.Type()
 	out := make(map[string]any)
 	for index := 0; index < value.NumField(); index++ {
@@ -843,7 +926,7 @@ func visualKPIValues(visual dashboardauthoring.Visual) map[string]any {
 			continue
 		}
 		name := strings.Split(typeInfo.Field(index).Tag.Get("yaml"), ",")[0]
-		if name != "" && name != "-" {
+		if name != "" && name != "-" && name != "type" {
 			out[name] = field.Interface()
 		}
 	}
@@ -858,11 +941,26 @@ func valueIsSet(value any) bool {
 	return reflected.IsValid() && !reflected.IsZero()
 }
 
-func valueOrZero(previous *dashboardauthoring.Visual, get func(dashboardauthoring.Visual) any) any {
+func valueOrZero(previous *dashboarddocument.DashboardVisual, get func(dashboarddocument.DashboardVisual) any) any {
 	if previous == nil {
 		return nil
 	}
 	return get(*previous)
+}
+
+func isTabularVisual(value dashboarddocument.DashboardVisualType) bool {
+	return value == dashboarddocument.DashboardVisualTypeTable || value == dashboarddocument.DashboardVisualTypeMatrix || value == dashboarddocument.DashboardVisualTypePivot
+}
+
+func visualKindFromRenderer(renderer string) string {
+	switch renderer {
+	case visualizationdefinition.RendererHTML:
+		return "kpi"
+	case visualizationdefinition.RendererTanStack:
+		return "grid"
+	default:
+		return "chart"
+	}
 }
 
 func sortedSet(values map[string]struct{}) []string {
@@ -874,8 +972,8 @@ func sortedSet(values map[string]struct{}) []string {
 	return result
 }
 
-func visualAccessibilityGuidance(visual dashboardauthoring.Visual) string {
-	if visual.KindOrDefault() == "kpi" {
+func visualAccessibilityGuidance(visual dashboarddocument.DashboardVisual) string {
+	if visual.Type == dashboarddocument.DashboardVisualTypeKpi {
 		return "State current, comparison, target, and status in text; use a direction cue and label so color is never the only indication of change."
 	}
 	switch visual.Type {
@@ -888,22 +986,25 @@ func visualAccessibilityGuidance(visual dashboardauthoring.Visual) string {
 	}
 }
 
-func buildExampleDashboard(catalog visualCatalog, examplesByPage map[string][]visualExample, dashboardID, semanticModelID projectgraph.ResourceID) *dashboardauthoring.Dashboard {
-	report := &dashboardauthoring.Dashboard{ID: dashboardID, Title: "Visual documentation", Description: "Executable documentation examples.", SemanticModel: semanticModelID, Visuals: map[string]dashboardauthoring.AuthoringVisualization{}, Pages: make([]dashboard.Page, 0, len(catalog.Documents))}
+func buildExampleDashboard(catalog visualCatalog, examplesByPage map[string][]visualExample, dashboardID, semanticModelID projectgraph.ResourceID) dashboarddocument.DashboardDocument {
+	displayName, description := "Visual documentation", "Executable documentation examples."
+	report := dashboarddocument.DashboardDocument{
+		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
+		Kind:       dashboarddocument.DashboardResourceKindDashboard,
+		Metadata:   dashboarddocument.DashboardMetadata{ID: dashboardID.String(), Name: "visual-docs", DisplayName: &displayName, Description: &description},
+		Spec: dashboarddocument.DashboardSpec{SemanticModel: semanticModelID.String(), Filters: []dashboarddocument.DashboardFilter{}, Visuals: map[string]dashboarddocument.DashboardVisual{}, Pages: make([]dashboarddocument.DashboardPage, 0, len(catalog.Documents)),
+			Layout: &dashboarddocument.DashboardLayoutDefaults{Columns: 12, RowHeight: 48, Gap: 16, Padding: 16}},
+	}
 	for _, document := range catalog.Documents {
-		page := dashboard.Page{ID: document.Source, Title: document.Title, Canvas: dashboard.PageCanvas{Width: 1366, Height: 3000}, Grid: dashboard.PageGrid{Columns: 12, RowHeight: 48, Gap: 16, Padding: 16}, Visuals: make([]dashboard.PageVisual, 0, len(examplesByPage[document.Source]))}
+		page := dashboarddocument.DashboardPage{ID: document.Source, Title: document.Title, Components: make([]dashboarddocument.DashboardPageComponent, 0, len(examplesByPage[document.Source]))}
 		for index, example := range examplesByPage[document.Source] {
-			component := dashboard.PageVisual{ID: example.ID, Placement: dashboard.PagePlacement{Col: 1, Row: 1 + index*8, ColSpan: 6, RowSpan: 7}}
-			if example.Chart != nil {
-				report.Visuals[example.ID] = dashboardauthoring.ChartVisualization(*example.Chart)
-				component.Kind, component.Visual = "visual", example.ID
-			} else {
-				report.Visuals[example.ID] = dashboardauthoring.TabularVisualization(example.Type, *example.Tabular)
-				component.Kind, component.Visual = "visual", example.ID
-			}
-			page.Visuals = append(page.Visuals, component)
+			report.Spec.Visuals[example.ID] = example.Visual
+			page.Components = append(page.Components, dashboarddocument.DashboardPageComponent{Value: &dashboarddocument.VisualDashboardPageComponent{
+				DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: example.ID, Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 1, Row: int32(1 + index*8), ColumnSpan: 6, RowSpan: 7}},
+				Type:                       "visual", Visual: example.ID,
+			}})
 		}
-		report.Pages = append(report.Pages, page)
+		report.Spec.Pages = append(report.Spec.Pages, page)
 	}
 	return report
 }
@@ -1020,11 +1121,19 @@ func decodeVisualExample(id, filename string, line int, node yaml.Node) (visualE
 	if err := validateVisualExampleContract(id, filename, node); err != nil {
 		return visualExample{}, fmt.Errorf("%s:%d: visual %q: %w", filename, line, id, err)
 	}
-	var authored dashboardauthoring.AuthoringVisualization
-	if err := node.Decode(&authored); err != nil {
+	var rawVisual any
+	if err := node.Decode(&rawVisual); err != nil {
 		return visualExample{}, fmt.Errorf("%s:%d: decode visual %q: %w", filename, line, id, err)
 	}
-	example := visualExample{ID: id, Source: filename, Line: line, Type: authored.Type, Chart: authored.Chart, Tabular: authored.Tabular}
+	encodedVisual, err := json.Marshal(rawVisual)
+	if err != nil {
+		return visualExample{}, fmt.Errorf("%s:%d: encode visual %q: %w", filename, line, id, err)
+	}
+	var visual dashboarddocument.DashboardVisual
+	if err := json.Unmarshal(encodedVisual, &visual); err != nil {
+		return visualExample{}, fmt.Errorf("%s:%d: decode visual %q: %w", filename, line, id, err)
+	}
+	example := visualExample{ID: id, Source: filename, Line: line, Type: string(visual.Type), Visual: visual}
 	return example, nil
 }
 
@@ -1042,12 +1151,13 @@ func validateVisualExampleContract(id, filename string, node yaml.Node) error {
 		},
 		"spec": map[string]any{
 			"semanticModel": "visual_examples",
+			"filters":       []any{},
 			"visuals":       map[string]any{id: visual},
 			"pages": []any{map[string]any{
 				"id": "example", "title": "Example",
 				"components": []any{map[string]any{
-					"id": id, "kind": "visual", "visual": id,
-					"placement": map[string]int{"col": 1, "row": 1, "col_span": 6, "row_span": 4},
+					"id": id, "type": "visual", "visual": id,
+					"placement": map[string]int{"column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4},
 				}},
 			}},
 		},

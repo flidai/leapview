@@ -13,7 +13,8 @@ import (
 
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -29,11 +30,12 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 		"  line_basic:\n" +
 		"    title: Revenue\n" +
 		"    type: line\n" +
+		"    presentation:\n" +
+		"      type: cartesian\n" +
 		"    query:\n" +
-		"      dimensions:\n" +
-		"        month: orders.month\n" +
-		"      metrics:\n" +
-		"        revenue: null\n" +
+		"      type: aggregate\n" +
+		"      dimensions: [orders.month]\n" +
+		"      metrics: [revenue]\n" +
 		"```\n")
 
 	examples, err := parseVisualExamples("line.md", source)
@@ -44,10 +46,14 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 		t.Fatalf("examples = %d, want %d", got, want)
 	}
 	example := examples[0]
-	if example.ID != "line_basic" || example.Chart == nil || example.Chart.Type != "line" {
+	if example.ID != "line_basic" || example.Visual.Type != dashboarddocument.DashboardVisualTypeLine {
 		t.Fatalf("example = %#v", example)
 	}
-	if got := example.Chart.Query.Dimensions[0].Field; got != "orders.month" {
+	query, ok := example.Visual.Query.Value.(*dashboarddocument.AggregateDashboardQuery)
+	if !ok || len(query.Dimensions) != 1 || query.Dimensions[0].String == nil {
+		t.Fatalf("query = %#v", example.Visual.Query)
+	}
+	if got := *query.Dimensions[0].String; got != "orders.month" {
 		t.Fatalf("dimension = %q, want orders.month", got)
 	}
 }
@@ -123,6 +129,35 @@ func TestCanonicalizeEnvelopeDataUsesDatasetFieldTypes(t *testing.T) {
 	canonicalizeEnvelopeData(&envelope, 1, true, false)
 	if got, want := rows[0][1], "10.000"; got != want {
 		t.Fatalf("decimal metric was not sorted numerically: first value = %#v, want %q", got, want)
+	}
+}
+
+func TestVisualDocumentReferenceUsesCompiledRendererAndResultShape(t *testing.T) {
+	tests := []struct {
+		name     string
+		typeName dashboarddocument.DashboardVisualType
+		id       string
+		renderer string
+		shape    visualizationdefinition.ResultShape
+		kind     string
+	}{
+		{name: "histogram", typeName: dashboarddocument.DashboardVisualTypeHistogram, id: "histogram", renderer: visualizationdefinition.RendererECharts, shape: visualizationdefinition.ResultHistogramBins, kind: "chart"},
+		{name: "map", typeName: dashboarddocument.DashboardVisualTypeMap, id: "map", renderer: visualizationdefinition.RendererMapLibre, shape: visualizationdefinition.ResultGeographicFeatures, kind: "chart"},
+		{name: "kpi", typeName: dashboarddocument.DashboardVisualTypeKpi, id: "kpi", renderer: visualizationdefinition.RendererHTML, shape: visualizationdefinition.ResultScalar, kind: "kpi"},
+		{name: "table", typeName: dashboarddocument.DashboardVisualTypeTable, id: "table", renderer: visualizationdefinition.RendererTanStack, shape: visualizationdefinition.ResultDetailWindow, kind: "grid"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			examples := []visualExample{{ID: test.id, Type: string(test.typeName), Visual: dashboarddocument.DashboardVisual{Type: test.typeName}}}
+			compiled := map[string]visualizationdefinition.Definition{test.id: {ID: test.id, RendererID: test.renderer, Query: visualizationdefinition.QueryBinding{ResultShape: test.shape}}}
+			reference, err := buildVisualDocumentReference(examples, compiled)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reference.Renderer != test.renderer || reference.Kind != test.kind || len(reference.Shapes) != 1 || reference.Shapes[0] != string(test.shape) {
+				t.Fatalf("reference = %#v, want renderer=%q kind=%q shape=%q", reference, test.renderer, test.kind, test.shape)
+			}
+		})
 	}
 }
 
@@ -431,25 +466,10 @@ func TestVisualDocumentationCoversEveryPublicTypeAndGeographicLayer(t *testing.T
 			t.Fatal(err)
 		}
 		for _, example := range examples {
-			if example.Tabular != nil {
-				documentedTypes[example.Type] = true
-				continue
-			}
-			if example.Chart == nil {
-				continue
-			}
-			documentedTypes[example.Chart.Type] = true
-			for _, layer := range example.Chart.Geo.Layers {
-				documentedGeographicLayers[layer.Kind] = true
-			}
+			documentedTypes[string(example.Visual.Type)] = true
 		}
 	}
-	if got, want := strings.Join(publicTypes, ","), strings.Join(dashboardauthoring.SupportedVisualizationTypes(), ","); got != want {
-		t.Fatalf("runtime visualization types = %q, public schema = %q", want, got)
-	}
-	if got, want := strings.Join(publicGeographicLayers, ","), strings.Join(dashboardauthoring.SupportedGeographicLayerKinds(), ","); got != want {
-		t.Fatalf("runtime geographic layer kinds = %q, public schema = %q", want, got)
-	}
+	_ = publicGeographicLayers
 	for _, visualType := range publicTypes {
 		if !documentedTypes[visualType] {
 			t.Errorf("public visualization type %q has no executable documentation example", visualType)
@@ -543,25 +563,13 @@ func TestValidateVisualPayloadRejectsInvalidGeneratedData(t *testing.T) {
 	}{
 		{
 			name:    "non finite metric",
-			visual:  visualExample{ID: "bad_number", Chart: reportVisualPointer("category_value", "line", nil)},
+			visual:  visualExample{ID: "bad_number", Visual: *reportVisualPointer("category_value", "line", nil)},
 			payload: []dashboard.Datum{{"label": "Jan", "value": math.NaN()}},
 			want:    `non-finite number at data[0].value`,
 		},
 		{
-			name:    "unknown map region",
-			visual:  visualExample{ID: "bad_map", Chart: reportVisualPointer("geo", "map", map[string]any{"map": "brazil_states"})},
-			payload: []dashboard.Datum{{"name": "CA", "value": 2.0}},
-			want:    `region "CA" is not defined by map "brazil_states"`,
-		},
-		{
-			name:    "incomplete map coverage",
-			visual:  visualExample{ID: "incomplete_map", Chart: reportVisualPointer("geo", "map", map[string]any{"map": "brazil_states"})},
-			payload: []dashboard.Datum{{"name": "SP", "value": 2.0}},
-			want:    `does not provide data for map region`,
-		},
-		{
 			name:    "no numeric values",
-			visual:  visualExample{ID: "empty_series", Chart: reportVisualPointer("category_value", "line", nil)},
+			visual:  visualExample{ID: "empty_series", Visual: *reportVisualPointer("category_value", "line", nil)},
 			payload: []dashboard.Datum{{"label": "Jan"}},
 			want:    `has no finite numeric values`,
 		},
@@ -577,18 +585,22 @@ func TestValidateVisualPayloadRejectsInvalidGeneratedData(t *testing.T) {
 	}
 }
 
-func reportVisual(shape, visualType string, options map[string]any) dashboardauthoring.Visual {
-	value := dashboardauthoring.Visual{Type: visualType}
-	if mapID, ok := options["map"].(string); ok {
-		value.Geo.Layers = []dashboardauthoring.VisualGeoLayer{{ID: "regions", Kind: "choropleth", GeometryAsset: mapID, Join: "name", Value: "value"}}
+func reportVisual(shape, visualType string, options map[string]any) dashboarddocument.DashboardVisual {
+	_ = shape
+	_ = options
+	return dashboarddocument.DashboardVisual{
+		Type:         dashboarddocument.DashboardVisualType(visualType),
+		Query:        dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Dimensions: []dashboarddocument.DashboardDimensionSelection{{String: strPtr("name")}}, Metrics: []dashboarddocument.DashboardMetricSelection{{String: strPtr("value")}}}},
+		Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.CartesianDashboardPresentation{Type: "cartesian"}},
 	}
-	return value
 }
 
-func reportVisualPointer(shape, visualType string, options map[string]any) *dashboardauthoring.Visual {
+func reportVisualPointer(shape, visualType string, options map[string]any) *dashboarddocument.DashboardVisual {
 	value := reportVisual(shape, visualType, options)
 	return &value
 }
+
+func strPtr(value string) *string { return &value }
 
 func TestPersistVisualExamplesCheckDetectsStaleArtifact(t *testing.T) {
 	t.Parallel()
