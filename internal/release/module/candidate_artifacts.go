@@ -14,6 +14,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
@@ -26,12 +27,13 @@ import (
 )
 
 type candidateArtifactService struct {
-	states      ServingStateRepository
-	artifacts   release.ArtifactStore
-	validator   servingstatevalidate.Service
-	environment servingstate.Environment
-	pins        ManagedDataPins
-	provenance  release.ServingStateProvenanceRepository
+	states            ServingStateRepository
+	artifacts         release.ArtifactStore
+	validator         servingstatevalidate.Service
+	environment       servingstate.Environment
+	pins              ManagedDataPins
+	provenance        release.ServingStateProvenanceRepository
+	extensionEvidence func(context.Context) ([]extension.Evidence, error)
 }
 
 type candidateGenerationBase struct {
@@ -154,6 +156,17 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if dataMode == release.GenerationDataRefreshSources && len(requirements) == 0 && len(managedPins) == 0 && len(authored) == 0 {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("project requires data preparation but has no refresh-capable connections"))
 	}
+	extensions, err := service.collectExtensionEvidence(ctx)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
+	}
+	if expected != nil && !reflect.DeepEqual(expected.Extensions, extensions) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized extension evidence differs from inspected evidence"))
+	}
+	extensions, err := service.collectExtensionEvidence(ctx)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
+	}
 	inspectIdentity, err := projectgraph.NewServingIdentity(request.Scope.ProjectID, request.Scope.Environment, "inspect-"+shortCandidateDigest(request.CandidateID))
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -170,7 +183,7 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	return release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()}, AuthorizationFingerprint: authorizationFingerprint, Generation: release.CandidateGenerationArtifact{Identity: inspectIdentity, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: candidateRestrictions(authorizationSnapshot)}, Compiler: release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution}}, nil
+	return release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()}, Extensions: extensions, AuthorizationFingerprint: authorizationFingerprint, Generation: release.CandidateGenerationArtifact{Identity: inspectIdentity, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: candidateRestrictions(authorizationSnapshot)}, Compiler: release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution}}, nil
 }
 
 func shortCandidateDigest(value string) string {
@@ -575,6 +588,7 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 	}
 	return release.CandidateArtifactSet{
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), ContentDigest: validated.Digest, CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()},
+		Extensions:               extensions,
 		AuthorizationFingerprint: authorizationFingerprint,
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, ServingArtifactID: artifact.ID, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions},
 		Compiler:                 release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution},
@@ -597,6 +611,27 @@ func candidateRestrictions(snapshot accesssnapshot.AuthorizationSnapshot) []rele
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result
+}
+
+func (service *candidateArtifactService) collectExtensionEvidence(ctx context.Context) ([]extension.Evidence, error) {
+	if service == nil || service.extensionEvidence == nil {
+		return nil, nil
+	}
+	values, err := service.extensionEvidence(ctx)
+	if err != nil {
+		return nil, err
+	}
+	values = append([]extension.Evidence(nil), values...)
+	sort.Slice(values, func(i, j int) bool { return values[i].Name < values[j].Name })
+	for i := range values {
+		if values[i].Name == "" || values[i].Identity == "" || values[i].Digest == "" || values[i].Origin == "" || values[i].Provenance == "" || values[i].Signature == "" {
+			return nil, errors.New("extension evidence is incomplete")
+		}
+		if i > 0 && values[i-1].Name == values[i].Name {
+			return nil, errors.New("duplicate extension evidence")
+		}
+	}
+	return values, nil
 }
 
 func (service *candidateArtifactService) generationBase(ctx context.Context, identity *projectgraph.ServingIdentity) (candidateGenerationBase, error) {

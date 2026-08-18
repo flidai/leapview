@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	ocidigest "github.com/opencontainers/go-digest"
@@ -102,6 +103,10 @@ type GenerationPlanProvenance struct {
 	ManagedDataPins     []ManagedDataPin              `json:"managedDataPins"`
 	Bindings            []BindingEvidence             `json:"bindings"`
 	AuthoredConnections []AuthoredConnectionEvidence  `json:"authoredConnections"`
+	// Extensions is non-secret target evidence for exact DuckDB extension
+	// artifacts admitted while preparing this candidate. It is optional for
+	// historical releases and canonicalized when present.
+	Extensions []extension.Evidence `json:"extensions,omitempty"`
 }
 
 type ProvenanceInput struct {
@@ -283,6 +288,10 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	if err != nil {
 		return GenerationPlanProvenance{}, err
 	}
+	p.Extensions, err = normalizeExtensionEvidence(p.Extensions)
+	if err != nil {
+		return GenerationPlanProvenance{}, err
+	}
 	if (p.DataMode == GenerationDataReuseBase || p.DataMode == GenerationDataReuseSnapshotLegacy) && len(p.AuthoredConnections) != 0 {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("snapshot reuse cannot retain authored refresh connection evidence"))
 	}
@@ -290,6 +299,26 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("source refresh requires connection evidence"))
 	}
 	return p, nil
+}
+
+func normalizeExtensionEvidence(values []extension.Evidence) ([]extension.Evidence, error) {
+	values = append([]extension.Evidence(nil), values...)
+	for i := range values {
+		value := &values[i]
+		if value.Name != strings.TrimSpace(value.Name) || value.Identity != strings.TrimSpace(value.Identity) || value.Digest != strings.TrimSpace(value.Digest) || value.DuckDBVersion != strings.TrimSpace(value.DuckDBVersion) || value.ExtensionVersion != strings.TrimSpace(value.ExtensionVersion) || value.GOOS != strings.TrimSpace(value.GOOS) || value.GOARCH != strings.TrimSpace(value.GOARCH) || value.Platform != strings.TrimSpace(value.Platform) || value.SupportProfile != strings.TrimSpace(value.SupportProfile) {
+			return nil, provenanceInvalid(errors.New("extension evidence identity must be canonical"))
+		}
+		if value.Name == "" || value.Identity == "" || value.Digest == "" || value.DuckDBVersion == "" || value.ExtensionVersion == "" || value.GOOS == "" || value.GOARCH == "" || value.Platform == "" || value.SupportProfile == "" || platformdigest.ValidateSHA256Identity(value.Identity) != nil || platformdigest.ValidateSHA256Identity(value.Digest) != nil {
+			return nil, provenanceInvalid(errors.New("extension evidence identity is invalid"))
+		}
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].Name < values[j].Name })
+	for i := 1; i < len(values); i++ {
+		if values[i-1].Name == values[i].Name {
+			return nil, provenanceInvalid(errors.New("duplicate extension evidence"))
+		}
+	}
+	return values, nil
 }
 
 func normalizeAuthoredConnectionEvidence(values []AuthoredConnectionEvidence) ([]AuthoredConnectionEvidence, error) {

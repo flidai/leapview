@@ -23,6 +23,7 @@ import (
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	extensiondomain "github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -37,21 +38,12 @@ type SourceRuntime struct {
 // AdmittedExtension is immutable evidence for one exact, already verified
 // extension artifact. The path is target-owned and never enters authored
 // resources or fingerprints.
-type AdmittedExtension struct {
-	Name     string
-	Identity string
-	Version  string
-	Platform string
-	Digest   string
-	Path     string
-}
+type AdmittedExtension = extensiondomain.AdmittedExtension
 
 // ExtensionAdmission is supplied by the deployment/runtime host after it has
 // verified the pinned extension artifact. Source preparation never acquires or
 // installs extensions; it loads only the exact path returned here.
-type ExtensionAdmission interface {
-	AdmitExtension(context.Context, string) (AdmittedExtension, error)
-}
+type ExtensionAdmission = extensiondomain.Admission
 
 type fatalReporter interface {
 	MarkFatal(error)

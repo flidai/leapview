@@ -10,6 +10,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -30,7 +31,10 @@ type Module struct {
 	environment        string
 	api                APIConfig
 	logger             *slog.Logger
-	finalizeExecution  apigencommand.AsyncExecutionContract
+	// ExtensionEvidence is target-side evidence supplied by packaging/admin
+	// preparation; project compilation cannot invent or fetch artifacts.
+	extensionEvidence func(context.Context) ([]extension.Evidence, error)
+	finalizeExecution apigencommand.AsyncExecutionContract
 }
 
 // candidateArtifactPhases is the complete phase-aware artifact surface used
@@ -57,6 +61,7 @@ type Config struct {
 	Environment       servingstate.Environment
 	API               APIConfig
 	Logger            *slog.Logger
+	ExtensionEvidence func(context.Context) ([]extension.Evidence, error)
 }
 
 type ServingStateRepository interface {
@@ -127,8 +132,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		candidateArtifacts: &candidateArtifactService{
 			states:    config.States,
 			artifacts: store, validator: validator,
-			environment: environment,
-			pins:        config.ManagedDataPins, provenance: servingProvenance,
+			environment:       environment,
+			extensionEvidence: config.ExtensionEvidence,
+			pins:              config.ManagedDataPins, provenance: servingProvenance,
 		},
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
 		searchCatalog: config.API.ProjectSearchCatalog,

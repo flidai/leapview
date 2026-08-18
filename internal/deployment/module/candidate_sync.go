@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/digest"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/project"
@@ -590,6 +591,7 @@ func candidateReleaseProvenance(
 			DataRevision: artifacts.Generation.DataRevision, DataMode: artifacts.Generation.DataMode,
 			ManagedDataPins: append([]release.ManagedDataPin(nil), artifacts.Generation.ManagedDataPins...),
 			Bindings:        bindings, AuthoredConnections: candidateProvenanceAuthoredConnections(artifacts.Generation.AuthoredConnections),
+			Extensions: append([]extension.Evidence(nil), artifacts.Extensions...),
 		},
 	})
 }

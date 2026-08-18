@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
@@ -80,7 +81,10 @@ type CandidateArtifactIdentity struct {
 }
 
 type CandidateArtifactSet struct {
-	Artifact                 ProjectArtifactProvenance
+	Artifact ProjectArtifactProvenance
+	// Extensions is target-side, non-secret evidence for exact extension
+	// artifacts admitted during bounded candidate preparation.
+	Extensions               []extension.Evidence
 	AuthorizationFingerprint string
 	Generation               CandidateGenerationArtifact
 	// Compiler is the exact immutable compiler evidence used to produce the
