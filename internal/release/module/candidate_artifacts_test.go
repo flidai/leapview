@@ -169,7 +169,7 @@ func relationContextFixture(t *testing.T) projectartifact.Project {
 		ID:          "project:context",
 		Connections: map[string]semanticmodel.Connection{"connection:orders": {Kind: "managed"}, "connection:customers": {Kind: "managed"}},
 		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:orders", Format: "csv"}, "source:customers": {Connection: "connection:customers", Format: "csv"}},
-		Models:      map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, SourceDependencies: []string{"source:orders"}}, "model:customers": {Execution: semanticmodel.ExecutionDefinition{Source: "source:customers"}, SourceDependencies: []string{"source:customers"}}, "model:summary": {ModelDependencies: []string{"model:orders"}}},
+		Models:      map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, SourceDependencies: []string{"source:orders"}}, "model:customers": {Execution: semanticmodel.ExecutionDefinition{Source: "source:customers"}, SourceDependencies: []string{"source:customers"}}, "model:summary": {Execution: semanticmodel.ExecutionDefinition{SQL: "select * from model.orders"}, ModelDependencies: []string{"model:orders"}}},
 	})
 	require.NoError(t, err)
 	return artifact

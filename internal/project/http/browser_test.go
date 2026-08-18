@@ -98,7 +98,7 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
 			ID: projectID,
 			Models: map[string]semanticmodel.Table{assetID: {
-				Sources: []string{"geolocations"}, Execution: semanticmodel.ExecutionDefinition{SQL: "select zip_code from source.geolocations"},
+				SourceDependencies: []string{"geolocations"}, Execution: semanticmodel.ExecutionDefinition{SQL: "select zip_code from source.geolocations"},
 				Entities: map[string]semanticmodel.EntityDefinition{"zip": {Type: "primary", Fields: []string{"zip_code"}}}, GrainEntity: "zip", Dimensions: map[string]semanticmodel.MetricDimension{"zip_code": {Label: "ZIP code"}},
 			}},
 		}},
