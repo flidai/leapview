@@ -295,7 +295,7 @@ model FieldFreshness {
 
 model RevisionFreshness {
   basis: "revision";
-  revision: string;
+  revision: utcDateTime;
   warningAfter?: FreshnessDuration;
   errorAfter?: FreshnessDuration;
 }
