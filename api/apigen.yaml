@@ -110,12 +110,19 @@ targets:
         typescript_module: ../visualization
   - name: agent-tool-contracts
     kind: contracts
-    typespec_dir: ../internal/agent/contracts
-    typespec_entrypoint: typespec/main.tsp
+    typespec_dir: ..
+    typespec_entrypoint: internal/agent/contracts/typespec/main.tsp
     ir_out: ../internal/agent/contracts/gen/agent-tools-ir.json
     go_models_out: ../internal/agent/contracts/models.gen.go
     go_models_package: contracts
     json_schema_out: ../internal/agent/contracts/gen/agent-tools.schema.json
+    contract_imports:
+      LeapViewDashboard:
+        go_package: github.com/flidai/leapview/internal/dashboard/document
+        go_alias: dashboarddocument
+      LeapViewVisualization:
+        go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
+        go_alias: visualizationir
   - name: desktop-discovery-contracts
     kind: contracts
     typespec_dir: .

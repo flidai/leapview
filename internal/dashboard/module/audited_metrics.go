@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -132,6 +133,31 @@ func (m auditedMetrics) QueryVisualization(ctx context.Context, dashboardID, pag
 	return m.Metrics.QueryVisualization(m.auditContext(ctx), dashboardID, pageID, filters, visualID)
 }
 
+// QueryVisualizationForDefinition preserves the canonical compiled-definition
+// execution seam through the audit decorator used by the application module.
+func (m auditedMetrics) QueryVisualizationForDefinition(ctx context.Context, definition dashboarddefinition.Definition, pageID string, filters dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
+	provider, ok := m.Metrics.(interface {
+		QueryVisualizationForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, string) (visualizationir.VisualizationEnvelope, error)
+	})
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, errors.New("compiled visualization execution is not supported by this runtime")
+	}
+	return provider.QueryVisualizationForDefinition(m.auditContext(ctx), definition, pageID, filters, visualID)
+}
+
+// DefaultFiltersForDefinition forwards authored defaults through the audit
+// decorator so canonical visual queries execute with the same filter state as
+// dashboard pages.
+func (m auditedMetrics) DefaultFiltersForDefinition(definition dashboarddefinition.Definition) dashboard.Filters {
+	provider, ok := m.Metrics.(interface {
+		DefaultFiltersForDefinition(dashboarddefinition.Definition) dashboard.Filters
+	})
+	if !ok {
+		return dashboard.Filters{}.WithDefaults()
+	}
+	return provider.DefaultFiltersForDefinition(definition)
+}
+
 func (m auditedMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	if m.Metrics == nil {
 		return visualizationir.VisualizationEnvelope{}, errors.New("query metrics are not configured")
@@ -235,28 +261,28 @@ func queryEventInput(request dataquery.Query, result dataquery.Result) queryaudi
 
 func queryShapeJSON(request dataquery.Query) string {
 	bytes, err := json.Marshal(struct {
-		ProjectID     string             `json:"projectId,omitempty"`
-		Surface       string             `json:"surface,omitempty"`
-		Operation     string             `json:"operation,omitempty"`
-		RequestID     string             `json:"requestId,omitempty"`
-		ObjectType    string             `json:"objectType,omitempty"`
-		ObjectID      string             `json:"objectId,omitempty"`
-		CorrelationID string             `json:"correlationId,omitempty"`
-		ModelID       string             `json:"modelId,omitempty"`
-		Kind          dataquery.Kind     `json:"kind"`
-		Target        string             `json:"target,omitempty"`
-		Fields        []dataquery.Field  `json:"fields,omitempty"`
-		Metrics       []dataquery.Field  `json:"metrics,omitempty"`
-		Value         dataquery.Field    `json:"value,omitempty"`
-		Time          dataquery.Time     `json:"time,omitempty"`
-		Filters       []dataquery.Filter `json:"filters,omitempty"`
-		Sort          []dataquery.Sort   `json:"sort,omitempty"`
-		Offset        int                `json:"offset,omitempty"`
-		Limit         int                `json:"limit,omitempty"`
-		BinCount      int                `json:"binCount,omitempty"`
+		ProjectID     string                         `json:"projectId,omitempty"`
+		Surface       string                         `json:"surface,omitempty"`
+		Operation     string                         `json:"operation,omitempty"`
+		RequestID     string                         `json:"requestId,omitempty"`
+		ObjectType    string                         `json:"objectType,omitempty"`
+		ObjectID      string                         `json:"objectId,omitempty"`
+		CorrelationID string                         `json:"correlationId,omitempty"`
+		ModelID       string                         `json:"modelId,omitempty"`
+		Kind          dataquery.Kind                 `json:"kind"`
+		Target        string                         `json:"target,omitempty"`
+		Fields        []dataquery.Field              `json:"fields,omitempty"`
+		Metrics       []dataquery.Field              `json:"metrics,omitempty"`
+		Value         dataquery.Field                `json:"value,omitempty"`
+		Time          dataquery.Time                 `json:"time,omitempty"`
+		Filters       []dataquery.Filter             `json:"filters,omitempty"`
+		Sort          []dataquery.Sort               `json:"sort,omitempty"`
+		Offset        int                            `json:"offset,omitempty"`
+		Limit         int                            `json:"limit,omitempty"`
+		BinCount      int                            `json:"binCount,omitempty"`
 		Histogram     *dataquery.HistogramOptions    `json:"histogram,omitempty"`
 		Distribution  *dataquery.DistributionOptions `json:"distribution,omitempty"`
-		IncludeTotal  bool               `json:"includeTotal,omitempty"`
+		IncludeTotal  bool                           `json:"includeTotal,omitempty"`
 	}{
 		request.ProjectID.String(), request.Surface, request.Operation, request.RequestID, request.ObjectType,
 		request.ObjectID, request.CorrelationID, request.ModelID, request.Kind, request.Target, request.Fields,

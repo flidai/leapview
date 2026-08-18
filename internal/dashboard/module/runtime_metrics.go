@@ -328,6 +328,22 @@ func (m runtimeMetrics) DefaultFilters(dashboardID string) dashboard.Filters {
 	return dashboard.Filters{}.WithDefaults()
 }
 
+// DefaultFiltersForDefinition returns the authored filter defaults embedded in
+// a compiled dashboard definition. Agent-created visuals use this seam after
+// their synthetic document has been compiled, ensuring the canonical runtime
+// receives the same default state as an ordinary dashboard page.
+func (m runtimeMetrics) DefaultFiltersForDefinition(definition dashboarddefinition.Definition) dashboard.Filters {
+	runtime, release, err := m.active(context.Background())
+	if err != nil {
+		return dashboard.Filters{}.WithDefaults()
+	}
+	defer release()
+	if port, ok := runtime.(definitionMetadataRuntime); ok {
+		return port.DefaultFiltersForDefinition(definition)
+	}
+	return dashboard.Filters{}.WithDefaults()
+}
+
 func (m runtimeMetrics) NormalizeVisualizationWindow(dashboardID string, request dashboard.TableRequest) dashboard.TableRequest {
 	runtime, release, resolved, err := m.activeResolved(context.Background(), dashboardID)
 	if err != nil {
@@ -412,6 +428,23 @@ func (m runtimeMetrics) QueryVisualization(ctx context.Context, dashboardID, pag
 		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide visualization data")
 	}
 	return port.QueryVisualization(ctx, dashboardID, pageID, filters, visualID)
+}
+
+// QueryVisualizationForDefinition executes a caller-supplied immutable
+// dashboard definition through the active runtime's canonical visual query
+// service. Agent-created visuals use this narrow port so they cannot rebuild
+// report queries or bypass the serving generation.
+func (m runtimeMetrics) QueryVisualizationForDefinition(ctx context.Context, definition dashboarddefinition.Definition, pageID string, filters dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
+	runtime, release, err := m.active(ctx)
+	if err != nil {
+		return visualizationir.VisualizationEnvelope{}, err
+	}
+	defer release()
+	port, ok := runtime.(definitionVisualizationRuntime)
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide compiled visualization data")
+	}
+	return port.QueryVisualizationForDefinition(ctx, definition, pageID, filters, visualID)
 }
 
 func (m runtimeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {

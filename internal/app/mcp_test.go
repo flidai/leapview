@@ -166,7 +166,7 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 		t.Fatalf("structured and text output differ: structured=%#v text=%#v", callResponse.Result.StructuredContent, textContent)
 	}
 
-	visual := mcpRequest(t, handler, "mcp-secret", "2025-11-25", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"query_visual","arguments":{"type":"bar","semanticModelId":"test","dataset":"orders","dimensions":[{"field":"orders.status"}],"metrics":[{"field":"order_count"}],"limit":10}}}`)
+	visual := mcpRequest(t, handler, "mcp-secret", "2025-11-25", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"query_visual","arguments":{"semanticModelId":"test","visual":{"type":"bar","query":{"type":"aggregate","dimensions":["orders.status"],"metrics":["order_count"],"limit":10},"presentation":{"type":"cartesian"}}}}}`)
 	if visual.Code != http.StatusOK {
 		t.Fatalf("query_visual = %d body=%s", visual.Code, visual.Body.String())
 	}

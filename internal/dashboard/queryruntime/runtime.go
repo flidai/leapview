@@ -8,6 +8,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -32,6 +33,15 @@ type Metrics interface {
 	QuerySemantic(ctx context.Context, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error)
 	PreviewSemantic(ctx context.Context, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error)
 	Pages(dashboardID string) []dashboard.Page
+}
+
+// DefinitionVisualizationMetrics is the canonical execution seam for
+// compiled visual definitions. It is intentionally separate from Metrics so
+// decorated runtime implementations can forward this capability without
+// expanding the broad dashboard query contract.
+type DefinitionVisualizationMetrics interface {
+	QueryVisualizationForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, string) (visualizationir.VisualizationEnvelope, error)
+	DefaultFiltersForDefinition(dashboarddefinition.Definition) dashboard.Filters
 }
 
 type ProjectMetrics interface {

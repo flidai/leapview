@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -199,6 +200,7 @@ func TestVisualDefinitionUsesBoundProjectContext(t *testing.T) {
 			authorizedScope = scope
 			return apigenAgentToolError("authorization_failed", "stop after scope capture"), false
 		},
+		SemanticModel: func(string, string) (*semanticmodel.Model, bool) { return testAgentModel(), true },
 	}
 	definition := provider.Definitions(Scope{ProjectID: "project_demo", PrincipalID: "principal-1"})[0]
 	var schema struct {
@@ -213,7 +215,7 @@ func TestVisualDefinitionUsesBoundProjectContext(t *testing.T) {
 	}
 	_, err := definition.Handler.Run(context.Background(), agentcore.ToolCall{
 		ID:        "call-visual",
-		Arguments: json.RawMessage(`{"type":"bar","semanticModelId":"orders","dataset":"orders"}`),
+		Arguments: json.RawMessage(`{"semanticModelId":"orders","visual":{"type":"bar","query":{"type":"aggregate","dimensions":["country"],"metrics":["revenue"],"limit":10},"presentation":{"type":"cartesian"},"dataBudget":{"maxRows":50}}}`),
 	})
 	if err != nil {
 		t.Fatalf("run tool: %v", err)

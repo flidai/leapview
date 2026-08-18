@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
@@ -14,11 +15,12 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
-	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -26,6 +28,7 @@ import (
 const (
 	agentVisualToolName = QueryVisualToolName
 	maxVisualRows       = 50
+	maxVisualBytes      = 8 << 20
 )
 
 type VisualAuthorizeFunc func(ctx context.Context, scope Scope, request VisualAuthorizationRequest) (agentcore.ToolResult, bool)
@@ -34,13 +37,11 @@ type VisualQueryContextFunc func(ctx context.Context, scope Scope) context.Conte
 
 type VisualModelFunc func(projectID, modelID string) (*semanticmodel.Model, bool)
 
-type VisualAggregateRowsFunc func(ctx context.Context, projectID, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error)
-
-type VisualPreviewRowsFunc func(ctx context.Context, projectID, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error)
-
-type VisualHistogramFunc func(ctx context.Context, projectID, modelID string, request reportdef.RawValueQuery, binCount int) ([]reportdef.HistogramBin, error)
-
-type VisualDistributionFunc func(ctx context.Context, projectID, modelID string, request reportdef.RawValueQuery, sort []reportdef.QuerySort, limit int) (reportdef.QueryRows, error)
+// VisualDefinitionQueryFunc is the single canonical execution seam for agent
+// visuals. Implementations execute the supplied compiler definition through
+// the active runtime, preserving its exact bindings, result shape, and
+// envelope framing.
+type VisualDefinitionQueryFunc func(ctx context.Context, projectID string, definition dashboarddefinition.Definition, pageID, visualID string, filters dashboard.Filters) (visualizationir.VisualizationEnvelope, error)
 
 type VisualQueryMetadata struct {
 	ServingSnapshot string
@@ -50,15 +51,12 @@ type VisualQueryMetadata struct {
 type VisualQueryMetadataFunc func(ctx context.Context, projectID, modelID string) VisualQueryMetadata
 
 type VisualProvider struct {
-	Authorize     VisualAuthorizeFunc
-	Resolve       ResourceResolver
-	QueryContext  VisualQueryContextFunc
-	SemanticModel VisualModelFunc
-	AggregateRows VisualAggregateRowsFunc
-	PreviewRows   VisualPreviewRowsFunc
-	Histogram     VisualHistogramFunc
-	Distribution  VisualDistributionFunc
-	QueryMetadata VisualQueryMetadataFunc
+	Authorize       VisualAuthorizeFunc
+	Resolve         ResourceResolver
+	QueryContext    VisualQueryContextFunc
+	SemanticModel   VisualModelFunc
+	QueryDefinition VisualDefinitionQueryFunc
+	QueryMetadata   VisualQueryMetadataFunc
 }
 
 type VisualAuthorizationRequest struct {
@@ -70,52 +68,71 @@ type VisualAuthorizationRequest struct {
 }
 
 type agentVisualInput struct {
-	SemanticModelID string                                 `json:"semanticModelId"`
-	Model           string                                 `json:"-"`
-	Dataset         string                                 `json:"dataset"`
-	Title           string                                 `json:"title"`
-	Type            string                                 `json:"type"`
-	Presentation    agentVisualPresentation                `json:"presentation"`
-	Dimensions      []agentVisualFieldRef                  `json:"dimensions"`
-	Series          *agentVisualFieldRef                   `json:"series"`
-	Metrics         []agentVisualFieldRef                  `json:"metrics"`
-	Fields          []agentVisualFieldRef                  `json:"fields"`
-	Rows            []agentVisualFieldRef                  `json:"rows"`
-	Columns         []dashboard.TableColumn                `json:"columns"`
-	Filters         []agentVisualFilter                    `json:"filters"`
-	Sort            []agentVisualSort                      `json:"sort"`
-	Limit           int                                    `json:"limit"`
-	Calculations    []dashboardauthoring.VisualCalculation `json:"calculations"`
+	SemanticModelID string                              `json:"semanticModelId"`
+	Model           string                              `json:"-"`
+	Visual          dashboarddocument.DashboardVisual   `json:"visual"`
+	Filters         []dashboarddocument.DashboardFilter `json:"filters"`
 }
-
-type agentVisualPresentation = dashboardauthoring.VisualPresentation
 
 type agentVisualFieldRef struct {
-	Field string `json:"field"`
-	Alias string `json:"alias,omitempty"`
+	Field string
+	Alias string
 }
 
-type agentVisualSort struct {
-	Field     string `json:"field"`
-	Direction string `json:"direction,omitempty"`
+func agentVisualType(input agentVisualInput) string { return string(input.Visual.Type) }
+
+func agentDefinitionDataset(definition visualizationdefinition.Definition) string {
+	if definition.Query.Aggregate != nil {
+		return definition.Query.Aggregate.TableID
+	}
+	if definition.Query.Detail != nil {
+		return definition.Query.Detail.TableID
+	}
+	if definition.Query.Matrix != nil {
+		return definition.Query.Matrix.TableID
+	}
+	if definition.Query.Pivot != nil {
+		return definition.Query.Pivot.TableID
+	}
+	if definition.Query.Spatial != nil {
+		return definition.Query.Spatial.TableID
+	}
+	return definition.Query.DatasetID
 }
 
-type agentVisualFilter struct {
-	Field    string                   `json:"field,omitempty"`
-	Dataset  string                   `json:"dataset,omitempty"`
-	Operator string                   `json:"operator,omitempty"`
-	Values   []string                 `json:"values,omitempty"`
-	Groups   []agentVisualFilterGroup `json:"groups,omitempty"`
+func agentDefinitionLimit(definition visualizationdefinition.Definition) int {
+	limit := int64(maxVisualRows)
+	switch {
+	case definition.Query.Aggregate != nil:
+		limit = definition.Query.Aggregate.Limit
+	case definition.Query.Detail != nil:
+		limit = definition.Query.Detail.Limit
+	case definition.Query.Matrix != nil:
+		limit = definition.Query.Matrix.Limit
+	case definition.Query.Pivot != nil:
+		limit = definition.Query.Pivot.Limit
+	case definition.Query.Spatial != nil:
+		limit = definition.Query.Spatial.Limit
+	}
+	if limit <= 0 || limit > int64(maxVisualRows) {
+		limit = maxVisualRows
+	}
+	return int(limit)
 }
 
-type agentVisualFilterGroup struct {
-	Filters []agentVisualFilter `json:"filters"`
+func agentDefinitionTitle(definition visualizationdefinition.Definition) string {
+	base, err := visualizationir.SpecificationBase(definition.Spec)
+	if err == nil && strings.TrimSpace(base.Title) != "" {
+		return base.Title
+	}
+	return definition.ID
 }
 
 type agentVisualResult struct {
 	Type    string                                                      `json:"type"`
 	ID      string                                                      `json:"id"`
 	Patch   map[string]map[string]visualizationir.VisualizationEnvelope `json:"patch"`
+	Filters dashboard.Filters                                           `json:"-"`
 	Summary string                                                      `json:"summary"`
 }
 
@@ -154,12 +171,29 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 		return apigenAgentToolError("catalog_not_found", "semantic model is unknown or unauthorized")
 	}
 	input.Model = resolvedModel.String()
+	if p.SemanticModel == nil {
+		return apigenAgentToolError("catalog_unavailable", "semantic model provider is not configured")
+	}
+	model, ok := p.SemanticModel(runScope.ProjectID, input.Model)
+	if !ok || model == nil {
+		return apigenAgentToolError("catalog_not_found", "semantic model is unknown or unauthorized")
+	}
+	visualID := agentVisualID(call.ID)
+	dashboardDefinition, err := compileAgentVisual(input, model, visualID)
+	if err != nil {
+		return apigenAgentToolError("query_visual_failed", err.Error())
+	}
+	definition, ok := dashboardDefinition.Visualizations[visualID]
+	if !ok {
+		return apigenAgentToolError("query_visual_failed", "compiled agent visualization is missing")
+	}
+	datasetID := agentDefinitionDataset(definition)
 	metadata := dataquery.Metadata{
 		Surface:     dataquery.SurfaceAgent,
 		Operation:   dataquery.OperationAgentQuery,
 		PrincipalID: scope.PrincipalID,
 		ObjectType:  "semantic_dataset",
-		ObjectID:    input.Model + ":" + input.Dataset,
+		ObjectID:    input.Model + ":" + datasetID,
 		RequestID:   call.ID,
 	}
 	ctx = dataquery.WithMetadata(ctx, metadata)
@@ -173,9 +207,9 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 		if errResult, ok := p.Authorize(ctx, runScope, VisualAuthorizationRequest{
 			ToolName: agentVisualToolName,
 			CallID:   call.ID,
-			Type:     input.Type,
+			Type:     agentVisualType(input),
 			Model:    input.Model,
-			Dataset:  input.Dataset,
+			Dataset:  datasetID,
 		}); !ok {
 			return errResult
 		}
@@ -187,11 +221,11 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	if strings.TrimSpace(queryMetadata.ServingSnapshot) == "" {
 		return apigenAgentToolError("query_visual_failed", "serving snapshot is unavailable")
 	}
-	result, model, err := p.queryAgentVisual(ctx, runScope.ProjectID, input, agentVisualID(call.ID))
+	result, err := p.queryAgentVisual(ctx, runScope.ProjectID, input, visualID, model, dashboardDefinition, definition)
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())
 	}
-	compact, err := compactAgentVisualResult(runScope.ProjectID, call.ID, queryMetadata, model, input, result)
+	compact, err := compactAgentVisualResult(runScope.ProjectID, call.ID, queryMetadata, model, input, dashboardDefinition, definition, result)
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())
 	}
@@ -220,145 +254,107 @@ func decodeAgentVisualInput(rawArgs json.RawMessage) (agentVisualInput, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return agentVisualInput{}, fmt.Errorf("arguments must contain exactly one JSON object")
 	}
-	input.Model = strings.TrimSpace(input.Model)
 	input.SemanticModelID = strings.TrimSpace(input.SemanticModelID)
 	input.Model = input.SemanticModelID
-	input.Dataset = strings.TrimSpace(input.Dataset)
-	input.Title = strings.TrimSpace(input.Title)
-	input.Type = strings.ToLower(strings.TrimSpace(input.Type))
-	if !isAgentVisualType(input.Type) {
-		return agentVisualInput{}, fmt.Errorf("type must be a supported visual type")
+	if strings.TrimSpace(agentVisualType(input)) == "" {
+		return agentVisualInput{}, fmt.Errorf("visual.type is required")
 	}
 	if input.SemanticModelID == "" {
 		return agentVisualInput{}, fmt.Errorf("semanticModelId is required")
 	}
-	input.Dataset = stripCatalogRefString(input.Dataset, input.Model)
-	normalizeAgentVisualFieldRefs(input.Dimensions, input.Model)
-	normalizeAgentVisualFieldRefs(input.Metrics, input.Model)
-	normalizeAgentVisualFieldRefs(input.Fields, input.Model)
-	normalizeAgentVisualFieldRefs(input.Rows, input.Model)
-	if input.Series != nil {
-		input.Series.Field = stripCatalogRefString(input.Series.Field, input.Model)
-	}
-	for index := range input.Sort {
-		input.Sort[index].Field = stripCatalogRefString(input.Sort[index].Field, input.Model)
-	}
-	normalizeAgentVisualFilters(input.Filters, input.Model)
-	if err := validateAgentVisualFilters(input.Filters); err != nil {
-		return agentVisualInput{}, err
-	}
-	if input.Dataset == "" {
-		return agentVisualInput{}, fmt.Errorf("dataset is required")
-	}
-	input.Limit = agentVisualLimit(input.Limit)
 	return input, nil
 }
 
-func normalizeAgentVisualFilters(filters []agentVisualFilter, modelID string) {
-	for index := range filters {
-		filters[index].Field = stripCatalogRefString(filters[index].Field, modelID)
-		filters[index].Dataset = stripCatalogRefString(filters[index].Dataset, modelID)
-		filters[index].Operator = strings.ToLower(strings.TrimSpace(filters[index].Operator))
-		if filters[index].Operator == "" {
-			filters[index].Operator = "equals"
-		}
-		for groupIndex := range filters[index].Groups {
-			normalizeAgentVisualFilters(filters[index].Groups[groupIndex].Filters, modelID)
-		}
+func compileAgentVisual(input agentVisualInput, model *semanticmodel.Model, id string) (dashboarddefinition.Definition, error) {
+	if model == nil {
+		return dashboarddefinition.Definition{}, fmt.Errorf("semantic model is required")
 	}
+	doc := agentVisualDocument(input, id, input.Model)
+	compiled, err := dashboardcompiler.CompileDocument(doc, map[string]*semanticmodel.Model{input.Model: model})
+	if err != nil {
+		return dashboarddefinition.Definition{}, fmt.Errorf("compile agent visualization: %w", err)
+	}
+	if _, ok := compiled.Definition.Visualizations[id]; !ok {
+		return dashboarddefinition.Definition{}, fmt.Errorf("compiled agent visualization %q is missing", id)
+	}
+	if err := validateAgentVisualBudget(compiled.Definition.Visualizations[id]); err != nil {
+		return dashboarddefinition.Definition{}, err
+	}
+	return compiled.Definition, nil
 }
 
-func validateAgentVisualFilters(filters []agentVisualFilter) error {
-	for index, filter := range filters {
-		if filter.Field == "" && len(filter.Groups) == 0 {
-			return fmt.Errorf("filters[%d] requires field or groups", index)
+func validateAgentVisualBudget(definition visualizationdefinition.Definition) error {
+	base, err := visualizationir.SpecificationBase(definition.Spec)
+	if err != nil {
+		return fmt.Errorf("inspect visualization budget: %w", err)
+	}
+	if base.DataBudget.MaxRows <= 0 {
+		return fmt.Errorf("visualization %q has no positive row budget", definition.ID)
+	}
+	if base.DataBudget.MaxRows > maxVisualRows {
+		return fmt.Errorf("visualization %q row budget %d exceeds agent limit %d", definition.ID, base.DataBudget.MaxRows, maxVisualRows)
+	}
+	check := func(datasetID string, binding visualizationdefinition.QueryBinding) error {
+		limit, offset, tiled := agentDefinitionQueryWindow(binding)
+		if tiled {
+			return fmt.Errorf("visualization %q %s query uses unbounded spatial tiles", definition.ID, datasetID)
 		}
-		if filter.Field != "" {
-			switch filter.Operator {
-			case "equals", "contains", "not_contains", "starts_with", "greater_than_or_equal", "less_than":
-				if len(filter.Values) != 1 {
-					return fmt.Errorf("filters[%d] operator %s requires one value", index, filter.Operator)
-				}
-			case "in":
-				if len(filter.Values) == 0 {
-					return fmt.Errorf("filters[%d] operator in requires at least one value", index)
-				}
-			case "is_null", "is_not_null":
-				if len(filter.Values) != 0 {
-					return fmt.Errorf("filters[%d] operator %s does not accept values", index, filter.Operator)
-				}
-			default:
-				return fmt.Errorf("filters[%d] has unsupported operator %q", index, filter.Operator)
-			}
+		if !tiled && limit > int64(maxVisualRows) {
+			return fmt.Errorf("visualization %q %s query limit %d exceeds agent limit %d", definition.ID, datasetID, limit, maxVisualRows)
 		}
-		for groupIndex, group := range filter.Groups {
-			if len(group.Filters) == 0 {
-				return fmt.Errorf("filters[%d].groups[%d] requires filters", index, groupIndex)
-			}
-			if err := validateAgentVisualFilters(group.Filters); err != nil {
-				return err
-			}
+		if !tiled && (offset < 0 || offset+limit > int64(maxVisualRows)) {
+			return fmt.Errorf("visualization %q %s query window exceeds agent limit %d", definition.ID, datasetID, maxVisualRows)
+		}
+		return nil
+	}
+	if err := check(definition.Query.DatasetID, definition.Query); err != nil {
+		return err
+	}
+	for datasetID, query := range definition.SecondaryQueries {
+		if err := check(datasetID, query); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func agentVisualFilters(filters []agentVisualFilter) []reportdef.QueryFilter {
-	out := make([]reportdef.QueryFilter, 0, len(filters))
-	for _, filter := range filters {
-		values := make([]any, len(filter.Values))
-		for index, value := range filter.Values {
-			values[index] = value
+func agentDefinitionQueryWindow(binding visualizationdefinition.QueryBinding) (limit, offset int64, tiled bool) {
+	switch {
+	case binding.Aggregate != nil:
+		return binding.Aggregate.Limit, 0, false
+	case binding.Detail != nil:
+		return binding.Detail.Limit, 0, false
+	case binding.Matrix != nil:
+		return binding.Matrix.Limit, 0, false
+	case binding.Pivot != nil:
+		return binding.Pivot.Limit, binding.Pivot.Offset, false
+	case binding.Spatial != nil:
+		if binding.Spatial.Tiles != nil {
+			return 0, 0, true
 		}
-		var groups []reportdef.QueryFilterGroup
-		if len(filter.Groups) > 0 {
-			groups = make([]reportdef.QueryFilterGroup, 0, len(filter.Groups))
-		}
-		for _, group := range filter.Groups {
-			groups = append(groups, reportdef.QueryFilterGroup{Filters: agentVisualFilters(group.Filters)})
-		}
-		out = append(out, reportdef.QueryFilter{
-			Field: filter.Field, Dataset: filter.Dataset, Operator: filter.Operator, Values: values, Groups: groups,
-		})
-	}
-	return out
-}
-
-func normalizeAgentVisualFieldRefs(values []agentVisualFieldRef, modelID string) {
-	for index := range values {
-		values[index].Field = stripCatalogRefString(values[index].Field, modelID)
-	}
-}
-
-func isAgentVisualType(value string) bool {
-	switch value {
-	case "line", "area", "bar", "column", "pie", "donut", "scatter", "funnel", "treemap", "gauge", "heatmap", "sankey", "graph", "map", "candlestick", "boxplot", "combo", "waterfall", "histogram", "radar", "tree", "sunburst", "kpi", "table", "matrix", "pivot":
-		return true
+		return binding.Spatial.Limit, 0, false
 	default:
-		return false
+		return 0, 0, false
 	}
 }
 
-func (p VisualProvider) queryAgentVisual(ctx context.Context, projectID string, input agentVisualInput, id string) (agentVisualResult, *semanticmodel.Model, error) {
-	if p.SemanticModel == nil {
-		return agentVisualResult{}, nil, fmt.Errorf("semantic model provider is not configured")
+func (p VisualProvider) queryAgentVisual(ctx context.Context, projectID string, input agentVisualInput, id string, model *semanticmodel.Model, dashboardDefinition dashboarddefinition.Definition, definition visualizationdefinition.Definition) (agentVisualResult, error) {
+	if model == nil {
+		return agentVisualResult{}, fmt.Errorf("semantic model is required")
 	}
-	model, ok := p.SemanticModel(projectID, input.Model)
-	if !ok || model == nil {
-		return agentVisualResult{}, nil, fmt.Errorf("unknown semantic model %q", input.Model)
+	if agentDefinitionDataset(definition) == "" {
+		return agentVisualResult{}, fmt.Errorf("compiled visual query has no dataset")
 	}
-	if _, ok := model.Tables[input.Dataset]; !ok {
-		return agentVisualResult{}, nil, fmt.Errorf("unknown dataset %q", input.Dataset)
+	if p.QueryDefinition == nil {
+		return agentVisualResult{}, fmt.Errorf("canonical visualization runtime is not configured")
 	}
-	var result agentVisualResult
-	var err error
-	switch input.Type {
-	case "table", "matrix", "pivot":
-		result, err = p.queryAgentTable(ctx, projectID, model, input, id)
-	default:
-		result, err = p.queryAgentChart(ctx, projectID, model, input, id)
+	filters := dashboardDefinition.DefaultFilters()
+	ctx = dataquery.WithIndependentResultBudget(ctx, dataquery.ResultLimits{MaxRows: maxVisualRows, MaxBytes: maxVisualBytes})
+	envelope, err := p.QueryDefinition(ctx, projectID, dashboardDefinition, "page", id, filters)
+	if err != nil {
+		return agentVisualResult{}, err
 	}
-	return result, model, err
+	return agentVisualResult{Type: agentVisualType(input), ID: id, Filters: filters, Patch: map[string]map[string]visualizationir.VisualizationEnvelope{"visuals": {id: envelope}}, Summary: fmt.Sprintf("Created visual %q.", agentDefinitionTitle(definition))}, nil
 }
 
 func compactAgentVisualResult(
@@ -367,6 +363,8 @@ func compactAgentVisualResult(
 	metadata VisualQueryMetadata,
 	model *semanticmodel.Model,
 	input agentVisualInput,
+	dashboardDefinition dashboarddefinition.Definition,
+	definition visualizationdefinition.Definition,
 	result agentVisualResult,
 ) (agentcontracts.QueryVisualResult, error) {
 	envelope, ok := result.Patch["visuals"][result.ID]
@@ -381,8 +379,13 @@ func compactAgentVisualResult(
 	completenessStatus := "complete"
 	if returnedRows == 0 {
 		completenessStatus = "empty"
-	} else if returnedRows >= input.Limit {
+	} else if agentDefinitionLimit(definition) > 0 && returnedRows >= agentDefinitionLimit(definition) {
 		completenessStatus = "limit_reached"
+	}
+	fieldUsages := agentVisualFieldUsages(projectID, input.Model, model, definition)
+	filterUsages, err := agentVisualFilterUsages(projectID, input.Model, dashboardDefinition, result.Filters)
+	if err != nil {
+		return agentcontracts.QueryVisualResult{}, err
 	}
 	return agentcontracts.QueryVisualResult{
 		Ok:               true,
@@ -393,12 +396,12 @@ func compactAgentVisualResult(
 		ID:               result.ID,
 		Title:            base.Title,
 		SemanticModelRef: agentVisualCatalogRef(projectID, "semantic_model", input.Model),
-		DatasetID:        input.Dataset,
-		Fields:           agentVisualFieldUsages(projectID, input.Model, model, input),
-		Filters:          agentVisualFilterUsages(projectID, input.Model, input.Filters, nil),
+		DatasetID:        agentDefinitionDataset(definition),
+		Fields:           fieldUsages,
+		Filters:          filterUsages,
 		Completeness: agentcontracts.QueryVisualCompleteness{
 			ReturnedRows: int32(returnedRows),
-			Limit:        int32(input.Limit),
+			Limit:        int32(agentDefinitionLimit(definition)),
 			Status:       completenessStatus,
 		},
 		Status:      agentVisualStatus(envelope.Status),
@@ -445,31 +448,28 @@ func agentVisualDiagnostics(values []visualizationir.VisualizationDiagnostic) []
 	return out
 }
 
-func agentVisualFieldUsages(projectID, modelID string, model *semanticmodel.Model, input agentVisualInput) []agentcontracts.QueryVisualFieldUsage {
-	type fieldRole struct {
-		ref  agentVisualFieldRef
-		role string
+func agentVisualFieldUsages(projectID, modelID string, model *semanticmodel.Model, definition visualizationdefinition.Definition) []agentcontracts.QueryVisualFieldUsage {
+	base, err := visualizationir.SpecificationBase(definition.Spec)
+	if err != nil {
+		return nil
 	}
-	values := make([]fieldRole, 0, len(input.Dimensions)+len(input.Metrics)+len(input.Fields)+len(input.Rows)+1)
-	for _, field := range input.Dimensions {
-		values = append(values, fieldRole{ref: field, role: "dimension"})
-	}
-	if input.Series != nil {
-		values = append(values, fieldRole{ref: *input.Series, role: "series"})
-	}
-	for _, field := range input.Fields {
-		values = append(values, fieldRole{ref: field, role: "table_field"})
-	}
-	for _, field := range input.Rows {
-		values = append(values, fieldRole{ref: field, role: "table_row"})
-	}
-	for _, field := range input.Metrics {
-		values = append(values, fieldRole{ref: field, role: "metric"})
-	}
-	out := make([]agentcontracts.QueryVisualFieldUsage, 0, len(values))
-	for _, value := range values {
-		usage := agentVisualFieldUsage(projectID, modelID, model, value.ref, value.role)
-		out = append(out, usage)
+	out := make([]agentcontracts.QueryVisualFieldUsage, 0)
+	for _, dataset := range base.Datasets {
+		if dataset.ID != "primary" {
+			continue
+		}
+		for _, field := range dataset.Fields {
+			role := "dimension"
+			if field.Role == visualizationir.VisualizationFieldRoleMetric {
+				role = "metric"
+			}
+			fieldID := field.ID
+			if field.SourceRef != nil && *field.SourceRef != "" {
+				fieldID = *field.SourceRef
+			}
+			ref := agentVisualFieldRef{Field: fieldID, Alias: field.ID}
+			out = append(out, agentVisualFieldUsage(projectID, modelID, model, ref, role))
+		}
 	}
 	return out
 }
@@ -507,39 +507,210 @@ func optionalString(value string) *string {
 	return &value
 }
 
-func agentVisualFilterUsages(
-	projectID string,
-	modelID string,
-	filters []agentVisualFilter,
-	groupPath []int32,
-) []agentcontracts.QueryVisualFilterUsage {
-	out := []agentcontracts.QueryVisualFilterUsage{}
-	for _, filter := range filters {
-		if filter.Field != "" {
-			usage := agentcontracts.QueryVisualFilterUsage{
-				FieldID:  qualifiedVisualFieldID(modelID, filter.Field),
-				Operator: filter.Operator,
-			}
-			if len(filter.Values) > 0 {
-				values := append([]string{}, filter.Values...)
-				usage.Values = &values
-			}
-			if len(groupPath) > 0 {
-				path := append([]int32{}, groupPath...)
-				usage.Path = &path
-			}
-			if filter.Dataset != "" {
-				datasetID := filter.Dataset
-				usage.ResolvedDatasetID = &datasetID
-			}
-			out = append(out, usage)
-		}
-		for index, group := range filter.Groups {
-			path := append(append([]int32{}, groupPath...), int32(index))
-			out = append(out, agentVisualFilterUsages(projectID, modelID, group.Filters, path)...)
+func agentVisualFilterUsages(projectID, modelID string, definition dashboarddefinition.Definition, filters dashboard.Filters) ([]agentcontracts.QueryVisualFilterUsage, error) {
+	_ = projectID
+	if filters.CompiledState == nil {
+		return nil, nil
+	}
+	bindings := definition.CompiledFilterBindings()
+	keys := append([]string(nil), definition.FilterOrder...)
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		seen[key] = struct{}{}
+	}
+	unsortedStart := len(keys)
+	for key := range bindings {
+		if _, ok := seen[key]; !ok {
+			keys = append(keys, key)
+			seen[key] = struct{}{}
 		}
 	}
-	return out
+	sort.Strings(keys[unsortedStart:])
+	out := make([]agentcontracts.QueryVisualFilterUsage, 0, len(keys))
+	for _, key := range keys {
+		binding, ok := bindings[key]
+		if !ok {
+			continue
+		}
+		applied, ok := filters.CompiledState.AppliedControls[key]
+		if !ok || applied.Expression.Kind == dashboardfilter.ExpressionUnfiltered {
+			continue
+		}
+		filterDefinition, ok := definition.FilterDefinitions[binding.Filter]
+		if !ok {
+			continue
+		}
+		expression := applied.Expression
+		usage := agentcontracts.QueryVisualFilterUsage{FieldID: qualifiedVisualFieldID(modelID, filterDefinition.Field)}
+		canonical, err := dashboardFilterExpression(expression)
+		if err != nil {
+			return nil, fmt.Errorf("filter %q: %w", key, err)
+		}
+		usage.Expression = canonical
+		if filterDefinition.Dataset != "" {
+			resolved := filterDefinition.Dataset
+			usage.ResolvedDatasetID = &resolved
+		}
+		out = append(out, usage)
+	}
+	return out, nil
+}
+
+func dashboardFilterExpression(expression dashboardfilter.Expression) (dashboarddocument.DashboardFilterExpression, error) {
+	switch expression.Kind {
+	case dashboardfilter.ExpressionUnfiltered:
+		return dashboarddocument.DashboardFilterExpression{Value: &dashboarddocument.UnfilteredDashboardFilterExpression{Type: "unfiltered"}}, nil
+	case dashboardfilter.ExpressionNullCheck:
+		operator, err := dashboardFilterOperator(expression.Operator)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		return dashboarddocument.DashboardFilterExpression{Value: &dashboarddocument.NullCheckDashboardFilterExpression{Type: "nullCheck", Operator: operator}}, nil
+	case dashboardfilter.ExpressionSet:
+		operator, err := dashboardFilterOperator(expression.Operator)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		values, err := dashboardFilterValues(expression.Values)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		return dashboarddocument.DashboardFilterExpression{Value: &dashboarddocument.SetDashboardFilterExpression{Type: "set", Operator: operator, Values: values}}, nil
+	case dashboardfilter.ExpressionComparison:
+		operator, err := dashboardFilterOperator(expression.Operator)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		if expression.Value == nil {
+			return dashboarddocument.DashboardFilterExpression{}, fmt.Errorf("comparison expression has no value")
+		}
+		value, err := dashboardFilterValue(*expression.Value)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		return dashboarddocument.DashboardFilterExpression{Value: &dashboarddocument.ComparisonDashboardFilterExpression{Type: "comparison", Operator: operator, Value: value}}, nil
+	case dashboardfilter.ExpressionRange:
+		lower, err := dashboardFilterBound(expression.Lower)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		upper, err := dashboardFilterBound(expression.Upper)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		return dashboarddocument.DashboardFilterExpression{Value: &dashboarddocument.RangeDashboardFilterExpression{Type: "range", Lower: lower, Upper: upper}}, nil
+	case dashboardfilter.ExpressionRelativePeriod:
+		direction, err := dashboardRelativeDirection(expression.Direction)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		unit, err := dashboardRelativeUnit(expression.Unit)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		anchor, err := dashboardRelativeAnchor(expression.Anchor)
+		if err != nil {
+			return dashboarddocument.DashboardFilterExpression{}, err
+		}
+		var anchorValue *dashboarddocument.DashboardFilterValue
+		if expression.AnchorValue != nil {
+			value, err := dashboardFilterValue(*expression.AnchorValue)
+			if err != nil {
+				return dashboarddocument.DashboardFilterExpression{}, err
+			}
+			anchorValue = &value
+		}
+		return dashboarddocument.DashboardFilterExpression{Value: &dashboarddocument.RelativePeriodDashboardFilterExpression{Type: "relativePeriod", Direction: direction, Count: int32(expression.Count), Unit: unit, IncludeCurrent: expression.IncludeCurrent, Anchor: anchor, AnchorValue: anchorValue}}, nil
+	default:
+		return dashboarddocument.DashboardFilterExpression{}, fmt.Errorf("unsupported expression kind %q", expression.Kind)
+	}
+}
+
+func dashboardFilterBound(bound *dashboardfilter.Bound) (*dashboarddocument.DashboardFilterBound, error) {
+	if bound == nil {
+		return nil, nil
+	}
+	value, err := dashboardFilterValue(bound.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &dashboarddocument.DashboardFilterBound{Value: value, Inclusive: bound.Inclusive}, nil
+}
+
+func dashboardFilterValues(values []dashboardfilter.Value) ([]dashboarddocument.DashboardFilterValue, error) {
+	out := make([]dashboarddocument.DashboardFilterValue, 0, len(values))
+	for _, value := range values {
+		converted, err := dashboardFilterValue(value)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, converted)
+	}
+	return out, nil
+}
+
+func dashboardFilterValue(value dashboardfilter.Value) (dashboarddocument.DashboardFilterValue, error) {
+	switch value.Kind {
+	case dashboardfilter.ValueString:
+		return dashboarddocument.DashboardFilterValue{Value: &dashboarddocument.StringDashboardFilterValue{Type: "string", Value: fmt.Sprint(value.Value)}}, nil
+	case dashboardfilter.ValueBoolean:
+		boolean, ok := value.Value.(bool)
+		if !ok {
+			return dashboarddocument.DashboardFilterValue{}, fmt.Errorf("boolean value has type %T", value.Value)
+		}
+		return dashboarddocument.DashboardFilterValue{Value: &dashboarddocument.BooleanDashboardFilterValue{Type: "boolean", Value: boolean}}, nil
+	case dashboardfilter.ValueInteger:
+		return dashboarddocument.DashboardFilterValue{Value: &dashboarddocument.IntegerDashboardFilterValue{Type: "integer", Value: fmt.Sprint(value.Value)}}, nil
+	case dashboardfilter.ValueDecimal:
+		return dashboarddocument.DashboardFilterValue{Value: &dashboarddocument.DecimalDashboardFilterValue{Type: "decimal", Value: fmt.Sprint(value.Value)}}, nil
+	case dashboardfilter.ValueDate:
+		return dashboarddocument.DashboardFilterValue{Value: &dashboarddocument.DateDashboardFilterValue{Type: "date", Value: fmt.Sprint(value.Value)}}, nil
+	case dashboardfilter.ValueTimestamp:
+		return dashboarddocument.DashboardFilterValue{Value: &dashboarddocument.TimestampDashboardFilterValue{Type: "timestamp", Value: fmt.Sprint(value.Value)}}, nil
+	default:
+		return dashboarddocument.DashboardFilterValue{}, fmt.Errorf("unsupported value kind %q", value.Kind)
+	}
+}
+
+func dashboardFilterOperator(operator dashboardfilter.Operator) (dashboarddocument.DashboardFilterOperator, error) {
+	value := map[dashboardfilter.Operator]dashboarddocument.DashboardFilterOperator{
+		dashboardfilter.OperatorIsNull: dashboarddocument.DashboardFilterOperatorIsNull, dashboardfilter.OperatorIsNotNull: dashboarddocument.DashboardFilterOperatorIsNotNull,
+		dashboardfilter.OperatorIn: dashboarddocument.DashboardFilterOperatorIn, dashboardfilter.OperatorNotIn: dashboarddocument.DashboardFilterOperatorNotIn,
+		dashboardfilter.OperatorEquals: dashboarddocument.DashboardFilterOperatorEquals, dashboardfilter.OperatorNotEquals: dashboarddocument.DashboardFilterOperatorNotEquals,
+		dashboardfilter.OperatorContains: dashboarddocument.DashboardFilterOperatorContains, dashboardfilter.OperatorNotContains: dashboarddocument.DashboardFilterOperatorNotContains,
+		dashboardfilter.OperatorStartsWith: dashboarddocument.DashboardFilterOperatorStartsWith, dashboardfilter.OperatorEndsWith: dashboarddocument.DashboardFilterOperatorEndsWith,
+		dashboardfilter.OperatorGreaterThan: dashboarddocument.DashboardFilterOperatorGreaterThan, dashboardfilter.OperatorGreaterThanOrEqual: dashboarddocument.DashboardFilterOperatorGreaterThanOrEqual,
+		dashboardfilter.OperatorLessThan: dashboarddocument.DashboardFilterOperatorLessThan, dashboardfilter.OperatorLessThanOrEqual: dashboarddocument.DashboardFilterOperatorLessThanOrEqual,
+	}
+	converted, ok := value[operator]
+	if !ok {
+		return "", fmt.Errorf("unsupported filter operator %q", operator)
+	}
+	return converted, nil
+}
+
+func dashboardRelativeDirection(direction dashboardfilter.RelativeDirection) (dashboarddocument.DashboardRelativeDirection, error) {
+	converted := dashboarddocument.DashboardRelativeDirection(direction)
+	if converted != dashboarddocument.DashboardRelativeDirectionPrevious && converted != dashboarddocument.DashboardRelativeDirectionCurrent && converted != dashboarddocument.DashboardRelativeDirectionNext {
+		return "", fmt.Errorf("unsupported relative direction %q", direction)
+	}
+	return converted, nil
+}
+
+func dashboardRelativeUnit(unit dashboardfilter.RelativeUnit) (dashboarddocument.DashboardRelativeUnit, error) {
+	converted := dashboarddocument.DashboardRelativeUnit(unit)
+	if converted == "" {
+		return "", fmt.Errorf("unsupported relative unit %q", unit)
+	}
+	return converted, nil
+}
+
+func dashboardRelativeAnchor(anchor dashboardfilter.RelativeAnchor) (dashboarddocument.DashboardRelativeAnchor, error) {
+	converted := dashboarddocument.DashboardRelativeAnchor(anchor)
+	if converted == "" {
+		return "", fmt.Errorf("unsupported relative anchor %q", anchor)
+	}
+	return converted, nil
 }
 
 func qualifiedVisualFieldID(modelID, field string) string {
@@ -550,588 +721,16 @@ func qualifiedVisualFieldID(modelID, field string) string {
 	return strings.TrimSpace(modelID) + "." + field
 }
 
-func (p VisualProvider) queryAgentChart(ctx context.Context, projectID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
-	semanticModelID, err := projectgraph.NewResourceID(input.Model)
-	if err != nil {
-		return agentVisualResult{}, fmt.Errorf("semantic model ID: %w", err)
+func agentVisualDocument(input agentVisualInput, id, semanticModel string) dashboarddocument.DashboardDocument {
+	// Preserve the supplied generated visual exactly. The wrapper only adds
+	// synthetic document identity and layout required by CompileDocument.
+	visual := input.Visual
+	return dashboarddocument.DashboardDocument{
+		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard,
+		Metadata: dashboarddocument.DashboardMetadata{ID: "dashboard:agent-visual", Name: "agent-visual"},
+		Spec: dashboarddocument.DashboardSpec{SemanticModel: semanticModel, Filters: append([]dashboarddocument.DashboardFilter(nil), input.Filters...), Visuals: map[string]dashboarddocument.DashboardVisual{id: visual},
+			Layout: &dashboarddocument.DashboardLayoutDefaults{Columns: 12, RowHeight: 48, Gap: 16, Padding: 16}, Pages: []dashboarddocument.DashboardPage{{ID: "page", Title: "Page", Components: []dashboarddocument.DashboardPageComponent{{Value: &dashboarddocument.VisualDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: "visual", Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}}, Type: "visual", Visual: id}}}}}},
 	}
-	shape := agentVisualShape(input)
-	if err := validateAgentChartContract(input); err != nil {
-		return agentVisualResult{}, err
-	}
-	data, err := p.agentChartData(ctx, projectID, input, shape, model)
-	if err != nil {
-		return agentVisualResult{}, err
-	}
-	metric, _ := model.Metrics[input.Metrics[0].Field]
-	title := input.Title
-	if title == "" {
-		title = metricLabelForAgent(input.Metrics[0].Field, metric)
-	}
-	chartType := input.Type
-	authored := agentReportVisual(input)
-	authored.Title = title
-	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
-		ID: "agent-visual", Title: "Agent visual", SemanticModel: semanticModelID,
-		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{id: authored}),
-	}, model)
-	if err != nil {
-		return agentVisualResult{}, fmt.Errorf("compile agent visualization: %w", err)
-	}
-	definition, ok := definitions[id]
-	if !ok {
-		return agentVisualResult{}, fmt.Errorf("compiled agent visualization %q is missing", id)
-	}
-	records := make([]map[string]any, len(data))
-	for index, datum := range data {
-		records[index] = map[string]any(datum)
-	}
-	frame, err := visualizationruntime.FrameFromRecords(definition, records)
-	if err != nil {
-		return agentVisualResult{}, fmt.Errorf("shape agent visualization: %w", err)
-	}
-	envelope, err := visualizationruntime.EnvelopeFromFrame(definition, frame, nil, 1, 1)
-	if err != nil {
-		return agentVisualResult{}, err
-	}
-	return agentVisualResult{
-		Type:    chartType,
-		ID:      id,
-		Patch:   map[string]map[string]visualizationir.VisualizationEnvelope{"visuals": {id: envelope}},
-		Summary: fmt.Sprintf("Created chart %q with %d data points.", title, len(data)),
-	}, nil
-}
-
-func agentVisualShape(input agentVisualInput) string {
-	return agentReportVisual(input).ResultShape()
-}
-
-func agentReportVisual(input agentVisualInput) dashboardauthoring.Visual {
-	dimensions := make([]dashboardauthoring.FieldRef, len(input.Dimensions))
-	for index, field := range input.Dimensions {
-		dimensions[index] = dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias}
-	}
-	metrics := make([]dashboardauthoring.FieldRef, len(input.Metrics))
-	for index, field := range input.Metrics {
-		metrics[index] = dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias}
-	}
-	series := dashboardauthoring.FieldRef{}
-	if input.Series != nil {
-		series = dashboardauthoring.FieldRef{Field: input.Series.Field, Alias: input.Series.Alias}
-	}
-	return dashboardauthoring.Visual{
-		Title: firstNonEmpty(input.Title, "Agent visual"), Type: input.Type, Presentation: input.Presentation,
-		Query:        dashboardauthoring.VisualQuery{Dataset: input.Dataset, Dimensions: dimensions, Series: series, Metrics: metrics, Limit: input.Limit},
-		Calculations: input.Calculations,
-	}
-}
-
-func validateAgentChartContract(input agentVisualInput) error {
-	visual := agentReportVisual(input)
-	definition := dashboardauthoring.Dashboard{
-		ID: "agent-visual", Title: "Agent visual", SemanticModel: "agent",
-		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"visual": visual}),
-		Pages: []dashboard.Page{{
-			ID: "page", Title: "Page",
-			Visuals: []dashboard.PageVisual{{ID: "visual", Kind: "visual", Visual: "visual", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 6, RowSpan: 4}}},
-		}},
-	}
-	if err := definition.ValidateContract(); err != nil {
-		return fmt.Errorf("invalid %s visual query: %w", input.Type, err)
-	}
-	return nil
-}
-
-func (p VisualProvider) agentChartData(ctx context.Context, projectID string, input agentVisualInput, shape string, model *semanticmodel.Model) ([]dashboard.Datum, error) {
-	filters := agentVisualFilters(input.Filters)
-	if shape == "binned_measure" {
-		if p.Histogram == nil {
-			return nil, fmt.Errorf("histogram query provider is not configured")
-		}
-		binCount := input.Presentation.HistogramBins
-		if binCount <= 0 {
-			binCount = 20
-		}
-		binCount = max(5, min(60, binCount))
-		bins, err := p.Histogram(ctx, projectID, input.Model, reportdef.RawValueQuery{
-			Dataset: input.Dataset, Metric: reportdef.QueryField{Field: input.Metrics[0].Field, Alias: "value"},
-			Filters: filters,
-		}, binCount)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]dashboard.Datum, 0, len(bins))
-		for _, bin := range bins {
-			out = append(out, dashboard.Datum{"label": fmt.Sprintf("%g–%g", bin.Start, bin.End), "binStart": bin.Start, "binEnd": bin.End, "value": bin.Count})
-		}
-		return out, nil
-	}
-	if shape == "distribution" {
-		if p.Distribution == nil {
-			return nil, fmt.Errorf("distribution query provider is not configured")
-		}
-		rows, err := p.Distribution(ctx, projectID, input.Model, reportdef.RawValueQuery{
-			Dataset:    input.Dataset,
-			Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
-			Metric:     reportdef.QueryField{Field: input.Metrics[0].Field, Alias: "value"},
-			Filters:    filters,
-		}, agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Metrics), input.Limit)
-		return agentDatums(rows), err
-	}
-	if p.AggregateRows == nil {
-		return nil, fmt.Errorf("aggregate query provider is not configured")
-	}
-	if shape == "single_value" {
-		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Dataset: input.Dataset,
-			Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
-			Filters: filters,
-			Limit:   1,
-		})
-		if err != nil {
-			return nil, err
-		}
-		value := any(nil)
-		if len(rows) > 0 {
-			value = agentRowValue(rows[0], "value", input.Metrics[0])
-		}
-		return []dashboard.Datum{{"label": firstNonEmpty(input.Title, metricLabelForAgent(input.Metrics[0].Field, mustResolveMetric(model, input.Metrics[0].Field))), "value": value}}, nil
-	}
-	if shape == "category_multi_measure" || len(input.Metrics) > 1 {
-		if shape == "ohlc" {
-			aliases := []string{"open", "close", "low", "high"}
-			metrics := make([]reportdef.QueryField, len(input.Metrics))
-			for index, metric := range input.Metrics {
-				metrics[index] = reportdef.QueryField{Field: metric.Field, Alias: aliases[index]}
-			}
-			rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-				Dataset: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
-				Metrics: metrics, Filters: filters,
-				Sort: agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Metrics), Limit: input.Limit,
-			})
-			return agentDatums(rows), err
-		}
-		out := []dashboard.Datum{}
-		for _, metricRef := range input.Metrics {
-			rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-				Dataset:    input.Dataset,
-				Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
-				Metrics:    []reportdef.QueryField{{Field: metricRef.Field, Alias: "value"}},
-				Filters:    filters,
-				Sort:       agentVisualSorts(input.Sort, input.Dimensions, input.Series, []agentVisualFieldRef{metricRef}),
-				Limit:      input.Limit,
-			})
-			if err != nil {
-				return nil, err
-			}
-			metric, _ := model.Metrics[metricRef.Field]
-			for _, row := range rows {
-				out = append(out, dashboard.Datum{
-					"label":  agentRowValue(row, "label", input.Dimensions[0]),
-					"series": metricLabelForAgent(metricRef.Field, metric),
-					"value":  agentRowValue(row, "value", metricRef),
-				})
-			}
-		}
-		return out, nil
-	}
-	if shape == "hierarchy" {
-		dimensions := make([]reportdef.QueryField, len(input.Dimensions))
-		for index, dimension := range input.Dimensions {
-			dimensions[index] = reportdef.QueryField{Field: dimension.Field, Alias: fmt.Sprintf("level_%d", index)}
-		}
-		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Dataset: input.Dataset, Dimensions: dimensions, Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
-			Filters: filters, Limit: input.Limit,
-		})
-		if err != nil {
-			return nil, err
-		}
-		out := make([]dashboard.Datum, 0, len(rows))
-		for _, row := range rows {
-			path := make([]string, 0, len(dimensions))
-			for index := range dimensions {
-				if value := fmt.Sprint(row[fmt.Sprintf("level_%d", index)]); value != "" && value != "<nil>" {
-					path = append(path, value)
-				}
-			}
-			out = append(out, dashboard.Datum{"path": path, "value": row["value"]})
-		}
-		return out, nil
-	}
-	if shape == "matrix" || shape == "graph" {
-		left, right := "row", "column"
-		if shape == "graph" {
-			left, right = "source", "target"
-		}
-		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Dataset:    input.Dataset,
-			Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: left}, {Field: input.Dimensions[1].Field, Alias: right}},
-			Metrics:    []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
-			Filters:    filters, Limit: input.Limit,
-		})
-		return agentDatums(rows), err
-	}
-	if shape == "geo" {
-		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Dataset: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "name"}},
-			Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
-			Filters: filters, Limit: input.Limit,
-		})
-		return agentDatums(rows), err
-	}
-	dimensions := []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}}
-	if input.Series != nil && input.Series.Field != "" {
-		dimensions = append(dimensions, reportdef.QueryField{Field: input.Series.Field, Alias: "series"})
-	}
-	rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-		Dataset:    input.Dataset,
-		Dimensions: dimensions,
-		Metrics:    []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
-		Filters:    filters,
-		Sort:       agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Metrics),
-		Limit:      input.Limit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]dashboard.Datum, 0, len(rows))
-	for _, row := range rows {
-		datum := dashboard.Datum{"label": agentRowValue(row, "label", input.Dimensions[0]), "value": agentRowValue(row, "value", input.Metrics[0])}
-		if input.Series != nil && input.Series.Field != "" {
-			datum["series"] = agentRowValue(row, "series", *input.Series)
-		}
-		out = append(out, datum)
-	}
-	if shape == "category_delta" {
-		cumulative := 0.0
-		for _, datum := range out {
-			value := agentFloat(datum["value"])
-			datum["start"] = cumulative
-			cumulative += value
-			datum["end"] = cumulative
-			datum["positive"] = value >= 0
-		}
-	}
-	return out, nil
-}
-
-func agentDatums(rows reportdef.QueryRows) []dashboard.Datum {
-	out := make([]dashboard.Datum, 0, len(rows))
-	for _, row := range rows {
-		datum := dashboard.Datum{}
-		for key, value := range row {
-			datum[key] = value
-		}
-		out = append(out, datum)
-	}
-	return out
-}
-
-func agentFloat(value any) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case float32:
-		return float64(typed)
-	case int:
-		return float64(typed)
-	case int64:
-		return float64(typed)
-	default:
-		return 0
-	}
-}
-
-func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, model *semanticmodel.Model, input agentVisualInput, id string) (agentVisualResult, error) {
-	semanticModelID, err := projectgraph.NewResourceID(input.Model)
-	if err != nil {
-		return agentVisualResult{}, fmt.Errorf("semantic model ID: %w", err)
-	}
-	fields := input.Fields
-	aggregate := len(fields) == 0 && (len(input.Rows) > 0 || len(input.Metrics) > 0)
-	if len(fields) == 0 {
-		fields = append([]agentVisualFieldRef{}, input.Rows...)
-		fields = append(fields, input.Metrics...)
-	}
-	if len(fields) == 0 {
-		return agentVisualResult{}, fmt.Errorf("table requires fields, or rows and metrics")
-	}
-	dimensions, metrics, columns, err := agentTableFields(model, fields, input.Columns)
-	if err != nil {
-		return agentVisualResult{}, err
-	}
-	var rows reportdef.QueryRows
-	if aggregate {
-		if p.AggregateRows == nil {
-			return agentVisualResult{}, fmt.Errorf("aggregate query provider is not configured")
-		}
-		rows, err = p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Dataset:    input.Dataset,
-			Dimensions: dimensions,
-			Metrics:    metrics,
-			Filters:    agentVisualFilters(input.Filters),
-			Sort:       agentTableSorts(input.Sort, fields),
-			Limit:      input.Limit,
-		})
-	} else {
-		if p.PreviewRows == nil {
-			return agentVisualResult{}, fmt.Errorf("preview query provider is not configured")
-		}
-		rows, err = p.PreviewRows(ctx, projectID, input.Model, reportdef.RowQuery{
-			Dataset:    input.Dataset,
-			Dimensions: dimensions,
-			Metrics:    metrics,
-			Filters:    agentVisualFilters(input.Filters),
-			Sort:       agentTableSorts(input.Sort, fields),
-			Limit:      input.Limit,
-		})
-	}
-	if err != nil {
-		return agentVisualResult{}, err
-	}
-	tableRows := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		tableRows = append(tableRows, map[string]any(row))
-	}
-	title := firstNonEmpty(input.Title, "Table")
-	sortSpec := dashboard.TableSort{}
-	if len(input.Sort) > 0 {
-		sortSpec = dashboard.TableSort{Key: agentFieldAlias(input.Sort[0].Field), Direction: normalizedSortDirection(input.Sort[0].Direction)}
-	}
-	authored := dashboardauthoring.TableVisual{Title: title, DefaultSort: sortSpec, Style: dashboard.TableStyle{}.WithDefaults(), Columns: columns, Query: dashboardauthoring.TableQuery{Dataset: input.Dataset}, Calculations: input.Calculations}
-	for _, field := range fields {
-		authored.DataColumns = append(authored.DataColumns, dashboardauthoring.FieldRef{Field: field.Field, Alias: agentFieldAliasForRef(field)})
-	}
-	if input.Type == "table" {
-		for _, field := range fields {
-			authored.Query.Fields = append(authored.Query.Fields, field.Field)
-		}
-	} else {
-		for _, field := range dimensions {
-			authored.Query.Rows = append(authored.Query.Rows, dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias})
-		}
-		for _, field := range metrics {
-			authored.Query.Metrics = append(authored.Query.Metrics, dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias})
-		}
-	}
-	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
-		ID: "agent", SemanticModel: semanticModelID,
-		Visuals: dashboardauthoring.TabularVisualizations(input.Type, map[string]dashboardauthoring.TableVisual{id: authored}),
-	}, model)
-	if err != nil {
-		return agentVisualResult{}, err
-	}
-	base, err := visualizationir.SpecificationBase(definitions[id].Spec)
-	if err != nil {
-		return agentVisualResult{}, err
-	}
-	limitReached := len(tableRows) >= input.Limit
-	tableRows, columns, err = applyAgentTableCalculations(base, tableRows, columns, limitReached)
-	if err != nil {
-		return agentVisualResult{}, err
-	}
-	cardinality := dashboard.ExactCardinality(len(tableRows))
-	if limitReached {
-		cardinality = dashboard.LowerBoundCardinality(len(tableRows))
-	}
-	table := dashboard.Table{
-		Version:       2,
-		Kind:          map[string]string{"table": "data_table", "matrix": "matrix_table", "pivot": "pivot_table"}[input.Type],
-		Title:         title,
-		Style:         dashboard.TableStyle{}.WithDefaults(),
-		Interaction:   dashboard.InteractionConfig{},
-		Selection:     []dashboard.InteractionSelectionEntry{},
-		Columns:       columns,
-		Cardinality:   cardinality,
-		AvailableRows: len(tableRows),
-		IsCapped:      limitReached,
-		RowCap:        maxVisualRows,
-		ChunkSize:     dashboard.TableChunkSize,
-		RowHeight:     dashboard.TableRowHeight,
-		ResetVersion:  0,
-		Sort:          sortSpec,
-		Blocks: map[string]dashboard.TableBlock{
-			"a": {Start: 0, RequestSeq: 0, ResetVersion: 0, Sort: sortSpec, Rows: tableRows},
-		},
-		LoadingBlock: "",
-		Error:        "",
-	}
-	envelope, err := visualizationruntime.WindowEnvelopeFromDefinition(definitions[id], table, 1, 1)
-	if err != nil {
-		return agentVisualResult{}, err
-	}
-	return agentVisualResult{
-		Type:    input.Type,
-		ID:      id,
-		Patch:   map[string]map[string]visualizationir.VisualizationEnvelope{"visuals": {id: envelope}},
-		Summary: fmt.Sprintf("Created table %q with %d rows.", title, len(tableRows)),
-	}, nil
-}
-
-func applyAgentTableCalculations(base visualizationir.VisualizationSpecBase, records []map[string]any, columns []dashboard.TableColumn, incomplete bool) ([]map[string]any, []dashboard.TableColumn, error) {
-	if base.Calculations == nil || len(*base.Calculations) == 0 {
-		return records, columns, nil
-	}
-	var schema *visualizationir.VisualizationDatasetSchema
-	for index := range base.Datasets {
-		if base.Datasets[index].ID == "primary" {
-			schema = &base.Datasets[index]
-			break
-		}
-	}
-	if schema == nil {
-		return nil, nil, fmt.Errorf("agent table visual calculation has no primary dataset")
-	}
-	sourceColumns := []string{}
-	fields := map[string]visualizationir.VisualizationField{}
-	for _, field := range schema.Fields {
-		fields[field.ID] = field
-		if field.Provenance == nil || field.Provenance.Kind != visualizationir.VisualizationFieldProvenanceKindVisualCalculation {
-			sourceColumns = append(sourceColumns, field.ID)
-		}
-	}
-	rows := make([][]any, len(records))
-	for rowIndex, record := range records {
-		rows[rowIndex] = make([]any, len(sourceColumns))
-		for columnIndex, column := range sourceColumns {
-			rows[rowIndex][columnIndex] = record[column]
-		}
-	}
-	completeness := visualizationir.VisualizationCompletenessComplete
-	if incomplete {
-		completeness = visualizationir.VisualizationCompletenessTruncated
-	} else if len(rows) == 0 {
-		completeness = visualizationir.VisualizationCompletenessEmpty
-	}
-	frame, _, err := visualizationruntime.ApplyVisualCalculations(base, "primary", visualizationruntime.Frame{Columns: sourceColumns, Rows: rows, Completeness: completeness}, completeness)
-	if err != nil {
-		return nil, nil, err
-	}
-	out := make([]map[string]any, len(records))
-	for rowIndex, record := range records {
-		next := make(map[string]any, len(frame.Columns))
-		for key, value := range record {
-			next[key] = value
-		}
-		for columnIndex, column := range frame.Columns {
-			next[column] = frame.Rows[rowIndex][columnIndex]
-		}
-		out[rowIndex] = next
-	}
-	for _, calculation := range *base.Calculations {
-		if calculation.Dataset != "primary" || calculation.Hidden {
-			continue
-		}
-		field := fields[calculation.ID]
-		format := "decimal"
-		if field.Format != nil {
-			if kind, kindErr := field.Format.Kind(); kindErr == nil {
-				format = kind
-			}
-		}
-		columns = append(columns, dashboard.TableColumn{Key: calculation.ID, Label: field.Label, Align: "right", Role: "metric", Metric: calculation.ID, Format: format})
-	}
-	return out, columns, nil
-}
-
-func agentTableFields(model *semanticmodel.Model, fields []agentVisualFieldRef, overrides []dashboard.TableColumn) ([]reportdef.QueryField, []reportdef.QueryField, []dashboard.TableColumn, error) {
-	dimensions := []reportdef.QueryField{}
-	metrics := []reportdef.QueryField{}
-	columns := make([]dashboard.TableColumn, 0, len(fields))
-	overrideByKey := map[string]dashboard.TableColumn{}
-	for _, column := range overrides {
-		if column.Key != "" {
-			overrideByKey[column.Key] = column
-		}
-	}
-	for _, field := range fields {
-		if strings.TrimSpace(field.Field) == "" {
-			return nil, nil, nil, fmt.Errorf("table field is required")
-		}
-		alias := agentFieldAliasForRef(field)
-		if dimension, err := model.ResolveDimension(field.Field); err == nil {
-			dimensions = append(dimensions, reportdef.QueryField{Field: field.Field, Alias: alias})
-			columns = append(columns, mergeAgentTableColumn(dashboard.TableColumn{Key: alias, Label: dimensionLabelForAgent(alias, dimension), Format: "text"}, overrideByKey[alias]))
-			continue
-		}
-		metric, ok := model.Metrics[field.Field]
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("unknown field %q", field.Field)
-		}
-		metrics = append(metrics, reportdef.QueryField{Field: field.Field, Alias: alias})
-		columns = append(columns, mergeAgentTableColumn(dashboard.TableColumn{Key: alias, Label: metricLabelForAgent(field.Field, metric), Align: "right", Role: "metric", Metric: alias, Format: metric.Format}, overrideByKey[alias]))
-	}
-	return dimensions, metrics, columns, nil
-}
-
-func agentVisualLimit(limit int) int {
-	if limit <= 0 || limit > maxVisualRows {
-		return maxVisualRows
-	}
-	return limit
-}
-
-func agentVisualSorts(sorts []agentVisualSort, dimensions []agentVisualFieldRef, series *agentVisualFieldRef, metrics []agentVisualFieldRef) []reportdef.QuerySort {
-	if len(sorts) == 0 {
-		return []reportdef.QuerySort{{Field: "label", Direction: "asc"}}
-	}
-	out := make([]reportdef.QuerySort, 0, len(sorts))
-	for _, sortSpec := range sorts {
-		field := sortSpec.Field
-		if agentSortMatches(field, dimensions) {
-			field = "label"
-		} else if series != nil && agentSortMatches(field, []agentVisualFieldRef{*series}) {
-			field = "series"
-		} else if agentSortMatches(field, metrics) {
-			field = "value"
-		}
-		out = append(out, reportdef.QuerySort{Field: field, Direction: normalizedSortDirection(sortSpec.Direction)})
-	}
-	return out
-}
-
-func agentTableSorts(sorts []agentVisualSort, fields []agentVisualFieldRef) []reportdef.QuerySort {
-	out := make([]reportdef.QuerySort, 0, len(sorts))
-	for _, sortSpec := range sorts {
-		field := agentFieldAlias(sortSpec.Field)
-		for _, ref := range fields {
-			if sortSpec.Field == ref.Field || sortSpec.Field == ref.Alias {
-				field = agentFieldAliasForRef(ref)
-				break
-			}
-		}
-		out = append(out, reportdef.QuerySort{Field: field, Direction: normalizedSortDirection(sortSpec.Direction)})
-	}
-	return out
-}
-
-func agentSortMatches(field string, refs []agentVisualFieldRef) bool {
-	for _, ref := range refs {
-		if field == ref.Field || field == ref.Alias || field == agentFieldAlias(ref.Field) {
-			return true
-		}
-	}
-	return false
-}
-
-func agentRowValue(row map[string]any, alias string, ref agentVisualFieldRef) any {
-	for _, key := range []string{alias, ref.Alias, agentFieldAlias(ref.Field), ref.Field} {
-		if key == "" {
-			continue
-		}
-		if value, ok := row[key]; ok {
-			return value
-		}
-	}
-	return nil
-}
-
-func normalizedSortDirection(direction string) string {
-	if strings.ToLower(direction) == "desc" {
-		return "desc"
-	}
-	return "asc"
 }
 
 func agentVisualID(seed string) string {
@@ -1169,28 +768,6 @@ func randomAgentVisualIDSuffix() string {
 	return hex.EncodeToString(bytes[:])
 }
 
-func displayAgentFields(fields []agentVisualFieldRef) []string {
-	out := make([]string, len(fields))
-	for i, field := range fields {
-		out[i] = displayAgentField(field)
-	}
-	return out
-}
-
-func displayAgentField(field agentVisualFieldRef) string {
-	if field.Alias != "" {
-		return field.Alias
-	}
-	return agentFieldAlias(field.Field)
-}
-
-func agentVisualSeries(series *agentVisualFieldRef) []string {
-	if series == nil || series.Field == "" {
-		return []string{}
-	}
-	return []string{displayAgentField(*series)}
-}
-
 func agentFieldAliasForRef(field agentVisualFieldRef) string {
 	if field.Alias != "" {
 		return field.Alias
@@ -1224,42 +801,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func mustResolveMetric(model *semanticmodel.Model, field string) semanticmodel.Metric {
-	return model.Metrics[field]
-}
-
-func mergeAgentTableColumn(base, override dashboard.TableColumn) dashboard.TableColumn {
-	if override.Key != "" {
-		base.Key = override.Key
-	}
-	if override.Label != "" {
-		base.Label = override.Label
-	}
-	if override.Align != "" {
-		base.Align = override.Align
-	}
-	if override.Role != "" {
-		base.Role = override.Role
-	}
-	if override.Group != "" {
-		base.Group = override.Group
-	}
-	if override.Metric != "" {
-		base.Metric = override.Metric
-	}
-	if override.ColumnValue != "" {
-		base.ColumnValue = override.ColumnValue
-	}
-	if override.Width > 0 {
-		base.Width = override.Width
-	}
-	if override.Format != "" {
-		base.Format = override.Format
-	}
-	if len(override.Formatting) > 0 {
-		base.Formatting = append([]dashboard.TableFormattingRule{}, override.Formatting...)
-	}
-	return base
 }

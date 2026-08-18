@@ -13,7 +13,10 @@ import (
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	reportdef "github.com/flidai/leapview/internal/dashboard/report"
+	"github.com/flidai/leapview/internal/dashboard"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/queryruntime"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -80,33 +83,17 @@ func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 			}
 			return metrics.SemanticModel(modelID)
 		},
-		AggregateRows: func(ctx context.Context, projectID, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
+		QueryDefinition: func(ctx context.Context, projectID string, definition dashboarddefinition.Definition, pageID, visualID string, filters dashboard.Filters) (visualizationir.VisualizationEnvelope, error) {
 			metrics, ok := m.dashboardMetrics(projectID)
 			if !ok || metrics == nil {
-				return nil, fmt.Errorf("unknown project %q", projectID)
+				return visualizationir.VisualizationEnvelope{}, fmt.Errorf("unknown project runtime for semantic model %q", definition.SemanticModel)
 			}
-			return executeAggregateRows(ctx, metrics, modelID, request)
-		},
-		PreviewRows: func(ctx context.Context, projectID, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error) {
-			metrics, ok := m.dashboardMetrics(projectID)
-			if !ok || metrics == nil {
-				return nil, fmt.Errorf("unknown project %q", projectID)
+			port, ok := metrics.(queryruntime.DefinitionVisualizationMetrics)
+			if !ok {
+				return visualizationir.VisualizationEnvelope{}, fmt.Errorf("active runtime does not provide compiled visualization execution")
 			}
-			return executePreviewRows(ctx, metrics, modelID, request)
-		},
-		Histogram: func(ctx context.Context, projectID, modelID string, request reportdef.RawValueQuery, binCount int) ([]reportdef.HistogramBin, error) {
-			metrics, ok := m.dashboardMetrics(projectID)
-			if !ok || metrics == nil {
-				return nil, fmt.Errorf("unknown project %q", projectID)
-			}
-			return executeHistogram(ctx, metrics, modelID, request, binCount)
-		},
-		Distribution: func(ctx context.Context, projectID, modelID string, request reportdef.RawValueQuery, sort []reportdef.QuerySort, limit int) (reportdef.QueryRows, error) {
-			metrics, ok := m.dashboardMetrics(projectID)
-			if !ok || metrics == nil {
-				return nil, fmt.Errorf("unknown project %q", projectID)
-			}
-			return executeDistribution(ctx, metrics, modelID, request, sort, limit)
+			filters = port.DefaultFiltersForDefinition(definition)
+			return port.QueryVisualizationForDefinition(ctx, definition, pageID, filters, visualID)
 		},
 		QueryMetadata: func(ctx context.Context, projectID, modelID string) agenttools.VisualQueryMetadata {
 			if m.queryMetadata != nil {
