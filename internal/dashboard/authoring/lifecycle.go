@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/project/graph"
+	configschema "github.com/flidai/leapview/internal/project/schema"
 )
 
 // These IDs are intentionally distinct: a dashboard ID is stable across
@@ -362,29 +364,29 @@ func (t RevisionToken) ValidateComplete() error {
 // Revision owns a complete authored document copy. Draft and Published below
 // only point at this immutable value.
 type Revision struct {
-	ID          RevisionID  `json:"id"`
-	DashboardID DashboardID `json:"dashboardId"`
-	Number      uint64      `json:"number"`
-	Document    Dashboard   `json:"document"`
-	ContentHash string      `json:"contentHash"`
-	Provenance  Provenance  `json:"provenance"`
-	CreatedAt   time.Time   `json:"createdAt,omitempty"`
+	ID          RevisionID                 `json:"id"`
+	DashboardID DashboardID                `json:"dashboardId"`
+	Number      uint64                     `json:"number"`
+	Document    document.DashboardDocument `json:"document"`
+	ContentHash string                     `json:"contentHash"`
+	Provenance  Provenance                 `json:"provenance"`
+	CreatedAt   time.Time                  `json:"createdAt,omitempty"`
 }
 
-func NewRevision(id RevisionID, dashboardID DashboardID, number uint64, createdAt time.Time, document Dashboard, provenance Provenance) (Revision, error) {
+func NewRevision(id RevisionID, dashboardID DashboardID, number uint64, createdAt time.Time, authored document.DashboardDocument, provenance Provenance) (Revision, error) {
 	if err := id.Validate(); err != nil {
 		return Revision{}, err
 	}
 	if err := dashboardID.Validate(); err != nil {
 		return Revision{}, err
 	}
-	if document.ID != dashboardID {
-		return Revision{}, fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, document.ID, dashboardID)
+	if authored.Metadata.ID != dashboardID.String() {
+		return Revision{}, fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, authored.Metadata.ID, dashboardID)
 	}
 	if err := provenance.Validate(); err != nil {
 		return Revision{}, err
 	}
-	if err := document.ValidateDraftStructure(); err != nil {
+	if err := ValidateCanonicalDocument(authored); err != nil {
 		return Revision{}, fmt.Errorf("%w: revision dashboard structure: %v", ErrInvalidAuthoring, err)
 	}
 	if number == 0 {
@@ -393,11 +395,11 @@ func NewRevision(id RevisionID, dashboardID DashboardID, number uint64, createdA
 	if createdAt.IsZero() || createdAt.Location() != time.UTC {
 		return Revision{}, fmt.Errorf("%w: revision created_at must be a non-zero UTC timestamp", ErrInvalidAuthoring)
 	}
-	hash, err := DashboardContentHash(document)
+	hash, err := DashboardContentHash(authored)
 	if err != nil {
 		return Revision{}, err
 	}
-	cloned, err := document.Clone()
+	cloned, err := authored.Clone()
 	if err != nil {
 		return Revision{}, err
 	}
@@ -411,8 +413,8 @@ func (r Revision) Validate() error {
 	if err := validateDashboardID(r.DashboardID); err != nil {
 		return err
 	}
-	if r.Document.ID != r.DashboardID {
-		return fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, r.Document.ID, r.DashboardID)
+	if r.Document.Metadata.ID != r.DashboardID.String() {
+		return fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, r.Document.Metadata.ID, r.DashboardID)
 	}
 	if r.Number == 0 {
 		return fmt.Errorf("%w: revision number is required", ErrInvalidAuthoring)
@@ -427,7 +429,7 @@ func (r Revision) Validate() error {
 	if err != nil || hash != r.ContentHash {
 		return fmt.Errorf("%w: revision content hash does not match document", ErrInvalidAuthoring)
 	}
-	if err := r.Document.ValidateDraftStructure(); err != nil {
+	if err := ValidateCanonicalDocument(r.Document); err != nil {
 		return fmt.Errorf("%w: revision dashboard structure: %v", ErrInvalidAuthoring, err)
 	}
 	return r.Provenance.Validate()
@@ -690,7 +692,7 @@ func digestValue(value any) string {
 	return "sha256:" + hex.EncodeToString(hash[:])
 }
 
-func DashboardContentHash(document Dashboard) (string, error) {
+func DashboardContentHash(document document.DashboardDocument) (string, error) {
 	encoded, err := json.Marshal(document)
 	if err != nil {
 		return "", fmt.Errorf("%w: dashboard document: %v", ErrInvalidAuthoring, err)
@@ -701,10 +703,24 @@ func DashboardContentHash(document Dashboard) (string, error) {
 
 // Clone performs a typed deep copy and surfaces unsupported reference values
 // rather than dropping authored fields or changing concrete interface values.
+func ValidateCanonicalDocument(value document.DashboardDocument) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("%w: encode canonical dashboard: %v", ErrInvalidAuthoring, err)
+	}
+	if err := configschema.ValidateBytes(configschema.KindDashboard, "dashboard.json", encoded); err != nil {
+		return fmt.Errorf("%w: canonical dashboard schema: %v", ErrInvalidAuthoring, err)
+	}
+	return nil
+}
+
+// Clone remains available to the runtime-only legacy compiler while all
+// authoring revisions use DashboardDocument above. It is intentionally not
+// used at any authoring source/revision boundary.
 func (d Dashboard) Clone() (Dashboard, error) {
 	cloned, err := cloneValue(reflect.ValueOf(d), "dashboard")
 	if err != nil {
-		return Dashboard{}, fmt.Errorf("%w: clone dashboard document: %v", ErrInvalidAuthoring, err)
+		return Dashboard{}, fmt.Errorf("%w: clone runtime dashboard: %v", ErrInvalidAuthoring, err)
 	}
 	return cloned.Interface().(Dashboard), nil
 }

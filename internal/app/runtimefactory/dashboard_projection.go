@@ -108,8 +108,8 @@ func authoredDashboardSources(manifest projectmanifest.Project, projectID projec
 			},
 			Path: source.Path,
 		}
-		if document.ID != dashboardID {
-			return nil, fmt.Errorf("dashboard source %q has mismatched document id %q", id, document.ID)
+		if document.Metadata.ID != dashboardID.String() {
+			return nil, fmt.Errorf("dashboard source %q has mismatched document id %q", id, document.Metadata.ID)
 		}
 	}
 	return sources, nil

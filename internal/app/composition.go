@@ -879,8 +879,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			return authorizeProjectResources(ctx, accessModule, runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 		},
-		AcquireRuntime:  authoringAcquireRuntime,
-		ExportDashboard: projectmodule.ExportDashboard,
+		AcquireRuntime: authoringAcquireRuntime,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("build dashboard authoring module: %w", err))

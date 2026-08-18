@@ -19,7 +19,6 @@ import (
 	dashboardcatalog "github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
-	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
@@ -28,11 +27,10 @@ var applicationTestTime = time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
 
 func TestNewRequiresCompositionPorts(t *testing.T) {
 	valid := application.Options{
-		Authoring:       newAuthoringService(t, newRepository(), &fakeAuthorizer{}),
-		Repository:      newRepository(),
-		Authorizer:      &fakeAuthorizer{},
-		AcquireRuntime:  func(context.Context) (runtimehost.Lease, error) { return nil, nil },
-		ExportDashboard: projectcompiler.ExportDashboard,
+		Authoring:      newAuthoringService(t, newRepository(), &fakeAuthorizer{}),
+		Repository:     newRepository(),
+		Authorizer:     &fakeAuthorizer{},
+		AcquireRuntime: func(context.Context) (runtimehost.Lease, error) { return nil, nil },
 	}
 	tests := []struct {
 		name string
@@ -468,7 +466,7 @@ func (a *recordingAuthorizer) Authorize(context.Context, authoringservice.Author
 func newApplication(t *testing.T, repository *fakeRepository, authorizer authoringservice.Authorizer, acquire sourceadapter.AcquireRuntime) *application.Application {
 	t.Helper()
 	authoringSvc := newAuthoringService(t, repository, authorizer)
-	app, err := application.New(application.Options{Authoring: authoringSvc, Repository: repository, Authorizer: authorizer, AcquireRuntime: acquire, ExportDashboard: projectcompiler.ExportDashboard})
+	app, err := application.New(application.Options{Authoring: authoringSvc, Repository: repository, Authorizer: authorizer, AcquireRuntime: acquire})
 	if err != nil {
 		t.Fatal(err)
 	}

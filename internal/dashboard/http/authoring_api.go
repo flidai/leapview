@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
@@ -133,7 +134,7 @@ type authoringDraftResponse struct {
 	DraftID     authoring.DraftID            `json:"draftId"`
 	Revision    authoring.RevisionToken      `json:"revision"`
 	Lifecycle   authoring.DashboardLifecycle `json:"lifecycle"`
-	Document    authoring.Dashboard          `json:"document"`
+	Document    document.DashboardDocument   `json:"document"`
 }
 
 func draftResponse(read application.DraftRead) authoringDraftResponse {

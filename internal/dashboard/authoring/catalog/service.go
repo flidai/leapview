@@ -350,8 +350,8 @@ func enrichProjectItem(runtime projectruntime.Runtime, item *Dashboard) error {
 	if !ok {
 		return nil
 	}
-	if source.Document.ID != item.ID {
-		return fmt.Errorf("project dashboard source %q document id = %q", item.ID, source.Document.ID)
+	if source.Document.Metadata.ID != item.ID.String() {
+		return fmt.Errorf("project dashboard source %q document id = %q", item.ID, source.Document.Metadata.ID)
 	}
 	if strings.TrimSpace(source.Metadata.Name) != item.ID.String() {
 		return fmt.Errorf("project dashboard source %q metadata name = %q", item.ID, source.Metadata.Name)
@@ -359,8 +359,8 @@ func enrichProjectItem(runtime projectruntime.Runtime, item *Dashboard) error {
 	if source.Metadata.Project != item.ProjectID {
 		return fmt.Errorf("project dashboard source %q project = %q, want %q", item.ID, source.Metadata.Project, item.ProjectID)
 	}
-	if source.Document.SemanticModel != "" && source.Document.SemanticModel != item.SemanticModel {
-		return fmt.Errorf("project dashboard source %q semantic model = %q, want %q", item.ID, source.Document.SemanticModel, item.SemanticModel)
+	if source.Document.Spec.SemanticModel != "" && source.Document.Spec.SemanticModel != item.SemanticModel.String() {
+		return fmt.Errorf("project dashboard source %q semantic model = %q, want %q", item.ID, source.Document.Spec.SemanticModel, item.SemanticModel)
 	}
 	if item.Title == "" {
 		item.Title = source.Metadata.Title
@@ -467,7 +467,9 @@ func (s *Service) enrichInstanceItem(ctx context.Context, projectID graph.Resour
 	if revision.DashboardID != item.ID || revision.Token().RevisionID.String() != item.Revision.ID || revision.Token().Number != item.Revision.Number || revision.Token().ContentHash != item.Revision.ContentHash {
 		return fmt.Errorf("dashboard %q lifecycle revision pointer does not match retained revision", item.ID)
 	}
-	item.Description = revision.Document.Description
+	if revision.Document.Metadata.Description != nil {
+		item.Description = *revision.Document.Metadata.Description
+	}
 	item.Revision.CreatedAt = revision.CreatedAt
 	return nil
 }
