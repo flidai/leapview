@@ -17,6 +17,7 @@ import (
 
 	"cuelang.org/go/cue"
 	cuecontext "cuelang.org/go/cue/cuecontext"
+	cueerrors "cuelang.org/go/cue/errors"
 	cuejsonschema "cuelang.org/go/encoding/jsonschema"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
@@ -172,7 +173,7 @@ var (
 	resourceNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 )
 
-const sourceFreshnessConstraint = `spec: {freshness?: ({warningAfter!: _} | {errorAfter!: _} | {warningAfter!: _, errorAfter!: _})}`
+const sourceFreshnessConstraint = `spec: {freshness?: {matchN(>=1, [{warningAfter!: _}, {errorAfter!: _}])}}`
 
 // validateGeneratedMetadata retains the stable resource identity constraints
 // that are not represented in the generated JSON Schema yet. These checks are
@@ -246,8 +247,8 @@ func validateGeneratedJSON(kind Kind, filename string, root *yaml.Node, content 
 	if err := schema.Validate(value); err != nil {
 		return generatedValidationDiagnostic(filename, root, err)
 	}
-	if err := validateGeneratedCUE(kind, value); err != nil {
-		return resourceDiagnostic(filename, root, "schema.generated", "generated JSON Schema/CUE confirmation failed: "+err.Error())
+	if err := validateGeneratedCUEAt(kind, filename, root, value); err != nil {
+		return err
 	}
 	return nil
 }
@@ -296,6 +297,10 @@ func cueJSONValue(value any) any {
 // truth; CUE contextual rules consume this imported value rather than a
 // parallel hand-authored Connection/Source/Model shape.
 func validateGeneratedCUE(kind Kind, value any) error {
+	return validateGeneratedCUEAt(kind, "", nil, value)
+}
+
+func validateGeneratedCUEAt(kind Kind, filename string, root *yaml.Node, value any) error {
 	ctx := cuecontext.New()
 	schemaJSON, err := generatedJSONSchema(kind)
 	if err != nil {
@@ -315,19 +320,47 @@ func validateGeneratedCUE(kind Kind, value any) error {
 	}
 	instance := ctx.Encode(value)
 	constraint := ctx.CompileString("{}")
-	if kind == KindSource {
+	if kind == KindSource && instance.LookupPath(cue.ParsePath("spec.freshness")).Exists() {
 		// Freshness is the only contextual Source rule. Its structural fields
-		// come from the generated schema; this static constraint merely requires
-		// at least one threshold whenever the optional freshness block is present.
+		// come from the generated schema; this static constraint is applied only
+		// when the generated instance actually contains freshness.
 		constraint = ctx.CompileString(sourceFreshnessConstraint)
 	}
 	if err := constraint.Err(); err != nil {
 		return err
 	}
 	if err := imported.Unify(constraint).Unify(instance).Validate(cue.Final()); err != nil {
+		if filename != "" && root != nil {
+			return generatedCUEValidationDiagnostic(filename, root, err)
+		}
 		return err
 	}
 	return nil
+}
+
+func generatedCUEValidationDiagnostic(filename string, root *yaml.Node, err error) error {
+	items := cueerrors.Errors(err)
+	if len(items) == 0 {
+		return resourceDiagnostic(filename, root, "schema.generated", "generated JSON Schema/CUE confirmation failed: "+err.Error())
+	}
+	for _, item := range items {
+		path := item.Path()
+		if len(path) == 0 {
+			continue
+		}
+		if len(path) >= 2 && path[0] == "spec" && path[1] == "freshness" {
+			path = []string{"spec", "freshness"}
+		}
+		node := yamlNodeAtPath(root, path)
+		if node == nil {
+			node = root
+		}
+		return &Error{Diagnostics: []Diagnostic{{
+			File: filename, Line: node.Line, Column: node.Column, Severity: SeverityError,
+			Code: "schema.generated", FieldPath: strings.Join(path, "."), Message: item.Error(),
+		}}}
+	}
+	return resourceDiagnostic(filename, root, "schema.generated", "generated JSON Schema/CUE confirmation failed: "+err.Error())
 }
 
 // generatedValidationDiagnostic keeps generated-schema failures actionable in
