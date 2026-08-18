@@ -111,8 +111,12 @@ func loadConnections(project *Project, includes []string) error {
 		if envelope.Kind != "Connection" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Connection", path, envelope.Kind)
 		}
-		var spec semanticmodel.Connection
-		if err := envelope.Spec.Decode(&spec); err != nil {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		spec, err := decodeConnectionResource(path, content, envelope.Metadata)
+		if err != nil {
 			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err.Error())
 		}
 		name := envelope.Metadata.Name
@@ -155,8 +159,12 @@ func loadSources(project *Project, includes []string) error {
 		if envelope.Kind != "Source" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Source", path, envelope.Kind)
 		}
-		var spec sourceSpec
-		if err := envelope.Spec.Decode(&spec); err != nil {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		source, err := decodeSourceResource(path, content, envelope.Metadata)
+		if err != nil {
 			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err.Error())
 		}
 		name := envelope.Metadata.Name
@@ -171,18 +179,6 @@ func loadSources(project *Project, includes []string) error {
 		}
 		if _, exists := project.Sources[name]; exists {
 			return resourceError(path, "source:"+name, "metadata.name", "duplicate Source %q", name)
-		}
-		source := semanticmodel.Source{
-			Format:      spec.Format,
-			Description: firstNonEmpty(spec.Description, envelope.Metadata.Description),
-			Path:        spec.Path,
-			Connection:  spec.Connection,
-			Object:      spec.Object,
-			Options:     spec.Options,
-			Fields:      map[string]semanticmodel.SourceField{},
-		}
-		for field, cfg := range spec.Fields {
-			source.Fields[field] = semanticmodel.SourceField{Type: cfg.Type, Description: cfg.Description}
 		}
 		project.Sources[name] = source
 		project.SourcePaths[name] = path

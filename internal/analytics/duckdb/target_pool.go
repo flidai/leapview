@@ -52,15 +52,17 @@ type TargetRuntimeLimits struct {
 }
 
 type TargetRuntimePoolFactoryConfig struct {
-	Open       TargetRuntimeSessionOpener
-	Limits     TargetRuntimeLimits
-	RequireTLS bool
+	Open               TargetRuntimeSessionOpener
+	Limits             TargetRuntimeLimits
+	RequireTLS         bool
+	ExtensionAdmission ExtensionAdmission
 }
 
 type TargetRuntimePoolFactory struct {
-	open       TargetRuntimeSessionOpener
-	limits     TargetRuntimeLimits
-	requireTLS bool
+	open               TargetRuntimeSessionOpener
+	limits             TargetRuntimeLimits
+	requireTLS         bool
+	extensionAdmission ExtensionAdmission
 }
 
 var _ connectionbinding.RuntimePoolFactory = (*TargetRuntimePoolFactory)(nil)
@@ -74,7 +76,7 @@ func NewTargetRuntimePoolFactory(config TargetRuntimePoolFactoryConfig) (*Target
 		)
 	}
 	return &TargetRuntimePoolFactory{
-		open: config.Open, limits: config.Limits, requireTLS: config.RequireTLS,
+		open: config.Open, limits: config.Limits, requireTLS: config.RequireTLS, extensionAdmission: config.ExtensionAdmission,
 	}, nil
 }
 
@@ -142,7 +144,17 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		"SET threads = " + strconv.Itoa(factory.limits.MaxThreads),
 	}
 	for _, extension := range spec.RequiredExtensions {
-		statements = append(statements, "INSTALL "+extension+" FROM core", "LOAD "+extension)
+		if factory.extensionAdmission == nil {
+			return nil, fmt.Errorf("extension %s is required but has no admission", extension)
+		}
+		admitted, err := factory.extensionAdmission.AdmitExtension(ctx, extension)
+		if err != nil {
+			return nil, fmt.Errorf("extension %s was not admitted: %w", extension, err)
+		}
+		if err := validateAdmittedExtension(extension, admitted); err != nil {
+			return nil, err
+		}
+		statements = append(statements, loadExtensionStatement(admitted.Path))
 	}
 	statements = append(statements, secret)
 	statements = append(statements, activationStatements...)
@@ -344,5 +356,11 @@ func cloneTargetConnection(connection semanticmodel.Connection) semanticmodel.Co
 	connection.Auth = maps.Clone(connection.Auth)
 	connection.Options = maps.Clone(connection.Options)
 	connection.Defaults.Options = maps.Clone(connection.Defaults.Options)
+	if connection.ReaderDefaults != nil {
+		connection.ReaderDefaults = make(map[string]map[string]any, len(connection.ReaderDefaults))
+		for format, options := range connection.ReaderDefaults {
+			connection.ReaderDefaults[format] = maps.Clone(options)
+		}
+	}
 	return connection
 }

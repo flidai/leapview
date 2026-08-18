@@ -12,7 +12,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspolicy "github.com/flidai/leapview/internal/access/policy"
-	"github.com/flidai/leapview/internal/analytics/connectors"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
@@ -366,11 +365,14 @@ func validateFlatProject(project Project) error {
 	}
 	for name, source := range project.Sources {
 		if source.Path != "" && source.Format == "" {
-			format, ok := connectors.InferFormat(source.Path)
-			if !ok {
-				return resourceError(project.SourcePaths[name], project.SourceIDs[name], "spec.format", "Source %q path %q requires format", name, source.Path)
+			return resourceError(project.SourcePaths[name], project.SourceIDs[name], "spec.location.format", "Source %q path requires explicit format", name)
+		}
+		if connection, ok := project.Connections[source.Connection]; ok && source.Path != "" {
+			effective, err := ResolveEffectiveSourceOptions(source, connection)
+			if err != nil {
+				return resourceError(project.SourcePaths[name], project.SourceIDs[name], "spec.location.options", "Source %q: %s", name, err)
 			}
-			source.Format = format
+			source.EffectiveOptions = effective
 			project.Sources[name] = source
 		}
 		if err := source.Validate(localSourceName(name), project.Connections); err != nil {

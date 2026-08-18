@@ -2,8 +2,10 @@ package duckdb
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -29,10 +31,26 @@ type SourceRuntime struct {
 	db                 analyticsresource.SessionProvider
 	resolver           CredentialResolver
 	connectionResolver analyticsruntime.ConnectionResolver
+	extensionAdmission ExtensionAdmission
 }
 
-type extensionProvider interface {
-	EnsureExtension(context.Context, string) error
+// AdmittedExtension is immutable evidence for one exact, already verified
+// extension artifact. The path is target-owned and never enters authored
+// resources or fingerprints.
+type AdmittedExtension struct {
+	Name     string
+	Identity string
+	Version  string
+	Platform string
+	Digest   string
+	Path     string
+}
+
+// ExtensionAdmission is supplied by the deployment/runtime host after it has
+// verified the pinned extension artifact. Source preparation never acquires or
+// installs extensions; it loads only the exact path returned here.
+type ExtensionAdmission interface {
+	AdmitExtension(context.Context, string) (AdmittedExtension, error)
 }
 
 type fatalReporter interface {
@@ -47,6 +65,10 @@ type refreshTelemetry interface {
 
 func NewSourceRuntime(db analyticsresource.SessionProvider) *SourceRuntime {
 	return &SourceRuntime{db: db, resolver: NonSecretCredentialResolver{}}
+}
+
+func NewSourceRuntimeWithExtensionAdmission(db analyticsresource.SessionProvider, admission ExtensionAdmission) *SourceRuntime {
+	return &SourceRuntime{db: db, resolver: NonSecretCredentialResolver{}, extensionAdmission: admission}
 }
 
 func NewSourceRuntimeWithCredentials(db analyticsresource.SessionProvider, resolver CredentialResolver) *SourceRuntime {
@@ -91,15 +113,34 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 	if err != nil {
 		return nil, err
 	}
+	closeSession := true
+	defer func() {
+		if closeSession {
+			if closer, ok := session.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+		}
+	}()
 	resolved, err := r.resolveCredentials(ctx, model)
 	if err != nil {
 		return nil, err
 	}
 	telemetry, _ := r.db.(refreshTelemetry)
-	if extensions, ok := r.db.(extensionProvider); ok {
-		for _, extension := range RequiredExtensions(resolved) {
-			if err := extensions.EnsureExtension(ctx, extension); err != nil {
+	requiredExtensions := RequiredExtensions(resolved)
+	if len(requiredExtensions) > 0 {
+		if r.extensionAdmission == nil {
+			return nil, fmt.Errorf("source preparation requires extension admission for %s", strings.Join(requiredExtensions, ", "))
+		}
+		for _, extension := range requiredExtensions {
+			admitted, err := r.extensionAdmission.AdmitExtension(ctx, extension)
+			if err != nil {
+				return nil, fmt.Errorf("extension %s was not admitted: %w", extension, err)
+			}
+			if err := validateAdmittedExtension(extension, admitted); err != nil {
 				return nil, err
+			}
+			if _, err := session.ExecContext(ctx, loadExtensionStatement(admitted.Path)); err != nil {
+				return nil, fmt.Errorf("loading admitted extension %s: %w", extension, err)
 			}
 		}
 	}
@@ -186,7 +227,34 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 		_ = prepared.Close()
 		return nil, fmt.Errorf("validating staged source schemas: %w", err)
 	}
+	closeSession = false
 	return prepared, nil
+}
+
+func validateAdmittedExtension(requested string, admitted AdmittedExtension) error {
+	if strings.TrimSpace(admitted.Name) != requested {
+		return fmt.Errorf("extension admission returned %q for requested %q", admitted.Name, requested)
+	}
+	if strings.TrimSpace(admitted.Identity) == "" || strings.TrimSpace(admitted.Version) == "" || strings.TrimSpace(admitted.Platform) == "" {
+		return fmt.Errorf("extension %s admission is missing immutable identity, version, or platform", requested)
+	}
+	digest := strings.TrimSpace(admitted.Digest)
+	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
+		return fmt.Errorf("extension %s admission digest must be sha256:<64 hex characters>", requested)
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:")); err != nil {
+		return fmt.Errorf("extension %s admission digest is not canonical sha256: %w", requested, err)
+	}
+	base := filepath.Base(admitted.Path)
+	stem := strings.TrimSuffix(base, ".duckdb_extension")
+	if !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(base, ".duckdb_extension") || stem != requested && !strings.HasPrefix(stem, requested+"-") {
+		return fmt.Errorf("extension %s admission path must be absolute", requested)
+	}
+	return nil
+}
+
+func loadExtensionStatement(path string) string {
+	return "LOAD '" + strings.ReplaceAll(filepath.ToSlash(path), "'", "''") + "'"
 }
 
 func refreshSourceModel(model *semanticmodel.Model, sourceName string, source semanticmodel.Source) *semanticmodel.Model {
@@ -376,6 +444,7 @@ type ProjectRuntimeConfig struct {
 	Database                 analyticsruntime.ProjectDatabase
 	CredentialResolver       CredentialResolver
 	ConnectionResolver       analyticsruntime.ConnectionResolver
+	ExtensionAdmission       ExtensionAdmission
 	SnapshotID               int64
 	ServingStateID           string
 	ProjectID                projectgraph.ResourceID
@@ -449,8 +518,14 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		}
 	}
 	sources := NewSourceRuntimeWithCredentials(db, config.CredentialResolver)
+	if config.ExtensionAdmission != nil {
+		sources.extensionAdmission = config.ExtensionAdmission
+	}
 	if config.ConnectionResolver != nil {
 		sources = NewSourceRuntimeWithConnectionResolver(db, config.ConnectionResolver)
+		if config.ExtensionAdmission != nil {
+			sources.extensionAdmission = config.ExtensionAdmission
+		}
 	}
 	materializationModel, err := physicalProjectModel(config.Models)
 	if err != nil {

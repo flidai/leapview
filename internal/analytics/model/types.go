@@ -194,10 +194,11 @@ type Connection struct {
 	SSLMode     string `yaml:"sslMode" json:"-"`
 	// Auth is populated only on a short-lived refresh copy by the injected
 	// credential resolver. It is deliberately absent from authored contracts.
-	Auth        ConnectionAuth        `yaml:"-" json:"-"`
-	Credentials ConnectionCredentials `yaml:"credentials" json:"-"`
-	Options     map[string]any        `yaml:"options" json:"Options"`
-	Defaults    ConnectionDefaults    `yaml:"defaults" json:"Defaults"`
+	Auth           ConnectionAuth            `yaml:"-" json:"-"`
+	Credentials    ConnectionCredentials     `yaml:"credentials" json:"-"`
+	Options        map[string]any            `yaml:"options" json:"Options"`
+	Defaults       ConnectionDefaults        `yaml:"defaults" json:"Defaults"`
+	ReaderDefaults map[string]map[string]any `yaml:"-" json:"-"`
 }
 
 type ConnectionCredentials struct {
@@ -215,14 +216,24 @@ type ConnectionDefaults struct {
 type ConnectionAuth map[string]any
 
 type Source struct {
-	Format      string                 `yaml:"format"`
-	Description string                 `yaml:"description"`
-	Path        string                 `yaml:"path"`
-	Connection  string                 `yaml:"connection"`
-	Object      string                 `yaml:"object"`
-	Options     map[string]any         `yaml:"options"`
-	Fields      map[string]SourceField `yaml:"fields"`
-	Schema      TableSchema            `yaml:"-"`
+	Format      string `yaml:"format"`
+	Description string `yaml:"description"`
+	Path        string `yaml:"path"`
+	Connection  string `yaml:"connection"`
+	Object      string `yaml:"object"`
+	// Structured location evidence is retained after lowering. Object remains
+	// the canonical runtime relation string for existing adapters.
+	LocationType string         `yaml:"-" json:"-"`
+	Catalog      string         `yaml:"-" json:"-"`
+	SchemaName   string         `yaml:"-" json:"-"`
+	RelationName string         `yaml:"-" json:"-"`
+	Options      map[string]any `yaml:"options"`
+	// EffectiveOptions is compiler-owned and excludes secrets. Runtime readers
+	// consume this resolved map instead of independently merging defaults.
+	EffectiveOptions map[string]any         `yaml:"-" json:"-"`
+	SchemaMode       string                 `yaml:"-" json:"-"`
+	Fields           map[string]SourceField `yaml:"fields"`
+	Schema           TableSchema            `yaml:"-"`
 }
 
 type Table struct {
@@ -282,11 +293,13 @@ type Transform struct {
 }
 
 type SourceField struct {
-	Field       string `yaml:"-"`
-	Table       string `yaml:"-"`
-	Name        string `yaml:"-"`
-	Type        string `yaml:"type"`
-	Description string `yaml:"description"`
+	Field       string          `yaml:"-"`
+	Table       string          `yaml:"-"`
+	Name        string          `yaml:"-"`
+	Type        string          `yaml:"type"`
+	Datatype    LogicalDataType `yaml:"-" json:"-"`
+	Nullable    *bool           `yaml:"-" json:"-"`
+	Description string          `yaml:"description"`
 }
 
 type ModelColumn struct {

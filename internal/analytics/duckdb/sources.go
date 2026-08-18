@@ -127,6 +127,16 @@ func ResolveSourcePlan(model *semanticmodel.Model, source semanticmodel.Source) 
 		if spec, ok := connectors.LookupConnection(connection.Kind); ok {
 			plan.connectionSpec = spec
 		}
+		if source.Kind() == connectors.KindPath {
+			if source.EffectiveOptions != nil {
+				plan.options = cloneSourceOptions(source.EffectiveOptions)
+			} else {
+				// Compiler-lowered Sources always carry EffectiveOptions. The
+				// fallback exists only for in-memory runtime callers and does not
+				// invent public defaults or reapply precedence.
+				plan.options = cloneSourceOptions(source.Options)
+			}
+		}
 	}
 	if source.Path == "" {
 		return plan, nil
@@ -137,6 +147,14 @@ func ResolveSourcePlan(model *semanticmodel.Model, source semanticmodel.Source) 
 	}
 	plan.path = path
 	return plan, nil
+}
+
+func cloneSourceOptions(options map[string]any) map[string]any {
+	result := make(map[string]any, len(options))
+	for key, value := range options {
+		result[key] = value
+	}
+	return result
 }
 
 func ResolveSourcePath(model *semanticmodel.Model, source semanticmodel.Source) (string, error) {
@@ -326,11 +344,28 @@ func sqlOptions(options map[string]any) (string, error) {
 	var builder strings.Builder
 	for _, key := range keys {
 		builder.WriteString(", ")
-		builder.WriteString(key)
+		builder.WriteString(duckDBOptionName(key))
 		builder.WriteString(" = ")
 		builder.WriteString(sqlLiteral(options[key]))
 	}
 	return builder.String(), nil
+}
+
+func duckDBOptionName(key string) string {
+	switch key {
+	case "delimiter":
+		return "delim"
+	case "nullString":
+		return "nullstr"
+	case "hivePartitioning":
+		return "hive_partitioning"
+	case "unionByName":
+		return "union_by_name"
+	case "maximumDepth":
+		return "maximum_depth"
+	default:
+		return key
+	}
 }
 
 func sqlLiteral(value any) string {

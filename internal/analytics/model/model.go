@@ -850,27 +850,13 @@ func (m *Model) resolveSource(source Source) (Source, error) {
 		if source.Connection == "" {
 			return source, fmt.Errorf("requires connection")
 		}
-		connection, ok := m.Connections[source.Connection]
+		_, ok := m.Connections[source.Connection]
 		if !ok {
 			return source, fmt.Errorf("references unknown connection %q", source.Connection)
 		}
 		if source.Path != "" {
-			if len(connection.Defaults.Options) > 0 {
-				options := make(map[string]any, len(connection.Defaults.Options)+len(source.Options))
-				for key, value := range connection.Defaults.Options {
-					options[key] = value
-				}
-				for key, value := range source.Options {
-					options[key] = value
-				}
-				source.Options = options
-			}
 			if source.Format == "" {
-				format, ok := InferFormat(source.Path)
-				if !ok {
-					return source, fmt.Errorf("path %q requires format", source.Path)
-				}
-				source.Format = format
+				return source, fmt.Errorf("path %q requires explicit format", source.Path)
 			}
 		}
 		return source, nil
@@ -886,6 +872,26 @@ func (s Source) Validate(name string, connections map[string]Connection) error {
 	for key := range s.Options {
 		if err := validateSemanticIdentifier(key); err != nil {
 			return fmt.Errorf("source %q option %q is invalid: %w", name, key, err)
+		}
+	}
+	mode := strings.ToLower(strings.TrimSpace(s.SchemaMode))
+	if mode == "" {
+		mode = "inferred"
+	}
+	if mode != "inferred" && mode != "compatible" && mode != "strict" {
+		return fmt.Errorf("source %q has unsupported schema mode %q", name, s.SchemaMode)
+	}
+	if mode == "inferred" && len(s.Fields) > 0 {
+		return fmt.Errorf("source %q inferred schema cannot declare fields", name)
+	}
+	if mode != "inferred" && len(s.Fields) == 0 {
+		return fmt.Errorf("source %q %s schema requires fields", name, mode)
+	}
+	for field, declaration := range s.Fields {
+		if declaration.Datatype != "" {
+			if err := validateLogicalDataType("source "+name+" field "+field, declaration.Datatype); err != nil {
+				return err
+			}
 		}
 	}
 	switch s.Kind() {
@@ -940,6 +946,21 @@ func (s Source) Validate(name string, connections map[string]Connection) error {
 		connectionSpec, ok := LookupConnection(connection.Kind)
 		if !ok || !connectionSpec.AllowsObjectSource {
 			return fmt.Errorf("source %q object cannot use %s connection %q", name, connection.Kind, s.Connection)
+		}
+		if s.Catalog != "" {
+			if err := validateSemanticIdentifier(s.Catalog); err != nil {
+				return fmt.Errorf("source %q catalog is invalid: %w", name, err)
+			}
+		}
+		if s.SchemaName != "" {
+			if err := validateSemanticIdentifier(s.SchemaName); err != nil {
+				return fmt.Errorf("source %q schema is invalid: %w", name, err)
+			}
+		}
+		if s.RelationName != "" {
+			if err := validateSemanticIdentifier(s.RelationName); err != nil {
+				return fmt.Errorf("source %q relation name is invalid: %w", name, err)
+			}
 		}
 	default:
 		return fmt.Errorf("source %q requires exactly one of path or object", name)
@@ -1066,6 +1087,12 @@ func (s Source) Role() string {
 }
 
 func (s Source) Kind() string {
+	if s.LocationType == KindPath && s.Path != "" {
+		return KindPath
+	}
+	if s.LocationType == KindObject && s.Object != "" {
+		return s.LocationType
+	}
 	count := 0
 	kind := ""
 	if s.Path != "" {
