@@ -423,6 +423,7 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 		columns, err := describeRelationSchema(ctx, p.session, relation)
 		if err != nil {
 			failure := sourceObservationFailure(ctx, budget, err)
+			queries++
 			result = append(result, analyticsmaterialize.SourceObservation{ID: id, SchemaFailure: failure, ObservationQueries: 1, ObservationMillis: time.Since(sourceStarted).Milliseconds()})
 			if failure == "timeout" || failure == "bounds" {
 				for _, remaining := range ids[len(result):] {
@@ -457,11 +458,15 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 				continue
 			}
 			if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
-				observation.FreshnessFailure = "bounds"
+				failure := "bounds"
+				if budget.MaxMillis > 0 && (ctx.Err() != nil || time.Since(started).Milliseconds() >= budget.MaxMillis) {
+					failure = "timeout"
+				}
+				observation.FreshnessFailure = failure
 				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
 				result = append(result, observation)
 				for _, remaining := range ids[len(result):] {
-					result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: "bounds"})
+					result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: failure})
 				}
 				break
 			}
@@ -469,6 +474,7 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 			var value any
 			if err := row.Scan(&value); err != nil {
 				observation.FreshnessFailure = sourceObservationFailure(ctx, budget, err)
+				queries++
 				observation.ObservationQueries++
 				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
 				result = append(result, observation)
