@@ -34,6 +34,7 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 			Connection: "local",
 			Path:       "orders.csv",
 			Format:     "csv",
+			SchemaMode: "compatible",
 			Fields: map[string]semanticmodel.SourceField{
 				"order_id": {Description: "Raw order identifier."},
 			},
@@ -91,6 +92,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 			Connections:       map[string]semanticmodel.Connection{"olist": {Kind: "managed"}},
 			Sources: map[string]semanticmodel.Source{"olist_customers": {
 				Connection: "olist", Path: "customers.csv", Format: "csv",
+				SchemaMode: "compatible",
 				Fields: map[string]semanticmodel.SourceField{
 					"customer_id":    {Description: "Customer identifier."},
 					"customer_state": {Description: "Customer state."},
@@ -375,6 +377,7 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 			Connection: "local",
 			Path:       "orders.csv",
 			Format:     "csv",
+			SchemaMode: "compatible",
 			Fields: map[string]semanticmodel.SourceField{
 				"missing": {Description: "Missing source field."},
 			},
@@ -1063,7 +1066,7 @@ func TestManagedSourceRelationUsesImmutableConnectionRoot(t *testing.T) {
 			"olist": {Kind: "managed", Root: root},
 		},
 		Sources: map[string]semanticmodel.Source{
-			"orders": {Connection: "olist", Path: "orders.csv", Format: "csv"},
+			"orders": {Connection: "olist", Path: "orders.csv", Format: "csv", EffectiveOptions: map[string]any{}},
 		},
 	}
 	relation, err := SourceRelation(model, model.Sources["orders"])

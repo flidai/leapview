@@ -296,10 +296,11 @@ func planningModel(sourceColumns map[string][]string, table semanticmodel.Table)
 			schemaColumns = append(schemaColumns, semanticmodel.ColumnSchema{Name: column, Ordinal: index + 1, PhysicalType: "VARCHAR"})
 		}
 		sources[name] = semanticmodel.Source{
-			Connection: "local_files",
-			Path:       name + ".csv",
-			Format:     "csv",
-			Schema:     semanticmodel.TableSchema{Columns: schemaColumns},
+			Connection:       "local_files",
+			Path:             name + ".csv",
+			Format:           "csv",
+			EffectiveOptions: map[string]any{},
+			Schema:           semanticmodel.TableSchema{Columns: schemaColumns},
 		}
 	}
 	if strings.TrimSpace(table.Transform.SQL) != "" {
