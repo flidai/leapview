@@ -1120,12 +1120,23 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 		}
 		if schema.Discriminator == nil {
 			seenVariants := make(map[string]struct{}, len(schema.OneOf))
-			hasScalarVariant := false
+			scalarCount := 0
+			objectCount := 0
 			for idx, variant := range schema.OneOf {
 				if isScalarUnionVariant(variant) {
-					hasScalarVariant = true
+					scalarCount++
 				} else if variant.Ref == "" {
 					return fmt.Errorf("schema %q union one_of[%d] must be an inline scalar when discriminator is omitted", name, idx)
+				} else {
+					objectCount++
+					variantName, ok := NormalizedSchemaRefName(variant)
+					if !ok {
+						return fmt.Errorf("schema %q union one_of[%d] object branch must be a named schema ref", name, idx)
+					}
+					variantSchema, ok := doc.Schemas[variantName]
+					if !ok || variantSchema.Type != "object" {
+						return fmt.Errorf("schema %q union one_of[%d] object branch %q must reference an object schema", name, idx, variantName)
+					}
 				}
 				key := variant.Ref
 				if key == "" {
@@ -1136,11 +1147,17 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 				}
 				seenVariants[key] = struct{}{}
 			}
-			// Pure object unions must carry a discriminator. A mixed scalar/object
-			// union is allowed for compact authored references where the scalar
-			// branch is the unaliased form and the object branch carries aliases.
-			if !hasScalarVariant {
-				return fmt.Errorf("schema %q union one_of[0] must be an inline scalar when discriminator is omitted", name)
+			// Pure scalar unions retain the existing untagged scalar behavior. A
+			// mixed scalar/object union is intentionally narrower: compact authored
+			// references have exactly one scalar and one closed object branch.
+			if objectCount == 0 {
+				if scalarCount == 0 {
+					return fmt.Errorf("schema %q union one_of[0] must be an inline scalar when discriminator is omitted", name)
+				}
+				return nil
+			}
+			if scalarCount != 1 || objectCount != 1 {
+				return fmt.Errorf("schema %q untagged union must contain exactly one scalar branch and exactly one object branch", name)
 			}
 			return nil
 		}

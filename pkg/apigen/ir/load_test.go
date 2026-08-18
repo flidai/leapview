@@ -1249,6 +1249,49 @@ func TestValidate_AcceptsMixedScalarObjectUnionForCompactReferences(t *testing.T
 	require.NoError(t, Validate(doc))
 }
 
+func TestValidate_RejectsMixedUnionWithMultipleObjectBranches(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Contracts", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"Selection":       {Type: "union", OneOf: []SchemaRef{{Type: "string"}, {Ref: "FirstReference"}, {Ref: "SecondReference"}}},
+			"FirstReference":  {Type: "object"},
+			"SecondReference": {Type: "object"},
+		},
+		Contracts: []Contract{{Name: "selection", Schema: SchemaRef{Ref: "Selection"}}},
+	}
+	require.ErrorContains(t, Validate(doc), "exactly one scalar branch and exactly one object branch")
+}
+
+func TestValidate_RejectsMixedUnionWithMultipleScalarBranches(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Contracts", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"Selection": {Type: "union", OneOf: []SchemaRef{{Type: "integer"}, {Type: "number"}, {Ref: "Reference"}}},
+			"Reference": {Type: "object"},
+		},
+		Contracts: []Contract{{Name: "selection", Schema: SchemaRef{Ref: "Selection"}}},
+	}
+	require.ErrorContains(t, Validate(doc), "exactly one scalar branch")
+}
+
+func TestValidate_RejectsMixedUnionWithNonObjectReference(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Contracts", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"Selection": {Type: "union", OneOf: []SchemaRef{{Type: "string"}, {Ref: "Reference"}}},
+			"Reference": {Type: "string"},
+		},
+		Contracts: []Contract{{Name: "selection", Schema: SchemaRef{Ref: "Selection"}}},
+	}
+	require.ErrorContains(t, Validate(doc), "must reference an object schema")
+}
+
 func TestValidate_RejectsObjectUnionWithoutDiscriminator(t *testing.T) {
 	doc := Document{
 		SchemaVersion: CurrentSchemaVersion,

@@ -128,25 +128,21 @@ func (value DashboardDimensionSelection) MarshalJSON() ([]byte, error) {
 	count := 0
 	if value.String != nil {
 		count++
-		if count > 1 {
-			return nil, fmt.Errorf("DashboardDimensionSelection has multiple variants")
-		}
-		encoded, err := json.Marshal(value.String)
-		if err != nil {
-			return nil, err
-		}
-		return encoded, nil
 	}
 	if value.Reference != nil {
 		count++
-		if count > 1 {
-			return nil, fmt.Errorf("DashboardDimensionSelection has multiple variants")
-		}
-		encoded, err := json.Marshal(value.Reference)
-		if err != nil {
-			return nil, err
-		}
-		return encoded, nil
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("DashboardDimensionSelection variant is required")
+	}
+	if count > 1 {
+		return nil, fmt.Errorf("DashboardDimensionSelection has multiple variants")
+	}
+	if value.String != nil {
+		return json.Marshal(value.String)
+	}
+	if value.Reference != nil {
+		return json.Marshal(value.Reference)
 	}
 	return nil, fmt.Errorf("DashboardDimensionSelection variant is required")
 }
@@ -1595,25 +1591,21 @@ func (value DashboardMetricSelection) MarshalJSON() ([]byte, error) {
 	count := 0
 	if value.String != nil {
 		count++
-		if count > 1 {
-			return nil, fmt.Errorf("DashboardMetricSelection has multiple variants")
-		}
-		encoded, err := json.Marshal(value.String)
-		if err != nil {
-			return nil, err
-		}
-		return encoded, nil
 	}
 	if value.Reference != nil {
 		count++
-		if count > 1 {
-			return nil, fmt.Errorf("DashboardMetricSelection has multiple variants")
-		}
-		encoded, err := json.Marshal(value.Reference)
-		if err != nil {
-			return nil, err
-		}
-		return encoded, nil
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("DashboardMetricSelection variant is required")
+	}
+	if count > 1 {
+		return nil, fmt.Errorf("DashboardMetricSelection has multiple variants")
+	}
+	if value.String != nil {
+		return json.Marshal(value.String)
+	}
+	if value.Reference != nil {
+		return json.Marshal(value.Reference)
 	}
 	return nil, fmt.Errorf("DashboardMetricSelection variant is required")
 }
@@ -2527,25 +2519,21 @@ func (value DashboardRecordFieldSelection) MarshalJSON() ([]byte, error) {
 	count := 0
 	if value.String != nil {
 		count++
-		if count > 1 {
-			return nil, fmt.Errorf("DashboardRecordFieldSelection has multiple variants")
-		}
-		encoded, err := json.Marshal(value.String)
-		if err != nil {
-			return nil, err
-		}
-		return encoded, nil
 	}
 	if value.Reference != nil {
 		count++
-		if count > 1 {
-			return nil, fmt.Errorf("DashboardRecordFieldSelection has multiple variants")
-		}
-		encoded, err := json.Marshal(value.Reference)
-		if err != nil {
-			return nil, err
-		}
-		return encoded, nil
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("DashboardRecordFieldSelection variant is required")
+	}
+	if count > 1 {
+		return nil, fmt.Errorf("DashboardRecordFieldSelection has multiple variants")
+	}
+	if value.String != nil {
+		return json.Marshal(value.String)
+	}
+	if value.Reference != nil {
+		return json.Marshal(value.Reference)
 	}
 	return nil, fmt.Errorf("DashboardRecordFieldSelection variant is required")
 }

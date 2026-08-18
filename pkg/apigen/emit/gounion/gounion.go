@@ -62,32 +62,42 @@ func Emit(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, ty
 	}
 }
 
-// EmitScalarObject emits a strict untagged union containing one or more JSON
-// scalar branches and exactly one object branch. This shape is used by
+// EmitScalarObject emits a strict untagged union containing exactly one JSON
+// scalar branch and exactly one object-model branch. This shape is used by
 // compact authored references: an unaliased member is a string while an
 // aliased member is a closed object. The generated wrapper never falls back
 // to interface{} and rejects every other JSON kind during unmarshal.
-func EmitScalarObject(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, typeName func(string) string) {
+func EmitScalarObject(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, typeName func(string) string) error {
 	unionName := typeName(name)
+	scalarIndex := -1
 	objectIndex := -1
 	for index, variant := range schema.OneOf {
-		if variant.Ref != "" {
+		if isScalarUnionVariant(variant) {
+			if scalarIndex >= 0 {
+				return fmt.Errorf("untagged union %q must contain exactly one scalar branch", name)
+			}
+			scalarIndex = index
+		} else if variant.Ref != "" {
 			if objectIndex >= 0 {
-				// The IR validator currently permits this only for a mixed union;
-				// leave an explicit error in generated code rather than silently
-				// accepting an ambiguous object branch.
-				objectIndex = -2
-				break
+				return fmt.Errorf("untagged union %q must contain exactly one object-model branch", name)
 			}
 			objectIndex = index
+		} else {
+			return fmt.Errorf("untagged union %q variant %d must be a scalar or named object-model ref", name, index)
 		}
 	}
-	if objectIndex < 0 {
-		b.WriteString("type " + unionName + " = any\n\n")
-		return
+	if scalarIndex < 0 || objectIndex < 0 {
+		return fmt.Errorf("untagged union %q must contain exactly one scalar branch and exactly one object-model branch", name)
 	}
 	objectRef := schema.OneOf[objectIndex]
-	objectName, _ := ir.NormalizedSchemaRefName(objectRef)
+	objectName, ok := ir.NormalizedSchemaRefName(objectRef)
+	if !ok {
+		return fmt.Errorf("untagged union %q object branch must reference a named schema", name)
+	}
+	objectSchema, ok := doc.Schemas[objectName]
+	if !ok || objectSchema.Type != "object" {
+		return fmt.Errorf("untagged union %q object branch %q must reference an object-model schema", name, objectName)
+	}
 	objectGoName := typeName(objectName)
 	objectFieldName := objectGoName
 	if strings.HasPrefix(objectFieldName, unionName) {
@@ -115,11 +125,21 @@ func EmitScalarObject(b *strings.Builder, doc ir.Document, name string, schema i
 	b.WriteString("\tcount := 0\n")
 	for _, variant := range schema.OneOf {
 		if variant.Ref != "" {
-			b.WriteString("\tif value." + objectFieldName + " != nil { count++; if count > 1 { return nil, fmt.Errorf(\"" + unionName + " has multiple variants\") }; encoded, err := json.Marshal(value." + objectFieldName + "); if err != nil { return nil, err }; return encoded, nil }\n")
+			b.WriteString("\tif value." + objectFieldName + " != nil { count++ }\n")
 			continue
 		}
 		field := scalarFieldName(variant.Type)
-		b.WriteString("\tif value." + field + " != nil { count++; if count > 1 { return nil, fmt.Errorf(\"" + unionName + " has multiple variants\") }; encoded, err := json.Marshal(value." + field + "); if err != nil { return nil, err }; return encoded, nil }\n")
+		b.WriteString("\tif value." + field + " != nil { count++ }\n")
+	}
+	b.WriteString("\tif count == 0 { return nil, fmt.Errorf(\"" + unionName + " variant is required\") }\n")
+	b.WriteString("\tif count > 1 { return nil, fmt.Errorf(\"" + unionName + " has multiple variants\") }\n")
+	for _, variant := range schema.OneOf {
+		if variant.Ref != "" {
+			b.WriteString("\tif value." + objectFieldName + " != nil { return json.Marshal(value." + objectFieldName + ") }\n")
+			continue
+		}
+		field := scalarFieldName(variant.Type)
+		b.WriteString("\tif value." + field + " != nil { return json.Marshal(value." + field + ") }\n")
 	}
 	b.WriteString("\treturn nil, fmt.Errorf(\"" + unionName + " variant is required\")\n}\n\n")
 
@@ -158,6 +178,19 @@ func EmitScalarObject(b *strings.Builder, doc ir.Document, name string, schema i
 	b.WriteString("\t\tif err := decoder.Decode(&parsed); err != nil { return fmt.Errorf(\"decode " + unionName + " object: %w\", err) }\n")
 	b.WriteString("\t\tvalue." + objectFieldName + " = &parsed\n\t\treturn nil\n")
 	b.WriteString("\tdefault:\n\t\treturn fmt.Errorf(\"decode " + unionName + ": expected a string or object\")\n\t}\n}\n\n")
+	return nil
+}
+
+func isScalarUnionVariant(variant ir.SchemaRef) bool {
+	if variant.Ref != "" || variant.Items != nil || variant.AdditionalProperties != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(variant.Type)) {
+	case "boolean", "integer", "number", "string", "null":
+		return true
+	default:
+		return false
+	}
 }
 
 func scalarLeadingBytes(kind string) string {

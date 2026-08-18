@@ -37,7 +37,7 @@ func TestEmit_PreservesGoInitialismsInJSONFieldNames(t *testing.T) {
 		},
 		Contracts: []ir.Contract{{Name: "Envelope", Schema: ir.SchemaRef{Ref: "Envelope"}}},
 	}
-		b, err := Emit(doc, Options{})
+	b, err := Emit(doc, Options{})
 	require.NoError(t, err)
 	require.Contains(t, string(b), "DashboardID string")
 	require.Contains(t, string(b), "URLParams string")
@@ -95,6 +95,115 @@ func TestEmit_GeneratesStrictScalarObjectUnion(t *testing.T) {
 	require.Contains(t, content, "func (value Selection) MarshalJSON()")
 	require.Contains(t, content, "expected a string or object")
 	require.NotContains(t, content, "type Selection = any")
+}
+
+func TestEmit_RejectsUnsupportedScalarObjectUnions(t *testing.T) {
+	tests := []struct {
+		name   string
+		oneOf  []ir.SchemaRef
+		schema map[string]ir.Schema
+		want   string
+	}{
+		{
+			name:  "multiple object branches",
+			oneOf: []ir.SchemaRef{{Type: "string"}, {Ref: "FirstReference"}, {Ref: "SecondReference"}},
+			schema: map[string]ir.Schema{
+				"FirstReference":  {Type: "object"},
+				"SecondReference": {Type: "object"},
+			},
+			want: "exactly one object-model branch",
+		},
+		{
+			name:  "multiple scalar branches",
+			oneOf: []ir.SchemaRef{{Type: "integer"}, {Type: "number"}, {Ref: "Reference"}},
+			schema: map[string]ir.Schema{
+				"Reference": {Type: "object"},
+			},
+			want: "exactly one scalar branch",
+		},
+		{
+			name:  "reference is not object",
+			oneOf: []ir.SchemaRef{{Type: "string"}, {Ref: "Reference"}},
+			schema: map[string]ir.Schema{
+				"Reference": {Type: "string"},
+			},
+			want: "object-model schema",
+		},
+		{
+			name:   "inline object branch",
+			oneOf:  []ir.SchemaRef{{Type: "string"}, {Type: "object"}},
+			schema: map[string]ir.Schema{},
+			want:   "scalar or named object-model ref",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.schema["Selection"] = ir.Schema{Type: "union", OneOf: test.oneOf}
+			doc := ir.Document{Info: ir.Info{Namespace: "Dashboard"}, Schemas: test.schema, Contracts: []ir.Contract{{Name: "selection", Schema: ir.SchemaRef{Ref: "Selection"}}}}
+			_, err := Emit(doc, Options{})
+			require.Error(t, err)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestEmit_GeneratedScalarObjectUnionRuntime(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Dashboard"},
+		Schemas: map[string]ir.Schema{
+			"Selection": {Type: "union", OneOf: []ir.SchemaRef{{Type: "string"}, {Ref: "Reference"}}},
+			"Reference": {Type: "object", Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"name"}},
+		},
+		Contracts: []ir.Contract{{Name: "selection", Schema: ir.SchemaRef{Ref: "Selection"}}},
+	}
+	generated, err := Emit(doc, Options{PackageName: "generated"})
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/generated\n\ngo 1.24\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models.gen.go"), generated, 0o600))
+	testSource := `package generated
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestScalarObjectUnionRuntime(t *testing.T) {
+	var scalar Selection
+	if err := json.Unmarshal([]byte("month"), &scalar); err == nil { t.Fatal("unquoted scalar unexpectedly decoded") }
+	if err := json.Unmarshal([]byte(` + "`\"month\"`" + `), &scalar); err != nil { t.Fatal(err) }
+	if scalar.String == nil || *scalar.String != "month" || scalar.Reference != nil { t.Fatalf("scalar variant = %#v", scalar) }
+	encoded, err := json.Marshal(scalar)
+	if err != nil || string(encoded) != ` + "`\"month\"`" + ` { t.Fatalf("scalar marshal = %s, %v", encoded, err) }
+
+	var object Selection
+	if err := json.Unmarshal([]byte(` + "`{\"name\":\"month\"}`" + `), &object); err != nil { t.Fatal(err) }
+	if object.Reference == nil || object.Reference.Name != "month" || object.String != nil { t.Fatalf("object variant = %#v", object) }
+	encoded, err = json.Marshal(object)
+	if err != nil || string(encoded) != ` + "`{\"name\":\"month\"}`" + ` { t.Fatalf("object marshal = %s, %v", encoded, err) }
+
+	for _, input := range []string{"true", "null", "1", "[]"} {
+		var rejected Selection
+		if err := json.Unmarshal([]byte(input), &rejected); err == nil { t.Errorf("wrong scalar kind %s accepted", input) }
+	}
+	for _, input := range []string{` + "`{}`" + `, ` + "`{\"name\":\"month\",\"extra\":true}`" + `} {
+		var rejected Selection
+		if err := json.Unmarshal([]byte(input), &rejected); err == nil { t.Errorf("invalid object %s accepted", input) }
+	}
+	name := "month"
+	if _, err := json.Marshal(Selection{String: &name, Reference: &Reference{Name: name}}); err == nil { t.Fatal("multiple set variants accepted") }
+	if _, err := json.Marshal(Selection{}); err == nil { t.Fatal("empty union accepted") }
+	if err := json.Unmarshal([]byte(` + "`{\"name\":\"month\"} trailing`" + `), &Selection{}); err == nil { t.Fatal("trailing object data accepted") }
+	if !strings.Contains(string(encoded), "name") { t.Fatal("object output lost required field") }
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models_test.go"), []byte(testSource), 0o600))
+	command := exec.Command("go", "test", "./...")
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 func TestEmit_ReferencesImportedContractNamespaceWithoutRegeneratingIt(t *testing.T) {
