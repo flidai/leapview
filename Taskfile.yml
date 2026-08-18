@@ -182,7 +182,7 @@ tasks:
       - task: docs:generate
       - task: docs:check
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
+        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/reference/config/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
         test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
       - task: site:build
       - bun run test:docs-diagrams
@@ -525,7 +525,7 @@ tasks:
       - task: generated:git-check
       - task: config:check
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
+        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/reference/config/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
         test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
 
   generated:git-check:
@@ -634,7 +634,9 @@ tasks:
       - internal/project/contracts/gen/data-resources.schema.json
       - internal/project/contracts/models.gen.go
       - internal/project/contracts/registry.gen.go
+      - internal/project/contracts/path_options.gen.go
       - web/generated/data-resources/index.ts
+      - docs/reference/config/data-resource-connectors.md
     cmds:
       - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target data-resource-contracts
       - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target data-resource-contracts

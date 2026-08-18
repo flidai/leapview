@@ -1,6 +1,7 @@
 package contracts_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	contracts "github.com/flidai/leapview/internal/project/contracts"
@@ -93,6 +94,8 @@ kind: Model
 metadata:
   id: model:orders
   name: orders
+aiContext:
+  instructions: Order identifiers are stable customer-facing references.
 spec:
   definition:
     type: sql
@@ -117,6 +120,9 @@ spec:
 	}
 	if _, ok := model.Spec.Definition.Value.(*contracts.SQLModelDefinition); !ok {
 		t.Fatalf("model definition variant = %T, want *SQLModelDefinition", model.Spec.Definition.Value)
+	}
+	if model.AiContext == nil || model.AiContext.Instructions == nil {
+		t.Fatalf("model aiContext = %#v, want preserved top-level instructions", model.AiContext)
 	}
 
 	directYAML := []byte(`apiVersion: leapview.dev/v1
@@ -196,6 +202,14 @@ spec:
 	var source contracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {
 		t.Fatal("csv location accepted parquet-only option")
+	}
+}
+
+func TestGeneratedGoPathVariantRejectsWrongTaggedOptions(t *testing.T) {
+	content := []byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"files","location":{"type":"path","path":"orders.csv","format":"csv","options":{"unionByName":true}}}}`)
+	var source contracts.Source
+	if err := json.Unmarshal(content, &source); err == nil {
+		t.Fatal("generated Go Source DTO accepted parquet-only CSV option")
 	}
 }
 

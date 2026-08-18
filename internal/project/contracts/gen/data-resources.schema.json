@@ -325,9 +325,7 @@
       },
       "required": [
         "basis",
-        "errorAfter",
-        "field",
-        "warningAfter"
+        "field"
       ],
       "type": "object"
     },
@@ -521,6 +519,9 @@
     },
     "Model": {
       "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
         "apiVersion": {
           "enum": [
             "leapview.dev/v1"
@@ -1436,9 +1437,7 @@
       },
       "required": [
         "basis",
-        "errorAfter",
-        "revision",
-        "warningAfter"
+        "revision"
       ],
       "type": "object"
     },

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,17 @@ type document struct {
 
 type schema struct {
 	Extensions map[string]json.RawMessage `json:"extensions"`
+	Properties map[string]property        `json:"properties"`
+}
+
+type property struct {
+	Schema schemaRef `json:"schema"`
+}
+
+type schemaRef struct {
+	Ref  string   `json:"ref"`
+	Type string   `json:"type"`
+	Enum []string `json:"enum"`
 }
 
 type profile struct {
@@ -35,14 +47,171 @@ type profile struct {
 }
 
 func main() {
-	if err := run("api/gen/data-resources-ir.json", "internal/project/contracts/registry.gen.go"); err != nil {
+	const (
+		input       = "api/gen/data-resources-ir.json"
+		registryOut = "internal/project/contracts/registry.gen.go"
+		schemaOut   = "internal/project/contracts/gen/data-resources.schema.json"
+		goOut       = "internal/project/contracts/path_options.gen.go"
+		tsOut       = "web/generated/data-resources/index.ts"
+		docsOut     = "docs/reference/config/data-resource-connectors.md"
+	)
+	doc, err := loadDocument(input)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "generate connector registry:", err)
 		os.Exit(1)
 	}
-	if err := patchPathSourceSchema("internal/project/contracts/gen/data-resources.schema.json"); err != nil {
+	profiles, err := buildProfiles(doc)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "generate connector registry:", err)
+		os.Exit(1)
+	}
+	if err := writeRegistry(registryOut, profiles); err != nil {
+		fmt.Fprintln(os.Stderr, "generate connector registry:", err)
+		os.Exit(1)
+	}
+	pairs, err := derivePathFormatOptions(doc)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "derive path format options:", err)
+		os.Exit(1)
+	}
+	if err := patchPathSourceSchema(schemaOut, pairs); err != nil {
 		fmt.Fprintln(os.Stderr, "patch data-resource schema:", err)
 		os.Exit(1)
 	}
+	if err := writePathOptionsGo(goOut, pairs); err != nil {
+		fmt.Fprintln(os.Stderr, "generate path option validation:", err)
+		os.Exit(1)
+	}
+	if err := patchPathOptionsTS(tsOut, pairs); err != nil {
+		fmt.Fprintln(os.Stderr, "generate TypeScript path options:", err)
+		os.Exit(1)
+	}
+	if err := writeConnectorReference(docsOut, profiles, pairs); err != nil {
+		fmt.Fprintln(os.Stderr, "generate connector reference:", err)
+		os.Exit(1)
+	}
+}
+
+func loadDocument(input string) (document, error) {
+	raw, err := os.ReadFile(input)
+	if err != nil {
+		return document{}, err
+	}
+	var doc document
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return document{}, fmt.Errorf("decode APIGen IR: %w", err)
+	}
+	return doc, nil
+}
+
+func run(input, output string) error {
+	doc, err := loadDocument(input)
+	if err != nil {
+		return err
+	}
+	profiles, err := buildProfiles(doc)
+	if err != nil {
+		return err
+	}
+	return writeRegistry(output, profiles)
+}
+
+func buildProfiles(doc document) ([]profile, error) {
+	profiles := make([]profile, 0)
+	for name, schema := range doc.Schemas {
+		value, ok := schema.Extensions["x-leapview-connector"]
+		if !ok {
+			continue
+		}
+		var item profile
+		if err := json.Unmarshal(value, &item); err != nil {
+			return nil, fmt.Errorf("decode connector profile %s: %w", name, err)
+		}
+		if item.Key == "" || item.AdapterKey == "" || item.ActivationMode == "" || item.SecretType == "" || item.SupportStatus == "" {
+			return nil, fmt.Errorf("connector profile %s is missing required metadata", name)
+		}
+		item.SchemaName = name
+		if err := checkRuntimeProfile(item); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, item)
+	}
+	if len(profiles) == 0 {
+		return nil, errors.New("no connector profiles found in APIGen IR")
+	}
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Key < profiles[j].Key })
+	seen := map[string]struct{}{}
+	adapters := map[string]string{}
+	for _, item := range profiles {
+		if _, ok := seen[item.Key]; ok {
+			return nil, fmt.Errorf("duplicate connector profile key %q", item.Key)
+		}
+		seen[item.Key] = struct{}{}
+		if previous, ok := adapters[item.AdapterKey]; ok {
+			return nil, fmt.Errorf("adapter key %q is declared by both %q and %q", item.AdapterKey, previous, item.Key)
+		}
+		adapters[item.AdapterKey] = item.Key
+	}
+	for _, key := range runtimeKeys() {
+		if _, ok := seen[key]; !ok {
+			return nil, fmt.Errorf("runtime connector %q has no TypeSpec declaration", key)
+		}
+		if owner := adapters[key]; owner != key {
+			return nil, fmt.Errorf("runtime connector %q is not mapped to exactly one adapter key", key)
+		}
+	}
+	return profiles, nil
+}
+
+func writeRegistry(output string, profiles []profile) error {
+	content := emit(profiles)
+	formatted, err := format.Source([]byte(content))
+	if err != nil {
+		return fmt.Errorf("format generated registry: %w", err)
+	}
+	return os.WriteFile(output, formatted, 0o644)
+}
+
+type pathFormatOption struct {
+	Format string
+	Model  string
+}
+
+func derivePathFormatOptions(doc document) ([]pathFormatOption, error) {
+	pathSchema, ok := doc.Schemas["PathSourceLocation"]
+	if !ok {
+		return nil, errors.New("APIGen IR has no PathSourceLocation schema")
+	}
+	formatProperty, ok := pathSchema.Properties["format"]
+	if !ok || len(formatProperty.Schema.Enum) == 0 {
+		return nil, errors.New("PathSourceLocation.format has no enum")
+	}
+	defaults, ok := doc.Schemas["ReaderDefaults"]
+	if !ok {
+		return nil, errors.New("APIGen IR has no ReaderDefaults schema")
+	}
+	formats := make(map[string]struct{}, len(formatProperty.Schema.Enum))
+	pairs := make([]pathFormatOption, 0, len(formatProperty.Schema.Enum))
+	for _, format := range formatProperty.Schema.Enum {
+		if _, duplicate := formats[format]; duplicate {
+			return nil, fmt.Errorf("PathSourceLocation.format declares duplicate %q", format)
+		}
+		formats[format] = struct{}{}
+		property, ok := defaults.Properties[format]
+		if !ok || property.Schema.Ref == "" {
+			return nil, fmt.Errorf("ReaderDefaults has no typed option model for path format %q", format)
+		}
+		pairs = append(pairs, pathFormatOption{Format: format, Model: property.Schema.Ref})
+	}
+	for name, property := range defaults.Properties {
+		if _, ok := formats[name]; !ok {
+			return nil, fmt.Errorf("ReaderDefaults option %q has no PathSourceLocation.format variant", name)
+		}
+		if property.Schema.Ref == "" {
+			return nil, fmt.Errorf("ReaderDefaults option %q has no typed model reference", name)
+		}
+	}
+	return pairs, nil
 }
 
 // patchPathSourceSchema composes the scalar ADR format with its typed sibling
@@ -51,7 +220,7 @@ func main() {
 // discriminator inside options. Keep the authored surface (`format: csv` and
 // `options: {header: true}`) and seal the correlation in the generated JSON
 // Schema consumed by DecodeResource.
-func patchPathSourceSchema(path string) error {
+func patchPathSourceSchema(path string, pairs []pathFormatOption) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -67,17 +236,9 @@ func patchPathSourceSchema(path string) error {
 	if _, ok := defs["PathSourceLocation"]; !ok {
 		return errors.New("generated schema has no PathSourceLocation definition")
 	}
-	branches := []any{
-		pathSourceSchemaBranch("csv", "CSVReaderOptions"),
-		pathSourceSchemaBranch("json", "JSONReaderOptions"),
-		pathSourceSchemaBranch("parquet", "ParquetReaderOptions"),
-		pathSourceSchemaBranch("excel", "ExcelReaderOptions"),
-		pathSourceSchemaBranch("text", "TextReaderOptions"),
-		pathSourceSchemaBranch("blob", "BlobReaderOptions"),
-		pathSourceSchemaBranch("vortex", "VortexReaderOptions"),
-		pathSourceSchemaBranch("delta", "DeltaReaderOptions"),
-		pathSourceSchemaBranch("iceberg", "IcebergReaderOptions"),
-		pathSourceSchemaBranch("lance", "LanceReaderOptions"),
+	branches := make([]any, 0, len(pairs))
+	for _, pair := range pairs {
+		branches = append(branches, pathSourceSchemaBranch(pair.Format, pair.Model))
 	}
 	defs["PathSourceLocation"] = map[string]any{"oneOf": branches}
 	encoded, err := json.MarshalIndent(document, "", "  ")
@@ -102,67 +263,140 @@ func pathSourceSchemaBranch(format, options string) map[string]any {
 	}
 }
 
-func run(input, output string) error {
-	raw, err := os.ReadFile(input)
+func writePathOptionsGo(path string, pairs []pathFormatOption) error {
+	var b strings.Builder
+	b.WriteString("// Code generated by internal/project/contracts/generate. DO NOT EDIT.\n")
+	b.WriteString("package contracts\n\n")
+	b.WriteString("import (\n\t\"bytes\"\n\t\"encoding/json\"\n\t\"fmt\"\n)\n\n")
+	b.WriteString("func validatePathSourceOptions(format string, options *SourcePathOptions) error {\n")
+	b.WriteString("\tif options == nil { return nil }\n")
+	b.WriteString("\tdata, err := json.Marshal(options)\n\tif err != nil { return err }\n")
+	b.WriteString("\tswitch format {\n")
+	for _, pair := range pairs {
+		b.WriteString("\tcase ")
+		b.WriteString(strconv.Quote(pair.Format))
+		b.WriteString(":\n\t\tvar typed ")
+		b.WriteString(pair.Model)
+		b.WriteString("\n\t\treturn decodePathSourceOptions(data, &typed)\n")
+	}
+	b.WriteString("\tdefault:\n\t\treturn fmt.Errorf(\"unsupported path source format %q\", format)\n\t}\n}\n\n")
+	b.WriteString("func decodePathSourceOptions(data []byte, destination any) error {\n")
+	b.WriteString("\tdecoder := json.NewDecoder(bytes.NewReader(data))\n\tdecoder.DisallowUnknownFields()\n\treturn decoder.Decode(destination)\n}\n\n")
+	b.WriteString("func (value *SourceLocationPathVariant) UnmarshalJSON(data []byte) error {\n")
+	b.WriteString("\tif value == nil { return fmt.Errorf(\"cannot unmarshal SourceLocationPathVariant into nil receiver\") }\n")
+	b.WriteString("\ttype plain SourceLocationPathVariant\n\tvar decoded plain\n")
+	b.WriteString("\tif err := decodePathSourceOptions(data, &decoded); err != nil { return err }\n")
+	b.WriteString("\tif decoded.Type != \"path\" { return fmt.Errorf(\"SourceLocation path variant type must be path\") }\n")
+	b.WriteString("\tif err := validatePathSourceOptions(decoded.Format, decoded.Options); err != nil { return err }\n")
+	b.WriteString("\t*value = SourceLocationPathVariant(decoded)\n\treturn nil\n}\n\n")
+	b.WriteString("func (value SourceLocationPathVariant) MarshalJSON() ([]byte, error) {\n")
+	b.WriteString("\tif value.Type != \"path\" { return nil, fmt.Errorf(\"SourceLocation path variant type must be path\") }\n")
+	b.WriteString("\tif err := validatePathSourceOptions(value.Format, value.Options); err != nil { return nil, err }\n")
+	b.WriteString("\ttype plain SourceLocationPathVariant\n\treturn json.Marshal(plain(value))\n}\n")
+	formatted, err := format.Source([]byte(b.String()))
+	if err != nil {
+		return fmt.Errorf("format generated path option validation: %w", err)
+	}
+	return os.WriteFile(path, formatted, 0o644)
+}
+
+func patchPathOptionsTS(path string, pairs []pathFormatOption) error {
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	var doc document
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return fmt.Errorf("decode APIGen IR: %w", err)
+	text := string(content)
+	start := strings.Index(text, "export interface PathSourceLocation {")
+	if start < 0 {
+		return errors.New("generated TypeScript has no PathSourceLocation interface")
 	}
-	profiles := make([]profile, 0)
-	for name, schema := range doc.Schemas {
-		value, ok := schema.Extensions["x-leapview-connector"]
-		if !ok {
-			continue
-		}
-		var item profile
-		if err := json.Unmarshal(value, &item); err != nil {
-			return fmt.Errorf("decode connector profile %s: %w", name, err)
-		}
-		if item.Key == "" || item.AdapterKey == "" || item.ActivationMode == "" || item.SecretType == "" || item.SupportStatus == "" {
-			return fmt.Errorf("connector profile %s is missing required metadata", name)
-		}
-		item.SchemaName = name
-		if err := checkRuntimeProfile(item); err != nil {
-			return err
-		}
-		profiles = append(profiles, item)
+	end := strings.Index(text[start:], "\n}\n")
+	if end < 0 {
+		return errors.New("generated TypeScript PathSourceLocation interface is malformed")
 	}
-	if len(profiles) == 0 {
-		return errors.New("no connector profiles found in APIGen IR")
+	end = start + end + len("\n}\n")
+	var replacement strings.Builder
+	replacement.WriteString("export type PathSourceLocation = ")
+	for i, pair := range pairs {
+		if i > 0 {
+			replacement.WriteString(" | ")
+		}
+		replacement.WriteString(pathFormatTypeName(pair.Format))
+		replacement.WriteString("PathSourceLocation")
 	}
-	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Key < profiles[j].Key })
-	seen := map[string]struct{}{}
-	adapters := map[string]string{}
+	replacement.WriteString("\n\n")
+	for _, pair := range pairs {
+		replacement.WriteString("export interface ")
+		replacement.WriteString(pathFormatTypeName(pair.Format))
+		replacement.WriteString("PathSourceLocation {\n  type: 'path'\n  path: string\n  format: '")
+		replacement.WriteString(pair.Format)
+		replacement.WriteString("'\n  options?: ")
+		replacement.WriteString(pair.Model)
+		replacement.WriteString("\n}\n\n")
+	}
+	text = text[:start] + replacement.String() + text[end:]
+	start = strings.Index(text, "export interface SourceLocationPathVariant extends PathSourceLocation {")
+	if start < 0 {
+		return errors.New("generated TypeScript has no SourceLocationPathVariant interface")
+	}
+	end = strings.Index(text[start:], "\n}\n")
+	if end < 0 {
+		return errors.New("generated TypeScript SourceLocationPathVariant interface is malformed")
+	}
+	end = start + end + len("\n}\n")
+	text = text[:start] + "export type SourceLocationPathVariant = PathSourceLocation\n\n" + text[end:]
+	return os.WriteFile(path, []byte(text), 0o644)
+}
+
+func pathFormatTypeName(format string) string {
+	if format == "csv" || format == "json" {
+		return strings.ToUpper(format)
+	}
+	return strings.ToUpper(format[:1]) + format[1:]
+}
+
+func writeConnectorReference(path string, profiles []profile, pairs []pathFormatOption) error {
+	var b strings.Builder
+	b.WriteString("<!-- Code generated by internal/project/contracts/generate; DO NOT EDIT. -->\n\n")
+	b.WriteString("# Data-resource connector capabilities\n\n")
+	b.WriteString("This reference is generated from the reviewed TypeSpec connector profiles and runtime registry checks. It describes authored capabilities only; target endpoints and credentials remain target-owned.\n\n")
+	b.WriteString("## Connectors\n\n")
+	b.WriteString("| Key | Activation | Locations | Approved extensions | Secret type | Support | Adapter |\n| --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, item := range profiles {
-		if _, ok := seen[item.Key]; ok {
-			return fmt.Errorf("duplicate connector profile key %q", item.Key)
+		b.WriteString("| `")
+		b.WriteString(item.Key)
+		b.WriteString("` | `")
+		b.WriteString(item.ActivationMode)
+		b.WriteString("` | `")
+		b.WriteString(strings.Join(item.LocationCapabilities, "`, `"))
+		b.WriteString("` | `")
+		if len(item.ApprovedExtensions) == 0 {
+			b.WriteString("none")
+		} else {
+			b.WriteString(strings.Join(item.ApprovedExtensions, "`, `"))
 		}
-		seen[item.Key] = struct{}{}
-		if previous, ok := adapters[item.AdapterKey]; ok {
-			return fmt.Errorf("adapter key %q is declared by both %q and %q", item.AdapterKey, previous, item.Key)
-		}
-		adapters[item.AdapterKey] = item.Key
+		b.WriteString("` | `")
+		b.WriteString(item.SecretType)
+		b.WriteString("` | `")
+		b.WriteString(item.SupportStatus)
+		b.WriteString("` | `")
+		b.WriteString(item.AdapterKey)
+		b.WriteString("` |\n")
 	}
-	for _, key := range runtimeKeys() {
-		if _, ok := seen[key]; !ok {
-			return fmt.Errorf("runtime connector %q has no TypeSpec declaration", key)
-		}
-		if owner := adapters[key]; owner != key {
-			return fmt.Errorf("runtime connector %q is not mapped to exactly one adapter key", key)
-		}
+	b.WriteString("\n## Path format options\n\n")
+	b.WriteString("Path Sources retain the scalar ADR shape (`format` plus sibling `options`). Each format is paired with exactly one generated reader option model; unknown or cross-format option fields are rejected.\n\n")
+	b.WriteString("| Format | Option model |\n| --- | --- |\n")
+	for _, pair := range pairs {
+		b.WriteString("| `")
+		b.WriteString(pair.Format)
+		b.WriteString("` | `")
+		b.WriteString(pair.Model)
+		b.WriteString("` |\n")
 	}
-	content := emit(profiles)
-	formatted, err := format.Source([]byte(content))
-	if err != nil {
-		return fmt.Errorf("format generated registry: %w", err)
-	}
-	if err := os.WriteFile(output, formatted, 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return nil
+	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
 func checkRuntimeProfile(item profile) error {

@@ -506,10 +506,10 @@ type ExcelReaderOptions struct {
 }
 
 type FieldFreshness struct {
-	Basis        string            `json:"basis" yaml:"basis"`
-	Field        string            `json:"field" yaml:"field"`
-	WarningAfter FreshnessDuration `json:"warningAfter" yaml:"warningAfter"`
-	ErrorAfter   FreshnessDuration `json:"errorAfter" yaml:"errorAfter"`
+	Basis        string             `json:"basis" yaml:"basis"`
+	Field        string             `json:"field" yaml:"field"`
+	WarningAfter *FreshnessDuration `json:"warningAfter,omitempty" yaml:"warningAfter,omitempty"`
+	ErrorAfter   *FreshnessDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
 }
 
 type FreshnessDuration struct {
@@ -559,6 +559,7 @@ type Model struct {
 	APIVersion string           `json:"apiVersion" yaml:"apiVersion"`
 	Kind       string           `json:"kind" yaml:"kind"`
 	Metadata   ResourceMetadata `json:"metadata" yaml:"metadata"`
+	AiContext  *AIContext       `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
 	Spec       ModelSpec        `json:"spec" yaml:"spec"`
 }
 
@@ -1090,10 +1091,10 @@ type ResourceProvenance struct {
 }
 
 type RevisionFreshness struct {
-	Basis        string            `json:"basis" yaml:"basis"`
-	Revision     string            `json:"revision" yaml:"revision"`
-	WarningAfter FreshnessDuration `json:"warningAfter" yaml:"warningAfter"`
-	ErrorAfter   FreshnessDuration `json:"errorAfter" yaml:"errorAfter"`
+	Basis        string             `json:"basis" yaml:"basis"`
+	Revision     string             `json:"revision" yaml:"revision"`
+	WarningAfter *FreshnessDuration `json:"warningAfter,omitempty" yaml:"warningAfter,omitempty"`
+	ErrorAfter   *FreshnessDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
 }
 
 type RowCountModelCheck struct {
@@ -1185,14 +1186,8 @@ func (value *SourceFreshness) UnmarshalJSON(data []byte) error {
 		if _, ok := fields["basis"]; !ok {
 			return fmt.Errorf("decode SourceFreshness variant %q: required property basis is missing", tag.Value)
 		}
-		if _, ok := fields["errorAfter"]; !ok {
-			return fmt.Errorf("decode SourceFreshness variant %q: required property errorAfter is missing", tag.Value)
-		}
 		if _, ok := fields["field"]; !ok {
 			return fmt.Errorf("decode SourceFreshness variant %q: required property field is missing", tag.Value)
-		}
-		if _, ok := fields["warningAfter"]; !ok {
-			return fmt.Errorf("decode SourceFreshness variant %q: required property warningAfter is missing", tag.Value)
 		}
 		var variant SourceFreshnessFieldVariant
 		if err := decode(&variant); err != nil {
@@ -1203,14 +1198,8 @@ func (value *SourceFreshness) UnmarshalJSON(data []byte) error {
 		if _, ok := fields["basis"]; !ok {
 			return fmt.Errorf("decode SourceFreshness variant %q: required property basis is missing", tag.Value)
 		}
-		if _, ok := fields["errorAfter"]; !ok {
-			return fmt.Errorf("decode SourceFreshness variant %q: required property errorAfter is missing", tag.Value)
-		}
 		if _, ok := fields["revision"]; !ok {
 			return fmt.Errorf("decode SourceFreshness variant %q: required property revision is missing", tag.Value)
-		}
-		if _, ok := fields["warningAfter"]; !ok {
-			return fmt.Errorf("decode SourceFreshness variant %q: required property warningAfter is missing", tag.Value)
 		}
 		var variant SourceFreshnessRevisionVariant
 		if err := decode(&variant); err != nil {

@@ -279,15 +279,15 @@ model FreshnessDuration {
 model FieldFreshness {
   basis: "field";
   field: string;
-  warningAfter: FreshnessDuration;
-  errorAfter: FreshnessDuration;
+  warningAfter?: FreshnessDuration;
+  errorAfter?: FreshnessDuration;
 }
 
 model RevisionFreshness {
   basis: "revision";
   revision: string;
-  warningAfter: FreshnessDuration;
-  errorAfter: FreshnessDuration;
+  warningAfter?: FreshnessDuration;
+  errorAfter?: FreshnessDuration;
 }
 
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "basis" })
@@ -462,5 +462,6 @@ model Model {
   apiVersion: "leapview.dev/v1";
   kind: "Model";
   metadata: ResourceMetadata;
+  aiContext?: AIContext;
   spec: ModelSpec;
 }
