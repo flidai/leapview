@@ -1,13 +1,16 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	nethttp "net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
@@ -42,13 +45,18 @@ type HeadlessAuthoringApplication interface {
 	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
-type authoringMutationResponse struct {
-	Revision  authoring.RevisionToken      `json:"revision"`
-	Lifecycle authoring.DashboardLifecycle `json:"lifecycle"`
-}
-
-func mutationResponse(result authoringservice.Result) authoringMutationResponse {
-	return authoringMutationResponse{Revision: result.Revision, Lifecycle: result.Lifecycle}
+func mutationResponse(result authoringservice.Result) (dashboardgen.DashboardAuthoringMutationResponse, error) {
+	if err := result.Lifecycle.Validate(); err != nil {
+		return dashboardgen.DashboardAuthoringMutationResponse{}, err
+	}
+	if err := result.Revision.ValidateComplete(); err != nil {
+		return dashboardgen.DashboardAuthoringMutationResponse{}, err
+	}
+	var response dashboardgen.DashboardAuthoringMutationResponse
+	if err := decodeGeneratedProjection(result, &response); err != nil {
+		return dashboardgen.DashboardAuthoringMutationResponse{}, err
+	}
+	return response, nil
 }
 
 // AuthoringAPI is the versioned, headless dashboard authoring transport. It
@@ -105,7 +113,12 @@ func (h AuthoringAPI) ListCatalog(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, result)
+	response, err := catalogListResponse(result)
+	if err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, response)
 }
 
 func (h AuthoringAPI) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -125,24 +138,91 @@ func (h AuthoringAPI) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request)
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, result)
+	response, err := catalogDashboardResponse(result)
+	if err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, response)
 }
 
-type authoringDraftResponse struct {
-	ProjectID   projectgraph.ResourceID      `json:"projectId"`
-	DashboardID authoring.DashboardID        `json:"dashboardId"`
-	DraftID     authoring.DraftID            `json:"draftId"`
-	Revision    authoring.RevisionToken      `json:"revision"`
-	Lifecycle   authoring.DashboardLifecycle `json:"lifecycle"`
-	Document    document.DashboardDocument   `json:"document"`
+func catalogDashboardResponse(value catalog.Dashboard) (dashboardgen.DashboardAuthoringSummary, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return dashboardgen.DashboardAuthoringSummary{}, err
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		return dashboardgen.DashboardAuthoringSummary{}, err
+	}
+	if value.ServingIdentity == (projectgraph.ServingIdentity{}) {
+		delete(wire, "servingIdentity")
+	} else if err := value.ServingIdentity.Validate(); err != nil {
+		return dashboardgen.DashboardAuthoringSummary{}, fmt.Errorf("catalog serving identity: %w", err)
+	}
+	var response dashboardgen.DashboardAuthoringSummary
+	if err := decodeGeneratedProjection(wire, &response); err != nil {
+		return dashboardgen.DashboardAuthoringSummary{}, err
+	}
+	return response, nil
 }
 
-func draftResponse(read application.DraftRead) authoringDraftResponse {
+func catalogListResponse(value catalog.ListResult) (dashboardgen.DashboardAuthoringCatalogResponse, error) {
+	items := make([]dashboardgen.DashboardAuthoringSummary, 0, len(value.Items))
+	for _, item := range value.Items {
+		converted, err := catalogDashboardResponse(item)
+		if err != nil {
+			return dashboardgen.DashboardAuthoringCatalogResponse{}, err
+		}
+		items = append(items, converted)
+	}
+	return dashboardgen.DashboardAuthoringCatalogResponse{Items: items, Count: int32(value.Count), InstanceCount: int32(value.InstanceCount), ProjectCount: int32(value.ProjectCount)}, nil
+}
+
+func draftResponse(read application.DraftRead) (dashboardgen.DashboardAuthoringDraftResponse, error) {
+	if err := read.Lifecycle.Validate(); err != nil {
+		return dashboardgen.DashboardAuthoringDraftResponse{}, err
+	}
+	if err := read.Revision.Validate(); err != nil {
+		return dashboardgen.DashboardAuthoringDraftResponse{}, err
+	}
 	draftID := authoring.DraftID("")
 	if read.Lifecycle.Draft != nil {
 		draftID = read.Lifecycle.Draft.ID
 	}
-	return authoringDraftResponse{ProjectID: read.Lifecycle.ProjectID, DashboardID: read.Revision.DashboardID, DraftID: draftID, Revision: read.Revision.Token(), Lifecycle: read.Lifecycle, Document: read.Revision.Document}
+	var response dashboardgen.DashboardAuthoringDraftResponse
+	value := struct {
+		ProjectID   string                       `json:"projectId"`
+		DashboardID string                       `json:"dashboardId"`
+		DraftID     string                       `json:"draftId"`
+		Revision    authoring.RevisionToken      `json:"revision"`
+		Lifecycle   authoring.DashboardLifecycle `json:"lifecycle"`
+		Document    document.DashboardDocument   `json:"document"`
+	}{ProjectID: read.Lifecycle.ProjectID.String(), DashboardID: read.Revision.DashboardID.String(), DraftID: draftID.String(), Revision: read.Revision.Token(), Lifecycle: read.Lifecycle, Document: read.Revision.Document}
+	if err := decodeGeneratedProjection(value, &response); err != nil {
+		return dashboardgen.DashboardAuthoringDraftResponse{}, err
+	}
+	return response, nil
+}
+
+func decodeGeneratedProjection(source any, destination any) error {
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		return fmt.Errorf("encode authoring projection: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return fmt.Errorf("decode generated authoring projection: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("decode generated authoring projection: trailing value")
+		}
+		return fmt.Errorf("decode generated authoring projection: %w", err)
+	}
+	return nil
 }
 
 func (h AuthoringAPI) GetDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -161,7 +241,12 @@ func (h AuthoringAPI) GetDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, draftResponse(read))
+	response, err := draftResponse(read)
+	if err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, response)
 }
 
 func (h AuthoringAPI) GetRevision(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -191,7 +276,24 @@ func (h AuthoringAPI) GetRevision(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, map[string]any{"projectId": projectID, "dashboardId": revision.DashboardID, "revision": revision.Token(), "document": revision.Document, "provenance": revision.Provenance, "createdAt": revision.CreatedAt})
+	if err := revision.Validate(); err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	var response dashboardgen.DashboardAuthoringRevisionResponse
+	value := struct {
+		ProjectID   string                     `json:"projectId"`
+		DashboardID string                     `json:"dashboardId"`
+		Revision    authoring.RevisionToken    `json:"revision"`
+		Document    document.DashboardDocument `json:"document"`
+		Provenance  authoring.Provenance       `json:"provenance"`
+		CreatedAt   time.Time                  `json:"createdAt"`
+	}{ProjectID: projectID.String(), DashboardID: revision.DashboardID.String(), Revision: revision.Token(), Document: revision.Document, Provenance: revision.Provenance, CreatedAt: revision.CreatedAt}
+	if err := decodeGeneratedProjection(value, &response); err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, response)
 }
 
 func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -240,7 +342,12 @@ func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusCreated, mutationResponse(result))
+	response, err := mutationResponse(result)
+	if err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusCreated, response)
 }
 
 func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -263,24 +370,10 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeAuthoringError(w, r, err)
 		return
 	}
-	origin := authoring.Origin(derefString(input.Origin))
-	if origin == "" {
-		origin = authoring.OriginUI
-	}
-	expectedRevision, err := revisionTokenFromAPIGen(input.ExpectedRevision)
+	command, origin, err := commandFromAPIGen(input, key, actor)
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
-	}
-	command := authoring.Command{
-		ID: authoring.CommandID(key), DashboardID: authoring.DashboardID(input.DashboardId), DraftID: authoring.DraftID(input.DraftId),
-		ExpectedRevision: expectedRevision, ContentHash: derefString(input.ContentHash),
-		Provenance:    authoring.Provenance{Origin: origin, ActorID: actor},
-		SetVisibility: setVisibilityPayloadFromAPIGen(input.SetVisibility),
-		AddPage:       addPagePayloadFromAPIGen(input.AddPage),
-		AddVisual:     addVisualPayloadFromAPIGen(input.AddVisual),
-		AssignField:   assignFieldPayloadFromAPIGen(input.AssignField),
-		Publish:       publishPayloadFromAPIGen(input.Publish), Archive: archivePayloadFromAPIGen(input.Archive),
 	}
 	var result authoringservice.Result
 	if command.IsBuilderIntent() {
@@ -303,7 +396,12 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, mutationResponse(result))
+	response, err := mutationResponse(result)
+	if err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, response)
 }
 
 func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -347,7 +445,12 @@ func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusCreated, mutationResponse(result))
+	response, err := mutationResponse(result)
+	if err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusCreated, response)
 }
 
 func (h AuthoringAPI) Preview(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -385,7 +488,12 @@ func (h AuthoringAPI) Preview(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, result)
+	var response dashboardgen.DashboardAuthoringPreviewResponse
+	if err := decodeGeneratedProjection(result, &response); err != nil {
+		writeAuthoringError(w, r, err)
+		return
+	}
+	writeJSON(w, nethttp.StatusOK, response)
 }
 
 func (h AuthoringAPI) Export(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -449,11 +557,99 @@ func revisionTokenFromAPIGen(value dashboardgen.GenSchemaDashboardAuthoringRevis
 	return authoring.RevisionToken{RevisionID: authoring.RevisionID(value.RevisionId), Number: uint64(value.Number), ContentHash: value.ContentHash}, nil
 }
 
-func setVisibilityPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringSetVisibilityIntent) *authoring.SetVisibilityPayload {
+func setVisibilityPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringSetVisibilityIntent) (*authoring.SetVisibilityPayload, error) {
+	if value == nil {
+		return nil, nil
+	}
+	visibility := authoring.Visibility(value.Visibility)
+	if err := visibility.Validate(); err != nil {
+		return nil, err
+	}
+	return &authoring.SetVisibilityPayload{Visibility: visibility}, nil
+}
+
+func metadataPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringMetadataIntent) (*authoring.MetadataPatch, error) {
+	if value == nil {
+		return nil, nil
+	}
+	var visibility *authoring.Visibility
+	if value.Visibility != nil {
+		converted := authoring.Visibility(*value.Visibility)
+		if err := converted.Validate(); err != nil {
+			return nil, err
+		}
+		visibility = &converted
+	}
+	return &authoring.MetadataPatch{
+		Title: value.Title, Description: value.Description, Slug: value.Slug,
+		SemanticModel: value.SemanticModel, Visibility: visibility, Appearance: value.Appearance,
+	}, nil
+}
+
+func upsertPagePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardPage) *authoring.UpsertPagePayload {
 	if value == nil {
 		return nil
 	}
-	return &authoring.SetVisibilityPayload{Visibility: authoring.Visibility(value.Visibility)}
+	return &authoring.UpsertPagePayload{Page: *value}
+}
+
+func removePagePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringRemovePageIntent) *authoring.RemovePagePayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.RemovePagePayload{PageID: value.PageId}
+}
+
+func upsertVisualPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringUpsertVisualIntent) *authoring.UpsertVisualPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.UpsertVisualPayload{VisualID: value.VisualId, Visual: value.Visual}
+}
+
+func removeVisualPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringRemoveVisualIntent) *authoring.RemoveVisualPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.RemoveVisualPayload{VisualID: value.VisualId}
+}
+
+func setLayoutPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringSetLayoutIntent) *authoring.SetLayoutPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.SetLayoutPayload{PageID: value.PageId, Layout: value.Layout}
+}
+
+func setFiltersPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringSetFiltersIntent) *authoring.SetFiltersPayload {
+	if value == nil {
+		return nil
+	}
+	payload := &authoring.SetFiltersPayload{}
+	if value.Filters != nil {
+		payload.Filters = append([]document.DashboardFilter(nil), (*value.Filters)...)
+	}
+	if value.Clear != nil {
+		payload.Clear = *value.Clear
+	}
+	return payload
+}
+
+func setInteractionPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringSetInteractionIntent) *authoring.SetInteractionPayload {
+	if value == nil {
+		return nil
+	}
+	payload := &authoring.SetInteractionPayload{Interaction: value.Interaction}
+	if value.PageId != nil {
+		payload.PageID = *value.PageId
+	}
+	if value.VisualId != nil {
+		payload.VisualID = *value.VisualId
+	}
+	if value.Clear != nil {
+		payload.Clear = *value.Clear
+	}
+	return payload
 }
 
 func addPagePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringAddPageIntent) *authoring.AddPagePayload {
@@ -477,6 +673,81 @@ func assignFieldPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthorin
 	return &authoring.AssignFieldPayload{PageID: value.PageId, VisualID: value.VisualId, FieldID: value.FieldId, Role: authoring.FieldRole(value.Role)}
 }
 
+func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequest, id, actor string) (authoring.Command, authoring.Origin, error) {
+	if input.Value == nil {
+		return authoring.Command{}, "", fmt.Errorf("%w: command variant is required", authoring.ErrInvalidPayload)
+	}
+	var base *dashboardgen.GenSchemaDashboardAuthoringCommandRequestBase
+	command := authoring.Command{ID: authoring.CommandID(id), Provenance: authoring.Provenance{ActorID: actor}}
+	var payloadErr error
+	switch value := input.Value.(type) {
+	case *dashboardgen.DashboardAuthoringMetadataCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.Metadata, payloadErr = metadataPayloadFromAPIGen(&value.Metadata)
+	case *dashboardgen.DashboardAuthoringSetVisibilityCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetVisibility, payloadErr = setVisibilityPayloadFromAPIGen(&value.SetVisibility)
+	case *dashboardgen.DashboardAuthoringAddPageCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.AddPage = addPagePayloadFromAPIGen(&value.AddPage)
+	case *dashboardgen.DashboardAuthoringAddVisualCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.AddVisual = addVisualPayloadFromAPIGen(&value.AddVisual)
+	case *dashboardgen.DashboardAuthoringAssignFieldCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.AssignField = assignFieldPayloadFromAPIGen(&value.AssignField)
+	case *dashboardgen.DashboardAuthoringUpsertPageCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpsertPage = upsertPagePayloadFromAPIGen(&value.UpsertPage)
+	case *dashboardgen.DashboardAuthoringRemovePageCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.RemovePage = removePagePayloadFromAPIGen(&value.RemovePage)
+	case *dashboardgen.DashboardAuthoringUpsertVisualCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.UpsertVisual = upsertVisualPayloadFromAPIGen(&value.UpsertVisual)
+	case *dashboardgen.DashboardAuthoringRemoveVisualCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.RemoveVisual = removeVisualPayloadFromAPIGen(&value.RemoveVisual)
+	case *dashboardgen.DashboardAuthoringSetLayoutCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetLayout = setLayoutPayloadFromAPIGen(&value.SetLayout)
+	case *dashboardgen.DashboardAuthoringSetFiltersCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetFilters = setFiltersPayloadFromAPIGen(&value.SetFilters)
+	case *dashboardgen.DashboardAuthoringSetInteractionCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetInteraction = setInteractionPayloadFromAPIGen(&value.SetInteraction)
+	case *dashboardgen.DashboardAuthoringPublishCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.Publish = &authoring.PublishPayload{}
+	case *dashboardgen.DashboardAuthoringArchiveCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.Archive = &authoring.ArchivePayload{}
+	default:
+		return authoring.Command{}, "", fmt.Errorf("%w: unsupported command variant %T", authoring.ErrInvalidPayload, input.Value)
+	}
+	if payloadErr != nil {
+		return authoring.Command{}, "", payloadErr
+	}
+	if base == nil {
+		return authoring.Command{}, "", fmt.Errorf("%w: command envelope is required", authoring.ErrInvalidPayload)
+	}
+	expected, err := revisionTokenFromAPIGen(base.ExpectedRevision)
+	if err != nil {
+		return authoring.Command{}, "", err
+	}
+	origin := authoring.Origin(derefString(base.Origin))
+	if origin == "" {
+		origin = authoring.OriginUI
+	}
+	command.DashboardID = authoring.DashboardID(base.DashboardId)
+	command.DraftID = authoring.DraftID(base.DraftId)
+	command.ExpectedRevision = expected
+	command.ContentHash = derefString(base.ContentHash)
+	command.Provenance.Origin = origin
+	return command, origin, nil
+}
+
 func publishPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringEmptyPayload) *authoring.PublishPayload {
 	if value == nil {
 		return nil
@@ -491,11 +762,22 @@ func archivePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringEmp
 	return &authoring.ArchivePayload{}
 }
 
-func filtersFromAPIGen(value *map[string]any) (dashboard.Filters, error) {
+func filtersFromAPIGen(value *dashboardgen.DashboardAuthoringPreviewFilters) (dashboard.Filters, error) {
 	if value == nil {
 		return dashboard.Filters{}, nil
 	}
-	encoded, err := json.Marshal(*value)
+	for _, selection := range value.Selections {
+		for _, entry := range selection.Entries {
+			for _, mapping := range entry.Mappings {
+				switch mapping.Value.(type) {
+				case nil, string, bool, float64:
+				default:
+					return dashboard.Filters{}, fmt.Errorf("%w: preview selection values must be JSON scalars", authoring.ErrInvalidAuthoring)
+				}
+			}
+		}
+	}
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return dashboard.Filters{}, fmt.Errorf("%w: encode filters: %v", authoring.ErrInvalidAuthoring, err)
 	}

@@ -2,9 +2,11 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -158,6 +160,91 @@ func TestAuthoringAPIRequiresIdempotencyKeyForCommands(t *testing.T) {
 	}
 }
 
+func TestAuthoringGeneratedCommandContractRejectsZeroAndMultiplePayloads(t *testing.T) {
+	base := `"kind":"metadata","dashboardId":"dash","draftId":"draft","expectedRevision":{"revisionId":"rev","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	var zero dashboardgen.GenSchemaDashboardAuthoringCommandRequest
+	if err := json.Unmarshal([]byte("{"+base+"}"), &zero); err == nil {
+		t.Fatal("command without payload decoded successfully")
+	}
+	var multiple dashboardgen.GenSchemaDashboardAuthoringCommandRequest
+	if err := json.Unmarshal([]byte("{"+base+`,"metadata":{},"setVisibility":{"visibility":"private"}}`+"}"), &multiple); err == nil {
+		t.Fatal("command with multiple payloads decoded successfully")
+	}
+}
+
+func TestAuthoringGeneratedCommandContractRejectsLegacyVisibility(t *testing.T) {
+	var input dashboardgen.GenSchemaDashboardAuthoringCommandRequest
+	body := `{"kind":"setVisibility","dashboardId":"dash","draftId":"draft","expectedRevision":{"revisionId":"rev","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"organization-visible"}}`
+	if err := json.Unmarshal([]byte(body), &input); err != nil {
+		t.Fatalf("generated command decode unexpectedly failed: %v", err)
+	}
+	if _, _, err := commandFromAPIGen(input, "cmd", "actor"); err == nil {
+		t.Fatal("legacy organization-visible visibility was accepted")
+	}
+}
+
+func TestAuthoringGeneratedForkEvidenceRoundTripAndBranchExclusivity(t *testing.T) {
+	valid := `{"kind":"project","project":{"sourceProjectId":"source","sourceDashboardId":"dash","identity":{"projectId":"source","environment":"prod","generationId":"gen"}}}`
+	var evidence dashboardgen.GenSchemaDashboardAuthoringForkEvidence
+	if err := json.Unmarshal([]byte(valid), &evidence); err != nil {
+		t.Fatalf("decode project fork evidence: %v", err)
+	}
+	encoded, err := json.Marshal(evidence)
+	var gotMap, wantMap map[string]any
+	if err == nil {
+		err = json.Unmarshal(encoded, &gotMap)
+	}
+	if err == nil {
+		err = json.Unmarshal([]byte(valid), &wantMap)
+	}
+	if err != nil || !reflect.DeepEqual(gotMap, wantMap) {
+		t.Fatalf("fork evidence round trip = %s, want %s (err=%v)", encoded, valid, err)
+	}
+	var exclusive dashboardgen.GenSchemaDashboardAuthoringForkEvidence
+	if err := json.Unmarshal([]byte(`{"kind":"project","project":{"sourceProjectId":"source","sourceDashboardId":"dash","identity":{"projectId":"source","environment":"prod","generationId":"gen"}},"instance":{}}`), &exclusive); err == nil {
+		t.Fatal("fork evidence with both branches decoded successfully")
+	}
+}
+
+func TestAuthoringGeneratedLifecycleAndCompilationRoundTrip(t *testing.T) {
+	body := `{"projectId":"project","id":"dash","ownerPrincipalId":"owner","slug":"sales","title":"Sales","semanticModel":"sales-model","visibility":"organization","status":"published","draft":{"id":"draft","dashboardId":"dash","revision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"provenance":{"origin":"file","actorId":"owner"}},"published":{"revision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"compilation":{"authoredRevision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"definitionHash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","semanticModelId":"sales-model","semanticIdentity":{"projectId":"project","environment":"prod","generationId":"gen"}},"publishedAt":"2026-01-02T03:04:05Z","provenance":{"origin":"file","actorId":"owner"}}}`
+	var lifecycle dashboardgen.GenSchemaDashboardAuthoringLifecycle
+	if err := json.Unmarshal([]byte(body), &lifecycle); err != nil {
+		t.Fatalf("decode lifecycle: %v", err)
+	}
+	encoded, err := json.Marshal(lifecycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotMap, wantMap map[string]any
+	if err := json.Unmarshal(encoded, &gotMap); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(body), &wantMap); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gotMap, wantMap) {
+		t.Fatalf("lifecycle round trip changed persisted shape:\n got %s\nwant %s", encoded, body)
+	}
+}
+
+func TestAuthoringGeneratedRevisionProjectionRejectsUint64Overflow(t *testing.T) {
+	var token dashboardgen.GenSchemaDashboardAuthoringRevisionToken
+	err := decodeGeneratedProjection(authoring.RevisionToken{RevisionID: "rev", Number: uint64(1) << 63, ContentHash: strings.Repeat("a", 64)}, &token)
+	if err == nil {
+		t.Fatal("uint64 revision number overflow decoded into int64 transport")
+	}
+}
+
+func TestAuthoringPreviewFiltersRejectObjectAndArraySelectionValues(t *testing.T) {
+	for _, invalid := range []any{map[string]any{"nested": true}, []any{"nested"}} {
+		filters := &dashboardgen.DashboardAuthoringPreviewFilters{Selections: []dashboardgen.DashboardAuthoringPreviewSelection{{Entries: []dashboardgen.DashboardAuthoringPreviewSelectionEntry{{Mappings: []dashboardgen.DashboardAuthoringPreviewSelectionMapping{{Field: "country", Value: invalid}}}}}}}
+		if _, err := filtersFromAPIGen(filters); err == nil {
+			t.Fatalf("preview filter accepted non-scalar value %#v", invalid)
+		}
+	}
+}
+
 func TestAuthoringAPIMapsStaleRevisionToConflict(t *testing.T) {
 	app := &fakeHeadlessAuthoring{draftErr: authoring.ErrStaleRevision}
 	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/draft", nil)
@@ -237,7 +324,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 
 func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{ID: "dash-command"}}}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"origin":"agent","publish":{}}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"kind":"publish","dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"origin":"agent","publish":{}}`))
 	req.Header.Set("Idempotency-Key", "cmd-audit")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -353,7 +440,7 @@ func TestAuthoringAPIProjectExportUsesActiveSourceExport(t *testing.T) {
 
 func TestAuthoringAPIRejectsCommandActorSpoof(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"shared"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"kind":"setVisibility","dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"shared"}}`))
 	req.Header.Set("Idempotency-Key", "cmd-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
