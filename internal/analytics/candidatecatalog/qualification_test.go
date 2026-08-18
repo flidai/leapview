@@ -224,16 +224,18 @@ func TestNormalizeRejectsLiveInlineDeletesWithoutRepair(t *testing.T) {
 			t.Fatalf("persist delete policy (%s): %v", statement, err)
 		}
 	}
+	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'data_inlining_row_limit', 0, schema => 'model', table_name => 'inline_delete')"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := working.Commit(ctx, "delete-update", nil, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, "UPDATE model.inline_delete SET id = 3001 WHERE id = 1")
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'data_inlining_row_limit', 0, schema => 'model', table_name => 'inline_delete')"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := working.Normalize(ctx); !errors.Is(err, ducklake.ErrLiveInlineData) {
+	err = nil
+	_, err = working.Normalize(ctx)
+	if !errors.Is(err, ducklake.ErrLiveInlineData) || !strings.Contains(err.Error(), "live inlined deletes") {
 		t.Fatalf("Normalize() error = %v, want live delete rejection", err)
 	}
 }
