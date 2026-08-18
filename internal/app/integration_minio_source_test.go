@@ -73,7 +73,10 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("configure development credential resolver: %v", err)
 	}
-	db, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(t.TempDir(), "ducklake"), MaxConnections: 2})
+	admission := newTestExactExtensionAdmission(t, "ducklake", "httpfs")
+	db, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
+		RootDir: filepath.Join(t.TempDir(), "ducklake"), MaxConnections: 2, ExtensionAdmission: admission,
+	})
 	require.NoError(t, err)
 	defer db.Close()
 	controller, err := workload.New(workload.DefaultConfig())
@@ -85,6 +88,7 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 		Models:             map[string]*semanticmodel.Model{"commerce": model},
 		Database:           db,
 		CredentialResolver: credentialResolver,
+		ExtensionAdmission: admission,
 		ProjectID:          "project:commerce",
 		Environment:        "test",
 	})
@@ -194,7 +198,7 @@ func minIOModel(bucket, key string) *semanticmodel.Model {
 			"lake": {Kind: "s3", Scope: scope, Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_TEST_MINIO_CREDENTIALS"}},
 		},
 		Sources: map[string]semanticmodel.Source{
-			"orders": {Connection: "lake", Path: "s3://" + bucket + "/commerce/" + key, Format: "parquet"},
+			"orders": {Connection: "lake", Path: "s3://" + bucket + "/commerce/" + key, Format: "parquet", EffectiveOptions: map[string]any{}},
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
