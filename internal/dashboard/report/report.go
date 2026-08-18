@@ -45,8 +45,12 @@ func DefaultPage() dashboard.Page {
 	return dashboard.Page{
 		ID:     "overview",
 		Title:  "Overview",
-		Canvas: dashboard.PageCanvas{Width: 1366, Height: 940},
 		Grid:   dashboard.PageGrid{Columns: 12, RowHeight: 48, Gap: 16, Padding: 16},
+		Height: 32,
+		ResponsiveLayout: &dashboard.PageResponsiveLayout{
+			OccupiedRows: 0,
+			NarrowView:   "stack",
+		},
 	}
 }
 

@@ -211,16 +211,16 @@ func placementsOverlap(left, right dashboard.PagePlacement) bool {
 }
 
 // dashboardfilterBindingRef creates the narrow page-component binding used by
-// the existing runtime projection. LEA-426 will supply the complete canonical
-// filter binding scope when it wires the generated filter declarations.
+// the runtime projection. Canonical filter compilation resolves the complete
+// filter declaration and scope before this page projection is served.
 func dashboardfilterBindingRef(filterID string) dashboardfilter.BindingRef {
 	return dashboardfilter.BindingRef{Scope: dashboardfilter.ScopeReport, ID: filterID}
 }
 
 // ValidateCanonicalDashboardCompatibility validates closed visual/query/
 // presentation combinations and page references. It remains separate from
-// layout compilation so LEA-426 can compose model resolution and query
-// lowering without routing through legacy authoring structs.
+// layout compilation so model resolution and query lowering can compose these
+// checks without introducing a second authoring representation.
 func ValidateCanonicalDashboardCompatibility(spec document.DashboardSpec) error {
 	for visualID, visual := range spec.Visuals {
 		if visualID == "" {
