@@ -33,7 +33,7 @@ visuals:
 
 ## Bubble chart
 
-Add delivery duration as bubble size and category as color. The explicit pixel range keeps bubble area legible without allowing one outlier to cover the plot.
+Add delivery duration and review score as the two quantitative axes, with category as color. The explicit point identity keeps each order stable.
 
 {{< visual id="delivery_scatter_status" >}}
 
@@ -50,7 +50,6 @@ visuals:
       metrics:
       - delivery_days
       - review_score
-      - revenue
       sort:
       - field: order_id
         direction: asc
@@ -87,8 +86,9 @@ visuals:
       - order_id
       metrics:
       - revenue
+      - delivery_days
       sort:
-      - field: purchase_day
+      - field: order_id
         direction: asc
       limit: 30
 ```

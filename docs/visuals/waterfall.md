@@ -93,7 +93,7 @@ visuals:
       metrics:
       - revenue
       sort:
-      - field: value
+      - field: revenue
         direction: desc
       limit: 12
 ```

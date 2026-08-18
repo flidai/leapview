@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic distribution
 
-Set `query.dataset` and one numeric metric so LeapView can bin raw delivery values and count observations in each interval.
+Select one numeric field and a bin count so LeapView can count observations in each interval.
 
 {{< visual id="delivery_histogram" >}}
 
@@ -28,7 +28,7 @@ visuals:
 
 ## Custom bins
 
-Change the raw metric to revenue and use `presentation.bin_count` to balance distribution detail against the available chart width.
+Change the numeric field to revenue and adjust `query.bins` to balance distribution detail against the available chart width.
 
 {{< visual id="revenue_histogram" >}}
 

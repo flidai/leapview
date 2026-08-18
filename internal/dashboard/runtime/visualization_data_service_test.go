@@ -34,7 +34,7 @@ func TestFlattenHierarchyRowsBuildsDeterministicNodeParentFrames(t *testing.T) {
 		{"node": "Springfield", "parent": "Europe", "value": 5.0, "region": "Europe", "city": "Springfield"},
 	}
 
-	got, err := flattenHierarchyRows(rows, []string{"region", "city"})
+	got, err := flattenHierarchyRowsTyped(rows, []string{"region", "city"}, "value", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestFlattenHierarchyRowsRejectsInvalidValues(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := flattenHierarchyRows(test.rows, []string{"level_0", "level_1"}); err == nil {
+			if _, err := flattenHierarchyRowsTyped(test.rows, []string{"level_0", "level_1"}, "value", false); err == nil {
 				t.Fatal("expected invalid hierarchy data to fail")
 			}
 		})
@@ -67,7 +67,7 @@ func TestFlattenHierarchyRowsPreservesExactDecimalSums(t *testing.T) {
 		{"region": "Americas", "city": "Austin", "value": "9007199254740993.125"},
 		{"region": "Americas", "city": "Austin", "value": "0.875"},
 	}
-	got, err := flattenHierarchyRows(rows, []string{"region", "city"})
+	got, err := flattenHierarchyRowsTyped(rows, []string{"region", "city"}, "value", true)
 	if err != nil {
 		t.Fatal(err)
 	}

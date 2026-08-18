@@ -20,18 +20,10 @@ func TestAggregateMemberMetadataResolvesMetricPresentation(t *testing.T) {
 	}
 }
 
-func TestCategoryMultiMeasureDatumsDecodesBundledWideRows(t *testing.T) {
-	runtime := &modelRuntime{model: &semanticmodel.Model{Metrics: map[string]semanticmodel.Metric{
-		"rating_count": {Label: "Ratings"},
-		"tag_count":    {Label: "Tags"},
-	}}}
-	visual := visualPlan{Metrics: []visualizationdefinition.FieldBinding{{FieldID: "rating_count"}, {FieldID: "tag_count"}}}
-	rows := []dashboard.Datum{{"label": "2024-01-01", "value_0": int64(8), "value_1": int64(3)}}
-	got := categoryMultiMeasureDatums(runtime, visual, rows)
-	want := []dashboard.Datum{
-		{"label": "2024-01-01", "series": "Ratings", "value": int64(8)},
-		{"label": "2024-01-01", "series": "Tags", "value": int64(3)},
-	}
+func TestCategoryMultiMeasureDatumsPreservesCanonicalWideRows(t *testing.T) {
+	rows := []dashboard.Datum{{"month": "2024-01-01", "rating_count": int64(8), "tag_count": int64(3)}}
+	got := categoryMultiMeasureDatums(rows)
+	want := rows
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("datums = %#v, want %#v", got, want)
 	}

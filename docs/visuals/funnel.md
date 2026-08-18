@@ -91,6 +91,6 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: asc
 ```

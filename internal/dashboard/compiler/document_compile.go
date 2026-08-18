@@ -75,6 +75,9 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 		if err := validateCanonicalVisualResultReferences(visual, query); err != nil {
 			return DocumentResult{}, fmt.Errorf("visual %q references: %w", visualID, err)
 		}
+		if err := validateDerivedResultAliases(query, visual.Type); err != nil {
+			return DocumentResult{}, fmt.Errorf("visual %q result aliases: %w", visualID, err)
+		}
 		if err := validateCanonicalInteractionKinds(visual); err != nil {
 			return DocumentResult{}, fmt.Errorf("visual %q interactions: %w", visualID, err)
 		}
@@ -111,7 +114,15 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 		if err := visualizationir.ValidateSpec(spec); err != nil {
 			return DocumentResult{}, fmt.Errorf("visual %q IR: %w", visualID, err)
 		}
-		compiled, err := visualizationdefinition.NewWithSecondaryQueries(visualID, spec, query.Binding, secondary)
+		definitionBinding := query.Binding
+		if visual.Type == document.DashboardVisualTypeMatrix && definitionBinding.Pivot != nil {
+			pivot := definitionBinding.Pivot
+			definitionBinding.Kind = visualizationdefinition.QueryMatrix
+			definitionBinding.ResultShape = visualizationdefinition.ResultMatrixWindow
+			definitionBinding.Matrix = &visualizationdefinition.MatrixQueryBinding{TableID: pivot.TableID, Rows: pivot.Rows, Columns: pivot.Columns, Metrics: pivot.Metrics, Limit: pivot.Limit}
+			definitionBinding.Pivot = nil
+		}
+		compiled, err := visualizationdefinition.NewWithSecondaryQueries(visualID, spec, definitionBinding, secondary)
 		if err != nil {
 			return DocumentResult{}, fmt.Errorf("visual %q definition: %w", visualID, err)
 		}
@@ -158,6 +169,26 @@ func adjustCanonicalResultShape(binding *visualizationdefinition.QueryBinding, v
 	case document.DashboardVisualTypeCombo:
 		binding.ResultShape = visualizationdefinition.ResultCategoryMultiMeasure
 	}
+}
+
+func validateDerivedResultAliases(query LoweredDashboardQuery, visualType document.DashboardVisualType) error {
+	reserved := map[string]struct{}{}
+	switch visualType {
+	case document.DashboardVisualTypeTreemap, document.DashboardVisualTypeTree, document.DashboardVisualTypeSunburst:
+		reserved = map[string]struct{}{"node": {}, "parent": {}}
+	case document.DashboardVisualTypeGraph, document.DashboardVisualTypeSankey:
+		return nil
+	case document.DashboardVisualTypeWaterfall:
+		reserved = map[string]struct{}{"start": {}, "end": {}, "positive": {}}
+	default:
+		return nil
+	}
+	for _, field := range query.ResultFrame {
+		if _, exists := reserved[field.Name]; exists {
+			return fmt.Errorf("result field %q is reserved for derived %s output", field.Name, visualType)
+		}
+	}
+	return nil
 }
 
 func validateCanonicalVisualResultReferences(visual document.DashboardVisual, query LoweredDashboardQuery) error {
@@ -339,14 +370,39 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			rows = bindingRefs(query.Binding.Pivot.Rows)
 			columns = bindingRefs(query.Binding.Pivot.Columns)
 			metricRefs = bindingRefs(query.Binding.Pivot.Metrics)
+		} else if query.Binding.Aggregate != nil && len(query.Binding.Aggregate.Dimensions) >= 2 {
+			rows = bindingRefs(query.Binding.Aggregate.Dimensions[:1])
+			columns = bindingRefs(query.Binding.Aggregate.Dimensions[1:2])
+			metricRefs = bindingRefs(query.Binding.Aggregate.Metrics)
 		} else {
-			return visualizationir.VisualizationSpec{}, fmt.Errorf("matrix visual requires a matrix or pivot query binding")
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("matrix visual requires a matrix, pivot, or two-dimensional aggregate query binding")
 		}
 		if len(rows) == 0 || len(metricRefs) == 0 {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("matrix visual requires non-empty rows and metrics")
 		}
 		base.Kind = "matrix"
 		return visualizationir.VisualizationSpec{Value: &visualizationir.MatrixVisualizationSpec{VisualizationSpecBase: base, Kind: "matrix", Rows: rows, Columns: columns, Metrics: metricRefs, MetricFormatting: map[string][]visualizationir.TableVisualizationFormattingRule{}, Presentation: p}}, nil
+	case document.DashboardVisualTypeHeatmap:
+		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
+		if !ok {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("heatmap presentation lowering returned %T", presentation)
+		}
+		if err := requireOperands("heatmap", 2, 1, false, false); err != nil {
+			return visualizationir.VisualizationSpec{}, err
+		}
+		base.Kind = "cartesian"
+		// Heatmaps use the matrix result shape at runtime (row, column,
+		// value), while retaining the canonical Cartesian IR contract so
+		// presentation validation and renderer capabilities remain shared with
+		// other Cartesian marks.
+		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{
+			VisualizationSpecBase: base,
+			Kind:                  "cartesian",
+			Mark:                  visualizationir.VisualizationCartesianMarkHeatmap,
+			X:                     dimensions[0],
+			Y:                     []visualizationir.VisualizationFieldRef{dimensions[1], metrics[0]},
+			Presentation:          p,
+		}}, nil
 	case document.DashboardVisualTypePivot:
 		p, ok := presentation.(visualizationir.GridVisualizationPresentation)
 		if !ok {
@@ -391,14 +447,18 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		if len(dimensions) < 1 || len(dimensions) > 2 || len(metrics) != 1 {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("hierarchy requires one or two dimensions and exactly one metric, got %d and %d", len(dimensions), len(metrics))
 		}
-		base.Kind = "hierarchy"
-		var parent *visualizationir.VisualizationFieldRef
-		if len(dimensions) > 1 {
-			parentRef := dimensions[1]
-			parent = &parentRef
+		if (visual.Type == document.DashboardVisualTypeGraph || visual.Type == document.DashboardVisualTypeSankey) && len(dimensions) != 2 {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("%s requires exactly two dimensions and one metric", visual.Type)
 		}
-		value := metricRef(0)
-		return visualizationir.VisualizationSpec{Value: &visualizationir.HierarchyVisualizationSpec{VisualizationSpecBase: base, Kind: "hierarchy", Mark: visualizationir.VisualizationHierarchyMark(typ), Node: dimensions[0], Parent: parent, Value: &value, Presentation: p}}, nil
+		base.Kind = "hierarchy"
+		if visual.Type == document.DashboardVisualTypeGraph || visual.Type == document.DashboardVisualTypeSankey {
+			source, target, value := dimensions[0], dimensions[1], metrics[0]
+			return visualizationir.VisualizationSpec{Value: &visualizationir.HierarchyVisualizationSpec{VisualizationSpecBase: base, Kind: "hierarchy", Mark: visualizationir.VisualizationHierarchyMark(typ), Node: source, Source: &source, Target: &target, Value: &value, Presentation: p}}, nil
+		}
+		node := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "node"}
+		parent := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "parent"}
+		value := metrics[0]
+		return visualizationir.VisualizationSpec{Value: &visualizationir.HierarchyVisualizationSpec{VisualizationSpecBase: base, Kind: "hierarchy", Mark: visualizationir.VisualizationHierarchyMark(typ), Node: node, Parent: &parent, Value: &value, Presentation: p}}, nil
 	case document.DashboardVisualTypeGauge, document.DashboardVisualTypeRadar:
 		p, ok := presentation.(visualizationir.PolarVisualizationPresentation)
 		if !ok {
@@ -453,6 +513,17 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		if !ok {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("statistical presentation lowering returned %T", presentation)
 		}
+		if typ == document.DashboardVisualTypeBoxplot {
+			if len(query.ResultFrame) != 6 {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("boxplot requires label,min,q1,median,q3,max result fields")
+			}
+			values := make([]visualizationir.VisualizationFieldRef, 0, len(query.ResultFrame)-1)
+			for _, field := range query.ResultFrame[1:] {
+				values = append(values, visualizationir.VisualizationFieldRef{Dataset: "primary", Field: field.Name})
+			}
+			base.Kind = "cartesian"
+			return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkBoxplot, X: ref(0), Y: values, Presentation: p}}, nil
+		}
 		if len(query.ResultFrame) < 2 {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("%s query must emit at least two result fields", typ)
 		}
@@ -462,6 +533,26 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		}
 		base.Kind = "cartesian"
 		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: statMark, X: ref(0), Y: []visualizationir.VisualizationFieldRef{ref(1)}, Presentation: p}}, nil
+	case document.DashboardVisualTypeCandlestick:
+		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
+		if !ok {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("candlestick presentation lowering returned %T", presentation)
+		}
+		if len(dimensions) != 1 || len(metrics) != 4 {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("candlestick requires one dimension and exactly four metrics")
+		}
+		base.Kind = "cartesian"
+		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkCandlestick, X: dimensions[0], Y: metrics, Presentation: p}}, nil
+	case document.DashboardVisualTypeWaterfall:
+		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
+		if !ok {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("waterfall presentation lowering returned %T", presentation)
+		}
+		if err := requireOperands("waterfall", 1, 1, false, false); err != nil {
+			return visualizationir.VisualizationSpec{}, err
+		}
+		base.Kind = "cartesian"
+		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkWaterfall, X: dimensions[0], Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "start"}, metrics[0]}, Presentation: p}}, nil
 	default:
 		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
 		if !ok {
@@ -619,7 +710,7 @@ func canonicalResultFields(query LoweredDashboardQuery, model *semanticmodel.Mod
 	}
 	for i, field := range query.ResultFrame {
 		role, typ := visualizationir.VisualizationFieldRoleDimension, visualizationir.VisualizationDataTypeString
-		if _, ok := metricNames[field.Name]; ok || field.Name == "count" || field.Name == "value" {
+		if _, ok := metricNames[field.Name]; ok {
 			role, typ = visualizationir.VisualizationFieldRoleMetric, visualizationir.VisualizationDataTypeDecimal
 		}
 		if query.Type == "records" {
@@ -629,8 +720,22 @@ func canonicalResultFields(query LoweredDashboardQuery, model *semanticmodel.Mod
 		} else {
 			typ = canonicalSemanticDataType(model, field.Source, true)
 		}
-		if i == 0 && query.Type == "distribution" {
-			role, typ = visualizationir.VisualizationFieldRoleMetric, visualizationir.VisualizationDataTypeDecimal
+		if query.Type == "distribution" {
+			if i == 0 {
+				role, typ = visualizationir.VisualizationFieldRoleDimension, visualizationir.VisualizationDataTypeString
+			} else {
+				role, typ = visualizationir.VisualizationFieldRoleMetric, visualizationir.VisualizationDataTypeDecimal
+			}
+		}
+		if query.Type == "histogram" {
+			switch field.Name {
+			case "count":
+				role, typ = visualizationir.VisualizationFieldRoleMetric, visualizationir.VisualizationDataTypeInteger
+			case "start", "end":
+				role, typ = visualizationir.VisualizationFieldRoleMetric, visualizationir.VisualizationDataTypeDecimal
+			default:
+				role, typ = visualizationir.VisualizationFieldRoleDimension, visualizationir.VisualizationDataTypeString
+			}
 		}
 		var sourceRef *string
 		if strings.TrimSpace(field.Source) != "" {
@@ -638,6 +743,23 @@ func canonicalResultFields(query LoweredDashboardQuery, model *semanticmodel.Mod
 			sourceRef = &source
 		}
 		fields = append(fields, visualizationir.VisualizationField{ID: field.Name, SourceRef: sourceRef, Role: role, DataType: typ, Nullable: true, Label: field.Name})
+	}
+	if query.Binding.ResultShape == visualizationdefinition.ResultHierarchyNodes {
+		mark := "node"
+		if query.Binding.Aggregate != nil && len(query.Binding.Aggregate.Dimensions) > 1 {
+			mark = "node"
+		}
+		fields = append(fields,
+			visualizationir.VisualizationField{ID: mark, Role: visualizationir.VisualizationFieldRoleIdentity, DataType: visualizationir.VisualizationDataTypeString, Nullable: true, Label: mark},
+			visualizationir.VisualizationField{ID: "parent", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Nullable: true, Label: "parent"},
+		)
+	}
+	if query.Binding.ResultShape == visualizationdefinition.ResultCategoryDelta {
+		fields = append(fields,
+			visualizationir.VisualizationField{ID: "start", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Nullable: true, Label: "start"},
+			visualizationir.VisualizationField{ID: "end", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Nullable: true, Label: "end"},
+			visualizationir.VisualizationField{ID: "positive", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeBoolean, Nullable: true, Label: "positive"},
+		)
 	}
 	return fields
 }
@@ -814,7 +936,11 @@ func canonicalCalculations(values *[]document.DashboardCalculation, query Lowere
 				if refErr != nil {
 					return nil, fmt.Errorf("calculation %d order %d: %w", index, orderIndex, refErr)
 				}
-				calculation.OrderBy[orderIndex] = visualizationir.VisualizationCalculationOrder{Field: ref, Direction: visualizationir.VisualizationSortDirection(order.Direction)}
+				direction := visualizationir.VisualizationSortDirectionAscending
+				if order.Direction == "desc" {
+					direction = visualizationir.VisualizationSortDirectionDescending
+				}
+				calculation.OrderBy[orderIndex] = visualizationir.VisualizationCalculationOrder{Field: ref, Direction: direction}
 			}
 		}
 		if value.Lookup != nil {

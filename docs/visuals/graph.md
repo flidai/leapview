@@ -35,7 +35,7 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
       limit: 40
 ```
@@ -59,7 +59,7 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
       limit: 60
     presentation:
@@ -87,7 +87,7 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
       limit: 60
 ```

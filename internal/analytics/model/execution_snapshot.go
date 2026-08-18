@@ -55,6 +55,7 @@ func (m *Model) RuntimeSnapshot() (*Model, error) {
 	}
 	clone.Connections = connections
 	clone.Sources = sources
+	clone.DefaultConnection = m.DefaultConnection
 	return clone, nil
 }
 
@@ -190,7 +191,40 @@ func snapshotTables(values map[string]Table) map[string]Table {
 		copyTable.Columns = snapshotModelColumns(table.Columns)
 		copyTable.Entities = snapshotEntities(table.Entities)
 		copyTable.Schema.Columns = snapshotColumnSchemas(table.Schema.Columns)
+		copyTable.SQLAnalysisEvidence = snapshotSQLAnalysisEvidence(table.SQLAnalysisEvidence)
+		copyTable.Checks = snapshotModelChecks(table.Checks)
 		clone[name] = copyTable
+	}
+	return clone
+}
+
+func snapshotSQLAnalysisEvidence(value *SQLAnalysisEvidence) *SQLAnalysisEvidence {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	clone.SourceRefs = append([]string(nil), value.SourceRefs...)
+	clone.ModelRefs = append([]string(nil), value.ModelRefs...)
+	return &clone
+}
+
+func snapshotModelChecks(values []ModelCheck) []ModelCheck {
+	if values == nil {
+		return nil
+	}
+	clone := make([]ModelCheck, len(values))
+	for index, value := range values {
+		clone[index] = value
+		clone[index].Fields = append([]string(nil), value.Fields...)
+		clone[index].Values = append([]string(nil), value.Values...)
+		if value.Minimum != nil {
+			minimum := *value.Minimum
+			clone[index].Minimum = &minimum
+		}
+		if value.Maximum != nil {
+			maximum := *value.Maximum
+			clone[index].Maximum = &maximum
+		}
 	}
 	return clone
 }

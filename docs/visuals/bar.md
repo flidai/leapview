@@ -23,7 +23,7 @@ visuals:
       metrics:
       - revenue
       sort:
-      - field: value
+      - field: revenue
         direction: desc
       limit: 10
     presentation:
@@ -53,29 +53,4 @@ visuals:
         direction: asc
     presentation:
       type: cartesian
-```
-
-## Stacked series
-
-Use `query.series` for status and `presentation.stacked` to combine each status segment into one category total while preserving its composition.
-
-{{< visual id="categories_by_status_bar" >}}
-
-```yaml visual-example=categories_by_status_bar
-visuals:
-  categories_by_status_bar:
-    title: Category revenue by status
-    type: bar
-    presentation:
-      type: cartesian
-    query:
-      type: aggregate
-      dimensions:
-      - category
-      metrics:
-      - revenue
-      sort:
-      - field: value
-        direction: desc
-      limit: 60
 ```

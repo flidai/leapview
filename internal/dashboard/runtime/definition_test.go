@@ -47,6 +47,7 @@ func TestProjectDefinitionRuntimeModelCloneRetainsExecutionAndRedactsTargetState
 	}}
 	readerDefaults := &projectcontracts.ReaderDefaults{Csv: &projectcontracts.CSVReaderOptions{Header: &header, Delimiter: &delimiter}}
 	model := &semanticmodel.Model{
+		DefaultConnection: "warehouse",
 		Connections: map[string]semanticmodel.Connection{
 			"warehouse": {
 				Kind: "managed", Access: semanticmodel.ConnectionAccessPublic, Description: "portable",
@@ -83,6 +84,9 @@ func TestProjectDefinitionRuntimeModelCloneRetainsExecutionAndRedactsTargetState
 	cloned := definition.Models()["model_1"]
 	if cloned == nil {
 		t.Fatal("runtime model clone is nil")
+	}
+	if cloned.DefaultConnection != "warehouse" {
+		t.Fatalf("runtime clone lost default connection: %q", cloned.DefaultConnection)
 	}
 	connection := cloned.Connections["warehouse"]
 	if connection.Auth != nil || connection.Credentials != (semanticmodel.ConnectionCredentials{}) || connection.Host != "" || connection.Port != 0 || connection.Database != "" || connection.Username != "" || connection.SSLMode != "" || connection.RuntimeOptions != (semanticmodel.ConnectionRuntimeOptions{}) || connection.Path != "" || connection.Root != "" || connection.Scope != "" {
