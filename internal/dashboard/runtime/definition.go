@@ -67,15 +67,7 @@ func NewProjectDefinition(projectID projectgraph.ResourceID, title, description 
 }
 
 func cloneModel(model *semanticmodel.Model) (*semanticmodel.Model, error) {
-	encoded, err := json.Marshal(model)
-	if err != nil {
-		return nil, err
-	}
-	var clone semanticmodel.Model
-	if err := json.Unmarshal(encoded, &clone); err != nil {
-		return nil, err
-	}
-	return &clone, nil
+	return model.RuntimeSnapshot()
 }
 
 func cloneDashboard(dashboard dashboarddefinition.Definition) (dashboarddefinition.Definition, error) {
