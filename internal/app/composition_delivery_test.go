@@ -119,11 +119,11 @@ func materializationDeltaFixture(t *testing.T) projectartifact.Project {
 		Connections: map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
 		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv"}},
 		Models: map[string]semanticmodel.Table{
-			"model:orders":    {Source: "source:orders"},
-			"model:customers": {Source: "source:orders"},
-			"model:legacy":    {Source: "source:orders"},
+			"model:orders":    {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
+			"model:customers": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
+			"model:legacy":    {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
 		},
-		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Source: "orders"}, "customers": {Source: "customers"}}}},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}, "customers": {Execution: semanticmodel.ExecutionDefinition{Source: "customers"}}}}},
 	})
 	if err != nil {
 		t.Fatal(err)

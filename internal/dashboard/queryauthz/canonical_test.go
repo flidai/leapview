@@ -126,7 +126,7 @@ func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.Authoriz
 		Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]semanticmodel.Table{"orders": {
-			Source:      "orders",
+			Execution:   semanticmodel.ExecutionDefinition{Source: "orders"},
 			ModelName:   "orders",
 			GrainEntity: "region",
 			Entities: map[string]semanticmodel.EntityDefinition{

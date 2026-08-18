@@ -165,7 +165,7 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", ModelName: "orders",
+				Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, ModelName: "orders",
 				Entities:    map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
 				GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{

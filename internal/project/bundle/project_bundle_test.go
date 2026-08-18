@@ -37,7 +37,7 @@ func bundleProject(t *testing.T) projectartifact.Project {
 			"source:orders": {Connection: "connection:warehouse"},
 		},
 		Models: map[string]semanticmodel.Table{
-			"model:orders": {Source: "source:orders"},
+			"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
 		},
 		ResourceFiles: map[string]string{"project:demo": "leapview.yaml", "connection:warehouse": "connections/warehouse.yaml", "source:orders": "sources/orders.yaml", "model:orders": "models/orders.yaml"},
 	})
