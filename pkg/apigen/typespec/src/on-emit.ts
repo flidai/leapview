@@ -320,12 +320,6 @@ class IRBuilder {
           additional_properties: { schema: this.schemaRef(type.indexer.value, `${context} value`) },
         };
       }
-      if (type.indexer && !isArrayModelType(type)) {
-        return {
-          type: "object",
-          additional_properties: { schema: this.schemaRef(type.indexer.value, `${context} value`) },
-        };
-      }
       if (isNamedUserModel(type)) {
         this.schemas.set(type.name, type);
         return { ref: type.name };
