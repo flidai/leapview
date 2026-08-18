@@ -1,4 +1,4 @@
-# ADR-0007: Adopt strict typed data-resource contracts
+# ADR-0010: Adopt strict typed data-resource contracts
 
 Status: accepted
 
@@ -12,7 +12,7 @@ Supersedes: none
 
 Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md);
-[ADR-0008](0008-adopt-a-canonical-dashboard-document.md)
+[ADR-0011](0011-adopt-a-canonical-dashboard-document.md)
 
 ## Context and problem statement
 
@@ -113,7 +113,7 @@ tagged unions. Project authoring and target binding will have distinct types and
 schemas. One definition will be authoritative at each boundary; runtime types
 may contain resolved fields that are impossible to author.
 
-This decision and ADR-0008 finalize `leapview.dev/v1` before its first public
+This decision and ADR-0011 finalize `leapview.dev/v1` before its first public
 release. Repository examples, generated schemas, APIs, CLI export, builder
 output, and documentation move directly to the final shape. Removed draft forms
 cease to exist: the compiler will not retain readers, translators, aliases,

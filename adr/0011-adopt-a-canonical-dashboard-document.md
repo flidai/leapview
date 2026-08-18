@@ -1,4 +1,4 @@
-# ADR-0008: Adopt a canonical dashboard document
+# ADR-0011: Adopt a canonical dashboard document
 
 Status: accepted
 
@@ -14,7 +14,7 @@ Related: [ADR-0001](0001-semantic-model-first.md);
 [ADR-0002](0002-use-maplibre-for-geographic-rendering.md);
 [ADR-0005](0005-use-project-wide-resource-graph.md);
 [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md);
-[ADR-0007](0007-adopt-strict-typed-data-resource-contracts.md)
+[ADR-0010](0010-adopt-strict-typed-data-resource-contracts.md)
 
 ## Context and problem statement
 
@@ -99,7 +99,7 @@ replace its authored shape with one strict canonical contract. Builder, agent,
 file loader, export, compiler, and revision storage will use the same semantic
 document rather than lossy adapters between public variants.
 
-ADR-0007 and this decision jointly finalize `leapview.dev/v1` before its first
+ADR-0010 and this decision jointly finalize `leapview.dev/v1` before its first
 public release. Current draft dashboard forms and compatibility shorthands are
 removed outright. There is no old-version reader, translator, alias, migration,
 or deprecation period. The semantic query vocabulary and typed execution
