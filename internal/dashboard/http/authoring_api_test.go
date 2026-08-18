@@ -46,15 +46,15 @@ type fakeHeadlessAuthoring struct {
 
 func (f *fakeHeadlessAuthoring) Create(_ context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
 	f.create = request
-	return f.result, f.createErr
+	return f.mutationResult(), f.createErr
 }
 func (f *fakeHeadlessAuthoring) Execute(_ context.Context, _ projectgraph.ResourceID, command authoring.Command) (authoringservice.Result, error) {
 	f.command = command
-	return f.result, f.executeErr
+	return f.mutationResult(), f.executeErr
 }
 func (f *fakeHeadlessAuthoring) ExecuteIntent(_ context.Context, request application.IntentRequest) (authoringservice.Result, error) {
 	f.command = request.Command
-	return f.result, f.executeErr
+	return f.mutationResult(), f.executeErr
 }
 func (f *fakeHeadlessAuthoring) List(context.Context, catalog.ListRequest) (catalog.ListResult, error) {
 	return catalog.ListResult{}, nil
@@ -67,11 +67,82 @@ func (f *fakeHeadlessAuthoring) Draft(context.Context, application.DraftRequest)
 }
 func (f *fakeHeadlessAuthoring) Revision(_ context.Context, request application.RevisionRequest) (authoring.Revision, error) {
 	f.revision = request
-	return authoring.Revision{}, nil
+	return canonicalHTTPRevision(request.DashboardID, request.RevisionID, 1), nil
+}
+
+func canonicalHTTPRevision(dashboardID authoring.DashboardID, revisionID authoring.RevisionID, number uint64) authoring.Revision {
+	displayName := "Sales"
+	document := dashboarddocument.DashboardDocument{
+		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
+		Kind:       dashboarddocument.DashboardResourceKindDashboard,
+		Metadata:   dashboarddocument.DashboardMetadata{ID: dashboardID.String(), Name: "sales", DisplayName: &displayName},
+		Spec: dashboarddocument.DashboardSpec{
+			SemanticModel: "sales-model", Filters: []dashboarddocument.DashboardFilter{},
+			Visuals: map[string]dashboarddocument.DashboardVisual{},
+			Pages:   []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{}}},
+		},
+	}
+	revision, err := authoring.NewRevision(revisionID, dashboardID, number, time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC), document, authoring.Provenance{Origin: authoring.OriginUI, ActorID: "principal_1"})
+	if err != nil {
+		panic(err)
+	}
+	return revision
 }
 func (f *fakeHeadlessAuthoring) Fork(_ context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
 	f.fork = request
-	return f.result, nil
+	return f.mutationResult(), nil
+}
+
+// mutationResult supplies the complete canonical lifecycle/revision payload
+// required by the transport projection. Individual tests may override the
+// result identity (for audit assertions), while the fixture fills the
+// remaining persisted pointers with schema-valid values.
+func (f *fakeHeadlessAuthoring) mutationResult() authoringservice.Result {
+	result := f.result
+	if result.Lifecycle.Validate() == nil && result.Revision.ValidateComplete() == nil {
+		return result
+	}
+	dashboardID := result.Lifecycle.ID
+	if dashboardID == "" {
+		dashboardID = "created-dashboard"
+	}
+	title := result.Lifecycle.Title
+	if title == "" {
+		title = "Sales"
+	}
+	slug := result.Lifecycle.Slug
+	if slug == "" {
+		slug = "sales"
+	}
+	semanticModel := result.Lifecycle.SemanticModel
+	if semanticModel == "" {
+		semanticModel = "sales-model"
+	}
+	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "principal_1"}
+	revisionID := result.Revision.RevisionID
+	if revisionID == "" {
+		revisionID = "revision-1"
+	}
+	number := result.Revision.Number
+	if number == 0 {
+		number = 1
+	}
+	revision := canonicalHTTPRevision(dashboardID, revisionID, number)
+	draftID := authoring.DraftID("draft-1")
+	if result.Lifecycle.Draft != nil && result.Lifecycle.Draft.ID != "" {
+		draftID = result.Lifecycle.Draft.ID
+	}
+	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
+		ProjectID: "sales", ID: dashboardID, OwnerPrincipalID: "principal_1", Slug: slug,
+		Title: title, SemanticModel: semanticModel, Visibility: authoring.VisibilityPrivate,
+		Draft: &authoring.Draft{ID: draftID, DashboardID: dashboardID, Revision: revision.Token(), Provenance: provenance},
+	})
+	if err != nil {
+		panic(err)
+	}
+	result.Lifecycle = lifecycle
+	result.Revision = revision.Token()
+	return result
 }
 func (f *fakeHeadlessAuthoring) Preview(context.Context, preview.PreviewRequest) (preview.Preview, error) {
 	return preview.Preview{}, f.previewErr
@@ -563,12 +634,12 @@ func TestAuthoringAPIProjectExportUsesActiveSourceExport(t *testing.T) {
 
 func TestAuthoringAPIRejectsCommandActorSpoof(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"kind":"setVisibility","dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"shared"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"kind":"setVisibility","dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"organization"}}`))
 	req.Header.Set("Idempotency-Key", "cmd-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+		t.Fatalf("status = %d, want %d (%s)", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	if app.command.ID != "cmd-1" || app.command.Provenance.ActorID != "principal_1" {
 		t.Fatalf("command identity = %#v, want authenticated id/actor", app.command)

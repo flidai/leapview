@@ -13,18 +13,15 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"github.com/flidai/leapview/internal/dashboard/report"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/internal/project/testing/dashboardfixture"
 )
 
-// canonicalDataRuntime is deliberately small: it exercises the runtime's
-// governed data-query boundary without opening a second analytics engine.
 type canonicalDataRuntime struct {
 	rows       []dataquery.Row
 	failTarget string
@@ -32,25 +29,23 @@ type canonicalDataRuntime struct {
 	planner    *semanticquery.Planner
 }
 
-type verifyingCanonicalDataRuntime struct {
+type canonicalVerifyingRuntime struct {
 	canonicalDataRuntime
 	verifyErr error
 	verifies  int
 }
 
-func (r *verifyingCanonicalDataRuntime) VerifySemantic(context.Context) error {
+func (r *canonicalVerifyingRuntime) VerifySemantic(context.Context) error {
 	r.verifies++
 	return r.verifyErr
 }
-
 func (r *canonicalDataRuntime) reportRows() report.QueryRows {
 	rows := make(report.QueryRows, len(r.rows))
-	for i, row := range r.rows {
-		rows[i] = report.QueryRow(row)
+	for index, row := range r.rows {
+		rows[index] = report.QueryRow(row)
 	}
 	return rows
 }
-
 func (r *canonicalDataRuntime) Query(context.Context, report.AggregateQuery) (report.QueryRows, error) {
 	return r.reportRows(), nil
 }
@@ -80,11 +75,11 @@ func (r *canonicalDataRuntime) ExecuteDataQuery(_ context.Context, query dataque
 	}
 	return result, nil
 }
-func (r *canonicalDataRuntime) Refresh(context.Context) error             { return nil }
-func (r *canonicalDataRuntime) Close() error                              { return nil }
-func (r *canonicalDataRuntime) LastRefresh() time.Time                    { return time.Now() }
-func (r *canonicalDataRuntime) setPlanner(planner *semanticquery.Planner) { r.planner = planner }
-func (r *canonicalDataRuntime) Planner() consumer.Planner                 { return r.planner }
+func (r *canonicalDataRuntime) Refresh(context.Context) error       { return nil }
+func (r *canonicalDataRuntime) Close() error                        { return nil }
+func (r *canonicalDataRuntime) LastRefresh() time.Time              { return time.Now() }
+func (r *canonicalDataRuntime) setPlanner(p *semanticquery.Planner) { r.planner = p }
+func (r *canonicalDataRuntime) Planner() consumer.Planner           { return r.planner }
 
 type canonicalFactory struct {
 	runtime DataRuntime
@@ -96,15 +91,12 @@ func (f canonicalFactory) OpenDashboardProjectDataRuntimes(_ context.Context, co
 		return nil, f.err
 	}
 	if setter, ok := f.runtime.(interface{ setPlanner(*semanticquery.Planner) }); ok && config.Definition != nil {
-		models := config.Definition.Models()
-		model := models[graph.ResourceID("model_1")]
+		model := config.Definition.Models()[graph.ResourceID("model_1")]
 		if model != nil {
 			for alias, dataset := range model.Datasets {
-				table, exists := model.Tables[alias]
-				if exists {
-					table.ModelName = dataset.Model
-					model.Tables[alias] = table
-				}
+				table := model.Tables[alias]
+				table.ModelName = dataset.Model
+				model.Tables[alias] = table
 			}
 			planner, err := semanticquery.NewCompiledPlanner(model)
 			if err != nil {
@@ -116,50 +108,44 @@ func (f canonicalFactory) OpenDashboardProjectDataRuntimes(_ context.Context, co
 	return map[graph.ResourceID]DataRuntime{"model_1": f.runtime}, nil
 }
 
+func canonicalBase(kind, title string, fields []visualizationir.VisualizationField) visualizationir.VisualizationSpecBase {
+	return visualizationir.VisualizationSpecBase{Kind: kind, Title: title, Accessibility: visualizationir.VisualizationAccessibility{Title: title, Description: title}, Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 100}}
+}
+
+func canonicalCartesian(t *testing.T, id string) visualizationdefinition.Definition {
+	fields := []visualizationir.VisualizationField{{ID: "status", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Status"}, {ID: "value", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Label: "Value"}}
+	base := canonicalBase("cartesian", id, fields)
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkBar, X: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "status"}, Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "value"}}, Presentation: visualizationir.CartesianVisualizationPresentation{VisualizationPresentation: visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionHidden, LabelPolicy: visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, MaxCharacters: 24, TooltipFallback: true}}}}}
+	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, ModelID: "model_1", DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Dimensions: []visualizationdefinition.FieldBinding{{FieldID: "status", Alias: "label"}}, Metrics: []visualizationdefinition.FieldBinding{{FieldID: "order_count", Alias: "value"}}, Limit: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return definition
+}
+
+func canonicalTable(t *testing.T) visualizationdefinition.Definition {
+	fields := []visualizationir.VisualizationField{{ID: "order_id", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Order"}, {ID: "status", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Status"}}
+	base := canonicalBase("table", "Orders", fields)
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: base, Kind: "table", Columns: []visualizationir.TableVisualizationColumn{{Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "order_id"}, Label: "Order", Formatting: []visualizationir.TableVisualizationFormattingRule{}}, {Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "status"}, Label: "Status", Formatting: []visualizationir.TableVisualizationFormattingRule{}}}, Presentation: visualizationir.GridVisualizationPresentation{RowHeight: 28, ShowHeader: true}}}
+	definition, err := visualizationdefinition.New("orders", spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow, ModelID: "model_1", DatasetID: "primary", Detail: &visualizationdefinition.DetailQueryBinding{TableID: "orders", Fields: []visualizationdefinition.FieldBinding{{FieldID: "order_id", Alias: "order_id"}, {FieldID: "status", Alias: "status"}}, Limit: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return definition
+}
+
 func canonicalBehaviorDefinition(t *testing.T, withTable bool) (*ProjectDefinition, dashboarddefinition.Definition) {
-	t.Helper()
-	model := &semanticmodel.Model{
-		Name:     "model_1",
-		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
-		Tables: map[string]semanticmodel.Table{"orders": {
-			ModelName:   "orders",
-			GrainEntity: "order_id",
-			Entities: map[string]semanticmodel.EntityDefinition{
-				"order_id": {Type: "primary", Fields: []string{"order_id"}},
-			},
-			Dimensions: map[string]semanticmodel.MetricDimension{
-				"status":   {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
-				"order_id": {Field: "orders.order_id", Type: "string", Datatype: semanticmodel.DataTypeString},
-			},
-		}},
-		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"status":   {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}},
-			"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
-		},
-		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}},
-	}
-	visuals := dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-		"good": {Type: "bar", Title: "Good", Query: dashboardauthoring.VisualQuery{
-			Dimensions: []dashboardauthoring.FieldRef{{Field: "status", Alias: "label"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
-		}},
-		"broken": {Type: "bar", Title: "Broken", Query: dashboardauthoring.VisualQuery{
-			Dimensions: []dashboardauthoring.FieldRef{{Field: "status", Alias: "label"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
-		}},
-	})
+	model := &semanticmodel.Model{Name: "model_1", Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", GrainEntity: "order_id", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}, "order_id": {Field: "orders.order_id", Type: "string", Datatype: semanticmodel.DataTypeString}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}}, "order_id": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}}}
+	good := canonicalCartesian(t, "good")
+	broken := canonicalCartesian(t, "broken")
+	visuals := map[string]visualizationdefinition.Definition{"good": good, "broken": broken}
+	pageVisuals := []dashboard.PageVisual{{ID: "good", Kind: "visual", Visual: "good", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 4, RowSpan: 4}}, {ID: "broken", Kind: "visual", Visual: "broken", Placement: dashboard.PagePlacement{Col: 5, Row: 1, ColSpan: 4, RowSpan: 4}}}
 	if withTable {
-		visuals = dashboardauthoring.MergeVisualizations(visuals, dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id", "orders.status"}}},
-		}))
+		table := canonicalTable(t)
+		visuals["orders"] = table
+		pageVisuals = append(pageVisuals, dashboard.PageVisual{ID: "orders", Kind: "visual", Visual: "orders", Placement: dashboard.PagePlacement{Col: 1, Row: 5, ColSpan: 8, RowSpan: 4}})
 	}
-	authored := dashboardauthoring.Dashboard{ID: "dashboard_1", Title: "Dashboard", SemanticModel: "model_1", Visuals: visuals,
-		Pages: []dashboard.Page{{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{
-			{ID: "good", Kind: "visual", Visual: "good", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 4, RowSpan: 4}},
-			{ID: "broken", Kind: "visual", Visual: "broken", Placement: dashboard.PagePlacement{Col: 5, Row: 1, ColSpan: 4, RowSpan: 4}},
-		}}}}
-	if withTable {
-		authored.Pages[0].Visuals = append(authored.Pages[0].Visuals, dashboard.PageVisual{ID: "orders", Kind: "visual", Visual: "orders", Placement: dashboard.PagePlacement{Col: 1, Row: 5, ColSpan: 8, RowSpan: 4}})
-	}
-	compiled := dashboardfixture.Compile(authored, model)
+	compiled := dashboarddefinition.Definition{ID: "dashboard_1", Title: "Dashboard", SemanticModel: "model_1", Pages: []dashboard.Page{{ID: "overview", Title: "Overview", Visuals: pageVisuals}}, Visualizations: visuals}
 	definition, err := NewProjectDefinition("project_1", "Project", "", map[graph.ResourceID]*semanticmodel.Model{"model_1": model}, map[graph.ResourceID]dashboarddefinition.Definition{"dashboard_1": compiled})
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +154,6 @@ func canonicalBehaviorDefinition(t *testing.T, withTable bool) (*ProjectDefiniti
 }
 
 func canonicalBehaviorRuntime(t *testing.T, definition *ProjectDefinition, data DataRuntime, factoryErr error) *Service {
-	t.Helper()
 	identity, err := graph.NewServingIdentity("project_1", "test", "generation_1")
 	if err != nil {
 		t.Fatal(err)
@@ -182,8 +167,7 @@ func canonicalBehaviorRuntime(t *testing.T, definition *ProjectDefinition, data 
 
 func TestCanonicalMissingDataReturnsSetupPatch(t *testing.T) {
 	definition, _ := canonicalBehaviorDefinition(t, false)
-	missing := &materializeruntime.MissingDataError{Missing: []string{"orders.csv"}}
-	service := canonicalBehaviorRuntime(t, definition, nil, missing)
+	service := canonicalBehaviorRuntime(t, definition, nil, &materializeruntime.MissingDataError{Missing: []string{"orders.csv"}})
 	defer service.Close()
 	patch, err := service.QueryDashboardPage(context.Background(), "dashboard_1", "overview", dashboard.Filters{})
 	if err != nil || !patch.Status.SetupRequired || !strings.Contains(patch.Status.Error, "orders.csv") {
@@ -198,26 +182,23 @@ func TestCanonicalMissingDataReturnsSetupPatch(t *testing.T) {
 	}
 }
 
-func TestServiceVerifyRunsGovernedSemanticVerifier(t *testing.T) {
+func TestCanonicalServiceVerifyRunsGovernedSemanticVerifier(t *testing.T) {
 	definition, _ := canonicalBehaviorDefinition(t, false)
-	data := &verifyingCanonicalDataRuntime{canonicalDataRuntime: canonicalDataRuntime{rows: []dataquery.Row{{"label": "A", "value": int64(1)}}}}
+	data := &canonicalVerifyingRuntime{canonicalDataRuntime: canonicalDataRuntime{rows: []dataquery.Row{{"status": "A", "value": int64(1)}}}}
 	service := canonicalBehaviorRuntime(t, definition, data, nil)
 	defer service.Close()
-	if err := service.Verify(context.Background()); err != nil {
-		t.Fatalf("Service.Verify() error = %v", err)
-	}
-	if data.verifies != 1 {
-		t.Fatalf("semantic verifier calls = %d, want 1", data.verifies)
+	if err := service.Verify(context.Background()); err != nil || data.verifies != 1 {
+		t.Fatalf("verify error=%v calls=%d", err, data.verifies)
 	}
 }
 
-func TestServiceVerifyFailsClosedOnSemanticVerifierError(t *testing.T) {
+func TestCanonicalServiceVerifyFailsClosedOnSemanticVerifierError(t *testing.T) {
 	definition, _ := canonicalBehaviorDefinition(t, false)
-	data := &verifyingCanonicalDataRuntime{canonicalDataRuntime: canonicalDataRuntime{rows: []dataquery.Row{{"label": "A", "value": int64(1)}}}, verifyErr: errors.New("representative plan failed")}
+	data := &canonicalVerifyingRuntime{canonicalDataRuntime: canonicalDataRuntime{rows: []dataquery.Row{{"status": "A", "value": int64(1)}}}, verifyErr: errors.New("representative plan failed")}
 	service := canonicalBehaviorRuntime(t, definition, data, nil)
 	defer service.Close()
 	if err := service.Verify(context.Background()); err == nil || !strings.Contains(err.Error(), "representative plan failed") {
-		t.Fatalf("Service.Verify() error = %v, want semantic verifier failure", err)
+		t.Fatalf("Verify() error = %v", err)
 	}
 }
 
@@ -228,7 +209,7 @@ func TestCanonicalPageQueryIsolatesVisualizationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := canonicalBehaviorRuntime(t, definition, &canonicalDataRuntime{rows: []dataquery.Row{{"label": "A", "value": int64(1)}}, failTarget: "missing_table"}, nil)
+	service := canonicalBehaviorRuntime(t, definition, &canonicalDataRuntime{rows: []dataquery.Row{{"status": "A", "value": int64(1)}}, failTarget: "missing_table"}, nil)
 	defer service.Close()
 	patch, err := service.QueryDashboardPage(context.Background(), "dashboard_1", "overview", dashboard.Filters{})
 	if err != nil || patch.Status.Error != "" {
@@ -246,7 +227,7 @@ func TestCanonicalPageQueryIsolatesVisualizationFailure(t *testing.T) {
 func TestCanonicalQueriesFlowThroughAuditedDataQueryBoundary(t *testing.T) {
 	definition, _ := canonicalBehaviorDefinition(t, false)
 	var queries []dataquery.Query
-	service := canonicalBehaviorRuntime(t, definition, &canonicalDataRuntime{rows: []dataquery.Row{{"label": "A", "value": int64(1)}}, queries: &queries}, nil)
+	service := canonicalBehaviorRuntime(t, definition, &canonicalDataRuntime{rows: []dataquery.Row{{"status": "A", "value": int64(1)}}, queries: &queries}, nil)
 	defer service.Close()
 	recorder := &runtimeAuditRecorder{}
 	ctx := dataquery.WithAuditRecorder(context.Background(), recorder)
@@ -270,8 +251,8 @@ func TestCanonicalQueriesFlowThroughAuditedDataQueryBoundary(t *testing.T) {
 func TestCanonicalTableRowsRespectInteractiveCap(t *testing.T) {
 	definition, _ := canonicalBehaviorDefinition(t, true)
 	rows := make([]dataquery.Row, dashboard.TableInteractiveRowCap+5)
-	for i := range rows {
-		rows[i] = dataquery.Row{"order_id": fmt.Sprintf("o%d", i), "status": "delivered"}
+	for index := range rows {
+		rows[index] = dataquery.Row{"order_id": fmt.Sprintf("o%d", index), "status": "delivered"}
 	}
 	service := canonicalBehaviorRuntime(t, definition, &canonicalDataRuntime{rows: rows}, nil)
 	defer service.Close()
@@ -286,18 +267,11 @@ func TestCanonicalTableRowsRespectInteractiveCap(t *testing.T) {
 
 func TestCanonicalPowerFiltersTranslateComparisonAndRangePredicates(t *testing.T) {
 	definition := dashboardfilter.Definition{Field: "orders.category", Dataset: "orders"}
-	contains, err := semanticFiltersForExpression(definition, dashboardfilter.Expression{
-		Kind: dashboardfilter.ExpressionComparison, Operator: dashboardfilter.OperatorContains,
-		Value: &dashboardfilter.Value{Kind: dashboardfilter.ValueString, Value: "watch"},
-	})
+	contains, err := semanticFiltersForExpression(definition, dashboardfilter.Expression{Kind: dashboardfilter.ExpressionComparison, Operator: dashboardfilter.OperatorContains, Value: &dashboardfilter.Value{Kind: dashboardfilter.ValueString, Value: "watch"}})
 	if err != nil || len(contains) != 1 || contains[0].Operator != string(dashboardfilter.OperatorContains) || contains[0].Values[0] != "watch" {
 		t.Fatalf("contains filter = %#v, err=%v", contains, err)
 	}
-	rangeFilters, err := semanticFiltersForExpression(definition, dashboardfilter.Expression{
-		Kind:  dashboardfilter.ExpressionRange,
-		Lower: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "10"}, Inclusive: true},
-		Upper: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "20"}, Inclusive: false},
-	})
+	rangeFilters, err := semanticFiltersForExpression(definition, dashboardfilter.Expression{Kind: dashboardfilter.ExpressionRange, Lower: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "10"}, Inclusive: true}, Upper: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "20"}, Inclusive: false}})
 	if err != nil || len(rangeFilters) != 2 || rangeFilters[0].Operator != string(dashboardfilter.OperatorGreaterThanOrEqual) || rangeFilters[1].Operator != string(dashboardfilter.OperatorLessThan) {
 		t.Fatalf("range filters = %#v, err=%v", rangeFilters, err)
 	}
