@@ -18,8 +18,8 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
-	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -248,16 +248,8 @@ func TestDashboardBuilderGETPropagatesPageSelectionAndPageBaseHref(t *testing.T)
 }
 
 func TestDashboardBuilderPreviewVisualsUseAuthoredIDsAndRuntimeMetadata(t *testing.T) {
-	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&authoring.Dashboard{
-		ID: "sales", SemanticModel: "sales",
-		Visuals: authoring.ChartVisualizations(map[string]authoring.Visual{
-			"orders": {Type: "line", Title: "Orders", Query: authoring.VisualQuery{Dataset: "orders", Metrics: []authoring.FieldRef{{Field: "orders.revenue"}}}},
-		}),
-	})
-	if err != nil {
-		t.Fatalf("compile visualization definition: %v", err)
-	}
-	envelope, err := visualizationruntime.EmptyEnvelopeFromDefinition(definitions["orders"], 2, 0, 0)
+	definition := canonicalBuilderVisualDefinition(t)
+	envelope, err := visualizationruntime.EmptyEnvelopeFromDefinition(definition, 2, 0, 0)
 	if err != nil {
 		t.Fatalf("empty visualization envelope: %v", err)
 	}
@@ -279,6 +271,16 @@ func TestDashboardBuilderPreviewVisualsUseAuthoredIDsAndRuntimeMetadata(t *testi
 	if signal.VisualID != "orders" || signal.ServingStateID != "state-7" || signal.StreamGeneration != 9 || signal.InteractionRevision != 4 || signal.ConsumerIdentity != "overview/orders" {
 		t.Fatalf("preview visual metadata = %#v", signal)
 	}
+}
+
+func canonicalBuilderVisualDefinition(t *testing.T) visualizationdefinition.Definition {
+	t.Helper()
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "cartesian", Title: "Orders", Accessibility: visualizationir.VisualizationAccessibility{Title: "Orders", Description: "Orders"}, Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: []visualizationir.VisualizationField{{ID: "label", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Label"}, {ID: "value", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Label: "Value"}}}}, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 100}}, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkLine, X: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "value"}}, Presentation: visualizationir.CartesianVisualizationPresentation{VisualizationPresentation: visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionHidden, LabelPolicy: visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, MaxCharacters: 24, TooltipFallback: true}}}}}
+	definition, err := visualizationdefinition.New("orders", spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, ModelID: "model", DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Dimensions: []visualizationdefinition.FieldBinding{{FieldID: "label", Alias: "label"}}, Metrics: []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return definition
 }
 
 func TestDashboardBuilderPreviewFailureKeepsBuilderVisible(t *testing.T) {
