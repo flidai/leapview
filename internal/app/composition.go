@@ -577,9 +577,23 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return snapshot, nil
 	}
 	sealedDelivery := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
+	resolveCurrentProjectID := func(ctx context.Context) (projectgraph.ResourceID, error) {
+		claimed, found, err := readClaim(ctx)
+		if err != nil {
+			return "", fmt.Errorf("read live project claim: %w", err)
+		}
+		if found {
+			return claimed, nil
+		}
+		return projectID, nil
+	}
 	snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, accessModule.AuthorizationSubjects)
 	authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection, func(ctx context.Context) (bool, error) {
-		return hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, projectID.String())
+		currentProjectID, err := resolveCurrentProjectID(ctx)
+		if err != nil {
+			return false, err
+		}
+		return hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, currentProjectID.String())
 	})
 	managedDataModule, err := manageddatamodule.Build(ctx, manageddatamodule.Config{
 		Database: store.SQLDB(), Product: managedDataProductConfig(cfg), ServingStates: servingStateRepo,
@@ -729,6 +743,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			return target.ActiveGenerationID, target.TargetRevision, nil
 		}
 		sealedActiveState = func(ctx context.Context) (servingstate.ID, error) {
+			currentProjectID, err := resolveCurrentProjectID(ctx)
+			if err != nil {
+				return "", err
+			}
 			target, targetErr := sealedDelivery.DeliveryTargetRevision(ctx, instanceID)
 			if targetErr != nil {
 				if errors.Is(targetErr, sql.ErrNoRows) || errors.Is(targetErr, deployment.ErrNotFound) {
@@ -736,7 +754,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				}
 				return "", targetErr
 			}
-			if target.ProjectID != projectID.String() || target.Environment != string(environment) {
+			if target.ProjectID != currentProjectID.String() || target.Environment != string(environment) {
 				return "", fmt.Errorf("%w: target scope or active generation changed", deployment.ErrDeliveryConflict)
 			}
 			// A target revision is created before its first publication. An empty
@@ -745,7 +763,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if strings.TrimSpace(target.ActiveGenerationID) == "" {
 				return "", servingstate.ErrNotFound
 			}
-			active, err := sealedDelivery.ActiveDeliveryGenerationForTarget(ctx, instanceID, projectID.String(), string(environment))
+			active, err := sealedDelivery.ActiveDeliveryGenerationForTarget(ctx, instanceID, currentProjectID.String(), string(environment))
 			if err != nil {
 				// A fresh production target has no delivery pointer yet. Keep the
 				// administration surface bootable and let readiness/serving report
@@ -1364,7 +1382,13 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if err := accessModule.AuthorizeBootstrapCredential(ctx, policy.ActorID, policy.CredentialID, policy.CredentialExpiresAt, time.Now().UTC()); err != nil {
 				return fmt.Errorf("bootstrap credential authorization: %w", err)
 			}
-			active, activeErr := hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, projectID.String())
+			// The process may have started before candidate synchronization
+			// established the durable project claim, so the startup projectID
+			// can legitimately be empty here. The bootstrap policy has already
+			// been validated against the fresh claim above; use that canonical
+			// request scope for the active-target check instead of the stale
+			// startup snapshot.
+			active, activeErr := hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, policy.ProjectID.String())
 			if activeErr != nil {
 				return fmt.Errorf("%w: %v", deployment.ErrBootstrapPolicyConflict, activeErr)
 			}

@@ -74,6 +74,26 @@ func TestHasActiveBootstrapServingStateUsesFreshScopes(t *testing.T) {
 	}
 }
 
+func TestHasActiveBootstrapServingStateUsesCanonicalTargetScope(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	target := bootstrapTargetReaderFake{target: deployment.DeliveryTarget{
+		TargetID:           "target_demo",
+		ProjectID:          project.String(),
+		Environment:        "prod",
+		ActiveGenerationID: "generation_active",
+	}}
+	active, err := hasActiveBootstrapServingState(context.Background(), nil, bootstrapStateStoreFake{}, "prod", target, "target_demo", project.String())
+	if err != nil {
+		t.Fatalf("hasActiveBootstrapServingState() error = %v", err)
+	}
+	if !active {
+		t.Fatal("hasActiveBootstrapServingState() = false, want active canonical target")
+	}
+	if _, err := hasActiveBootstrapServingState(context.Background(), nil, bootstrapStateStoreFake{}, "prod", target, "target_demo", ""); err == nil {
+		t.Fatal("hasActiveBootstrapServingState() accepted a stale empty project scope")
+	}
+}
+
 func TestBootstrapAPIGenDecision(t *testing.T) {
 	project := bootstrapProject(t, "project_demo")
 	foreign := bootstrapProject(t, "project_foreign")
