@@ -64,6 +64,10 @@ type CandidateGenerationArtifact struct {
 	Connections         []CandidateConnectionRequirement
 	AuthoredConnections []CandidateAuthoredConnection
 	Restrictions        []CandidateRestriction
+	// BaseGateEvidence is the sealed base's source/check evidence. Reuse paths
+	// may use its observed schema/timestamps only after current identity checks
+	// and must still re-evaluate freshness at candidate evaluation time.
+	BaseGateEvidence *GateEvidence
 }
 
 type CandidateArtifactRequest struct {

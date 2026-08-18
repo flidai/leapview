@@ -20,8 +20,10 @@ import (
 	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	analyticsgates "github.com/flidai/leapview/internal/analytics/gates"
 	"github.com/flidai/leapview/internal/app/gcadapter"
 	"github.com/flidai/leapview/internal/deployment"
+	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	"github.com/flidai/leapview/internal/release"
 )
@@ -80,7 +82,7 @@ type CandidateCatalogRunnerConfig struct {
 	StagingRoot         string
 	CredentialBootstrap ducklake.CredentialBootstrap
 	Base                func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error)
-	Materialize         func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet, string) error
+	Materialize         func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet, string) ([]analyticsgates.SourceInput, error)
 	// Connections is acquired only around candidate catalog construction. The
 	// lease registers the candidate resolver used by governed materialization;
 	// it is always closed before normalization/sealing begins.
@@ -93,6 +95,12 @@ type CandidateCatalogRunnerConfig struct {
 	RemoteVerifier       catalogseal.RemoteVerifier
 	RequestTemplate      deployment.DeliveryBuildRequest
 	VerifyLease          candidatecatalog.LeaseVerifier
+	// Gates runs typed source/model checks against the same lease-checked
+	// candidate catalog immediately before qualification/seal. A nil value
+	// uses the compiler-evidence evaluator below.
+	Gates          func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet) (release.GateEvidence, error)
+	GateBounds     analyticsgates.Bounds
+	RuntimeVersion string
 }
 
 // CandidateObjectStore adapts catalogseal's metadata-bearing object store to
@@ -241,10 +249,12 @@ func BuildRequestFactory(config CandidateCatalogRunnerConfig) func(context.Conte
 
 // candidateCatalogRunner is scoped to one exact source/artifact input.
 type candidateCatalogRunner struct {
-	config    CandidateCatalogRunnerConfig
-	input     deployment.DeliveryCandidateBuildInput
-	artifacts release.CandidateArtifactSet
-	working   *candidatecatalog.WorkingCatalog
+	config             CandidateCatalogRunnerConfig
+	input              deployment.DeliveryCandidateBuildInput
+	artifacts          release.CandidateArtifactSet
+	working            *candidatecatalog.WorkingCatalog
+	sourceInputs       []analyticsgates.SourceInput
+	bindingFingerprint string
 }
 
 // SetCandidateArtifacts installs the exact inspected/materialized artifact
@@ -392,6 +402,10 @@ func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deplo
 	if r.config.Materialize == nil {
 		return nil, fmt.Errorf("candidate materialization adapter is required")
 	}
+	r.bindingFingerprint, err = deployment.BindingFingerprint(nil)
+	if err != nil {
+		return nil, err
+	}
 	// Candidate connection leases are deliberately scoped to materialization.
 	// Qualification and sealing operate solely on the detached catalog and
 	// never retain target credentials or resolver registrations.
@@ -409,10 +423,29 @@ func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deplo
 		if connections == nil {
 			return nil, fmt.Errorf("candidate materialization connections unavailable")
 		}
+		fingerprint, fingerprintErr := deployment.BindingFingerprint(connections.Evidence())
+		if fingerprintErr != nil {
+			return nil, fingerprintErr
+		}
+		r.bindingFingerprint = fingerprint
 		defer connections.Close()
 	}
+	if r.artifacts.Generation.DataMode == release.GenerationDataReuseBase {
+		baseEvidence := r.artifacts.Generation.BaseGateEvidence
+		if baseEvidence == nil {
+			return nil, fmt.Errorf("reuse-base candidate requires sealed base gate evidence")
+		}
+		if baseEvidence.SourceDigest != r.artifacts.Artifact.SourceDigest || baseEvidence.BindingGeneration != r.bindingFingerprint || baseEvidence.RuntimeVersion != r.config.RuntimeVersion || baseEvidence.DuckDBVersion != extensionsupply.CurrentDuckDBVersion {
+			return nil, fmt.Errorf("reuse-base candidate gate evidence does not match current source, runtime, duckdb, and binding identities")
+		}
+	}
 	working, err := candidatecatalog.Build(ctx, candidatecatalog.Request{AttemptID: buildInput.Attempt.ID, StagingRoot: r.config.StagingRoot, PoolContract: r.config.PoolContract, CredentialBootstrap: r.config.CredentialBootstrap, VerifyLease: r.config.VerifyLease, Lease: candidatecatalog.WriterLease{ID: buildInput.Lease.ID, AttemptID: buildInput.Attempt.ID, PhysicalPoolID: buildInput.Lease.PhysicalPoolID, HolderID: buildInput.Lease.OwnerID, Epoch: buildInput.Lease.Epoch, ExpiresAt: buildInput.Lease.ExpiresAt, Status: candidatecatalog.LeaseActive}, Base: base}, func(ctx context.Context, catalog *candidatecatalog.WorkingCatalog) error {
-		return r.config.Materialize(ctx, catalog, buildInput, r.artifacts, r.input.Candidate.ID)
+		inputs, err := r.config.Materialize(ctx, catalog, buildInput, r.artifacts, r.input.Candidate.ID)
+		if err != nil {
+			return err
+		}
+		r.sourceInputs = inputs
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -446,6 +479,29 @@ func (r *candidateCatalogRunner) Qualify(ctx context.Context, buildInput deploym
 		qualification.Checks.ReviewerAuthorization = func(ctx context.Context, _ candidatecatalog.QualificationInput) error {
 			return r.config.ReviewerAuthorize(ctx, r.input.OwnerID)
 		}
+	}
+	var gateEvidence *release.GateEvidence
+	gateEvaluator := r.config.Gates
+	if gateEvaluator == nil {
+		gateEvaluator = func(ctx context.Context, working *candidatecatalog.WorkingCatalog, buildInput deployment.DeliveryBuildInput, artifacts release.CandidateArtifactSet) (release.GateEvidence, error) {
+			return evaluateCompiledGates(ctx, working, buildInput, artifacts, r.input.Candidate.ID, r.bindingFingerprint, r.config.RuntimeVersion, r.config.GateBounds, r.sourceInputs)
+		}
+	}
+	if gateEvaluator != nil {
+		evidence, gateErr := gateEvaluator(ctx, working, buildInput, r.artifacts)
+		if gateErr != nil {
+			var evaluationErr *analyticsgates.EvaluationError
+			if errors.As(gateErr, &evaluationErr) && evaluationErr.Evidence.CandidateID != "" {
+				failedEvidence := evaluationErr.Evidence
+				return deployment.DeliveryBuildOutput{GateEvidence: &failedEvidence}, gateErr
+			}
+			return deployment.DeliveryBuildOutput{}, gateErr
+		}
+		canonical, gateErr := evidence.Canonical()
+		if gateErr != nil {
+			return deployment.DeliveryBuildOutput{}, gateErr
+		}
+		gateEvidence = &canonical
 	}
 	qualified, err := candidatecatalog.NormalizeAndQualify(ctx, working, qualification)
 	if err != nil {
@@ -487,7 +543,58 @@ func (r *candidateCatalogRunner) Qualify(ctx context.Context, buildInput deploym
 		}
 		resolved.Inputs = append(resolved.Inputs, item)
 	}
-	return deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: qualified.CatalogPath()}, QualificationDigest: qualified.Record.Digest, ClosureDigest: qualified.Record.Closure.Digest, CompatibilityDigest: compatibilityDigest, ResolvedInputs: resolved, ObjectStore: r.config.ObjectStore, SealRepository: r.config.SealRepository, RemoteVerifier: r.config.RemoteVerifier, Cleanup: qualified.Remove}, nil
+	return deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: qualified.CatalogPath()}, QualificationDigest: qualified.Record.Digest, ClosureDigest: qualified.Record.Closure.Digest, CompatibilityDigest: compatibilityDigest, ResolvedInputs: resolved, GateEvidence: gateEvidence, ObjectStore: r.config.ObjectStore, SealRepository: r.config.SealRepository, RemoteVerifier: r.config.RemoteVerifier, Cleanup: qualified.Remove}, nil
+}
+
+// evaluateCompiledGates lowers only compiler-owned manifest resources into the
+// closed gate evaluator. Relation names are validated component-by-component
+// before being quoted; no authored SQL is accepted at this boundary.
+func evaluateCompiledGates(ctx context.Context, working *candidatecatalog.WorkingCatalog, buildInput deployment.DeliveryBuildInput, artifacts release.CandidateArtifactSet, candidateID, bindingFingerprint, runtimeVersion string, bounds analyticsgates.Bounds, sources []analyticsgates.SourceInput) (release.GateEvidence, error) {
+	if working == nil {
+		return release.GateEvidence{}, fmt.Errorf("candidate gate catalog is unavailable")
+	}
+	if bounds.MaxRows <= 0 || bounds.MaxQueries <= 0 || bounds.MaxMillis <= 0 {
+		bounds = analyticsgates.Bounds{MaxRows: 10000, MaxQueries: 128, MaxMillis: 5000}
+	}
+	if strings.TrimSpace(runtimeVersion) == "" {
+		return release.GateEvidence{}, fmt.Errorf("exact runtime version is required for candidate gates")
+	}
+	duckdbVersion := extensionsupply.CurrentDuckDBVersion
+	if strings.TrimSpace(bindingFingerprint) == "" {
+		return release.GateEvidence{}, fmt.Errorf("exact acquired connection binding fingerprint is required")
+	}
+	input := analyticsgates.Input{CandidateID: candidateID, SourceDigest: artifacts.Artifact.SourceDigest, BindingGeneration: bindingFingerprint, RuntimeVersion: runtimeVersion, DuckDBVersion: duckdbVersion, Bounds: bounds, Query: working.Query}
+	manifest := artifacts.Compiler.Manifest
+	input.Sources = append(input.Sources, sources...)
+	for _, source := range input.Sources {
+		if source.ObservationQueries < 0 || source.ObservationRows < 0 || source.ObservationMillis < 0 {
+			return release.GateEvidence{}, fmt.Errorf("candidate source observation metrics are invalid")
+		}
+		input.PreflightQueries += source.ObservationQueries
+		input.PreflightRows += source.ObservationRows
+		input.PreflightMillis += source.ObservationMillis
+	}
+	seenSources := make(map[string]struct{}, len(input.Sources))
+	for _, source := range input.Sources {
+		if _, duplicate := seenSources[source.ID]; duplicate {
+			return release.GateEvidence{}, fmt.Errorf("candidate source observations contain duplicate %q", source.ID)
+		}
+		if _, known := manifest.Sources[source.ID]; !known {
+			return release.GateEvidence{}, fmt.Errorf("candidate source observations contain unknown %q", source.ID)
+		}
+		seenSources[source.ID] = struct{}{}
+	}
+	if len(seenSources) != len(manifest.Sources) {
+		return release.GateEvidence{}, fmt.Errorf("candidate source schema observations are incomplete")
+	}
+	for id, table := range manifest.Models {
+		if len(table.Checks) == 0 && len(table.Entities) == 0 && table.GrainEntity == "" {
+			continue
+		}
+		input.Models = append(input.Models, analyticsgates.ModelInput{ID: id, Model: table})
+	}
+	input.Now = time.Now().UTC()
+	return analyticsgates.Evaluate(ctx, input)
 }
 
 // ReadOnlyCatalogVerifier is a minimal remote verifier for providers whose

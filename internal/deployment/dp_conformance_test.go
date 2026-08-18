@@ -65,6 +65,7 @@ func TestDestinationBuildRunsQualificationAfterDevelopmentEvidence(t *testing.T)
 		output: DeliveryBuildOutput{
 			Catalog: catalogseal.FileCatalog{Path: file.Name()}, QualificationDigest: destinationDigest,
 			ClosureDigest: lifecycleDigest('5'), CompatibilityDigest: lifecycleDigest('6'),
+			GateEvidence:   lifecycleGateEvidence(t, "candidate-destination-qualification", plan.SourceDigest, now),
 			ResolvedInputs: DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest},
 			ObjectStore:    objects, SealRepository: seals, RemoteVerifier: lifecycleRemoteVerifier{},
 		},
@@ -82,8 +83,15 @@ func TestDestinationBuildRunsQualificationAfterDevelopmentEvidence(t *testing.T)
 	if !called {
 		t.Fatal("destination qualification callback did not run")
 	}
-	if result.Completion.Seal.Identity.Qualification.Digest != destinationDigest {
-		t.Fatalf("sealed qualification digest = %q, want destination digest %q", result.Completion.Seal.Identity.Qualification.Digest, destinationDigest)
+	wantQualification, err := canonicalJSONDigest(struct {
+		Qualification string `json:"qualification"`
+		GateEvidence  string `json:"gateEvidence"`
+	}{Qualification: destinationDigest, GateEvidence: runner.output.GateEvidence.Digest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Completion.Seal.Identity.Qualification.Digest != wantQualification {
+		t.Fatalf("sealed qualification digest = %q, want combined qualification digest %q", result.Completion.Seal.Identity.Qualification.Digest, wantQualification)
 	}
 	if result.Completion.Seal.Identity.Qualification.Digest == devDigest {
 		t.Fatalf("destination reused development qualification digest %q", devDigest)

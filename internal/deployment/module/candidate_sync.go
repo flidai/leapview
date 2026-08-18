@@ -592,7 +592,8 @@ func candidateReleaseProvenance(
 			DataRevision: artifacts.Generation.DataRevision, DataMode: artifacts.Generation.DataMode,
 			ManagedDataPins: append([]release.ManagedDataPin(nil), artifacts.Generation.ManagedDataPins...),
 			Bindings:        bindings, AuthoredConnections: candidateProvenanceAuthoredConnections(artifacts.Generation.AuthoredConnections),
-			Extensions: append([]extension.Evidence(nil), artifacts.Extensions...),
+			Extensions:   append([]extension.Evidence(nil), artifacts.Extensions...),
+			GateEvidence: receipt.GateEvidence,
 		},
 	})
 }

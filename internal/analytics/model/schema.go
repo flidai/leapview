@@ -177,6 +177,11 @@ func (m *Model) ValidateDiscoveredSourceSchemas() error {
 		if len(columns) == 0 {
 			return fmt.Errorf("source %q has no discovered schema", sourceName)
 		}
+		if source.Freshness != nil && source.Freshness.Basis == "field" {
+			if _, ok := columns[source.Freshness.Field]; !ok {
+				return fmt.Errorf("source %q freshness field %q is not in discovered schema", sourceName, source.Freshness.Field)
+			}
+		}
 		mode := strings.ToLower(strings.TrimSpace(source.SchemaMode))
 		if mode == "" {
 			mode = "inferred"

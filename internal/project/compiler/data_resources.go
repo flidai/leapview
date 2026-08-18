@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
@@ -103,6 +104,22 @@ func decodeSourceResource(path string, content []byte, metadata metadata) (seman
 			return semanticmodel.Source{}, err
 		}
 		source.SchemaMode, source.Fields = mode, fields
+	}
+	if authored.Spec.Freshness != nil {
+		freshness, err := lowerSourceFreshness(authored.Spec.Freshness)
+		if err != nil {
+			return semanticmodel.Source{}, err
+		}
+		schemaMode := strings.ToLower(strings.TrimSpace(source.SchemaMode))
+		if schemaMode == "" {
+			schemaMode = "inferred"
+		}
+		if freshness != nil && freshness.Basis == "field" && schemaMode != "inferred" {
+			if _, ok := source.Fields[freshness.Field]; !ok {
+				return semanticmodel.Source{}, fmt.Errorf("source freshness field %q is not declared in source schema", freshness.Field)
+			}
+		}
+		source.Freshness = freshness
 	}
 	return source, nil
 }
@@ -213,27 +230,153 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 		return nil, nil
 	}
 	checks := make([]semanticmodel.ModelCheck, 0, len(*value))
-	for _, check := range *value {
+	for index, check := range *value {
 		lowered := semanticmodel.ModelCheck{}
 		switch variant := check.Value.(type) {
 		case *projectcontracts.ModelCheckNonNullVariant:
+			if strings.TrimSpace(variant.Field) == "" {
+				return nil, fmt.Errorf("checks[%d] non_null requires field", index)
+			}
 			lowered.Type, lowered.Field, lowered.Severity = variant.Type, variant.Field, optionalString(variant.Severity)
 		case *projectcontracts.ModelCheckUniqueVariant:
+			if len(variant.Fields) == 0 {
+				return nil, fmt.Errorf("checks[%d] unique requires fields", index)
+			}
+			seenFields := make(map[string]struct{}, len(variant.Fields))
+			for _, field := range variant.Fields {
+				if strings.TrimSpace(field) == "" {
+					return nil, fmt.Errorf("checks[%d] unique fields must be non-empty", index)
+				}
+				if _, exists := seenFields[field]; exists {
+					return nil, fmt.Errorf("checks[%d] unique contains duplicate field %q", index, field)
+				}
+				seenFields[field] = struct{}{}
+			}
 			lowered.Type, lowered.Fields, lowered.Severity = variant.Type, append([]string(nil), variant.Fields...), optionalString(variant.Severity)
 		case *projectcontracts.ModelCheckAcceptedValuesVariant:
+			if strings.TrimSpace(variant.Field) == "" || len(variant.Values) == 0 {
+				return nil, fmt.Errorf("checks[%d] accepted_values requires field and values", index)
+			}
+			seenValues := make(map[string]struct{}, len(variant.Values))
+			for _, accepted := range variant.Values {
+				if _, exists := seenValues[accepted]; exists {
+					return nil, fmt.Errorf("checks[%d] accepted_values contains duplicate value %q", index, accepted)
+				}
+				seenValues[accepted] = struct{}{}
+			}
 			lowered.Type, lowered.Field, lowered.Values, lowered.Severity = variant.Type, variant.Field, append([]string(nil), variant.Values...), optionalString(variant.Severity)
 		case *projectcontracts.ModelCheckRelationshipVariant:
+			if strings.TrimSpace(variant.Field) == "" || strings.TrimSpace(variant.To) == "" {
+				return nil, fmt.Errorf("checks[%d] relationship requires field and to", index)
+			}
 			lowered.Type, lowered.Field, lowered.To, lowered.Severity = variant.Type, variant.Field, variant.To, optionalString(variant.Severity)
 		case *projectcontracts.ModelCheckRowCountVariant:
+			if variant.Minimum == nil && variant.Maximum == nil {
+				return nil, fmt.Errorf("checks[%d] row_count requires minimum or maximum", index)
+			}
+			if variant.Minimum != nil && *variant.Minimum < 0 {
+				return nil, fmt.Errorf("checks[%d] row_count minimum must be non-negative", index)
+			}
+			if variant.Maximum != nil && *variant.Maximum < 0 {
+				return nil, fmt.Errorf("checks[%d] row_count maximum must be non-negative", index)
+			}
+			if variant.Minimum != nil && variant.Maximum != nil && *variant.Minimum > *variant.Maximum {
+				return nil, fmt.Errorf("checks[%d] row_count minimum exceeds maximum", index)
+			}
 			lowered.Type, lowered.Minimum, lowered.Maximum, lowered.Severity = variant.Type, variant.Minimum, variant.Maximum, optionalString(variant.Severity)
 		case nil:
 			return nil, fmt.Errorf("model check variant is required")
 		default:
 			return nil, fmt.Errorf("unsupported model check variant %T", check.Value)
 		}
+		if lowered.Severity != "" && !strings.EqualFold(lowered.Severity, "warning") && !strings.EqualFold(lowered.Severity, "error") {
+			return nil, fmt.Errorf("checks[%d] severity must be warning or error", index)
+		}
 		checks = append(checks, lowered)
 	}
 	return checks, nil
+}
+
+func lowerSourceFreshness(value *projectcontracts.SourceFreshness) (*semanticmodel.SourceFreshnessSpec, error) {
+	if value == nil {
+		return nil, nil
+	}
+	result := &semanticmodel.SourceFreshnessSpec{}
+	switch variant := value.Value.(type) {
+	case *projectcontracts.SourceFreshnessFieldVariant:
+		if strings.TrimSpace(variant.Field) == "" {
+			return nil, fmt.Errorf("source freshness field is required")
+		}
+		result.Basis, result.Field = "field", variant.Field
+		var err error
+		result.WarningAfter, err = lowerFreshnessDuration(variant.WarningAfter)
+		if err != nil {
+			return nil, fmt.Errorf("source freshness warningAfter: %w", err)
+		}
+		result.ErrorAfter, err = lowerFreshnessDuration(variant.ErrorAfter)
+		if err != nil {
+			return nil, fmt.Errorf("source freshness errorAfter: %w", err)
+		}
+	case *projectcontracts.SourceFreshnessRevisionVariant:
+		if strings.TrimSpace(variant.Revision) == "" {
+			return nil, fmt.Errorf("source freshness revision is required")
+		}
+		parsed, parseErr := time.Parse(time.RFC3339Nano, variant.Revision)
+		if parseErr != nil {
+			return nil, fmt.Errorf("source freshness revision must be RFC3339 utcDateTime: %w", parseErr)
+		}
+		if parsed.Location() != time.UTC {
+			return nil, fmt.Errorf("source freshness revision must use UTC")
+		}
+		parsed = parsed.UTC()
+		result.Basis, result.Revision, result.RevisionAt = "revision", parsed.Format(time.RFC3339Nano), &parsed
+		var err error
+		result.WarningAfter, err = lowerFreshnessDuration(variant.WarningAfter)
+		if err != nil {
+			return nil, fmt.Errorf("source freshness warningAfter: %w", err)
+		}
+		result.ErrorAfter, err = lowerFreshnessDuration(variant.ErrorAfter)
+		if err != nil {
+			return nil, fmt.Errorf("source freshness errorAfter: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported source freshness variant %T", value.Value)
+	}
+	if result.WarningAfter == nil && result.ErrorAfter == nil {
+		return nil, fmt.Errorf("source freshness requires warningAfter or errorAfter")
+	}
+	if result.WarningAfter != nil && result.ErrorAfter != nil && result.WarningAfter.Duration() >= result.ErrorAfter.Duration() {
+		return nil, fmt.Errorf("source freshness warningAfter must be shorter than errorAfter")
+	}
+	return result, nil
+}
+
+func lowerFreshnessDuration(value *projectcontracts.FreshnessDuration) (*semanticmodel.FreshnessDurationSpec, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if value.Amount <= 0 {
+		return nil, fmt.Errorf("amount must be greater than zero")
+	}
+	unit := strings.TrimSpace(strings.ToLower(value.Unit))
+	switch unit {
+	case "second", "minute", "hour", "day":
+	default:
+		return nil, fmt.Errorf("unit %q is not supported", value.Unit)
+	}
+	multiplier := int64(time.Second)
+	switch unit {
+	case "minute":
+		multiplier *= 60
+	case "hour":
+		multiplier *= 60 * 60
+	case "day":
+		multiplier *= 24 * 60 * 60
+	}
+	if value.Amount > int64(^uint64(0)>>1)/multiplier {
+		return nil, fmt.Errorf("amount overflows time.Duration")
+	}
+	return &semanticmodel.FreshnessDurationSpec{Amount: value.Amount, Unit: unit}, nil
 }
 
 func sourceSchema(value *projectcontracts.SourceSchema) (string, map[string]semanticmodel.SourceField, error) {

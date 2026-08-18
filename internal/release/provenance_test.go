@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
@@ -14,6 +15,18 @@ func TestProvenanceCanonicalizesGenerationEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, provenance.Validate())
 	require.Equal(t, provenance.Artifact.ContentDigest, provenance.Artifact.ContentDigest)
+}
+
+func TestProvenanceBindsGateEvidenceAndDetectsTampering(t *testing.T) {
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	evidence, err := (GateEvidence{Version: 1, CandidateID: input.Candidate.ID, SourceDigest: input.Artifact.SourceDigest, BindingGeneration: BindingFingerprint(input.Plan.Bindings), RuntimeVersion: input.Plan.RuntimeVersion, DuckDBVersion: "duckdb:1", Outcome: GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}).Canonical()
+	require.NoError(t, err)
+	input.Plan.GateEvidence = &evidence
+	provenance, err := NewProvenance(input)
+	require.NoError(t, err)
+	require.NoError(t, provenance.Validate())
+	provenance.Plan.GateEvidence.DuckDBVersion = "duckdb:tampered"
+	require.Error(t, provenance.Validate())
 }
 
 func TestProvenanceDetectsArtifactAndPlanTampering(t *testing.T) {

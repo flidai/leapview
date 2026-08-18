@@ -2,9 +2,9 @@ package model
 
 import (
 	"fmt"
-	"regexp"
-
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	"regexp"
+	"time"
 )
 
 var (
@@ -238,6 +238,10 @@ type Source struct {
 	SchemaMode            string                               `yaml:"-" json:"schemaMode,omitempty"`
 	Fields                map[string]SourceField               `yaml:"fields"`
 	Schema                TableSchema                          `yaml:"-"`
+	// Freshness is the lowered, typed Source freshness contract. It is kept
+	// beside the source so candidate qualification can evaluate the authored
+	// expectation without re-decoding a project document.
+	Freshness *SourceFreshnessSpec `yaml:"-" json:"freshness,omitempty"`
 }
 
 // PathLocationHasOptions checks typed option presence without lowering the
@@ -335,6 +339,45 @@ type ModelCheck struct {
 	Minimum  *int64
 	Maximum  *int64
 	Severity string
+}
+
+// FreshnessDurationSpec is intentionally scalar and portable. The generated
+// contract owns the unit vocabulary; runtime code receives a normalized
+// duration after lowering.
+type FreshnessDurationSpec struct {
+	Amount int64  `json:"amount"`
+	Unit   string `json:"unit"`
+}
+
+func (d FreshnessDurationSpec) Duration() time.Duration {
+	if d.Amount <= 0 {
+		return 0
+	}
+	multiplier := int64(time.Second)
+	switch d.Unit {
+	case "second":
+	case "minute":
+		multiplier *= 60
+	case "hour":
+		multiplier *= 60 * 60
+	case "day":
+		multiplier *= 24 * 60 * 60
+	default:
+		return 0
+	}
+	if d.Amount > int64(^uint64(0)>>1)/multiplier {
+		return 0
+	}
+	return time.Duration(d.Amount * multiplier)
+}
+
+type SourceFreshnessSpec struct {
+	Basis        string                 `json:"basis"`
+	Field        string                 `json:"field,omitempty"`
+	Revision     string                 `json:"revision,omitempty"`
+	RevisionAt   *time.Time             `json:"revisionAt,omitempty"`
+	WarningAfter *FreshnessDurationSpec `json:"warningAfter,omitempty"`
+	ErrorAfter   *FreshnessDurationSpec `json:"errorAfter,omitempty"`
 }
 
 // SQLAnalysisEvidence is normalized compiler-owned evidence from the pinned

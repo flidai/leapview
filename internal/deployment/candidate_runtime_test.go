@@ -7,6 +7,7 @@ import (
 	"time"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/stretchr/testify/require"
 )
@@ -24,6 +25,7 @@ func TestCandidateRuntimeServicePreparesProjectGenerationWithConnectionEvidence(
 	require.NoError(t, err)
 	identity := projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "prod", GenerationID: "generation_2"}
 	generation := candidateRuntimeGeneration(identity, CandidateDataRefreshSources, "sources:managed")
+	generation.ManagedDataConnections = []string{"managed_1"}
 	generation.Connections = []CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}}
 	receipt, err := service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: candidate, AuthorizationFingerprint: "policy:v1", Generation: generation})
 	require.NoError(t, err)
@@ -34,6 +36,30 @@ func TestCandidateRuntimeServicePreparesProjectGenerationWithConnectionEvidence(
 	require.Equal(t, candidate.ID, connections.requests[0].CandidateID)
 	require.Len(t, host.inputs, 1)
 	require.Equal(t, "policy:v1", host.inputs[0].Registration.Compatibility.AuthorizationFingerprint)
+}
+
+func TestCandidateRuntimeServiceBindsGateEvidenceIntoReceiptAndCompatibility(t *testing.T) {
+	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
+	candidate := candidateRuntimeTestCandidate(t, now)
+	connections, host := &candidateRuntimeConnections{}, &candidateRuntimeHost{}
+	service, err := NewCandidateRuntimeService(CandidateRuntimeServiceConfig{Connections: connections, Runtime: host, RuntimeVersion: "leapview:test"})
+	require.NoError(t, err)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "prod", GenerationID: "generation_2"}
+	bindingEvidence := []CandidateConnectionEvidence{{BindingID: "binding_warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 7, ProviderVersion: "provider:v3", EndpointConfigHash: "sha256:" + strings.Repeat("9", 64)}}
+	bindingFingerprint, err := BindingFingerprint(bindingEvidence)
+	require.NoError(t, err)
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: candidate.ID, SourceDigest: candidate.ArtifactDigest, BindingGeneration: bindingFingerprint, RuntimeVersion: "leapview:test", DuckDBVersion: "duckdb:1", Outcome: release.GateSuccess, EvaluatedAt: now, Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}).Canonical()
+	require.NoError(t, err)
+	generation := candidateRuntimeGeneration(identity, CandidateDataRefreshSources, "sources:managed")
+	generation.ManagedDataConnections = []string{"managed_1"}
+	generation.Connections = []CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}}
+	generation.GateEvidence = &evidence
+	generation.BindingFingerprint = evidence.BindingGeneration
+	receipt, err := service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: candidate, AuthorizationFingerprint: "policy:v1", Generation: generation})
+	require.NoError(t, err)
+	require.NotNil(t, receipt.GateEvidence)
+	require.Equal(t, evidence.Digest, receipt.GateEvidence.Digest)
+	require.Equal(t, evidence.Digest, host.inputs[0].Registration.Compatibility.GateEvidenceDigest)
 }
 
 func TestCandidateRuntimeServiceAllowsManagedOnlyRefreshWithoutSecretBinding(t *testing.T) {

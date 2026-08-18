@@ -1,6 +1,7 @@
 package release
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +53,29 @@ type BindingEvidence struct {
 	Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
 }
 
+// BindingFingerprint returns the canonical hash of target-acquired binding
+// evidence. It excludes raw endpoint/credential material by construction.
+func BindingFingerprint(values []BindingEvidence) string {
+	values = append([]BindingEvidence(nil), values...)
+	sort.Slice(values, func(i, j int) bool { return values[i].BindingID < values[j].BindingID })
+	type input struct {
+		BindingID          string                         `json:"bindingId"`
+		ConnectionID       string                         `json:"connectionId"`
+		ConnectorKind      string                         `json:"connectorKind"`
+		Revision           int64                          `json:"revision"`
+		ProviderVersion    string                         `json:"providerVersion"`
+		EndpointConfigHash string                         `json:"endpointConfigHash"`
+		Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+	}
+	preimage := make([]input, len(values))
+	for i, value := range values {
+		preimage[i] = input{value.BindingID, value.ConnectionID, value.ConnectorKind, value.Revision, value.ValidatedVersion, value.EndpointConfigHash, value.Access}
+	}
+	encoded, _ := json.Marshal(preimage)
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + fmt.Sprintf("%x", sum)
+}
+
 type AuthoredConnectionEvidence struct {
 	ConnectionID  string                         `json:"connectionId"`
 	ConnectorKind string                         `json:"connectorKind"`
@@ -96,6 +120,9 @@ type GenerationPlanProvenance struct {
 	// artifacts admitted while preparing this candidate. It is optional for
 	// historical releases and canonicalized when present.
 	Extensions []extension.Evidence `json:"extensions,omitempty"`
+	// GateEvidence is optional for historical provenance rows. New candidates
+	// carrying executable source/model gates persist the exact sealed record.
+	GateEvidence *GateEvidence `json:"gateEvidence,omitempty"`
 }
 
 type ProvenanceInput struct {
@@ -262,6 +289,16 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	p.Extensions, err = normalizeExtensionEvidence(p.Extensions)
 	if err != nil {
 		return GenerationPlanProvenance{}, err
+	}
+	if p.GateEvidence != nil {
+		canonical, gateErr := p.GateEvidence.Canonical()
+		if gateErr != nil {
+			return GenerationPlanProvenance{}, provenanceInvalid(gateErr)
+		}
+		if canonical.SourceDigest != artifact.SourceDigest || canonical.RuntimeVersion != p.RuntimeVersion || canonical.BindingGeneration != BindingFingerprint(p.Bindings) {
+			return GenerationPlanProvenance{}, provenanceInvalid(errors.New("gate evidence is not bound to artifact, runtime, or generation identity"))
+		}
+		p.GateEvidence = &canonical
 	}
 	if p.DataMode == GenerationDataReuseBase && len(p.AuthoredConnections) != 0 {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("snapshot reuse cannot retain authored refresh connection evidence"))

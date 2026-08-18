@@ -2,6 +2,8 @@ package deployment
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -100,6 +103,8 @@ type CandidateGenerationRuntime struct {
 	AuthoredConnections    []CandidateAuthoredConnection
 	ManagedDataConnections []string
 	Restrictions           []CandidateRestriction
+	BindingFingerprint     string
+	GateEvidence           *release.GateEvidence
 }
 
 type CandidateRuntimeRequest struct {
@@ -109,8 +114,46 @@ type CandidateRuntimeRequest struct {
 }
 
 type CandidateRuntimeReceipt struct {
-	RuntimeVersion string
-	Bindings       []CandidateConnectionEvidence
+	RuntimeVersion     string
+	Bindings           []CandidateConnectionEvidence
+	BindingFingerprint string
+	GateEvidence       *release.GateEvidence
+}
+
+// BindingFingerprint hashes the canonical, non-secret evidence returned by a
+// target connection lease. Endpoint material and credentials never enter this
+// preimage; only their validated configuration digest is retained.
+func BindingFingerprint(values []CandidateConnectionEvidence) (string, error) {
+	bindings, err := candidateBindingVersions(values)
+	if err != nil {
+		return "", err
+	}
+	preimage := make([]struct {
+		BindingID          string                         `json:"bindingId"`
+		ConnectionID       string                         `json:"connectionId"`
+		ConnectorKind      string                         `json:"connectorKind"`
+		Revision           int64                          `json:"revision"`
+		ProviderVersion    string                         `json:"providerVersion"`
+		EndpointConfigHash string                         `json:"endpointConfigHash"`
+		Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+	}, len(bindings))
+	for i, binding := range bindings {
+		preimage[i] = struct {
+			BindingID          string                         `json:"bindingId"`
+			ConnectionID       string                         `json:"connectionId"`
+			ConnectorKind      string                         `json:"connectorKind"`
+			Revision           int64                          `json:"revision"`
+			ProviderVersion    string                         `json:"providerVersion"`
+			EndpointConfigHash string                         `json:"endpointConfigHash"`
+			Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+		}{binding.BindingID, binding.LogicalConnection, binding.ConnectorKind, binding.Revision, binding.ProviderVersion, binding.EndpointConfigHash, binding.Access}
+	}
+	encoded, err := json.Marshal(preimage)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + fmt.Sprintf("%x", sum), nil
 }
 
 func NewCandidateRuntimeService(config CandidateRuntimeServiceConfig) (*CandidateRuntimeService, error) {
@@ -168,6 +211,13 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 	if generation.Identity.ProjectID != candidate.Scope.ProjectID || generation.Identity.Environment != candidate.Scope.Environment {
 		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
+	if generation.GateEvidence != nil {
+		canonical, gateErr := generation.GateEvidence.Canonical()
+		if gateErr != nil || canonical.CandidateID == "" || canonical.CandidateID != candidate.ID || canonical.RuntimeVersion != service.runtimeVersion || generation.BindingFingerprint == "" || canonical.BindingGeneration != generation.BindingFingerprint {
+			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+		}
+		generation.GateEvidence = &canonical
+	}
 	projectID := generation.Identity.ProjectID
 	leases, err := service.connections.Acquire(ctx, CandidateConnectionRequest{
 		CandidateID: candidate.ID, Actor: candidate.OwnerID, TargetID: candidate.TargetID,
@@ -183,6 +233,15 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 		_ = leases.Close()
 		return CandidateRuntimeReceipt{}, err
 	}
+	bindingFingerprint, err := BindingFingerprint(leases.Evidence())
+	if err != nil {
+		_ = leases.Close()
+		return CandidateRuntimeReceipt{}, err
+	}
+	if generation.BindingFingerprint != "" && generation.BindingFingerprint != bindingFingerprint {
+		_ = leases.Close()
+		return CandidateRuntimeReceipt{}, fmt.Errorf("%w: acquired connection binding evidence changed", ErrCandidateInvalid)
+	}
 	preparation := runtimehost.CandidatePreparation{
 		Registration: runtimehost.CandidateRegistration{
 			CandidateID: candidate.ID, OwnerID: candidate.OwnerID, ProjectID: projectID, ExpiresAt: candidate.ExpiresAt,
@@ -190,6 +249,8 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 				ArtifactDigest: generation.ArtifactDigest, DataRevision: generation.DataRevision,
 				DataMode: runtimehost.CandidateDataMode(generation.DataMode), RuntimeVersion: service.runtimeVersion,
 				AuthorizationFingerprint: request.AuthorizationFingerprint, Bindings: bindings,
+				BindingFingerprint:     bindingFingerprint,
+				GateEvidenceDigest:     gateEvidenceDigest(generation.GateEvidence),
 				ManagedDataConnections: append([]string(nil), generation.ManagedDataConnections...),
 				AuthoredConnections:    candidateAuthoredConnections(generation.AuthoredConnections),
 				Restrictions:           candidateRestrictions(generation.Restrictions),
@@ -201,7 +262,14 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 	if err := service.runtime.PrepareAndRegisterCandidateSet(ctx, []runtimehost.CandidatePreparation{preparation}); err != nil {
 		return CandidateRuntimeReceipt{}, fmt.Errorf("%w: candidate runtime preparation failed: %v", ErrCandidateUnavailable, err)
 	}
-	return CandidateRuntimeReceipt{RuntimeVersion: service.runtimeVersion, Bindings: candidateConnectionEvidence(bindings)}, nil
+	return CandidateRuntimeReceipt{RuntimeVersion: service.runtimeVersion, Bindings: candidateConnectionEvidence(bindings), BindingFingerprint: bindingFingerprint, GateEvidence: generation.GateEvidence}, nil
+}
+
+func gateEvidenceDigest(value *release.GateEvidence) string {
+	if value == nil {
+		return ""
+	}
+	return value.Digest
 }
 
 func normalizeCandidateManagedConnections(values []string) ([]string, error) {

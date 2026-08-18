@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 )
 
 func repoDeliveryDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
@@ -225,6 +227,66 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	}
 	if retry, err := repo.Rollback(t.Context(), rollbackRequest); err != nil || retry != rolledBack {
 		t.Fatalf("rollback retry=%#v err=%v", retry, err)
+	}
+}
+
+func TestFailedGateEvidenceRoundTripIsImmutable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "failed-gate.db")
+	store, err := platform.Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{})
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := repoDeliveryPlan(t, now)
+	if _, err := repo.CreatePlan(t.Context(), plan); err != nil {
+		t.Fatal(err)
+	}
+	pool := repoDeliveryDigest('9')
+	insertDeliveryPool(t, store, pool)
+	lease := deployment.DeliveryWriterLease{ID: "writer-failed-gate", AttemptID: "attempt-failed-gate", PhysicalPoolID: pool, OwnerID: "builder", Epoch: 1, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	attempt := deployment.DeliveryBuildAttempt{ID: lease.AttemptID, PlanID: plan.ID, IdempotencyKey: "build-op-failed-gate", PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, PhysicalPoolID: pool, WriterLeaseID: lease.ID, CreatedAt: now}
+	if _, _, err := repo.CreateWriterLeaseAndBuildAttempt(t.Context(), lease, attempt); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: "candidate-failed-gate", SourceDigest: plan.SourceDigest, BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: release.GateUnavailable, EvaluatedAt: now, Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}, Sources: []release.GateSourceEvidence{{ID: "source-1", Mode: "inferred", SourceDigest: plan.SourceDigest, SchemaOutcome: release.GateUnavailable, ObservedSchema: []semanticmodel.ColumnSchema{}}}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordFailedBuildGateEvidence(t.Context(), attempt.ID, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.FailedBuildGateEvidence(t.Context(), attempt.ID)
+	if err != nil || got == nil || got.Digest != evidence.Digest {
+		t.Fatalf("failed gate evidence readback=%#v err=%v", got, err)
+	}
+	var payload string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT evidence_json FROM delivery_failed_gate_evidence WHERE attempt_id=?`, attempt.ID).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(payload), "secret") || strings.Contains(strings.ToLower(payload), "password") {
+		t.Fatalf("failed gate evidence persisted a secret-looking value: %s", payload)
+	}
+	conflict := evidence
+	conflict.CandidateID = "candidate-other"
+	conflict, err = conflict.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordFailedBuildGateEvidence(t.Context(), attempt.ID, &conflict); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("changed failed evidence err=%v, want conflict", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := platform.Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if restarted, err := NewRepositoryWithHooks(reopened.SQLDB(), ActivationHooks{}).FailedBuildGateEvidence(t.Context(), attempt.ID); err != nil || restarted == nil || restarted.Digest != evidence.Digest {
+		t.Fatalf("restarted failed gate evidence=%#v err=%v", restarted, err)
 	}
 }
 

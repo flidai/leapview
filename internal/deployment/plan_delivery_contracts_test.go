@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 )
 
 func deliveryTestDigest(char byte) string {
@@ -352,6 +353,33 @@ func TestResolvedBuildInputsRequireObservedEvidenceDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = bounded
+}
+
+func TestResolvedBuildInputsPersistAndRejectTamperedGateEvidence(t *testing.T) {
+	plan := deliveryTestPlan(t)
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: "candidate-1", SourceDigest: plan.SourceDigest, BindingGeneration: "sha256:" + strings.Repeat("c", 64), RuntimeVersion: "runtime-1", DuckDBVersion: "duckdb-1", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ValidateDeliveryResolvedBuildInputs(plan, DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: &evidence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reloaded DeliveryResolvedBuildInputs
+	if err := json.Unmarshal(encoded, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateDeliveryResolvedBuildInputs(plan, reloaded); err != nil {
+		t.Fatalf("reloaded evidence rejected: %v", err)
+	}
+	reloaded.GateEvidence.Digest = deliveryTestDigest('f')
+	if _, err := ValidateDeliveryResolvedBuildInputs(plan, reloaded); !errors.Is(err, ErrDeliveryConflict) {
+		t.Fatalf("tampered gate evidence error = %v, want conflict", err)
+	}
 }
 
 func TestResolvedBoundedInputRejectsChangedWatermark(t *testing.T) {

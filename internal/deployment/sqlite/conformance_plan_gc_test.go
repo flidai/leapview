@@ -26,6 +26,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 )
 
 type conformancePolicy struct {
@@ -335,7 +336,11 @@ func conformanceBuild(t *testing.T, ctx context.Context, lifecycle *deployment.D
 	if err := os.WriteFile(path, []byte("catalog-"+candidateID), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	output := deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: path}, QualificationDigest: repoDeliveryDigest('8'), ClosureDigest: repoDeliveryDigest('9'), CompatibilityDigest: repoDeliveryDigest('a'), ResolvedInputs: conformanceResolvedInputs(plan, mode), ObjectStore: &conformanceCatalogStore{objects: objects, ambiguous: objects.ambiguous}, SealRepository: repo, RemoteVerifier: conformanceVerifier{objects: objects}}
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: candidateID, SourceDigest: plan.SourceDigest, BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: created.UTC(), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: path}, QualificationDigest: repoDeliveryDigest('8'), ClosureDigest: repoDeliveryDigest('9'), CompatibilityDigest: repoDeliveryDigest('a'), GateEvidence: &evidence, ResolvedInputs: conformanceResolvedInputs(plan, mode), ObjectStore: &conformanceCatalogStore{objects: objects, ambiguous: objects.ambiguous}, SealRepository: repo, RemoteVerifier: conformanceVerifier{objects: objects}}
 	runner := &conformancePhase{t: t, output: output}
 	request := conformanceBuildRequest(plan, attemptID, candidateID, created, runner)
 	// The pool identity is derived from the target and must match the pool row;

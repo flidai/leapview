@@ -483,8 +483,78 @@ func (m *Model) validateExecutionDatasetsAndTables() error {
 		if err := validateExecutionTable(tableName, m.Tables[tableName]); err != nil {
 			return err
 		}
+		if err := validateModelChecks(m, tableName, m.Tables[tableName]); err != nil {
+			return err
+		}
 	}
 	return validateExecutionTimeSemantics(m)
+}
+
+func validateModelChecks(model *Model, tableName string, table Table) error {
+	for index, check := range table.Checks {
+		severity := strings.ToLower(strings.TrimSpace(check.Severity))
+		if severity != "" && severity != "warning" && severity != "error" {
+			return fmt.Errorf("model table %q check %d severity must be warning or error", tableName, index)
+		}
+		fieldExists := func(field string) bool {
+			_, ok := table.Dimensions[field]
+			return ok
+		}
+		switch check.Type {
+		case "non_null", "accepted_values":
+			if !fieldExists(check.Field) {
+				return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, check.Field)
+			}
+			if check.Type == "accepted_values" {
+				if len(check.Values) == 0 {
+					return fmt.Errorf("model table %q check %d accepted_values requires values", tableName, index)
+				}
+				seen := map[string]struct{}{}
+				for _, value := range check.Values {
+					if _, duplicate := seen[value]; duplicate {
+						return fmt.Errorf("model table %q check %d accepted_values duplicates %q", tableName, index, value)
+					}
+					seen[value] = struct{}{}
+				}
+			}
+		case "unique":
+			if len(check.Fields) == 0 {
+				return fmt.Errorf("model table %q check %d unique requires fields", tableName, index)
+			}
+			seen := map[string]struct{}{}
+			for _, field := range check.Fields {
+				if !fieldExists(field) {
+					return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, field)
+				}
+				if _, duplicate := seen[field]; duplicate {
+					return fmt.Errorf("model table %q check %d unique duplicates %q", tableName, index, field)
+				}
+				seen[field] = struct{}{}
+			}
+		case "relationship":
+			if !fieldExists(check.Field) {
+				return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, check.Field)
+			}
+			parts := strings.Split(strings.TrimSpace(check.To), ".")
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				return fmt.Errorf("model table %q check %d relationship target %q is invalid", tableName, index, check.To)
+			}
+			target, ok := model.Tables[parts[0]]
+			if !ok {
+				return fmt.Errorf("model table %q check %d references unknown model %q", tableName, index, parts[0])
+			}
+			if _, ok := target.Dimensions[parts[1]]; !ok {
+				return fmt.Errorf("model table %q check %d references unknown target field %q", tableName, index, check.To)
+			}
+		case "row_count":
+			if check.Minimum == nil && check.Maximum == nil || check.Minimum != nil && *check.Minimum < 0 || check.Maximum != nil && *check.Maximum < 0 || check.Minimum != nil && check.Maximum != nil && *check.Minimum > *check.Maximum {
+				return fmt.Errorf("model table %q check %d row_count bounds are invalid", tableName, index)
+			}
+		default:
+			return fmt.Errorf("model table %q check %d has unsupported type %q", tableName, index, check.Type)
+		}
+	}
+	return nil
 }
 
 func validateExecutionTimeSemantics(m *Model) error {

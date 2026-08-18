@@ -84,14 +84,15 @@ var refreshSessionSequence atomic.Uint64
 var sourceScopeLocks sync.Map
 
 type PreparedSources struct {
-	model     *semanticmodel.Model
-	session   analyticsresource.Session
-	relations map[string]string
-	tables    []string
-	once      sync.Once
-	closeErr  error
-	reporter  fatalReporter
-	telemetry refreshTelemetry
+	model           *semanticmodel.Model
+	session         analyticsresource.Session
+	relations       map[string]string
+	relationQueries map[string]string
+	tables          []string
+	once            sync.Once
+	closeErr        error
+	reporter        fatalReporter
+	telemetry       refreshTelemetry
 }
 
 func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model) (analyticsmaterialize.PreparedSources, error) {
@@ -138,7 +139,7 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 	}
 	releaseScopes := lockSourceScopes(resolved, telemetry)
 	defer releaseScopes()
-	prepared := &PreparedSources{model: resolved, session: session, relations: map[string]string{}, telemetry: telemetry}
+	prepared := &PreparedSources{model: resolved, session: session, relations: map[string]string{}, relationQueries: map[string]string{}, telemetry: telemetry}
 	prepared.reporter, _ = r.db.(fatalReporter)
 	for _, sourceName := range sortedKeys(resolved.Sources) {
 		source := resolved.Sources[sourceName]
@@ -156,6 +157,11 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 			}
 			source.Schema = semanticmodel.TableSchema{Columns: columns}
 			resolved.Sources[sourceName] = source
+			// Keep the resolved relation on the live prepared session so the
+			// freshness observation seam can query it before Close releases the
+			// target-owned connection.
+			prepared.relations[sourceName] = relation
+			prepared.relationQueries[sourceName] = "(" + relation + ")"
 			original := model.Sources[sourceName]
 			original.Schema = source.Schema
 			model.Sources[sourceName] = original
@@ -194,6 +200,7 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 		}
 		prepared.tables = append(prepared.tables, table)
 		prepared.relations[sourceName] = quoteIdentifier(table)
+		prepared.relationQueries[sourceName] = quoteIdentifier(table)
 		columns, err := describeRelationSchema(ctx, session, quoteIdentifier(table))
 		if err != nil {
 			observeSource(telemetry, connection.Kind, "failed")
@@ -371,6 +378,110 @@ func (p *PreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.M
 	return planModelTable(ctx, p.session, p.model, tableName, table, p.relations)
 }
 
+// SourceObservations captures all source evidence while the resolved source
+// session remains live.  The returned record contains only schemas and
+// target-owned timestamps/revision tokens; no relation text or credentials
+// leave this seam.
+func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsmaterialize.SourceObservation, error) {
+	if p == nil || p.session == nil {
+		return nil, fmt.Errorf("prepared source session is unavailable")
+	}
+	ids := sortedKeys(p.model.Sources)
+	result := make([]analyticsmaterialize.SourceObservation, 0, len(ids))
+	budget := analyticsmaterialize.ObservationBudgetFromContext(ctx)
+	started := time.Now()
+	if budget.MaxMillis > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(budget.MaxMillis)*time.Millisecond)
+		defer cancel()
+	}
+	queries := 0
+	for _, id := range ids {
+		if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
+			return nil, fmt.Errorf("source observation query bound exceeded")
+		}
+		sourceStarted := time.Now()
+		sourceQueries := 0
+		sourceRows := int64(0)
+		source := p.model.Sources[id]
+		relation := p.relationQueries[id]
+		if relation == "" {
+			return nil, fmt.Errorf("source %q observation relation is unavailable", id)
+		}
+		// Re-describe the prepared relation on this still-live session. The
+		// schema carried on the semantic model is only a refresh aid; the gate
+		// evidence must reflect the exact target relation acquired for this
+		// candidate.
+		columns, err := describeRelationSchema(ctx, p.session, relation)
+		if err != nil {
+			return nil, fmt.Errorf("source %q schema observation: %w", id, err)
+		}
+		queries++
+		sourceQueries++
+		sourceRows += int64(len(columns))
+		observation := analyticsmaterialize.SourceObservation{ID: id, Schema: append([]semanticmodel.ColumnSchema(nil), columns...)}
+		observation.ObservationQueries = sourceQueries
+		observation.ObservationRows = sourceRows
+		if source.Freshness != nil && source.Freshness.Basis == "revision" {
+			// A revision selector is not itself a freshness timestamp. A
+			// connector/managed-data adapter must populate RevisionObserved from
+			// target-owned revision metadata; absent that evidence the gate fails
+			// closed instead of synthesizing "now".
+			observation.Revision = source.Freshness.Revision
+			if source.Freshness.RevisionAt != nil {
+				observation.RevisionObserved = source.Freshness.RevisionAt.UTC()
+				observation.FreshnessObserved = observation.RevisionObserved
+			}
+		} else if source.Freshness != nil && source.Freshness.Basis == "field" {
+			field := source.Freshness.Field
+			if relation == "" || field == "" {
+				return nil, fmt.Errorf("source %q freshness relation is unavailable", id)
+			}
+			if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
+				return nil, fmt.Errorf("source observation query bound exceeded")
+			}
+			row := p.session.QueryRowContext(ctx, "SELECT MAX(\""+strings.ReplaceAll(field, "\"", "\"\"")+"\") FROM ("+relation+")")
+			var value any
+			if err := row.Scan(&value); err != nil {
+				return nil, fmt.Errorf("source %q freshness observation: %w", id, err)
+			}
+			if budget.MaxQueries > 0 && queries >= budget.MaxQueries {
+				return nil, fmt.Errorf("source observation query bound exceeded")
+			}
+			queries++
+			sourceQueries++
+			observation.ObservationQueries++
+			observation.FreshnessObserved = sourceObservationTime(value)
+			observation.FreshnessEmpty = value == nil
+		}
+		result = append(result, observation)
+		result[len(result)-1].ObservationRows = sourceRows
+		result[len(result)-1].ObservationMillis = time.Since(sourceStarted).Milliseconds()
+	}
+	if budget.MaxMillis > 0 && time.Since(started).Milliseconds() > budget.MaxMillis {
+		return nil, fmt.Errorf("source observation time bound exceeded")
+	}
+	return result, nil
+}
+
+func sourceObservationTime(value any) time.Time {
+	switch value := value.(type) {
+	case time.Time:
+		return value.UTC()
+	case *time.Time:
+		if value != nil {
+			return value.UTC()
+		}
+	case string:
+		for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05", "2006-01-02"} {
+			if parsed, err := time.Parse(layout, value); err == nil {
+				return parsed.UTC()
+			}
+		}
+	}
+	return time.Time{}
+}
+
 func (p *PreparedSources) Close() error {
 	if p == nil {
 		return nil
@@ -472,6 +583,7 @@ type ProjectRuntime struct {
 	views                map[string]*analyticsmaterialize.Runtime
 	lastRefresh          time.Time
 	lastSnapshotID       int64
+	sourceObservations   []analyticsmaterialize.SourceObservation
 	commitMetadata       map[string]string
 	cacheScope           *resultcache.Scope
 }
@@ -1009,10 +1121,18 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 	if r.committer == nil {
 		if len(tableNames) > 0 {
 			lastRefresh, err := analyticsmaterialize.RefreshModelTables(ctx, r.db, prepared, model, tableNames)
-			return lastRefresh, 0, errors.Join(err, prepared.Close())
+			observations, observationErr := captureSourceObservations(ctx, prepared)
+			if err == nil && observationErr == nil {
+				r.sourceObservations = observations
+			}
+			return lastRefresh, 0, errors.Join(err, observationErr, prepared.Close())
 		}
 		lastRefresh, err := analyticsmaterialize.Refresh(ctx, r.db, prepared, model)
-		return lastRefresh, 0, errors.Join(err, prepared.Close())
+		observations, observationErr := captureSourceObservations(ctx, prepared)
+		if err == nil && observationErr == nil {
+			r.sourceObservations = observations
+		}
+		return lastRefresh, 0, errors.Join(err, observationErr, prepared.Close())
 	}
 	metadata := map[string]string{}
 	for key, value := range r.commitMetadata {
@@ -1031,10 +1151,24 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 		_ = prepared.Close()
 		return time.Time{}, 0, err
 	}
+	observations, observationErr := captureSourceObservations(ctx, prepared)
+	if observationErr != nil {
+		_ = prepared.Close()
+		return time.Time{}, 0, observationErr
+	}
+	r.sourceObservations = observations
 	if err := prepared.Close(); err != nil {
 		return time.Time{}, 0, fmt.Errorf("cleaning refresh staging: %w", err)
 	}
 	return time.Now(), snapshotID, nil
+}
+
+func captureSourceObservations(ctx context.Context, prepared analyticsmaterialize.PreparedSources) ([]analyticsmaterialize.SourceObservation, error) {
+	provider, ok := prepared.(analyticsmaterialize.SourceObservationProvider)
+	if !ok {
+		return nil, nil
+	}
+	return provider.SourceObservations(ctx)
 }
 
 func (r *ProjectRuntime) acquireOperation(ctx context.Context) (context.Context, func(), error) {
@@ -1105,6 +1239,22 @@ func (r *ProjectRuntime) LastRefresh() time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.lastRefresh
+}
+
+// SourceObservations returns source evidence captured during the latest live
+// refresh. It never resolves authored paths or opens a new credential session.
+func (r *ProjectRuntime) SourceObservations() []analyticsmaterialize.SourceObservation {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]analyticsmaterialize.SourceObservation, len(r.sourceObservations))
+	for i, item := range r.sourceObservations {
+		result[i] = item
+		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), item.Schema...)
+	}
+	return result
 }
 
 func (r *ProjectRuntime) DBPath() string {

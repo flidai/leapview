@@ -27,3 +27,14 @@ func TestValidateDiscoveredSourceSchemaModesAndNullability(t *testing.T) {
 		t.Fatal("strict mode accepted undeclared physical field")
 	}
 }
+
+func TestValidateDiscoveredSourceSchemaFreshnessField(t *testing.T) {
+	model := &Model{Sources: map[string]Source{"orders": {
+		SchemaMode: "inferred",
+		Schema:     TableSchema{Columns: []ColumnSchema{{Name: "id", PhysicalType: "INTEGER"}}},
+		Freshness:  &SourceFreshnessSpec{Basis: "field", Field: "updated_at"},
+	}}}
+	if err := model.ValidateDiscoveredSourceSchemas(); err == nil {
+		t.Fatal("freshness field absent from discovered schema was accepted")
+	}
+}
