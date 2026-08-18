@@ -2,6 +2,7 @@ package queryjson
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -76,5 +77,73 @@ func TestAnalyzeSQLRejectsMalformedPinnedAST(t *testing.T) {
 		if _, err := AnalyzeSQL([]byte(test.payload)); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("AnalyzeSQL malformed payload error = %v", err)
 		}
+	}
+}
+
+func TestAnalyzeSQLRejectsClosedEnumAndTypeMutations(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{
+			name:    "star type",
+			payload: `{"error":false,"statements":[{"node":{"type":"SELECT_NODE","select_list":[{"class":"STAR","type":"CONSTANT"}],"from_table":{"type":"EMPTY"}}}]}`,
+			want:    "does not allow type",
+		},
+		{
+			name:    "comparison enum",
+			payload: `{"error":false,"statements":[{"node":{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"where_clause":{"class":"COMPARISON","type":"COMPARE_FUTURE","left":{"class":"CONSTANT","type":"VALUE_CONSTANT","value":{}},"right":{"class":"CONSTANT","type":"VALUE_CONSTANT","value":{}}}}}]}`,
+			want:    "does not allow type",
+		},
+		{
+			name:    "join enum",
+			payload: `{"error":false,"statements":[{"node":{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"JOIN","left":{"type":"EMPTY"},"right":{"type":"EMPTY"},"join_type":"FUTURE","ref_type":"REGULAR"}}}]}`,
+			want:    "join_type",
+		},
+		{
+			name:    "function children type",
+			payload: `{"error":false,"statements":[{"node":{"type":"SELECT_NODE","select_list":[{"class":"FUNCTION","type":"FUNCTION","function_name":"count_star","children":{}}],"from_table":{"type":"EMPTY"}}}]}`,
+			want:    "children must be an array",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := AnalyzeSQL([]byte(test.payload)); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("AnalyzeSQL mutation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeSQLRejectsAcceptedKeyWrongTypesAndOpaquePayloads(t *testing.T) {
+	const root = `{"error":false,"statements":[{"node":%s}]}`
+	const selectBase = `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"}}`
+	mutations := []struct {
+		name string
+		node string
+		want string
+	}{
+		{"aggregate handling", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"aggregate_handling":1}`, "aggregate_handling"},
+		{"group set index", `{"type":"SELECT_NODE","select_list":[{"class":"COLUMN_REF","type":"COLUMN_REF","column_names":["id"]}],"from_table":{"type":"EMPTY"},"group_sets":[[-1]]}`, "group_sets"},
+		{"sample", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"sample":{}}`, "samples"},
+		{"window definition name", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"window_definitions":[{"name":1,"expression":{"class":"STAR","type":"STAR"}}]}`, "window definition name"},
+		{"window definition expression", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"window_definitions":[{"name":"w"}]}`, "window definition expression"},
+		{"base table alias", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"BASE_TABLE","table_name":"orders","alias":1}}`, "BASE_TABLE alias"},
+		{"base table aliases", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"BASE_TABLE","table_name":"orders","column_name_alias":["bad-name"]}}`, "column_name_alias"},
+		{"order modifier orders", `{"type":"SELECT_NODE","select_list":[{"class":"FUNCTION","type":"FUNCTION","function_name":"count_star","order_bys":{"type":"ORDER_MODIFIER","orders":{}}}],"from_table":{"type":"EMPTY"}}`, "ORDER modifier orders"},
+		{"cast type extra", `{"type":"SELECT_NODE","select_list":[{"class":"CAST","type":"OPERATOR_CAST","child":{"class":"CONSTANT","type":"VALUE_CONSTANT","value":1},"cast_type":{"id":"INTEGER","unknown":true}}],"from_table":{"type":"EMPTY"}}`, "unknown DuckDB SQL AST field"},
+		{"window boundary", `{"type":"SELECT_NODE","select_list":[{"class":"WINDOW","type":"WINDOW_AGGREGATE","function_name":"count","partitions":[],"orders":[],"children":[],"start":1,"end":"CURRENT_ROW_RANGE"}],"from_table":{"type":"EMPTY"}}`, "WINDOW start"},
+		{"pivot relation", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"PIVOT","source":{"type":"EMPTY"},"aggregates":[],"pivots":[]}}`, "PIVOT relations"},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			payload := []byte(fmt.Sprintf(root, mutation.node))
+			if _, err := AnalyzeSQL(payload); err == nil || !strings.Contains(err.Error(), mutation.want) {
+				t.Fatalf("AnalyzeSQL mutation error = %v, want %q", err, mutation.want)
+			}
+		})
+	}
+	if _, err := AnalyzeSQL([]byte(fmt.Sprintf(root, selectBase))); err != nil {
+		t.Fatalf("control AST rejected: %v", err)
 	}
 }

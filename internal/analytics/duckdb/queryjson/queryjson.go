@@ -33,11 +33,14 @@ func AnalyzeSQLText(ctx context.Context, sqlText string) (SQLAnalysis, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	for _, statement := range []string{
-		"LOAD json",
 		"SET allow_persistent_secrets = false",
 		"SET autoinstall_known_extensions = false",
 		"SET autoload_known_extensions = false",
 		"SET enable_external_access = false",
+		// The JSON extension is pinned and linked into the LeapView DuckDB
+		// build. Load it only after the analysis sandbox is closed to external
+		// access and automatic extension resolution is disabled.
+		"LOAD json",
 		"SET lock_configuration = true",
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
@@ -87,7 +90,21 @@ func AnalyzeSQL(input []byte) (SQLAnalysis, error) {
 	if err := requireKeys(object, "error", "statements", "error_type", "error_message"); err != nil {
 		return SQLAnalysis{}, err
 	}
-	if errorValue, _ := object["error"].(bool); errorValue {
+	errorValue, ok := object["error"].(bool)
+	if !ok {
+		return SQLAnalysis{}, fmt.Errorf("DuckDB SQL JSON error must be a boolean")
+	}
+	if raw, present := object["error_type"]; present && raw != nil {
+		if _, ok := raw.(string); !ok {
+			return SQLAnalysis{}, fmt.Errorf("DuckDB SQL JSON error_type must be a string")
+		}
+	}
+	if raw, present := object["error_message"]; present && raw != nil {
+		if _, ok := raw.(string); !ok {
+			return SQLAnalysis{}, fmt.Errorf("DuckDB SQL JSON error_message must be a string")
+		}
+	}
+	if errorValue {
 		message, _ := object["error_message"].(string)
 		if message == "" {
 			message = "unknown error"
@@ -154,6 +171,11 @@ func (v *astVisitor) selectNode(node map[string]any) error {
 		if err := requireKeys(node, "type", "modifiers", "cte_map", "select_list", "from_table", "where_clause", "group_expressions", "group_sets", "aggregate_handling", "having", "sample", "qualify", "window_definitions"); err != nil {
 			return err
 		}
+		if raw, present := node["cte_map"]; present && raw != nil {
+			if _, ok := raw.(map[string]any); !ok {
+				return fmt.Errorf("SELECT_NODE cte_map must be an object")
+			}
+		}
 		previousCTEs := v.ctes
 		localCTEs := make(map[string]struct{}, len(previousCTEs))
 		for name := range previousCTEs {
@@ -199,6 +221,67 @@ func (v *astVisitor) selectNode(node map[string]any) error {
 			}
 		} else if node["group_expressions"] != nil {
 			return fmt.Errorf("SELECT_NODE group_expressions must be an array")
+		}
+		if raw, present := node["group_sets"]; present && raw != nil {
+			sets, ok := raw.([]any)
+			if !ok {
+				return fmt.Errorf("SELECT_NODE group_sets must be an array")
+			}
+			for _, rawSet := range sets {
+				set, ok := rawSet.([]any)
+				if !ok {
+					return fmt.Errorf("SELECT_NODE group_sets entry must be an array")
+				}
+				for _, item := range set {
+					if !nonNegativeInteger(item) {
+						return fmt.Errorf("SELECT_NODE group_sets entries must be non-negative integer indexes")
+					}
+				}
+			}
+		}
+		if raw, present := node["aggregate_handling"]; present && raw != nil {
+			handling, ok := raw.(string)
+			if !ok || !validAggregateHandling(handling) {
+				return fmt.Errorf("SELECT_NODE aggregate_handling has an unknown mode")
+			}
+		}
+		if raw, present := node["sample"]; present && raw != nil {
+			return fmt.Errorf("SELECT_NODE samples are not supported in model SQL")
+		}
+		if raw, present := node["window_definitions"]; present && raw != nil {
+			definitions, ok := raw.([]any)
+			if !ok {
+				return fmt.Errorf("SELECT_NODE window_definitions must be an array")
+			}
+			seenNames := map[string]struct{}{}
+			for _, rawDefinition := range definitions {
+				definition, ok := rawDefinition.(map[string]any)
+				if !ok {
+					return fmt.Errorf("SELECT_NODE window definition must be an object")
+				}
+				if err := requireKeys(definition, "name", "expression"); err != nil {
+					return err
+				}
+				name, ok := definition["name"].(string)
+				if !ok || !validIdentifier(name) {
+					return fmt.Errorf("SELECT_NODE window definition name must be a string")
+				}
+				if _, duplicate := seenNames[strings.ToLower(name)]; duplicate {
+					return fmt.Errorf("SELECT_NODE window definition name %q is duplicated", name)
+				}
+				seenNames[strings.ToLower(name)] = struct{}{}
+				rawExpression, present := definition["expression"]
+				if !present || rawExpression == nil {
+					return fmt.Errorf("SELECT_NODE window definition expression is required")
+				}
+				expression, ok := rawExpression.(map[string]any)
+				if !ok {
+					return fmt.Errorf("SELECT_NODE window definition expression must be an object")
+				}
+				if err := v.expression(expression); err != nil {
+					return err
+				}
+			}
 		}
 		if modifiers, ok := node["modifiers"].([]any); ok {
 			for _, item := range modifiers {
@@ -265,6 +348,12 @@ func (v *astVisitor) cteMap(value map[string]any) error {
 		if err := requireKeys(value, "query", "materialized"); err != nil {
 			return err
 		}
+		if raw, present := value["materialized"]; present && raw != nil {
+			materialized, ok := raw.(string)
+			if !ok || !validMaterializedMode(materialized) {
+				return fmt.Errorf("CTE %q materialized has an unknown mode", name)
+			}
+		}
 		query, ok := value["query"].(map[string]any)
 		if !ok {
 			return fmt.Errorf("CTE %q query must be an object", name)
@@ -296,6 +385,31 @@ func (v *astVisitor) relation(obj map[string]any) error {
 		}
 		if err := requireKeys(obj, "type", "alias", "query_location", "schema_name", "table_name", "catalog_name", "column_name_alias", "sample"); err != nil {
 			return err
+		}
+		for _, key := range []string{"alias", "schema_name", "table_name", "catalog_name"} {
+			if raw, present := obj[key]; present && raw != nil {
+				if _, ok := raw.(string); !ok {
+					return fmt.Errorf("BASE_TABLE %s must be a string", key)
+				}
+			}
+		}
+		if err := validateOptionalQueryLocation(obj, "BASE_TABLE"); err != nil {
+			return err
+		}
+		if raw, present := obj["column_name_alias"]; present && raw != nil {
+			aliases, ok := raw.([]any)
+			if !ok {
+				return fmt.Errorf("BASE_TABLE column_name_alias must be an array")
+			}
+			for _, alias := range aliases {
+				name, ok := alias.(string)
+				if !ok || !validIdentifier(name) {
+					return fmt.Errorf("BASE_TABLE column_name_alias entries must be strings")
+				}
+			}
+		}
+		if raw, present := obj["sample"]; present && raw != nil {
+			return fmt.Errorf("BASE_TABLE samples are not supported in model SQL")
 		}
 		schema, _ := obj["schema_name"].(string)
 		table, _ := obj["table_name"].(string)
@@ -336,7 +450,21 @@ func (v *astVisitor) relation(obj map[string]any) error {
 		if err := requireKeys(obj, "type", "query_location", "left", "right", "condition", "join_type", "ref_type", "using_columns"); err != nil {
 			return err
 		}
+		if err := validateOptionalQueryLocation(obj, "JOIN"); err != nil {
+			return err
+		}
+		joinType, ok := optionalString(obj, "join_type")
+		if !ok || (joinType != "" && !allowedJoinType(joinType)) {
+			return fmt.Errorf("JOIN join_type must be a known DuckDB join type")
+		}
+		refType, ok := optionalString(obj, "ref_type")
+		if !ok || (refType != "" && !allowedJoinRefType(refType)) {
+			return fmt.Errorf("JOIN ref_type must be a known DuckDB join reference type")
+		}
 		if raw, ok := obj["using_columns"]; ok {
+			if raw == nil {
+				return fmt.Errorf("JOIN using_columns must be an array")
+			}
 			columns, ok := raw.([]any)
 			if !ok || len(columns) == 0 {
 				return fmt.Errorf("JOIN using_columns must be a non-empty array")
@@ -373,8 +501,28 @@ func (v *astVisitor) relation(obj map[string]any) error {
 		if err := requireKeys(obj, "type", "alias", "query_location", "subquery", "column_name_alias"); err != nil {
 			return err
 		}
+		if err := validateOptionalQueryLocation(obj, "SUBQUERY"); err != nil {
+			return err
+		}
+		if raw, present := obj["alias"]; present && raw != nil {
+			if _, ok := raw.(string); !ok {
+				return fmt.Errorf("SUBQUERY alias must be a string")
+			}
+		}
 		if alias, _ := obj["alias"].(string); alias != "" && !validIdentifier(alias) {
 			return fmt.Errorf("subquery alias %q is invalid", alias)
+		}
+		if raw, present := obj["column_name_alias"]; present && raw != nil {
+			aliases, ok := raw.([]any)
+			if !ok {
+				return fmt.Errorf("SUBQUERY column_name_alias must be an array")
+			}
+			for _, alias := range aliases {
+				name, ok := alias.(string)
+				if !ok || !validIdentifier(name) {
+					return fmt.Errorf("SUBQUERY column_name_alias entries must be strings")
+				}
+			}
 		}
 		query, ok := obj["subquery"].(map[string]any)
 		if !ok {
@@ -409,42 +557,67 @@ func (v *astVisitor) relation(obj map[string]any) error {
 		}
 		return nil
 	case "PIVOT":
-		if err := requireKeys(obj, "type", "query_location", "source", "aggregates", "pivots"); err != nil {
-			return err
-		}
-		source, ok := obj["source"].(map[string]any)
-		if !ok {
-			return fmt.Errorf("pivot source must be a relation")
-		}
-		if err := v.relation(source); err != nil {
-			return err
-		}
-		if values, ok := obj["aggregates"].([]any); ok {
-			for _, item := range values {
-				if err := v.expressionObject(item); err != nil {
-					return err
+		return fmt.Errorf("PIVOT relations are not supported in model SQL")
+		/*
+			if err := requireKeys(obj, "type", "query_location", "source", "aggregates", "pivots"); err != nil {
+				return err
+			}
+			if err := validateOptionalQueryLocation(obj, "PIVOT"); err != nil {
+				return err
+			}
+			source, ok := obj["source"].(map[string]any)
+			if !ok {
+				return fmt.Errorf("pivot source must be a relation")
+			}
+			if err := v.relation(source); err != nil {
+				return err
+			}
+			if raw, present := obj["aggregates"]; present && raw != nil {
+				values, ok := raw.([]any)
+				if !ok {
+					return fmt.Errorf("pivot aggregates must be an array")
+				}
+				for _, item := range values {
+					if err := v.expressionObject(item); err != nil {
+						return err
+					}
 				}
 			}
-		}
-		if pivots, ok := obj["pivots"].([]any); ok {
-			for _, item := range pivots {
-				p, ok := item.(map[string]any)
+			if raw, present := obj["pivots"]; present && raw != nil {
+				pivots, ok := raw.([]any)
 				if !ok {
-					return fmt.Errorf("pivot entry must be an object")
+					return fmt.Errorf("pivot pivots must be an array")
 				}
-				if err := requireKeys(p, "pivot_expressions", "entries"); err != nil {
-					return err
-				}
-				if exprs, ok := p["pivot_expressions"].([]any); ok {
+				for _, item := range pivots {
+					p, ok := item.(map[string]any)
+					if !ok {
+						return fmt.Errorf("pivot entry must be an object")
+					}
+					if err := requireKeys(p, "pivot_expressions", "entries"); err != nil {
+						return err
+					}
+					exprs, ok := p["pivot_expressions"].([]any)
+					if !ok {
+						return fmt.Errorf("pivot pivot_expressions must be an array")
+					}
 					for _, expr := range exprs {
 						if err := v.expressionObject(expr); err != nil {
 							return err
 						}
 					}
+					if entries, ok := p["entries"].([]any); !ok {
+						return fmt.Errorf("pivot entries must be an array")
+					} else {
+						for _, entry := range entries {
+							if _, ok := entry.(string); !ok {
+								return fmt.Errorf("pivot entries must contain strings")
+							}
+						}
+					}
 				}
 			}
-		}
-		return nil
+			return nil
+		*/
 	case "TABLE_FUNCTION":
 		return fmt.Errorf("table functions are not allowed in model SQL")
 	default:
@@ -469,6 +642,9 @@ func (v *astVisitor) expression(obj map[string]any) error {
 	if typ == "" {
 		return fmt.Errorf("SQL expression class %q is missing type", class)
 	}
+	if !validExpressionType(class, typ) {
+		return fmt.Errorf("SQL expression class %q does not allow type %q", class, typ)
+	}
 	allowed := map[string][]string{
 		"CONSTANT": {"class", "type", "alias", "query_location", "value"}, "COLUMN_REF": {"class", "type", "alias", "query_location", "column_names"}, "STAR": {"class", "type", "alias", "query_location"},
 		"FUNCTION": {"class", "type", "alias", "query_location", "function_name", "schema", "children", "filter", "order_bys", "distinct", "is_operator", "export_state", "catalog"}, "OPERATOR": {"class", "type", "alias", "query_location", "children"}, "COMPARISON": {"class", "type", "alias", "query_location", "left", "right"}, "CAST": {"class", "type", "alias", "query_location", "child", "cast_type", "try_cast"}, "CASE": {"class", "type", "alias", "query_location", "case_checks", "else_expr"}, "WINDOW": {"class", "type", "alias", "query_location", "function_name", "partitions", "orders", "start", "end", "children", "filter"}, "SUBQUERY": {"class", "type", "query_location", "subquery"}, "BETWEEN": {"class", "type", "alias", "query_location", "input", "lower", "upper"}, "CONJUNCTION": {"class", "type", "alias", "query_location", "children"},
@@ -478,6 +654,14 @@ func (v *astVisitor) expression(obj map[string]any) error {
 		return fmt.Errorf("unsupported DuckDB SQL expression class %q", class)
 	}
 	if err := requireKeys(obj, keys...); err != nil {
+		return err
+	}
+	if raw, present := obj["alias"]; present && raw != nil {
+		if _, ok := raw.(string); !ok {
+			return fmt.Errorf("%s alias must be a string", class)
+		}
+	}
+	if err := validateOptionalQueryLocation(obj, class); err != nil {
 		return err
 	}
 	if alias, _ := obj["alias"].(string); alias != "" && !validIdentifier(alias) {
@@ -501,29 +685,61 @@ func (v *astVisitor) expression(obj map[string]any) error {
 		if _, ok := obj["function_name"]; !ok {
 			return fmt.Errorf("FUNCTION is missing function_name")
 		}
-		name, _ := obj["function_name"].(string)
+		name, ok := obj["function_name"].(string)
+		if !ok {
+			return fmt.Errorf("FUNCTION function_name must be a string")
+		}
 		if !approvedFunction(name) {
 			return fmt.Errorf("function %q is not allowed in model SQL", name)
+		}
+		if raw, present := obj["schema"]; present && raw != nil {
+			if _, ok := raw.(string); !ok {
+				return fmt.Errorf("FUNCTION schema must be a string")
+			}
 		}
 		if schema, _ := obj["schema"].(string); schema != "" && !strings.EqualFold(schema, "main") {
 			return fmt.Errorf("qualified function %q is not allowed", name)
 		}
+		if raw, present := obj["catalog"]; present && raw != nil {
+			if _, ok := raw.(string); !ok {
+				return fmt.Errorf("FUNCTION catalog must be a string")
+			}
+		}
 		if catalog, _ := obj["catalog"].(string); catalog != "" {
 			return fmt.Errorf("external function catalog is not allowed")
 		}
-		if children, ok := obj["children"].([]any); ok {
+		for _, key := range []string{"distinct", "is_operator", "export_state"} {
+			if value, present := obj[key]; present && value != nil {
+				if _, ok := value.(bool); !ok {
+					return fmt.Errorf("FUNCTION %s must be a boolean", key)
+				}
+			}
+		}
+		children, ok := optionalArray(obj, "children")
+		if !ok {
+			return fmt.Errorf("FUNCTION children must be an array")
+		}
+		if children != nil {
 			for _, child := range children {
 				if err := v.expressionObject(child); err != nil {
 					return err
 				}
 			}
 		}
-		if filter, ok := obj["filter"].(map[string]any); ok {
+		filter, ok := optionalObject(obj, "filter")
+		if !ok {
+			return fmt.Errorf("FUNCTION filter must be an expression")
+		}
+		if filter != nil {
 			if err := v.expression(filter); err != nil {
 				return err
 			}
 		}
-		if order, ok := obj["order_bys"].(map[string]any); ok {
+		order, ok := optionalObject(obj, "order_bys")
+		if !ok {
+			return fmt.Errorf("FUNCTION order_bys must be an order modifier")
+		}
+		if order != nil {
 			if err := v.orderBys(order); err != nil {
 				return err
 			}
@@ -532,7 +748,11 @@ func (v *astVisitor) expression(obj map[string]any) error {
 		if !approvedOperator(typ) {
 			return fmt.Errorf("operator %q is not allowed in model SQL", typ)
 		}
-		if children, ok := obj["children"].([]any); ok {
+		children, ok := optionalArray(obj, "children")
+		if !ok {
+			return fmt.Errorf("%s children must be an array", class)
+		}
+		if children != nil {
 			for _, child := range children {
 				if err := v.expressionObject(child); err != nil {
 					return err
@@ -540,9 +760,6 @@ func (v *astVisitor) expression(obj map[string]any) error {
 			}
 		}
 	case "COMPARISON":
-		if !strings.HasPrefix(typ, "COMPARE_") {
-			return fmt.Errorf("unknown comparison operator %q", typ)
-		}
 		for _, key := range []string{"left", "right"} {
 			child, ok := obj[key].(map[string]any)
 			if !ok {
@@ -553,6 +770,51 @@ func (v *astVisitor) expression(obj map[string]any) error {
 			}
 		}
 	case "CAST":
+		if castType, present := obj["cast_type"]; present {
+			castObject, ok := castType.(map[string]any)
+			if !ok {
+				return fmt.Errorf("cast cast_type must be an object")
+			}
+			if err := requireKeys(castObject, "id", "type_modifiers", "type_info"); err != nil {
+				return err
+			}
+			if id, ok := castObject["id"]; !ok || !validCastType(id) {
+				return fmt.Errorf("cast cast_type.id must be a known type")
+			}
+			if raw, present := castObject["type_modifiers"]; present && raw != nil {
+				if _, ok := raw.([]any); !ok {
+					return fmt.Errorf("cast cast_type.type_modifiers must be an array")
+				}
+			}
+			if raw, present := castObject["type_info"]; present && raw != nil {
+				typeInfo, ok := raw.(map[string]any)
+				if !ok {
+					return fmt.Errorf("cast cast_type.type_info must be an object")
+				}
+				if err := requireKeys(typeInfo, "type", "width", "scale"); err != nil {
+					return err
+				}
+				if rawType, present := typeInfo["type"]; present && rawType != nil {
+					if _, ok := rawType.(string); !ok {
+						return fmt.Errorf("cast cast_type.type_info.type must be a string")
+					}
+				}
+				for _, key := range []string{"width", "scale"} {
+					if rawNumber, present := typeInfo[key]; present && rawNumber != nil {
+						switch rawNumber.(type) {
+						case float64, int, int64:
+						default:
+							return fmt.Errorf("cast cast_type.type_info.%s must be numeric", key)
+						}
+					}
+				}
+			}
+		}
+		if tryCast, present := obj["try_cast"]; present {
+			if _, ok := tryCast.(bool); !ok {
+				return fmt.Errorf("cast try_cast must be a boolean")
+			}
+		}
 		child, ok := obj["child"].(map[string]any)
 		if !ok {
 			return fmt.Errorf("cast child must be an expression")
@@ -583,16 +845,27 @@ func (v *astVisitor) expression(obj map[string]any) error {
 				}
 			}
 		}
-		if child, ok := obj["else_expr"].(map[string]any); ok {
+		if elseExpr, present := obj["else_expr"]; present && elseExpr != nil {
+			child, ok := elseExpr.(map[string]any)
+			if !ok {
+				return fmt.Errorf("CASE else_expr must be an expression")
+			}
 			return v.expression(child)
 		}
 	case "WINDOW":
-		name, _ := obj["function_name"].(string)
+		name, ok := obj["function_name"].(string)
+		if !ok {
+			return fmt.Errorf("WINDOW function_name must be a string")
+		}
 		if !approvedFunction(name) {
 			return fmt.Errorf("window function %q is not allowed", name)
 		}
 		for _, key := range []string{"partitions", "children"} {
-			if values, ok := obj[key].([]any); ok {
+			values, ok := optionalArray(obj, key)
+			if !ok {
+				return fmt.Errorf("WINDOW %s must be an array", key)
+			}
+			if values != nil {
 				for _, child := range values {
 					if err := v.expressionObject(child); err != nil {
 						return err
@@ -600,7 +873,11 @@ func (v *astVisitor) expression(obj map[string]any) error {
 				}
 			}
 		}
-		if orders, ok := obj["orders"].([]any); ok {
+		orders, ok := optionalArray(obj, "orders")
+		if !ok {
+			return fmt.Errorf("WINDOW orders must be an array")
+		}
+		if orders != nil {
 			for _, raw := range orders {
 				order, ok := raw.(map[string]any)
 				if !ok {
@@ -611,8 +888,31 @@ func (v *astVisitor) expression(obj map[string]any) error {
 				}
 			}
 		}
-		if filter, ok := obj["filter"].(map[string]any); ok {
-			return v.expression(filter)
+		filter, ok := optionalObject(obj, "filter")
+		if !ok {
+			return fmt.Errorf("WINDOW filter must be an expression")
+		}
+		if filter != nil {
+			if err := v.expression(filter); err != nil {
+				return err
+			}
+		}
+		for _, key := range []string{"start", "end"} {
+			if raw, present := obj[key]; present && raw != nil {
+				if boundaryType, ok := raw.(string); ok {
+					if !validWindowBoundaryType(boundaryType) {
+						return fmt.Errorf("WINDOW %s type is unknown", key)
+					}
+					continue
+				}
+				boundary, ok := raw.(map[string]any)
+				if !ok {
+					return fmt.Errorf("WINDOW %s must be an object", key)
+				}
+				if err := v.windowBoundary(boundary, key); err != nil {
+					return err
+				}
+			}
 		}
 	case "SUBQUERY":
 		query, ok := obj["subquery"].(map[string]any)
@@ -669,7 +969,11 @@ func (v *astVisitor) modifier(value any) error {
 			return err
 		}
 		for _, key := range []string{"limit", "offset"} {
-			if child, ok := obj[key].(map[string]any); ok {
+			if value, present := obj[key]; present && value != nil {
+				child, ok := value.(map[string]any)
+				if !ok {
+					return fmt.Errorf("LIMIT modifier %s must be an expression", key)
+				}
 				if err := v.expression(child); err != nil {
 					return err
 				}
@@ -688,6 +992,14 @@ func (v *astVisitor) order(value any) error {
 	if err := requireKeys(obj, "type", "null_order", "expression"); err != nil {
 		return err
 	}
+	orderType, ok := optionalString(obj, "type")
+	if !ok || (orderType != "ASCENDING" && orderType != "DESCENDING" && orderType != "ORDER_DEFAULT") {
+		return fmt.Errorf("ORDER item type is unknown")
+	}
+	nullOrder, ok := optionalString(obj, "null_order")
+	if !ok || (nullOrder != "" && nullOrder != "ORDER_DEFAULT" && nullOrder != "NULLS_FIRST" && nullOrder != "NULLS_LAST") {
+		return fmt.Errorf("ORDER null_order is unknown")
+	}
 	expr, ok := obj["expression"].(map[string]any)
 	if !ok {
 		return fmt.Errorf("ORDER expression must be an expression")
@@ -698,12 +1010,105 @@ func (v *astVisitor) orderBys(obj map[string]any) error {
 	if err := requireKeys(obj, "type", "orders"); err != nil {
 		return err
 	}
-	if values, ok := obj["orders"].([]any); ok {
+	if raw, present := obj["orders"]; present && raw != nil {
+		values, ok := raw.([]any)
+		if !ok {
+			return fmt.Errorf("ORDER modifier orders must be an array")
+		}
 		for _, item := range values {
 			if err := v.order(item); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func (v *astVisitor) windowBoundary(obj map[string]any, name string) error {
+	if err := requireKeys(obj, "type", "preceding", "following", "expression"); err != nil {
+		return err
+	}
+	if raw, present := obj["type"]; present && raw != nil {
+		typeName, ok := raw.(string)
+		if !ok {
+			return fmt.Errorf("WINDOW %s type must be a string", name)
+		}
+		if !validWindowBoundaryType(typeName) {
+			return fmt.Errorf("WINDOW %s type is unknown", name)
+		}
+	}
+	for _, key := range []string{"preceding", "following"} {
+		if raw, present := obj[key]; present && raw != nil {
+			switch raw.(type) {
+			case float64, int, int64:
+			default:
+				return fmt.Errorf("WINDOW %s %s must be numeric", name, key)
+			}
+		}
+	}
+	if raw, present := obj["expression"]; present && raw != nil {
+		expression, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("WINDOW %s expression must be an expression", name)
+		}
+		return v.expression(expression)
+	}
+	return nil
+}
+
+func validWindowBoundaryType(value string) bool {
+	switch value {
+	case "UNBOUNDED_PRECEDING", "UNBOUNDED_FOLLOWING", "CURRENT_ROW", "EXPR_PRECEDING", "EXPR_FOLLOWING", "CURRENT_ROW_RANGE":
+		return true
+	default:
+		return false
+	}
+}
+
+func validMaterializedMode(value string) bool {
+	switch value {
+	case "CTE_MATERIALIZE_DEFAULT", "CTE_MATERIALIZE_ALWAYS", "CTE_MATERIALIZE_NEVER":
+		return true
+	default:
+		return false
+	}
+}
+
+func validAggregateHandling(value string) bool {
+	switch value {
+	case "STANDARD_HANDLING", "FORCE_NULL_HANDLING", "NON_EMPTY_HANDLING":
+		return true
+	default:
+		return false
+	}
+}
+
+func nonNegativeInteger(value any) bool {
+	switch value := value.(type) {
+	case int:
+		return value >= 0
+	case int64:
+		return value >= 0
+	case float64:
+		return value >= 0 && value == float64(int64(value))
+	default:
+		return false
+	}
+}
+
+func validateOptionalQueryLocation(obj map[string]any, owner string) error {
+	raw, present := obj["query_location"]
+	if !present || raw == nil {
+		return nil
+	}
+	switch value := raw.(type) {
+	case float64:
+		if value != float64(int(value)) || value < 0 {
+			return fmt.Errorf("%s query_location must be a non-negative integer", owner)
+		}
+	case int, int64:
+	default:
+		return fmt.Errorf("%s query_location must be a number", owner)
 	}
 	return nil
 }
@@ -762,6 +1167,106 @@ func approvedOperator(value string) bool {
 	}
 	return false
 }
+
+func validExpressionType(class, typ string) bool {
+	switch class {
+	case "CONSTANT":
+		return typ == "VALUE_CONSTANT"
+	case "COLUMN_REF":
+		return typ == "COLUMN_REF"
+	case "STAR":
+		return typ == "STAR"
+	case "FUNCTION":
+		return typ == "FUNCTION"
+	case "OPERATOR":
+		return approvedOperator(typ)
+	case "COMPARISON":
+		switch typ {
+		case "COMPARE_EQUAL", "COMPARE_NOTEQUAL", "COMPARE_LESSTHAN", "COMPARE_GREATERTHAN", "COMPARE_LESSTHANOREQUALTO", "COMPARE_GREATERTHANOREQUALTO", "COMPARE_DISTINCT_FROM", "COMPARE_NOT_DISTINCT_FROM", "COMPARE_IN", "COMPARE_NOT_IN", "COMPARE_BETWEEN", "COMPARE_NOT_BETWEEN", "COMPARE_IS_NULL", "COMPARE_IS_NOT_NULL":
+			return true
+		default:
+			return false
+		}
+	case "CAST":
+		return typ == "OPERATOR_CAST"
+	case "CASE":
+		return typ == "CASE_EXPR"
+	case "WINDOW":
+		switch typ {
+		case "WINDOW", "WINDOW_AGGREGATE", "WINDOW_ROW_NUMBER", "WINDOW_RANK", "WINDOW_DENSE_RANK", "WINDOW_PERCENT_RANK", "WINDOW_CUME_DIST", "WINDOW_NTILE", "WINDOW_LEAD", "WINDOW_LAG", "WINDOW_FIRST_VALUE", "WINDOW_LAST_VALUE", "WINDOW_NTH_VALUE":
+			return true
+		default:
+			return false
+		}
+	case "SUBQUERY":
+		return typ == "SUBQUERY"
+	case "BETWEEN":
+		return typ == "COMPARE_BETWEEN" || typ == "COMPARE_NOT_BETWEEN"
+	case "CONJUNCTION":
+		return typ == "CONJUNCTION_AND" || typ == "CONJUNCTION_OR"
+	default:
+		return false
+	}
+}
+
+func allowedJoinType(value string) bool {
+	switch value {
+	case "INNER", "LEFT", "RIGHT", "FULL", "SEMI", "ANTI", "MARK", "ASOF", "POSITIONAL", "LEFT_DELIM", "RIGHT_DELIM", "FULL_DELIM":
+		return true
+	default:
+		return false
+	}
+}
+
+func allowedJoinRefType(value string) bool {
+	switch value {
+	case "REGULAR", "NATURAL", "POSITIONAL", "ASOF":
+		return true
+	default:
+		return false
+	}
+}
+
+func validCastType(value any) bool {
+	id, ok := value.(string)
+	if !ok {
+		return false
+	}
+	switch strings.ToUpper(id) {
+	case "ANY", "UNKNOWN", "NULL", "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "FLOAT", "DOUBLE", "DECIMAL", "VARCHAR", "BLOB", "DATE", "TIME", "TIMESTAMP", "TIMESTAMP_TZ", "TIMESTAMP_MS", "TIMESTAMP_NS", "TIMESTAMP_SEC", "INTERVAL", "UUID", "JSON", "ENUM", "LIST", "STRUCT", "MAP":
+		return true
+	default:
+		return false
+	}
+}
+
+func optionalArray(obj map[string]any, key string) ([]any, bool) {
+	value, present := obj[key]
+	if !present || value == nil {
+		return nil, true
+	}
+	array, ok := value.([]any)
+	return array, ok
+}
+
+func optionalObject(obj map[string]any, key string) (map[string]any, bool) {
+	value, present := obj[key]
+	if !present || value == nil {
+		return nil, true
+	}
+	object, ok := value.(map[string]any)
+	return object, ok
+}
+
+func optionalString(obj map[string]any, key string) (string, bool) {
+	value, present := obj[key]
+	if !present || value == nil {
+		return "", true
+	}
+	text, ok := value.(string)
+	return text, ok
+}
+
 func approvedFunction(value string) bool {
 	if strings.EqualFold(value, "lpad") || strings.EqualFold(value, "list_contains") || strings.EqualFold(value, "str_split") {
 		return true
