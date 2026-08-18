@@ -404,6 +404,12 @@ sections:
         type: reference
         summary: Review supported resource, data, visual, and integration surfaces.
         source: articles/reference/capabilities.md
+      - slug: reference/data-resource-connectors
+        title: Data-resource connector capabilities
+        type: reference
+        summary: Review generated connector locations, approved extensions, target-binding modes, and typed path options.
+        source: articles/reference/data-resource-connectors.md
+        generated: true
       - slug: cli/troubleshooting
         title: CLI troubleshooting
         type: how-to

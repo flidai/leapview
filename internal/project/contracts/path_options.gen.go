@@ -86,3 +86,64 @@ func (value SourceLocationPathVariant) MarshalJSON() ([]byte, error) {
 	type plain SourceLocationPathVariant
 	return json.Marshal(plain(value))
 }
+
+func validateFreshnessThresholds(warningAfter, errorAfter *FreshnessDuration) error {
+	if warningAfter == nil && errorAfter == nil {
+		return fmt.Errorf("freshness requires warningAfter or errorAfter")
+	}
+	return nil
+}
+
+func (value *SourceFreshnessFieldVariant) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal SourceFreshnessFieldVariant into nil receiver")
+	}
+	type plain SourceFreshnessFieldVariant
+	var decoded plain
+	if err := decodePathSourceOptions(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.Basis != "field" {
+		return fmt.Errorf("SourceFreshness field variant basis must be field")
+	}
+	if err := validateFreshnessThresholds(decoded.WarningAfter, decoded.ErrorAfter); err != nil {
+		return err
+	}
+	*value = SourceFreshnessFieldVariant(decoded)
+	return nil
+}
+
+func (value SourceFreshnessFieldVariant) MarshalJSON() ([]byte, error) {
+	if err := validateFreshnessThresholds(value.WarningAfter, value.ErrorAfter); err != nil {
+		return nil, err
+	}
+	type plain SourceFreshnessFieldVariant
+	return json.Marshal(plain(value))
+}
+
+func (value *SourceFreshnessRevisionVariant) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal SourceFreshnessRevisionVariant into nil receiver")
+	}
+	type plain SourceFreshnessRevisionVariant
+	var decoded plain
+	if err := decodePathSourceOptions(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.Basis != "revision" {
+		return fmt.Errorf("SourceFreshness revision variant basis must be revision")
+	}
+	if err := validateFreshnessThresholds(decoded.WarningAfter, decoded.ErrorAfter); err != nil {
+		return err
+	}
+	*value = SourceFreshnessRevisionVariant(decoded)
+	return nil
+}
+
+func (value SourceFreshnessRevisionVariant) MarshalJSON() ([]byte, error) {
+	if err := validateFreshnessThresholds(value.WarningAfter, value.ErrorAfter); err != nil {
+		return nil, err
+	}
+	type plain SourceFreshnessRevisionVariant
+	return json.Marshal(plain(value))
+}

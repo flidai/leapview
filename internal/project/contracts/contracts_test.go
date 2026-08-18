@@ -67,6 +67,14 @@ spec:
 	if pathLocation.Options == nil || pathLocation.Options.Header == nil || !*pathLocation.Options.Header {
 		t.Fatalf("source path options = %#v, want csv header=true", pathLocation.Options)
 	}
+	encodedSource, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("marshal Source with generated path validation: %v", err)
+	}
+	var roundTrip contracts.Source
+	if err := json.Unmarshal(encodedSource, &roundTrip); err != nil {
+		t.Fatalf("round-trip Source with generated path validation: %v", err)
+	}
 
 	relationYAML := []byte(`apiVersion: leapview.dev/v1
 kind: Source
@@ -234,6 +242,28 @@ spec:
 	var source contracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {
 		t.Fatal("inferred schema accepted fields")
+	}
+}
+
+func TestGeneratedResourceBoundaryRequiresFreshnessThreshold(t *testing.T) {
+	content := []byte(`apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:orders
+  name: orders
+spec:
+  connection: files
+  location:
+    type: path
+    path: orders.csv
+    format: csv
+  freshness:
+    basis: field
+    field: updated_at
+`)
+	var source contracts.Source
+	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {
+		t.Fatal("freshness accepted without warningAfter or errorAfter")
 	}
 }
 

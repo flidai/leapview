@@ -306,6 +306,18 @@
       "unevaluatedProperties": false
     },
     "FieldFreshness": {
+      "anyOf": [
+        {
+          "required": [
+            "warningAfter"
+          ]
+        },
+        {
+          "required": [
+            "errorAfter"
+          ]
+        }
+      ],
       "properties": {
         "basis": {
           "enum": [
@@ -1418,6 +1430,18 @@
       "unevaluatedProperties": false
     },
     "RevisionFreshness": {
+      "anyOf": [
+        {
+          "required": [
+            "warningAfter"
+          ]
+        },
+        {
+          "required": [
+            "errorAfter"
+          ]
+        }
+      ],
       "properties": {
         "basis": {
           "enum": [
