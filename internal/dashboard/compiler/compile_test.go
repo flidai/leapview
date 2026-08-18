@@ -36,7 +36,7 @@ func TestCompilePreservesInputAndIsDeterministic(t *testing.T) {
 				"orders": {
 					ModelName:   "orders",
 					GrainEntity: "status",
-					Entities: map[string]semanticmodel.ModelEntitySpec{
+					Entities: map[string]semanticmodel.EntityDefinition{
 						"status": {Type: "primary", Fields: []string{"status"}},
 					},
 					Dimensions: map[string]semanticmodel.MetricDimension{

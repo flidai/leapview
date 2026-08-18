@@ -195,7 +195,7 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 			Connection:            "local",
 			Path:                  "orders.csv",
 			Format:                "csv",
-			EffectivePathLocation: testPathLocation("csv", "orders.csv"),
+			EffectivePathLocation: testCSVPathLocationWithHeader("orders.csv", true),
 			SchemaMode:            "compatible",
 			Fields: map[string]semanticmodel.SourceField{
 				"order_id": {Description: "Raw order identifier."},
@@ -254,7 +254,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 			Connections:       map[string]semanticmodel.Connection{"olist": {Kind: "managed"}},
 			Sources: map[string]semanticmodel.Source{"olist_customers": {
 				Connection: "olist", Path: "customers.csv", Format: "csv",
-				EffectivePathLocation: testPathLocation("csv", "customers.csv"),
+				EffectivePathLocation: testCSVPathLocationWithHeader("customers.csv", true),
 				SchemaMode:            "compatible",
 				Fields: map[string]semanticmodel.SourceField{
 					"customer_id":    {Description: "Customer identifier."},
@@ -483,7 +483,7 @@ func TestDiscoverSchemasIgnoresAttachedDatabaseSchemas(t *testing.T) {
 			Connection:            "local",
 			Path:                  "orders.csv",
 			Format:                "csv",
-			EffectivePathLocation: testPathLocation("csv", "orders.csv"),
+			EffectivePathLocation: testCSVPathLocationWithHeader("orders.csv", true),
 			SchemaMode:            "inferred",
 		}},
 		Tables: map[string]semanticmodel.Table{
@@ -545,7 +545,7 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 			Connection:            "local",
 			Path:                  "orders.csv",
 			Format:                "csv",
-			EffectivePathLocation: testPathLocation("csv", "orders.csv"),
+			EffectivePathLocation: testCSVPathLocationWithHeader("orders.csv", true),
 			SchemaMode:            "compatible",
 			Fields: map[string]semanticmodel.SourceField{
 				"missing": {Description: "Missing source field."},

@@ -135,7 +135,7 @@ func TestSemanticQueryColumnsUseModelMetadataInsteadOfPageValues(t *testing.T) {
 					"created_at": {Label: "Created at", Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
 					"order_id":   {Label: "Order ID", Type: "integer", Datatype: semanticmodel.DataTypeInteger},
 				},
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"created_at"}}}, GrainEntity: "order",
+				Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"created_at"}}}, GrainEntity: "order",
 			},
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},

@@ -244,14 +244,7 @@ func candidateRelationContexts(pins map[string]string, artifact projectartifact.
 				refs.unknown = true
 			}
 		}
-		addSource(table.Source)
-		for _, source := range table.Sources {
-			addSource(source)
-		}
 		for _, source := range table.SourceDependencies {
-			addSource(source)
-		}
-		for source := range table.SourceReads {
 			addSource(source)
 		}
 		for _, dependency := range table.ModelDependencies {

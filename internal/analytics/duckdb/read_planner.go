@@ -23,8 +23,8 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	if err := validateIdentifier(tableName); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	sqlText := strings.TrimSpace(table.Transform.SQL)
-	if table.Source != "" && sqlText == "" {
+	sqlText := strings.TrimSpace(table.Execution.SQL)
+	if table.Execution.Source != "" && sqlText == "" {
 		return planDirectSourceTable(ctx, runtimeDB, model, tableName, table, staged)
 	}
 	if sqlText == "" {
@@ -107,19 +107,19 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 }
 
 func planDirectSourceTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]string) (analyticsmaterialize.ModelTablePlan, error) {
-	source, ok := model.Sources[table.Source]
+	source, ok := model.Sources[table.Execution.Source]
 	if !ok {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("unknown source %q", table.Source)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("unknown source %q", table.Execution.Source)
 	}
 	if len(source.Schema.Columns) == 0 {
 		if columns, err := discoverSourceSchema(ctx, runtimeDB, model, source); err != nil {
-			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("discovering source %s schema: %w", table.Source, err)
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("discovering source %s schema: %w", table.Execution.Source, err)
 		} else if len(columns) > 0 {
 			source.Schema = semanticmodel.TableSchema{Columns: columns}
-			model.Sources[table.Source] = source
+			model.Sources[table.Execution.Source] = source
 		}
 	}
-	relation, err := sourceReadRelation(model, table.Source, source, nil, modelTableReadColumns(table), false, staged)
+	relation, err := sourceReadRelation(model, table.Execution.Source, source, nil, modelTableReadColumns(table), false, staged)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}

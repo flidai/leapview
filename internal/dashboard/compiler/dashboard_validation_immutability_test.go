@@ -88,7 +88,7 @@ func dashboardValidationNormalizationModel() *semanticmodel.Model {
 		Tables: map[string]semanticmodel.Table{"orders": {
 			ModelName:   "orders",
 			GrainEntity: "status",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"status": {Type: "primary", Fields: []string{"status"}},
 			},
 			Dimensions: map[string]semanticmodel.MetricDimension{

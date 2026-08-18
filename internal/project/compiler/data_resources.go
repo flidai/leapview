@@ -71,41 +71,6 @@ func lowerConnectionAccess(value *projectcontracts.PublicAccess) semanticmodel.C
 	return semanticmodel.ConnectionAccess(*value)
 }
 
-func readerDefaults(value *projectcontracts.ReaderDefaults) map[string]any {
-	result := map[string]any{}
-	if value.Csv != nil {
-		result["csv"] = value.Csv
-	}
-	if value.JSON != nil {
-		result["json"] = value.JSON
-	}
-	if value.Parquet != nil {
-		result["parquet"] = value.Parquet
-	}
-	if value.Excel != nil {
-		result["excel"] = value.Excel
-	}
-	if value.Text != nil {
-		result["text"] = value.Text
-	}
-	if value.Blob != nil {
-		result["blob"] = value.Blob
-	}
-	if value.Vortex != nil {
-		result["vortex"] = value.Vortex
-	}
-	if value.Delta != nil {
-		result["delta"] = value.Delta
-	}
-	if value.Iceberg != nil {
-		result["iceberg"] = value.Iceberg
-	}
-	if value.Lance != nil {
-		result["lance"] = value.Lance
-	}
-	return result
-}
-
 func decodeSourceResource(path string, content []byte, metadata metadata) (semanticmodel.Source, error) {
 	var authored projectcontracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, path, content, &authored); err != nil {

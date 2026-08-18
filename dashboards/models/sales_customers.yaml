@@ -5,8 +5,6 @@ metadata:
   name: sales_customers
   displayName: Customers
 spec:
-  sources:
-  - olist.customers
   fields:
     customer_id:
       datatype: String
@@ -14,7 +12,8 @@ spec:
     state:
       datatype: String
       label: State
-  transform:
+  definition:
+    type: sql
     sql: |
       SELECT customer_id, customer_state AS state
       FROM source."olist.customers"

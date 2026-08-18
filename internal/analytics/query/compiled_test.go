@@ -89,7 +89,7 @@ func TestCompiledDatasetTableGetterReturnsDetachedMetadata(t *testing.T) {
 	}
 	detached := dataset.Table()
 	detached.Dimensions["order_id"] = semanticmodel.MetricDimension{Label: "mutated"}
-	detached.Entities["order"] = semanticmodel.ModelEntitySpec{Type: "unique", Fields: []string{"status"}}
+	detached.Entities["order"] = semanticmodel.EntityDefinition{Type: "unique", Fields: []string{"status"}}
 	detached.Description = "mutated"
 	current := dataset.Table()
 	if current.Dimensions["order_id"].Label == "mutated" || current.Entities["order"].Type != "primary" || current.Description == "mutated" {
@@ -479,7 +479,7 @@ func TestPlannerRendersCompositeRelationshipJoinTuple(t *testing.T) {
 	model := testModel()
 	customers := model.Tables["customers"]
 	customers.Dimensions["order_id"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeInteger}
-	customers.Entities["customer_order"] = semanticmodel.ModelEntitySpec{Type: "unique", Fields: []string{"customer_id", "order_id"}}
+	customers.Entities["customer_order"] = semanticmodel.EntityDefinition{Type: "unique", Fields: []string{"customer_id", "order_id"}}
 	model.Tables["customers"] = customers
 	model.Relationships[0] = semanticmodel.Relationship{
 		ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id", "order_id"},

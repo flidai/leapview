@@ -129,7 +129,7 @@ func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.Authoriz
 			Source:      "orders",
 			ModelName:   "orders",
 			GrainEntity: "region",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"region": {Type: "primary", Fields: []string{"region"}},
 			},
 			Dimensions: map[string]semanticmodel.MetricDimension{

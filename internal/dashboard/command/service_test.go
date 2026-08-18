@@ -109,7 +109,7 @@ func (m fakeMetrics) dashboardDefinition(string) (dashboarddefinition.Definition
 		Tables: map[string]semanticmodel.Table{"orders": {
 			ModelName:   "orders",
 			GrainEntity: "state",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"state": {Type: "primary", Fields: []string{"state"}},
 			},
 			Dimensions: map[string]semanticmodel.MetricDimension{

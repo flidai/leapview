@@ -5,8 +5,6 @@ metadata:
   name: orders
   displayName: Documentation orders
 spec:
-  sources:
-  - docs.orders
   fields:
     order_id:
       datatype: String
@@ -44,7 +42,8 @@ spec:
     delivery_bucket:
       datatype: String
       label: Delivery speed
-  transform:
+  definition:
+    type: sql
     sql: |
       SELECT
         order_id,

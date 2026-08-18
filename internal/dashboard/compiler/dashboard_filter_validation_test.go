@@ -20,7 +20,7 @@ func TestValidateDashboardPreservesDatasetOnLocalFilterForMultiDatasetTarget(t *
 			"ratings": {
 				ModelName:   "ratings",
 				GrainEntity: "rating_bucket",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"rating_bucket": {Type: "primary", Fields: []string{"rating_bucket"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
@@ -30,7 +30,7 @@ func TestValidateDashboardPreservesDatasetOnLocalFilterForMultiDatasetTarget(t *
 			"tags": {
 				ModelName:   "tags",
 				GrainEntity: "tag_id",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"tag_id": {Type: "primary", Fields: []string{"tag_id"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{

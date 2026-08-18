@@ -21,7 +21,7 @@ func TestCompileDashboardFilterArchitectureResolvesBindingKeysAndComponentTarget
 			"customers": {
 				ModelName:   "customers",
 				GrainEntity: "state",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"state": {Type: "primary", Fields: []string{"state"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
@@ -31,7 +31,7 @@ func TestCompileDashboardFilterArchitectureResolvesBindingKeysAndComponentTarget
 			"orders": {
 				ModelName:   "orders",
 				GrainEntity: "order_id",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"order_id": {Type: "primary", Fields: []string{"order_id"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{

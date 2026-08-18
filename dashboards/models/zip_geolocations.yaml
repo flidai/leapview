@@ -6,9 +6,6 @@ metadata:
   displayName: Canonical Brazilian ZIP Locations
   description: Robust centroids derived from Olist geolocation observations after rejecting coordinates outside Brazil.
 spec:
-  description: One deterministic median coordinate per five-digit Brazilian ZIP-code prefix.
-  sources:
-  - olist.geolocation
   fields:
     zip_prefix:
       datatype: String
@@ -30,7 +27,8 @@ spec:
       datatype: Float
       label: Longitude
       description: Median longitude across valid observations for the ZIP prefix.
-  transform:
+  definition:
+    type: sql
     sql: |
       WITH normalized AS (
         SELECT

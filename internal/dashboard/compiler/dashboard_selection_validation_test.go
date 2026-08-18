@@ -143,7 +143,7 @@ func compilerSpatialSelectionFixture() (*dashboardauthoring.Dashboard, *semantic
 		Tables: map[string]semanticmodel.Table{"ratings": {
 			ModelName:   "ratings",
 			GrainEntity: "release_decade",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"release_decade": {Type: "primary", Fields: []string{"release_decade"}},
 			},
 			Dimensions: map[string]semanticmodel.MetricDimension{
@@ -186,7 +186,7 @@ func compilerSelectionFixture(mapping dashboardauthoring.SelectionMapping) (*das
 			"ratings": {
 				ModelName:   "ratings",
 				GrainEntity: "release_decade",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"release_decade": {Type: "primary", Fields: []string{"release_decade"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
@@ -196,7 +196,7 @@ func compilerSelectionFixture(mapping dashboardauthoring.SelectionMapping) (*das
 			"tags": {
 				ModelName:   "tags",
 				GrainEntity: "release_decade",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"release_decade": {Type: "primary", Fields: []string{"release_decade"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{

@@ -202,7 +202,7 @@ func minIOModel(bucket, key string) *semanticmodel.Model {
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Source: "orders", ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Datatype: semanticmodel.DataTypeString},
 					"revenue":  {Type: "number", Datatype: semanticmodel.DataTypeFloat},

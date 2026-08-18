@@ -539,16 +539,16 @@ func testModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Name: "commerce",
 		Tables: map[string]semanticmodel.Table{
-			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id": {Datatype: semanticmodel.DataTypeInteger}, "customer_id": {Datatype: semanticmodel.DataTypeInteger},
 				"ordered_at": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ}, "revenue": {Type: "number", Datatype: semanticmodel.DataTypeDecimal},
 				"status": {Type: "string", Datatype: semanticmodel.DataTypeString}, "latitude": {Type: "number", Datatype: semanticmodel.DataTypeFloat}, "longitude": {Type: "number", Datatype: semanticmodel.DataTypeFloat},
 			}},
-			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.ModelEntitySpec{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.EntityDefinition{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"tag_id": {Datatype: semanticmodel.DataTypeInteger}, "customer_id": {Datatype: semanticmodel.DataTypeInteger},
 				"tagged_at": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
 			}},
-			"customers": {GrainEntity: "customer", Entities: map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"customers": {GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"customer_id": {Datatype: semanticmodel.DataTypeInteger}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
 		},
@@ -584,7 +584,7 @@ func rolePlayingDateModel() *semanticmodel.Model {
 	orders.Dimensions["shipped_date_id"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeInteger}
 	model.Tables["orders"] = orders
 	model.Datasets["dates"] = semanticmodel.SemanticDatasetSpec{Model: "dates"}
-	model.Tables["dates"] = semanticmodel.Table{GrainEntity: "date", Entities: map[string]semanticmodel.ModelEntitySpec{"date": {Type: "primary", Fields: []string{"date_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+	model.Tables["dates"] = semanticmodel.Table{GrainEntity: "date", Entities: map[string]semanticmodel.EntityDefinition{"date": {Type: "primary", Fields: []string{"date_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 		"date_id":    {Datatype: semanticmodel.DataTypeInteger},
 		"date_value": {Type: "date", Datatype: semanticmodel.DataTypeDate},
 	}}

@@ -1227,11 +1227,9 @@ func sourcePhysicalSignature(source semanticmodel.Source) semanticmodel.Source {
 }
 
 type tablePhysicalSignatureValue struct {
-	Source             string
-	Sources            []string
-	Transform          semanticmodel.Transform
+	Execution          semanticmodel.ExecutionDefinition
 	Columns            map[string]semanticmodel.ModelColumn
-	Entities           map[string]semanticmodel.ModelEntitySpec
+	Entities           map[string]semanticmodel.EntityDefinition
 	GrainEntity        string
 	SourceDependencies []string
 	ModelDependencies  []string
@@ -1239,9 +1237,7 @@ type tablePhysicalSignatureValue struct {
 
 func tablePhysicalSignature(table semanticmodel.Table) tablePhysicalSignatureValue {
 	return tablePhysicalSignatureValue{
-		Source:             table.Source,
-		Sources:            append([]string{}, table.Sources...),
-		Transform:          table.Transform,
+		Execution:          table.Execution,
 		Columns:            table.Columns,
 		Entities:           table.Entities,
 		GrainEntity:        table.GrainEntity,
