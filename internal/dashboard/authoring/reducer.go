@@ -313,16 +313,25 @@ func addCanonicalVisual(value *document.DashboardDocument, patch AddVisualPayloa
 			return false
 		})
 	}
-	placement := nextCanonicalVisualPlacement(value.Spec.Pages[pageIndex])
+	placement := nextCanonicalVisualPlacement(*value, pageIndex)
 	value.Spec.Pages[pageIndex].Components = append(value.Spec.Pages[pageIndex].Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: componentID, Type: "visual", Placement: placement}, Type: "visual", Visual: visualID}})
 	return nil
 }
 
-func nextCanonicalVisualPlacement(page document.DashboardPage) document.DashboardPlacement {
+func nextCanonicalVisualPlacement(value document.DashboardDocument, pageIndex int) document.DashboardPlacement {
 	const (
-		columnSpan int32 = 12
-		rowSpan    int32 = 4
+		defaultColumnSpan int32 = 12
+		rowSpan           int32 = 4
 	)
+	columns := defaultColumnSpan
+	if value.Spec.Layout != nil && value.Spec.Layout.Columns > 0 {
+		columns = value.Spec.Layout.Columns
+	}
+	page := value.Spec.Pages[pageIndex]
+	if page.Layout != nil && page.Layout.Columns != nil && *page.Layout.Columns > 0 {
+		columns = *page.Layout.Columns
+	}
+	columnSpan := minPositive(columns, defaultColumnSpan)
 	row := int32(1)
 	for {
 		candidate := document.DashboardPlacement{Column: 1, Row: row, ColumnSpan: columnSpan, RowSpan: rowSpan}
@@ -362,6 +371,16 @@ func maxPositive(value, fallback int32) int32 {
 	return fallback
 }
 
+func minPositive(left, right int32) int32 {
+	if left <= 0 {
+		return right
+	}
+	if right <= 0 || left < right {
+		return left
+	}
+	return right
+}
+
 func canonicalVisualTypeSupported(value document.DashboardVisualType) bool {
 	switch value {
 	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn, document.DashboardVisualTypePie, document.DashboardVisualTypeDonut, document.DashboardVisualTypeScatter, document.DashboardVisualTypeFunnel, document.DashboardVisualTypeTreemap, document.DashboardVisualTypeGauge, document.DashboardVisualTypeHeatmap, document.DashboardVisualTypeSankey, document.DashboardVisualTypeGraph, document.DashboardVisualTypeMap, document.DashboardVisualTypeCandlestick, document.DashboardVisualTypeBoxplot, document.DashboardVisualTypeCombo, document.DashboardVisualTypeWaterfall, document.DashboardVisualTypeHistogram, document.DashboardVisualTypeRadar, document.DashboardVisualTypeTree, document.DashboardVisualTypeSunburst, document.DashboardVisualTypeKpi, document.DashboardVisualTypeTable, document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
@@ -383,10 +402,10 @@ func defaultCanonicalVisual(kind, title string) document.DashboardVisual {
 	case document.DashboardVisualTypeBoxplot:
 		query.Value = &document.DistributionDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "distribution"}, Type: "distribution", Field: document.DashboardMetricSelection{String: &metric}, Quantiles: []float64{0.25, 0.5, 0.75}, Outliers: document.DashboardDistributionOutlierPolicyOmit, Approximation: document.DashboardHistogramApproximationExact}
 		presentation.Value = &document.CartesianDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian"}, Type: "cartesian"}
-	case document.DashboardVisualTypeTable, document.DashboardVisualTypeMatrix:
+	case document.DashboardVisualTypeTable:
 		query.Value = &document.RecordsDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "records"}, Type: "records", Dataset: "pending_dataset", Fields: []document.DashboardRecordFieldSelection{}}
 		presentation.Value = &document.TableDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "table"}, Type: "table", RowHeight: 32, ShowHeader: true, Striped: false}
-	case document.DashboardVisualTypePivot:
+	case document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
 		query.Value = &document.PivotDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "pivot"}, Type: "pivot", Rows: []document.DashboardDimensionSelection{}, Columns: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
 		presentation.Value = &document.TableDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "table"}, Type: "table", RowHeight: 32, ShowHeader: true, Striped: false}
 	case document.DashboardVisualTypeKpi:
@@ -395,10 +414,10 @@ func defaultCanonicalVisual(kind, title string) document.DashboardVisual {
 	case document.DashboardVisualTypePie, document.DashboardVisualTypeDonut, document.DashboardVisualTypeFunnel:
 		query.Value = &document.AggregateDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
 		presentation.Value = &document.ProportionalDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "proportional"}, Type: "proportional"}
-	case document.DashboardVisualTypeTreemap, document.DashboardVisualTypeTree, document.DashboardVisualTypeSunburst:
+	case document.DashboardVisualTypeTreemap, document.DashboardVisualTypeSankey, document.DashboardVisualTypeGraph, document.DashboardVisualTypeTree, document.DashboardVisualTypeSunburst:
 		query.Value = &document.AggregateDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
 		presentation.Value = &document.HierarchyDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "hierarchy"}, Type: "hierarchy"}
-	case document.DashboardVisualTypeRadar:
+	case document.DashboardVisualTypeGauge, document.DashboardVisualTypeRadar:
 		query.Value = &document.AggregateDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
 		presentation.Value = &document.PolarDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "polar"}, Type: "polar"}
 	case document.DashboardVisualTypeMap:

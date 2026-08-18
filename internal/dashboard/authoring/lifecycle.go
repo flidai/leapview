@@ -712,69 +712,6 @@ func ValidateCanonicalDocument(value document.DashboardDocument) error {
 	if err := configschema.ValidateBytes(configschema.KindDashboard, "dashboard.json", encoded); err != nil {
 		return fmt.Errorf("%w: canonical dashboard schema: %v", ErrInvalidAuthoring, err)
 	}
-	if err := validateCanonicalObjectIDs(value); err != nil {
-		return fmt.Errorf("%w: canonical dashboard object id: %v", ErrInvalidAuthoring, err)
-	}
-	return nil
-}
-
-func validateCanonicalObjectIDs(value document.DashboardDocument) error {
-	validate := func(kind, id string) error {
-		if id == "" || !canonicalObjectIDPattern.MatchString(id) {
-			return fmt.Errorf("invalid %s %q", kind, id)
-		}
-		return nil
-	}
-	for id, visual := range value.Spec.Visuals {
-		if err := validate("visual id", id); err != nil {
-			return err
-		}
-		if visual.Interactions == nil {
-			continue
-		}
-		for _, interaction := range *visual.Interactions {
-			base, err := interaction.Base()
-			if err != nil {
-				return err
-			}
-			if base.Targets != nil {
-				for _, target := range *base.Targets {
-					if err := validate("interaction target", target); err != nil {
-						return err
-					}
-				}
-			}
-		}
-	}
-	for _, filter := range value.Spec.Filters {
-		if err := validate("filter id", filter.ID); err != nil {
-			return err
-		}
-	}
-	for _, page := range value.Spec.Pages {
-		if err := validate("page id", page.ID); err != nil {
-			return err
-		}
-		for _, component := range page.Components {
-			base, err := component.Base()
-			if err != nil {
-				return err
-			}
-			if err := validate("component id", base.ID); err != nil {
-				return err
-			}
-			switch variant := component.Value.(type) {
-			case *document.VisualDashboardPageComponent:
-				if err := validate("visual reference", variant.Visual); err != nil {
-					return err
-				}
-			case *document.FilterDashboardPageComponent:
-				if err := validate("filter reference", variant.Filter); err != nil {
-					return err
-				}
-			}
-		}
-	}
 	return nil
 }
 

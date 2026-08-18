@@ -550,8 +550,8 @@ func validatePayload(payload authoringPayload) error {
 }
 
 func validateCanonicalObjectID(kind, value string) error {
-	value = strings.TrimSpace(value)
-	if value == "" || value != strings.TrimSpace(value) || !canonicalObjectIDPattern.MatchString(value) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || value != trimmed || !canonicalObjectIDPattern.MatchString(trimmed) {
 		return fmt.Errorf("%w: invalid canonical %s %q", ErrInvalidPayload, kind, value)
 	}
 	return nil
@@ -562,11 +562,11 @@ func validateCanonicalObjectID(kind, value string) error {
 // model member (name) or a qualified physical dimension (table.field); no
 // expression, renderer alias, or raw SQL syntax is accepted.
 func ValidGovernedFieldID(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || value != strings.TrimSpace(value) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || value != trimmed {
 		return false
 	}
-	parts := strings.Split(value, ".")
+	parts := strings.Split(trimmed, ".")
 	if len(parts) > 2 {
 		return false
 	}
@@ -582,8 +582,8 @@ func ValidGovernedFieldID(value string) bool {
 // used by aggregate, pivot, histogram, and distribution query selections.
 // Physical table-qualified fields are reserved for records queries.
 func ValidSemanticMemberID(value string) bool {
-	value = strings.TrimSpace(value)
-	return value != "" && value == strings.TrimSpace(value) && validSemanticPart(value)
+	trimmed := strings.TrimSpace(value)
+	return trimmed != "" && value == trimmed && validSemanticPart(trimmed)
 }
 
 func validSemanticPart(value string) bool {
