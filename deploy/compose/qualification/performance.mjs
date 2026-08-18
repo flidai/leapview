@@ -263,7 +263,7 @@ async function runWorkload(path) {
 }
 
 async function loginAndResolveDashboard(page, credentials) {
-  await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.getByLabel('Email').fill(credentials.email)
   await page.getByLabel('Password').fill(credentials.qualificationPassword)
   await page.getByLabel('Password').press('Enter')

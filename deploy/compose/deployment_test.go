@@ -337,6 +337,8 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	installed := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_installed.go"))
 	imageQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image.go"))
 	recovery := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_recovery.go"))
+	browser := read(t, filepath.Join(root, "deploy", "compose", "qualification", "browser.mjs"))
+	authoringWorker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	performance := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance.mjs"))
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
 	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
@@ -398,6 +400,15 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	if strings.Contains(performance, "setInterval(") || strings.Count(performance, "metricSamples.push(await metricSnapshot())") < 7 || !strings.Contains(performance, "{ mode: 0o644 }") {
 		t.Error("performance evidence must be bounded and artifact-readable")
+	}
+	for name, script := range map[string]string{
+		"authoring":   authoringWorker,
+		"browser":     browser,
+		"performance": performance,
+	} {
+		if !strings.Contains(script, "new URL('/login', baseURL).href") {
+			t.Errorf("%s qualification worker must navigate to the explicit public login route", name)
+		}
 	}
 	for _, required := range []string{
 		"validateQualificationPerformancePolicy",

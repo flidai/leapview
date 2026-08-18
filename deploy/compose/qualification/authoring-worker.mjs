@@ -16,7 +16,7 @@ async function requireJSON(response, description) {
 }
 
 async function signIn(page, email, temporaryPassword, password) {
-  await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill(temporaryPassword)
   await page.getByLabel('Password').press('Enter')
