@@ -9,98 +9,102 @@ import (
 	"github.com/flidai/leapview/internal/project/manifest"
 )
 
-// runtimeProjection is the artifact-owned private payload for fields that are
+// RuntimeProjection is the artifact-owned private payload for fields that are
 // deliberately omitted by semanticmodel's generic JSON contract. Keeping the
 // payload to those fields makes canonical bytes stable before and after decode:
 // every other manifest field has exactly one JSON representation.
-type runtimeProjection struct {
-	Sources        map[string]runtimeSourceProjection           `json:"sources"`
+type RuntimeProjection struct {
+	Sources        map[string]RuntimeSourceProjection           `json:"sources"`
 	Models         map[string]semanticmodel.ExecutionDefinition `json:"models"`
-	SemanticModels map[string]runtimeModelProjection            `json:"semanticModels"`
+	SemanticModels map[string]RuntimeModelProjection            `json:"semanticModels"`
 }
 
-type runtimeModelProjection struct {
-	Sources map[string]runtimeSourceProjection           `json:"sources"`
+// RuntimeModelProjection contains private source locations and table
+// execution definitions for one semantic model.
+type RuntimeModelProjection struct {
+	Sources map[string]RuntimeSourceProjection           `json:"sources"`
 	Tables  map[string]semanticmodel.ExecutionDefinition `json:"tables"`
 }
 
-type runtimeSourceProjection struct {
+// RuntimeSourceProjection contains the typed path locations omitted from the
+// generic semantic model JSON contract.
+type RuntimeSourceProjection struct {
 	PathLocation          *projectcontracts.PathSourceLocation `json:"pathLocation,omitempty"`
 	EffectivePathLocation *projectcontracts.PathSourceLocation `json:"effectivePathLocation,omitempty"`
 }
 
-func prepareRuntimeProjection(value manifest.Project) (manifest.Project, runtimeProjection, error) {
+func prepareRuntimeProjection(value manifest.Project) (manifest.Project, RuntimeProjection, error) {
 	if err := validatePortableConnections(value); err != nil {
-		return manifest.Project{}, runtimeProjection{}, err
+		return manifest.Project{}, RuntimeProjection{}, err
 	}
 	portable := cloneValue(value)
-	projection := runtimeProjection{
-		Sources:        make(map[string]runtimeSourceProjection, len(value.Sources)),
+	projection := RuntimeProjection{
+		Sources:        make(map[string]RuntimeSourceProjection, len(value.Sources)),
 		Models:         make(map[string]semanticmodel.ExecutionDefinition, len(value.Models)),
-		SemanticModels: make(map[string]runtimeModelProjection, len(value.SemanticModels)),
+		SemanticModels: make(map[string]RuntimeModelProjection, len(value.SemanticModels)),
 	}
 	for id, source := range value.Sources {
 		runtime, err := runtimeSourceFromModel(source)
 		if err != nil {
-			return manifest.Project{}, runtimeProjection{}, fmt.Errorf("source %q: %w", id, err)
+			return manifest.Project{}, RuntimeProjection{}, fmt.Errorf("source %q: %w", id, err)
 		}
 		if err := validateRuntimeSource("source "+id, source, runtime); err != nil {
-			return manifest.Project{}, runtimeProjection{}, err
+			return manifest.Project{}, RuntimeProjection{}, err
 		}
 		projection.Sources[id] = runtime
 	}
 	for id, table := range value.Models {
 		if err := validateRuntimeExecution("model "+id, table.Execution); err != nil {
-			return manifest.Project{}, runtimeProjection{}, err
+			return manifest.Project{}, RuntimeProjection{}, err
 		}
 		projection.Models[id] = table.Execution
 	}
 	for id, model := range value.SemanticModels {
 		if model == nil {
-			projection.SemanticModels[id] = runtimeModelProjection{}
+			projection.SemanticModels[id] = RuntimeModelProjection{}
 			continue
 		}
 		runtime, err := runtimeModelFromModel(model)
 		if err != nil {
-			return manifest.Project{}, runtimeProjection{}, fmt.Errorf("semantic model %q: %w", id, err)
+			return manifest.Project{}, RuntimeProjection{}, fmt.Errorf("semantic model %q: %w", id, err)
 		}
 		projection.SemanticModels[id] = runtime
 	}
 	return portable, projection, nil
 }
 
-func runtimeModelFromModel(value *semanticmodel.Model) (runtimeModelProjection, error) {
-	result := runtimeModelProjection{
-		Sources: make(map[string]runtimeSourceProjection, len(value.Sources)),
+func runtimeModelFromModel(value *semanticmodel.Model) (RuntimeModelProjection, error) {
+	result := RuntimeModelProjection{
+		Sources: make(map[string]RuntimeSourceProjection, len(value.Sources)),
 		Tables:  make(map[string]semanticmodel.ExecutionDefinition, len(value.Tables)),
 	}
 	for name, source := range value.Sources {
 		runtime, err := runtimeSourceFromModel(source)
 		if err != nil {
-			return runtimeModelProjection{}, fmt.Errorf("source %q: %w", name, err)
+			return RuntimeModelProjection{}, fmt.Errorf("source %q: %w", name, err)
 		}
 		if err := validateRuntimeSource("source "+name, source, runtime); err != nil {
-			return runtimeModelProjection{}, err
+			return RuntimeModelProjection{}, err
 		}
 		result.Sources[name] = runtime
 	}
 	for name, table := range value.Tables {
 		if err := validateRuntimeExecution("semantic model table "+name, table.Execution); err != nil {
-			return runtimeModelProjection{}, err
+			return RuntimeModelProjection{}, err
 		}
 		result.Tables[name] = table.Execution
 	}
 	return result, nil
 }
 
-func runtimeSourceFromModel(value semanticmodel.Source) (runtimeSourceProjection, error) {
+func runtimeSourceFromModel(value semanticmodel.Source) (RuntimeSourceProjection, error) {
 	model := &semanticmodel.Model{Sources: map[string]semanticmodel.Source{"source": value}}
 	snapshot, err := model.RuntimeSnapshot()
 	if err != nil {
-		return runtimeSourceProjection{}, err
+		return RuntimeSourceProjection{}, err
 	}
 	value = snapshot.Sources["source"]
-	return runtimeSourceProjection{PathLocation: value.PathLocation, EffectivePathLocation: value.EffectivePathLocation}, nil
+	return RuntimeSourceProjection{PathLocation: value.PathLocation, EffectivePathLocation: value.EffectivePathLocation}, nil
 }
 
 func validatePortableConnections(value manifest.Project) error {
@@ -131,7 +135,7 @@ func validatePortableConnection(id string, value semanticmodel.Connection) error
 	return nil
 }
 
-func applyRuntimeProjection(value *manifest.Project, projection runtimeProjection) error {
+func applyRuntimeProjection(value *manifest.Project, projection RuntimeProjection) error {
 	if value == nil {
 		return fmt.Errorf("manifest is required")
 	}
@@ -188,7 +192,7 @@ func validateRuntimeExecution(scope string, execution semanticmodel.ExecutionDef
 	return nil
 }
 
-func validateRuntimeSource(scope string, source semanticmodel.Source, projection runtimeSourceProjection) error {
+func validateRuntimeSource(scope string, source semanticmodel.Source, projection RuntimeSourceProjection) error {
 	pathBacked := strings.EqualFold(strings.TrimSpace(source.LocationType), "path") || strings.TrimSpace(source.Path) != ""
 	if pathBacked {
 		if projection.PathLocation == nil || projection.EffectivePathLocation == nil {
@@ -202,7 +206,7 @@ func validateRuntimeSource(scope string, source semanticmodel.Source, projection
 	return nil
 }
 
-func validateRuntimeProjectionCoverage(value manifest.Project, projection runtimeProjection) error {
+func validateRuntimeProjectionCoverage(value manifest.Project, projection RuntimeProjection) error {
 	if projection.Sources == nil || projection.Models == nil || projection.SemanticModels == nil {
 		return fmt.Errorf("runtime projection is required")
 	}
@@ -245,7 +249,7 @@ func exactKeys[T any, U any](scope string, values map[string]T, overlays map[str
 	return nil
 }
 
-func applyRuntimeSource(value *semanticmodel.Source, projection runtimeSourceProjection) {
+func applyRuntimeSource(value *semanticmodel.Source, projection RuntimeSourceProjection) {
 	value.PathLocation = projection.PathLocation
 	value.EffectivePathLocation = projection.EffectivePathLocation
 }

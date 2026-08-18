@@ -31,7 +31,7 @@ const (
 	ProjectFile            = "leapview.yaml"
 	CompiledProjectFile    = "compiled/project.json"
 	projectBundleVersion   = 1
-	compiledProjectVersion = 1
+	compiledProjectVersion = 2
 	projectAPIVersion      = "leapview.dev/v1"
 )
 
@@ -75,14 +75,15 @@ type Plan = projectcompiler.ProjectPlan
 // compiled/project.json. It contains one graph, one project manifest, and one
 // project plan. Environment and generation are intentionally absent.
 type CompiledProjectArtifact struct {
-	Version       int                        `json:"version"`
-	ProjectID     projectgraph.ResourceID    `json:"projectId"`
-	ProjectDigest string                     `json:"projectDigest"`
-	GraphDigest   string                     `json:"graphDigest"`
-	Validation    CompiledArtifactValidation `json:"validation"`
-	Manifest      projectmanifest.Project    `json:"manifest"`
-	Graph         projectgraph.ProjectGraph  `json:"graph"`
-	Plan          Plan                       `json:"plan"`
+	Version       int                               `json:"version"`
+	ProjectID     projectgraph.ResourceID           `json:"projectId"`
+	ProjectDigest string                            `json:"projectDigest"`
+	GraphDigest   string                            `json:"graphDigest"`
+	Validation    CompiledArtifactValidation        `json:"validation"`
+	Manifest      projectmanifest.Project           `json:"manifest"`
+	Runtime       projectartifact.RuntimeProjection `json:"runtime"`
+	Graph         projectgraph.ProjectGraph         `json:"graph"`
+	Plan          Plan                              `json:"plan"`
 }
 
 type CompiledArtifactValidation struct {
@@ -189,7 +190,7 @@ func compiledProject(project projectartifact.Project, plan projectcompiler.Proje
 		Version:   compiledProjectVersion,
 		ProjectID: graph.ProjectID(), ProjectDigest: project.Digest(), GraphDigest: graph.Digest(),
 		Validation: CompiledArtifactValidation{Status: "passed", SchemaVersion: projectAPIVersion},
-		Manifest:   project.Manifest(), Graph: graph, Plan: plan,
+		Manifest:   project.Manifest(), Runtime: project.RuntimeProjection(), Graph: graph, Plan: plan,
 	}
 	if err := ValidateCompiledProjectArtifact(compiled); err != nil {
 		return CompiledProjectArtifact{}, err
@@ -578,7 +579,11 @@ func ValidateCompiledProjectArtifact(compiled CompiledProjectArtifact) error {
 	if compiled.GraphDigest != compiled.Graph.Digest() {
 		return fmt.Errorf("compiled graph digest = %q, want %q", compiled.GraphDigest, compiled.Graph.Digest())
 	}
-	reconstructed, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
+	manifest := compiled.Manifest
+	if err := projectartifact.RestoreRuntimeProjection(&manifest, compiled.Runtime); err != nil {
+		return fmt.Errorf("compiled project runtime projection: %w", err)
+	}
+	reconstructed, err := projectartifact.NewProject(compiled.Graph, manifest)
 	if err != nil {
 		return fmt.Errorf("compiled project manifest: %w", err)
 	}
@@ -666,6 +671,9 @@ func readCompiledProjectArtifact(root string, manifest Manifest) (CompiledProjec
 	}
 	if err := ValidateCompiledProjectArtifact(compiled); err != nil {
 		return CompiledProjectArtifact{}, err
+	}
+	if err := projectartifact.RestoreRuntimeProjection(&compiled.Manifest, compiled.Runtime); err != nil {
+		return CompiledProjectArtifact{}, fmt.Errorf("compiled project runtime projection: %w", err)
 	}
 	if compiled.ProjectID.String() != manifest.ProjectID || compiled.ProjectDigest != manifest.ProjectDigest || compiled.GraphDigest != manifest.GraphDigest {
 		return CompiledProjectArtifact{}, errors.New("compiled project identity does not match bundle manifest")

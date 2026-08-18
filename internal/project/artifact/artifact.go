@@ -51,7 +51,7 @@ type projectWire struct {
 	Version  int                       `json:"version"`
 	Graph    projectgraph.ProjectGraph `json:"graph"`
 	Manifest manifest.Project          `json:"manifest"`
-	Runtime  runtimeProjection         `json:"runtime"`
+	Runtime  RuntimeProjection         `json:"runtime"`
 }
 
 // Project is an immutable, environment-neutral project artifact. All values
@@ -363,6 +363,22 @@ func (p Project) Graph() projectgraph.ProjectGraph { return p.graph }
 
 // Manifest returns a detached project-wide compiler manifest.
 func (p Project) Manifest() manifest.Project { return cloneManifest(p.manifest) }
+
+// RuntimeProjection returns the private execution/location payload required
+// to reconstruct this project's manifest after a generic JSON round trip.
+func (p Project) RuntimeProjection() RuntimeProjection {
+	_, projection, err := prepareRuntimeProjection(p.manifest)
+	if err != nil {
+		panic(fmt.Sprintf("project artifact runtime projection: %v", err))
+	}
+	return projection
+}
+
+// RestoreRuntimeProjection applies the artifact-owned private payload to a
+// generic manifest and validates exact key coverage and runtime invariants.
+func RestoreRuntimeProjection(value *manifest.Project, projection RuntimeProjection) error {
+	return applyRuntimeProjection(value, projection)
+}
 
 // Canonical returns deterministic artifact bytes.
 func (p Project) Canonical() []byte { return append([]byte(nil), p.canonical...) }
