@@ -167,7 +167,7 @@ type SealedCoordinator interface {
 	Rollback(context.Context, sealedcontrol.RollbackRequest) (deployment.RollbackResult, error)
 }
 
-type SealedPublishRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor) (sealedcontrol.PublishRequest, error)
+type SealedPublishRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, bool) (sealedcontrol.PublishRequest, error)
 type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, string, int64) (sealedcontrol.RollbackRequest, error)
 type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
 

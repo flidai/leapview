@@ -224,24 +224,29 @@ func TestSealedPublicationBootstrapDecisionBindsExactMarkerAndActiveFence(t *tes
 	exact := accessmodule.BootstrapAuthorization{ProjectID: projectgraph.ResourceID("project_demo"), PrincipalID: "principal_alice", Capability: access.CapabilityResourcePublish}
 	activeErr := errors.New("active generation lookup failed")
 	for _, test := range []struct {
-		name       string
-		marker     accessmodule.BootstrapAuthorization
-		marked     bool
-		active     bool
-		activeErr  error
-		wantHandle bool
-		wantErr    bool
+		name             string
+		marker           accessmodule.BootstrapAuthorization
+		marked           bool
+		active           bool
+		activeErr        error
+		bindingBootstrap bool
+		wantHandle       bool
+		wantErr          bool
 	}{
 		{name: "exact marker on fresh target", marker: exact, marked: true, wantHandle: true},
 		{name: "missing marker", marker: exact, wantHandle: true, wantErr: true},
 		{name: "principal mismatch", marker: accessmodule.BootstrapAuthorization{ProjectID: exact.ProjectID, PrincipalID: "principal_other", Capability: exact.Capability}, marked: true, wantHandle: true, wantErr: true},
 		{name: "project mismatch", marker: accessmodule.BootstrapAuthorization{ProjectID: "project_other", PrincipalID: exact.PrincipalID, Capability: exact.Capability}, marked: true, wantHandle: true, wantErr: true},
 		{name: "capability mismatch", marker: accessmodule.BootstrapAuthorization{ProjectID: exact.ProjectID, PrincipalID: exact.PrincipalID, Capability: access.CapabilityResourceUse}, marked: true, wantHandle: true, wantErr: true},
+		{name: "durable worker bootstrap authorization", marker: accessmodule.BootstrapAuthorization{}, wantHandle: true, bindingBootstrap: true},
+		{name: "durable worker rejects mismatched request marker", marker: accessmodule.BootstrapAuthorization{ProjectID: exact.ProjectID, PrincipalID: "principal_other", Capability: exact.Capability}, marked: true, wantHandle: true, wantErr: true, bindingBootstrap: true},
 		{name: "active race falls through live snapshot", marker: accessmodule.BootstrapAuthorization{}, active: true, wantHandle: false},
 		{name: "active check error", marker: exact, marked: true, activeErr: activeErr, wantHandle: false, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			handled, err := sealedPublicationBootstrapDecision(t.Context(), binding, test.marker, test.marked, func(context.Context) (bool, error) {
+			decisionBinding := binding
+			decisionBinding.Bootstrap = test.bindingBootstrap
+			handled, err := sealedPublicationBootstrapDecision(t.Context(), decisionBinding, test.marker, test.marked, func(context.Context) (bool, error) {
 				return test.active, test.activeErr
 			})
 			if handled != test.wantHandle || (err != nil) != test.wantErr {

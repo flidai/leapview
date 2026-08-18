@@ -175,7 +175,7 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			}
 			row = mapSealedDeployment(activated)
 		} else {
-			request, resolveErr := m.sealedPublishRequest(ctx, pending, releaseID, payload.Credential)
+			request, resolveErr := m.sealedPublishRequest(ctx, pending, releaseID, payload.Credential, payload.Bootstrap)
 			if resolveErr != nil {
 				return resolveErr
 			}

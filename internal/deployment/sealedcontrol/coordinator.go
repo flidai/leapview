@@ -58,6 +58,11 @@ type SealBinding struct {
 	ApprovalReleaseID string
 	ActorID           string
 	Operation         string
+	// Bootstrap is set only by the activation worker after it has revalidated
+	// the durable one-shot bootstrap policy. It allows that worker's context,
+	// which is not the original HTTP request context, to cross the sealed
+	// publication authorization boundary.
+	Bootstrap bool
 }
 
 // VerifiedSealVerifier is target-owned evidence validation. Implementations
@@ -170,6 +175,10 @@ type PublishRequest struct {
 	Seal              deployment.VerifiedSeal
 	ApprovalReleaseID string
 	ActorID           string
+	// Bootstrap carries the worker's already-validated first-activation
+	// decision into the sealed binding. Ordinary publication requests leave it
+	// false and must carry the request-local APIGen marker instead.
+	Bootstrap bool
 }
 
 func (c *Coordinator) Publish(ctx context.Context, request PublishRequest) (deployment.PublicationIntent, error) {
@@ -200,7 +209,7 @@ func (c *Coordinator) PublishWithActivation(ctx context.Context, request Publish
 	if request.Publication.CandidateID != request.Generation.CandidateID || request.Publication.GenerationID != request.Generation.ID || request.Publication.PlanID != request.Generation.PlanID || request.Publication.PlanDigest != request.Generation.PlanDigest || request.Publication.TargetID != request.Generation.TargetID || request.Publication.ProjectID != request.Generation.ProjectID || request.Publication.Environment != request.Generation.Environment {
 		return deployment.PublicationIntent{}, fmt.Errorf("%w: publication does not bind exact candidate/generation", ErrSealUnverified)
 	}
-	binding := SealBinding{Seal: request.Seal, DeploymentID: request.Publication.ID, ProjectID: request.Publication.ProjectID.String(), Environment: request.Publication.Environment, TargetID: request.Publication.TargetID, CandidateID: request.Generation.CandidateID, GenerationID: request.Generation.ID, PlanDigest: request.Generation.PlanDigest, ServingArtifactID: request.Generation.ServingArtifactID, ApprovalReleaseID: request.ApprovalReleaseID, ActorID: request.ActorID, Operation: "publish"}
+	binding := SealBinding{Seal: request.Seal, DeploymentID: request.Publication.ID, ProjectID: request.Publication.ProjectID.String(), Environment: request.Publication.Environment, TargetID: request.Publication.TargetID, CandidateID: request.Generation.CandidateID, GenerationID: request.Generation.ID, PlanDigest: request.Generation.PlanDigest, ServingArtifactID: request.Generation.ServingArtifactID, ApprovalReleaseID: request.ApprovalReleaseID, ActorID: request.ActorID, Operation: "publish", Bootstrap: request.Bootstrap}
 	// A committed retry may skip only the fresh approval check.  Authorization
 	// remains live on every request so revocation takes effect immediately.
 	if err := c.Authorize(ctx, binding); err != nil {

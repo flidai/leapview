@@ -222,8 +222,9 @@ func deliveryMaterializationDelta(artifacts release.CandidateArtifactSet, delive
 // sealedPublicationBootstrapDecision is kept separate from the coordinator
 // closure so the first-activation fence is directly testable. A durable active
 // generation wins a race and returns unhandled, forcing the caller through the
-// live snapshot authorizer. Only an exact APIGen marker may authorize while
-// the durable target is still fresh.
+// live snapshot authorizer. While the durable target is still fresh, an exact
+// APIGen marker or a worker binding backed by the revalidated bootstrap policy
+// may authorize the publication.
 func sealedPublicationBootstrapDecision(
 	ctx context.Context,
 	binding sealedcontrol.SealBinding,
@@ -243,6 +244,16 @@ func sealedPublicationBootstrapDecision(
 	}
 	if isActive {
 		return false, nil
+	}
+	if binding.Bootstrap {
+		// Async activation workers do not retain the original HTTP request
+		// context. The deployment worker may set Bootstrap only after the
+		// durable one-shot policy has been revalidated; the active-generation
+		// check above still wins any concurrent first-activation race.
+		if marked && (marker.PrincipalID != binding.ActorID || marker.ProjectID.String() != binding.ProjectID || marker.Capability != access.CapabilityResourcePublish) {
+			return true, fmt.Errorf("sealed publication bootstrap authorization is missing or mismatched")
+		}
+		return true, nil
 	}
 	if !marked || marker.PrincipalID != binding.ActorID || marker.ProjectID.String() != binding.ProjectID || marker.Capability != access.CapabilityResourcePublish {
 		return true, fmt.Errorf("sealed publication bootstrap authorization is missing or mismatched")
@@ -722,9 +733,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			},
 		}
 		releases := releaseModule.DeploymentLinkage()
-		sealedPublishRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor) (sealedcontrol.PublishRequest, error) {
+		sealedPublishRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor, bootstrap bool) (sealedcontrol.PublishRequest, error) {
 			request, err := buildSealedPublishRequest(ctx, sealedDelivery, releases, pending, releaseID, instanceID)
 			request.ActorID = actor.PrincipalID
+			request.Bootstrap = bootstrap
 			return request, err
 		}
 		sealedRollbackRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor, expectedBaseGenerationID string, expectedTargetRevision int64) (sealedcontrol.RollbackRequest, error) {
