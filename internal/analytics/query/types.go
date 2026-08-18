@@ -9,6 +9,12 @@ import (
 type Field struct {
 	Field string
 	Alias string
+	// Grain is an optional temporal grain for a semantic dimension. It is
+	// carried on the dimension reference itself so a request can contain more
+	// than one grained temporal dimension. Request.Time remains an internal
+	// compatibility input for older callers; canonical dashboard lowering uses
+	// this field exclusively.
+	Grain string
 }
 
 type resolvedAggregateMetric struct {

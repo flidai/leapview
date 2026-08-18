@@ -12,6 +12,39 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
+func TestPlannerHonorsGrainOnEveryDimensionReference(t *testing.T) {
+	model := testModel()
+	populateFixtureTableModelNames(model)
+	model.Dimensions["ship_date"] = semanticmodel.SemanticDimension{
+		Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ, NativeGrain: "day", Grains: []string{"day", "month"},
+		Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.ordered_at"}},
+	}
+	plan, err := mustNewCompiledPlanner(t, model).Plan(Request{
+		Dimensions: []Field{{Field: "activity_date", Alias: "purchase_month", Grain: "month"}, {Field: "ship_date", Alias: "ship_day", Grain: "day"}},
+		Metrics:    []Field{{Field: "order_count", Alias: "orders"}}, Limit: 20,
+	})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Columns) < 3 || plan.Columns[0] != "purchase_month" || plan.Columns[1] != "ship_day" {
+		t.Fatalf("plan columns = %#v", plan.Columns)
+	}
+	if !strings.Contains(plan.SQL, "DATE_TRUNC('month'") || !strings.Contains(plan.SQL, "DATE_TRUNC('day'") {
+		t.Fatalf("plan SQL does not preserve independent grains: %s", plan.SQL)
+	}
+}
+
+func TestPlannerRejectsUnsupportedPerDimensionGrain(t *testing.T) {
+	model := testModel()
+	populateFixtureTableModelNames(model)
+	_, err := mustNewCompiledPlanner(t, model).Plan(Request{
+		Dimensions: []Field{{Field: "activity_date", Grain: "year"}}, Metrics: []Field{{Field: "order_count"}}, Limit: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), `semantic dimension "activity_date" does not support grain "year"`) {
+		t.Fatalf("error = %v, want unsupported grain diagnostic", err)
+	}
+}
+
 func TestPlannerScalarMultiDatasetAggregatesDatasetsIndependently(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{Metrics: []Field{
 		{Field: "revenue", Alias: "revenue"},

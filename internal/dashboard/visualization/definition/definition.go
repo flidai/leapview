@@ -68,6 +68,11 @@ type QueryBinding struct {
 type FieldBinding struct {
 	FieldID string `json:"fieldID" yaml:"field_id"`
 	Alias   string `json:"alias" yaml:"alias"`
+	// Grain is populated for semantic temporal dimensions. It belongs to the
+	// compiled dimension binding rather than a query-global time slot so two
+	// dimensions can retain independent temporal semantics through runtime and
+	// Visual IR lowering.
+	Grain string `json:"grain,omitempty" yaml:"grain,omitempty"`
 }
 
 type TimeBinding struct {
@@ -101,7 +106,22 @@ type MatrixQueryBinding struct {
 	Limit   int64          `json:"limit" yaml:"limit"`
 }
 
-type PivotQueryBinding = MatrixQueryBinding
+type PivotQueryBinding struct {
+	TableID string         `json:"tableID" yaml:"table_id"`
+	Rows    []FieldBinding `json:"rows" yaml:"rows"`
+	Columns []FieldBinding `json:"columns" yaml:"columns"`
+	Metrics []FieldBinding `json:"metrics" yaml:"metrics"`
+	Sort    []Sort         `json:"sort,omitempty" yaml:"sort,omitempty"`
+	Offset  int64          `json:"offset,omitempty" yaml:"offset,omitempty"`
+	Totals  *PivotTotals   `json:"totals,omitempty" yaml:"totals,omitempty"`
+	Limit   int64          `json:"limit" yaml:"limit"`
+}
+
+type PivotTotals struct {
+	Rows    bool `json:"rows" yaml:"rows"`
+	Columns bool `json:"columns" yaml:"columns"`
+	Grand   bool `json:"grand" yaml:"grand"`
+}
 
 // SpatialQueryBinding is the compiler-resolved query contract for a
 // geographic visualization. Tiles is present when every data-bound layer can
@@ -182,6 +202,9 @@ func (query QueryBinding) Validate() error {
 	if len(view.fields) == 0 || (view.limit <= 0 && view.tiles == nil) {
 		return fmt.Errorf("visualization %s query requires fields and a positive limit unless tiled", query.Kind)
 	}
+	if view.offset < 0 {
+		return fmt.Errorf("visualization %s query offset must not be negative", query.Kind)
+	}
 	aliases := make(map[string]int, len(view.fields))
 	fieldIDs := make(map[string]struct{}, len(view.fields))
 	for index, field := range view.fields {
@@ -257,6 +280,7 @@ type queryBindingView struct {
 	fields  []FieldBinding
 	sorts   []Sort
 	time    *TimeBinding
+	offset  int64
 	limit   int64
 	tiles   *SpatialTileBinding
 }
@@ -298,7 +322,7 @@ func (query QueryBinding) validationView() (queryBindingView, error) {
 		if query.Pivot == nil {
 			return queryBindingView{}, fmt.Errorf("pivot query binding requires pivot branch")
 		}
-		view.tableID, view.limit = query.Pivot.TableID, query.Pivot.Limit
+		view.tableID, view.sorts, view.offset, view.limit = query.Pivot.TableID, query.Pivot.Sort, query.Pivot.Offset, query.Pivot.Limit
 		view.fields = append(view.fields, query.Pivot.Rows...)
 		view.fields = append(view.fields, query.Pivot.Columns...)
 		view.fields = append(view.fields, query.Pivot.Metrics...)
