@@ -211,9 +211,6 @@ type ConnectionCredentials struct {
 	AccountName string `yaml:"accountName" json:"accountName,omitempty"`
 }
 
-type ConnectionDefaults struct {
-}
-
 type ConnectionRuntimeOptions struct {
 	Path     string
 	DataPath string
