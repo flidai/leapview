@@ -429,7 +429,7 @@ func validatePayload(payload authoringPayload) error {
 		}
 	case *AddPagePayload:
 		if value.PageID != "" {
-			if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+			if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
 				return err
 			}
 		}
@@ -440,20 +440,16 @@ func validatePayload(payload authoringPayload) error {
 		if strings.TrimSpace(value.PageID) == "" {
 			return fmt.Errorf("%w: add visual requires page id", ErrInvalidPayload)
 		}
-		if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
 			return err
 		}
 		if strings.TrimSpace(value.VisualID) != "" {
-			if err := validateCanonicalBuilderIdentifier("visual id", value.VisualID); err != nil {
+			if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
 				return err
 			}
 		}
 		if strings.TrimSpace(value.ComponentID) != "" {
-			// Page component IDs use the schema's #ObjectID contract, which
-			// intentionally permits hyphens (for example, an existing
-			// "orders-card" placement). Keep explicit IDs backwards-compatible;
-			// only generated defaults need the stricter identifier form.
-			if err := validateBuilderIdentifier("component id", value.ComponentID); err != nil {
+			if err := validateCanonicalObjectID("component id", value.ComponentID); err != nil {
 				return err
 			}
 		}
@@ -466,10 +462,10 @@ func validatePayload(payload authoringPayload) error {
 				return fmt.Errorf("%w: assign field requires %s", ErrInvalidPayload, kind)
 			}
 		}
-		if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
 			return err
 		}
-		if err := validateBuilderIdentifier("visual id", value.VisualID); err != nil {
+		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
 			return err
 		}
 		if !ValidGovernedFieldID(value.FieldID) {
@@ -482,9 +478,15 @@ func validatePayload(payload authoringPayload) error {
 		if value.Page.ID == "" {
 			return fmt.Errorf("%w: upsert page requires page id", ErrInvalidPayload)
 		}
+		if err := validateCanonicalObjectID("page id", value.Page.ID); err != nil {
+			return err
+		}
 	case *RemovePagePayload:
 		if strings.TrimSpace(value.PageID) == "" {
 			return fmt.Errorf("%w: remove page requires page id", ErrInvalidPayload)
+		}
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
 		}
 	case *UpsertVisualPayload:
 		if strings.TrimSpace(value.VisualID) == "" {
@@ -493,13 +495,22 @@ func validatePayload(payload authoringPayload) error {
 		if value.Visual.Type == "" {
 			return fmt.Errorf("%w: upsert visual requires type", ErrInvalidPayload)
 		}
+		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
+			return err
+		}
 	case *RemoveVisualPayload:
 		if strings.TrimSpace(value.VisualID) == "" {
 			return fmt.Errorf("%w: remove visual requires visual id", ErrInvalidPayload)
 		}
+		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
+			return err
+		}
 	case *SetLayoutPayload:
 		if strings.TrimSpace(value.PageID) == "" {
 			return fmt.Errorf("%w: set layout requires page id", ErrInvalidPayload)
+		}
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
 		}
 		if value.Layout == nil {
 			return fmt.Errorf("%w: set layout has no edits", ErrInvalidPayload)
@@ -515,6 +526,16 @@ func validatePayload(payload authoringPayload) error {
 		if strings.TrimSpace(value.PageID) == "" && strings.TrimSpace(value.VisualID) == "" {
 			return fmt.Errorf("%w: set interaction requires a page or visual id", ErrInvalidPayload)
 		}
+		if value.PageID != "" {
+			if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+				return err
+			}
+		}
+		if value.VisualID != "" {
+			if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
+				return err
+			}
+		}
 		if value.Clear && value.Interaction != nil {
 			return fmt.Errorf("%w: clear interaction cannot include replacement values", ErrInvalidPayload)
 		}
@@ -528,17 +549,9 @@ func validatePayload(payload authoringPayload) error {
 	return nil
 }
 
-func validateBuilderIdentifier(kind, value string) error {
+func validateCanonicalObjectID(kind, value string) error {
 	value = strings.TrimSpace(value)
-	if value == "" || value != strings.TrimSpace(value) || !identifierPattern.MatchString(value) {
-		return fmt.Errorf("%w: invalid %s %q", ErrInvalidPayload, kind, value)
-	}
-	return nil
-}
-
-func validateCanonicalBuilderIdentifier(kind, value string) error {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || value != trimmed || !canonicalIdentifierPattern.MatchString(trimmed) {
+	if value == "" || value != strings.TrimSpace(value) || !canonicalObjectIDPattern.MatchString(value) {
 		return fmt.Errorf("%w: invalid canonical %s %q", ErrInvalidPayload, kind, value)
 	}
 	return nil
@@ -563,6 +576,14 @@ func ValidGovernedFieldID(value string) bool {
 		}
 	}
 	return true
+}
+
+// ValidSemanticMemberID accepts the unqualified semantic member identifiers
+// used by aggregate, pivot, histogram, and distribution query selections.
+// Physical table-qualified fields are reserved for records queries.
+func ValidSemanticMemberID(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && value == strings.TrimSpace(value) && validSemanticPart(value)
 }
 
 func validSemanticPart(value string) bool {

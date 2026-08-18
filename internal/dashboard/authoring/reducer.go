@@ -313,8 +313,53 @@ func addCanonicalVisual(value *document.DashboardDocument, patch AddVisualPayloa
 			return false
 		})
 	}
-	value.Spec.Pages[pageIndex].Components = append(value.Spec.Pages[pageIndex].Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: componentID, Type: "visual", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 12, RowSpan: 4}}, Type: "visual", Visual: visualID}})
+	placement := nextCanonicalVisualPlacement(value.Spec.Pages[pageIndex])
+	value.Spec.Pages[pageIndex].Components = append(value.Spec.Pages[pageIndex].Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: componentID, Type: "visual", Placement: placement}, Type: "visual", Visual: visualID}})
 	return nil
+}
+
+func nextCanonicalVisualPlacement(page document.DashboardPage) document.DashboardPlacement {
+	const (
+		columnSpan int32 = 12
+		rowSpan    int32 = 4
+	)
+	row := int32(1)
+	for {
+		candidate := document.DashboardPlacement{Column: 1, Row: row, ColumnSpan: columnSpan, RowSpan: rowSpan}
+		moved := false
+		for _, component := range page.Components {
+			base, err := component.Base()
+			if err != nil || base == nil {
+				continue
+			}
+			if placementsOverlap(candidate, base.Placement) {
+				bottom := base.Placement.Row + maxPositive(base.Placement.RowSpan, 1)
+				if bottom > row {
+					row = bottom
+				}
+				moved = true
+				break
+			}
+		}
+		if !moved {
+			return candidate
+		}
+	}
+}
+
+func placementsOverlap(left, right document.DashboardPlacement) bool {
+	leftColumnEnd := left.Column + maxPositive(left.ColumnSpan, 1)
+	leftRowEnd := left.Row + maxPositive(left.RowSpan, 1)
+	rightColumnEnd := right.Column + maxPositive(right.ColumnSpan, 1)
+	rightRowEnd := right.Row + maxPositive(right.RowSpan, 1)
+	return left.Column < rightColumnEnd && right.Column < leftColumnEnd && left.Row < rightRowEnd && right.Row < leftRowEnd
+}
+
+func maxPositive(value, fallback int32) int32 {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func canonicalVisualTypeSupported(value document.DashboardVisualType) bool {
@@ -400,6 +445,9 @@ func assignCanonicalField(value *document.DashboardDocument, patch AssignFieldPa
 	}
 	switch query := visual.Query.Value.(type) {
 	case *document.AggregateDashboardQuery:
+		if !ValidSemanticMemberID(patch.FieldID) {
+			return fmt.Errorf("%w: aggregate selections require an unqualified semantic member", ErrInvalidPayload)
+		}
 		switch patch.Role {
 		case FieldRoleMetric:
 			ref := patch.FieldID
@@ -426,8 +474,17 @@ func assignCanonicalField(value *document.DashboardDocument, patch AssignFieldPa
 		if patch.Role != FieldRoleDetail {
 			return fmt.Errorf("%w: records queries accept detail fields", ErrInvalidPayload)
 		}
-		if strings.TrimSpace(query.Dataset) == "pending_dataset" && strings.TrimSpace(patch.ResolvedTable) != "" {
+		if strings.TrimSpace(query.Dataset) == "" {
+			return fmt.Errorf("%w: records query dataset is required", ErrInvalidPayload)
+		}
+		if strings.TrimSpace(query.Dataset) == "pending_dataset" {
+			if strings.TrimSpace(patch.ResolvedTable) == "" {
+				return fmt.Errorf("%w: governed records field requires a resolved table", ErrInvalidPayload)
+			}
 			query.Dataset = strings.TrimSpace(patch.ResolvedTable)
+		}
+		if qualified := strings.SplitN(strings.TrimSpace(patch.FieldID), ".", 2); len(qualified) == 2 && qualified[0] != query.Dataset {
+			return fmt.Errorf("%w: records field table %q does not match dataset %q", ErrInvalidPayload, qualified[0], query.Dataset)
 		}
 		ref := patch.FieldID
 		for _, existing := range query.Fields {
@@ -437,6 +494,51 @@ func assignCanonicalField(value *document.DashboardDocument, patch AssignFieldPa
 			}
 		}
 		query.Fields = append(query.Fields, document.DashboardRecordFieldSelection{String: &ref})
+	case *document.PivotDashboardQuery:
+		if !ValidSemanticMemberID(patch.FieldID) {
+			return fmt.Errorf("%w: pivot selections require an unqualified semantic member", ErrInvalidPayload)
+		}
+		ref := patch.FieldID
+		switch patch.Role {
+		case FieldRoleDimension:
+			for _, existing := range query.Rows {
+				id, _ := canonicalDimensionSelection(existing)
+				if id == ref {
+					return nil
+				}
+			}
+			query.Rows = append(query.Rows, document.DashboardDimensionSelection{String: &ref})
+		case FieldRoleMetric:
+			for _, existing := range query.Metrics {
+				id, _ := canonicalMetricSelection(existing)
+				if id == ref {
+					return nil
+				}
+			}
+			query.Metrics = append(query.Metrics, document.DashboardMetricSelection{String: &ref})
+		default:
+			return fmt.Errorf("%w: detail fields require records queries", ErrInvalidPayload)
+		}
+	case *document.HistogramDashboardQuery:
+		if patch.Role != FieldRoleMetric || !ValidSemanticMemberID(patch.FieldID) {
+			return fmt.Errorf("%w: histogram queries accept semantic metric fields", ErrInvalidPayload)
+		}
+		id, _ := canonicalMetricSelection(query.Field)
+		if id != "" && id != "pending_metric" && id != patch.FieldID {
+			return fmt.Errorf("%w: histogram query already has a different metric", ErrConflict)
+		}
+		ref := patch.FieldID
+		query.Field = document.DashboardMetricSelection{String: &ref}
+	case *document.DistributionDashboardQuery:
+		if patch.Role != FieldRoleMetric || !ValidSemanticMemberID(patch.FieldID) {
+			return fmt.Errorf("%w: distribution queries accept semantic metric fields", ErrInvalidPayload)
+		}
+		id, _ := canonicalMetricSelection(query.Field)
+		if id != "" && id != "pending_metric" && id != patch.FieldID {
+			return fmt.Errorf("%w: distribution query already has a different metric", ErrConflict)
+		}
+		ref := patch.FieldID
+		query.Field = document.DashboardMetricSelection{String: &ref}
 	default:
 		return fmt.Errorf("%w: visual query does not accept assigned fields", ErrInvalidPayload)
 	}

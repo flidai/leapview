@@ -43,17 +43,18 @@ var (
 	ErrCommandReuse      = errors.New("dashboard authoring command id was reused with a different request")
 )
 
-var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
+// lifecycleIdentifierPattern is reserved for opaque authoring records such as
+// revision, draft, command, actor, and provenance identifiers. It is not the
+// grammar for identifiers embedded in a canonical DashboardDocument.
+var lifecycleIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
-// canonicalIdentifierPattern matches the stricter identifier contract used by
-// dashboard spec maps and visual references. Authoring identifiers remain
-// backwards-compatible with the broader pattern above, but server-generated
-// defaults must be safe to export without requiring a caller-provided rename.
-var canonicalIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// canonicalObjectIDPattern is the generated DashboardDocument #ObjectID
+// grammar used by page, visual, filter, and component identities.
+var canonicalObjectIDPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,127}$`)
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 
 func validateIdentifier(kind, value string) error {
-	if !identifierPattern.MatchString(value) {
+	if !lifecycleIdentifierPattern.MatchString(value) {
 		return fmt.Errorf("%w: %s %q", ErrInvalidIdentifier, kind, value)
 	}
 	return nil
@@ -301,7 +302,7 @@ func validateProvenanceIdentifier(kind, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("%w: provenance actor id is required", ErrInvalidAuthoring)
 	}
-	if value != strings.TrimSpace(value) || !identifierPattern.MatchString(value) {
+	if value != strings.TrimSpace(value) || !lifecycleIdentifierPattern.MatchString(value) {
 		return fmt.Errorf("%w: invalid %s %q", ErrInvalidAuthoring, kind, value)
 	}
 	return nil
@@ -644,7 +645,7 @@ func validateRequiredLifecycleValue(kind, value string) error {
 	if value != strings.TrimSpace(value) {
 		return fmt.Errorf("%w: %s cannot have surrounding whitespace", ErrInvalidAuthoring, kind)
 	}
-	if !identifierPattern.MatchString(value) {
+	if !lifecycleIdentifierPattern.MatchString(value) {
 		return fmt.Errorf("%w: invalid %s %q", ErrInvalidAuthoring, kind, value)
 	}
 	return nil
@@ -710,6 +711,69 @@ func ValidateCanonicalDocument(value document.DashboardDocument) error {
 	}
 	if err := configschema.ValidateBytes(configschema.KindDashboard, "dashboard.json", encoded); err != nil {
 		return fmt.Errorf("%w: canonical dashboard schema: %v", ErrInvalidAuthoring, err)
+	}
+	if err := validateCanonicalObjectIDs(value); err != nil {
+		return fmt.Errorf("%w: canonical dashboard object id: %v", ErrInvalidAuthoring, err)
+	}
+	return nil
+}
+
+func validateCanonicalObjectIDs(value document.DashboardDocument) error {
+	validate := func(kind, id string) error {
+		if id == "" || !canonicalObjectIDPattern.MatchString(id) {
+			return fmt.Errorf("invalid %s %q", kind, id)
+		}
+		return nil
+	}
+	for id, visual := range value.Spec.Visuals {
+		if err := validate("visual id", id); err != nil {
+			return err
+		}
+		if visual.Interactions == nil {
+			continue
+		}
+		for _, interaction := range *visual.Interactions {
+			base, err := interaction.Base()
+			if err != nil {
+				return err
+			}
+			if base.Targets != nil {
+				for _, target := range *base.Targets {
+					if err := validate("interaction target", target); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	for _, filter := range value.Spec.Filters {
+		if err := validate("filter id", filter.ID); err != nil {
+			return err
+		}
+	}
+	for _, page := range value.Spec.Pages {
+		if err := validate("page id", page.ID); err != nil {
+			return err
+		}
+		for _, component := range page.Components {
+			base, err := component.Base()
+			if err != nil {
+				return err
+			}
+			if err := validate("component id", base.ID); err != nil {
+				return err
+			}
+			switch variant := component.Value.(type) {
+			case *document.VisualDashboardPageComponent:
+				if err := validate("visual reference", variant.Visual); err != nil {
+					return err
+				}
+			case *document.FilterDashboardPageComponent:
+				if err := validate("filter reference", variant.Filter); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }
