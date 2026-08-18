@@ -37,6 +37,9 @@ func NewPoolCredentialBootstrap(contract *ducklake.PoolContract, config S3Config
 	accessKey, secretKey, sessionToken := config.AccessKeyID, config.SecretAccessKey, config.SessionToken
 	pathStyle := config.PathStyle
 	return func(ctx context.Context, execer driver.ExecerContext) error {
+		if _, err := execer.ExecContext(ctx, "INSTALL httpfs FROM core", nil); err != nil {
+			return err
+		}
 		if _, err := execer.ExecContext(ctx, "LOAD httpfs", nil); err != nil {
 			return err
 		}

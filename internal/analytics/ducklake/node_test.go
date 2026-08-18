@@ -105,6 +105,21 @@ func TestEnvironmentAdmitsQuackExtension(t *testing.T) {
 	}
 }
 
+func TestEnvironmentRejectsUnapprovedExtension(t *testing.T) {
+	node := openLeaseTestNode(t)
+	defer node.Close()
+	ctx, releaseWorkload := admittedTestContext(t, workload.Refresh, "sales")
+	defer releaseWorkload()
+	lease, err := node.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+	if err := node.EnsureExtension(lease.Context(), "arbitrary"); err == nil || !strings.Contains(err.Error(), "is not approved") {
+		t.Fatalf("EnsureExtension(arbitrary) error = %v, want the approved extension allowlist to reject it", err)
+	}
+}
+
 func TestSpatialExtensionIsApprovedForGovernedTileExecution(t *testing.T) {
 	if _, ok := approvedExtensions["spatial"]; !ok {
 		t.Fatal("spatial extension is not approved")

@@ -48,7 +48,7 @@ func TestNewPoolCredentialBootstrapS3IsPerConnection(t *testing.T) {
 	if err := bootstrap(context.Background(), execer); err != nil {
 		t.Fatal(err)
 	}
-	if len(execer.statements) != 2 || !strings.Contains(execer.statements[1], "CREATE OR REPLACE SECRET") || !strings.Contains(execer.statements[1], "KEY_ID 'key'") {
+	if len(execer.statements) != 3 || execer.statements[0] != "INSTALL httpfs FROM core" || execer.statements[1] != "LOAD httpfs" || !strings.Contains(execer.statements[2], "CREATE OR REPLACE SECRET") || !strings.Contains(execer.statements[2], "KEY_ID 'key'") {
 		t.Fatalf("bootstrap statements = %#v", execer.statements)
 	}
 }

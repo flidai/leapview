@@ -50,6 +50,9 @@ func TestSharedPoolConformanceMinIOLane(t *testing.T) {
 	}
 	var bootstrapCalls atomic.Int32
 	bootstrap := func(ctx context.Context, execer driver.ExecerContext) error {
+		if _, err := execer.ExecContext(ctx, "INSTALL httpfs FROM core", nil); err != nil {
+			return err
+		}
 		if _, err := execer.ExecContext(ctx, "LOAD httpfs", nil); err != nil {
 			return err
 		}
