@@ -751,11 +751,31 @@ func addPagePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringAdd
 	return &authoring.AddPagePayload{PageID: derefString(value.PageId), Title: derefString(value.Title)}
 }
 
-func addVisualPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringAddVisualIntent) *authoring.AddVisualPayload {
+func addVisualPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringAddVisualIntent) (*authoring.AddVisualPayload, error) {
 	if value == nil {
-		return nil
+		return nil, nil
 	}
-	return &authoring.AddVisualPayload{PageID: value.PageId, VisualID: derefString(value.VisualId), ComponentID: derefString(value.ComponentId), Type: value.Type, Title: derefString(value.Title)}
+	if !validDashboardVisualType(value.Type) {
+		return nil, fmt.Errorf("%w: unsupported visual type %q", authoring.ErrInvalidPayload, value.Type)
+	}
+	return &authoring.AddVisualPayload{PageID: value.PageId, VisualID: derefString(value.VisualId), ComponentID: derefString(value.ComponentId), Type: string(value.Type), Title: derefString(value.Title)}, nil
+}
+
+func validDashboardVisualType(value document.DashboardVisualType) bool {
+	switch value {
+	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar,
+		document.DashboardVisualTypeColumn, document.DashboardVisualTypePie, document.DashboardVisualTypeDonut,
+		document.DashboardVisualTypeScatter, document.DashboardVisualTypeFunnel, document.DashboardVisualTypeTreemap,
+		document.DashboardVisualTypeGauge, document.DashboardVisualTypeHeatmap, document.DashboardVisualTypeSankey,
+		document.DashboardVisualTypeGraph, document.DashboardVisualTypeMap, document.DashboardVisualTypeCandlestick,
+		document.DashboardVisualTypeBoxplot, document.DashboardVisualTypeCombo, document.DashboardVisualTypeWaterfall,
+		document.DashboardVisualTypeHistogram, document.DashboardVisualTypeRadar, document.DashboardVisualTypeTree,
+		document.DashboardVisualTypeSunburst, document.DashboardVisualTypeKpi, document.DashboardVisualTypeTable,
+		document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
+		return true
+	default:
+		return false
+	}
 }
 
 func assignFieldPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringAssignFieldIntent) *authoring.AssignFieldPayload {
@@ -784,7 +804,7 @@ func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequ
 		command.AddPage = addPagePayloadFromAPIGen(&value.AddPage)
 	case *dashboardgen.DashboardAuthoringAddVisualCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
-		command.AddVisual = addVisualPayloadFromAPIGen(&value.AddVisual)
+		command.AddVisual, payloadErr = addVisualPayloadFromAPIGen(&value.AddVisual)
 	case *dashboardgen.DashboardAuthoringAssignFieldCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.AssignField = assignFieldPayloadFromAPIGen(&value.AssignField)
@@ -859,8 +879,17 @@ func filtersFromAPIGen(value *dashboardgen.DashboardAuthoringPreviewFilters) (da
 		return dashboard.Filters{}, nil
 	}
 	for _, selection := range value.Selections {
+		if selection.SourceKind != "visual" {
+			return dashboard.Filters{}, fmt.Errorf("%w: preview selection sourceKind must be visual", authoring.ErrInvalidAuthoring)
+		}
+		if selection.InteractionKind != "point_selection" && selection.InteractionKind != "row_selection" {
+			return dashboard.Filters{}, fmt.Errorf("%w: unsupported preview interactionKind %q", authoring.ErrInvalidAuthoring, selection.InteractionKind)
+		}
 		for _, entry := range selection.Entries {
 			for _, mapping := range entry.Mappings {
+				if mapping.Grain != nil && !validDashboardTimeGrain(*mapping.Grain) {
+					return dashboard.Filters{}, fmt.Errorf("%w: unsupported preview grain %q", authoring.ErrInvalidAuthoring, *mapping.Grain)
+				}
 				switch mapping.Value.(type) {
 				case nil, string, bool, float64:
 				default:
@@ -878,6 +907,17 @@ func filtersFromAPIGen(value *dashboardgen.DashboardAuthoringPreviewFilters) (da
 		return dashboard.Filters{}, fmt.Errorf("%w: decode filters: %v", authoring.ErrInvalidAuthoring, err)
 	}
 	return filters, nil
+}
+
+func validDashboardTimeGrain(value document.DashboardTimeGrain) bool {
+	switch value {
+	case document.DashboardTimeGrainSecond, document.DashboardTimeGrainMinute, document.DashboardTimeGrainHour,
+		document.DashboardTimeGrainDay, document.DashboardTimeGrainWeek, document.DashboardTimeGrainMonth,
+		document.DashboardTimeGrainQuarter, document.DashboardTimeGrainYear:
+		return true
+	default:
+		return false
+	}
 }
 
 func idempotencyKey(w nethttp.ResponseWriter, r *nethttp.Request) (string, bool) {

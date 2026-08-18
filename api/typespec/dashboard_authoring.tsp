@@ -162,7 +162,7 @@ model DashboardAuthoringAddVisualIntent {
   pageId: string;
   visualId?: string;
   componentId?: string;
-  type: string;
+  type: LeapViewDashboard.DashboardVisualType;
   title?: string;
 }
 
@@ -348,9 +348,9 @@ model DashboardAuthoringPreviewFilters {
 
 model DashboardAuthoringPreviewSelection {
   id: string;
-  sourceKind: string;
+  sourceKind: "visual";
   sourceId: string;
-  interactionKind: string;
+  interactionKind: "point_selection" | "row_selection";
   entries: DashboardAuthoringPreviewSelectionEntry[];
   label: string;
   order: int32;
@@ -364,7 +364,7 @@ model DashboardAuthoringPreviewSelectionEntry {
 model DashboardAuthoringPreviewSelectionMapping {
   field: string;
   dataset?: string;
-  grain?: string;
+  grain?: LeapViewDashboard.DashboardTimeGrain;
   value: DashboardAuthoringPreviewJSONScalar;
   label?: string;
 }
@@ -496,13 +496,13 @@ model DashboardAuthoringPreviewSpatialQuery extends DashboardAuthoringPreviewQue
 model DashboardAuthoringPreviewFieldBinding {
   `fieldID`: string;
   `alias`: string;
-  grain?: string;
+  grain?: LeapViewDashboard.DashboardTimeGrain;
 }
 
 model DashboardAuthoringPreviewTimeBinding {
   `fieldID`: string;
   `alias`: string;
-  grain: string;
+  grain: LeapViewDashboard.DashboardTimeGrain;
 }
 
 model DashboardAuthoringPreviewAggregateQueryBinding {

@@ -21,6 +21,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -189,6 +190,17 @@ func TestAuthoringGeneratedCommandContractRejectsLegacyVisibility(t *testing.T) 
 	}
 }
 
+func TestAuthoringGeneratedCommandContractRejectsUnknownVisualType(t *testing.T) {
+	body := `{"kind":"addVisual","dashboardId":"dash","draftId":"draft","expectedRevision":{"revisionId":"rev","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"addVisual":{"pageId":"overview","type":"unknown"}}`
+	var input dashboardgen.GenSchemaDashboardAuthoringCommandRequest
+	if err := json.Unmarshal([]byte(body), &input); err != nil {
+		return // Generated schema validation may reject the enum before the mapper.
+	}
+	if _, _, err := commandFromAPIGen(input, "cmd", "actor"); err == nil {
+		t.Fatal("unknown dashboard visual type was accepted")
+	}
+}
+
 func TestAuthoringGeneratedForkEvidenceRoundTripAndBranchExclusivity(t *testing.T) {
 	valid := `{"kind":"project","project":{"sourceProjectId":"source","sourceDashboardId":"dash","identity":{"projectId":"source","environment":"prod","generationId":"gen"}}}`
 	var evidence dashboardgen.GenSchemaDashboardAuthoringForkEvidence
@@ -292,6 +304,18 @@ func TestAuthoringPreviewFiltersRejectObjectAndArraySelectionValues(t *testing.T
 		if _, err := filtersFromAPIGen(filters); err == nil {
 			t.Fatalf("preview filter accepted non-scalar value %#v", invalid)
 		}
+	}
+}
+
+func TestAuthoringPreviewFiltersRejectUnknownSelectionVocabulary(t *testing.T) {
+	filters := &dashboardgen.DashboardAuthoringPreviewFilters{Selections: []dashboardgen.DashboardAuthoringPreviewSelection{{SourceKind: "chart", InteractionKind: "hover", Entries: []dashboardgen.DashboardAuthoringPreviewSelectionEntry{{Mappings: []dashboardgen.DashboardAuthoringPreviewSelectionMapping{{Field: "country", Value: "US"}}}}}}}
+	if _, err := filtersFromAPIGen(filters); err == nil {
+		t.Fatal("preview selection accepted unknown source and interaction kinds")
+	}
+	grain := dashboarddocument.DashboardTimeGrain("fortnight")
+	filters = &dashboardgen.DashboardAuthoringPreviewFilters{Selections: []dashboardgen.DashboardAuthoringPreviewSelection{{SourceKind: "visual", InteractionKind: "point_selection", Entries: []dashboardgen.DashboardAuthoringPreviewSelectionEntry{{Mappings: []dashboardgen.DashboardAuthoringPreviewSelectionMapping{{Field: "country", Grain: &grain, Value: "US"}}}}}}}
+	if _, err := filtersFromAPIGen(filters); err == nil {
+		t.Fatal("preview selection accepted unknown grain")
 	}
 }
 
