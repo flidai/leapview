@@ -159,6 +159,56 @@ func TestAgentVisualQueryUsesCanonicalDefinitionExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestAgentVisualQueryPreservesSecondaryQueriesAndCountsPrimaryRows(t *testing.T) {
+	model := testAgentModel()
+	visual := testAgentVisualWithLimit("bar", 10)
+	secondary := map[string]dashboarddocument.DashboardQuery{"context": visual.Query}
+	visual.Datasets = &secondary
+	input := agentVisualInput{Visual: visual, Model: "commerce"}
+	dashboardDefinition, err := compileAgentVisual(input, model, "visual-id")
+	if err != nil {
+		t.Fatalf("compileAgentVisual(): %v", err)
+	}
+	compiled := dashboardDefinition.Visualizations["visual-id"]
+	if _, ok := compiled.SecondaryQueries["context"]; !ok {
+		t.Fatalf("compiled definition lost secondary query: %#v", compiled.SecondaryQueries)
+	}
+	wantEnvelope := visualizationir.VisualizationEnvelope{
+		VisualID: "visual-id", RendererID: "canonical",
+		Spec: compiled.Spec,
+		DataState: visualizationir.VisualizationDataState{Value: &visualizationir.InlineVisualizationDataState{
+			VisualizationDataStateBase: visualizationir.VisualizationDataStateBase{Kind: "inline"},
+			Kind:                       "inline",
+			Datasets: []visualizationir.VisualizationInlineDataset{
+				{ID: "primary", Rows: [][]any{{"primary"}}},
+				{ID: "context", Rows: [][]any{{"secondary"}, {"secondary-2"}}},
+			},
+		}},
+	}
+	var captured dashboarddefinition.Definition
+	provider := VisualProvider{QueryDefinition: func(_ context.Context, _ string, got dashboarddefinition.Definition, _ string, _ string, _ dashboard.Filters) (visualizationir.VisualizationEnvelope, error) {
+		captured = got
+		return wantEnvelope, nil
+	}}
+	result, err := provider.queryAgentVisual(context.Background(), "sales", input, "visual-id", model, dashboardDefinition, compiled)
+	if err != nil {
+		t.Fatalf("queryAgentVisual(): %v", err)
+	}
+	if _, ok := captured.Visualizations["visual-id"].SecondaryQueries["context"]; !ok {
+		t.Fatalf("runtime definition lost secondary query: %#v", captured.Visualizations["visual-id"].SecondaryQueries)
+	}
+	compact, err := compactAgentVisualResult("sales", "query-secondary", VisualQueryMetadata{}, model, input, dashboardDefinition, compiled, result)
+	if err != nil {
+		t.Fatalf("compactAgentVisualResult(): %v", err)
+	}
+	if got := compact.Completeness.ReturnedRows; got != 1 {
+		t.Fatalf("returned rows = %d, want primary-only count 1", got)
+	}
+	if got := result.Patch["visuals"]["visual-id"]; !reflect.DeepEqual(got, wantEnvelope) {
+		t.Fatalf("runtime envelope changed:\n got %#v\nwant %#v", got, wantEnvelope)
+	}
+}
+
 func TestAgentVisualQueryRequiresCanonicalRuntime(t *testing.T) {
 	model := testAgentModel()
 	input := agentVisualInput{Visual: testAgentVisualWithLimit("bar", 10), Model: "commerce"}
@@ -201,6 +251,50 @@ func TestAgentVisualFilterUsagesReportAppliedDefaults(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("unfiltered metadata = %#v, want omitted", got)
+	}
+}
+
+func TestDashboardFilterExpressionPreservesRangeAndRelativeValues(t *testing.T) {
+	tests := []struct {
+		name       string
+		expression dashboardfilter.Expression
+		want       []string
+	}{
+		{
+			name: "range",
+			expression: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionRange,
+				Lower: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueInteger, Value: int64(10)}, Inclusive: true},
+				Upper: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueDecimal, Value: "19.5"}, Inclusive: false}},
+			want: []string{`"type":"range"`, `"inclusive":true`, `"inclusive":false`, `"type":"integer"`, `"value":"10"`, `"type":"decimal"`, `"value":"19.5"`},
+		},
+		{
+			name:       "relative",
+			expression: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionRelativePeriod, Direction: dashboardfilter.DirectionPrevious, Count: 2, Unit: dashboardfilter.UnitQuarter, IncludeCurrent: true, Anchor: dashboardfilter.AnchorFixed, AnchorValue: &dashboardfilter.Value{Kind: dashboardfilter.ValueDate, Value: "2026-01-01"}},
+			want:       []string{`"type":"relativePeriod"`, `"direction":"previous"`, `"count":2`, `"unit":"quarter"`, `"includeCurrent":true`, `"anchor":"fixed"`, `"type":"date"`, `"value":"2026-01-01"`},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			converted, err := dashboardFilterExpression(test.expression)
+			if err != nil {
+				t.Fatalf("dashboardFilterExpression(): %v", err)
+			}
+			encoded, err := json.Marshal(converted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, fragment := range test.want {
+				if !strings.Contains(string(encoded), fragment) {
+					t.Errorf("expression %s missing %s", encoded, fragment)
+				}
+			}
+		})
+	}
+	if _, err := dashboardRelativeUnit(dashboardfilter.RelativeUnit("fortnight")); err == nil {
+		t.Fatal("unknown relative unit was accepted")
+	}
+	if _, err := dashboardRelativeAnchor(dashboardfilter.RelativeAnchor("nearest")); err == nil {
+		t.Fatal("unknown relative anchor was accepted")
 	}
 }
 

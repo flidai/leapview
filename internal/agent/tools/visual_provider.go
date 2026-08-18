@@ -421,6 +421,13 @@ func agentVisualReturnedRows(envelope visualizationir.VisualizationEnvelope) int
 	case *visualizationir.InlineVisualizationDataState:
 		total := 0
 		for _, dataset := range state.Datasets {
+			// The completeness contract describes the primary visual result.
+			// Context/secondary datasets are auxiliary frames and must not
+			// inflate the returned-row count (or make a bounded primary result
+			// appear incomplete).
+			if dataset.ID != "primary" {
+				continue
+			}
 			total += len(dataset.Rows)
 		}
 		return total
@@ -698,19 +705,39 @@ func dashboardRelativeDirection(direction dashboardfilter.RelativeDirection) (da
 }
 
 func dashboardRelativeUnit(unit dashboardfilter.RelativeUnit) (dashboarddocument.DashboardRelativeUnit, error) {
-	converted := dashboarddocument.DashboardRelativeUnit(unit)
-	if converted == "" {
+	switch unit {
+	case dashboardfilter.UnitMinute:
+		return dashboarddocument.DashboardRelativeUnitMinute, nil
+	case dashboardfilter.UnitHour:
+		return dashboarddocument.DashboardRelativeUnitHour, nil
+	case dashboardfilter.UnitDay:
+		return dashboarddocument.DashboardRelativeUnitDay, nil
+	case dashboardfilter.UnitWeek:
+		return dashboarddocument.DashboardRelativeUnitWeek, nil
+	case dashboardfilter.UnitMonth:
+		return dashboarddocument.DashboardRelativeUnitMonth, nil
+	case dashboardfilter.UnitQuarter:
+		return dashboarddocument.DashboardRelativeUnitQuarter, nil
+	case dashboardfilter.UnitYear:
+		return dashboarddocument.DashboardRelativeUnitYear, nil
+	default:
 		return "", fmt.Errorf("unsupported relative unit %q", unit)
 	}
-	return converted, nil
 }
 
 func dashboardRelativeAnchor(anchor dashboardfilter.RelativeAnchor) (dashboarddocument.DashboardRelativeAnchor, error) {
-	converted := dashboarddocument.DashboardRelativeAnchor(anchor)
-	if converted == "" {
+	switch anchor {
+	case dashboardfilter.AnchorCurrentTime:
+		return dashboarddocument.DashboardRelativeAnchorCurrentTime, nil
+	case dashboardfilter.AnchorFirstAvailable:
+		return dashboarddocument.DashboardRelativeAnchorFirstAvailable, nil
+	case dashboardfilter.AnchorLastAvailable:
+		return dashboarddocument.DashboardRelativeAnchorLastAvailable, nil
+	case dashboardfilter.AnchorFixed:
+		return dashboarddocument.DashboardRelativeAnchorFixed, nil
+	default:
 		return "", fmt.Errorf("unsupported relative anchor %q", anchor)
 	}
-	return converted, nil
 }
 
 func qualifiedVisualFieldID(modelID, field string) string {

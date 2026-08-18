@@ -96,6 +96,10 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 				if lowerErr != nil {
 					return DocumentResult{}, fmt.Errorf("visual %q dataset %q query: %w", visualID, datasetID, lowerErr)
 				}
+				// LowerDashboardQuery produces a primary binding by default. A
+				// context dataset is a distinct result frame and must carry its
+				// authored dataset ID through validation and runtime execution.
+				secondaryQuery.Binding.DatasetID = datasetID
 				secondary[datasetID] = secondaryQuery.Binding
 				secondarySchemas = append(secondarySchemas, visualizationir.VisualizationDatasetSchema{ID: datasetID, Fields: canonicalResultFields(secondaryQuery, model)})
 			}
