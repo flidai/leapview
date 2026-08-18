@@ -75,8 +75,49 @@ func TestCapabilityAPIClientResolvesAuthoringProfile(t *testing.T) {
 	require.NoError(t, err)
 	if resolver.name != "prod" ||
 		credentials.Target != server.URL ||
-		credentials.Token != "short-lived" {
+		credentials.Token != "short-lived" ||
+		credentials.CanonicalOrigin != server.URL {
 		t.Fatalf("resolver name=%q credentials=%+v", resolver.name, credentials)
+	}
+}
+
+func TestCapabilityAPIClientPreservesTransportTargetAndCanonicalOrigin(t *testing.T) {
+	const canonicalOrigin = "https://public.example.com"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/instance":
+			_, _ = w.Write([]byte(`{
+				"id":"lvinst_prod",
+				"canonicalOrigin":"` + canonicalOrigin + `",
+				"environment":"production"
+			}`))
+		case "/api/v1/capabilities":
+			if r.Header.Get("Authorization") != "Bearer short-lived" {
+				t.Fatalf("capabilities authorization = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{
+				"apiVersion":"v1","buildVersion":"test","buildRevision":"test",
+				"buildTime":"2026-07-29T12:00:00Z","buildDirty":false,
+				"buildDevelopment":false,"environment":"production",
+				"authentication":["bearer"],"queryFormats":["application/json"],
+				"uploadProtocols":[],"visualization":{"schemaVersion":3,"renderers":[]}
+			}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	credentials, err := (capabilityAPIClient{
+		httpClient: server.Client(), validateAuthoring: true,
+	}).Resolve(context.Background(), cliapi.Credentials{
+		Target: server.URL, Token: "short-lived",
+	})
+	require.NoError(t, err)
+	if credentials.Target != server.URL ||
+		credentials.CanonicalOrigin != canonicalOrigin {
+		t.Fatalf("credentials = %+v", credentials)
 	}
 }
 
@@ -200,7 +241,8 @@ func TestCapabilityAPIClientExchangesEphemeralWorkloadIdentity(t *testing.T) {
 		cliapi.Credentials{Target: server.URL},
 	)
 	require.NoError(t, err)
-	if credentials.Target != server.URL || credentials.Token != "ephemeral-access" {
+	if credentials.Target != server.URL || credentials.Token != "ephemeral-access" ||
+		credentials.CanonicalOrigin != server.URL {
 		t.Fatalf("credentials = %+v", credentials)
 	}
 }

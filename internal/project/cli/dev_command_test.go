@@ -27,8 +27,9 @@ func (client *devCommandClient) Resolve(
 		return cliapi.Credentials{}, io.ErrUnexpectedEOF
 	}
 	client.resolved = cliapi.Credentials{
-		Target: "https://prod.example.com",
-		Token:  "ephemeral",
+		Target:          "http://localhost:8080",
+		Token:           "ephemeral",
+		CanonicalOrigin: "https://prod.example.com",
 	}
 	return client.resolved, nil
 }

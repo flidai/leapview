@@ -237,8 +237,12 @@ func RunDev(
 			return nil
 		}
 		candidate := update.Result.Candidate
+		previewOrigin := credentials.CanonicalOrigin
+		if strings.TrimSpace(previewOrigin) == "" {
+			previewOrigin = credentials.Target
+		}
 		if err := validateCandidatePreviewURL(
-			credentials.Target,
+			previewOrigin,
 			candidate.ID,
 			candidate.PreviewURL,
 		); err != nil {
@@ -360,11 +364,11 @@ func RunDev(
 }
 
 func validateCandidatePreviewURL(
-	target,
+	canonicalOrigin,
 	candidateID,
 	previewURL string,
 ) error {
-	targetURL, err := url.Parse(strings.TrimSpace(target))
+	targetURL, err := url.Parse(strings.TrimSpace(canonicalOrigin))
 	if err != nil ||
 		(targetURL.Scheme != "http" && targetURL.Scheme != "https") ||
 		targetURL.Host == "" ||
