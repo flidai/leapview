@@ -175,7 +175,6 @@ func (w *WorkingCatalog) RememberNormalization(result NormalizationResult) error
 	clone := result
 	clone.Snapshots = append([]ducklake.Snapshot(nil), result.Snapshots...)
 	clone.Tables = append([]CatalogTable(nil), result.Tables...)
-	clone.InlineTables = append([]ducklake.InlineTableState(nil), result.InlineTables...)
 	clone.Closure = cloneQualificationClosure(result.Closure)
 	w.normalized = &clone
 	return nil

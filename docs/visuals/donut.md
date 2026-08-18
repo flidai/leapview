@@ -17,17 +17,16 @@ visuals:
     description: Breaks down orders by lifecycle status.
     type: donut
     presentation:
-      center_label: Orders
-      inner_radius: 0.54
-      outer_radius: 0.76
+      type: proportional
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
 ```
 
 ## Alternate metric
@@ -42,14 +41,17 @@ visuals:
     title: Revenue by category donut
     type: donut
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 8
+    presentation:
+      type: proportional
 ```
 
 ## Center label
@@ -64,15 +66,14 @@ visuals:
     title: Orders donut with center label
     type: donut
     presentation:
-      center_label: Orders
-      inner_radius: 0.54
-      outer_radius: 0.76
+      type: proportional
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
 ```

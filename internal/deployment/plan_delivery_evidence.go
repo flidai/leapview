@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/flidai/leapview/internal/release"
 )
 
 // DeliveryImpactResource is one graph node included in the target-specific
@@ -368,29 +370,34 @@ func (e DeliveryPlanEvidence) Digest() (string, error) {
 // constraint it enforced. Planning declarations never masquerade as actual
 // pinned values.
 type DeliveryResolvedDataInput struct {
-	ID              string                `json:"id"`
-	Mode            DeliveryDataInputMode `json:"mode"`
-	PlannedRevision string                `json:"plannedRevision,omitempty"`
-	PlannedBound    string                `json:"plannedBound,omitempty"`
-	ActualRevision  string                `json:"actualRevision,omitempty"`
-	ActualBound     string                `json:"actualBound,omitempty"`
-	// ObservedValue is accepted only as an in-memory compatibility field and is
-	// never serialized. Persisted evidence carries a connector-provided digest
-	// or equivalence token instead of a raw source value.
-	ObservedValue     string `json:"-"`
-	ObservationDigest string `json:"observationDigest,omitempty"`
-	Explanation       string `json:"explanation"`
+	ID                string                `json:"id"`
+	Mode              DeliveryDataInputMode `json:"mode"`
+	PlannedRevision   string                `json:"plannedRevision,omitempty"`
+	PlannedBound      string                `json:"plannedBound,omitempty"`
+	ActualRevision    string                `json:"actualRevision,omitempty"`
+	ActualBound       string                `json:"actualBound,omitempty"`
+	ObservationDigest string                `json:"observationDigest,omitempty"`
+	Explanation       string                `json:"explanation"`
 }
 
 type DeliveryResolvedBuildInputs struct {
 	Inputs         []DeliveryResolvedDataInput `json:"inputs,omitempty"`
 	PolicyDigest   string                      `json:"policyDigest"`
 	EvidenceDigest string                      `json:"evidenceDigest,omitempty"`
+	// GateEvidence is required for every v1 resolved-input record. No-gate
+	// projects persist canonical success evidence with empty components.
+	GateEvidence *release.GateEvidence `json:"gateEvidence,omitempty"`
 }
 
 func (inputs DeliveryResolvedBuildInputs) canonical() DeliveryResolvedBuildInputs {
 	inputs.Inputs = append([]DeliveryResolvedDataInput(nil), inputs.Inputs...)
 	sort.Slice(inputs.Inputs, func(i, j int) bool { return inputs.Inputs[i].ID < inputs.Inputs[j].ID })
+	if inputs.GateEvidence != nil {
+		canonical, err := inputs.GateEvidence.Canonical()
+		if err == nil {
+			inputs.GateEvidence = &canonical
+		}
+	}
 	return inputs
 }
 
@@ -399,6 +406,19 @@ func (inputs DeliveryResolvedBuildInputs) Validate() error {
 		if err := ValidateDeliveryDigest(inputs.PolicyDigest); err != nil {
 			return fmt.Errorf("resolved input policy: %w", err)
 		}
+	}
+	if inputs.GateEvidence == nil {
+		return fmt.Errorf("%w: resolved gate evidence is required", ErrDeliveryInvalid)
+	}
+	canonical, err := inputs.GateEvidence.Canonical()
+	if err != nil {
+		return fmt.Errorf("resolved gate evidence: %w", err)
+	}
+	if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+		return fmt.Errorf("%w: resolved gate evidence outcome %q cannot qualify", ErrDeliveryConflict, canonical.Outcome)
+	}
+	if canonical.Digest != inputs.GateEvidence.Digest {
+		return fmt.Errorf("%w: resolved gate evidence is not canonical", ErrDeliveryConflict)
 	}
 	seen := map[string]bool{}
 	for _, input := range inputs.Inputs {
@@ -422,9 +442,6 @@ func (inputs DeliveryResolvedBuildInputs) Validate() error {
 				return fmt.Errorf("%w: bounded input %q did not enforce its planned bound", ErrDeliveryInvalid, input.ID)
 			}
 		case DeliveryDataObserved:
-			if input.ObservedValue != "" {
-				return fmt.Errorf("%w: observed input %q contains a raw value", ErrDeliveryInvalid, input.ID)
-			}
 			if err := ValidateDeliveryDigest(input.ObservationDigest); err != nil {
 				return fmt.Errorf("observed input %q: %w", input.ID, err)
 			}
@@ -469,6 +486,22 @@ func NewDeliveryResolvedBuildInputs(inputs DeliveryResolvedBuildInputs) (Deliver
 // canonical empty evidence digest so ready candidates never carry ambiguous
 // zero-value evidence.
 func ValidateDeliveryResolvedBuildInputs(plan DeliveryPlan, inputs DeliveryResolvedBuildInputs) (DeliveryResolvedBuildInputs, error) {
+	if inputs.GateEvidence == nil {
+		return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence is required", ErrDeliveryInvalid)
+	}
+	canonical, gateErr := inputs.GateEvidence.Canonical()
+	if gateErr != nil {
+		return DeliveryResolvedBuildInputs{}, gateErr
+	}
+	if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+		return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence outcome %q cannot qualify", ErrDeliveryConflict, canonical.Outcome)
+	}
+	if canonical.SourceDigest != plan.SourceDigest {
+		return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence source digest does not match plan", ErrDeliveryConflict)
+	}
+	if canonical.Digest != inputs.GateEvidence.Digest {
+		return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence digest does not match canonical evidence", ErrDeliveryConflict)
+	}
 	resolved, err := NewDeliveryResolvedBuildInputs(inputs)
 	if err != nil {
 		return DeliveryResolvedBuildInputs{}, err

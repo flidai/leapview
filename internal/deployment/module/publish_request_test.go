@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
@@ -200,14 +201,18 @@ func TestPublishProjectCandidatePromotesAndRequestsTheExactReadyCandidate(t *tes
 	)
 	require.NoError(t, err)
 	targetRelease := publishTestRelease(t)
-	provenance, err := release.NewProvenance(release.ProvenanceInput{
+	input := release.ProvenanceInput{
 		Artifact: targetRelease.Provenance.Artifact,
 		Candidate: release.CandidateProvenance{
 			ID: started.Candidate.ID, Revision: started.Candidate.Revision + 1,
 			OwnerID: "principal_1",
 		},
 		Plan: targetRelease.Provenance.Plan,
-	})
+	}
+	gateEvidence, err := (&release.GateEvidence{Version: 1, CandidateID: input.Candidate.ID, SourceDigest: input.Artifact.SourceDigest, BindingGeneration: release.BindingFingerprint(input.Plan.Bindings), RuntimeVersion: input.Plan.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	require.NoError(t, err)
+	input.Plan.GateEvidence = &gateEvidence
+	provenance, err := release.NewProvenance(input)
 	require.NoError(t, err)
 	targetRelease.Provenance = &provenance
 	ready, err := module.candidates.MarkReady(
@@ -328,7 +333,7 @@ func publishTestRelease(t *testing.T) release.Release {
 	require.NoError(t, err)
 	baseIdentity, err := projectgraph.NewServingIdentity("project", "prod", "generation_3")
 	require.NoError(t, err)
-	provenance, err := release.NewProvenance(release.ProvenanceInput{
+	input := release.ProvenanceInput{
 		Artifact: release.ProjectArtifactProvenance{
 			SourceDigest: "sha256:" + strings.Repeat("d", 64), ProjectDigest: projectDigest,
 			ContentDigest: artifactDigest, CompilerVersion: "test", SchemaVersion: 1,
@@ -347,7 +352,11 @@ func publishTestRelease(t *testing.T) release.Release {
 			ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: "revision_4"}},
 			Bindings:        []release.BindingEvidence{{BindingID: "warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 7, ValidatedVersion: "version_7", EndpointConfigHash: "sha256:" + strings.Repeat("9", 64)}},
 		},
-	})
+	}
+	gateEvidence, err := (&release.GateEvidence{Version: 1, CandidateID: input.Candidate.ID, SourceDigest: input.Artifact.SourceDigest, BindingGeneration: release.BindingFingerprint(input.Plan.Bindings), RuntimeVersion: input.Plan.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	require.NoError(t, err)
+	input.Plan.GateEvidence = &gateEvidence
+	provenance, err := release.NewProvenance(input)
 	require.NoError(t, err)
 	return release.Release{
 		ID: "release_1", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest,

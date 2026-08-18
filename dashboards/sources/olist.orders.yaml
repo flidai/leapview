@@ -6,10 +6,15 @@ metadata:
   displayName: Orders
 spec:
   connection: olist
-  path: olist_orders_dataset.csv
-  fields:
-    order_id: {type: string, description: Raw order identifier.}
-    customer_id: {type: string, description: Customer identifier attached to the order.}
-    order_status: {type: string, description: Raw lifecycle status.}
-    order_purchase_timestamp: {type: string, description: Timestamp when the order was placed.}
-    order_delivered_customer_date: {type: string, description: Timestamp when the order reached the customer.}
+  location:
+    type: path
+    path: olist_orders_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      order_id: {datatype: String, description: Raw order identifier.}
+      customer_id: {datatype: String, description: Customer identifier attached to the order.}
+      order_status: {datatype: String, description: Raw lifecycle status.}
+      order_purchase_timestamp: {datatype: String, description: Timestamp when the order was placed.}
+      order_delivered_customer_date: {datatype: String, description: Timestamp when the order reached the customer.}

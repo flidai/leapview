@@ -17,20 +17,27 @@ visuals:
     description: Shows the operating model and active workload across its teams.
     type: tree
     presentation:
+      type: hierarchy
       orientation: horizontal
-      initial_depth: 2
-      roam: true
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
-      dataset: service_teams
+      type: aggregate
       dimensions:
-        division: service_teams.division
-        team: service_teams.team
+      - division
+      - team
       metrics:
-        active_work_items: null
+      - active_work_items
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
 ```
 
 ## Alternate hierarchy
@@ -45,15 +52,18 @@ visuals:
     title: Category and status tree
     type: tree
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 80
+    presentation:
+      type: hierarchy
 ```
 
 ## Three-level hierarchy
@@ -68,18 +78,27 @@ visuals:
     title: Category, state, and status tree
     type: tree
     presentation:
+      type: hierarchy
       orientation: vertical
-      initial_depth: 2
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 16, minimumSpacing: 6, tooltipFallback: true}
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 16
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        state: orders.state
-        status: orders.status
+      - category
+      - state
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 120
 ```

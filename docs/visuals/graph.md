@@ -17,20 +17,26 @@ visuals:
     description: Shows status and delivery-speed relationships as a network.
     type: graph
     presentation:
-      layout: circular
-      roam: true
-      curveness: 0.24
-      focus: adjacency
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
+      type: hierarchy
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
-        delivery_bucket: orders.delivery_bucket
+      - status
+      - delivery_bucket
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 40
 ```
 
@@ -46,15 +52,18 @@ visuals:
     title: Category and status network
     type: graph
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 60
+    presentation:
+      type: hierarchy
 ```
 
 ## Circular layout
@@ -69,17 +78,16 @@ visuals:
     title: Circular category and status network
     type: graph
     presentation:
-      layout: circular
-      curveness: 0.28
-      focus: adjacency
+      type: hierarchy
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 60
 ```

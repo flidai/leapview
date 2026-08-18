@@ -8,35 +8,19 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
-	"sync"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 	cueerrors "cuelang.org/go/cue/errors"
 	cuejsonschema "cuelang.org/go/encoding/jsonschema"
 	cueyaml "cuelang.org/go/encoding/yaml"
-	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"gopkg.in/yaml.v3"
 )
 
 //go:embed contracts/contracts.cue
 var contractsCUE string
-
-// dashboardDocumentSchema is generated from api/dashboard TypeSpec and is the
-// sole structural authority for canonical Dashboard resources. It is kept
-// beside the CUE contracts so schema consumers do not depend on a build-time
-// path outside this package.
-//
-//go:embed contracts/dashboard-document.schema.json
-var dashboardDocumentSchema []byte
-
-var (
-	dashboardSchemaOnce sync.Once
-	dashboardSchema     *jsonschema.Schema
-	dashboardSchemaErr  error
-)
 
 type Kind string
 
@@ -113,8 +97,12 @@ func ValidateFile(kind Kind, path string) error {
 }
 
 func ValidateBytes(kind Kind, filename string, content []byte) error {
-	if kind == KindDashboard {
-		return validateDashboardBytes(filename, content)
+	// Connection, Source, and Model structure is owned by the generated
+	// TypeSpec contracts. ValidateBytes is also called directly by schema tests
+	// and callers, so route all three kinds through the same generated JSON
+	// Schema boundary used by DecodeResource.
+	if kind == KindConnection || kind == KindSource || kind == KindModel {
+		return validateGeneratedResource(kind, filename, content)
 	}
 	ctx, value, definition, err := compiledDefinition(kind)
 	if err != nil {
@@ -141,8 +129,8 @@ func ValidateBytes(kind Kind, filename string, content []byte) error {
 }
 
 func JSONSchema(kind Kind) ([]byte, error) {
-	if kind == KindDashboard {
-		return append([]byte(nil), dashboardDocumentSchema...), nil
+	if kind == KindConnection || kind == KindSource || kind == KindModel {
+		return generatedJSONSchema(kind)
 	}
 	ctx, value, _, err := compiledDefinition(kind)
 	if err != nil {
@@ -168,201 +156,61 @@ func JSONSchema(kind Kind) ([]byte, error) {
 	return append(pretty, '\n'), nil
 }
 
-func validateDashboardBytes(filename string, content []byte) error {
-	normalized, err := NormalizeJSONDocument(filename, content)
-	if err != nil {
-		return err
+// generatedJSONSchema projects one resource root from the shared APIGen
+// contract document. Keeping the original $defs intact means references in
+// the closed tagged unions remain resolvable while each exported file has a
+// single, kind-specific authoring root.
+func generatedJSONSchema(kind Kind) ([]byte, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(projectcontracts.DataResourcesSchema, &payload); err != nil {
+		return nil, fmt.Errorf("decode generated data-resource schema: %w", err)
 	}
-	schema, err := compiledDashboardSchema()
-	if err != nil {
-		return resourceDiagnostic(filename, nil, "schema.generated", err.Error())
+	rootName := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model"}[kind]
+	if rootName == "" {
+		return nil, fmt.Errorf("generated schema is not available for %s", kind)
 	}
-	var value any
-	if err := json.Unmarshal(normalized, &value); err != nil {
-		return resourceDiagnostic(filename, nil, "schema.generated", "decode normalized dashboard: "+err.Error())
+	definitions, _ := payload["$defs"].(map[string]any)
+	root, ok := definitions[rootName].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("generated schema root %q is missing", rootName)
 	}
-	if err := validateDashboardCUE(filename, normalized); err != nil {
-		// The generated Dashboard JSON Schema is imported into CUE above and is
-		// the acceptance gate. Re-run its validator only to retain the stable
-		// keyword/path diagnostics exposed by the public CLI contract.
-		if schemaErr := schema.Validate(value); schemaErr != nil {
-			return &Error{Diagnostics: []Diagnostic{dashboardValidationDiagnostic(filename, content, schemaErr)}}
+	for _, key := range []string{"$ref", "anyOf", "properties", "required", "type", "unevaluatedProperties"} {
+		delete(payload, key)
+	}
+	for key, value := range root {
+		payload[key] = value
+	}
+	if properties, ok := payload["properties"].(map[string]any); ok {
+		if kindSchema, ok := properties["kind"].(map[string]any); ok {
+			if values, ok := kindSchema["enum"].([]any); ok && len(values) == 1 {
+				kindSchema["const"] = values[0]
+				delete(kindSchema, "enum")
+			}
 		}
-		return resourceDiagnostic(filename, nil, "schema.contract", err.Error())
 	}
-	return nil
-}
-
-func validateDashboardCUE(filename string, content []byte) error {
-	ctx := cuecontext.New()
-	schemaValue := ctx.CompileBytes(dashboardDocumentSchema, cue.Filename("dashboard-document.schema.json"))
-	if err := schemaValue.Err(); err != nil {
-		return fmt.Errorf("compile generated dashboard schema: %w", err)
-	}
-	expr, err := cuejsonschema.Extract(schemaValue, &cuejsonschema.Config{ID: "https://leapview.dev/schemas/dashboard-document.schema.json"})
-	if err != nil {
-		return fmt.Errorf("import generated dashboard schema into CUE: %w", err)
-	}
-	contract := ctx.BuildFile(expr)
-	if err := contract.Err(); err != nil {
-		return fmt.Errorf("compile imported dashboard CUE contract: %w", err)
-	}
-	file, err := cueyaml.Extract(filename, content)
-	if err != nil {
-		return fmt.Errorf("decode dashboard YAML for CUE: %w", err)
-	}
-	instance := ctx.BuildFile(file)
-	if err := instance.Err(); err != nil {
-		return fmt.Errorf("compile dashboard YAML for CUE: %w", err)
-	}
-	if err := contract.Unify(instance).Validate(cue.Final()); err != nil {
-		return err
-	}
-	return nil
-}
-
-func dashboardValidationDiagnostic(filename string, content []byte, err error) Diagnostic {
-	diagnostic := resourceDiagnostic(filename, nil, "schema.generated", err.Error()).(*Error).Diagnostics[0]
-	var validation *jsonschema.ValidationError
-	if !errors.As(err, &validation) || validation == nil {
-		return diagnostic
-	}
-	best := validationCause(validation)
-	if best == nil {
-		return diagnostic
-	}
-	keyword := ""
-	keywords := best.ErrorKind.KeywordPath()
-	if len(keywords) > 0 {
-		keyword = keywords[len(keywords)-1]
-	}
-	switch keyword {
-	case "enum":
-		diagnostic.Code = "schema.enum"
-	case "type":
-		diagnostic.Code = "schema.type"
-	case "required":
-		diagnostic.Code = "schema.contract"
-	case "additionalProperties", "unevaluatedProperties":
-		diagnostic.Code = "schema.unknown_field"
-	case "pattern", "format":
-		diagnostic.Code = "schema.pattern"
-	}
-	diagnostic.Line, diagnostic.Column = dashboardYAMLLocation(content, best.InstanceLocation)
-	diagnostic.FieldPath = dashboardFieldPath(best.InstanceLocation)
-	return diagnostic
-}
-
-func dashboardFieldPath(path []string) string {
-	var result strings.Builder
-	for _, segment := range path {
-		if _, err := strconv.Atoi(segment); err == nil {
-			result.WriteByte('[')
-			result.WriteString(segment)
-			result.WriteByte(']')
+	// The generated document's contract list describes all three roots. A
+	// per-kind export should describe exactly one resource.
+	contracts, _ := payload["x-apigen-contracts"].([]any)
+	filtered := make([]any, 0, 1)
+	for _, item := range contracts {
+		entry, ok := item.(map[string]any)
+		if !ok || entry["name"] != rootName {
 			continue
 		}
-		if result.Len() > 0 {
-			result.WriteByte('.')
-		}
-		result.WriteString(segment)
+		filtered = append(filtered, entry)
 	}
-	return result.String()
-}
-
-func validationCause(value *jsonschema.ValidationError) *jsonschema.ValidationError {
-	if value == nil {
-		return nil
+	if len(filtered) > 0 {
+		payload["x-apigen-contracts"] = filtered
 	}
-	best := value
-	bestScore := validationKeywordScore(value)
-	for _, cause := range value.Causes {
-		candidate := validationCause(cause)
-		if validationKeywordScore(candidate) > bestScore {
-			best, bestScore = candidate, validationKeywordScore(candidate)
-		}
+	slug := strings.ToLower(string(kind))
+	payload["$id"] = "https://leapview.dev/schemas/" + slug + ".schema.json"
+	payload["title"] = "LeapView v1 " + rootName + " resource"
+	payload["description"] = "Strict authored " + rootName + " resource contract."
+	pretty, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return nil, err
 	}
-	return best
-}
-
-func validationKeywordScore(value *jsonschema.ValidationError) int {
-	if value == nil || value.ErrorKind == nil {
-		return -1
-	}
-	keywords := value.ErrorKind.KeywordPath()
-	if len(keywords) == 0 {
-		return 0
-	}
-	switch keywords[len(keywords)-1] {
-	case "enum":
-		return 100
-	case "type":
-		return 90
-	case "required":
-		return 80
-	case "additionalProperties", "unevaluatedProperties":
-		return 70
-	case "pattern", "format":
-		return 60
-	default:
-		return 10
-	}
-}
-
-func dashboardYAMLLocation(content []byte, path []string) (int, int) {
-	var root yaml.Node
-	if err := yaml.Unmarshal(content, &root); err != nil {
-		return 0, 0
-	}
-	node := yamlMappingNode(&root)
-	for _, segment := range path {
-		if node == nil {
-			return 0, 0
-		}
-		if node.Kind == yaml.MappingNode {
-			found := false
-			for index := 0; index+1 < len(node.Content); index += 2 {
-				if node.Content[index].Value == segment {
-					node = node.Content[index+1]
-					found = true
-					break
-				}
-			}
-			if !found {
-				return 0, 0
-			}
-			continue
-		}
-		if node.Kind == yaml.SequenceNode {
-			var index int
-			if _, err := fmt.Sscanf(segment, "%d", &index); err != nil || index < 0 || index >= len(node.Content) {
-				return 0, 0
-			}
-			node = node.Content[index]
-		}
-	}
-	if node == nil {
-		return 0, 0
-	}
-	return node.Line, node.Column
-}
-
-func compiledDashboardSchema() (*jsonschema.Schema, error) {
-	dashboardSchemaOnce.Do(func() {
-		var value any
-		if err := json.Unmarshal(dashboardDocumentSchema, &value); err != nil {
-			dashboardSchemaErr = fmt.Errorf("decode generated dashboard schema: %w", err)
-			return
-		}
-		compiler := jsonschema.NewCompiler()
-		const schemaURL = "https://leapview.dev/schemas/dashboard-document.schema.json"
-		if err := compiler.AddResource(schemaURL, value); err != nil {
-			dashboardSchemaErr = fmt.Errorf("register generated dashboard schema: %w", err)
-			return
-		}
-		dashboardSchema, dashboardSchemaErr = compiler.Compile(schemaURL)
-	})
-	return dashboardSchema, dashboardSchemaErr
+	return append(pretty, '\n'), nil
 }
 
 func compiledDefinition(kind Kind) (*cue.Context, cue.Value, string, error) {
@@ -407,7 +255,7 @@ func JSONSchemaFilename(kind Kind) string {
 	case KindPipeline:
 		return "pipeline.schema.json"
 	case KindDashboard:
-		return "dashboard-document.schema.json"
+		return "dashboard.schema.json"
 	case KindGroup:
 		return "group.schema.json"
 	case KindRoleBinding:
@@ -452,12 +300,6 @@ func definitionName(kind Kind) (string, error) {
 	switch kind {
 	case KindProject:
 		return "Project", nil
-	case KindConnection:
-		return "ConnectionResource", nil
-	case KindSource:
-		return "SourceResource", nil
-	case KindModel:
-		return "ModelResource", nil
 	case KindSemanticModel:
 		return "SemanticModelResource", nil
 	case KindPipeline:
@@ -648,6 +490,10 @@ var schemaOverlays = map[Kind]schemaOverlay{
 	},
 	KindDashboard: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
+		collections: []collectionRule{
+			definitionCollection("#DashboardSpec", "visuals", collectionMapping),
+			definitionCollection("#DashboardSpec", "pages", collectionSequence),
+		},
 	},
 	KindGroup: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
@@ -687,6 +533,9 @@ func definitionCollection(definition, property string, kind collectionKind) coll
 }
 
 func hardenJSONSchema(kind Kind, payload any) {
+	if kind == KindConnection || kind == KindSource || kind == KindModel {
+		return
+	}
 	normalizeGeneratedSchema(payload)
 	root, ok := payload.(map[string]any)
 	if !ok {

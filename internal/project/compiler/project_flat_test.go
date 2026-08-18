@@ -2,15 +2,21 @@ package compiler
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -18,36 +24,149 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
-	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
+	extensionsupply "github.com/flidai/leapview/internal/deployment/extensionsupply"
+	"github.com/flidai/leapview/internal/extension"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	"github.com/flidai/leapview/internal/workload"
 )
 
-func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
-	metric := "order_count"
-	document := dashboarddocument.DashboardDocument{
-		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
-		Kind:       dashboarddocument.DashboardResourceKindDashboard,
-		Metadata:   dashboarddocument.DashboardMetadata{ID: "dashboard_sales", Name: "sales_dashboard"},
-		Spec: dashboarddocument.DashboardSpec{
-			SemanticModel: "semantic_sales", Filters: []dashboarddocument.DashboardFilter{},
-			Visuals: map[string]dashboarddocument.DashboardVisual{"total": {
-				Type:         dashboarddocument.DashboardVisualTypeKpi,
-				Query:        dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Dimensions: []dashboarddocument.DashboardDimensionSelection{}, Metrics: []dashboarddocument.DashboardMetricSelection{{String: &metric}}}},
-				Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.KPIDashboardPresentation{Type: "kpi"}},
-			}},
-			Pages: []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{}}},
-		},
+type compilerTestExtensionAdmission struct{ admitted extension.AdmittedExtension }
+
+var _ extension.Admission = compilerTestExtensionAdmission{}
+var _ extension.Preparation = compilerTestExtensionAdmission{}
+
+func (a compilerTestExtensionAdmission) AdmitExtension(ctx context.Context, name string) (extension.AdmittedExtension, error) {
+	if err := ctx.Err(); err != nil {
+		return extension.AdmittedExtension{}, err
 	}
-	encoded, err := ExportDashboard(document)
+	if name != a.admitted.Name {
+		return extension.AdmittedExtension{}, fmt.Errorf("test extension %q was not admitted", name)
+	}
+	return a.admitted, nil
+}
+
+func (a compilerTestExtensionAdmission) PrepareExtensions(ctx context.Context, names []string) ([]extension.Evidence, error) {
+	evidence := make([]extension.Evidence, 0, len(names))
+	for _, name := range names {
+		admitted, err := a.AdmitExtension(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, admitted.Evidence())
+	}
+	return evidence, nil
+}
+
+func newCompilerTestExtensionAdmission(t *testing.T, name string) extension.Admission {
+	t.Helper()
+	version, platform := compilerTestRuntimeTarget(t)
+	setupRoot := t.TempDir()
+	sourcePath := findCompilerTestExtension(name, version, platform)
+	if sourcePath == "" {
+		installCompilerTestExtension(t, name, setupRoot)
+		sourcePath = findCompilerTestExtensionInRoot(setupRoot, name, version, platform)
+	}
+	if sourcePath == "" {
+		t.Fatalf("reviewed local test extension %q is unavailable for DuckDB %s/%s", name, version, platform)
+	}
+	contents, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read test extension %q: %v", name, err)
+	}
+	ownedPath := filepath.Join(setupRoot, name+".duckdb_extension")
+	if err := os.WriteFile(ownedPath, contents, 0o600); err != nil {
+		t.Fatalf("stage test extension %q: %v", name, err)
+	}
+	digest := sha256.Sum256(contents)
+	digestValue := "sha256:" + hex.EncodeToString(digest[:])
+	identity := extension.Identity{DuckDBVersion: version, ExtensionVersion: "test-fixture", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, Name: name, Digest: digestValue, SupportProfile: "test-fixture"}
+	canonical, err := identity.Canonical()
+	if err != nil {
+		t.Fatalf("canonicalize test extension %q: %v", name, err)
+	}
+	return compilerTestExtensionAdmission{admitted: extension.AdmittedExtension{Name: name, Identity: canonical, Version: "test-fixture", ExtensionVersion: "test-fixture", DuckDBVersion: version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, SupportProfile: "test-fixture", Digest: digestValue, Path: ownedPath, Origin: "reviewed-local-test-fixture", Provenance: "attest:compiler-test", Signature: "sig:compiler-test"}}
+}
+
+func compilerTestRuntimeTarget(t *testing.T) (string, string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open DuckDB runtime probe: %v", err)
+	}
+	defer db.Close()
+	var version, platform string
+	if err := db.QueryRowContext(t.Context(), "SELECT version()").Scan(&version); err != nil {
+		t.Fatalf("read DuckDB runtime version: %v", err)
+	}
+	if err := db.QueryRowContext(t.Context(), "PRAGMA platform").Scan(&platform); err != nil {
+		t.Fatalf("read DuckDB runtime platform: %v", err)
+	}
+	if version != extensionsupply.CurrentDuckDBVersion {
+		t.Fatalf("DuckDB runtime = %q, want pinned %q", version, extensionsupply.CurrentDuckDBVersion)
+	}
+	return strings.TrimSpace(version), strings.TrimSpace(platform)
+}
+
+func findCompilerTestExtension(name, version, platform string) string {
+	roots := []string{}
+	if configured := strings.TrimSpace(os.Getenv("DUCKDB_EXTENSION_DIRECTORY")); configured != "" {
+		roots = append(roots, configured)
+	} else if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, ".duckdb", "extensions"))
+	}
+	for _, root := range roots {
+		if found := findCompilerTestExtensionInRoot(root, name, version, platform); found != "" {
+			return found
+		}
+	}
+	return ""
+}
+
+func findCompilerTestExtensionInRoot(root, name, version, platform string) string {
+	filename := name + ".duckdb_extension"
+	platformDir := strings.ReplaceAll(platform, "-", "_")
+	for _, path := range []string{filepath.Join(root, version, platformDir, filename), filepath.Join(root, version, platform, filename)} {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			return filepath.Clean(path)
+		}
+	}
+	return ""
+}
+
+func installCompilerTestExtension(t *testing.T, name, root string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open test extension installer: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("SET extension_directory = '" + strings.ReplaceAll(root, "'", "''") + "'"); err != nil {
+		t.Fatalf("set test extension directory: %v", err)
+	}
+	if _, err := db.Exec("INSTALL " + name + " FROM core"); err != nil {
+		t.Fatalf("install test extension %q: %v", name, err)
+	}
+}
+
+func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
+	document := dashboardauthoring.Dashboard{
+		ID: "dashboard_sales", Title: "Sales", SemanticModel: "semantic_sales",
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
+			"total": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}}},
+		}),
+		Pages: []dashboard.Page{{ID: "overview", Title: "Overview"}},
+	}
+	encoded, err := ExportDashboard(document, dashboardauthoring.DashboardExportMetadata{Name: "sales_dashboard"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	if !strings.Contains(text, `"id": "dashboard_sales"`) || !strings.Contains(text, `"name": "sales_dashboard"`) || !strings.Contains(text, `"semanticModel": "semantic_sales"`) {
+	if !strings.Contains(text, "id: dashboard_sales") || !strings.Contains(text, "name: sales_dashboard") || !strings.Contains(text, "semanticModel: semantic_sales") {
 		t.Fatalf("canonical dashboard omitted ResourceID strings: %s", text)
 	}
 }
@@ -57,17 +176,17 @@ func TestDashboardDomainRoundTripsCompiledManifestAndExport(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {order: {type: primary, fields: [order_id]}}, grain: {entity: order}, fields: {order_id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {order: {type: primary, fields: [order_id]}}, grain: {entity: order}, fields: {order_id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -80,13 +199,12 @@ spec:
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard, domain: revenue}
 spec:
+  title: Sales Dashboard
   semanticModel: sales
-  filters: []
   visuals:
     order_count:
       type: kpi
-      query: {type: aggregate, dimensions: [], metrics: [order_count]}
-      presentation: {type: kpi}
+      query: {metrics: {order_count: null}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
@@ -104,20 +222,14 @@ spec:
 	if source.Metadata.Domain != "revenue" {
 		t.Fatalf("compiled dashboard source domain = %q, want revenue", source.Metadata.Domain)
 	}
-	displayName := source.Metadata.Title
-	domain := source.Metadata.Domain
-	encoded, err := ExportDashboard(dashboarddocument.DashboardDocument{
-		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
-		Kind:       dashboarddocument.DashboardResourceKindDashboard,
-		Metadata: dashboarddocument.DashboardMetadata{
-			ID: "dashboard:sales", Name: source.Metadata.Name, DisplayName: &displayName, Domain: &domain,
-		},
-		Spec: dashboarddocument.DashboardSpec{SemanticModel: "sales", Filters: []dashboarddocument.DashboardFilter{}, Visuals: map[string]dashboarddocument.DashboardVisual{}, Pages: []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{}}}},
+	encoded, err := ExportDashboard(source.Document, dashboardauthoring.DashboardExportMetadata{
+		Name: source.Metadata.Name, Title: source.Metadata.Title, Description: source.Metadata.Description,
+		Owner: source.Metadata.Owner, Domain: source.Metadata.Domain, Tags: source.Metadata.Tags,
 	})
 	if err != nil {
 		t.Fatalf("ExportDashboard() error = %v", err)
 	}
-	if !strings.Contains(string(encoded), `"domain": "revenue"`) {
+	if !strings.Contains(string(encoded), "domain: revenue") {
 		t.Fatalf("canonical dashboard export omitted authored domain: %s", encoded)
 	}
 }
@@ -136,15 +248,15 @@ func TestAIContextIsPreservedWithoutChangingExecutableSemantics(t *testing.T) {
 			"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 			"sources/orders_source.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders_source, name: orders_source}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv, options: {header: true}}}
 `,
 			"models/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders}\n" + modelContext + `spec:
-  source: orders_source
+  definition: {type: direct, source: orders_source}
   entities:
     order_line: {type: primary, fields: [order_id, line_number]}
   grain: {entity: order_line}
@@ -158,7 +270,7 @@ spec: {connection: warehouse, format: csv, path: orders.csv}
 kind: Model
 metadata: {id: model:customers, name: customers}
 spec:
-  source: orders_source
+  definition: {type: direct, source: orders_source}
   entities:
     customer_line: {type: primary, fields: [order_id, line_number]}
   grain: {entity: customer_line}
@@ -357,7 +469,8 @@ spec:
 	execute := func(model *semanticmodel.Model) dataquery.Result {
 		ctx := context.Background()
 		dir := t.TempDir()
-		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+		admission := newCompilerTestExtensionAdmission(t, "ducklake")
+		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
 		if err != nil {
 			t.Fatalf("open DuckLake fixture environment: %v", err)
 		}
@@ -373,7 +486,7 @@ spec:
 			t.Fatalf("admit fixture refresh: %v", err)
 		}
 		runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(lease.Context(), analyticsduckdb.ProjectRuntimeConfig{
-			ProjectID: "project:test", Models: map[string]*semanticmodel.Model{"semantic:sales": model}, Database: environment,
+			ProjectID: "project:test", Models: map[string]*semanticmodel.Model{"semantic:sales": model}, Database: environment, ExtensionAdmission: admission,
 		})
 		if err != nil {
 			lease.Release()
@@ -461,7 +574,7 @@ func TestProjectGraphCanonicalBytesStableAcrossTraversalOrder(t *testing.T) {
 	}
 }
 
-func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
+func TestCompilerPersistsSQLAnalysisEvidenceAndDependencies(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales", Connections: map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
@@ -470,9 +583,12 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 			"daily":  {Model: "daily"},
 		},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
-			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
+			"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, Entities: map[string]semanticmodel.EntityDefinition{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
+			"daily":  {Execution: semanticmodel.ExecutionDefinition{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.EntityDefinition{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
 		},
+	}
+	if err := deriveModelSQLDependencies(model); err != nil {
+		t.Fatalf("deriveModelSQLDependencies() error = %v", err)
 	}
 	if err := model.ValidateAuthored(); err != nil {
 		t.Fatalf("ValidateAuthored() error = %v", err)
@@ -483,21 +599,24 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 	if got := model.Tables["daily"].ModelDependencies; len(got) != 1 || got[0] != "orders" {
 		t.Fatalf("model dependencies = %#v, want [orders]", got)
 	}
+	evidence := model.Tables["daily"].SQLAnalysisEvidence
+	if evidence == nil || !evidence.Validated || !reflect.DeepEqual(evidence.SourceRefs, []string{"orders"}) || !reflect.DeepEqual(evidence.ModelRefs, []string{"orders"}) {
+		t.Fatalf("SQL analysis evidence = %#v, want validated orders lineage", evidence)
+	}
 }
 
 func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T) {
 	modelTable := func(source string) semanticmodel.Table {
 		return semanticmodel.Table{
-			Source:      source,
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}},
+			Execution:   semanticmodel.ExecutionDefinition{Source: source},
+			Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
 			GrainEntity: "order",
 			Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
 		}
 	}
 	base := modelTable("orders")
 	derived := modelTable("")
-	derived.Sources = []string{"orders"}
-	derived.Transform.SQL = "SELECT base.order_id FROM model.base_model AS base JOIN source.orders AS raw ON raw.order_id = base.order_id"
+	derived.Execution.SQL = "SELECT base.order_id FROM model.base_model AS base JOIN source.orders AS raw ON raw.order_id = base.order_id"
 	project := Project{
 		ID: "project:test", Name: "test",
 		Connections:   map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
@@ -528,7 +647,7 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 		invalid.Models[name] = table
 	}
 	derived = invalid.Models["derived_model"]
-	derived.Transform.SQL = strings.Replace(derived.Transform.SQL, "model.base_model", "model.base_alias", 1)
+	derived.Execution.SQL = strings.Replace(derived.Execution.SQL, "model.base_model", "model.base_alias", 1)
 	invalid.Models["derived_model"] = derived
 	if _, err := projectManifest(invalid); err == nil || !strings.Contains(err.Error(), `unknown model table "base_alias"`) {
 		t.Fatalf("dataset alias in transform dependency error = %v, want unknown physical model", err)
@@ -540,19 +659,18 @@ func TestFlatProjectAllowsModelOnlyTransform(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
-  sources: [orders]
-  transform: {sql: SELECT order_id FROM source.orders}
+  definition: {type: sql, sql: SELECT order_id FROM source.orders}
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
   fields: {order_id: {datatype: String}}
@@ -561,7 +679,8 @@ spec:
 kind: Model
 metadata: {id: model:order_labels, name: order_labels}
 spec:
-  transform:
+  definition:
+    type: sql
     sql: SELECT order_id FROM model.orders_model
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
@@ -599,12 +718,12 @@ func TestFlatProjectRejectsTopLevelModelSQLAlias(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -616,7 +735,7 @@ spec:
   fields: {order_id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "spec.sql: field not allowed") {
+	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "missing property 'definition'") {
 		t.Fatalf("LoadProject() accepted removed top-level Model sql alias: %v", err)
 	}
 }
@@ -626,17 +745,17 @@ func TestFlatProjectPreservesStableIDForPunctuatedSourceName(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/foo-bar.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:foo-bar, name: foo-bar}
-spec: {connection: warehouse, format: csv, path: foo-bar.csv}
+spec: {connection: warehouse, location: {type: path, path: foo-bar.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders}
-spec: {source: foo-bar, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: foo-bar}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	project, err := LoadProject(projectPath)
@@ -647,7 +766,7 @@ spec: {source: foo-bar, entities: {id: {type: primary, fields: [id]}}, grain: {e
 	if !ok || resource.Kind != projectgraph.KindSource || resource.Name != "foo-bar" {
 		t.Fatalf("source graph resource = %#v, present=%v; want source:foo-bar/foo-bar", resource, ok)
 	}
-	if got := project.Manifest.Models["model:orders"].Source; got != "source:foo-bar" {
+	if got := project.Manifest.Models["model:orders"].Execution.Source; got != "source:foo-bar" {
 		t.Fatalf("manifest model source = %q, want stable source ID", got)
 	}
 }
@@ -657,22 +776,22 @@ func TestFlatProjectRejectsCollidingSourceAliases(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/foo-bar.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:foo-bar, name: foo-bar}
-spec: {connection: warehouse, format: csv, path: foo-bar.csv}
+spec: {connection: warehouse, location: {type: path, path: foo-bar.csv, format: csv}}
 `,
 		"sources/foo_bar.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:foo_bar, name: foo_bar}
-spec: {connection: warehouse, format: csv, path: foo_bar.csv}
+spec: {connection: warehouse, location: {type: path, path: foo_bar.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders}
-spec: {source: foo-bar, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: foo-bar}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	_, err := LoadProject(projectPath)
@@ -743,21 +862,23 @@ spec:
 	write("connections/warehouse.yaml", `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: conn:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `)
 	write("sources/orders.yaml", `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
 spec:
   connection: warehouse
-  format: csv
-  path: orders.csv
+  location:
+    type: path
+    path: orders.csv
+    format: csv
 `)
 	write("models/orders.yaml", `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
-  source: orders
+  definition: {type: direct, source: orders}
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
   fields: {order_id: {datatype: String}}
@@ -778,13 +899,12 @@ spec: {semanticModel: sales}
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard}
 spec:
+  title: Sales Dashboard
   semanticModel: sales
-  filters: []
   visuals:
     order_count:
       type: kpi
-      query: {type: aggregate, dimensions: [], metrics: [order_count]}
-      presentation: {type: kpi}
+      query: {metrics: {order_count: null}}
   pages: [{id: overview, title: Overview, components: []}]
 `)
 
@@ -879,9 +999,9 @@ spec:
   dashboards: {include: []}
   access: {include: []}
 `)
-	write("connections/c.yaml", "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:id, name: warehouse}\nspec: {kind: managed}\n")
-	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, format: csv, path: orders.csv}\n")
-	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {source: source:id, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n")
+	write("connections/c.yaml", "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:id, name: warehouse}\nspec: {type: managed}\n")
+	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n")
+	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {definition: {type: direct, source: source:id}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n")
 	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {datasets: {orders: {model: orders_model}}, metrics: {count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}\n")
 	graph, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
 	if err != nil {
@@ -897,18 +1017,18 @@ func TestFlatProjectAllowsTwoSemanticConsumersOfOneModel(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
-  source: orders
+  definition: {type: direct, source: orders}
   entities: {id: {type: primary, fields: [id]}}
   grain: {entity: id}
   fields: {id: {datatype: String}}
@@ -977,12 +1097,12 @@ func TestFlatProjectRejectsDuplicateStableIDsAcrossKinds(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: resource:duplicate, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: resource:duplicate, name: orders}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	_, err := LoadProject(projectPath)
@@ -1000,17 +1120,17 @@ func TestFlatProjectWrongReferenceReportsResourcePathAndField(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1033,17 +1153,17 @@ func TestFlatProjectManifestIsCheckoutIndependentAndCanonical(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1088,7 +1208,7 @@ func TestLoadProjectRejectsSymlinkEscapingInclude(t *testing.T) {
 	if err := os.WriteFile(outsideConnection, []byte(`apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1138,7 +1258,7 @@ func TestLoadProjectDeduplicatesOverlappingIncludes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte(`apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1180,16 +1300,16 @@ func TestFlatProjectRejectsTargetOwnedConnectionCredentials(t *testing.T) {
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
 spec:
-  kind: managed
+  type: managed
   credentials: {provider: env, secret: LEAPVIEW_WAREHOUSE_CREDENTIALS}
 `,
 	})
 	_, err := LoadProject(projectPath)
-	if err == nil || !strings.Contains(err.Error(), "target-owned") {
-		t.Fatalf("LoadProject() error = %v, want target-owned credential diagnostic", err)
+	if err == nil || !strings.Contains(err.Error(), "schema.generated") {
+		t.Fatalf("LoadProject() error = %v, want generated schema rejection", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
-	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" || diagnostics[0].FieldPath != "spec" {
+	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" || !strings.HasPrefix(diagnostics[0].FieldPath, "spec") {
 		t.Fatalf("diagnostics = %#v, want connection resource and spec", diagnostics)
 	}
 }
@@ -1199,26 +1319,25 @@ func TestFlatProjectRejectsHiddenSQLImportsAndUnsafeIncludes(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
-  sources: [orders]
-  transform: {sql: 'SELECT * FROM raw.orders'}
+  definition: {type: sql, sql: 'SELECT * FROM raw.orders'}
   entities: {id: {type: primary, fields: [id]}}
   grain: {entity: id}
   fields: {id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "raw.<name> is internal") {
-		t.Fatalf("LoadProject() accepted hidden raw import: %v", err)
+	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "raw namespace relations are not allowed") {
+		t.Fatalf("LoadProject() accepted hidden raw import or returned the wrong AST diagnostic: %v", err)
 	}
 	projectBytes, err := os.ReadFile(projectPath)
 	if err != nil {
@@ -1239,17 +1358,17 @@ func TestFlatProjectRefreshPipelinesValidateAndNormalize(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1304,10 +1423,10 @@ func TestFlatProjectRejectsInlineConnectionAuthAndSourceIdentity(t *testing.T) {
 		spec string
 		want string
 	}{
-		"auth": {spec: `spec: {kind: managed, auth: {token: secret}}
-`, want: "field not allowed"},
-		"source identity": {spec: `spec: {kind: postgres, username: privileged_runtime}
-`, want: "target-owned"},
+		"auth": {spec: `spec: {type: managed, auth: {token: secret}}
+`, want: "schema.generated"},
+		"source identity": {spec: `spec: {type: postgres, username: privileged_runtime}
+`, want: "schema.generated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			files := map[string]string{"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\n" + tc.spec}
@@ -1328,17 +1447,17 @@ func TestFlatProjectRejectsSQLSourceMismatchAndModelCycles(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"sources/customers.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:customers, name: customers}
-spec: {connection: warehouse, format: csv, path: customers.csv}
+spec: {connection: warehouse, location: {type: path, path: customers.csv, format: csv}}
 `,
 	}
 	t.Run("source mismatch", func(t *testing.T) {
@@ -1346,11 +1465,18 @@ spec: {connection: warehouse, format: csv, path: customers.csv}
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.customers'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
-		_, err := LoadProject(writeFlatProjectFixture(t, files))
-		if err == nil || !strings.Contains(err.Error(), "SQL source references") {
-			t.Fatalf("LoadProject() error = %v, want SQL source mismatch", err)
+		project, err := LoadProject(writeFlatProjectFixture(t, files))
+		if err != nil {
+			t.Fatalf("LoadProject() source-list mismatch: %v", err)
+		}
+		table := project.Models["orders_model"]
+		if !reflect.DeepEqual(table.SourceDependencies, []string{"customers"}) {
+			t.Fatalf("compiler-derived source dependencies = %#v, want [customers]", table.SourceDependencies)
+		}
+		if table.SQLAnalysisEvidence == nil || !table.SQLAnalysisEvidence.Validated || !reflect.DeepEqual(table.SQLAnalysisEvidence.SourceRefs, []string{"customers"}) {
+			t.Fatalf("persisted SQL analysis evidence = %#v, want customers lineage", table.SQLAnalysisEvidence)
 		}
 	})
 	t.Run("model cycle", func(t *testing.T) {
@@ -1358,12 +1484,12 @@ spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, en
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.orders JOIN model.customers_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.orders JOIN model.customers_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
 		files["models/customers.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:customers, name: customers_model}
-spec: {sources: [customers], transform: {sql: 'SELECT * FROM source.customers JOIN model.orders_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.customers JOIN model.orders_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
 		_, err := LoadProject(writeFlatProjectFixture(t, files))
 		if err == nil || !strings.Contains(err.Error(), "cycle") {
@@ -1378,17 +1504,17 @@ func TestFlatProjectDashboardAdapterMatchesDirectCompilation(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1399,9 +1525,9 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: 
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
+  title: Sales
   semanticModel: sales
-  filters: []
-  visuals: {order_count: {type: kpi, query: {type: aggregate, dimensions: [], metrics: [order_count]}, presentation: {type: kpi}}}
+  visuals: {order_count: {type: kpi, query: {metrics: {order_count: null}}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
@@ -1411,8 +1537,8 @@ spec:
 	}
 	authored := *project.Dashboards["sales_dashboard"]
 	model := project.Manifest.SemanticModels["semantic:sales"]
-	authored.Spec.SemanticModel = "semantic:sales"
-	direct, err := dashboardcompiler.CompileDocument(authored, map[string]*semanticmodel.Model{"semantic:sales": model})
+	authored.SemanticModel = "semantic:sales"
+	direct, err := dashboardcompiler.Compile(authored, map[string]*semanticmodel.Model{"semantic:sales": model})
 	if err != nil {
 		t.Fatalf("direct dashboard compilation error = %v", err)
 	}
@@ -1433,17 +1559,17 @@ func TestFlatProjectPublicationValidationAndCanonicalization(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1454,9 +1580,9 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: 
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
+  title: Sales
   semanticModel: sales
-  filters: []
-  visuals: {order_count: {type: kpi, query: {type: aggregate, dimensions: [], metrics: [order_count]}, presentation: {type: kpi}}}
+  visuals: {order_count: {type: kpi, query: {metrics: {order_count: null}}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 		"publications/website.yaml": `apiVersion: leapview.dev/v1

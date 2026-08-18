@@ -632,7 +632,7 @@ func previewModel() *semanticmodel.Model {
 			"orders": {
 				ModelName:   "orders",
 				GrainEntity: "status",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"status": {Type: "primary", Fields: []string{"status"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
@@ -649,7 +649,7 @@ func addCustomersTable(model *semanticmodel.Model) {
 	model.Tables["customers"] = semanticmodel.Table{
 		ModelName:   "customers",
 		GrainEntity: "customer_id",
-		Entities: map[string]semanticmodel.ModelEntitySpec{
+		Entities: map[string]semanticmodel.EntityDefinition{
 			"customer_id": {Type: "primary", Fields: []string{"customer_id"}},
 		},
 		Dimensions: map[string]semanticmodel.MetricDimension{

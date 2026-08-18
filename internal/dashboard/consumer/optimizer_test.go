@@ -176,7 +176,7 @@ func optimizerTestModel() *semanticmodel.Model {
 			"orders": {
 				ModelName:   "orders",
 				GrainEntity: "customer",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"customer": {Type: "primary", Fields: []string{"customer"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
@@ -189,7 +189,7 @@ func optimizerTestModel() *semanticmodel.Model {
 			"tags": {
 				ModelName:   "tags",
 				GrainEntity: "customer",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"customer": {Type: "primary", Fields: []string{"customer"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{

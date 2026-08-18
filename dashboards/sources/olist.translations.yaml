@@ -6,7 +6,12 @@ metadata:
   displayName: Product Category Translations
 spec:
   connection: olist
-  path: product_category_name_translation.csv
-  fields:
-    product_category_name: {type: string, description: Product category name in Portuguese.}
-    product_category_name_english: {type: string, description: English product category name.}
+  location:
+    type: path
+    path: product_category_name_translation.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      product_category_name: {datatype: String, description: Product category name in Portuguese.}
+      product_category_name_english: {datatype: String, description: English product category name.}

@@ -6,10 +6,6 @@ metadata:
   displayName: Seller-to-Customer Delivery Routes
   description: Aggregated real Olist delivery corridors represented as ordered origin and destination vertices.
 spec:
-  description: Two vertices per actual order-seller delivery with seller-allocated revenue.
-  sources:
-  - olist.order_items
-  - olist.sellers
   fields:
     vertex_id:
       datatype: String
@@ -47,7 +43,8 @@ spec:
       datatype: Decimal
       label: Route revenue
       description: Order revenue allocated evenly across participating sellers
-  transform:
+  definition:
+    type: sql
     sql: |
       WITH order_sellers AS (
         SELECT DISTINCT order_id, seller_id

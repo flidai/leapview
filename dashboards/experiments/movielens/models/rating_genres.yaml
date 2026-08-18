@@ -63,7 +63,8 @@ spec:
       datatype: String
       label: Release decade
       description: Movie release decade.
-  transform:
+  definition:
+    type: sql
     sql: |
       WITH genre_rows AS (
         SELECT 'Action' AS genre UNION ALL

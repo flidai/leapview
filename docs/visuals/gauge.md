@@ -16,12 +16,12 @@ visuals:
     title: Average customer review
     type: gauge
     presentation:
-      minimum: 0
-      maximum: 5
-      target: 4.5
+      type: polar
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        review_score: null
+      - review_score
 ```
 
 ## Large-volume domain
@@ -36,12 +36,12 @@ visuals:
     title: Total orders gauge
     type: gauge
     presentation:
-      minimum: 0
-      maximum: 120000
-      target: 100000
+      type: polar
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        order_count: null
+      - order_count
 ```
 
 ## Threshold bands
@@ -56,18 +56,10 @@ visuals:
     title: Review gauge with thresholds
     type: gauge
     presentation:
-      minimum: 0
-      maximum: 5
-      target: 4.5
-      progress_width: 16
-      thresholds:
-        - value: 3
-          tone: danger
-        - value: 4
-          tone: warning
-        - value: 5
-          tone: success
+      type: polar
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        review_score: null
+      - review_score
 ```

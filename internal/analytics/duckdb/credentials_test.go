@@ -57,3 +57,13 @@ func TestDefaultSourceRuntimeUsesFailClosedNonSecretResolver(t *testing.T) {
 		t.Fatalf("default resolver = %T", runtime.resolver)
 	}
 }
+
+func TestNonSecretCredentialResolverLeavesPublicConnectionCredentialFree(t *testing.T) {
+	auth, err := (NonSecretCredentialResolver{}).Resolve(context.Background(), "public_files", semanticmodel.Connection{
+		Kind: "s3", Access: semanticmodel.ConnectionAccessPublic,
+	})
+	require.NoError(t, err)
+	if len(auth) != 0 {
+		t.Fatalf("public resolver returned auth keys: %#v", auth)
+	}
+}

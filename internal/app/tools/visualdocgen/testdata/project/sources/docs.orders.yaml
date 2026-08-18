@@ -6,14 +6,5 @@ metadata:
   displayName: Documentation orders
 spec:
   connection: docs
-  path: orders.csv
-  fields:
-    order_id: {type: string}
-    purchase_month: {type: string}
-    status: {type: string}
-    category: {type: string}
-    state: {type: string}
-    revenue: {type: number}
-    review_score: {type: number}
-    delivery_days: {type: number}
-    delivery_bucket: {type: string}
+  location: {type: path, path: orders.csv, format: csv, options: {header: true}}
+  schema: {mode: inferred}

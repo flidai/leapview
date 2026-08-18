@@ -6,9 +6,6 @@ metadata:
   displayName: Movies Dimension
   description: Movie dimension with release year, decade, genres, and external identifiers.
 spec:
-  sources:
-  - movielens.movies
-  - movielens.links
   fields:
     movie_id:
       datatype: Integer
@@ -42,7 +39,8 @@ spec:
       datatype: Integer
       label: TMDb ID
       description: TMDb movie identifier.
-  transform:
+  definition:
+    type: sql
     sql: |
       WITH parsed AS (
         SELECT

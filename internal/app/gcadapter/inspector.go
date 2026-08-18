@@ -100,11 +100,7 @@ func (i Inspector) Inspect(ctx context.Context, root deployment.DeliveryRoot) (g
 	if err := policy.ValidateZero(); err != nil {
 		return gc.CatalogReachability{}, err
 	}
-	inline, err := env.LegacyInlineTables(ctx)
-	if err != nil {
-		return gc.CatalogReachability{}, err
-	}
-	if err := ducklake.ValidateNoLiveInlineData(inline); err != nil {
+	if err := env.ValidateNoLiveInlineData(ctx); err != nil {
 		return gc.CatalogReachability{}, err
 	}
 	snapshots, err := env.Snapshots(ctx)

@@ -12,8 +12,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
+	"cuelang.org/go/cue"
+	cuecontext "cuelang.org/go/cue/cuecontext"
+	cueerrors "cuelang.org/go/cue/errors"
+	cuejsonschema "cuelang.org/go/encoding/jsonschema"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	jsonschemakind "github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"gopkg.in/yaml.v3"
 )
 
@@ -81,6 +89,26 @@ func DecodeResource(kind Kind, filename string, content []byte, destination any)
 	if value.Kind() != reflect.Pointer || value.IsNil() {
 		return resourceDiagnostic(filename, nil, "schema.decode", "destination must be a non-nil pointer")
 	}
+	// Generated resource roots are selected by a compile-time type switch. This
+	// keeps the generated DTOs as the only public contract and prevents a
+	// caller from decoding one resource kind into another kind's envelope.
+	switch destination := destination.(type) {
+	case *projectcontracts.Connection:
+		if kind != KindConnection {
+			return resourceDiagnostic(filename, nil, "schema.decode", "Connection destination requires kind connection")
+		}
+		return decodeGeneratedResource(kind, filename, content, destination)
+	case *projectcontracts.Source:
+		if kind != KindSource {
+			return resourceDiagnostic(filename, nil, "schema.decode", "Source destination requires kind source")
+		}
+		return decodeGeneratedResource(kind, filename, content, destination)
+	case *projectcontracts.Model:
+		if kind != KindModel {
+			return resourceDiagnostic(filename, nil, "schema.decode", "Model destination requires kind model")
+		}
+		return decodeGeneratedResource(kind, filename, content, destination)
+	}
 	normalized, err := NormalizeResource(kind, filename, content)
 	if err != nil {
 		return err
@@ -89,6 +117,304 @@ func DecodeResource(kind Kind, filename string, content []byte, destination any)
 		return resourceDiagnostic(filename, nil, "schema.decode", err.Error())
 	}
 	return nil
+}
+
+func decodeGeneratedResource(kind Kind, filename string, content []byte, destination any) error {
+	if kind != KindConnection && kind != KindSource && kind != KindModel {
+		return resourceDiagnostic(filename, nil, "schema.decode", "generated decoding is only available for Connection, Source, and Model")
+	}
+	normalized, err := generatedResourceJSON(kind, filename, content)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(normalized, destination); err != nil {
+		return resourceDiagnostic(filename, nil, "schema.decode", err.Error())
+	}
+	return nil
+}
+
+// validateGeneratedResource validates a generated Connection, Source, or Model
+// envelope without decoding into a destination. It is deliberately shared by
+// ValidateBytes and DecodeResource so direct schema callers cannot bypass the
+// generated tagged-union contract.
+func validateGeneratedResource(kind Kind, filename string, content []byte) error {
+	_, err := generatedResourceJSON(kind, filename, content)
+	return err
+}
+
+func generatedResourceJSON(kind Kind, filename string, content []byte) ([]byte, error) {
+	root, err := parseResourceDocument(filename, content)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResourceNode(filename, root); err != nil {
+		return nil, err
+	}
+	if err := checkJSONNumbers(filename, content, root); err != nil {
+		return nil, err
+	}
+	normalizedValue, err := normalizeResourceNode(filename, root)
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := json.Marshal(normalizedValue)
+	if err != nil {
+		return nil, resourceDiagnostic(filename, root, "schema.normalize", err.Error())
+	}
+	if err := validateGeneratedJSON(kind, filename, root, normalized); err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(normalized, &envelope); err != nil {
+		return nil, resourceDiagnostic(filename, root, "schema.decode", err.Error())
+	}
+	wantKind := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model"}[kind]
+	if envelope.Kind != wantKind {
+		return nil, resourceDiagnostic(filename, root, "schema.kind", fmt.Sprintf("resource kind %q does not match requested %s", envelope.Kind, wantKind))
+	}
+	return normalized, nil
+}
+
+const sourceFreshnessConstraint = `spec: {freshness?: {matchN(>=1, [{warningAfter!: _}, {errorAfter!: _}])}}`
+
+var (
+	generatedSchemaOnce sync.Once
+	generatedSchemas    map[Kind]*jsonschema.Schema
+	generatedSchemaErr  error
+)
+
+func compiledGeneratedSchema(kind Kind) (*jsonschema.Schema, error) {
+	generatedSchemaOnce.Do(func() {
+		generatedSchemas = map[Kind]*jsonschema.Schema{}
+		for _, candidate := range []Kind{KindConnection, KindSource, KindModel} {
+			content, err := generatedJSONSchema(candidate)
+			if err != nil {
+				generatedSchemaErr = err
+				return
+			}
+			var schemaDocument any
+			if err := json.Unmarshal(content, &schemaDocument); err != nil {
+				generatedSchemaErr = fmt.Errorf("decode generated %s schema: %w", candidate, err)
+				return
+			}
+			compiler := jsonschema.NewCompiler()
+			schemaURL := "https://leapview.dev/schemas/" + strings.ToLower(string(candidate)) + ".schema.json"
+			if err := compiler.AddResource(schemaURL, schemaDocument); err != nil {
+				generatedSchemaErr = fmt.Errorf("register generated %s schema: %w", candidate, err)
+				return
+			}
+			compiled, err := compiler.Compile(schemaURL)
+			if err != nil {
+				generatedSchemaErr = err
+				return
+			}
+			generatedSchemas[candidate] = compiled
+		}
+	})
+	return generatedSchemas[kind], generatedSchemaErr
+}
+
+func validateGeneratedJSON(kind Kind, filename string, root *yaml.Node, content []byte) error {
+	schema, err := compiledGeneratedSchema(kind)
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", err.Error())
+	}
+	value, err := decodeJSONForCUE(content)
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", "decode normalized generated resource: "+err.Error())
+	}
+	if err := schema.Validate(value); err != nil {
+		return generatedValidationDiagnostic(filename, root, err)
+	}
+	if err := validateGeneratedCUEAt(kind, filename, root, value); err != nil {
+		return err
+	}
+	return nil
+}
+
+// decodeJSONForCUE preserves integral JSON numbers as Go integers before they
+// are encoded into CUE. encoding/json's default float64 representation would
+// otherwise make values such as freshness durations fail an imported integer
+// schema even though the normalized JSON passed JSON Schema validation.
+func decodeJSONForCUE(content []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return cueJSONValue(value), nil
+}
+
+func cueJSONValue(value any) any {
+	switch value := value.(type) {
+	case json.Number:
+		if integer, err := strconv.ParseInt(string(value), 10, 64); err == nil {
+			return integer
+		}
+		if decimal, err := strconv.ParseFloat(string(value), 64); err == nil {
+			if decimal == math.Trunc(decimal) && decimal <= math.MaxInt64 && decimal >= math.MinInt64 {
+				return int64(decimal)
+			}
+			return decimal
+		}
+		return string(value)
+	case []any:
+		for index := range value {
+			value[index] = cueJSONValue(value[index])
+		}
+	case map[string]any:
+		for key, nested := range value {
+			value[key] = cueJSONValue(nested)
+		}
+	}
+	return value
+}
+
+// validateGeneratedCUE confirms the generated JSON Schema through CUE's
+// standards-backed importer. JSON Schema remains the structural source of
+// truth; CUE contextual rules consume this imported value rather than a
+// parallel hand-authored Connection/Source/Model shape.
+func validateGeneratedCUE(kind Kind, value any) error {
+	return validateGeneratedCUEAt(kind, "", nil, value)
+}
+
+func validateGeneratedCUEAt(kind Kind, filename string, root *yaml.Node, value any) error {
+	ctx := cuecontext.New()
+	schemaJSON, err := generatedJSONSchema(kind)
+	if err != nil {
+		return err
+	}
+	schemaValue := ctx.CompileBytes(schemaJSON, cue.Filename("generated-"+strings.ToLower(string(kind))+".schema.json"))
+	if err := schemaValue.Err(); err != nil {
+		return err
+	}
+	file, err := cuejsonschema.Extract(schemaValue, &cuejsonschema.Config{ID: "https://leapview.dev/schemas/" + strings.ToLower(string(kind)) + ".schema.json"})
+	if err != nil {
+		return err
+	}
+	imported := ctx.BuildFile(file)
+	if err := imported.Err(); err != nil {
+		return err
+	}
+	instance := ctx.Encode(value)
+	constraint := ctx.CompileString("{}")
+	if kind == KindSource && instance.LookupPath(cue.ParsePath("spec.freshness")).Exists() {
+		// Freshness is the only contextual Source rule. Its structural fields
+		// come from the generated schema; this static constraint is applied only
+		// when the generated instance actually contains freshness.
+		constraint = ctx.CompileString(sourceFreshnessConstraint)
+	}
+	if err := constraint.Err(); err != nil {
+		return err
+	}
+	if err := imported.Unify(constraint).Unify(instance).Validate(cue.Final()); err != nil {
+		if filename != "" && root != nil {
+			return generatedCUEValidationDiagnostic(filename, root, err)
+		}
+		return err
+	}
+	return nil
+}
+
+func generatedCUEValidationDiagnostic(filename string, root *yaml.Node, err error) error {
+	items := cueerrors.Errors(err)
+	if len(items) == 0 {
+		return resourceDiagnostic(filename, root, "schema.generated", "generated JSON Schema/CUE confirmation failed: "+err.Error())
+	}
+	for _, item := range items {
+		path := item.Path()
+		if len(path) == 0 {
+			continue
+		}
+		if len(path) >= 2 && path[0] == "spec" && path[1] == "freshness" {
+			path = []string{"spec", "freshness"}
+		}
+		node := yamlNodeAtPath(root, path)
+		if node == nil {
+			node = root
+		}
+		return &Error{Diagnostics: []Diagnostic{{
+			File: filename, Line: node.Line, Column: node.Column, Severity: SeverityError,
+			Code: "schema.generated", FieldPath: strings.Join(path, "."), Message: item.Error(),
+		}}}
+	}
+	return resourceDiagnostic(filename, root, "schema.generated", "generated JSON Schema/CUE confirmation failed: "+err.Error())
+}
+
+// generatedValidationDiagnostic keeps generated-schema failures actionable in
+// authored YAML. The validator reports a JSON instance path; map that path
+// back to the corresponding YAML node so callers receive stable line/column
+// and field-path metadata instead of a root-only diagnostic.
+func generatedValidationDiagnostic(filename string, root *yaml.Node, err error) error {
+	var validationErr *jsonschema.ValidationError
+	if !errors.As(err, &validationErr) {
+		return resourceDiagnostic(filename, root, "schema.generated", err.Error())
+	}
+	leaf := validationErr
+	for len(leaf.Causes) > 0 {
+		leaf = leaf.Causes[0]
+	}
+	path := append([]string(nil), leaf.InstanceLocation...)
+	// Preserve the generated-schema error code for compatibility; FieldPath and
+	// source coordinates carry the actionable detail for callers.
+	code := "schema.generated"
+	if _, ok := leaf.ErrorKind.(*jsonschemakind.Required); ok {
+		if required, ok := leaf.ErrorKind.(*jsonschemakind.Required); ok && len(required.Missing) > 0 {
+			path = append(path, required.Missing[0])
+		}
+	} else if additional, ok := leaf.ErrorKind.(*jsonschemakind.AdditionalProperties); ok {
+		if len(additional.Properties) > 0 {
+			path = append(path, additional.Properties[0])
+		}
+	}
+	node := yamlNodeAtPath(root, path)
+	if node == nil {
+		node = root
+	}
+	diagnostic := Diagnostic{File: filename, Line: node.Line, Column: node.Column, Severity: SeverityError, Code: code, FieldPath: strings.Join(path, "."), Message: err.Error()}
+	return &Error{Diagnostics: []Diagnostic{diagnostic}}
+}
+
+func yamlNodeAtPath(root *yaml.Node, path []string) *yaml.Node {
+	node := root
+	for _, segment := range path {
+		if node == nil {
+			return nil
+		}
+		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+			node = node.Content[0]
+		}
+		switch node.Kind {
+		case yaml.MappingNode:
+			found := false
+			for index := 0; index+1 < len(node.Content); index += 2 {
+				key, value := node.Content[index], node.Content[index+1]
+				if key.Value == segment {
+					node = value
+					found = true
+					break
+				}
+			}
+			if !found {
+				return node
+			}
+		case yaml.SequenceNode:
+			index, err := strconv.Atoi(segment)
+			if err != nil || index < 0 || index >= len(node.Content) {
+				return node
+			}
+			node = node.Content[index]
+		default:
+			return node
+		}
+	}
+	if node != nil && node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
+		return node.Content[0]
+	}
+	return node
 }
 
 func parseResourceDocument(filename string, content []byte) (*yaml.Node, error) {

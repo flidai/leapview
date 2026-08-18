@@ -9,23 +9,16 @@ visuals:
   orders_table:
     type: table
     title: Orders
-    cardinality: exact
-    default_sort:
-      key: revenue
-      direction: desc
-    columns:
-      - key: order_id
-        label: Order
-      - key: status
-        label: Status
-      - key: revenue
-        label: Revenue
-        align: right
-        format: currency
     query:
+      type: records
       dataset: orders
       fields:
-        - orders.order_id
-        - orders.status
-        - orders.revenue
+      - order_id
+      - status
+      - revenue
+    presentation:
+      type: table
+      rowHeight: 32
+      showHeader: true
+      striped: false
 ```

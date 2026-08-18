@@ -2,14 +2,17 @@ package configschema
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 )
@@ -99,7 +102,9 @@ metadata: {id: model:sales_orders, name: sales_orders}
 aiContext:
   instructions: Use governed order identity.
 spec:
-  source: source:orders
+  definition:
+    type: direct
+    source: source:orders
   entities:
     order: {type: primary, fields: [order_id]}
     customer: {type: foreign, fields: [customer_id]}
@@ -212,7 +217,22 @@ spec:
 	if err == nil {
 		t.Fatal("Model accepted removed top-level spec.sql alias")
 	}
-	assertDiagnostic(t, err, "schema.unknown_field", "sql")
+	assertDiagnostic(t, err, "schema.generated", "definition")
+}
+
+func TestValidateBytesRejectsLegacyModelValidation(t *testing.T) {
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  sources: [source:orders]
+  fields:
+    order_id: {datatype: String}
+`))
+	if err == nil {
+		t.Fatal("ValidateBytes accepted legacy Model source list")
+	}
 }
 
 func TestCanonicalDatasetModelUsesAuthoringName(t *testing.T) {
@@ -455,12 +475,12 @@ metadata:
   id: connection:files
   name: files
 spec:
-  kind: local
+  type: local
 `))
-	assertDiagnostic(t, err, "schema.enum", "local")
+	assertDiagnosticMessage(t, err, "schema.generated", "value must be 'managed'")
 }
 
-func TestValidateBytesRejectsInvalidIdentifierKey(t *testing.T) {
+func TestValidateBytesRejectsGeneratedInvalidFieldName(t *testing.T) {
 	err := ValidateBytes(KindModel, "orders.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Model
@@ -468,6 +488,7 @@ metadata:
   id: model:orders
   name: orders
 spec:
+  definition: {type: direct, source: orders}
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
   fields:
@@ -476,7 +497,208 @@ spec:
     order_id:
       datatype: String
 `))
-	assertDiagnostic(t, err, "schema.unknown_field", "invalid-name")
+	if err == nil {
+		t.Fatal("generated Model schema accepted invalid field key")
+	}
+}
+
+func TestValidateBytesRejectsGeneratedMetadataAndMapViolations(t *testing.T) {
+	cases := []struct {
+		name string
+		kind Kind
+		yaml string
+	}{
+		{
+			name: "resource id pattern",
+			kind: KindModel,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: "model:invalid id", name: orders}
+spec:
+  definition: {type: direct, source: orders}
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`,
+		},
+		{
+			name: "source schema map key",
+			kind: KindSource,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: managed:local
+  location: {type: path, path: orders.csv, format: csv}
+  schema:
+    mode: strict
+    fields: {"invalid-name": {datatype: String}}
+`,
+		},
+		{
+			name: "freshness duration lower bound",
+			kind: KindSource,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: managed:local
+  location: {type: path, path: orders.csv, format: csv}
+  freshness:
+    basis: field
+    field: order_id
+    warningAfter: {amount: 0, unit: hour}
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateBytes(tc.kind, tc.name+".yaml", []byte(tc.yaml)); err == nil {
+				t.Fatal("ValidateBytes accepted generated contract violation")
+			}
+		})
+	}
+}
+
+func TestGeneratedSchemaDiagnosticsPointToField(t *testing.T) {
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  definition: {type: direct, source: orders}
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+  unexpected: true
+`))
+	diagnostics := Diagnostics(err)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one generated-schema diagnostic", diagnostics)
+	}
+	diagnostic := diagnostics[0]
+	if diagnostic.FieldPath != "spec.unexpected" || diagnostic.Line == 0 || diagnostic.Column == 0 {
+		t.Fatalf("diagnostic = %#v, want spec.unexpected with source position", diagnostic)
+	}
+}
+
+func TestGeneratedSchemaCUEImportFailsClosedForInvalidValue(t *testing.T) {
+	if err := validateGeneratedCUE(KindModel, map[string]any{"kind": "Model"}); err == nil {
+		t.Fatal("generated CUE import accepted an invalid Model value")
+	}
+}
+
+func TestGeneratedPerKindSchemaPreservesAPIGenRootStructure(t *testing.T) {
+	var source map[string]any
+	if err := json.Unmarshal(projectcontracts.DataResourcesSchema, &source); err != nil {
+		t.Fatal(err)
+	}
+	definitions, ok := source["$defs"].(map[string]any)
+	if !ok {
+		t.Fatal("APIGen schema has no $defs")
+	}
+	for _, test := range []struct {
+		kind Kind
+		root string
+	}{
+		{KindConnection, "Connection"}, {KindSource, "Source"}, {KindModel, "Model"},
+	} {
+		t.Run(string(test.kind), func(t *testing.T) {
+			want, ok := definitions[test.root].(map[string]any)
+			if !ok {
+				t.Fatalf("APIGen root %q missing", test.root)
+			}
+			encoded, err := generatedJSONSchema(test.kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(encoded, &got); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"$id", "title", "description", "x-apigen-contracts"} {
+				delete(got, key)
+			}
+			delete(got, "$defs")
+			delete(got, "$schema")
+			want = cloneJSONMap(want)
+			normalizeKindConstraint(want)
+			normalizeKindConstraint(got)
+			if !reflect.DeepEqual(want, got) {
+				t.Fatalf("generated %s root changed APIGen structure\nwant=%s\ngot=%s", test.root, mustJSON(t, want), mustJSON(t, got))
+			}
+		})
+	}
+}
+
+func TestSourceFreshnessOverlayIsContextOnly(t *testing.T) {
+	for _, forbidden := range []string{"basis", "field", "revision", "close"} {
+		if strings.Contains(strings.ToLower(sourceFreshnessConstraint), forbidden) {
+			t.Fatalf("freshness overlay contains structural vocabulary %q: %s", forbidden, sourceFreshnessConstraint)
+		}
+	}
+	if !strings.Contains(sourceFreshnessConstraint, "warningAfter!") || !strings.Contains(sourceFreshnessConstraint, "errorAfter!") {
+		t.Fatalf("freshness overlay does not express threshold disjunction: %s", sourceFreshnessConstraint)
+	}
+}
+
+func TestSourceFreshnessDiagnosticPointsToContextualField(t *testing.T) {
+	err := ValidateBytes(KindSource, "source.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: files
+  location: {type: path, path: orders.csv, format: csv}
+  freshness:
+    basis: field
+    field: updated_at
+`))
+	if err == nil {
+		t.Fatal("source freshness without thresholds was accepted")
+	}
+	diagnostics := Diagnostics(err)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one contextual freshness diagnostic", diagnostics)
+	}
+	diagnostic := diagnostics[0]
+	if diagnostic.FieldPath != "spec.freshness" || diagnostic.Line == 0 || diagnostic.Column == 0 {
+		t.Fatalf("diagnostic = %#v, want spec.freshness with source position", diagnostic)
+	}
+}
+
+func cloneJSONMap(value map[string]any) map[string]any {
+	encoded, _ := json.Marshal(value)
+	var clone map[string]any
+	_ = json.Unmarshal(encoded, &clone)
+	return clone
+}
+
+func normalizeKindConstraint(schema map[string]any) {
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return
+	}
+	kind, ok := properties["kind"].(map[string]any)
+	if !ok {
+		return
+	}
+	if values, ok := kind["enum"].([]any); ok && len(values) == 1 {
+		kind["const"] = values[0]
+		delete(kind, "enum")
+	}
+}
+
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 func TestValidateBytesRejectsMissingRequiredRootFields(t *testing.T) {
@@ -727,7 +949,7 @@ metadata:
   id: connection:files
   name: files
 spec:
-  kind: managed
+  type: managed
 `
 	if err := ValidateBytes(KindConnection, "connection.yaml", []byte(base)); err != nil {
 		t.Fatalf("valid metadata rejected: %v", err)

@@ -143,6 +143,7 @@ type CandidateRuntimeContext struct {
 	AuthorizationFingerprint string
 	BindingFingerprint       string
 	CompatibilityFingerprint string
+	GateEvidenceDigest       string
 }
 
 type ManagerOptions struct {

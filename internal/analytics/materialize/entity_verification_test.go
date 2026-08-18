@@ -28,7 +28,7 @@ func entityVerificationModel() *semanticmodel.Model {
 	return &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 		"orders": {
 			ModelName: "orders",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"order":    {Type: "primary", Fields: []string{"order_id", "line_no"}},
 				"external": {Type: "unique", Fields: []string{"line_no"}},
 			},

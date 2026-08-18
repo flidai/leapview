@@ -17,14 +17,17 @@ visuals:
     description: Ranks product categories by revenue.
     type: bar
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 10
+    presentation:
+      type: cartesian
 ```
 
 ## Alternate metric
@@ -40,13 +43,16 @@ visuals:
     description: Compares order volume across delivery-speed buckets.
     type: bar
     query:
+      type: aggregate
       dimensions:
-        delivery_bucket: orders.delivery_bucket
+      - delivery_bucket
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: delivery_bucket
-          direction: asc
+      - field: delivery_bucket
+        direction: asc
+    presentation:
+      type: cartesian
 ```
 
 ## Stacked series
@@ -61,17 +67,15 @@ visuals:
     title: Category revenue by status
     type: bar
     presentation:
-      stacked: true
+      type: cartesian
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-      series:
-        field: orders.status
-        alias: status
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 60
 ```

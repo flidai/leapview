@@ -52,7 +52,7 @@ func (source activeConnectionEvidenceSource) BindingEvidence(
 		result[index] = analyticsmodule.ActiveRuntimeBindingEvidence{
 			BindingID: bindingID, ConnectionID: connectionID,
 			ConnectorKind: evidence.ConnectorKind, Revision: evidence.Revision,
-			ValidatedVersion: evidence.ValidatedVersion, EndpointConfigHash: evidence.EndpointConfigHash,
+			ValidatedVersion: evidence.ValidatedVersion, EndpointConfigHash: evidence.EndpointConfigHash, Access: evidence.Access,
 		}
 	}
 	return result, nil

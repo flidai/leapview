@@ -17,16 +17,21 @@ visuals:
     type: line
     presentation:
       type: cartesian
-      labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
+      labels:
+        density: hidden
+        priority: []
+        maxCharacters: 24
+        minimumSpacing: 0
+        tooltipFallback: true
     query:
       type: aggregate
       dimensions:
-        - purchase_month
+      - purchase_month
       metrics:
-        - revenue
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```
 
@@ -46,13 +51,13 @@ visuals:
     query:
       type: aggregate
       dimensions:
-        - purchase_month
-        - status
+      - purchase_month
+      - status
       metrics:
-        - revenue
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 60
 ```
 
@@ -70,22 +75,22 @@ visuals:
     presentation:
       type: cartesian
     calculations:
-      - id: running_revenue
-        label: Running revenue
-        template: running_total
-        source: revenue
-        orderBy:
-          - field: purchase_month
-            direction: asc
+    - id: running_revenue
+      label: Running revenue
+      template: running_total
+      source: revenue
+      orderBy:
+      - field: purchase_month
+        direction: asc
     query:
       type: aggregate
       dimensions:
-        - purchase_month
+      - purchase_month
       metrics:
-        - revenue
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```
 
@@ -107,11 +112,11 @@ visuals:
     query:
       type: aggregate
       dimensions:
-        - purchase_month
+      - purchase_month
       metrics:
-        - revenue
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```

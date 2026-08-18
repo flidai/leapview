@@ -20,7 +20,8 @@ visuals:
     query:
       type: aggregate
       dimensions: []
-      metrics: [order_count]
+      metrics:
+      - order_count
     presentation:
       type: kpi
       displayUnits: auto

@@ -17,20 +17,23 @@ visuals:
     description: Compares monthly revenue and order volume together.
     type: combo
     presentation:
-      labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
-      dual_axis: true
-      series_types:
-        Revenue: line
-        Orders: column
+      type: cartesian
+      labels:
+        density: hidden
+        priority: []
+        maxCharacters: 24
+        minimumSpacing: 0
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue: null
-        order_count: null
+      - revenue
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```
 
@@ -46,18 +49,17 @@ visuals:
     title: Review and delivery by status
     type: combo
     presentation:
-      series_types:
-        Review: line
-        Delivery days: column
+      type: cartesian
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        review_score: null
-        delivery_days: null
+      - review_score
+      - delivery_days
       sort:
-        - field: status
-          direction: asc
+      - field: status
+        direction: asc
 ```
 
 ## Dual axes
@@ -72,18 +74,16 @@ visuals:
     title: Revenue and orders dual-axis combo
     type: combo
     presentation:
-      dual_axis: true
-      series_types:
-        Revenue: column
-        Orders: line
+      type: cartesian
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue: null
-        order_count: null
+      - revenue
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 60
 ```

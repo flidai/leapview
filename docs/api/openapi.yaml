@@ -4188,6 +4188,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: actor
@@ -4211,6 +4212,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 64
+            pattern: ^[A-Za-z][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: resourceId
@@ -4220,6 +4222,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: from
@@ -5081,6 +5084,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -5365,6 +5369,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -5667,6 +5672,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: page
           in: path
@@ -5939,6 +5945,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: page
           in: path
@@ -6268,6 +6275,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: page
           in: path
@@ -6598,6 +6606,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: page
           in: path
@@ -6945,6 +6954,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: page
           in: path
@@ -7232,6 +7242,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: page
           in: path
@@ -19954,6 +19965,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -20223,6 +20235,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: actor
           in: query
@@ -20245,6 +20258,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 64
+            pattern: ^[A-Za-z][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: resourceId
@@ -20254,6 +20268,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: from
@@ -20568,6 +20583,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -20856,6 +20872,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -21193,6 +21210,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dashboard
           in: path
@@ -21201,6 +21219,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -21491,6 +21510,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dashboard
           in: path
@@ -21499,6 +21519,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -21771,6 +21792,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dashboard
           in: path
@@ -21779,6 +21801,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: draft
           in: path
@@ -22074,6 +22097,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dashboard
           in: path
@@ -22082,6 +22106,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: draft
           in: path
@@ -22374,6 +22399,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dashboard
           in: path
@@ -22382,6 +22408,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: revision
           in: path
@@ -22668,6 +22695,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -22984,6 +23012,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -23302,6 +23331,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: kind
           in: path
@@ -23316,6 +23346,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -23584,6 +23615,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -23866,6 +23898,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidate
           in: path
@@ -24151,6 +24184,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidateKey
           in: path
@@ -24497,6 +24531,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: digest
           in: path
@@ -24841,6 +24876,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -25203,6 +25239,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -25498,6 +25535,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -25841,6 +25879,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -26199,6 +26238,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidate
           in: path
@@ -26484,6 +26524,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidate
           in: path
@@ -26839,6 +26880,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidate
           in: path
@@ -27185,6 +27227,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidate
           in: path
@@ -27620,6 +27663,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidate
           in: path
@@ -27966,6 +28010,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -28251,6 +28296,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -28259,6 +28305,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -28526,6 +28573,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -28534,6 +28582,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -28805,6 +28854,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -28813,6 +28863,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -29103,6 +29154,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -29111,6 +29163,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: revision
           in: path
@@ -29119,6 +29172,7 @@ paths:
             type: string
             minLength: 71
             maxLength: 71
+            pattern: ^sha256:[0-9a-f]{64}$
           example: example
       responses:
         '200':
@@ -29392,6 +29446,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -29400,6 +29455,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -29716,6 +29772,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -29724,6 +29781,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -30113,6 +30171,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -30121,6 +30180,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: uploadSession
           in: path
@@ -30424,6 +30484,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -30432,6 +30493,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: uploadSession
           in: path
@@ -30812,6 +30874,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -30820,6 +30883,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: uploadSession
           in: path
@@ -31143,6 +31207,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -31151,6 +31216,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: uploadSession
           in: path
@@ -31546,6 +31612,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -31554,6 +31621,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: uploadSession
           in: path
@@ -31920,6 +31988,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -31928,6 +31997,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: uploadSession
           in: path
@@ -32289,6 +32359,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -32297,6 +32368,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: uploadSession
           in: path
@@ -32674,6 +32746,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: connection
           in: path
@@ -32682,6 +32755,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: uploadSession
           in: path
@@ -32992,6 +33066,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -33270,6 +33345,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -33553,6 +33629,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -33888,6 +33965,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -34223,6 +34301,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -34558,6 +34637,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: resourceKind
           in: query
@@ -34573,6 +34653,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: includeInherited
@@ -34874,6 +34955,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -35202,6 +35284,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: policy
           in: path
@@ -35492,6 +35575,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: policy
           in: path
@@ -35769,6 +35853,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: policy
           in: path
@@ -36100,6 +36185,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -36501,6 +36587,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: build
           in: path
@@ -36788,6 +36875,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidate
           in: path
@@ -37092,6 +37180,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: candidate
           in: path
@@ -37456,6 +37545,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: generation
           in: path
@@ -37744,6 +37834,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: generation
           in: path
@@ -38108,6 +38199,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -38441,6 +38533,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: plan
           in: path
@@ -38762,6 +38855,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: plan
           in: path
@@ -39123,6 +39217,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -39408,6 +39503,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -39749,6 +39845,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -40040,6 +40137,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -40392,6 +40490,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -40744,6 +40843,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: publication
           in: path
@@ -41092,6 +41192,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: seal
           in: path
@@ -41381,6 +41482,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -41718,6 +41820,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -42144,6 +42247,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -42466,6 +42570,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -42886,6 +42991,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -43239,6 +43345,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -43603,6 +43710,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -43967,6 +44075,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -44331,6 +44440,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -44709,6 +44819,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -45030,6 +45141,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -45438,6 +45550,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: deployment
           in: path
@@ -45846,6 +45959,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: resourceKind
           in: query
@@ -45861,6 +45975,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
           explode: false
       responses:
@@ -46141,6 +46256,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: resourceKind
           in: query
@@ -46156,6 +46272,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: includeInherited
@@ -46458,6 +46575,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -46799,6 +46917,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: grant
           in: path
@@ -47103,6 +47222,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: grant
           in: path
@@ -47381,6 +47501,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: grant
           in: path
@@ -47721,6 +47842,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: principal
           in: query
@@ -47757,6 +47879,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: resourceKind
@@ -47766,6 +47889,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 64
+            pattern: ^[A-Za-z][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: resourceId
@@ -47775,6 +47899,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
           explode: false
         - name: status
@@ -48111,6 +48236,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -48406,6 +48532,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -48762,6 +48889,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: run
           in: path
@@ -49042,6 +49170,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: run
           in: path
@@ -49377,6 +49506,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: run
           in: path
@@ -49694,6 +49824,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -50041,6 +50172,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -50482,6 +50614,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: release
           in: path
@@ -50814,6 +50947,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: release
           in: path
@@ -51163,6 +51297,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: release
           in: path
@@ -51484,6 +51619,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: release
           in: path
@@ -51886,6 +52022,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -52173,6 +52310,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -52181,6 +52319,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
       responses:
         '200':
@@ -52470,6 +52609,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -52478,6 +52618,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: Idempotency-Key
           in: header
@@ -52864,6 +53005,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -52872,6 +53014,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: connection
           in: path
@@ -52880,6 +53023,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -53168,6 +53312,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -53176,6 +53321,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: connection
           in: path
@@ -53184,6 +53330,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -53559,6 +53706,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -53567,6 +53715,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: connection
           in: path
@@ -53575,6 +53724,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -53929,6 +54079,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -53937,6 +54088,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: connection
           in: path
@@ -53945,6 +54097,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -54295,6 +54448,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -54303,6 +54457,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: connection
           in: path
@@ -54311,6 +54466,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -54587,6 +54743,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -54595,6 +54752,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: connection
           in: path
@@ -54603,6 +54761,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -54897,6 +55056,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -54905,6 +55065,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: connection
           in: path
@@ -54913,6 +55074,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -55262,6 +55424,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: target
           in: path
@@ -55270,6 +55433,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         - name: connection
           in: path
@@ -55278,6 +55442,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: Idempotency-Key
           in: header
@@ -56210,6 +56375,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -56493,6 +56659,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -56782,6 +56949,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dataset
           in: path
@@ -57061,6 +57229,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dataset
           in: path
@@ -57365,6 +57534,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dataset
           in: path
@@ -57698,6 +57868,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: dataset
           in: path
@@ -58011,6 +58182,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -58309,6 +58481,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: accept
           in: header
@@ -58689,6 +58862,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       responses:
         '200':
@@ -59000,6 +59174,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -59293,6 +59468,7 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         - name: limit
           in: query
@@ -62323,11 +62499,13 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+          pattern: ^[A-Za-z][A-Za-z0-9_.:-]*$
           example: example
         resourceId:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         surface:
           type: string
@@ -62858,6 +63036,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         principalId:
           type: string
@@ -62869,11 +63048,13 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+          pattern: ^[A-Za-z][A-Za-z0-9_.:-]*$
           example: example
         resourceId:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         capability:
           $ref: '#/components/schemas/Capability'
@@ -62987,6 +63168,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         capabilities:
           type: array
@@ -63045,6 +63227,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         capabilities:
           type: array
@@ -63128,6 +63311,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       example:
         capability: PROJECT_ADMIN
@@ -63157,6 +63341,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         grantId:
           type: string
@@ -63165,6 +63350,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         subjectType:
           type: string
@@ -63283,6 +63469,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         targetId:
           type: string
@@ -63362,6 +63549,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         candidateKey:
           type: string
@@ -63505,6 +63693,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         sourceDigest:
           type: string
@@ -63554,6 +63743,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         sourceDigest:
           type: string
@@ -64472,11 +64662,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         dashboardId:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         draftId:
           type: string
@@ -64505,6 +64697,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         draftId:
           type: string
@@ -64573,6 +64766,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         slug:
           type: string
@@ -64602,6 +64796,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         draftId:
           type: string
@@ -64875,6 +65070,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         revision:
           $ref: '#/components/schemas/DashboardAuthoringRevisionToken'
@@ -64959,6 +65155,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       example:
         dashboardId: example
@@ -64979,11 +65176,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         stableId:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         title:
           type: string
@@ -64995,6 +65194,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         source:
           type: string
@@ -65909,6 +66109,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         title:
           type: string
@@ -65920,6 +66121,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         model:
           $ref: '#/components/schemas/ModelRef'
@@ -66275,11 +66477,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         dashboard:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         defaultPage:
           type: string
@@ -66606,6 +66810,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         title:
           type: string
@@ -66617,6 +66822,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         tags:
           type: array
@@ -66827,6 +67033,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         resourceKind:
           $ref: '#/components/schemas/ResourceKind'
@@ -66888,6 +67095,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         subjectType:
           type: string
@@ -66929,6 +67137,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         resourceKind:
           $ref: '#/components/schemas/ResourceKind'
@@ -67121,6 +67330,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         environment:
           type: string
@@ -67252,6 +67462,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         resourceId:
           type: string
@@ -67426,6 +67637,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         environment:
           type: string
@@ -67523,6 +67735,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         environment:
           type: string
@@ -67919,6 +68132,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         targetId:
           type: string
@@ -68103,6 +68317,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         environment:
           type: string
@@ -68644,6 +68859,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         deploymentId:
           type: string
@@ -68959,6 +69175,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         releaseId:
           type: string
@@ -68993,6 +69210,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         releaseId:
           type: string
@@ -69156,6 +69374,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         capabilities:
           type: array
@@ -69218,6 +69437,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         resourceKind:
           $ref: '#/components/schemas/ResourceKind'
@@ -69549,6 +69769,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         resourceKind:
           $ref: '#/components/schemas/ResourceKind'
@@ -69629,6 +69850,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         subjectType:
           type: string
@@ -69662,6 +69884,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         resourceKind:
           $ref: '#/components/schemas/ResourceKind'
@@ -69685,6 +69908,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         createdAt:
           type: string
@@ -70285,11 +70509,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         projectId:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         title:
           type: string
@@ -70347,11 +70573,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         connectionId:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         surface:
           type: string
@@ -70373,6 +70601,7 @@ components:
           type: string
           minLength: 1
           maxLength: 1024
+          pattern: ^(?!/)(?!.*(?:^|/)\.\.(?:/|$))(?!.*\\).+$
           example: example
         size:
           type: integer
@@ -70383,6 +70612,7 @@ components:
           type: string
           minLength: 64
           maxLength: 64
+          pattern: ^[0-9a-f]{64}$
           description: A lowercase 64-character hexadecimal SHA-256 digest.
           example: example
       example:
@@ -70517,6 +70747,7 @@ components:
           type: string
           minLength: 71
           maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$
           description: The immutable revision identity, formatted as sha256 followed by a colon and 64 lowercase hexadecimal characters.
           example: example
         status:
@@ -70574,6 +70805,7 @@ components:
           type: string
           minLength: 71
           maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$
           description: The immutable revision identity, formatted as sha256 followed by a colon and 64 lowercase hexadecimal characters.
           example: example
         status:
@@ -70626,6 +70858,7 @@ components:
           type: string
           minLength: 64
           maxLength: 64
+          pattern: ^[0-9a-f]{64}$
           example: example
       example:
         etag: example
@@ -70650,11 +70883,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         connectionId:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         surface:
           type: string
@@ -70692,6 +70927,7 @@ components:
           type: string
           minLength: 1
           maxLength: 1024
+          pattern: ^(?!/)(?!.*(?:^|/)\.\.(?:/|$))(?!.*\\).+$
           example: example
       example:
         path: example
@@ -70744,6 +70980,7 @@ components:
           type: string
           minLength: 64
           maxLength: 64
+          pattern: ^[0-9a-f]{64}$
           example: example
       example:
         sha256: example
@@ -71020,16 +71257,19 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         connection:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         revisionId:
           type: string
           minLength: 71
           maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$
           example: example
         status:
           $ref: '#/components/schemas/ManagedDataUploadSessionStatus'
@@ -71202,6 +71442,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         pages:
           type: integer
@@ -71222,6 +71463,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         title:
           type: string
@@ -72463,6 +72705,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         title:
           type: string
@@ -72746,6 +72989,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         principalId:
           type: string
@@ -72763,16 +73007,19 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         resourceKind:
           type: string
           minLength: 1
           maxLength: 64
+          pattern: ^[A-Za-z][A-Za-z0-9_.:-]*$
           example: example
         resourceId:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         requestId:
           type: string
@@ -72852,6 +73099,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           description: Stable project-graph ID of the semantic member.
           example: example
       example:
@@ -72920,6 +73168,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         status:
           type: string
@@ -72949,11 +73198,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         semanticModel:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         trigger:
           type: string
@@ -72980,6 +73231,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         retryOf:
           type: string
@@ -73056,11 +73308,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         semanticModel:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         principalId:
           type: string
@@ -73120,6 +73374,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         environment:
           type: string
@@ -73128,6 +73383,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       example:
         environment: example
@@ -73396,6 +73652,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         projectDigest:
           type: string
@@ -73417,7 +73674,6 @@ components:
       type: string
       enum:
         - reuse_base
-        - reuse_snapshot
         - refresh_sources
       example: reuse_base
     ReleaseGenerationPlanProvenance:
@@ -73798,6 +74054,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         environment:
           type: string
@@ -73919,6 +74176,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         environment:
           type: string
@@ -73978,6 +74236,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         status:
           type: string
@@ -74104,6 +74363,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         kind:
           $ref: '#/components/schemas/SearchKind'
@@ -74673,6 +74933,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         title:
           type: string
@@ -74757,6 +75018,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         title:
           type: string
@@ -75868,6 +76130,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         revision:
           type: integer
@@ -75935,11 +76198,13 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         logicalConnection:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         configuration:
           $ref: '#/components/schemas/TargetConnectionConfiguration'
@@ -75989,16 +76254,19 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         connectorKind:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         environment:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         bindingRevision:
           type: integer
@@ -76160,11 +76428,13 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         connectorKind:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         authenticationMode:
           $ref: '#/components/schemas/TargetConnectionAuthenticationMode'
@@ -76172,6 +76442,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         endpoint:
           $ref: '#/components/schemas/TargetConnectionEndpoint'
@@ -76278,6 +76549,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
           example: example
         authenticationMode:
           $ref: '#/components/schemas/TargetConnectionAuthenticationMode'
@@ -76314,6 +76586,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         environment:
           type: string

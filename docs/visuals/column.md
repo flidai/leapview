@@ -16,14 +16,17 @@ visuals:
     title: Orders by month
     type: column
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
+    presentation:
+      type: cartesian
 ```
 
 ## Stacked series
@@ -39,18 +42,16 @@ visuals:
     description: Compares monthly order volume split by status.
     type: column
     presentation:
-      stacked: true
+      type: cartesian
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
-      series:
-        field: orders.status
-        alias: status
+      - purchase_month
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 40
 ```
 
@@ -66,17 +67,16 @@ visuals:
     title: Orders by month and status grouped
     type: column
     presentation:
+      type: cartesian
       legend: bottom
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
-      series:
-        field: orders.status
-        alias: status
+      - purchase_month
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 60
 ```

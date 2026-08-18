@@ -6,7 +6,12 @@ metadata:
   displayName: Products
 spec:
   connection: olist
-  path: olist_products_dataset.csv
-  fields:
-    product_id: {type: string, description: Stable product identifier.}
-    product_category_name: {type: string, description: Product category name in the source language.}
+  location:
+    type: path
+    path: olist_products_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      product_id: {datatype: String, description: Stable product identifier.}
+      product_category_name: {datatype: String, description: Product category name in the source language.}

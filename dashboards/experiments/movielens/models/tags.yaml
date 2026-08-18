@@ -6,8 +6,6 @@ metadata:
   displayName: Tags
   description: User-generated tag events from MovieLens.
 spec:
-  sources:
-  - movielens.tags
   fields:
     tag_id:
       datatype: String
@@ -37,7 +35,8 @@ spec:
       datatype: String
       label: Tag month
       description: Calendar month when the tag was applied.
-  transform:
+  definition:
+    type: sql
     sql: |
       SELECT
         concat(

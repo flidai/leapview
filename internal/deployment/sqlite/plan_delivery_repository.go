@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploydb "github.com/flidai/leapview/internal/deployment/internal/db"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 )
 
 func deliveryTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
@@ -528,6 +529,74 @@ func (r *Repository) MarkBuildFailed(ctx context.Context, id string, expectedRev
 		return deployment.DeliveryBuildAttempt{}, err
 	}
 	return r.saveBuildAttemptCAS(ctx, updated, expectedRevision)
+}
+
+// RecordFailedBuildGateEvidence durably records the exact normalized,
+// non-secret evidence produced before a candidate was rejected. Repeated
+// retries for an attempt are idempotent and cannot rewrite a different digest.
+func (r *Repository) RecordFailedBuildGateEvidence(ctx context.Context, attemptID string, evidence *release.GateEvidence) error {
+	if r == nil || r.db == nil || strings.TrimSpace(attemptID) == "" || evidence == nil {
+		return fmt.Errorf("failed gate evidence recording requires attempt and evidence")
+	}
+	canonical, err := evidence.Canonical()
+	if err != nil {
+		return err
+	}
+	payload, err := json.Marshal(canonical)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if r.deliveryNow != nil {
+		now = r.deliveryNow().UTC()
+	}
+	var existing string
+	lookupErr := r.db.QueryRowContext(ctx, `SELECT evidence_digest FROM delivery_failed_gate_evidence WHERE attempt_id=?`, attemptID).Scan(&existing)
+	if lookupErr == nil {
+		if existing != canonical.Digest {
+			return fmt.Errorf("%w: failed gate evidence for attempt %q is immutable", deployment.ErrDeliveryConflict, attemptID)
+		}
+		return nil
+	}
+	if !errors.Is(lookupErr, sql.ErrNoRows) {
+		return lookupErr
+	}
+	_, err = r.db.ExecContext(ctx, `INSERT INTO delivery_failed_gate_evidence (attempt_id,evidence_json,evidence_digest,created_at) VALUES (?,?,?,?) ON CONFLICT(attempt_id) DO NOTHING`, attemptID, string(payload), canonical.Digest, deliveryTime(now))
+	if err != nil {
+		return err
+	}
+	if err := r.db.QueryRowContext(ctx, `SELECT evidence_digest FROM delivery_failed_gate_evidence WHERE attempt_id=?`, attemptID).Scan(&existing); err != nil {
+		return err
+	}
+	if existing != canonical.Digest {
+		return fmt.Errorf("%w: failed gate evidence for attempt %q changed concurrently", deployment.ErrDeliveryConflict, attemptID)
+	}
+	return nil
+}
+
+func (r *Repository) FailedBuildGateEvidence(ctx context.Context, attemptID string) (*release.GateEvidence, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("delivery repository is not open")
+	}
+	var payload, digest string
+	if err := r.db.QueryRowContext(ctx, `SELECT evidence_json,evidence_digest FROM delivery_failed_gate_evidence WHERE attempt_id=?`, attemptID).Scan(&payload, &digest); err != nil {
+		return nil, err
+	}
+	var evidence release.GateEvidence
+	if err := json.Unmarshal([]byte(payload), &evidence); err != nil {
+		return nil, fmt.Errorf("decode failed gate evidence: %w", err)
+	}
+	if evidence.Digest != digest {
+		return nil, fmt.Errorf("failed gate evidence digest mismatch")
+	}
+	canonical, err := evidence.Canonical()
+	if err != nil || canonical.Digest != digest {
+		if err == nil {
+			err = fmt.Errorf("failed gate evidence is not canonical")
+		}
+		return nil, err
+	}
+	return &canonical, nil
 }
 
 // MarkBuildFailedAndReleaseLease records a deterministic pre-seal failure and

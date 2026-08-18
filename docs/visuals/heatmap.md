@@ -17,17 +17,20 @@ visuals:
     description: Shows order status concentration by customer state.
     type: heatmap
     query:
+      type: aggregate
       dimensions:
-        state: orders.state
-        status: orders.status
+      - state
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: state
-          direction: asc
-        - field: status
-          direction: asc
+      - field: state
+        direction: asc
+      - field: status
+        direction: asc
       limit: 120
+    presentation:
+      type: cartesian
 ```
 
 ## Alternate dimensions
@@ -42,15 +45,18 @@ visuals:
     title: Category by order status
     type: heatmap
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 120
+    presentation:
+      type: cartesian
 ```
 
 ## Cell labels
@@ -65,15 +71,25 @@ visuals:
     title: Labeled category status heatmap
     type: heatmap
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 12, minimumSpacing: 4, tooltipFallback: true}
+      type: cartesian
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 12
+        minimumSpacing: 4
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 80
 ```

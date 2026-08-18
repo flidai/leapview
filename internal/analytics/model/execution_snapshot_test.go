@@ -14,7 +14,7 @@ func TestExecutionSnapshotOmitsAuthoringAndConnectionState(t *testing.T) {
 		Tables: map[string]Table{"orders": {
 			AIContext:   tableContext,
 			GrainEntity: "order",
-			Entities:    map[string]ModelEntitySpec{"order": {Type: "primary", Fields: []string{"id"}, AIContext: &AIContext{Instructions: "entity"}}},
+			Entities:    map[string]EntityDefinition{"order": {Type: "primary", Fields: []string{"id"}, AIContext: &AIContext{Instructions: "entity"}}},
 			Dimensions:  map[string]MetricDimension{"id": {Datatype: DataTypeInteger, AIContext: dimensionContext}},
 		}},
 		Datasets:                map[string]SemanticDatasetSpec{"orders": {Model: "orders", AIContext: &AIContext{Instructions: "dataset"}}},

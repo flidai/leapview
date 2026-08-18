@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -32,6 +35,7 @@ import (
 	visualizationdecimal "github.com/flidai/leapview/internal/dashboard/visualization/decimal"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	"github.com/flidai/leapview/internal/extension"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/schema"
@@ -45,6 +49,101 @@ var visualFencePattern = regexp.MustCompile("^```ya?ml[ \\t]+visual-example=([a-
 const (
 	visualDocsDashboardID projectgraph.ResourceID = "dashboard:visual-docs"
 )
+
+// visualDocExtensionAdmission is an explicit test-tool admission boundary.
+// The generator never asks DuckDB to install or autoload an extension; it
+// resolves the already-installed DuckLake artifact and supplies its exact
+// immutable path to the fixture runtime.
+type visualDocExtensionAdmission struct {
+}
+
+func (a visualDocExtensionAdmission) AdmitExtension(ctx context.Context, name string) (extension.AdmittedExtension, error) {
+	if err := ctx.Err(); err != nil {
+		return extension.AdmittedExtension{}, err
+	}
+	path, err := findVisualDocExtension(name)
+	if err != nil {
+		return extension.AdmittedExtension{}, err
+	}
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return extension.AdmittedExtension{}, fmt.Errorf("read visual-doc %s extension: %w", name, err)
+	}
+	digest := sha256.Sum256(bytes)
+	return extension.AdmittedExtension{
+		Name: name, Identity: "visual-doc-fixture/" + name, Version: "fixture",
+		Platform: runtime.GOOS + "-" + runtime.GOARCH, Digest: "sha256:" + hex.EncodeToString(digest[:]), Path: path,
+	}, nil
+}
+
+func visualDocDuckLakeAdmission() (extension.Admission, error) {
+	// Resolve DuckLake during fixture setup so a missing reviewed local cache
+	// fails before opening the runtime. Other approved extensions are resolved
+	// through the same explicit admission object on demand.
+	if _, err := findVisualDocExtension("ducklake"); err != nil {
+		return nil, err
+	}
+	return visualDocExtensionAdmission{}, nil
+}
+
+func findVisualDocExtension(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("visual-doc extension name is required")
+	}
+	filename := name + ".duckdb_extension"
+	if name == "sqlite" {
+		filename = "sqlite_scanner.duckdb_extension"
+	}
+	roots := make([]string, 0, 2)
+	if configured := strings.TrimSpace(os.Getenv("DUCKDB_EXTENSION_DIRECTORY")); configured != "" {
+		roots = append(roots, configured)
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		roots = append(roots, filepath.Join(home, ".duckdb", "extensions"))
+	}
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		info, err := os.Lstat(root)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		var found string
+		err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.IsDir() {
+				if path != root && len(strings.Split(strings.TrimPrefix(path, root), string(filepath.Separator))) > 4 {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.Name() == filename && found == "" {
+				fileInfo, statErr := entry.Info()
+				if statErr == nil && fileInfo.Mode().IsRegular() {
+					found = path
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			continue
+		}
+		if found != "" {
+			absolute, absErr := filepath.Abs(found)
+			if absErr == nil && filepath.Clean(absolute) == absolute {
+				return absolute, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("visual-doc %s extension is not installed; set DUCKDB_EXTENSION_DIRECTORY or prepare the reviewed local DuckDB extension cache", name)
+}
 
 type visualExample struct {
 	ID     string
@@ -184,7 +283,11 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		return visualExamplesArtifact{}, err
 	}
 	defer os.RemoveAll(runtimeDir)
-	database, err := analyticsducklake.Open(context.Background(), analyticsducklake.Config{RootDir: filepath.Join(runtimeDir, "ducklake"), MaxConnections: 1})
+	ducklakeAdmission, err := visualDocDuckLakeAdmission()
+	if err != nil {
+		return visualExamplesArtifact{}, err
+	}
+	database, err := analyticsducklake.Open(context.Background(), analyticsducklake.Config{RootDir: filepath.Join(runtimeDir, "ducklake"), MaxConnections: 1, ExtensionAdmission: ducklakeAdmission})
 	if err != nil {
 		return visualExamplesArtifact{}, fmt.Errorf("open fixture DuckDB: %w", err)
 	}

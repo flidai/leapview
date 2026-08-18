@@ -29,7 +29,7 @@ func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *t
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: deliveryPlanDigest('a'), ProjectDigest: deliveryPlanDigest('b'), CompilerVersion: "compiler:v1", SchemaVersion: 1},
 		AuthorizationFingerprint: deliveryPlanDigest('c'),
 		Generation: release.CandidateGenerationArtifact{
-			Identity: identity, DataRevision: "snapshot:7", DataMode: release.GenerationDataReuseSnapshot, Deterministic: true,
+			Identity: identity, DataRevision: "snapshot:7", DataMode: release.GenerationDataReuseBase, Deterministic: true,
 			Connections: []release.CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}},
 		},
 		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_delivery"}},
@@ -75,17 +75,6 @@ func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *t
 
 	if firstPlan.ExecutionDigest == "" {
 		t.Fatal("candidate plan did not compute execution identity")
-	}
-}
-
-func TestCandidatePlanRejectsLegacySnapshotReuseWithControlledRebuildDiagnostic(t *testing.T) {
-	_, err := CandidatePlanRequestWithPolicyAndReuse(
-		deployment.DeliveryCandidateBuildInput{},
-		release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseSnapshotLegacy}},
-		"runtime:v1", CandidateDeliveryPolicy{}, time.Time{}, nil,
-	)
-	if !errors.Is(err, release.ErrLegacyReuseSnapshot) {
-		t.Fatalf("legacy candidate plan error = %v, want controlled rebuild diagnostic", err)
 	}
 }
 
@@ -145,7 +134,7 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: deliveryPlanDigest('a'), ProjectDigest: deliveryPlanDigest('b'), CompilerVersion: "compiler:v1", SchemaVersion: 1},
 		AuthorizationFingerprint: deliveryPlanDigest('c'),
 		Generation: release.CandidateGenerationArtifact{
-			Identity: identity, DataRevision: "snapshot:7", DataMode: release.GenerationDataReuseSnapshot, Deterministic: true,
+			Identity: identity, DataRevision: "snapshot:7", DataMode: release.GenerationDataReuseBase, Deterministic: true,
 			Connections: []release.CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}},
 		},
 		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_delivery"}},
@@ -430,8 +419,8 @@ func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVarian
 		ID: "project:dashboard", Name: "dashboard",
 		Connections:          map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed", Scope: "warehouse"}},
 		Sources:              map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv"}},
-		Models:               map[string]semanticmodel.Table{"model:orders": {Source: "source:orders"}},
-		SemanticModels:       map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Source: "orders"}}}},
+		Models:               map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}}},
+		SemanticModels:       map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}}}},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{"dashboard:sales": {ID: "dashboard:sales", Title: dashboardTitle, SemanticModel: "semantic:sales"}},
 		DashboardSources:     map[string]projectmanifest.DashboardSource{"dashboard:sales": {Document: dashboardauthoring.Dashboard{ID: "dashboard:sales", SemanticModel: "semantic:sales"}}},
 		Access:               access,
@@ -499,7 +488,7 @@ func TestCandidateRunnerRebuildsWhenReuseDecisionMismatches(t *testing.T) {
 			},
 		},
 		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseSnapshot}},
+		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
 	}
 	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: basePlan})
 	if err == nil || baseCalled {
@@ -520,7 +509,7 @@ func TestCandidateRunnerUsesBaseForExactReuseDecision(t *testing.T) {
 			},
 		},
 		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseSnapshot}},
+		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
 	}
 	plan := deployment.DeliveryPlan{BaseGenerationID: "generation_1", Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate_1", Reusable: true, Reason: "exact identity"}}}}
 	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: plan})
@@ -539,7 +528,7 @@ func TestCandidateRunnerMissingReuseDecisionRebuilds(t *testing.T) {
 			},
 		},
 		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseSnapshot}},
+		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
 	}
 	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: deployment.DeliveryPlan{BaseGenerationID: "generation_1"}})
 	if err == nil || baseCalled {
@@ -547,14 +536,6 @@ func TestCandidateRunnerMissingReuseDecisionRebuilds(t *testing.T) {
 	}
 	if runner.artifacts.Generation.DataMode != release.GenerationDataRefreshSources {
 		t.Fatalf("missing reuse decision left data mode %q", runner.artifacts.Generation.DataMode)
-	}
-}
-
-func TestCandidateRunnerRejectsLegacySnapshotReuseBeforePhysicalWork(t *testing.T) {
-	runner := &candidateCatalogRunner{artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseSnapshotLegacy}}}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{})
-	if !errors.Is(err, release.ErrLegacyReuseSnapshot) {
-		t.Fatalf("legacy candidate build error = %v, want controlled rebuild diagnostic", err)
 	}
 }
 

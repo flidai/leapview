@@ -17,11 +17,13 @@ visuals:
     description: Buckets order volume by delivery duration.
     type: histogram
     presentation:
-      histogram_bins: 16
+      type: cartesian
     query:
-      dataset: orders
-      metrics:
-        delivery_days: null
+      type: histogram
+      field: delivery_days
+      bins: 16
+      nullPolicy: omit
+      approximation: exact
 ```
 
 ## Custom bins
@@ -36,11 +38,13 @@ visuals:
     title: Revenue histogram
     type: histogram
     presentation:
-      histogram_bins: 18
+      type: cartesian
     query:
-      dataset: orders
-      metrics:
-        revenue: null
+      type: histogram
+      field: revenue
+      bins: 18
+      nullPolicy: omit
+      approximation: exact
 ```
 
 ## Labeled bins
@@ -55,10 +59,20 @@ visuals:
     title: Review score histogram
     type: histogram
     presentation:
-      histogram_bins: 10
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 12, minimumSpacing: 6, tooltipFallback: true}
+      type: cartesian
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 12
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
-      dataset: orders
-      metrics:
-        review_score: null
+      type: histogram
+      field: review_score
+      bins: 10
+      nullPolicy: omit
+      approximation: exact
 ```

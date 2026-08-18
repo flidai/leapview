@@ -5,10 +5,7 @@ metadata:
   name: olist
   displayName: Olist CSV files
 spec:
-  kind: managed
-  description: Project-global managed Olist ecommerce demo data.
-  credentials:
-    provider: none
+  type: managed
   defaults:
-    options:
+    csv:
       header: true

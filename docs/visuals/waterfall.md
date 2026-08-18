@@ -18,16 +18,24 @@ visuals:
     type: waterfall
     presentation:
       type: cartesian
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
-      dataset: revenue_bridge
+      type: aggregate
       dimensions:
-        component: revenue_bridge.component
+      - component
       metrics:
-        revenue_impact: null
+      - revenue_impact
       sort:
-        - field: component
-          direction: asc
+      - field: component
+        direction: asc
 ```
 
 ## Alternate metric
@@ -42,14 +50,17 @@ visuals:
     title: Monthly order contribution
     type: waterfall
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 18
+    presentation:
+      type: cartesian
 ```
 
 ## Labels and zoom
@@ -65,15 +76,24 @@ visuals:
     type: waterfall
     presentation:
       type: cartesian
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
       dataZoom: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 12
 ```

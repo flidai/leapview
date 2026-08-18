@@ -70,9 +70,6 @@ targets:
       dir: ../internal/app/cli/gen
       package: gen
     contract_imports:
-      LeapViewDashboard:
-        go_package: github.com/flidai/leapview/internal/dashboard/document
-        go_alias: dashboarddocument
       LeapViewVisualization:
         go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
         go_alias: visualizationir
@@ -97,35 +94,23 @@ targets:
     go_models_package: ir
     ts_out: ../web/generated/visualization/index.ts
     json_schema_out: gen/visualization.schema.json
-  - name: dashboard-contracts
-    kind: contracts
-    typespec_dir: .
-    typespec_entrypoint: dashboard/main.tsp
-    ir_out: gen/dashboard-ir.json
-    go_models_out: ../internal/dashboard/document/models.gen.go
-    go_models_package: document
-    ts_out: ../web/generated/dashboard/index.ts
-    json_schema_out: ../schemas/json/dashboard-document.schema.json
-    contract_imports:
-      LeapViewVisualization:
-        go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
-        go_alias: visualizationir
-        typescript_module: ../visualization
   - name: agent-tool-contracts
     kind: contracts
-    typespec_dir: ..
-    typespec_entrypoint: internal/agent/contracts/typespec/main.tsp
+    typespec_dir: ../internal/agent/contracts
+    typespec_entrypoint: typespec/main.tsp
     ir_out: ../internal/agent/contracts/gen/agent-tools-ir.json
     go_models_out: ../internal/agent/contracts/models.gen.go
     go_models_package: contracts
     json_schema_out: ../internal/agent/contracts/gen/agent-tools.schema.json
-    contract_imports:
-      LeapViewDashboard:
-        go_package: github.com/flidai/leapview/internal/dashboard/document
-        go_alias: dashboarddocument
-      LeapViewVisualization:
-        go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
-        go_alias: visualizationir
+  - name: data-resource-contracts
+    kind: contracts
+    typespec_dir: .
+    typespec_entrypoint: data-resources/main.tsp
+    ir_out: gen/data-resources-ir.json
+    go_models_out: ../internal/project/contracts/models.gen.go
+    go_models_package: contracts
+    ts_out: ../web/generated/data-resources/index.ts
+    json_schema_out: ../internal/project/contracts/gen/data-resources.schema.json
   - name: desktop-discovery-contracts
     kind: contracts
     typespec_dir: .

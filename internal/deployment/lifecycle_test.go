@@ -13,9 +13,19 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 )
 
 type lifecycleTarget struct{ state DeliveryTarget }
+
+func lifecycleGateEvidence(t *testing.T, candidateID, sourceDigest string, now time.Time) *release.GateEvidence {
+	t.Helper()
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: candidateID, SourceDigest: sourceDigest, BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: now, Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &evidence
+}
 
 func (t lifecycleTarget) ResolveDeliveryTarget(context.Context, string) (DeliveryTarget, error) {
 	return t.state, nil
@@ -121,6 +131,7 @@ type lifecycleBuildStore struct {
 	failed          bool
 	leaseReleased   bool
 	transitionCount int
+	failedGate      *release.GateEvidence
 }
 
 func (s *lifecycleBuildStore) CreatePlan(context.Context, DeliveryPlan) (DeliveryPlan, error) {
@@ -178,6 +189,14 @@ func (s *lifecycleBuildStore) MarkBuildFailedAndReleaseLease(_ context.Context, 
 	s.leaseReleased = true
 	return updated, nil
 }
+func (s *lifecycleBuildStore) RecordFailedBuildGateEvidence(_ context.Context, _ string, evidence *release.GateEvidence) error {
+	if evidence == nil {
+		return ErrDeliveryInvalid
+	}
+	copy := *evidence
+	s.failedGate = &copy
+	return nil
+}
 func (s *lifecycleBuildStore) TransitionWriterLease(_ context.Context, id string, expected, next DeliveryLeaseStatus, now time.Time) (DeliveryWriterLease, error) {
 	if id != s.lease.ID || s.lease.Status != expected || next != DeliveryLeaseReleased {
 		return DeliveryWriterLease{}, ErrDeliveryConflict
@@ -202,6 +221,38 @@ type lifecycleFaultPhase struct {
 	stage  string
 	closed *bool
 }
+
+type lifecycleGateFailurePhase struct {
+	evidence *release.GateEvidence
+}
+
+type lifecycleCanonicalGatePhase struct {
+	evidence *release.GateEvidence
+}
+
+func (lifecycleGateFailurePhase) Construct(context.Context, DeliveryBuildInput) (any, error) {
+	return lifecycleGateFailurePhase{}, nil
+}
+func (lifecycleGateFailurePhase) Normalize(context.Context, DeliveryBuildInput, any) error {
+	return nil
+}
+func (p lifecycleGateFailurePhase) Qualify(context.Context, DeliveryBuildInput, any) (DeliveryBuildOutput, error) {
+	return DeliveryBuildOutput{GateEvidence: p.evidence}, errors.New("candidate gate blocked")
+}
+func (lifecycleGateFailurePhase) Close() error { return nil }
+
+func (p lifecycleCanonicalGatePhase) Construct(context.Context, DeliveryBuildInput) (any, error) {
+	return p, nil
+}
+func (lifecycleCanonicalGatePhase) Normalize(context.Context, DeliveryBuildInput, any) error {
+	return nil
+}
+func (p lifecycleCanonicalGatePhase) Qualify(context.Context, DeliveryBuildInput, any) (DeliveryBuildOutput, error) {
+	// Injected canonical evidence must still be rejected by the delivery
+	// boundary; this phase intentionally returns no evaluator error.
+	return DeliveryBuildOutput{GateEvidence: p.evidence}, nil
+}
+func (lifecycleCanonicalGatePhase) Close() error { return nil }
 
 type lifecycleSuccessPhase struct {
 	path   string
@@ -441,7 +492,7 @@ func TestDeliveryLifecycleReconcilesPhasesToSeal(t *testing.T) {
 				store.attempt.UpdatedAt = now
 			}}
 			closed := false
-			runner := lifecycleSuccessPhase{closed: &closed, output: DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: file.Name()}, QualificationDigest: lifecycleDigest('4'), ClosureDigest: lifecycleDigest('5'), CompatibilityDigest: lifecycleDigest('6'), ResolvedInputs: DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest}, ObjectStore: objects, SealRepository: seals, RemoteVerifier: lifecycleRemoteVerifier{}}}
+			runner := lifecycleSuccessPhase{closed: &closed, output: DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: file.Name()}, QualificationDigest: lifecycleDigest('4'), ClosureDigest: lifecycleDigest('5'), CompatibilityDigest: lifecycleDigest('6'), GateEvidence: lifecycleGateEvidence(t, "candidate-restart-success", plan.SourceDigest, now), ResolvedInputs: DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest}, ObjectStore: objects, SealRepository: seals, RemoteVerifier: lifecycleRemoteVerifier{}}}
 			lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod"}}, Store: store, Now: func() time.Time { return now }}
 			result, err := lifecycle.Build(t.Context(), DeliveryBuildRequest{PlanID: plan.ID, AttemptID: "attempt-restart-success", WriterLeaseID: "writer-build", CandidateID: "candidate-restart-success", SealID: "seal-restart-success", ServingArtifactID: "artifact-build", ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: "state-build", PhysicalPoolID: "pool-build", OwnerID: "owner-build", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now, PhasedRunner: runner})
 			if err != nil {
@@ -449,6 +500,73 @@ func TestDeliveryLifecycleReconcilesPhasesToSeal(t *testing.T) {
 			}
 			if result.Attempt.Status != DeliveryBuildSealed || store.failed || store.leaseReleased || (phase != DeliveryBuildSealing && store.transitionCount == 0) {
 				t.Fatalf("phase %s result=%#v failed=%v released=%v transitions=%d", phase, result.Attempt, store.failed, store.leaseReleased, store.transitionCount)
+			}
+		})
+	}
+}
+
+func TestDeliveryLifecycleFailedGateEvidenceDoesNotChangeActiveGeneration(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	plan.BaseGenerationID, plan.BaseTargetRevision = "generation-active", 0
+	plan.ExecutionDigest, _ = plan.Execution.ExecutionDigest()
+	plan.GovernanceDigest, _ = canonicalJSONDigest(plan.Governance)
+	plan.EvidenceDigest, _ = plan.Evidence.Digest()
+	plan.Digest = ""
+	plan, err := NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeTarget := &lifecycleSequencedTarget{states: []DeliveryTarget{{TargetID: "target", ProjectID: "project", Environment: "prod", ActiveGenerationID: "generation-active", TargetRevision: 0}}}
+	store := &lifecycleBuildStore{plan: plan}
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: "candidate-gate-failed", SourceDigest: plan.SourceDigest, BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: release.GateUnavailable, EvaluatedAt: now, Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 100}, Sources: []release.GateSourceEvidence{{ID: "source-1", Mode: "inferred", SourceDigest: plan.SourceDigest, SchemaOutcome: release.GateUnavailable}}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := &DeliveryLifecycle{Targets: activeTarget, Store: store, Now: func() time.Time { return now }}
+	_, err = lifecycle.Build(t.Context(), DeliveryBuildRequest{PlanID: plan.ID, AttemptID: "attempt-gate-failed", WriterLeaseID: "writer-gate-failed", CandidateID: "candidate-gate-failed", SealID: "seal-gate-failed", ServingArtifactID: "artifact-gate-failed", ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: "state-gate-failed", PhysicalPoolID: "pool-build", BaseCatalogDigest: lifecycleDigest('6'), BasePhysicalPoolID: "pool-build", OwnerID: "owner-build", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now, PhasedRunner: lifecycleGateFailurePhase{evidence: &evidence}})
+	if err == nil || store.failedGate == nil {
+		t.Fatalf("failed gate build err=%v evidence=%#v", err, store.failedGate)
+	}
+	if store.failedGate.Digest != evidence.Digest || store.attempt.Status != DeliveryBuildFailed || store.leaseReleased == false {
+		t.Fatalf("failed gate terminal evidence=%#v attempt=%#v released=%v", store.failedGate, store.attempt, store.leaseReleased)
+	}
+	if activeTarget.states[0].ActiveGenerationID != "generation-active" || activeTarget.states[0].TargetRevision != 0 {
+		t.Fatalf("active generation changed after failed gate: %#v", activeTarget.states[0])
+	}
+}
+
+func TestDeliveryLifecycleRejectsInjectedCanonicalFailedEvidence(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	plan.BaseGenerationID, plan.BaseTargetRevision = "generation-active", 0
+	plan.ExecutionDigest, _ = plan.Execution.ExecutionDigest()
+	plan.GovernanceDigest, _ = canonicalJSONDigest(plan.Governance)
+	plan.EvidenceDigest, _ = plan.Evidence.Digest()
+	plan.Digest = ""
+	plan, err := NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeTarget := &lifecycleSequencedTarget{states: []DeliveryTarget{{TargetID: "target", ProjectID: "project", Environment: "prod", ActiveGenerationID: "generation-active", TargetRevision: 0}}}
+	for _, outcome := range []release.GateOutcome{release.GateUnavailable, release.GateTimeout} {
+		t.Run(string(outcome), func(t *testing.T) {
+			store := &lifecycleBuildStore{plan: plan}
+			failure := release.GateObservationFailureUnavailable
+			if outcome == release.GateTimeout {
+				failure = release.GateObservationFailureTimeout
+			}
+			evidence, err := (release.GateEvidence{Version: 1, CandidateID: "candidate-injected-" + string(outcome), SourceDigest: plan.SourceDigest, BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: outcome, EvaluatedAt: now, Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 100}, Sources: []release.GateSourceEvidence{{ID: "source-1", Mode: "inferred", SourceDigest: plan.SourceDigest, SchemaOutcome: outcome, SchemaFailure: failure}}}).Canonical()
+			if err != nil {
+				t.Fatal(err)
+			}
+			lifecycle := &DeliveryLifecycle{Targets: activeTarget, Store: store, Now: func() time.Time { return now }}
+			_, err = lifecycle.Build(t.Context(), DeliveryBuildRequest{PlanID: plan.ID, AttemptID: "attempt-injected-" + string(outcome), WriterLeaseID: "writer-injected-" + string(outcome), CandidateID: evidence.CandidateID, SealID: "seal-injected-" + string(outcome), ServingArtifactID: "artifact-injected-" + string(outcome), ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: "state-injected-" + string(outcome), PhysicalPoolID: "pool-build", BaseCatalogDigest: lifecycleDigest('6'), BasePhysicalPoolID: "pool-build", OwnerID: "owner-build", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now, PhasedRunner: lifecycleCanonicalGatePhase{evidence: &evidence}})
+			if err == nil || store.failedGate == nil || store.attempt.Status != DeliveryBuildFailed {
+				t.Fatalf("injected %s build err=%v failedGate=%#v attempt=%#v", outcome, err, store.failedGate, store.attempt)
+			}
+			if activeTarget.states[0].ActiveGenerationID != "generation-active" || activeTarget.states[0].TargetRevision != 0 {
+				t.Fatalf("active generation changed after injected %s: %#v", outcome, activeTarget.states[0])
 			}
 		})
 	}

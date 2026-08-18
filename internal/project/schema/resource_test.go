@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
 
 const testConnectionYAML = `apiVersion: leapview.dev/v1
@@ -13,10 +15,10 @@ metadata:
   id: connection:files
   name: files
 spec:
-  kind: managed
+  type: managed
 `
 
-const testConnectionJSON = `{"apiVersion":"leapview.dev/v1","kind":"Connection","metadata":{"id":"connection:files","name":"files"},"spec":{"kind":"managed"}}`
+const testConnectionJSON = `{"apiVersion":"leapview.dev/v1","kind":"Connection","metadata":{"id":"connection:files","name":"files"},"spec":{"type":"managed"}}`
 
 func TestNormalizeResourceCanonicalYAMLandJSON(t *testing.T) {
 	yamlBytes, err := NormalizeResource(KindConnection, "connection.yaml", []byte(testConnectionYAML))
@@ -30,7 +32,7 @@ func TestNormalizeResourceCanonicalYAMLandJSON(t *testing.T) {
 	if !reflect.DeepEqual(yamlBytes, jsonBytes) {
 		t.Fatalf("YAML and JSON normalization differ:\nYAML: %s\nJSON: %s", yamlBytes, jsonBytes)
 	}
-	if got, want := string(yamlBytes), `{"apiVersion":"leapview.dev/v1","kind":"Connection","metadata":{"id":"connection:files","name":"files"},"spec":{"kind":"managed"}}`; got != want {
+	if got, want := string(yamlBytes), `{"apiVersion":"leapview.dev/v1","kind":"Connection","metadata":{"id":"connection:files","name":"files"},"spec":{"type":"managed"}}`; got != want {
 		t.Fatalf("normalized bytes = %s, want %s", got, want)
 	}
 }
@@ -64,6 +66,32 @@ func TestDecodeResourceUsesGeneratedJSONDecoder(t *testing.T) {
 	}
 }
 
+func TestGeneratedResourceBoundaryRejectsCrossKindDocuments(t *testing.T) {
+	source := []byte(`apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: files
+  location: {type: path, path: orders.csv, format: csv}
+`)
+	if err := ValidateBytes(KindConnection, "source.yaml", source); err == nil {
+		t.Fatal("ValidateBytes accepted Source document as Connection")
+	}
+	var connection projectcontracts.Connection
+	if err := DecodeResource(KindConnection, "source.yaml", source, &connection); err == nil {
+		t.Fatal("DecodeResource accepted Source document as Connection")
+	}
+
+	connectionDocument := []byte(testConnectionYAML)
+	if err := ValidateBytes(KindSource, "connection.yaml", connectionDocument); err == nil {
+		t.Fatal("ValidateBytes accepted Connection document as Source")
+	}
+	var decodedSource projectcontracts.Source
+	if err := DecodeResource(KindSource, "connection.yaml", connectionDocument, &decodedSource); err == nil {
+		t.Fatal("DecodeResource accepted Connection document as Source")
+	}
+}
+
 func TestNormalizeResourceRejectsAmbiguousYAML(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -73,55 +101,55 @@ func TestNormalizeResourceRejectsAmbiguousYAML(t *testing.T) {
 	}{
 		{
 			name:    "duplicate key",
-			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  kind: managed", 1),
+			doc:     strings.Replace(testConnectionYAML, "  type: managed", "  type: managed\n  type: managed", 1),
 			code:    "schema.duplicate_key",
 			message: "duplicate mapping key",
 		},
 		{
 			name:    "anchor",
-			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: &managed managed", 1),
+			doc:     strings.Replace(testConnectionYAML, "  type: managed", "  type: &managed managed", 1),
 			code:    "schema.alias",
 			message: "anchors",
 		},
 		{
 			name:    "alias",
-			doc:     strings.Replace(testConnectionYAML, "spec:\n  kind: managed", "spec: &spec\n  kind: managed\nother: *spec", 1),
+			doc:     strings.Replace(testConnectionYAML, "spec:\n  type: managed", "spec: &spec\n  type: managed\nother: *spec", 1),
 			code:    "schema.alias",
 			message: "anchors",
 		},
 		{
 			name:    "explicit tag",
-			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: !!str managed", 1),
+			doc:     strings.Replace(testConnectionYAML, "  type: managed", "  type: !!str managed", 1),
 			code:    "schema.tag",
 			message: "explicit YAML tag",
 		},
 		{
 			name:    "non-string key",
-			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  options: {true: value}", 1),
+			doc:     strings.Replace(testConnectionYAML, "  type: managed", "  type: managed\n  options: {true: value}", 1),
 			code:    "schema.key",
 			message: "keys must be strings",
 		},
 		{
 			name:    "non-finite float",
-			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  options: {ratio: .nan}", 1),
+			doc:     strings.Replace(testConnectionYAML, "  type: managed", "  type: managed\n  options: {ratio: .nan}", 1),
 			code:    "schema.number",
 			message: "non-finite",
 		},
 		{
 			name:    "underflowing float",
-			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  options: {ratio: 1e-400}", 1),
+			doc:     strings.Replace(testConnectionYAML, "  type: managed", "  type: managed\n  options: {ratio: 1e-400}", 1),
 			code:    "schema.number",
 			message: "underflows",
 		},
 		{
 			name:    "overflowing float",
-			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  options: {ratio: 1e400}", 1),
+			doc:     strings.Replace(testConnectionYAML, "  type: managed", "  type: managed\n  options: {ratio: 1e400}", 1),
 			code:    "schema.number",
 			message: "cannot be represented",
 		},
 		{
 			name:    "timestamp",
-			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  options: {when: 2024-01-01}", 1),
+			doc:     strings.Replace(testConnectionYAML, "  type: managed", "  type: managed\n  options: {when: 2024-01-01}", 1),
 			code:    "schema.tag",
 			message: "tag",
 		},
@@ -141,7 +169,7 @@ func TestNormalizeResourceRejectsAmbiguousYAML(t *testing.T) {
 }
 
 func TestNormalizeResourcePreservesSourcePosition(t *testing.T) {
-	doc := strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  options: {true: value}", 1)
+	doc := strings.Replace(testConnectionYAML, "  type: managed", "  type: managed\n  options: {true: value}", 1)
 	_, err := NormalizeResource(KindConnection, "connection.yaml", []byte(doc))
 	diagnostic := assertDiagnosticMessage(t, err, "schema.key", "keys must be strings")
 	if diagnostic.File != "connection.yaml" || diagnostic.Line != 8 || diagnostic.Column == 0 {
@@ -150,7 +178,7 @@ func TestNormalizeResourcePreservesSourcePosition(t *testing.T) {
 }
 
 func TestNormalizeResourceRejectsUnderflowingJSONNumber(t *testing.T) {
-	doc := strings.Replace(testConnectionJSON, `"kind":"managed"`, `"kind":"managed","options":{"ratio":1e-400}`, 1)
+	doc := strings.Replace(testConnectionJSON, `"type":"managed"`, `"type":"managed","options":{"ratio":1e-400}`, 1)
 	_, err := NormalizeResource(KindConnection, "connection.json", []byte(doc))
 	assertDiagnostic(t, err, "schema.number", "underflows")
 }

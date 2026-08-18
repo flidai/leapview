@@ -86,7 +86,7 @@ func TestActiveProjectDefinitionReaderSnapshotReadsCompiledModelPort(t *testing.
 			"orders": {
 				ModelName:   "orders",
 				GrainEntity: "order",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"order": {Type: "primary", Fields: []string{"order_id"}},
 				},
 				Dimensions: map[string]semanticmodel.MetricDimension{
@@ -134,7 +134,7 @@ func TestActiveProjectDefinitionReaderSnapshotRejectsMismatchedPlanner(t *testin
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]semanticmodel.Table{"orders": {
 			ModelName: "orders", GrainEntity: "order",
-			Entities:   map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}},
+			Entities:   map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
 			Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeInteger}},
 		}},
 		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}}},

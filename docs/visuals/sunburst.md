@@ -17,16 +17,26 @@ visuals:
     description: Shows category and status hierarchy by order count.
     type: sunburst
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 12, minimumSpacing: 6, tooltipFallback: true}
+      type: hierarchy
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 12
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 80
 ```
 
@@ -42,15 +52,18 @@ visuals:
     title: State and status sunburst
     type: sunburst
     query:
+      type: aggregate
       dimensions:
-        state: orders.state
-        status: orders.status
+      - state
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 80
+    presentation:
+      type: hierarchy
 ```
 
 ## Three-level hierarchy
@@ -65,17 +78,17 @@ visuals:
     title: Category, state, and status sunburst
     type: sunburst
     presentation:
-      initial_depth: 2
-      roam: true
+      type: hierarchy
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        state: orders.state
-        status: orders.status
+      - category
+      - state
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 120
 ```

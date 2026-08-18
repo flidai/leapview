@@ -198,19 +198,19 @@ func singleDatasetFanoutModel() *semanticmodel.Model {
 		Name: "single_dataset_fanout",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "revenue": {Type: "number", Datatype: semanticmodel.DataTypeDecimal},
 				},
 			},
 			"customers": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
+				Entities: map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "region": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 			"profiles": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
+				Entities: map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "tier": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
@@ -245,25 +245,25 @@ func multiDatasetFanoutModel() *semanticmodel.Model {
 		Name: "multi_dataset_fanout",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 			"returns": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"return_id": {Type: "primary", Fields: []string{"return_id"}}}, GrainEntity: "return_id",
+				Entities: map[string]semanticmodel.EntityDefinition{"return_id": {Type: "primary", Fields: []string{"return_id"}}}, GrainEntity: "return_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"return_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 			"clicks": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"click_id": {Type: "primary", Fields: []string{"click_id"}}}, GrainEntity: "click_id",
+				Entities: map[string]semanticmodel.EntityDefinition{"click_id": {Type: "primary", Fields: []string{"click_id"}}}, GrainEntity: "click_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"click_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 			"customers": {
-				Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
+				Entities: map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "region": {Type: "string", Datatype: semanticmodel.DataTypeString},
 				},

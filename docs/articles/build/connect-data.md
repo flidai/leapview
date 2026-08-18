@@ -41,12 +41,9 @@ metadata:
   displayName: Commerce managed files
   owner: data-platform
 spec:
-  kind: managed
-  description: Reviewed commerce extracts staged as immutable revisions.
-  credentials:
-    provider: none
+  type: managed
   defaults:
-    options:
+    csv:
       header: true
 ```
 
@@ -68,13 +65,17 @@ metadata:
   owner: data-platform
 spec:
   connection: commerce
-  path: orders.csv
-  format: csv
-  fields:
-    order_id: {type: string, description: Stable order identifier.}
-    customer_id: {type: string, description: Customer identifier.}
-    purchased_at: {type: string, description: Source purchase timestamp.}
-    amount: {type: number, description: Source order amount.}
+  location:
+    type: path
+    path: orders.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      order_id: {datatype: String, description: Stable order identifier.}
+      customer_id: {datatype: String, description: Customer identifier.}
+      purchased_at: {datatype: String, description: Source purchase timestamp.}
+      amount: {datatype: Decimal, description: Source order amount.}
 ```
 
 The source name is logical identity; `path` is a physical detail that can evolve. Declare the source fields expected by downstream transformations. Model-table SQL should still cast defensively when physical CSV values can be malformed.
@@ -97,15 +98,16 @@ Include patterns are relative to the project manifest. A duplicate match or undi
 
 ### Reference the source in the project graph
 
-Model resources declare their source dependencies directly:
+Model resources declare governed SQL references through the source namespace:
 
 ```yaml
 spec:
-  sources:
-    - commerce.orders
+  definition:
+    type: sql
+    sql: SELECT * FROM source."commerce.orders"
 ```
 
-This records lineage and keeps SQL reads within the governed project graph. It does not stage managed data or grant every user access to the resulting model.
+The compiler derives lineage and keeps SQL reads within the governed project graph. It does not stage managed data or grant every user access to the resulting model.
 
 ## Validate ingestion
 
@@ -130,13 +132,13 @@ Then stage it to a target with `leapview data sync`. Staging returns an immutabl
 
 ## Verify the source boundary
 
-Check that filenames match source paths exactly, source fields reflect the actual header, credentials resolve in the target instance, and each model lists every source its SQL will read. Continue with [Define model tables](/docs/guides/build/model-tables).
+Check that filenames match source paths exactly, source fields reflect the actual header, credentials resolve in the target instance, and compiler-derived governed lineage covers every source each model SQL expression reads. Continue with [Define model tables](/docs/guides/build/model-tables).
 
 For managed data, retain the revision digest returned by staging and confirm that the target can resolve it before deployment. Re-run the plan against the same input directory; an unchanged directory should produce the same reviewed revision.
 
 ## Troubleshooting
 
-If validation cannot discover the connection or source, resolve include patterns relative to `dashboards/leapview.yaml` and check for duplicate matches. If staging reports missing files, compare the source `path` with the case-sensitive filename beneath `--from`. If a model later reports a missing source dependency, add the logical source ID to that model's `spec.sources` rather than bypassing project validation.
+If validation cannot discover the connection or source, resolve include patterns relative to `dashboards/leapview.yaml` and check for duplicate matches. If staging reports missing files, compare the source `location.path` with the case-sensitive filename beneath `--from`. If a model later reports a missing source dependency, correct its governed SQL reference or source resource rather than bypassing project validation.
 
 ## Next steps
 

@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/digest"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/project"
@@ -533,6 +534,7 @@ func candidateAuthoredConnections(
 		result[index] = deployment.CandidateAuthoredConnection{
 			ConnectionID:  value.ConnectionID,
 			ConnectorKind: value.ConnectorKind,
+			Access:        value.Access,
 		}
 	}
 	return result
@@ -543,7 +545,7 @@ func candidateConnectionRequirements(
 ) []deployment.CandidateConnectionRequirement {
 	result := make([]deployment.CandidateConnectionRequirement, len(values))
 	for index, value := range values {
-		result[index] = deployment.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+		result[index] = deployment.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind, Access: value.Access}
 	}
 	return result
 }
@@ -569,7 +571,7 @@ func candidateReleaseProvenance(
 	}
 	bindings := make([]release.BindingEvidence, len(receipt.Bindings))
 	for index, item := range receipt.Bindings {
-		bindings[index] = release.BindingEvidence{BindingID: item.BindingID, ConnectionID: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ValidatedVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash}
+		bindings[index] = release.BindingEvidence{BindingID: item.BindingID, ConnectionID: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ValidatedVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash, Access: item.Access}
 	}
 	identity := artifacts.Generation.Identity
 	var baseIdentity *projectgraph.ServingIdentity
@@ -590,6 +592,8 @@ func candidateReleaseProvenance(
 			DataRevision: artifacts.Generation.DataRevision, DataMode: artifacts.Generation.DataMode,
 			ManagedDataPins: append([]release.ManagedDataPin(nil), artifacts.Generation.ManagedDataPins...),
 			Bindings:        bindings, AuthoredConnections: candidateProvenanceAuthoredConnections(artifacts.Generation.AuthoredConnections),
+			Extensions:   append([]extension.Evidence(nil), artifacts.Extensions...),
+			GateEvidence: receipt.GateEvidence,
 		},
 	})
 }
@@ -602,6 +606,7 @@ func candidateProvenanceAuthoredConnections(
 		result[index] = release.AuthoredConnectionEvidence{
 			ConnectionID:  value.ConnectionID.String(),
 			ConnectorKind: value.ConnectorKind,
+			Access:        value.Access,
 		}
 	}
 	return result

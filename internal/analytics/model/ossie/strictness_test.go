@@ -11,7 +11,7 @@ func strictnessProjectModels() map[string]semanticmodel.Table {
 	return map[string]semanticmodel.Table{
 		"orders": {
 			GrainEntity: "order",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"order": {Type: "primary", Fields: []string{"order_id"}},
 			},
 			Columns: map[string]semanticmodel.ModelColumn{

@@ -14,11 +14,9 @@ metadata:
   name: olist
   displayName: Olist CSV files
 spec:
-  kind: managed
-  credentials:
-    provider: none
+  type: managed
   defaults:
-    options:
+    csv:
       header: true
 ```
 
@@ -66,26 +64,31 @@ metadata:
   displayName: Orders
 spec:
   connection: olist
-  path: olist_orders_dataset.csv
-  fields:
-    order_id:
-      type: string
-      description: Raw order identifier.
+  location:
+    type: path
+    path: olist_orders_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      order_id:
+        datatype: String
+        description: Raw order identifier.
 ```
 
-The source may identify a path, database object, format, options, and declared fields. Use a name that reflects the governed dataset rather than a temporary filename. Model tables and project-resource permissions depend on that stable name.
+The source identifies a typed path or relation location, format options, and declared schema. Use a name that reflects the governed dataset rather than a temporary filename. Model tables and project-resource permissions depend on that stable name.
 
 Field declarations document expected input shape and improve validation and discovery. They do not replace defensive transformations: model-table SQL should still cast or reject malformed physical values where necessary.
 
 ## Project dependency and access
 
-A model lists the project sources it may use under `spec.sources`. Listing a source establishes the configuration dependency; it does not copy the source or its credentials into the model.
+A model's governed SQL definition names project sources through the source namespace. The compiler derives the dependency; it does not copy source credentials into the model.
 
 ```yaml
 spec:
-  sources:
-    - olist.orders
-    - olist.customers
+  definition:
+    type: sql
+    sql: SELECT * FROM source."olist.orders"
 ```
 
 Validation should fail when a model table references an undiscovered source. This keeps repository layout from becoming an accidental authorization mechanism.

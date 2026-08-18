@@ -23,6 +23,9 @@ import (
 	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	analyticsgates "github.com/flidai/leapview/internal/analytics/gates"
+	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	physicalpoolsqlite "github.com/flidai/leapview/internal/analytics/physicalpool/sqlite"
@@ -94,6 +97,43 @@ func verifyCanonicalDeliveryTarget(ctx context.Context, reader deliveryTargetRea
 		return fmt.Errorf("%w: canonical delivery target no longer points to generation %q at revision %d", deployment.ErrDeliveryConflict, generationID, revision)
 	}
 	return nil
+}
+
+func sourceInputsFromManifest(artifacts release.CandidateArtifactSet, runtime any) []analyticsgates.SourceInput {
+	observed := map[string]analyticsmaterialize.SourceObservation{}
+	if reader, ok := runtime.(interface {
+		SourceObservations() []analyticsmaterialize.SourceObservation
+	}); ok {
+		for _, item := range reader.SourceObservations() {
+			observed[item.ID] = item
+		}
+	}
+	if len(observed) == 0 && artifacts.Generation.BaseGateEvidence != nil {
+		base := artifacts.Generation.BaseGateEvidence
+		for _, item := range base.Sources {
+			source, ok := artifacts.Compiler.Manifest.Sources[item.ID]
+			if !ok {
+				continue
+			}
+			// Base observations are immutable evidence reused for schema/freshness
+			// comparison; they are not work performed by this candidate. Do not
+			// charge their historical query/row/time totals to the new gate budget.
+			observation := analyticsmaterialize.SourceObservation{ID: item.ID, Schema: append([]semanticmodel.ColumnSchema(nil), item.ObservedSchema...), FreshnessObserved: item.ObservedAt}
+			if source.Freshness != nil && source.Freshness.Basis == "revision" {
+				observation.Revision = source.Freshness.Revision
+				observation.RevisionObserved = item.ObservedAt
+			}
+			observation.FreshnessEmpty = item.FreshnessOutcome == release.GateEmpty
+			observed[item.ID] = observation
+		}
+	}
+	result := make([]analyticsgates.SourceInput, 0, len(artifacts.Compiler.Manifest.Sources))
+	for id, source := range artifacts.Compiler.Manifest.Sources {
+		item := observed[id]
+		result = append(result, analyticsgates.SourceInput{ID: id, Source: source, Observed: append([]semanticmodel.ColumnSchema(nil), item.Schema...), Revision: item.Revision, RevisionObserved: item.RevisionObserved, FreshnessObserved: item.FreshnessObserved, FreshnessEmpty: item.FreshnessEmpty, SchemaFailure: item.SchemaFailure, FreshnessFailure: item.FreshnessFailure, ObservationQueries: item.ObservationQueries, ObservationRows: item.ObservationRows, ObservationMillis: item.ObservationMillis})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
 }
 
 // deliveryMaterializationDelta maps compiler model-resource changes to the
@@ -427,6 +467,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err := store.BindInstanceEnvironment(ctx, string(environment)); err != nil {
 		return fail(err)
 	}
+	extensionSupply, err := loadExtensionSupply(ctx, cfg)
+	if err != nil {
+		return fail(err)
+	}
 	candidateSources, err := projectmodule.NewCandidateSourceSynchronizer(
 		filepath.Join(cfg.ArtifactDir(), "candidate-sources"),
 	)
@@ -476,8 +520,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			InfisicalUniversalClientSecret: cfg.InfisicalUniversalClientSecret,
 			InfisicalAllowedScopes:         cfg.InfisicalAllowedScopes,
 		},
-		RootDir:     cfg.DuckDBDirPath(),
-		CatalogPath: duckLakeCatalogPath, DataPath: cfg.DuckLakeDataDir(),
+		RootDir:            cfg.DuckDBDirPath(),
+		ExtensionAdmission: extensionSupply,
+		CatalogPath:        duckLakeCatalogPath, DataPath: cfg.DuckLakeDataDir(),
 		MaxConnections: workloadConfig.MaxRunning, MemoryMaxBytes: cfg.DuckDBNodeMemoryMaxBytes,
 		TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads,
 		TempDir:                   cfg.DuckDBTempDirPath(),
@@ -610,7 +655,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		Database:        store.SQLDB(),
 		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
-		ArtifactDirectory: cfg.ArtifactDir(), Environment: environment,
+		ExtensionPreparation: extensionSupply,
+		ArtifactDirectory:    cfg.ArtifactDir(), Environment: environment,
 		API: releasemodule.APIConfig{
 			CurrentPrincipal: func(r *http.Request) (releasemodule.Principal, bool) {
 				auth := accessModule.Auth()
@@ -779,7 +825,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			return appruntimefactory.RunSQLiteProductionGC(gcCtx, appruntimefactory.ProductionGCRunConfig{
 				Database: store.SQLDB(), TargetID: instanceID, ProjectID: projectID.String(), Environment: string(environment), OwnerID: instanceID, HolderID: instanceID,
 				StagingRoot:   filepath.Join(cfg.RuntimeDir(), "gc"),
-				PoolS3:        gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle},
+				PoolS3:        gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
 				LeaseDuration: 15 * time.Minute, BuildGrace: time.Hour, OrphanGrace: time.Hour, ReaderGrace: 30 * time.Minute,
 			})
 		}, cfg.ManagedDataGCInterval, slog.Default(), nil)
@@ -794,7 +840,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), LeaseHolder: instanceID,
 			ProjectRuntimeFactory: analyticsModule.ProjectRuntimeFactoryForEnvironment,
 			DashboardMaxRows:      cfg.QueryResultMaxRows, DashboardMaxBytes: cfg.QueryResultMaxBytes,
-			PoolS3: gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle},
+			PoolS3: gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
 			Authorize: func(ctx context.Context, evidence appruntimefactory.SealedAuthorizationInput) error {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -1007,7 +1053,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				poolErr = fmt.Errorf("load configured delivery physical-pool admission: %w", err)
 			} else {
 				poolContract = &ducklake.PoolContract{Pool: admission.Pool, Tuple: admission.Pool.Compatibility, Admission: admission.Admission, Evidence: admission.Evidence}
-				poolS3 := gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle}
+				poolS3 := gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply}
 				poolStore, poolErr = appruntimefactory.NewCatalogObjectStore(ctx, poolContract, poolS3)
 				if poolErr == nil {
 					poolCredentialBootstrap, poolErr = gcadapter.NewPoolCredentialBootstrap(poolContract, poolS3)
@@ -1062,10 +1108,12 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		if runtimeErr != nil {
 			return fail(runtimeErr)
 		}
-		materialize := func(matCtx context.Context, working *candidatecatalog.WorkingCatalog, buildInput deployment.DeliveryBuildInput, artifacts release.CandidateArtifactSet, candidateID string) error {
+		materialize := func(matCtx context.Context, working *candidatecatalog.WorkingCatalog, buildInput deployment.DeliveryBuildInput, artifacts release.CandidateArtifactSet, candidateID string) ([]analyticsgates.SourceInput, error) {
+			observationBounds := analyticsgates.Bounds{MaxRows: 10000, MaxQueries: 128, MaxMillis: 5000}
+			matCtx = analyticsmaterialize.WithObservationBudget(matCtx, analyticsmaterialize.ObservationBudget{MaxQueries: observationBounds.MaxQueries, MaxMillis: observationBounds.MaxMillis})
 			models := artifacts.Compiler.Artifact.Models()
 			if len(models) == 0 {
-				return fmt.Errorf("compiled project contains no semantic models")
+				return nil, fmt.Errorf("compiled project contains no semantic models")
 			}
 			// Candidate artifacts intentionally keep managed-data locations out of
 			// the portable project artifact. Resolve the exact pins that were
@@ -1073,23 +1121,27 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			// runtime roots to this detached model copy for physical refresh.
 			managedResolution, resolveErr := managedDataResolver.ResolveManagedDataForIdentity(matCtx, artifacts.Generation.Identity)
 			if resolveErr != nil {
-				return fmt.Errorf("resolve candidate managed-data roots: %w", resolveErr)
+				return nil, fmt.Errorf("resolve candidate managed-data roots: %w", resolveErr)
 			}
 			if managedResolution.Lifetime != nil {
 				defer managedResolution.Lifetime.Release()
 			}
 			if err := analyticsmodule.BindCandidateManagedDataRoots(models, artifacts.Compiler.Artifact.Manifest().NameIndex.Connections, managedResolution.Roots); err != nil {
-				return err
+				return nil, err
 			}
 			if artifacts.Generation.DataMode == release.GenerationDataReuseBase {
 				actual, err := working.VisibleTables(matCtx)
 				if err != nil {
-					return err
+					return nil, err
 				}
 				expected := appruntimefactory.ExpectedRelations(artifacts)
-				return appruntimefactory.VerifyExpectedRelations(actual, expected)
+				if err := appruntimefactory.VerifyExpectedRelations(actual, expected); err != nil {
+					return nil, err
+				}
+				return sourceInputsFromManifest(artifacts, nil), nil
 			}
-			return working.WithEnvironment(matCtx, func(environment *ducklake.Environment) error {
+			var observations []analyticsgates.SourceInput
+			err := working.WithEnvironment(matCtx, func(environment *ducklake.Environment) error {
 				baseRetained := buildInput.Attempt.BaseCatalogDigest != ""
 				changedByModel, removed, refreshAll := deliveryMaterializationDelta(artifacts, buildInput.Plan)
 				if baseRetained {
@@ -1114,10 +1166,19 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 							return fmt.Errorf("refresh impacted model %q: %w", modelID, err)
 						}
 					}
+					observations = sourceInputsFromManifest(artifacts, runtime)
 					return nil
 				}
-				return runtime.Refresh(matCtx)
+				if err := runtime.Refresh(matCtx); err != nil {
+					return err
+				}
+				observations = sourceInputsFromManifest(artifacts, runtime)
+				return nil
 			})
+			if err != nil {
+				return nil, err
+			}
+			return observations, nil
 		}
 		var baseResolver func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error)
 		if poolContract != nil && poolStore != nil {
@@ -1147,7 +1208,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		if poolErr == nil && poolContract != nil {
 			verifyLease = appruntimefactory.SQLiteWriterLeaseVerifier(deliveryRepository)
 		}
-		buildFactory := appruntimefactory.BuildRequestFactory(appruntimefactory.CandidateCatalogRunnerConfig{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, CredentialBootstrap: poolCredentialBootstrap, Base: baseResolver, Materialize: materialize, Connections: candidateConnectionLeaser{leaser: candidateBindings, module: analyticsModule}, QualificationFactory: appruntimefactory.QualificationRequestForCandidate, ObjectStore: poolStore, SealRepository: deliveryRepository, RemoteVerifier: appruntimefactory.ReadOnlyCatalogVerifier{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ObjectStore: poolStore, CredentialBootstrap: poolCredentialBootstrap}, VerifyLease: verifyLease})
+		buildFactory := appruntimefactory.BuildRequestFactory(appruntimefactory.CandidateCatalogRunnerConfig{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, CredentialBootstrap: poolCredentialBootstrap, Base: baseResolver, Materialize: materialize, Connections: candidateConnectionLeaser{leaser: candidateBindings, module: analyticsModule}, QualificationFactory: appruntimefactory.QualificationRequestForCandidate, ObjectStore: poolStore, SealRepository: deliveryRepository, RemoteVerifier: appruntimefactory.ReadOnlyCatalogVerifier{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ObjectStore: poolStore, CredentialBootstrap: poolCredentialBootstrap}, VerifyLease: verifyLease, RuntimeVersion: identity.Version + ":" + identity.Revision})
 		planCandidate := func(planCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet) (deployment.DeliveryPlan, error) {
 			var reuse *deployment.DeliveryReuseInput
 			if input.Candidate.Scope.BaseGenerationID != "" {
@@ -1233,8 +1294,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return deployment.DeliveryBuildRequest{}, fmt.Errorf("%w: candidate physical-pool admission unavailable", deployment.ErrCandidateUnavailable)
 			}
 			return buildFactory(buildCtx, input, artifacts)
-		}, ReadyCandidate: func(readyCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, _ deployment.DeliveryBuildResult) (deployment.Candidate, error) {
-			receipt, err := canonicalRuntime.Prepare(readyCtx, deployment.CandidateRuntimeRequest{Candidate: input.Candidate, AuthorizationFingerprint: artifacts.AuthorizationFingerprint, Generation: deployment.CandidateGenerationRuntime{Identity: artifacts.Generation.Identity, ArtifactDigest: artifacts.Generation.ArtifactDigest, DataRevision: artifacts.Generation.DataRevision, DataMode: deployment.CandidateDataMode(artifacts.Generation.DataMode), Connections: candidateConnectionRequirements(artifacts.Generation.Connections), AuthoredConnections: candidateReleaseAuthoredConnections(artifacts.Generation.AuthoredConnections), ManagedDataConnections: candidateManagedDataConnections(artifacts.Generation.ManagedDataPins), Restrictions: candidateRuntimeRestrictions(artifacts.Generation.Restrictions)}})
+		}, ReadyCandidate: func(readyCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, build deployment.DeliveryBuildResult) (deployment.Candidate, error) {
+			if build.GateEvidence == nil {
+				return deployment.Candidate{}, fmt.Errorf("%w: candidate gate evidence is required", deployment.ErrCandidateInvalid)
+			}
+			bindingFingerprint := ""
+			if build.GateEvidence != nil {
+				bindingFingerprint = build.GateEvidence.BindingGeneration
+			}
+			receipt, err := canonicalRuntime.Prepare(readyCtx, deployment.CandidateRuntimeRequest{Candidate: input.Candidate, AuthorizationFingerprint: artifacts.AuthorizationFingerprint, Generation: deployment.CandidateGenerationRuntime{Identity: artifacts.Generation.Identity, ArtifactDigest: artifacts.Generation.ArtifactDigest, DataRevision: artifacts.Generation.DataRevision, DataMode: deployment.CandidateDataMode(artifacts.Generation.DataMode), Connections: candidateConnectionRequirements(artifacts.Generation.Connections), AuthoredConnections: candidateReleaseAuthoredConnections(artifacts.Generation.AuthoredConnections), ManagedDataConnections: candidateManagedDataConnections(artifacts.Generation.ManagedDataPins), Restrictions: candidateRuntimeRestrictions(artifacts.Generation.Restrictions), BindingFingerprint: bindingFingerprint, GateEvidence: build.GateEvidence}})
 			if err != nil {
 				return deployment.Candidate{}, err
 			}

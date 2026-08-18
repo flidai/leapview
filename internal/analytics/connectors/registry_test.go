@@ -1,6 +1,9 @@
 package connectors
 
-import "testing"
+import (
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	"testing"
+)
 
 func TestRegistryIncludesSupportedFormats(t *testing.T) {
 	expected := []string{"csv", "json", "parquet", "excel", "text", "blob", "vortex", "delta", "iceberg", "lance"}
@@ -45,6 +48,21 @@ func TestConnectionActivationModesAreExplicit(t *testing.T) {
 		spec, ok := LookupConnection(kind)
 		if !ok || spec.ActivationMode != want {
 			t.Fatalf("connection %q activation mode = %q, want %q", kind, spec.ActivationMode, want)
+		}
+	}
+}
+
+func TestPublicAccessCapabilityMatchesGeneratedConnectorDeclarations(t *testing.T) {
+	for _, kind := range []string{"managed", "s3", "r2", "gcs", "http", "azure_blob"} {
+		spec, ok := LookupConnection(kind)
+		if !ok || !spec.AllowPublicAccess {
+			t.Fatalf("connector %q public capability = %#v, want generated access support", kind, spec)
+		}
+	}
+	for _, kind := range []string{"postgres", "mysql", "sqlite", "ducklake", "quack"} {
+		spec, ok := LookupConnection(kind)
+		if !ok || spec.AllowPublicAccess {
+			t.Fatalf("connector %q public capability = %#v, want generated access rejection", kind, spec)
 		}
 	}
 }
@@ -99,6 +117,101 @@ func TestRegistrySpecializedCapabilities(t *testing.T) {
 		t.Fatalf("s3 registry = %#v, want httpfs path source", s3)
 	}
 
+}
+
+func TestGeneratedRegistryHasTotalFormatAdapters(t *testing.T) {
+	if len(projectcontracts.FormatRegistry) != len(projectcontracts.PathFormatNames) {
+		t.Fatalf("generated format registry = %d entries, names = %d", len(projectcontracts.FormatRegistry), len(projectcontracts.PathFormatNames))
+	}
+	seen := map[string]struct{}{}
+	for _, profile := range projectcontracts.FormatRegistry {
+		if _, duplicate := seen[profile.Name]; duplicate {
+			t.Fatalf("duplicate generated format profile %q", profile.Name)
+		}
+		seen[profile.Name] = struct{}{}
+		format, ok := LookupFormat(profile.Name)
+		if !ok || format.Name != profile.Name {
+			t.Fatalf("generated format %q has no runtime adapter: %#v, ok=%v", profile.Name, format, ok)
+		}
+	}
+	for _, name := range FormatNames() {
+		if _, ok := seen[name]; !ok {
+			t.Fatalf("runtime format %q is absent from generated registry", name)
+		}
+	}
+}
+
+func TestGeneratedRegistryHasTotalConnectionAdapters(t *testing.T) {
+	if len(projectcontracts.ConnectorRegistry) == 0 {
+		t.Fatal("generated connector registry is empty")
+	}
+	seen := map[string]struct{}{}
+	for _, profile := range projectcontracts.ConnectorRegistry {
+		if profile.Key == "" || profile.AdapterKey == "" {
+			t.Fatalf("generated connector profile has incomplete identity: %#v", profile)
+		}
+		if _, duplicate := seen[profile.Key]; duplicate {
+			t.Fatalf("duplicate generated connector profile %q", profile.Key)
+		}
+		seen[profile.Key] = struct{}{}
+		connection, ok := LookupConnection(profile.Key)
+		if !ok {
+			t.Fatalf("generated connector %q has no runtime adapter (adapter key %q)", profile.Key, profile.AdapterKey)
+		}
+		if connection.Kind != profile.Key {
+			t.Fatalf("generated connector %q resolved with private adapter identity %q", profile.Key, connection.Kind)
+		}
+	}
+}
+
+func TestLookupConnectionResolvesPrivateAdapterKey(t *testing.T) {
+	const publicKey = "fixture_public_connector"
+	const adapterKey = "fixture_private_adapter"
+
+	originalRegistry := projectcontracts.ConnectorRegistry
+	originalConnections := connections
+	t.Cleanup(func() {
+		projectcontracts.ConnectorRegistry = originalRegistry
+		connections = originalConnections
+	})
+
+	registry := append([]projectcontracts.ConnectorProfile(nil), originalRegistry...)
+	registry = append(registry, projectcontracts.ConnectorProfile{
+		Key:                  publicKey,
+		SchemaName:           "FixtureConnection",
+		ActivationMode:       projectcontracts.ConnectorActivationMode("authored"),
+		LocationCapabilities: []string{KindPath},
+		ApprovedExtensions:   []string{"httpfs"},
+		SecretType:           "fixture",
+		SupportStatus:        projectcontracts.ConnectorSupportStatus("experimental"),
+		AdapterKey:           adapterKey,
+		AllowPublicAccess:    true,
+	})
+	projectcontracts.ConnectorRegistry = registry
+
+	implementation := make(map[string]ConnectionSpec, len(originalConnections)+1)
+	for key, value := range originalConnections {
+		implementation[key] = value
+	}
+	implementation[adapterKey] = ConnectionSpec{
+		ActivationMode:     AuthoredActivation,
+		SecretType:         "fixture",
+		RequiredExtensions: []string{"httpfs"},
+		AllowsPathSource:   true,
+		AllowPublicAccess:  true,
+	}
+	connections = implementation
+
+	got, ok := LookupConnection(publicKey)
+	if !ok {
+		t.Fatal("fixture connector was not resolved")
+	}
+	if got.Kind != publicKey {
+		t.Fatalf("fixture public identity = %q, want %q", got.Kind, publicKey)
+	}
+	if got.SecretType != "fixture" || !got.AllowsPathSource || !got.AllowPublicAccess {
+		t.Fatalf("fixture runtime capabilities = %#v", got)
+	}
 }
 
 func equalStrings(left, right []string) bool {

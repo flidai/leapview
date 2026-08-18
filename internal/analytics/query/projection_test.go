@@ -119,10 +119,10 @@ func TestProjectScalarFromGroupedRecombinesAdditiveSumsBeforeMetricEvaluation(t 
 func projectionModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Tables: map[string]semanticmodel.Table{
-			"ratings": {GrainEntity: "rating", Entities: map[string]semanticmodel.ModelEntitySpec{"rating": {Type: "primary", Fields: []string{"rating"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"ratings": {GrainEntity: "rating", Entities: map[string]semanticmodel.EntityDefinition{"rating": {Type: "primary", Fields: []string{"rating"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"rating": {Type: "number", Datatype: semanticmodel.DataTypeDecimal}, "activity_date": {Type: "date", Datatype: semanticmodel.DataTypeDate}, "release_decade": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
-			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.ModelEntitySpec{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.EntityDefinition{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"tag_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "activity_date": {Type: "date", Datatype: semanticmodel.DataTypeDate}, "release_decade": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
 		},

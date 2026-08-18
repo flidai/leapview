@@ -17,18 +17,20 @@ visuals:
     description: Shows monthly open, close, low, and high values.
     type: candlestick
     query:
-      dataset: market_ohlc
+      type: aggregate
       dimensions:
-        month: market_ohlc.month
+      - month
       metrics:
-        market_open: null
-        market_close: null
-        market_low: null
-        market_high: null
+      - market_open
+      - market_close
+      - market_low
+      - market_high
       sort:
-        - field: month
-          direction: asc
+      - field: month
+        direction: asc
       limit: 12
+    presentation:
+      type: cartesian
 ```
 
 ## Revenue range
@@ -46,15 +48,16 @@ visuals:
       type: cartesian
       dataZoom: true
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue_q1: null
-        revenue_q3: null
-        revenue_min: null
-        revenue_max: null
+      - revenue_q1
+      - revenue_q3
+      - revenue_min
+      - revenue_max
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```

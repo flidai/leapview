@@ -37,7 +37,7 @@ func bundleProject(t *testing.T) projectartifact.Project {
 			"source:orders": {Connection: "connection:warehouse"},
 		},
 		Models: map[string]semanticmodel.Table{
-			"model:orders": {Source: "source:orders"},
+			"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
 		},
 		ResourceFiles: map[string]string{"project:demo": "leapview.yaml", "connection:warehouse": "connections/warehouse.yaml", "source:orders": "sources/orders.yaml", "model:orders": "models/orders.yaml"},
 	})
@@ -109,10 +109,10 @@ func TestPackProjectPreservesAuthoredSourcesDeterministically(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "models"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "sources", "orders.yaml"), []byte("kind: Source\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "sources", "orders.yaml"), []byte("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte("kind: Connection\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte("apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: managed}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("kind: Model\n"), 0o600); err != nil {
@@ -145,8 +145,8 @@ func TestPackProjectIncludesOnlyManifestAndGraphProvenanceFiles(t *testing.T) {
 	projectPath := filepath.Join(root, ProjectFile)
 	files := map[string]string{
 		ProjectFile:                  "apiVersion: leapview.dev/v1\nkind: Project\n",
-		"connections/warehouse.yaml": "kind: Connection\n",
-		"sources/orders.yaml":        "kind: Source\n",
+		"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: managed}\n",
+		"sources/orders.yaml":        "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n",
 		"models/orders.yaml":         "kind: Model\n",
 		"unrelated/other.yaml":       "must not be bundled\n",
 	}

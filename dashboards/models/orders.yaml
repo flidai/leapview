@@ -6,14 +6,6 @@ metadata:
   displayName: Visual Orders
   description: Order-grain model table with deliberately grain-aligned category, revenue, review, and delivery fields.
 spec:
-  description: Order-grain model table with deliberately grain-aligned category, revenue, review, and delivery fields.
-  sources:
-  - olist.orders
-  - olist.payments
-  - olist.reviews
-  - olist.order_items
-  - olist.products
-  - olist.translations
   fields:
     order_id:
       datatype: String
@@ -63,7 +55,8 @@ spec:
       datatype: String
       label: Delivery speed
       description: Delivery speed bucket derived from delivery days.
-  transform:
+  definition:
+    type: sql
     sql: |
       WITH revenue AS (
         SELECT order_id, CAST(SUM(try_cast(payment_value AS DECIMAL(38,2))) AS DECIMAL(38,2)) AS revenue

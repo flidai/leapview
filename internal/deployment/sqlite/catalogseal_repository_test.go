@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/release"
 )
 
 type catalogSealFixture struct {
@@ -60,7 +61,12 @@ func newCatalogSealFixture(t *testing.T) catalogSealFixture {
 }
 
 func (f catalogSealFixture) completionInput() catalogseal.CompleteInput {
-	resolved, err := deployment.NewDeliveryResolvedBuildInputs(deployment.DeliveryResolvedBuildInputs{PolicyDigest: f.plan.Governance.PolicyDigest})
+	binding := release.BindingFingerprint(nil)
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: f.identity.Candidate.ID, SourceDigest: f.plan.SourceDigest, BindingGeneration: binding, RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: f.now, Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	if err != nil {
+		panic(err)
+	}
+	resolved, err := deployment.NewDeliveryResolvedBuildInputs(deployment.DeliveryResolvedBuildInputs{PolicyDigest: f.plan.Governance.PolicyDigest, GateEvidence: &evidence})
 	if err != nil {
 		panic(err)
 	}

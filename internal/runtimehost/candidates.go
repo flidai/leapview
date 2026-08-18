@@ -12,6 +12,7 @@ import (
 	"time"
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -30,6 +31,7 @@ type CandidateBindingVersion struct {
 	BindingID, LogicalConnection, ConnectorKind string
 	Revision                                    int64
 	ProviderVersion, EndpointConfigHash         string
+	Access                                      semanticmodel.ConnectionAccess
 }
 type CandidateRestriction struct {
 	ID             string
@@ -42,17 +44,21 @@ type CandidateRestriction struct {
 type CandidateDataMode string
 
 const (
-	CandidateDataReuseBase CandidateDataMode = "reuse_base"
-	// CandidateDataReuseSnapshot is retained as a source-compatible alias.
-	CandidateDataReuseSnapshot  CandidateDataMode = CandidateDataReuseBase
+	CandidateDataReuseBase      CandidateDataMode = "reuse_base"
 	CandidateDataRefreshSources CandidateDataMode = "refresh_sources"
 )
 
-type CandidateAuthoredConnection struct{ LogicalConnection, ConnectorKind string }
+type CandidateAuthoredConnection struct {
+	LogicalConnection string
+	ConnectorKind     string
+	Access            semanticmodel.ConnectionAccess
+}
 type CandidateCompatibility struct {
 	ArtifactDigest, DataRevision             string
 	DataMode                                 CandidateDataMode
 	RuntimeVersion, AuthorizationFingerprint string
+	GateEvidenceDigest                       string
+	BindingFingerprint                       string
 	Bindings                                 []CandidateBindingVersion
 	AuthoredConnections                      []CandidateAuthoredConnection
 	ManagedDataConnections                   []string
@@ -168,6 +174,7 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 		AuthorizationFingerprint: normalized.Compatibility.AuthorizationFingerprint,
 		BindingFingerprint:       fingerprintCandidateBindings(normalized.Compatibility.Bindings),
 		CompatibilityFingerprint: "sha256:" + fmt.Sprintf("%x", fingerprint),
+		GateEvidenceDigest:       normalized.Compatibility.GateEvidenceDigest,
 	}, expiresAt: normalized.ExpiresAt, fingerprint: fingerprint, lifetime: input.Lifetime}
 	// Ownership transfers to the prepared candidate; manager preparation closes
 	// it on every subsequent failure path.
@@ -276,13 +283,20 @@ func normalizeLeaseRequest(input CandidateLeaseRequest, now time.Time) (Candidat
 }
 
 func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibility, error) {
-	if value.ArtifactDigest != strings.TrimSpace(value.ArtifactDigest) || value.DataRevision != strings.TrimSpace(value.DataRevision) || value.RuntimeVersion != strings.TrimSpace(value.RuntimeVersion) || value.AuthorizationFingerprint != strings.TrimSpace(value.AuthorizationFingerprint) {
+	if value.ArtifactDigest != strings.TrimSpace(value.ArtifactDigest) || value.DataRevision != strings.TrimSpace(value.DataRevision) || value.RuntimeVersion != strings.TrimSpace(value.RuntimeVersion) || value.AuthorizationFingerprint != strings.TrimSpace(value.AuthorizationFingerprint) || value.GateEvidenceDigest != strings.TrimSpace(value.GateEvidenceDigest) || value.BindingFingerprint != strings.TrimSpace(value.BindingFingerprint) {
 		return CandidateCompatibility{}, fmt.Errorf("%w: compatibility fingerprints must be canonical", ErrCandidateRuntimeInvalid)
 	}
 	value.ArtifactDigest = strings.TrimSpace(value.ArtifactDigest)
 	value.DataRevision = strings.TrimSpace(value.DataRevision)
 	value.RuntimeVersion = strings.TrimSpace(value.RuntimeVersion)
 	value.AuthorizationFingerprint = strings.TrimSpace(value.AuthorizationFingerprint)
+	value.GateEvidenceDigest = strings.TrimSpace(value.GateEvidenceDigest)
+	value.BindingFingerprint = strings.TrimSpace(value.BindingFingerprint)
+	if value.GateEvidenceDigest != "" {
+		if err := platformdigest.ValidateSHA256Identity(value.GateEvidenceDigest); err != nil {
+			return CandidateCompatibility{}, fmt.Errorf("%w: gate evidence digest: %v", ErrCandidateRuntimeInvalid, err)
+		}
+	}
 	if value.ArtifactDigest == "" || value.DataRevision == "" || value.RuntimeVersion == "" || value.AuthorizationFingerprint == "" {
 		return CandidateCompatibility{}, fmt.Errorf("%w: artifact, data, runtime, and authorization fingerprints are required", ErrCandidateRuntimeInvalid)
 	}
@@ -298,6 +312,9 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 		if b.BindingID != strings.TrimSpace(b.BindingID) || b.LogicalConnection != strings.TrimSpace(b.LogicalConnection) || b.ConnectorKind != strings.TrimSpace(b.ConnectorKind) || b.ProviderVersion != strings.TrimSpace(b.ProviderVersion) || b.EndpointConfigHash != strings.TrimSpace(b.EndpointConfigHash) {
 			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity must be canonical", ErrCandidateRuntimeInvalid)
 		}
+		if b.Access != "" && b.Access != semanticmodel.ConnectionAccessPublic {
+			return CandidateCompatibility{}, fmt.Errorf("%w: unsupported binding access policy", ErrCandidateRuntimeInvalid)
+		}
 		if b.BindingID == "" || b.LogicalConnection == "" || b.ConnectorKind == "" || b.Revision < 1 || b.ProviderVersion == "" {
 			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity, positive revision, and provider version are required", ErrCandidateRuntimeInvalid)
 		}
@@ -312,10 +329,18 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 		}
 	}
 	value.Bindings = bindings
+	computedBindingFingerprint := fingerprintCandidateBindings(bindings)
+	if value.BindingFingerprint != "" && value.BindingFingerprint != computedBindingFingerprint {
+		return CandidateCompatibility{}, fmt.Errorf("%w: binding fingerprint mismatch", ErrCandidateRuntimeInvalid)
+	}
+	value.BindingFingerprint = computedBindingFingerprint
 	connections := append([]CandidateAuthoredConnection(nil), value.AuthoredConnections...)
 	for i := range connections {
 		if connections[i].LogicalConnection != strings.TrimSpace(connections[i].LogicalConnection) || connections[i].ConnectorKind != strings.TrimSpace(connections[i].ConnectorKind) || connections[i].LogicalConnection == "" || connections[i].ConnectorKind == "" {
 			return CandidateCompatibility{}, fmt.Errorf("%w: authored connection identity and connector kind are required and canonical", ErrCandidateRuntimeInvalid)
+		}
+		if connections[i].Access != "" && connections[i].Access != semanticmodel.ConnectionAccessPublic {
+			return CandidateCompatibility{}, fmt.Errorf("%w: unsupported authored connection access policy", ErrCandidateRuntimeInvalid)
 		}
 	}
 	sort.Slice(connections, func(i, j int) bool { return connections[i].LogicalConnection < connections[j].LogicalConnection })
@@ -362,7 +387,20 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 }
 
 func fingerprintCandidateBindings(bindings []CandidateBindingVersion) string {
-	data, _ := json.Marshal(bindings)
+	type bindingFingerprintInput struct {
+		BindingID          string                         `json:"bindingId"`
+		ConnectionID       string                         `json:"connectionId"`
+		ConnectorKind      string                         `json:"connectorKind"`
+		Revision           int64                          `json:"revision"`
+		ProviderVersion    string                         `json:"providerVersion"`
+		EndpointConfigHash string                         `json:"endpointConfigHash"`
+		Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+	}
+	preimage := make([]bindingFingerprintInput, len(bindings))
+	for i, binding := range bindings {
+		preimage[i] = bindingFingerprintInput{BindingID: binding.BindingID, ConnectionID: binding.LogicalConnection, ConnectorKind: binding.ConnectorKind, Revision: binding.Revision, ProviderVersion: binding.ProviderVersion, EndpointConfigHash: binding.EndpointConfigHash, Access: binding.Access}
+	}
+	data, _ := json.Marshal(preimage)
 	sum := sha256.Sum256(data)
 	return "sha256:" + fmt.Sprintf("%x", sum)
 }

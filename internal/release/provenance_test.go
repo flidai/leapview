@@ -2,9 +2,9 @@ package release
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
@@ -15,6 +15,29 @@ func TestProvenanceCanonicalizesGenerationEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, provenance.Validate())
 	require.Equal(t, provenance.Artifact.ContentDigest, provenance.Artifact.ContentDigest)
+}
+
+func TestProvenanceBindsGateEvidenceAndDetectsTampering(t *testing.T) {
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	evidence, err := (GateEvidence{Version: 1, CandidateID: input.Candidate.ID, SourceDigest: input.Artifact.SourceDigest, BindingGeneration: BindingFingerprint(input.Plan.Bindings), RuntimeVersion: input.Plan.RuntimeVersion, DuckDBVersion: "duckdb:1", Outcome: GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}).Canonical()
+	require.NoError(t, err)
+	input.Plan.GateEvidence = &evidence
+	provenance, err := NewProvenance(input)
+	require.NoError(t, err)
+	require.NoError(t, provenance.Validate())
+	provenance.Plan.GateEvidence.DuckDBVersion = "duckdb:tampered"
+	require.Error(t, provenance.Validate())
+}
+
+func TestProvenanceRejectsGateEvidenceFromAnotherCandidate(t *testing.T) {
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	evidence := *input.Plan.GateEvidence
+	evidence.CandidateID = "candidate_other"
+	evidence, err := evidence.Canonical()
+	require.NoError(t, err)
+	input.Plan.GateEvidence = &evidence
+	_, err = NewProvenance(input)
+	require.Error(t, err)
 }
 
 func TestProvenanceDetectsArtifactAndPlanTampering(t *testing.T) {
@@ -34,36 +57,10 @@ func TestProvenanceDetectsArtifactAndPlanTampering(t *testing.T) {
 }
 
 func TestProvenanceSnapshotReuseRejectsAuthoredRefreshEvidence(t *testing.T) {
-	input := testGenerationInput(t, GenerationDataReuseSnapshot)
+	input := testGenerationInput(t, GenerationDataReuseBase)
 	input.Plan.AuthoredConnections = []AuthoredConnectionEvidence{{ConnectionID: "connection_2", ConnectorKind: "http"}}
 	_, err := NewProvenance(input)
 	require.Error(t, err)
-}
-
-func TestLegacySnapshotReuseRemainsAuditableButRequiresControlledRebuild(t *testing.T) {
-	input := testGenerationInput(t, GenerationDataReuseBase)
-	canonical, err := NewProvenance(input)
-	require.NoError(t, err)
-	input.Plan.DataMode = GenerationDataReuseSnapshotLegacy
-	legacy, err := newProvenance(input, true)
-	require.NoError(t, err)
-	require.NoError(t, legacy.ValidateStored())
-	require.ErrorIs(t, legacy.Validate(), ErrLegacyReuseSnapshot)
-
-	encoded, err := json.Marshal(legacy)
-	require.NoError(t, err)
-	var decoded Provenance
-	require.NoError(t, json.Unmarshal(encoded, &decoded))
-	require.NoError(t, decoded.ValidateStored())
-	require.Equal(t, GenerationDataReuseSnapshotLegacy, decoded.Plan.DataMode)
-	require.Equal(t, canonical.ArtifactProvenanceDigest, decoded.ArtifactProvenanceDigest)
-	require.True(t, errors.Is(decoded.Validate(), ErrLegacyReuseSnapshot))
-}
-
-func TestNewProvenanceRejectsLegacySnapshotReuseLiteral(t *testing.T) {
-	input := testGenerationInput(t, GenerationDataReuseSnapshotLegacy)
-	_, err := NewProvenance(input)
-	require.ErrorIs(t, err, ErrLegacyReuseSnapshot)
 }
 
 func TestProvenanceRefreshAcceptsManagedAndAuthoredEvidence(t *testing.T) {
@@ -72,6 +69,23 @@ func TestProvenanceRefreshAcceptsManagedAndAuthoredEvidence(t *testing.T) {
 	provenance, err := NewProvenance(input)
 	require.NoError(t, err)
 	require.Len(t, provenance.Plan.AuthoredConnections, 1)
+}
+
+func TestPublicBindingProvenanceRetainsOnlyPolicyAndNonSecretEvidence(t *testing.T) {
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	input.Plan.Bindings[0].Access = "public"
+	input.Plan.Bindings[0].ValidatedVersion = "public-no-auth:v1"
+	encoded, err := json.Marshal(input.Plan.Bindings)
+	require.NoError(t, err)
+	text := string(encoded)
+	if !strings.Contains(text, `"access":"public"`) || !strings.Contains(text, "public-no-auth:v1") {
+		t.Fatalf("public binding evidence omitted policy/version: %s", text)
+	}
+	for _, secret := range []string{"password", "token", "secret_access_key", "warehouse.internal", "s3://"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("public binding evidence leaked credential/endpoint field %q: %s", secret, text)
+		}
+	}
 }
 
 func TestProvenanceInitialGenerationAllowsMissingBaseIdentity(t *testing.T) {
@@ -118,11 +132,20 @@ func testGenerationInput(t *testing.T, mode GenerationDataMode) ProvenanceInput 
 	t.Helper()
 	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_2")
 	require.NoError(t, err)
-	return ProvenanceInput{
-		Artifact:  ProjectArtifactProvenance{SourceDigest: testDigest("a"), ProjectDigest: testDigest("b"), ContentDigest: testDigest("c"), CompilerVersion: "compiler:v1", SchemaVersion: 1},
-		Candidate: CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"},
-		Plan:      GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("d"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil},
+	artifact := ProjectArtifactProvenance{SourceDigest: testDigest("a"), ProjectDigest: testDigest("b"), ContentDigest: testDigest("c"), CompilerVersion: "compiler:v1", SchemaVersion: 1}
+	candidate := CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"}
+	plan := GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("d"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil}
+	plan.GateEvidence = testPlanGateEvidence(t, artifact, candidate, plan)
+	return ProvenanceInput{Artifact: artifact, Candidate: candidate, Plan: plan}
+}
+
+func testPlanGateEvidence(t *testing.T, artifact ProjectArtifactProvenance, candidate CandidateProvenance, plan GenerationPlanProvenance) *GateEvidence {
+	t.Helper()
+	evidence, err := (GateEvidence{Version: 1, CandidateID: candidate.ID, SourceDigest: artifact.SourceDigest, BindingGeneration: BindingFingerprint(plan.Bindings), RuntimeVersion: plan.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
 	}
+	return &evidence
 }
 
 func testDigest(value string) string { return "sha256:" + strings.Repeat(value, 64)[:64] }

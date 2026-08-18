@@ -16,13 +16,16 @@ visuals:
     title: Orders by status pie
     type: pie
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
+    presentation:
+      type: proportional
 ```
 
 ## Rose sectors
@@ -38,16 +41,24 @@ visuals:
     type: pie
     presentation:
       type: proportional
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true}
-      rose: true
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 24
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
 ```
 
 ## Compact labels
@@ -63,15 +74,23 @@ visuals:
     type: pie
     presentation:
       type: proportional
-      labels: {density: automatic, priority: [selected, anomaly, threshold], maxCharacters: 18, minimumSpacing: 6, tooltipFallback: true}
-      labelPosition: inside
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: value
+        direction: desc
       limit: 6
 ```

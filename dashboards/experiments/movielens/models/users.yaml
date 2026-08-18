@@ -6,9 +6,6 @@ metadata:
   displayName: Users Dimension
   description: Derived user dimension based on rating and tagging activity.
 spec:
-  sources:
-  - movielens.ratings
-  - movielens.tags
   fields:
     user_id:
       datatype: Integer
@@ -46,7 +43,8 @@ spec:
       datatype: String
       label: Activity bucket
       description: Rating-volume segment derived from user activity.
-  transform:
+  definition:
+    type: sql
     sql: |
       WITH rating_activity AS (
         SELECT

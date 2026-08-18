@@ -65,20 +65,6 @@ package contracts
 	})
 })
 
-#ConnectionResource: close({
-	apiVersion!: #APIVersion
-	kind!:       "Connection"
-	metadata!:   #Metadata
-	spec!:        #Connection
-})
-
-#SourceResource: close({
-	apiVersion!: #APIVersion
-	kind!:       "Source"
-	metadata!:   #Metadata
-	spec!:        #Source
-})
-
 #GroupResource: close({
 	apiVersion!: #APIVersion
 	kind!:       "Group"
@@ -173,14 +159,6 @@ package contracts
 		})
 	})
 })
-#ModelResource: close({
-	apiVersion!: #APIVersion
-	kind!:       "Model"
-	metadata!:   #Metadata
-	aiContext?:  #AIContext
-	spec!:        #Model
-})
-
 #SemanticModelResource: close({
 	apiVersion!: #APIVersion
 	kind!:       "SemanticModel"
@@ -202,39 +180,6 @@ package contracts
 	})
 })
 
-#Connection: close({
-	kind!:        "managed" | "s3" | "r2" | "gcs" | "http" | "azure_blob" | "postgres" | "mysql" | "sqlite" | "ducklake" | "quack"
-	description?: string
-	path?:        string
-	root?:        string
-	scope?:       string
-	host?:        string
-	port?:        int
-	database?:    string
-	username?:    string
-	sslMode?:     string
-	credentials?: #NoCredentials | #EnvCredentials | #AmbientCredentials
-	options?:     #AnyObject
-	defaults?: close({
-		options?: #AnyObject
-	})
-})
-
-#Source: close({
-	format?:      "csv" | "json" | "parquet" | "excel" | "text" | "blob" | "vortex" | "delta" | "iceberg" | "lance"
-	description?: string
-	path?:        string
-	connection!:  #ResourceID
-	object?:      string
-	options?:     #AnyObject
-	fields?: close({
-		[#Identifier]: close({
-			type?:        string
-			description?: string
-		})
-	})
-})
-
 #LogicalDataType: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque"
 
 #TimeGrain: "second" | "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year"
@@ -243,38 +188,6 @@ package contracts
 	instructions?: string
 	synonyms?: [...string]
 	examples?: [...string]
-})
-
-#ModelField: close({
-	datatype!: #LogicalDataType
-	label?: string
-	description?: string
-	aiContext?: #AIContext
-})
-
-#ModelEntity: close({
-	type!: "primary" | "unique" | "foreign" | "natural"
-	fields!: [#Identifier, ...#Identifier]
-	description?: string
-	aiContext?: #AIContext
-})
-
-#Model: close({
-	source?: #ResourceID
-	sources?: [...#ResourceID]
-	transform?: close({
-		sql?: string
-	})
-	entities!: close({
-		[#Identifier]: #ModelEntity
-	})
-	grain!: close({
-		entity!: #Identifier
-	})
-	fields!: close({
-		[#Identifier]: #ModelField
-	})
-	description?: string
 })
 
 #SemanticDataset: close({

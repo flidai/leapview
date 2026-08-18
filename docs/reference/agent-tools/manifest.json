@@ -308,6 +308,7 @@
               "id": {
                 "maxLength": 256,
                 "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
                 "type": "string"
               },
               "kind": {
@@ -388,6 +389,7 @@
                   "id": {
                     "maxLength": 256,
                     "minLength": 1,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
                     "type": "string"
                   },
                   "kind": {
@@ -485,6 +487,7 @@
               "id": {
                 "maxLength": 256,
                 "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
                 "type": "string"
               },
               "kind": {
@@ -544,6 +547,7 @@
                     "id": {
                       "maxLength": 256,
                       "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
                       "type": "string"
                     },
                     "kind": {
@@ -686,6 +690,7 @@
                     "id": {
                       "maxLength": 256,
                       "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
                       "type": "string"
                     },
                     "kind": {
@@ -1477,6 +1482,7 @@
             "description": "Stable dashboard resource ID to query.",
             "maxLength": 200,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
             "type": "string"
           },
           "limit": {
@@ -1940,6 +1946,7 @@
             "description": "Stable semantic-model resource ID to query.",
             "maxLength": 200,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
             "type": "string"
           },
           "pageToken": {
@@ -3037,6 +3044,7 @@
               "id": {
                 "maxLength": 256,
                 "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
                 "type": "string"
               },
               "kind": {

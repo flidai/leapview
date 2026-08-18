@@ -110,6 +110,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Reference](/docs/reference): Find exact syntax and supported contracts.
 - [Environment variable reference](/docs/configuration): Process-wide settings generated from the runtime configuration specification.
 - [Supported capabilities](/docs/reference/capabilities): Review supported resource, data, visual, and integration surfaces.
+- [Data-resource connector capabilities](/docs/reference/data-resource-connectors): Review generated connector locations, approved extensions, target-binding modes, and typed path options.
 - [CLI troubleshooting](/docs/cli/troubleshooting): Diagnose local validation and remote operation failures.
 
 #### Agent tools

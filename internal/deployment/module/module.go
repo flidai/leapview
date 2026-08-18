@@ -28,7 +28,7 @@ type Module struct {
 	candidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle
 	candidateSources          deployment.CandidateSourceSynchronizer
 	candidateSourceAudit      func(context.Context, CandidateSourceAuditEvent) error
-	candidateSourceBlobAudit  func(context.Context, CandidateSourceBlobAuditEvent) error
+	candidateSourceBlobAudit  func(context.Context, CandidateSourceAuditEvent) error
 	candidateArtifacts        release.CandidateArtifactPreparer
 	candidateAdmission        CandidatePreparationAdmitter
 	deliveryCandidateBuilder  func(context.Context, deployment.DeliveryCandidateBuildInput) (deployment.Candidate, error)
@@ -123,21 +123,17 @@ type BootstrapPersistence interface {
 // Action and Capability are copied from the generated command contract by the
 // module. SourceAttestationDigest is populated for retained source snapshots.
 type CandidateSourceAuditEvent struct {
-	PrincipalID            string
-	ProjectID              projectgraph.ResourceID
-	Digest                 string
+	PrincipalID             string
+	ProjectID               projectgraph.ResourceID
+	Digest                  string
 	SourceAttestationDigest string
-	Action                 string
-	Capability             access.Capability
-	Status                 string
-	RequestID              string
-	CorrelationID          string
-	MetadataJSON           string
+	Action                  string
+	Capability              access.Capability
+	Status                  string
+	RequestID               string
+	CorrelationID           string
+	MetadataJSON            string
 }
-
-// CandidateSourceBlobAuditEvent remains an alias for compatibility with
-// existing composition and tests while source and blob audits share one sink.
-type CandidateSourceBlobAuditEvent = CandidateSourceAuditEvent
 
 const (
 	CandidatePreparing          = deployment.CandidatePreparing
@@ -146,7 +142,6 @@ const (
 	CandidateCancelled          = deployment.CandidateCancelled
 	CandidateExpired            = deployment.CandidateExpired
 	CandidateDataReuseBase      = deployment.CandidateDataReuseBase
-	CandidateDataReuseSnapshot  = deployment.CandidateDataReuseSnapshot
 	CandidateDataRefreshSources = deployment.CandidateDataRefreshSources
 )
 
@@ -187,7 +182,7 @@ type Config struct {
 	MaxCandidatesPerOwner     int
 	CandidateAudit            func(context.Context, deployment.CandidateEvent) error
 	CandidateSourceAudit      func(context.Context, CandidateSourceAuditEvent) error
-	CandidateSourceBlobAudit  func(context.Context, CandidateSourceBlobAuditEvent) error
+	CandidateSourceBlobAudit  func(context.Context, CandidateSourceAuditEvent) error
 	CandidateConnections      deployment.CandidateConnectionLeaser
 	CandidateRuntime          deployment.CandidateRuntimeHost
 	CandidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle

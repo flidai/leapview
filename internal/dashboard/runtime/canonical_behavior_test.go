@@ -124,7 +124,7 @@ func canonicalBehaviorDefinition(t *testing.T, withTable bool) (*ProjectDefiniti
 		Tables: map[string]semanticmodel.Table{"orders": {
 			ModelName:   "orders",
 			GrainEntity: "order_id",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"order_id": {Type: "primary", Fields: []string{"order_id"}},
 			},
 			Dimensions: map[string]semanticmodel.MetricDimension{

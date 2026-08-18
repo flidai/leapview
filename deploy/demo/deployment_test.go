@@ -31,7 +31,7 @@ func TestDemoUsesCanonicalOlistShowcase(t *testing.T) {
 	project := strings.ToLower(source.String())
 	for _, required := range []string{
 		"name: olist",
-		"kind: managed",
+		"type: managed",
 		"name: visual-showcase",
 		"name: executive-sales",
 		"name: fulfillment-operations",

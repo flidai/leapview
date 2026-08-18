@@ -42,10 +42,10 @@ func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) 
 			"source:orders": {Connection: "connection:warehouse"},
 		},
 		Models: map[string]semanticmodel.Table{
-			"model:orders": {Source: "source:orders", SourceDependencies: []string{"source:orders"}, Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}},
+			"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, SourceDependencies: []string{"source:orders"}, Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}},
 		},
 		SemanticModels: map[string]*semanticmodel.Model{
-			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}}}},
+			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}}}},
 		},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{
 			"dashboard:sales": {ID: "dashboard:sales", SemanticModel: "semantic:sales"},
@@ -126,6 +126,34 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 	if _, ok := wire["identity"]; ok {
 		t.Fatalf("project artifact retained serving identity: %#v", wire)
+	}
+}
+
+func TestConnectionActivationCarriesCanonicalAccessPolicy(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed", Access: semanticmodel.ConnectionAccessPublic}
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatalf("NewProject() public connection: %v", err)
+	}
+	activations, err := project.ConnectionActivations()
+	if err != nil {
+		t.Fatalf("ConnectionActivations(): %v", err)
+	}
+	if len(activations) != 1 || activations[0].Access != semanticmodel.ConnectionAccessPublic {
+		t.Fatalf("activation access = %#v, want public", activations)
+	}
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed"}
+	omitted, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatalf("NewProject() omitted connection: %v", err)
+	}
+	omittedActivations, err := omitted.ConnectionActivations()
+	if err != nil {
+		t.Fatalf("omitted ConnectionActivations(): %v", err)
+	}
+	if activations[0].Access == omittedActivations[0].Access {
+		t.Fatal("public and omitted activation access collapsed")
 	}
 }
 

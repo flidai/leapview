@@ -17,14 +17,19 @@ visuals:
     description: Summarizes delivery-day distribution by speed bucket.
     type: boxplot
     query:
-      dataset: orders
-      dimensions:
-        delivery_bucket: orders.delivery_bucket
-      metrics:
-        delivery_days: null
-      sort:
-        - field: delivery_bucket
-          direction: asc
+      type: distribution
+      field: delivery_days
+      quantiles:
+      - 0.25
+      - 0.5
+      - 0.75
+      outliers: include
+      approximation: exact
+      whiskers:
+        lower: 1.5
+        upper: 1.5
+    presentation:
+      type: cartesian
 ```
 
 ## Review distribution
@@ -39,14 +44,19 @@ visuals:
     title: Review score distribution
     type: boxplot
     query:
-      dataset: orders
-      dimensions:
-        status: orders.status
-      metrics:
-        review_score: null
-      sort:
-        - field: status
-          direction: asc
+      type: distribution
+      field: review_score
+      quantiles:
+      - 0.25
+      - 0.5
+      - 0.75
+      outliers: include
+      approximation: exact
+      whiskers:
+        lower: 1.5
+        upper: 1.5
+    presentation:
+      type: cartesian
 ```
 
 ## Zoomable distribution
@@ -64,13 +74,15 @@ visuals:
       type: cartesian
       dataZoom: true
     query:
-      dataset: orders
-      dimensions:
-        category: orders.category
-      metrics:
-        revenue: null
-      sort:
-        - field: category
-          direction: desc
-      limit: 12
+      type: distribution
+      field: revenue
+      quantiles:
+      - 0.25
+      - 0.5
+      - 0.75
+      outliers: include
+      approximation: exact
+      whiskers:
+        lower: 1.5
+        upper: 1.5
 ```

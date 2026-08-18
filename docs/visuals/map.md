@@ -24,8 +24,12 @@ visuals:
     type: map
     query:
       type: aggregate
-      dimensions: [order_id, latitude, longitude]
-      metrics: [revenue]
+      dimensions:
+      - order_id
+      - latitude
+      - longitude
+      metrics:
+      - revenue
     presentation:
       type: geographic
       labels:
