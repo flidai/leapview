@@ -36,8 +36,6 @@ func snapshotTables(values map[string]Table) map[string]Table {
 	for name, table := range values {
 		copyTable := table
 		copyTable.AIContext = nil
-		copyTable.Sources = append([]string(nil), table.Sources...)
-		copyTable.SourceReads = snapshotStringSliceMap(table.SourceReads)
 		copyTable.SourceDependencies = append([]string(nil), table.SourceDependencies...)
 		copyTable.ModelDependencies = append([]string(nil), table.ModelDependencies...)
 		copyTable.Dimensions = snapshotMetricDimensions(table.Dimensions)
@@ -195,11 +193,11 @@ func snapshotModelColumns(values map[string]ModelColumn) map[string]ModelColumn 
 	return clone
 }
 
-func snapshotEntities(values map[string]ModelEntitySpec) map[string]ModelEntitySpec {
+func snapshotEntities(values map[string]EntityDefinition) map[string]EntityDefinition {
 	if values == nil {
 		return nil
 	}
-	clone := make(map[string]ModelEntitySpec, len(values))
+	clone := make(map[string]EntityDefinition, len(values))
 	for name, value := range values {
 		value.AIContext = nil
 		value.Fields = append([]string(nil), value.Fields...)

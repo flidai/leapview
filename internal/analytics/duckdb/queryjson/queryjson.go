@@ -558,66 +558,6 @@ func (v *astVisitor) relation(obj map[string]any) error {
 		return nil
 	case "PIVOT":
 		return fmt.Errorf("PIVOT relations are not supported in model SQL")
-		/*
-			if err := requireKeys(obj, "type", "query_location", "source", "aggregates", "pivots"); err != nil {
-				return err
-			}
-			if err := validateOptionalQueryLocation(obj, "PIVOT"); err != nil {
-				return err
-			}
-			source, ok := obj["source"].(map[string]any)
-			if !ok {
-				return fmt.Errorf("pivot source must be a relation")
-			}
-			if err := v.relation(source); err != nil {
-				return err
-			}
-			if raw, present := obj["aggregates"]; present && raw != nil {
-				values, ok := raw.([]any)
-				if !ok {
-					return fmt.Errorf("pivot aggregates must be an array")
-				}
-				for _, item := range values {
-					if err := v.expressionObject(item); err != nil {
-						return err
-					}
-				}
-			}
-			if raw, present := obj["pivots"]; present && raw != nil {
-				pivots, ok := raw.([]any)
-				if !ok {
-					return fmt.Errorf("pivot pivots must be an array")
-				}
-				for _, item := range pivots {
-					p, ok := item.(map[string]any)
-					if !ok {
-						return fmt.Errorf("pivot entry must be an object")
-					}
-					if err := requireKeys(p, "pivot_expressions", "entries"); err != nil {
-						return err
-					}
-					exprs, ok := p["pivot_expressions"].([]any)
-					if !ok {
-						return fmt.Errorf("pivot pivot_expressions must be an array")
-					}
-					for _, expr := range exprs {
-						if err := v.expressionObject(expr); err != nil {
-							return err
-						}
-					}
-					if entries, ok := p["entries"].([]any); !ok {
-						return fmt.Errorf("pivot entries must be an array")
-					} else {
-						for _, entry := range entries {
-							if _, ok := entry.(string); !ok {
-								return fmt.Errorf("pivot entries must contain strings")
-							}
-						}
-					}
-				}
-			}
-			return nil
-		*/
 	case "TABLE_FUNCTION":
 		return fmt.Errorf("table functions are not allowed in model SQL")
 	default:
@@ -668,13 +608,32 @@ func (v *astVisitor) expression(obj map[string]any) error {
 		return fmt.Errorf("expression alias %q is invalid", alias)
 	}
 	switch class {
+	case "CONSTANT":
+		value, present := obj["value"]
+		if !present || value == nil {
+			return fmt.Errorf("CONSTANT value is required")
+		}
+		if err := validateConstantValue(value); err != nil {
+			return err
+		}
 	case "COLUMN_REF":
 		if _, ok := obj["column_names"]; !ok {
 			return fmt.Errorf("COLUMN_REF is missing column_names")
 		}
-		names := stringArray(obj["column_names"])
+		names, ok := columnNames(obj["column_names"])
+		if !ok {
+			return fmt.Errorf("column reference names must be an array of identifiers")
+		}
 		if len(names) == 0 || len(names) > 3 {
 			return fmt.Errorf("column reference must contain one to three identifiers")
+		}
+		for _, name := range names {
+			if !validIdentifier(name) {
+				return fmt.Errorf("column reference identifier %q is invalid", name)
+			}
+		}
+		if len(names) == 3 && !strings.EqualFold(names[0], "source") && !strings.EqualFold(names[0], "model") {
+			return fmt.Errorf("column reference namespace %q is not governed", names[0])
 		}
 		if len(names) == 3 && strings.EqualFold(names[0], "source") {
 			v.qualifiedSourceColumnRefs[strings.Join(names[:3], ".")] = struct{}{}
@@ -771,43 +730,8 @@ func (v *astVisitor) expression(obj map[string]any) error {
 		}
 	case "CAST":
 		if castType, present := obj["cast_type"]; present {
-			castObject, ok := castType.(map[string]any)
-			if !ok {
-				return fmt.Errorf("cast cast_type must be an object")
-			}
-			if err := requireKeys(castObject, "id", "type_modifiers", "type_info"); err != nil {
+			if err := validateCastType(castType); err != nil {
 				return err
-			}
-			if id, ok := castObject["id"]; !ok || !validCastType(id) {
-				return fmt.Errorf("cast cast_type.id must be a known type")
-			}
-			if raw, present := castObject["type_modifiers"]; present && raw != nil {
-				if _, ok := raw.([]any); !ok {
-					return fmt.Errorf("cast cast_type.type_modifiers must be an array")
-				}
-			}
-			if raw, present := castObject["type_info"]; present && raw != nil {
-				typeInfo, ok := raw.(map[string]any)
-				if !ok {
-					return fmt.Errorf("cast cast_type.type_info must be an object")
-				}
-				if err := requireKeys(typeInfo, "type", "width", "scale"); err != nil {
-					return err
-				}
-				if rawType, present := typeInfo["type"]; present && rawType != nil {
-					if _, ok := rawType.(string); !ok {
-						return fmt.Errorf("cast cast_type.type_info.type must be a string")
-					}
-				}
-				for _, key := range []string{"width", "scale"} {
-					if rawNumber, present := typeInfo[key]; present && rawNumber != nil {
-						switch rawNumber.(type) {
-						case float64, int, int64:
-						default:
-							return fmt.Errorf("cast cast_type.type_info.%s must be numeric", key)
-						}
-					}
-				}
 			}
 		}
 		if tryCast, present := obj["try_cast"]; present {
@@ -1240,6 +1164,64 @@ func validCastType(value any) bool {
 	}
 }
 
+func validateCastType(value any) error {
+	castObject, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("cast cast_type must be an object")
+	}
+	if err := requireKeys(castObject, "id", "type_modifiers", "type_info"); err != nil {
+		return err
+	}
+	if id, ok := castObject["id"]; !ok || !validCastType(id) {
+		return fmt.Errorf("cast cast_type.id must be a known type")
+	}
+	if raw, present := castObject["type_modifiers"]; present && raw != nil {
+		modifiers, ok := raw.([]any)
+		if !ok {
+			return fmt.Errorf("cast cast_type.type_modifiers must be an array")
+		}
+		for _, modifier := range modifiers {
+			if !boundedInteger(modifier, 0, 1_000_000) {
+				return fmt.Errorf("cast cast_type.type_modifiers entries must be bounded integers")
+			}
+		}
+	}
+	if raw, present := castObject["type_info"]; present && raw != nil {
+		typeInfo, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("cast cast_type.type_info must be an object")
+		}
+		if err := requireKeys(typeInfo, "type", "width", "scale"); err != nil {
+			return err
+		}
+		if rawType, present := typeInfo["type"]; present && rawType != nil {
+			typeName, ok := rawType.(string)
+			if !ok || typeName != "DECIMAL_TYPE_INFO" {
+				return fmt.Errorf("cast cast_type.type_info.type is unsupported")
+			}
+		}
+		for _, key := range []string{"width", "scale"} {
+			if rawNumber, present := typeInfo[key]; present && rawNumber != nil && !boundedInteger(rawNumber, 0, 1_000_000) {
+				return fmt.Errorf("cast cast_type.type_info.%s must be a bounded integer", key)
+			}
+		}
+	}
+	return nil
+}
+
+func boundedInteger(value any, minimum, maximum int64) bool {
+	switch value := value.(type) {
+	case int:
+		return int64(value) >= minimum && int64(value) <= maximum
+	case int64:
+		return value >= minimum && value <= maximum
+	case float64:
+		return value >= float64(minimum) && value <= float64(maximum) && value == float64(int64(value))
+	default:
+		return false
+	}
+}
+
 func optionalArray(obj map[string]any, key string) ([]any, bool) {
 	value, present := obj[key]
 	if !present || value == nil {
@@ -1279,20 +1261,90 @@ func approvedFunction(value string) bool {
 	}
 }
 
-func stringArray(value any) []string {
+func columnNames(value any) ([]string, bool) {
 	items, ok := value.([]any)
 	if !ok {
-		return nil
+		return nil, false
 	}
-	result := make([]string, 0, len(items))
+	names := make([]string, 0, len(items))
 	for _, item := range items {
-		text, ok := item.(string)
+		name, ok := item.(string)
 		if !ok {
-			return nil
+			return nil, false
 		}
-		result = append(result, text)
+		names = append(names, name)
 	}
-	return result
+	return names, true
+}
+
+func validateConstantValue(value any) error {
+	switch value := value.(type) {
+	case nil, string, bool, float64, int, int64:
+		return nil
+	case []any:
+		for _, item := range value {
+			if err := validateConstantValue(item); err != nil {
+				return err
+			}
+		}
+		return nil
+	case map[string]any:
+		if err := requireKeys(value, "type", "is_null", "value"); err != nil {
+			return err
+		}
+		typeValue, ok := value["type"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("CONSTANT value type must be an object")
+		}
+		if err := validateConstantType(typeValue); err != nil {
+			return err
+		}
+		if raw, present := value["is_null"]; !present {
+			return fmt.Errorf("CONSTANT value is_null is required")
+		} else if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("CONSTANT value is_null must be a boolean")
+		}
+		if raw, present := value["value"]; present && raw != nil {
+			return validateConstantValue(raw)
+		}
+		return nil
+	default:
+		return fmt.Errorf("CONSTANT value has unsupported type %T", value)
+	}
+}
+
+func validateConstantType(value map[string]any) error {
+	if err := requireKeys(value, "id", "type_info"); err != nil {
+		return err
+	}
+	if id, ok := value["id"]; !ok || !validCastType(id) {
+		return fmt.Errorf("CONSTANT value type id must be a known type")
+	}
+	if raw, present := value["type_info"]; present && raw != nil {
+		return validateTypeInfo(raw)
+	}
+	return nil
+}
+
+func validateTypeInfo(value any) error {
+	typeInfo, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("CONSTANT value type_info must be an object")
+	}
+	if err := requireKeys(typeInfo, "type", "width", "scale"); err != nil {
+		return err
+	}
+	if raw, present := typeInfo["type"]; present && raw != nil {
+		if typeName, ok := raw.(string); !ok || typeName != "DECIMAL_TYPE_INFO" {
+			return fmt.Errorf("CONSTANT value type_info.type is unsupported")
+		}
+	}
+	for _, key := range []string{"width", "scale"} {
+		if raw, present := typeInfo[key]; present && raw != nil && !boundedInteger(raw, 0, 1_000_000) {
+			return fmt.Errorf("CONSTANT value type_info.%s must be a bounded integer", key)
+		}
+	}
+	return nil
 }
 
 func queryLocation(value any) int {
