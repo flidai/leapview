@@ -27,6 +27,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_dashboard_visual.
       "description": "Stable dashboard resource ID to query.",
       "maxLength": 200,
       "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
       "type": "string"
     },
     "limit": {
