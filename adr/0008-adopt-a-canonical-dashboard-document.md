@@ -57,6 +57,9 @@ composable, and identical to builder and agent output.
 
 - Preserve one canonical Dashboard document for files, builder drafts, agent
   commands, immutable revisions, compiler input, and export.
+- Generate the Dashboard's structural contract and language projections from
+  one TypeSpec declaration rather than maintaining equivalent Go, TypeScript,
+  CUE, JSON Schema, API, and documentation shapes.
 - Keep dashboards governed: no SQL, joins, aggregate expressions, credentials,
   grants, or executable AI instructions.
 - Make every accepted authoring field observable in compiled behavior or reject
@@ -81,6 +84,11 @@ composable, and identical to builder and agent output.
   translate between them.
 - Adopt a third-party dashboard document or renderer-native ECharts options as
   the authored contract.
+- Continue hand-maintaining parallel Dashboard structures for project YAML,
+  builder and agent DTOs, APIs, browser signals, and schema validation.
+- Make TypeSpec the structural Dashboard contract, generate its projections
+  through APIGen, and retain CUE and compiler code only for contextual rules and
+  behavioral compilation.
 - Consolidate LeapView's existing renderer-independent document into one strict,
   composable shape shared by every authoring origin.
 
@@ -96,6 +104,34 @@ public release. Current draft dashboard forms and compatibility shorthands are
 removed outright. There is no old-version reader, translator, alias, migration,
 or deprecation period. The semantic query vocabulary and typed execution
 behavior adopted by ADR-0006 remain authoritative.
+
+### Dashboard structure is generated from TypeSpec
+
+TypeSpec is the authoritative structural declaration for the canonical
+Dashboard document. It owns public camelCase names, required and optional
+fields, closed tagged unions, enum vocabularies, scalar formats, collection
+shapes, and descriptions. The existing APIGen contract IR generates Go
+authoring and API DTOs, TypeScript builder, agent, and browser DTOs, sealed JSON
+Schema 2020-12 artifacts, and reference documentation from that declaration.
+Generated Go fields use identical camelCase JSON and YAML tags.
+
+The project CUE validation layer consumes the generated structural JSON Schema
+and adds only contextual constraints that require project knowledge. The Go
+compiler owns behavioral rules such as semantic-member resolution, query and
+visual compatibility, result-name uniqueness, filter-target compatibility, and
+fragment expansion. Neither layer independently restates public structural
+fields. Builder commands, agent tools, stored revisions, API payloads, and
+browser signals may project subsets for their operation, but every projection
+is generated from or explicitly mapped to the canonical TypeSpec types and is
+covered by lossless round-trip tests.
+
+The Dashboard TypeSpec package remains distinct from the existing
+Visualization IR TypeSpec package. Dashboard authoring compiles into Visual IR;
+it does not embed or inherit renderer-facing fields. The two generated
+contracts share scalar and result-field primitives where their meanings are
+identical, while preserving the architecture boundary between authored intent
+and renderer input. No experimental CUE-to-Go generator is part of the contract
+pipeline.
 
 ### Public names use camelCase
 
@@ -362,6 +398,13 @@ revision fingerprints, API schemas, examples, tests, and documentation. Because
 one canonical document is shared by all origins, partial rollout or dual
 serialization would create divergent behavior and is prohibited.
 
+TypeSpec and APIGen absorb the repeated structural work across those surfaces.
+The generator becomes part of the Dashboard compatibility boundary: generated
+artifacts are deterministic reviewable snapshots, and CI rejects stale output
+or handwritten structural shadow contracts. CUE and compiler code remain
+necessary for contextual and behavioral invariants that cannot be represented
+as structural schemas, but do not duplicate property definitions.
+
 Ordered reference sequences are slightly more verbose when many aliases are
 needed. Explicit query tags add one field to every visual query, while making
 execution semantics reviewable and preventing visual types or incidental keys
@@ -383,6 +426,10 @@ deprecated fields.
 - One canonical schema fixture round-trips without semantic change through file
   loading, builder drafts, agent commands, immutable revision storage, compiler
   input, and CLI export.
+- Generation tests prove one TypeSpec Dashboard declaration deterministically
+  produces matching Go and TypeScript DTOs, sealed JSON Schema, imported CUE
+  structure, API and signal projections, and reference documentation. Repository
+  checks reject independently maintained structural shadow types.
 - Generated CUE, JSON Schema, OpenAPI, Go, and TypeScript contracts expose the
   same camelCase names, closed unions, and required fields.
 - Schema and compiler tests reject all removed names, mapping query

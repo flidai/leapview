@@ -65,6 +65,9 @@ retaining multiple equivalent representations.
 ## Decision drivers
 
 - Make generated schemas describe exactly what project compilation accepts.
+- Generate public structural shapes, language DTOs, and schemas from one
+  TypeSpec declaration rather than maintaining parallel Go, TypeScript, CUE,
+  JSON Schema, and documentation definitions.
 - Keep endpoints, credentials, secret providers, and environment bindings owned
   by the target instance.
 - Represent connector, source-location, and transformation variants as closed
@@ -90,6 +93,10 @@ retaining multiple equivalent representations.
   connector-specific invariants.
 - Generate documentation from the connector registry while retaining untyped
   authoring maps and implicit variants.
+- Continue hand-maintaining equivalent authored-resource structures in Go,
+  TypeScript, and CUE.
+- Make TypeSpec the structural contract, generate language and JSON Schema
+  projections through APIGen, and use CUE only for contextual project rules.
 - Introduce ADBC as a generic source-connectivity layer between LeapView and
   DuckDB.
 - Adopt dbt profiles, sources, models, and tests as LeapView's native authored
@@ -113,6 +120,32 @@ cease to exist: the compiler will not retain readers, translators, aliases,
 migrations, or deprecation warnings for them. ADR-0006's semantic behavior
 carries forward unchanged; this decision finalizes the adjacent data-resource
 contracts without reopening semantic execution choices.
+
+### Public resource structure is generated from TypeSpec
+
+TypeSpec is the authoritative structural declaration for public Connection,
+Source, and Model documents. It owns public names, required and optional fields,
+closed tagged unions, enum vocabularies, scalar formats, and descriptions. The
+existing APIGen contract IR is extended to generate the corresponding Go
+authoring DTOs, TypeScript DTOs where needed, JSON Schema 2020-12 artifacts, and
+reference documentation. Generated structs use the same camelCase JSON and YAML
+names.
+
+The project CUE validation layer consumes the generated structural JSON Schema
+and adds only contextual constraints such as cross-resource identity,
+connector/location compatibility, and target-independent project invariants.
+It must not restate the structural fields as a separately maintained public
+contract. Runtime and compiler types may add resolved fields that cannot be
+authored, but conversion from generated authoring DTOs is explicit and tested.
+
+Connector variants carry LeapView-only profile metadata in the TypeSpec
+contract for activation mode, location capabilities, approved extensions,
+secret type, support status, and adapter key. A custom APIGen projection emits
+the Go connector registry and capability documentation. Bounded adapter
+implementations remain handwritten and register by generated key; generation
+fails unless every declared adapter key is implemented and every implementation
+has one declaration. No experimental CUE-to-Go generator is part of the public
+contract pipeline.
 
 ### Connections are portable logical declarations
 
@@ -152,16 +185,16 @@ spec:
       header: true
 ```
 
-One connector registry is the source of truth for supported variants, target
-binding requirements, approved runtime readers and extensions, location
-capabilities, option schemas, and LeapView support status. It is a stable
-LeapView compatibility profile over DuckDB capabilities, not a mirror of
+The generated connector registry is the runtime source of truth for supported
+variants, target-binding requirements, approved runtime readers and extensions,
+location capabilities, option schemas, and LeapView support status. It is a
+stable LeapView compatibility profile over DuckDB capabilities, not a mirror of
 DuckDB's extension registry. DuckDB extension support tiers and newly added
 extension options do not automatically become LeapView support or public YAML.
-Generated CUE, JSON Schema, compiler validation, deployment validation,
-runtime preparation, and documentation must derive from or be checked against
-the LeapView registry. An arbitrary `options` escape hatch is not part of the
-canonical contract.
+Generated CUE, JSON Schema, compiler validation, deployment validation, runtime
+preparation, and documentation derive from the TypeSpec profile declarations or
+are checked against their generated registry. An arbitrary `options` escape
+hatch is not part of the canonical contract.
 
 ADBC is not the source-connectivity abstraction. LeapView may use Arrow or an
 ADBC client at another boundary where an application communicates with DuckDB,
@@ -306,6 +339,30 @@ functions that execute SQL against an external system are prohibited even when
 nested inside a query. Relation and function validation operates on the parsed
 representation rather than token scanning or string rewriting.
 
+LeapView promotes its existing DuckDB SQL-to-JSON analysis path to the one
+canonical Model SQL parser. Every SQL definition is passed to the pinned
+DuckDB engine's `json_serialize_sql` function, including definitions for which
+an earlier scan would infer no dependencies. The result must contain exactly
+one serialized `SELECT` statement. A fail-closed visitor accepts only the
+versioned AST node, relation, and function vocabulary required by the Model
+query profile; an unknown node or field that affects execution is an error.
+The same visit derives Source and Model dependencies and rejects direct readers,
+table functions, external catalogs, and non-governed relations.
+
+SQL analysis runs in an isolated in-memory DuckDB connection containing no
+target bindings, credentials, external attachments, or Source data. LeapView
+explicitly loads only its pinned JSON extension, disables automatic extension
+installation and loading and external access, and locks configuration before
+parsing authored SQL. Only after the AST passes the closed validation profile
+may LeapView bind or obtain `EXPLAIN (FORMAT json)` evidence against compiler-
+created stub relations in the governed `source` and `model` schemas.
+
+DuckDB's serialized AST is ephemeral version-coupled parser input. It is not
+stored in project resources, compiled artifacts, lineage events, or APIs.
+LeapView normalizes accepted nodes into its own analysis result and plan.
+DuckDB upgrades require AST snapshot and adversarial conformance tests before
+the pinned version changes.
+
 The compiler lowers validated governed relation references to runtime relations
 only after authorization and dependency resolution. Authored SQL cannot name an
 attached catalog, invoke the underlying reader used to construct a Source, or
@@ -366,6 +423,18 @@ shape, governed relation and function allowlists, dependency derivation, and
 runtime lowering. A first-token scanner, keyword blocklist, or textual rewrite
 cannot satisfy this contract.
 
+The existing DuckDB JSON-AST and JSON-plan infrastructure removes the need for
+a second SQL parser or a language-runtime sidecar. LeapView nevertheless owns a
+small closed visitor and normalized analysis result. That visitor is coupled to
+the pinned DuckDB version intentionally, so an engine upgrade includes contract
+snapshots and security-corpus review rather than silently accepting new syntax.
+
+TypeSpec and APIGen become build dependencies for authored-resource DTOs in
+addition to APIs, signals, and Visualization IR. This removes structural drift
+but makes generator correctness part of the resource contract. Generated files
+remain reviewable snapshots, and contextual CUE and compiler checks remain
+handwritten where they express behavior rather than shape.
+
 Compiled dependency and validation evidence remains LeapView-owned. It may be
 emitted using the OpenLineage interoperability format established by ADR-0005,
 but OpenLineage is not an authored dependency list or an execution contract.
@@ -384,6 +453,10 @@ will remain in production.
 
 - Generated CUE and JSON Schemas expose a closed variant for every registered
   authored connector and reject all target-owned endpoint and credential fields.
+- Generation tests prove one TypeSpec declaration deterministically produces
+  matching Go and TypeScript DTOs, sealed JSON Schema, imported CUE structure,
+  connector registry metadata, and reference documentation. Repository checks
+  reject independently maintained structural shadow types.
 - Registry consistency tests prove that schema, compiler, deployment, runtime
   preparation, and documentation recognize the same connector, location,
   format, option set, approved extension, and LeapView support status. DuckDB
@@ -409,10 +482,17 @@ will remain in production.
   is complete and deterministic, the resulting columns exactly match declared
   fields and compatible logical types, undeclared namespaces are rejected, and
   no authored dependency list exists to diverge from compiled lineage.
-  Adversarial parser-backed tests reject multiple statements, direct readers
-  and connectors, paths and URIs, external SQL execution, attachments, secrets,
-  extensions, DDL, DML, `COPY`, `PRAGMA`, and `CALL`, including when concealed
-  in nested expressions or CTEs.
+  Adversarial DuckDB JSON-AST tests cover every allowed node family and reject
+  multiple statements, unknown semantic nodes, direct readers and connectors,
+  paths and URIs, external SQL execution, attachments, secrets, extensions,
+  DDL, DML, `COPY`, `PRAGMA`, and `CALL`, including when concealed in nested
+  expressions or CTEs. Definitions with no governed dependencies still pass
+  through the same parser and validator.
+- SQL-analysis isolation tests prove the analysis connection has no target
+  bindings or Source data, loads only the pinned JSON extension, disables
+  automatic extension installation and loading and external access, and locks
+  configuration before parsing. DuckDB upgrade tests snapshot the accepted AST
+  corpus and fail on unreviewed semantic changes.
 - Freshness and check tests cover warning, blocking, unavailable, empty, and
   bounded-execution outcomes and preserve the active serving generation after a
   failed candidate.
