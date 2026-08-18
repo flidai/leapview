@@ -64,3 +64,36 @@ func TestGrandPivotTotalIsNotImplicitColumnTotal(t *testing.T) {
 		t.Fatalf("grand-only total columns = %#v", columns)
 	}
 }
+
+func TestPivotAxisWindowRetainsRowsBeyondInteractiveCellCap(t *testing.T) {
+	axis := make([]map[string]any, dashboard.TableInteractiveRowCap+25)
+	for index := range axis {
+		axis[index] = map[string]any{"row": index}
+	}
+	dimensions := []visualizationdefinition.FieldBinding{{Alias: "row"}}
+	axis = dedupePivotAxisRows(axis, dimensions)
+	selected := applyPivotWindow(axis, dashboard.TableInteractiveRowCap+10, 5)
+	if len(selected) != 5 {
+		t.Fatalf("selected axis rows = %d, want 5", len(selected))
+	}
+	if got := selected[0]["row"]; got != dashboard.TableInteractiveRowCap+10 {
+		t.Fatalf("first selected row = %v, want %d", got, dashboard.TableInteractiveRowCap+10)
+	}
+}
+
+func TestPivotTotalsUseCompleteColumnAndGrandAggregates(t *testing.T) {
+	values := []crossTabValueField{{key: "revenue", label: "Revenue", format: "decimal"}}
+	columns := []dashboard.TableColumn{{Key: "pivot_east", Role: "metric", Metric: "revenue", ColumnValue: "East"}}
+	rows := []map[string]any{{"region": "North", "pivot_east": 3.0}}
+	table := tablePlan{Rows: []visualizationdefinition.FieldBinding{{Alias: "region"}}, ColumnDims: []visualizationdefinition.FieldBinding{{Alias: "quarter"}}, Totals: &visualizationdefinition.PivotTotals{Columns: true, Grand: true}}
+	columns, rows = addPivotTotalsExact(columns, rows, table, values,
+		[]map[string]any{{"quarter": "East", "revenue": 10.0}},
+		[]map[string]any{{"revenue": 30.0}},
+	)
+	if len(rows) != 2 || rows[1]["pivot_east"] != 10.0 || rows[1]["pivot_grand"] != 30.0 {
+		t.Fatalf("exact totals row = %#v", rows)
+	}
+	if len(columns) != 2 {
+		t.Fatalf("exact totals columns = %#v", columns)
+	}
+}
