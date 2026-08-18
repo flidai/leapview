@@ -35,7 +35,7 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
       limit: 80
 ```
@@ -59,36 +59,9 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
       limit: 80
     presentation:
       type: hierarchy
-```
-
-## Three-level hierarchy
-
-Add a third ordered dimension for deeper nesting, set `initial_depth` to control the first visible level, and enable roaming for exploration.
-
-{{< visual id="category_state_status_sunburst" >}}
-
-```yaml visual-example=category_state_status_sunburst
-visuals:
-  category_state_status_sunburst:
-    title: Category, state, and status sunburst
-    type: sunburst
-    presentation:
-      type: hierarchy
-    query:
-      type: aggregate
-      dimensions:
-      - category
-      - state
-      - status
-      metrics:
-      - order_count
-      sort:
-      - field: value
-        direction: desc
-      limit: 120
 ```

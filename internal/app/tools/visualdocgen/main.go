@@ -302,6 +302,9 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		return visualExamplesArtifact{}, err
 	}
 	projects := analyticsruntime.ProjectFactoryFunc(func(ctx context.Context, request analyticsruntime.ProjectRequest) (analyticsruntime.Project, error) {
+		if err := bindFixtureDataRoot(request.Models, dataRoot); err != nil {
+			return nil, err
+		}
 		if len(request.RequiredExtensions) > 0 {
 			lease, err := database.Acquire(refreshLease.Context())
 			if err != nil {
@@ -1139,6 +1142,21 @@ func bindFixtureDataRoot(models map[string]*semanticmodel.Model, dataRoot string
 			connection.Root = root
 			connection.Scope = ""
 			model.Connections[name] = connection
+		}
+		for name, source := range model.Sources {
+			if source.EffectivePathLocation != nil || source.PathLocation == nil {
+				continue
+			}
+			connection, ok := model.Connections[source.Connection]
+			if !ok {
+				return fmt.Errorf("fixture source %q references unknown connection %q", name, source.Connection)
+			}
+			effective, err := projectcompiler.ResolveEffectivePathLocation(source, connection)
+			if err != nil {
+				return fmt.Errorf("fixture source %q effective options: %w", name, err)
+			}
+			source.EffectivePathLocation = effective
+			model.Sources[name] = source
 		}
 	}
 	return nil

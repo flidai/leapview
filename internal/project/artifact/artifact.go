@@ -28,7 +28,7 @@ import (
 const (
 	// Version is the project artifact wire contract version. It is independent
 	// of graph.GraphVersion and of serving ArtifactEnvelope versions.
-	Version = 1
+	Version = 2
 
 	// CompilerVersion identifies the project compiler contract that produced
 	// the manifest. It is informational and is not part of serving identity.
@@ -51,6 +51,7 @@ type projectWire struct {
 	Version  int                       `json:"version"`
 	Graph    projectgraph.ProjectGraph `json:"graph"`
 	Manifest manifest.Project          `json:"manifest"`
+	Runtime  runtimeProjection         `json:"runtime"`
 }
 
 // Project is an immutable, environment-neutral project artifact. All values
@@ -70,7 +71,11 @@ func NewProject(graph projectgraph.ProjectGraph, project manifest.Project) (Proj
 		return Project{}, fmt.Errorf("project artifact: %w", err)
 	}
 
-	wire := projectWire{Version: Version, Graph: graph, Manifest: project}
+	portable, runtime, err := prepareRuntimeProjection(project)
+	if err != nil {
+		return Project{}, fmt.Errorf("prepare runtime projection: %w", err)
+	}
+	wire := projectWire{Version: Version, Graph: graph, Manifest: portable, Runtime: runtime}
 	canonical, err := json.Marshal(wire)
 	if err != nil {
 		return Project{}, fmt.Errorf("encode canonical project artifact: %w", err)
@@ -80,6 +85,9 @@ func NewProject(graph projectgraph.ProjectGraph, project manifest.Project) (Proj
 	decoded, err := decodeCanonical(canonical)
 	if err != nil {
 		return Project{}, err
+	}
+	if !bytes.Equal(canonical, decoded.Canonical()) {
+		return Project{}, errors.New("project artifact canonical bytes changed during decode")
 	}
 	sum := sha256.Sum256(canonical)
 	return Project{
@@ -114,6 +122,12 @@ func decodeCanonical(data []byte) (Project, error) {
 	}
 	if wire.Version != Version {
 		return Project{}, UnsupportedVersionError{Version: wire.Version}
+	}
+	if err := validatePortableConnections(wire.Manifest); err != nil {
+		return Project{}, fmt.Errorf("decode project artifact: %w", err)
+	}
+	if err := applyRuntimeProjection(&wire.Manifest, wire.Runtime); err != nil {
+		return Project{}, fmt.Errorf("decode project artifact runtime projection: %w", err)
 	}
 	if err := validateGraphManifest(wire.Graph, wire.Manifest); err != nil {
 		return Project{}, fmt.Errorf("decode project artifact: %w", err)
@@ -383,13 +397,13 @@ func (p Project) Connections() map[string]semanticmodel.Connection {
 
 // Models returns detached project-wide semantic model projections.
 func (p Project) Models() map[string]*semanticmodel.Model {
-	return cloneValue(p.manifest.SemanticModels)
+	return cloneRuntimeModels(p.manifest.SemanticModels)
 }
 
 // ModelTables returns detached physical model-table projections keyed by
 // canonical resource ID.
 func (p Project) ModelTables() map[string]semanticmodel.Table {
-	return cloneValue(p.manifest.Models)
+	return cloneRuntimeTables(p.manifest.Models)
 }
 
 // RelationExecutionDigests returns per-model-table identities for physical
@@ -507,10 +521,19 @@ func (p Project) RefreshDefinition() *refreshartifact.Definition {
 
 // RefreshProjection narrows a project manifest to refresh-owned resources.
 func RefreshProjection(value manifest.Project) *refreshartifact.Definition {
-	return &refreshartifact.Definition{Models: cloneValue(value.SemanticModels), Pipelines: cloneValue(value.RefreshPipelines), ConnectionIDs: cloneValue(value.NameIndex.Connections)}
+	return &refreshartifact.Definition{Models: cloneRuntimeModels(value.SemanticModels), Pipelines: cloneValue(value.RefreshPipelines), ConnectionIDs: cloneValue(value.NameIndex.Connections)}
 }
 
-func cloneManifest(value manifest.Project) manifest.Project { return cloneValue(value) }
+func cloneManifest(value manifest.Project) manifest.Project {
+	cloned, projection, err := prepareRuntimeProjection(value)
+	if err != nil {
+		panic(fmt.Sprintf("clone artifact manifest: prepare runtime projection: %v", err))
+	}
+	if err := applyRuntimeProjection(&cloned, projection); err != nil {
+		panic(fmt.Sprintf("clone artifact manifest: apply runtime projection: %v", err))
+	}
+	return cloned
+}
 
 // cloneValue uses the JSON representation because the compiler's model graph
 // contains nested maps, slices, pointers, and interface values. This keeps

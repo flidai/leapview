@@ -25,7 +25,7 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
       limit: 8
 ```
@@ -74,7 +74,7 @@ visuals:
       metrics:
       - revenue
       sort:
-      - field: value
+      - field: revenue
         direction: desc
       limit: 8
 ```

@@ -25,7 +25,6 @@ visuals:
     query:
       type: aggregate
       dimensions:
-      - order_id
       - latitude
       - longitude
       metrics:

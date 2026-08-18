@@ -36,7 +36,7 @@ visuals:
       metrics:
       - active_work_items
       sort:
-      - field: value
+      - field: active_work_items
         direction: desc
 ```
 
@@ -59,46 +59,9 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
       limit: 80
     presentation:
       type: hierarchy
-```
-
-## Three-level hierarchy
-
-Add state as an intermediate level, use `initial_depth` to limit the initial expansion, and apply automatic label collision handling so deeper nodes remain legible as the card resizes.
-
-{{< visual id="category_state_status_tree" >}}
-
-```yaml visual-example=category_state_status_tree
-visuals:
-  category_state_status_tree:
-    title: Category, state, and status tree
-    type: tree
-    presentation:
-      type: hierarchy
-      orientation: vertical
-      labels:
-        density: automatic
-        priority:
-        - selected
-        - anomaly
-        - threshold
-        maxCharacters: 16
-        minimumSpacing: 6
-        tooltipFallback: true
-    query:
-      type: aggregate
-      dimensions:
-      - category
-      - state
-      - status
-      metrics:
-      - order_count
-      sort:
-      - field: value
-        direction: desc
-      limit: 120
 ```

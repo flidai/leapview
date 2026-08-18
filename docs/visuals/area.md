@@ -36,33 +36,6 @@ visuals:
       limit: 30
 ```
 
-## Stacked series
-
-Add status as a second semantic dimension and set `presentation.stacking` to `normal` to show how each status contributes to the monthly total.
-
-{{< visual id="revenue_area_status" >}}
-
-```yaml visual-example=revenue_area_status
-visuals:
-  revenue_area_status:
-    title: Stacked revenue area
-    type: area
-    presentation:
-      type: cartesian
-      stacking: normal
-    query:
-      type: aggregate
-      dimensions:
-      - purchase_month
-      - status
-      metrics:
-      - revenue
-      sort:
-      - field: purchase_month
-        direction: asc
-      limit: 60
-```
-
 ## Smoothed line
 
 Enable `presentation.smooth` to interpolate the boundary, hide symbols to reduce clutter, and add `dataZoom` when the ordered range grows.

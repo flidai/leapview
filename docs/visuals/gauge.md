@@ -43,23 +43,3 @@ visuals:
       metrics:
       - order_count
 ```
-
-## Threshold bands
-
-Declare `min` and `max`, then add ordered `thresholds` to give score ranges semantic tones; `progress_width` controls the arc weight.
-
-{{< visual id="review_gauge_thresholds" >}}
-
-```yaml visual-example=review_gauge_thresholds
-visuals:
-  review_gauge_thresholds:
-    title: Review gauge with thresholds
-    type: gauge
-    presentation:
-      type: polar
-    query:
-      type: aggregate
-      dimensions: []
-      metrics:
-      - review_score
-```

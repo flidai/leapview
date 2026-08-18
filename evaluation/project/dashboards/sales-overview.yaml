@@ -75,12 +75,12 @@ spec:
         type: records
         dataset: orders
         fields:
-        - orders.order_id
-        - orders.purchase_date
-        - orders.state
-        - orders.category
-        - orders.status
-        - orders.revenue
+        - order_id
+        - purchase_date
+        - state
+        - category
+        - status
+        - revenue
       title: Governed order rows
       presentation:
         type: table

@@ -1,12 +1,12 @@
 # Boxplot
 
-Use a boxplot to compare the distribution of a raw metric across categories.
+Use a boxplot to compare quantiles and outliers for a governed numeric field.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Delivery distribution
 
-Set `query.dataset` and select a numeric metric so LeapView can derive the quartiles, median, whiskers, and outliers from raw delivery values.
+Select a numeric field and explicit quantiles so LeapView can derive the quartiles, median, whiskers, and outliers.
 
 {{< visual id="delivery_distribution" >}}
 
@@ -23,18 +23,18 @@ visuals:
       - 0.25
       - 0.5
       - 0.75
-      outliers: include
+      outliers: omit
       approximation: exact
       whiskers:
-        lower: 1.5
-        upper: 1.5
+        lower: 0.05
+        upper: 0.95
     presentation:
       type: cartesian
 ```
 
 ## Review distribution
 
-Swap the numeric metric to compare review-score spread with the same `distribution` shape and raw-table query path.
+Swap the numeric field to compare review-score spread with the same `distribution` shape.
 
 {{< visual id="review_distribution" >}}
 
@@ -50,18 +50,18 @@ visuals:
       - 0.25
       - 0.5
       - 0.75
-      outliers: include
+      outliers: omit
       approximation: exact
       whiskers:
-        lower: 1.5
-        upper: 1.5
+        lower: 0.05
+        upper: 0.95
     presentation:
       type: cartesian
 ```
 
 ## Zoomable distribution
 
-Use revenue as the raw metric and enable `presentation.dataZoom` when the range contains values that benefit from closer inspection.
+Use revenue as the numeric field and enable `presentation.dataZoom` when the range contains values that benefit from closer inspection.
 
 {{< visual id="revenue_distribution" >}}
 
@@ -80,9 +80,9 @@ visuals:
       - 0.25
       - 0.5
       - 0.75
-      outliers: include
+      outliers: omit
       approximation: exact
       whiskers:
-        lower: 1.5
-        upper: 1.5
+        lower: 0.05
+        upper: 0.95
 ```

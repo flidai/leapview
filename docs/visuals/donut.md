@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic
 
-Use one categorical dimension and one metric to show each status as a share of the whole, with an explicit center annotation identifying the represented total.
+Use one categorical dimension and one metric to show each status as a share of the whole.
 
 {{< visual id="orders" >}}
 
@@ -25,7 +25,7 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
 ```
 
@@ -47,33 +47,9 @@ visuals:
       metrics:
       - revenue
       sort:
-      - field: value
+      - field: revenue
         direction: desc
       limit: 8
     presentation:
       type: proportional
-```
-
-## Center label
-
-Set `presentation.center_label` to state the total represented by the ring, and adjust the typed inner and outer radii to control the ring diameters.
-
-{{< visual id="orders_donut_center" >}}
-
-```yaml visual-example=orders_donut_center
-visuals:
-  orders_donut_center:
-    title: Orders donut with center label
-    type: donut
-    presentation:
-      type: proportional
-    query:
-      type: aggregate
-      dimensions:
-      - status
-      metrics:
-      - order_count
-      sort:
-      - field: value
-        direction: desc
 ```

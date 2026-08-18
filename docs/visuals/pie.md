@@ -22,7 +22,7 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
     presentation:
       type: proportional
@@ -57,7 +57,7 @@ visuals:
       metrics:
       - order_count
       sort:
-      - field: value
+      - field: order_count
         direction: desc
 ```
 
@@ -90,7 +90,7 @@ visuals:
       metrics:
       - revenue
       sort:
-      - field: value
+      - field: revenue
         direction: desc
       limit: 6
 ```

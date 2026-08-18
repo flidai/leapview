@@ -113,12 +113,11 @@ spec:
         type: records
         dataset: sales_orders
         fields:
-        - sales_orders.order_id
-        - sales_orders.purchase_date
-        - sales_orders.status
-        - sales_customers.state
-        - sales_orders.category
-        - sales_orders.revenue
+        - order_id
+        - purchase_date
+        - status
+        - category
+        - revenue
       title: Orders
       presentation:
         type: table

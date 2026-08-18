@@ -121,38 +121,21 @@ func queryFieldRef(ref visualizationdefinition.FieldBinding, alias string) repor
 	}
 }
 
-func queryDimensionFields(dimensions []visualizationdefinition.FieldBinding) []string {
-	fields := make([]string, len(dimensions))
-	for i, dimension := range dimensions {
-		fields[i] = dimension.FieldID
-	}
-	return fields
-}
-
-func displayField(field string) string {
-	parts := strings.Split(field, ".")
-	return parts[len(parts)-1]
-}
-
 func visualSorts(visual visualPlan) []reportdef.QuerySort {
 	if len(visual.Sort) == 0 {
-		return []reportdef.QuerySort{{Field: defaultSortColumn(visual), Direction: "asc"}}
+		if len(visual.Dimensions) > 0 {
+			return []reportdef.QuerySort{{Field: visual.Dimensions[0].Alias, Direction: "asc"}}
+		}
+		return nil
 	}
 	sorts := make([]reportdef.QuerySort, 0, len(visual.Sort))
 	for _, sort := range visual.Sort {
 		field := sort.FieldID
 		if field == "" {
-			field = defaultSortColumn(visual)
-		}
-		if field != "value" && field != "series" {
-			for index, dimension := range visual.Dimensions {
-				if field == dimension.FieldID || field == dimension.Alias || field == displayField(dimension.FieldID) {
-					field = dimensionSortColumn(visual.ResultShape(), index)
-					break
-				}
-			}
-			if visual.Series != nil && (field == visual.Series.FieldID || field == visual.Series.Alias || field == displayField(visual.Series.FieldID)) {
-				field = "series"
+			if len(visual.Dimensions) > 0 {
+				field = visual.Dimensions[0].Alias
+			} else if len(visual.Metrics) > 0 {
+				field = visual.Metrics[0].Alias
 			}
 		}
 		sorts = append(sorts, reportdef.QuerySort{Field: field, Direction: sort.Direction})
@@ -278,52 +261,12 @@ func distributionSorts(visual visualPlan) []reportdef.QuerySort {
 	}
 	sorts := make([]reportdef.QuerySort, 0, len(visual.Sort))
 	for _, sortSpec := range visual.Sort {
-		field := sortSpec.FieldID
-		if field == "" {
-			field = "label"
+		if strings.TrimSpace(sortSpec.FieldID) == "" {
+			continue
 		}
-		if field != "label" && field != "min" && field != "q1" && field != "median" && field != "q3" && field != "max" {
-			field = "label"
-		}
-		sorts = append(sorts, reportdef.QuerySort{Field: field, Direction: sortSpec.Direction})
+		sorts = append(sorts, reportdef.QuerySort{Field: sortSpec.FieldID, Direction: sortSpec.Direction})
 	}
 	return sorts
-}
-
-func defaultSortColumn(visual visualPlan) string {
-	switch visual.ResultShape() {
-	case visualizationdefinition.ResultMatrixCells:
-		return "row"
-	case visualizationdefinition.ResultGraphEdges:
-		return "source"
-	case visualizationdefinition.ResultGeographicFeatures:
-		return "name"
-	case visualizationdefinition.ResultHierarchyNodes:
-		return "value"
-	default:
-		return "label"
-	}
-}
-
-func dimensionSortColumn(shape visualizationdefinition.ResultShape, index int) string {
-	switch shape {
-	case visualizationdefinition.ResultMatrixCells:
-		if index == 1 {
-			return "chart_column"
-		}
-		return "row"
-	case visualizationdefinition.ResultGraphEdges:
-		if index == 1 {
-			return "target"
-		}
-		return "source"
-	case visualizationdefinition.ResultGeographicFeatures:
-		return "name"
-	case visualizationdefinition.ResultHierarchyNodes:
-		return fmt.Sprintf("level_%d", index)
-	default:
-		return "label"
-	}
 }
 
 func compiledInteractionConfig(interaction visualizationir.VisualizationInteraction) dashboard.InteractionConfig {
