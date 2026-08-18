@@ -4,7 +4,6 @@ import (
 	"context"
 
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 )
 
 type QueryField struct {
@@ -49,11 +48,16 @@ type QuerySort struct {
 	Direction string
 }
 
+// QueryTime is a runtime query projection. Authoring documents use the
+// generated Dashboard query contract; this alias keeps the execution request
+// independent of authoring package types.
+type QueryTime = semanticquery.Time
+
 type AggregateQuery struct {
 	Dataset    string
 	Dimensions []QueryField
 	Metrics    []QueryField
-	Time       dashboardauthoring.QueryTime
+	Time       QueryTime
 	Filters    []QueryFilter
 	Sort       []QuerySort
 	Limit      int

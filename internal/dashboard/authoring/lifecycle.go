@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -702,8 +701,8 @@ func DashboardContentHash(document document.DashboardDocument) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash[:]), nil
 }
 
-// Clone performs a typed deep copy and surfaces unsupported reference values
-// rather than dropping authored fields or changing concrete interface values.
+// ValidateCanonicalDocument checks the generated dashboard document against
+// the public JSON Schema before it is retained in an authored revision.
 func ValidateCanonicalDocument(value document.DashboardDocument) error {
 	encoded, err := json.Marshal(value)
 	if err != nil {
@@ -713,122 +712,4 @@ func ValidateCanonicalDocument(value document.DashboardDocument) error {
 		return fmt.Errorf("%w: canonical dashboard schema: %v", ErrInvalidAuthoring, err)
 	}
 	return nil
-}
-
-// Clone remains available to the runtime-only legacy compiler while all
-// authoring revisions use DashboardDocument above. It is intentionally not
-// used at any authoring source/revision boundary.
-func (d Dashboard) Clone() (Dashboard, error) {
-	cloned, err := cloneValue(reflect.ValueOf(d), "dashboard")
-	if err != nil {
-		return Dashboard{}, fmt.Errorf("%w: clone runtime dashboard: %v", ErrInvalidAuthoring, err)
-	}
-	return cloned.Interface().(Dashboard), nil
-}
-
-func cloneValue(value reflect.Value, path string) (reflect.Value, error) {
-	if !value.IsValid() {
-		return value, nil
-	}
-	switch value.Kind() {
-	case reflect.Interface:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		cloned, err := cloneValue(value.Elem(), path)
-		if err != nil {
-			return reflect.Value{}, err
-		}
-		out := reflect.New(value.Type()).Elem()
-		if cloned.Type().AssignableTo(value.Type()) {
-			out.Set(cloned)
-		} else if cloned.Type().Implements(value.Type()) {
-			out.Set(cloned)
-		} else {
-			return reflect.Value{}, fmt.Errorf("%s has non-assignable interface value %s", path, cloned.Type())
-		}
-		return out, nil
-	case reflect.Pointer:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		cloned, err := cloneValue(value.Elem(), path+".*")
-		if err != nil {
-			return reflect.Value{}, err
-		}
-		out := reflect.New(value.Type().Elem())
-		out.Elem().Set(cloned)
-		return out, nil
-	case reflect.Struct:
-		out := reflect.New(value.Type()).Elem()
-		out.Set(value)
-		for i := 0; i < value.NumField(); i++ {
-			field := out.Field(i)
-			// Unexported fields are copied as part of the struct value. Authored
-			// documents contain no mutable unexported fields; this also preserves
-			// opaque values such as time.Time without unsafe operations.
-			if !field.CanSet() || !value.Field(i).CanInterface() {
-				continue
-			}
-			cloned, err := cloneValue(value.Field(i), fmt.Sprintf("%s.%s", path, value.Type().Field(i).Name))
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			field.Set(cloned)
-		}
-		return out, nil
-	case reflect.Map:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		out := reflect.MakeMapWithSize(value.Type(), value.Len())
-		iter := value.MapRange()
-		for iter.Next() {
-			key, err := cloneValue(iter.Key(), path+".key")
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			item, err := cloneValue(iter.Value(), path+"[value]")
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			out.SetMapIndex(key, item)
-		}
-		return out, nil
-	case reflect.Slice:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
-		for i := 0; i < value.Len(); i++ {
-			cloned, err := cloneValue(value.Index(i), fmt.Sprintf("%s[%d]", path, i))
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			out.Index(i).Set(cloned)
-		}
-		return out, nil
-	case reflect.Array:
-		out := reflect.New(value.Type()).Elem()
-		for i := 0; i < value.Len(); i++ {
-			cloned, err := cloneValue(value.Index(i), fmt.Sprintf("%s[%d]", path, i))
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			out.Index(i).Set(cloned)
-		}
-		return out, nil
-	case reflect.Func, reflect.Chan:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		return reflect.Value{}, fmt.Errorf("%s contains unsupported %s", path, value.Kind())
-	case reflect.UnsafePointer:
-		if value.Pointer() == 0 {
-			return reflect.Zero(value.Type()), nil
-		}
-		return reflect.Value{}, fmt.Errorf("%s contains unsupported %s", path, value.Kind())
-	default:
-		return value, nil
-	}
 }

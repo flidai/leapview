@@ -10,7 +10,6 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/flidai/leapview/internal/dashboard/reportmodel"
@@ -324,33 +323,6 @@ func dimensionSortColumn(shape visualizationdefinition.ResultShape, index int) s
 		return fmt.Sprintf("level_%d", index)
 	default:
 		return "label"
-	}
-}
-
-func visualInteractionConfig(selection dashboardauthoring.SelectionInteraction) dashboard.InteractionConfig {
-	return interactionConfig("point_selection", selection)
-}
-
-func tableInteractionConfig(selection dashboardauthoring.SelectionInteraction) dashboard.InteractionConfig {
-	return interactionConfig("row_selection", selection)
-}
-
-func interactionConfig(kind string, selection dashboardauthoring.SelectionInteraction) dashboard.InteractionConfig {
-	mappings := make([]dashboard.InteractionConfigMapping, 0, len(selection.Mappings))
-	for _, mapping := range selection.Mappings {
-		mappings = append(mappings, dashboard.InteractionConfigMapping{
-			Field:   mapping.Field,
-			Dataset: mapping.Dataset,
-			Grain:   mapping.Grain,
-			Value:   mapping.Value,
-			Label:   mapping.Label,
-		})
-	}
-	return dashboard.InteractionConfig{
-		Kind:     kind,
-		Toggle:   selection.Toggle,
-		Mappings: mappings,
-		Targets:  append([]string{}, selection.Targets...),
 	}
 }
 
