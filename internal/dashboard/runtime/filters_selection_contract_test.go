@@ -15,7 +15,7 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
-func restoredSelectionFixture() (*dashboarddefinition.Definition, *semanticmodel.Model) {
+func canonicalSelectionFixture() (*dashboarddefinition.Definition, *semanticmodel.Model) {
 	model := &semanticmodel.Model{
 		Tables: map[string]semanticmodel.Table{
 			"ratings": {Dimensions: map[string]semanticmodel.MetricDimension{"rating_bucket": {Type: "string", Datatype: semanticmodel.DataTypeString}, "rated_at": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTime}, "release_decade": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
@@ -28,16 +28,16 @@ func restoredSelectionFixture() (*dashboarddefinition.Definition, *semanticmodel
 		Metrics: map[string]semanticmodel.Metric{"rating_count": {Type: "aggregate", Dataset: "ratings", Input: &semanticmodel.MetricInput{Field: "ratings.rating_bucket"}}, "tag_count": {Type: "aggregate", Dataset: "tags", Input: &semanticmodel.MetricInput{Field: "tags.tagged_at"}}},
 	}
 	visuals := map[string]visualizationdefinition.Definition{
-		"decades":     restoredSelectionVisual("decades", "release_decade", "", "release_decade", "", "cross"),
-		"buckets":     restoredSelectionVisual("buckets", "ratings.rating_bucket", "ratings", "ratings.rating_bucket", "", "cross"),
-		"months":      restoredSelectionVisual("months", "activity_date", "", "activity_date", "month", "cross"),
-		"cross":       restoredSelectionVisual("cross", "", "", "", "", ""),
+		"decades":     canonicalSelectionVisual("decades", "release_decade", "", "release_decade", "", "cross"),
+		"buckets":     canonicalSelectionVisual("buckets", "ratings.rating_bucket", "ratings", "ratings.rating_bucket", "", "cross"),
+		"months":      canonicalSelectionVisual("months", "activity_date", "", "activity_date", "month", "cross"),
+		"cross":       canonicalSelectionVisual("cross", "", "", "", "", ""),
 		"plain_table": {ID: "plain_table", Spec: visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "table", Title: "Table", Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: []visualizationir.VisualizationField{{ID: "row", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString}}}}, Accessibility: visualizationir.VisualizationAccessibility{Title: "Table", Description: "Table"}}, Kind: "table", Columns: []visualizationir.TableVisualizationColumn{{Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "row"}, Label: "Row", Formatting: []visualizationir.TableVisualizationFormattingRule{}}}}}, Query: visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow, Detail: &visualizationdefinition.DetailQueryBinding{TableID: "ratings", Fields: []visualizationdefinition.FieldBinding{{FieldID: "row", Alias: "row"}}, Limit: 100}}},
 	}
 	return &dashboarddefinition.Definition{Visualizations: visuals}, model
 }
 
-func restoredSelectionVisual(id, field, dataset, targetField, grain, target string) visualizationdefinition.Definition {
+func canonicalSelectionVisual(id, field, dataset, targetField, grain, target string) visualizationdefinition.Definition {
 	fields := []visualizationir.VisualizationField{}
 	dimensions := []visualizationdefinition.FieldBinding{}
 	refs := []visualizationir.VisualizationFieldRef{}
@@ -78,12 +78,12 @@ func restoredSelectionVisual(id, field, dataset, targetField, grain, target stri
 	}(), Limit: 100}}}
 }
 
-func restoredFilterSelection(source string, mapping dashboard.InteractionSelectionMapping) dashboard.InteractionSelection {
+func canonicalFilterSelection(source string, mapping dashboard.InteractionSelectionMapping) dashboard.InteractionSelection {
 	return dashboard.InteractionSelection{SourceKind: "visual", SourceID: source, InteractionKind: "point_selection", Entries: []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{mapping}}}}
 }
 
-func TestRestoredSemanticFiltersTranslateConformedAndDatasetLocalSelections(t *testing.T) {
-	report, model := restoredSelectionFixture()
+func TestCanonicalSemanticFiltersTranslateConformedAndDatasetLocalSelections(t *testing.T) {
+	report, model := canonicalSelectionFixture()
 	service := &FilterService{}
 	for _, test := range []struct {
 		name           string
@@ -92,9 +92,9 @@ func TestRestoredSemanticFiltersTranslateConformedAndDatasetLocalSelections(t *t
 		value          any
 		operator       string
 	}{
-		{name: "conformed", selection: restoredFilterSelection("decades", dashboard.InteractionSelectionMapping{Field: "release_decade", Value: "1990s"}), field: "release_decade", value: "1990s", operator: "equals"},
-		{name: "local", selection: restoredFilterSelection("buckets", dashboard.InteractionSelectionMapping{Field: "ratings.rating_bucket", Dataset: "ratings", Value: "5"}), field: "ratings.rating_bucket", dataset: "ratings", value: "5", operator: "equals"},
-		{name: "null", selection: restoredFilterSelection("decades", dashboard.InteractionSelectionMapping{Field: "release_decade", Value: nil}), field: "release_decade", operator: "is_null"},
+		{name: "conformed", selection: canonicalFilterSelection("decades", dashboard.InteractionSelectionMapping{Field: "release_decade", Value: "1990s"}), field: "release_decade", value: "1990s", operator: "equals"},
+		{name: "local", selection: canonicalFilterSelection("buckets", dashboard.InteractionSelectionMapping{Field: "ratings.rating_bucket", Dataset: "ratings", Value: "5"}), field: "ratings.rating_bucket", dataset: "ratings", value: "5", operator: "equals"},
+		{name: "null", selection: canonicalFilterSelection("decades", dashboard.InteractionSelectionMapping{Field: "release_decade", Value: nil}), field: "release_decade", operator: "is_null"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			filters, err := service.semanticFilters(context.Background(), &modelRuntime{model: model}, report, dashboard.Filters{Selections: []dashboard.InteractionSelection{test.selection}}, "visual", "cross")
@@ -116,7 +116,7 @@ func TestRestoredSemanticFiltersTranslateConformedAndDatasetLocalSelections(t *t
 	}
 }
 
-func TestRestoredSelectionMappingFiltersBuildHalfOpenRangesForEveryTimeGrain(t *testing.T) {
+func TestCanonicalSelectionMappingFiltersBuildHalfOpenRangesForEveryTimeGrain(t *testing.T) {
 	for _, test := range []struct{ grain, value, start, end string }{{"day", "2026-02-03", "2026-02-03", "2026-02-04"}, {"week", "2026-02-02", "2026-02-02", "2026-02-09"}, {"month", "2026-02", "2026-02-01", "2026-03-01"}, {"quarter", "2026-Q2", "2026-04-01", "2026-07-01"}, {"year", "2026", "2026-01-01", "2027-01-01"}} {
 		t.Run(test.grain, func(t *testing.T) {
 			filters, err := selectionMappingFilters(reportmodel.ResolvedSelectionMapping{Field: "activity_date", Grain: test.grain}, test.value)
@@ -133,17 +133,17 @@ func TestRestoredSelectionMappingFiltersBuildHalfOpenRangesForEveryTimeGrain(t *
 	}
 }
 
-func TestRestoredSemanticFiltersEmitConformedHalfOpenTimeRange(t *testing.T) {
-	report, model := restoredSelectionFixture()
-	selection := restoredFilterSelection("months", dashboard.InteractionSelectionMapping{Field: "activity_date", Grain: "month", Value: "2026-02"})
+func TestCanonicalSemanticFiltersEmitConformedHalfOpenTimeRange(t *testing.T) {
+	report, model := canonicalSelectionFixture()
+	selection := canonicalFilterSelection("months", dashboard.InteractionSelectionMapping{Field: "activity_date", Grain: "month", Value: "2026-02"})
 	filters, err := (&FilterService{}).semanticFilters(context.Background(), &modelRuntime{model: model}, report, dashboard.Filters{Selections: []dashboard.InteractionSelection{selection}}, "visual", "cross")
 	if err != nil || len(filters) != 2 || filters[0].Field != "activity_date" || filters[0].Dataset != "" || filters[1].Dataset != "" || filters[0].Operator != "greater_than_or_equal" || filters[1].Operator != "less_than" {
 		t.Fatalf("time filters=%#v err=%v", filters, err)
 	}
 }
 
-func TestRestoredSemanticFiltersIgnoreUIOnlyRowSelections(t *testing.T) {
-	report, model := restoredSelectionFixture()
+func TestCanonicalSemanticFiltersIgnoreUIOnlyRowSelections(t *testing.T) {
+	report, model := canonicalSelectionFixture()
 	selection := dashboard.InteractionSelection{SourceKind: "visual", SourceID: "plain_table", InteractionKind: "row_selection", Entries: []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: dashboard.UIRowSelectionField, Value: "row-1"}}}}}
 	filters, err := (&FilterService{}).semanticFilters(context.Background(), &modelRuntime{model: model}, report, dashboard.Filters{Selections: []dashboard.InteractionSelection{selection}}, "visual", "cross")
 	if err != nil || len(filters) != 0 {
@@ -151,8 +151,8 @@ func TestRestoredSemanticFiltersIgnoreUIOnlyRowSelections(t *testing.T) {
 	}
 }
 
-func TestRestoredSemanticFiltersRejectStoredSelectionWithOmittedJSONValue(t *testing.T) {
-	report, model := restoredSelectionFixture()
+func TestCanonicalSemanticFiltersRejectStoredSelectionWithOmittedJSONValue(t *testing.T) {
+	report, model := canonicalSelectionFixture()
 	var selection dashboard.InteractionSelection
 	if err := json.Unmarshal([]byte(`{"sourceKind":"visual","sourceId":"decades","interactionKind":"point_selection","entries":[{"mappings":[{"field":"release_decade"}]}]}`), &selection); err != nil {
 		t.Fatal(err)

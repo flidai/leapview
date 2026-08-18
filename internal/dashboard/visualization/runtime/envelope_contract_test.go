@@ -9,7 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
-func restoredCartesianDefinition(t *testing.T, id string, fields []ir.VisualizationField, interactions []ir.VisualizationInteraction) visualizationdefinition.Definition {
+func canonicalCartesianDefinition(t *testing.T, id string, fields []ir.VisualizationField, interactions []ir.VisualizationInteraction) visualizationdefinition.Definition {
 	t.Helper()
 	spec := ir.VisualizationSpec{Value: &ir.CartesianVisualizationSpec{VisualizationSpecBase: ir.VisualizationSpecBase{Kind: "cartesian", Title: "Compiled title", Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, DataBudget: ir.VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: ir.VisualizationCompletenessComplete}, Accessibility: ir.VisualizationAccessibility{Title: "Compiled title", Description: "Compiled title"}, Interactions: interactions}, Kind: "cartesian", Mark: ir.VisualizationCartesianMarkLine, X: ir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, Y: []ir.VisualizationFieldRef{{Dataset: "primary", Field: "value"}}, Presentation: ir.CartesianVisualizationPresentation{VisualizationPresentation: ir.VisualizationPresentation{Legend: ir.VisualizationLegendPositionHidden, LabelPolicy: ir.VisualizationLabelPolicy{Density: ir.VisualizationLabelDensityHidden, Priority: []ir.VisualizationLabelPriority{}, MaxCharacters: 24, TooltipFallback: true}}}}}
 	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, ModelID: "sales", DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Metrics: []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100}})
@@ -19,11 +19,11 @@ func restoredCartesianDefinition(t *testing.T, id string, fields []ir.Visualizat
 	return definition
 }
 
-func restoredCartesianFields() []ir.VisualizationField {
+func canonicalCartesianFields() []ir.VisualizationField {
 	return []ir.VisualizationField{{ID: "label", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: true, Label: "Label"}, {ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"}}
 }
 
-func restoredGridDefinition(t *testing.T, id string) visualizationdefinition.Definition {
+func canonicalGridDefinition(t *testing.T, id string) visualizationdefinition.Definition {
 	t.Helper()
 	base := ir.VisualizationSpecBase{Kind: "table", Title: "Orders", Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{{ID: "order_id", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Label: "Order"}}}}, DataBudget: ir.VisualizationDataBudget{MaxRows: 100}, Accessibility: ir.VisualizationAccessibility{Title: "Orders", Description: "Orders"}}
 	spec := ir.VisualizationSpec{Value: &ir.TableVisualizationSpec{VisualizationSpecBase: base, Kind: "table", Columns: []ir.TableVisualizationColumn{{Field: ir.VisualizationFieldRef{Dataset: "primary", Field: "order_id"}, Label: "Order", Formatting: []ir.TableVisualizationFormattingRule{}}}, Presentation: ir.GridVisualizationPresentation{RowHeight: 34, ShowHeader: true}}}
@@ -34,8 +34,8 @@ func restoredGridDefinition(t *testing.T, id string) visualizationdefinition.Def
 	return definition
 }
 
-func TestRestoredEnvelopeFromFrameKeepsCompiledSpecAndStreamRevision(t *testing.T) {
-	definition := restoredCartesianDefinition(t, "revenue", restoredCartesianFields(), nil)
+func TestCanonicalEnvelopeFromFrameKeepsCompiledSpecAndStreamRevision(t *testing.T) {
+	definition := canonicalCartesianDefinition(t, "revenue", canonicalCartesianFields(), nil)
 	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "10.5"}}}, nil, 9, 4)
 	if err != nil {
 		t.Fatal(err)
@@ -49,10 +49,10 @@ func TestRestoredEnvelopeFromFrameKeepsCompiledSpecAndStreamRevision(t *testing.
 	}
 }
 
-func TestRestoredFrameFromRecordsUsesCompiledDatasetOrdering(t *testing.T) {
-	fields := restoredCartesianFields()
+func TestCanonicalFrameFromRecordsUsesCompiledDatasetOrdering(t *testing.T) {
+	fields := canonicalCartesianFields()
 	fields[0], fields[1] = fields[1], fields[0]
-	frame, err := FrameFromRecords(restoredCartesianDefinition(t, "revenue", fields, nil), []map[string]any{{"value": "10.5", "label": "Jan"}})
+	frame, err := FrameFromRecords(canonicalCartesianDefinition(t, "revenue", fields, nil), []map[string]any{{"value": "10.5", "label": "Jan"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestRestoredFrameFromRecordsUsesCompiledDatasetOrdering(t *testing.T) {
 	}
 }
 
-func TestRestoredNormalizeDecimalFrameUsesColumnIDs(t *testing.T) {
+func TestCanonicalNormalizeDecimalFrameUsesColumnIDs(t *testing.T) {
 	frame := Frame{Columns: []string{"value", "label"}, Rows: [][]any{{int64(42), "Jan"}}}
 	if err := normalizeDecimalFrame([]ir.VisualizationField{{ID: "label", DataType: ir.VisualizationDataTypeString}, {ID: "value", DataType: ir.VisualizationDataTypeDecimal}}, &frame); err != nil {
 		t.Fatal(err)
@@ -71,12 +71,12 @@ func TestRestoredNormalizeDecimalFrameUsesColumnIDs(t *testing.T) {
 	}
 }
 
-func TestRestoredEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
+func TestCanonicalEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
 	dataset := "orders"
-	fields := restoredCartesianFields()
+	fields := canonicalCartesianFields()
 	fields[0].Role = ir.VisualizationFieldRoleIdentity
 	interaction := ir.VisualizationInteraction{ID: "point_selection", Kind: ir.VisualizationInteractionKindSelect, Mode: ir.VisualizationSelectionModeSingle, RequiresStableIdentity: true, Mappings: []ir.VisualizationInteractionMapping{{Source: ir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, TargetFieldID: "orders.status", TargetDatasetID: &dataset}}}
-	definition := restoredCartesianDefinition(t, "orders", fields, []ir.VisualizationInteraction{interaction})
+	definition := canonicalCartesianDefinition(t, "orders", fields, []ir.VisualizationInteraction{interaction})
 	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", "42"}}}, []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: "orders.status", Dataset: "orders", Value: "delivered"}}, Label: "Delivered"}}, 8, 3)
 	if err != nil {
 		t.Fatal(err)
@@ -86,8 +86,8 @@ func TestRestoredEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
 	}
 }
 
-func TestRestoredEnvelopeFromFrameUsesColumnarTypedIR(t *testing.T) {
-	envelope, err := EnvelopeFromFrame(restoredCartesianDefinition(t, "revenue", restoredCartesianFields(), nil), Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "10.5"}}}, nil, 4, 2)
+func TestCanonicalEnvelopeFromFrameUsesColumnarTypedIR(t *testing.T) {
+	envelope, err := EnvelopeFromFrame(canonicalCartesianDefinition(t, "revenue", canonicalCartesianFields(), nil), Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "10.5"}}}, nil, 4, 2)
 	if err != nil || envelope.RendererID != "echarts" {
 		t.Fatalf("envelope=%#v err=%v", envelope, err)
 	}
@@ -100,9 +100,9 @@ func TestRestoredEnvelopeFromFrameUsesColumnarTypedIR(t *testing.T) {
 	}
 }
 
-func TestRestoredTableEnvelopePreservesWindowIdentity(t *testing.T) {
+func TestCanonicalTableEnvelopePreservesWindowIdentity(t *testing.T) {
 	table := dashboard.Table{Kind: "data_table", Title: "Orders", Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order", Role: "row_header"}}, Cardinality: dashboard.ExactCardinality(1), AvailableRows: 1, RowCap: 100, ChunkSize: 50, RowHeight: 34, ResetVersion: 3, Sort: dashboard.TableSort{Key: "order_id", Direction: "asc"}, Blocks: map[string]dashboard.TableBlock{"a": {Start: 0, RequestSeq: 7, ResetVersion: 3, Sort: dashboard.TableSort{Key: "order_id", Direction: "asc"}, Rows: []map[string]any{{"order_id": "one"}}}}}
-	envelope, err := WindowEnvelopeFromDefinition(restoredGridDefinition(t, "orders"), table, 8, 5)
+	envelope, err := WindowEnvelopeFromDefinition(canonicalGridDefinition(t, "orders"), table, 8, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +115,9 @@ func TestRestoredTableEnvelopePreservesWindowIdentity(t *testing.T) {
 	}
 }
 
-func TestRestoredTableEnvelopeOmitsUnknownCardinalityCount(t *testing.T) {
+func TestCanonicalTableEnvelopeOmitsUnknownCardinalityCount(t *testing.T) {
 	table := dashboard.Table{Kind: "data_table", Title: "Orders", Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order", Role: "row_header"}}, Cardinality: dashboard.TableCardinality{Kind: dashboard.CardinalityUnknown}, AvailableRows: 10000, RowCap: 10000, ChunkSize: 50, RowHeight: 34, Sort: dashboard.TableSort{Key: "order_id", Direction: "asc"}, Blocks: map[string]dashboard.TableBlock{}}
-	envelope, err := WindowEnvelopeFromDefinition(restoredGridDefinition(t, "orders"), table, 1, 1)
+	envelope, err := WindowEnvelopeFromDefinition(canonicalGridDefinition(t, "orders"), table, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,8 +127,8 @@ func TestRestoredTableEnvelopeOmitsUnknownCardinalityCount(t *testing.T) {
 	}
 }
 
-func TestRestoredErrorEnvelopePreservesCompiledBoundary(t *testing.T) {
-	definition := restoredGridDefinition(t, "orders")
+func TestCanonicalErrorEnvelopePreservesCompiledBoundary(t *testing.T) {
+	definition := canonicalGridDefinition(t, "orders")
 	envelope, err := ErrorEnvelopeFromDefinition(definition, errors.New("query failed"), 7, 3)
 	if err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,9 +49,12 @@ type canonicalRepository struct {
 		fingerprint string
 		token       authoring.RevisionToken
 	}
-	operations  map[string]authoring.CreateOperationResult
-	compiled    authoring.CompiledRevision
-	createCalls int
+	operations           map[string]authoring.CreateOperationResult
+	compiled             authoring.CompiledRevision
+	createCalls          int
+	getCalls             int
+	getRevisionCalls     int
+	lookupOperationCalls int
 }
 
 func newCanonicalRepository() *canonicalRepository {
@@ -82,6 +86,7 @@ func (r *canonicalRepository) Create(_ context.Context, input authoring.CreateIn
 }
 
 func (r *canonicalRepository) Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+	r.getCalls++
 	if r.lifecycle.ID == "" {
 		return authoring.DashboardLifecycle{}, authoring.ErrNotFound
 	}
@@ -94,6 +99,7 @@ func (r *canonicalRepository) CountBySemanticModel(context.Context, graph.Resour
 	return nil, nil
 }
 func (r *canonicalRepository) GetRevision(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
+	r.getRevisionCalls++
 	value, ok := r.revisions[id]
 	if !ok {
 		return authoring.Revision{}, authoring.ErrNotFound
@@ -101,6 +107,7 @@ func (r *canonicalRepository) GetRevision(_ context.Context, _ graph.ResourceID,
 	return value, nil
 }
 func (r *canonicalRepository) LookupCreateOperation(_ context.Context, operation authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
+	r.lookupOperationCalls++
 	value, ok := r.operations[operationKey(operation)]
 	return value, ok, nil
 }
@@ -257,5 +264,93 @@ func TestCanonicalServiceCreateIdempotencyAndFork(t *testing.T) {
 	}
 	if forked.Lifecycle.ID != "dashboard-fork" || forked.Lifecycle.Status != authoring.LifecycleStatusDraft || forked.Lifecycle.Draft == nil {
 		t.Fatalf("forked result = %#v", forked)
+	}
+	if got := repository.revisions[first.Revision.RevisionID].CreatedAt; !got.Equal(time.Date(2026, 8, 18, 14, 0, 0, 0, time.UTC)) {
+		t.Fatalf("deterministic create clock = %v", got)
+	}
+	forkRevision := repository.revisions[forked.Revision.RevisionID]
+	forkRevision.Document.Spec.Filters = append(forkRevision.Document.Spec.Filters, document.DashboardFilter{ID: "region", Label: "Region", Dimension: "region"})
+	forkRevision.Provenance.ForkedFrom.Instance.SourceRevision.Number = 99
+	repository.revisions[forked.Revision.RevisionID] = forkRevision
+	if len(repository.revisions[first.Revision.RevisionID].Document.Spec.Filters) != 0 {
+		t.Fatal("fork document aliases source document")
+	}
+	if repository.revisions[first.Revision.RevisionID].Provenance.ForkedFrom != nil {
+		t.Fatal("source provenance unexpectedly received fork evidence")
+	}
+	if repository.revisions[forked.Revision.RevisionID].Provenance.ForkedFrom.Instance.SourceRevision.Number != 99 {
+		t.Fatal("fork provenance mutation did not stay local")
+	}
+}
+
+func TestCanonicalServiceIdempotencyAuthorizesBeforeReuseDisclosure(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-created", "draft-created", "revision-created")
+	request := service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "model:test", IdempotencyKey: "retry-auth"}
+	if _, err := svc.Create(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	changed := request
+	changed.Title = "Changed"
+	authorizer.denied = true
+	if _, err := svc.Create(t.Context(), changed); err == nil || err.Error() != "denied" {
+		t.Fatalf("unauthorized reused key error = %v", err)
+	}
+	if repository.lookupOperationCalls == 0 || len(authorizer.calls) == 0 || authorizer.calls[len(authorizer.calls)-1].Action != authoring.AuthorizationActionEdit {
+		t.Fatalf("authorization/reuse ordering calls=%d auth=%#v", repository.lookupOperationCalls, authorizer.calls)
+	}
+}
+
+func TestCanonicalServiceForkRejectsIncompleteSourceAndInvalidClock(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-source", "draft-source", "revision-source", "revision-edited")
+	if _, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project:test", SourceDashboardID: "missing", ActorID: "actor", IdempotencyKey: "fork-missing"}); !errors.Is(err, authoring.ErrNotFound) {
+		t.Fatalf("missing source error = %v", err)
+	}
+	invalidClock, err := service.NewService(service.Options{Repository: repository, Authorizer: authorizer, Compiler: compiler, Now: func() time.Time { return time.Time{} }, NewDashboardID: func() (authoring.DashboardID, error) { return "dashboard-fork", nil }, NewDraftID: func() (authoring.DraftID, error) { return "draft-fork", nil }, NewRevisionID: func() (authoring.RevisionID, error) { return "revision-fork", nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Source", Slug: "source", SemanticModel: "model:test", IdempotencyKey: "create-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Published"
+	edit := authoring.Command{ID: "edit-source", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID, ExpectedRevision: created.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Metadata: &authoring.MetadataPatch{Title: &title}}
+	updated, err := svc.Execute(t.Context(), "project:test", edit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Execute(t.Context(), "project:test", authoring.Command{ID: "publish-source", DashboardID: updated.Lifecycle.ID, DraftID: updated.Lifecycle.Draft.ID, ExpectedRevision: updated.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Publish: &authoring.PublishPayload{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invalidClock.Fork(t.Context(), service.ForkRequest{ProjectID: "project:test", SourceDashboardID: created.Lifecycle.ID, ActorID: "actor", IdempotencyKey: "fork-invalid-clock"}); err == nil || !strings.Contains(err.Error(), "clock") {
+		t.Fatalf("invalid fork clock error = %v", err)
+	}
+}
+
+func TestCanonicalServiceForkAuthorizesBeforeRevisionDisclosure(t *testing.T) {
+	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
+	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-source", "draft-source", "revision-source", "revision-edited")
+	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Source", Slug: "source", SemanticModel: "model:test", IdempotencyKey: "create-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Published"
+	updated, err := svc.Execute(t.Context(), "project:test", authoring.Command{ID: "edit-source", DashboardID: created.Lifecycle.ID, DraftID: created.Lifecycle.Draft.ID, ExpectedRevision: created.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Metadata: &authoring.MetadataPatch{Title: &title}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Execute(t.Context(), "project:test", authoring.Command{ID: "publish-source", DashboardID: updated.Lifecycle.ID, DraftID: updated.Lifecycle.Draft.ID, ExpectedRevision: updated.Revision, Provenance: authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}, Publish: &authoring.PublishPayload{}}); err != nil {
+		t.Fatal(err)
+	}
+	repository.getRevisionCalls = 0
+	authorizer.calls = nil
+	authorizer.denied = true
+	if _, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project:test", SourceDashboardID: created.Lifecycle.ID, ActorID: "actor", IdempotencyKey: "fork-denied"}); err == nil || err.Error() != "denied" {
+		t.Fatalf("source authorization error = %v", err)
+	}
+	if repository.getRevisionCalls != 0 {
+		t.Fatalf("source revision was disclosed before authorization: reads=%d", repository.getRevisionCalls)
 	}
 }
