@@ -61,3 +61,12 @@ func TestCanonicalDashboardEnvelopeValidatesPageScopedVisuals(t *testing.T) {
 		t.Fatalf("missing visual validation = %v", err)
 	}
 }
+
+func TestCanonicalDashboardEnvelopeRejectsUnusedVisualPayload(t *testing.T) {
+	compiled, model, definitions, pages := canonicalSignalFixture(t)
+	envelope := dashboardsignals.DashboardInitialEnvelope("client", "stream-instance", dashboard.Catalog{}, compiled, model, definitions, pages, pages[0], dashboard.Filters{})
+	envelope.Visuals["unused"] = envelope.Visuals["active_chart"]
+	if err := dashboardsignals.ValidateDashboardEnvelope(envelope); err == nil || !strings.Contains(err.Error(), `unused visual payload "unused"`) {
+		t.Fatalf("unused visual validation = %v", err)
+	}
+}
