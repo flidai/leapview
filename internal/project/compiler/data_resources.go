@@ -26,66 +26,37 @@ func decodeConnectionResource(path string, content []byte, metadata metadata) (s
 	if err != nil {
 		return semanticmodel.Connection{}, err
 	}
-	readerDefaults := make(map[string]map[string]any, len(defaults))
-	for format, value := range defaults {
-		options, err := structMap(value)
-		if err != nil {
-			return semanticmodel.Connection{}, fmt.Errorf("decode %s defaults: %w", format, err)
-		}
-		readerDefaults[format] = options
-	}
 	return semanticmodel.Connection{
 		Kind: kind, Description: metadata.Description,
 		Access:         access,
-		ReaderDefaults: readerDefaults,
-		Defaults:       semanticmodel.ConnectionDefaults{Options: map[string]any{}},
-		Options:        map[string]any{},
+		ReaderDefaults: defaults,
 	}, nil
 }
 
-func connectionVariant(value projectcontracts.ConnectionSpecVariant) (string, semanticmodel.ConnectionAccess, map[string]any, error) {
-	defaults := map[string]any{}
+func connectionVariant(value projectcontracts.ConnectionSpecVariant) (string, semanticmodel.ConnectionAccess, *projectcontracts.ReaderDefaults, error) {
 	switch variant := value.(type) {
 	case *projectcontracts.ManagedConnection:
-		if variant.Defaults != nil {
-			defaults = readerDefaults(variant.Defaults)
-		}
-		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), variant.Defaults, nil
 	case *projectcontracts.S3Connection:
-		if variant.Defaults != nil {
-			defaults = readerDefaults(variant.Defaults)
-		}
-		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), variant.Defaults, nil
 	case *projectcontracts.R2Connection:
-		if variant.Defaults != nil {
-			defaults = readerDefaults(variant.Defaults)
-		}
-		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), variant.Defaults, nil
 	case *projectcontracts.GCSConnection:
-		if variant.Defaults != nil {
-			defaults = readerDefaults(variant.Defaults)
-		}
-		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), variant.Defaults, nil
 	case *projectcontracts.HTTPConnection:
-		if variant.Defaults != nil {
-			defaults = readerDefaults(variant.Defaults)
-		}
-		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), variant.Defaults, nil
 	case *projectcontracts.AzureBlobConnection:
-		if variant.Defaults != nil {
-			defaults = readerDefaults(variant.Defaults)
-		}
-		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), variant.Defaults, nil
 	case *projectcontracts.PostgresConnection:
-		return variant.Type, "", defaults, nil
+		return variant.Type, "", nil, nil
 	case *projectcontracts.MySQLConnection:
-		return variant.Type, "", defaults, nil
+		return variant.Type, "", nil, nil
 	case *projectcontracts.SQLiteConnection:
-		return variant.Type, "", defaults, nil
+		return variant.Type, "", nil, nil
 	case *projectcontracts.DuckLakeConnection:
-		return variant.Type, "", defaults, nil
+		return variant.Type, "", nil, nil
 	case *projectcontracts.QuackConnection:
-		return variant.Type, "", defaults, nil
+		return variant.Type, "", nil, nil
 	case nil:
 		return "", "", nil, fmt.Errorf("connection spec variant is required")
 	default:
@@ -140,19 +111,15 @@ func decodeSourceResource(path string, content []byte, metadata metadata) (seman
 	if err := configschema.DecodeResource(configschema.KindSource, path, content, &authored); err != nil {
 		return semanticmodel.Source{}, err
 	}
-	source := semanticmodel.Source{Connection: authored.Spec.Connection, Description: metadata.Description, Fields: map[string]semanticmodel.SourceField{}, Options: map[string]any{}}
+	source := semanticmodel.Source{Connection: authored.Spec.Connection, Description: metadata.Description, Fields: map[string]semanticmodel.SourceField{}}
 	switch location := authored.Spec.Location.Value.(type) {
 	case *projectcontracts.SourceLocationPathVariant:
-		path, format, rawOptions, err := lowerPathLocation(&location.PathSourceLocation)
+		path, format, err := lowerPathLocation(&location.PathSourceLocation)
 		if err != nil {
 			return semanticmodel.Source{}, fmt.Errorf("decode path location: %w", err)
 		}
 		source.LocationType, source.Path, source.Format = semanticmodel.KindPath, path, format
-		options, err := pathOptions(rawOptions)
-		if err != nil {
-			return semanticmodel.Source{}, fmt.Errorf("decode path options: %w", err)
-		}
-		source.Options = options
+		source.PathLocation = &location.PathSourceLocation
 	case *projectcontracts.SourceLocationRelationVariant:
 		source.LocationType, source.Catalog, source.SchemaName, source.RelationName = semanticmodel.KindObject, optionalString(location.Catalog), optionalString(location.Schema), location.Name
 		parts := make([]string, 0, 3)
@@ -331,43 +298,36 @@ func lowerSourceField(name string, field projectcontracts.SourceSchemaField) sem
 	return semanticmodel.SourceField{Field: name, Name: name, Datatype: semanticmodel.LogicalDataType(field.Datatype), Nullable: field.Nullable, Description: optionalString(field.Description)}
 }
 
-func lowerPathLocation(value *projectcontracts.PathSourceLocation) (string, string, any, error) {
+func lowerPathLocation(value *projectcontracts.PathSourceLocation) (string, string, error) {
 	if value == nil {
-		return "", "", nil, fmt.Errorf("path location is required")
+		return "", "", fmt.Errorf("path location is required")
 	}
 	switch variant := value.Value.(type) {
 	case *projectcontracts.CSVPathSourceLocation:
-		return variant.Path, "csv", variant.Options, nil
+		return variant.Path, "csv", nil
 	case *projectcontracts.JSONPathSourceLocation:
-		return variant.Path, "json", variant.Options, nil
+		return variant.Path, "json", nil
 	case *projectcontracts.ParquetPathSourceLocation:
-		return variant.Path, "parquet", variant.Options, nil
+		return variant.Path, "parquet", nil
 	case *projectcontracts.ExcelPathSourceLocation:
-		return variant.Path, "excel", variant.Options, nil
+		return variant.Path, "excel", nil
 	case *projectcontracts.TextPathSourceLocation:
-		return variant.Path, "text", variant.Options, nil
+		return variant.Path, "text", nil
 	case *projectcontracts.BlobPathSourceLocation:
-		return variant.Path, "blob", variant.Options, nil
+		return variant.Path, "blob", nil
 	case *projectcontracts.VortexPathSourceLocation:
-		return variant.Path, "vortex", variant.Options, nil
+		return variant.Path, "vortex", nil
 	case *projectcontracts.DeltaPathSourceLocation:
-		return variant.Path, "delta", variant.Options, nil
+		return variant.Path, "delta", nil
 	case *projectcontracts.IcebergPathSourceLocation:
-		return variant.Path, "iceberg", variant.Options, nil
+		return variant.Path, "iceberg", nil
 	case *projectcontracts.LancePathSourceLocation:
-		return variant.Path, "lance", variant.Options, nil
+		return variant.Path, "lance", nil
 	case nil:
-		return "", "", nil, fmt.Errorf("path location variant is required")
+		return "", "", fmt.Errorf("path location variant is required")
 	default:
-		return "", "", nil, fmt.Errorf("unsupported path location variant %T", variant)
+		return "", "", fmt.Errorf("unsupported path location variant %T", variant)
 	}
-}
-
-func pathOptions(value any) (map[string]any, error) {
-	if value == nil {
-		return map[string]any{}, nil
-	}
-	return structMap(value)
 }
 
 func structMap(value any) (map[string]any, error) {

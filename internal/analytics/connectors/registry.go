@@ -68,225 +68,137 @@ type ConnectionSpec struct {
 	ObjectRelation    string
 }
 
-var formats = map[string]Format{
-	"csv": {
-		Name:          "csv",
-		Extensions:    []string{".csv", ".csv.gz"},
-		ScanKind:      ScanTableFunction,
-		ScanFunction:  "read_csv",
-		AllowsOptions: true,
-	},
-	"json": {
-		Name:          "json",
-		Extensions:    []string{".json", ".jsonl", ".ndjson"},
-		ScanKind:      ScanTableFunction,
-		ScanFunction:  "read_json",
-		AllowsOptions: true,
-	},
-	"parquet": {
-		Name:          "parquet",
-		Extensions:    []string{".parquet"},
-		ScanKind:      ScanTableFunction,
-		ScanFunction:  "read_parquet",
-		AllowsOptions: true,
-	},
-	"excel": {
-		Name:              "excel",
-		Extensions:        []string{".xlsx"},
-		ScanKind:          ScanTableFunction,
-		ScanFunction:      "read_xlsx",
-		RequiredExtension: "excel",
-		AllowsOptions:     true,
-	},
-	"text": {
-		Name:          "text",
-		Extensions:    []string{".txt"},
-		ScanKind:      ScanTableFunction,
-		ScanFunction:  "read_text",
-		AllowsOptions: true,
-	},
-	"blob": {
-		Name:          "blob",
-		Extensions:    []string{".blob"},
-		ScanKind:      ScanTableFunction,
-		ScanFunction:  "read_blob",
-		AllowsOptions: true,
-	},
-	"vortex": {
-		Name:              "vortex",
-		Extensions:        []string{".vortex"},
-		ScanKind:          ScanTableFunction,
-		ScanFunction:      "read_vortex",
-		RequiredExtension: "vortex",
-		AllowsOptions:     true,
-	},
-	"delta": {
-		Name:              "delta",
-		ScanKind:          ScanTableFunction,
-		ScanFunction:      "delta_scan",
-		RequiredExtension: "delta",
-		AllowsOptions:     true,
-		TableLike:         true,
-	},
-	"iceberg": {
-		Name:              "iceberg",
-		ScanKind:          ScanTableFunction,
-		ScanFunction:      "iceberg_scan",
-		RequiredExtension: "iceberg",
-		AllowsOptions:     true,
-		TableLike:         true,
-	},
-	"lance": {
-		Name:              "lance",
-		Extensions:        []string{".lance"},
-		ScanKind:          ScanReplacement,
-		RequiredExtension: "lance",
-		SourceSecretType:  "lance",
-		TableLike:         true,
-	},
-}
-
 var connections = map[string]ConnectionSpec{
 	"managed": {
-		Kind:             "managed",
-		ActivationMode:   ManagedActivation,
-		AllowsPathSource: true,
-		AllowNoAuth:      true,
+		AllowNoAuth: true,
 	},
 	"s3": {
-		Kind:               "s3",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "s3",
-		RequiredExtensions: []string{"httpfs"},
-		AllowsPathSource:   true,
-		AuthKeys:           []string{"access_key_id", "secret_access_key", "session_token", "region", "endpoint", "url_style", "use_ssl"},
-		RequiredAuthSets:   [][]string{{"access_key_id", "secret_access_key"}},
+		AuthKeys:         []string{"access_key_id", "secret_access_key", "session_token", "region", "endpoint", "url_style", "use_ssl"},
+		RequiredAuthSets: [][]string{{"access_key_id", "secret_access_key"}},
 	},
 	"r2": {
-		Kind:               "r2",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "r2",
-		RequiredExtensions: []string{"httpfs"},
-		AllowsPathSource:   true,
-		AuthKeys:           []string{"access_key_id", "secret_access_key", "account_id", "region"},
-		RequiredAuthSets:   [][]string{{"access_key_id", "secret_access_key", "account_id"}},
+		AuthKeys:         []string{"access_key_id", "secret_access_key", "account_id", "region"},
+		RequiredAuthSets: [][]string{{"access_key_id", "secret_access_key", "account_id"}},
 	},
 	"gcs": {
-		Kind:               "gcs",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "gcs",
-		RequiredExtensions: []string{"httpfs"},
-		AllowsPathSource:   true,
-		AuthKeys:           []string{"access_key_id", "secret_access_key", "endpoint"},
-		RequiredAuthSets:   [][]string{{"access_key_id", "secret_access_key"}},
+		AuthKeys:         []string{"access_key_id", "secret_access_key", "endpoint"},
+		RequiredAuthSets: [][]string{{"access_key_id", "secret_access_key"}},
 	},
 	"http": {
-		Kind:               "http",
-		ActivationMode:     AuthoredActivation,
-		SecretType:         "http",
-		RequiredExtensions: []string{"httpfs"},
-		AllowsPathSource:   true,
-		AllowNoAuth:        true,
+		AllowNoAuth: true,
 	},
 	"azure_blob": {
-		Kind:               "azure_blob",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "azure",
-		RequiredExtensions: []string{"azure"},
-		AllowsPathSource:   true,
-		AuthKeys:           []string{"connection_string", "account_name", "tenant_id", "client_id", "client_secret"},
-		RequiredAuthSets:   [][]string{{"connection_string"}, {"account_name", "tenant_id", "client_id", "client_secret"}},
+		AuthKeys:         []string{"connection_string", "account_name", "tenant_id", "client_id", "client_secret"},
+		RequiredAuthSets: [][]string{{"connection_string"}, {"account_name", "tenant_id", "client_id", "client_secret"}},
 	},
 	"postgres": {
-		Kind:               "postgres",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "postgres",
-		RequiredExtensions: []string{"postgres"},
-		AllowsObjectSource: true,
-		AuthKeys:           []string{"connection_string", "password"},
-		RequiredAuthSets:   [][]string{{"connection_string"}, {"password"}},
-		AttachKind:         AttachDatabase,
-		ObjectRelation:     ObjectRelationAttach,
+		AuthKeys:         []string{"connection_string", "password"},
+		RequiredAuthSets: [][]string{{"connection_string"}, {"password"}},
+		AttachKind:       AttachDatabase,
+		ObjectRelation:   ObjectRelationAttach,
 	},
 	"mysql": {
-		Kind:               "mysql",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "mysql",
-		RequiredExtensions: []string{"mysql"},
-		AllowsObjectSource: true,
-		AuthKeys:           []string{"connection_string", "password"},
-		RequiredAuthSets:   [][]string{{"connection_string"}, {"password"}},
-		AttachKind:         AttachDatabase,
-		ObjectRelation:     ObjectRelationAttach,
+		AuthKeys:         []string{"connection_string", "password"},
+		RequiredAuthSets: [][]string{{"connection_string"}, {"password"}},
+		AttachKind:       AttachDatabase,
+		ObjectRelation:   ObjectRelationAttach,
 	},
 	"sqlite": {
-		Kind:               "sqlite",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "sqlite",
-		RequiredExtensions: []string{"sqlite"},
-		AllowsObjectSource: true,
-		AllowedOptions:     []string{"path"},
-		AuthKeys:           []string{"path"},
-		RequiredAuthSets:   [][]string{{"path"}},
-		AllowNoAuth:        true,
-		AttachKind:         AttachDatabase,
-		ObjectRelation:     ObjectRelationAttach,
+		AllowedOptions:   []string{"path"},
+		AuthKeys:         []string{"path"},
+		RequiredAuthSets: [][]string{{"path"}},
+		AllowNoAuth:      true,
+		AttachKind:       AttachDatabase,
+		ObjectRelation:   ObjectRelationAttach,
 	},
 	"ducklake": {
-		Kind:               "ducklake",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "ducklake",
-		RequiredExtensions: []string{"ducklake"},
-		AllowsObjectSource: true,
-		AllowsPath:         true,
-		RequiresPath:       true,
-		AllowedOptions:     []string{"data_path"},
-		AuthKeys:           []string{"access_key_id", "secret_access_key", "session_token", "region", "endpoint", "url_style", "use_ssl", "account_id", "connection_string", "account_name", "tenant_id", "client_id", "client_secret"},
-		RequiredAuthSets:   [][]string{{"access_key_id", "secret_access_key"}, {"connection_string"}, {"account_name", "tenant_id", "client_id", "client_secret"}},
-		AllowNoAuth:        true,
-		AttachKind:         AttachDuckLake,
-		ObjectRelation:     ObjectRelationAttach,
+		AllowsPath:       true,
+		RequiresPath:     true,
+		AllowedOptions:   []string{"data_path"},
+		AuthKeys:         []string{"access_key_id", "secret_access_key", "session_token", "region", "endpoint", "url_style", "use_ssl", "account_id", "connection_string", "account_name", "tenant_id", "client_id", "client_secret"},
+		RequiredAuthSets: [][]string{{"access_key_id", "secret_access_key"}, {"connection_string"}, {"account_name", "tenant_id", "client_id", "client_secret"}},
+		AllowNoAuth:      true,
+		AttachKind:       AttachDuckLake,
+		ObjectRelation:   ObjectRelationAttach,
 	},
 	"quack": {
-		Kind:               "quack",
-		ActivationMode:     TargetBindingActivation,
-		SecretType:         "quack",
-		RequiredExtensions: []string{"httpfs", "quack"},
-		AllowsObjectSource: true,
-		AuthKeys:           []string{"token"},
-		RequiredAuthSets:   [][]string{{"token"}},
-		AttachKind:         AttachQuack,
-		ObjectRelation:     ObjectRelationQuackQuery,
+		AuthKeys:         []string{"token"},
+		RequiredAuthSets: [][]string{{"token"}},
+		AttachKind:       AttachQuack,
+		ObjectRelation:   ObjectRelationQuackQuery,
 	},
 }
 
 func LookupFormat(name string) (Format, bool) {
-	spec, ok := formats[name]
-	return spec, ok
+	if !generatedFormatName(name) {
+		return Format{}, false
+	}
+	for _, profile := range projectcontracts.FormatRegistry {
+		if profile.Name != name {
+			continue
+		}
+		return Format{
+			Name:              profile.Name,
+			Extensions:        append([]string(nil), profile.Extensions...),
+			ScanKind:          profile.ScanKind,
+			ScanFunction:      profile.ScanFunction,
+			RequiredExtension: profile.RequiredExtension,
+			AllowsOptions:     profile.AllowsOptions,
+			SourceSecretType:  profile.SourceSecretType,
+			TableLike:         profile.TableLike,
+		}, true
+	}
+	return Format{}, false
 }
 
 func LookupConnection(kind string) (ConnectionSpec, bool) {
-	spec, ok := connections[kind]
-	if ok {
-		if profile, profileOK := projectcontracts.LookupConnector(kind); profileOK {
-			spec.AllowPublicAccess = profile.AllowPublicAccess
-		}
+	profile, profileOK := projectcontracts.LookupConnector(kind)
+	if !profileOK {
+		return ConnectionSpec{}, false
 	}
+	// The generated profile's public key is the lookup identity. Its AdapterKey
+	// is the private implementation selector, so these names are intentionally
+	// allowed to diverge as the public contract evolves.
+	spec, ok := connections[profile.AdapterKey]
+	if !ok {
+		return ConnectionSpec{}, false
+	}
+	// Generated APIGen metadata is authoritative for public connector identity,
+	// activation, location capabilities, extensions, and access policy. The
+	// hand-maintained values above are implementation details (auth key sets,
+	// attach/query strategy) keyed by this generated AdapterKey.
+	spec.Kind = profile.Key
+	spec.ActivationMode = ActivationMode(profile.ActivationMode)
+	spec.SecretType = profile.SecretType
+	spec.RequiredExtensions = append([]string(nil), profile.ApprovedExtensions...)
+	spec.AllowsPathSource = generatedContains(profile.LocationCapabilities, KindPath)
+	// TypeSpec calls object locations "relation"; runtime planners use the
+	// object terminology for the same capability.
+	spec.AllowsObjectSource = generatedContains(profile.LocationCapabilities, KindObject) || generatedContains(profile.LocationCapabilities, "relation")
+	spec.AllowPublicAccess = profile.AllowPublicAccess
 	return spec, ok
 }
 
 func FormatNames() []string {
-	return sortedKeys(formats)
+	return append([]string(nil), projectcontracts.PathFormatNames...)
 }
 
 func ConnectionKinds() []string {
-	return sortedKeys(connections)
+	keys := make([]string, 0, len(projectcontracts.ConnectorRegistry))
+	for _, profile := range projectcontracts.ConnectorRegistry {
+		keys = append(keys, profile.Key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func InferFormat(path string) (string, bool) {
 	lower := strings.ToLower(path)
 	for _, format := range FormatNames() {
-		spec := formats[format]
+		spec, ok := LookupFormat(format)
+		if !ok {
+			continue
+		}
 		for _, ext := range spec.Extensions {
 			if strings.HasSuffix(lower, ext) {
 				return spec.Name, true
@@ -294,6 +206,24 @@ func InferFormat(path string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func generatedFormatName(name string) bool {
+	for _, format := range projectcontracts.PathFormatNames {
+		if format == name {
+			return true
+		}
+	}
+	return false
+}
+
+func generatedContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func IsLocalPath(path string) bool {

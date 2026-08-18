@@ -73,16 +73,13 @@ func (m *Model) validate(authored bool) error {
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("model table %q has invalid name: %w", name, err)
 		}
-		if table.Source == "" && table.Transform.SQL == "" {
-			return fmt.Errorf("model table %q requires source or transform.sql", name)
+		if table.Execution.Source == "" && table.Execution.SQL == "" {
+			return fmt.Errorf("model table %q requires direct source or definition.sql", name)
 		}
-		if table.Source != "" {
-			if _, ok := m.Sources[table.Source]; !ok {
-				return fmt.Errorf("model table %q references unknown source %q", name, table.Source)
+		if table.Execution.Source != "" {
+			if _, ok := m.Sources[table.Execution.Source]; !ok {
+				return fmt.Errorf("model table %q references unknown source %q", name, table.Execution.Source)
 			}
-		}
-		if len(table.SourceReads) > 0 {
-			return fmt.Errorf("model table %q source_reads is no longer supported; source reads are inferred from transform.sql", name)
 		}
 		dependencies, err := m.modelTableSourceDependencies(name, table)
 		if err != nil {
@@ -173,16 +170,16 @@ func (m *Model) validate(authored bool) error {
 }
 
 func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]string, error) {
-	sql := strings.TrimSpace(table.Transform.SQL)
+	sql := strings.TrimSpace(table.Execution.SQL)
 	hasSQL := sql != ""
 	if hasSQL {
-		if table.Source != "" {
-			return nil, fmt.Errorf("model table %q uses transform.sql and must declare sources instead of source", tableName)
+		if table.Execution.Source != "" {
+			return nil, fmt.Errorf("model table %q definition cannot contain both direct source and sql", tableName)
 		}
 		// SQL lineage is populated by the compiler-owned DuckDB AST analyzer.
 		return append([]string(nil), table.SourceDependencies...), nil
-	} else if table.Source == "" {
-		return nil, fmt.Errorf("model table %q requires source or transform.sql", tableName)
+	} else if table.Execution.Source == "" {
+		return nil, fmt.Errorf("model table %q requires direct source or definition.sql", tableName)
 	}
 	seen := map[string]struct{}{}
 	add := func(source string) error {
@@ -196,13 +193,8 @@ func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]s
 		seen[source] = struct{}{}
 		return nil
 	}
-	if err := add(table.Source); err != nil {
+	if err := add(table.Execution.Source); err != nil {
 		return nil, err
-	}
-	for _, source := range table.Sources {
-		if err := add(source); err != nil {
-			return nil, err
-		}
 	}
 	result := make([]string, 0, len(seen))
 	for source := range seen {
@@ -230,7 +222,7 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 			if column.SourceField == "" {
 				column.SourceField = name
 			}
-			if table.Source != "" && table.Transform.SQL == "" {
+			if table.Execution.Source != "" && table.Execution.SQL == "" {
 				if err := validateSemanticIdentifier(column.SourceField); err != nil {
 					return nil, fmt.Errorf("model table %q column %q source_field %q is invalid: %w", tableName, name, column.SourceField, err)
 				}
@@ -305,7 +297,7 @@ func validateRequiredModelColumns(tableName string, table Table, columns map[str
 }
 
 func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]string, error) {
-	sql := strings.TrimSpace(table.Transform.SQL)
+	sql := strings.TrimSpace(table.Execution.SQL)
 	if sql == "" {
 		return nil, nil
 	}
@@ -313,7 +305,7 @@ func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]st
 }
 
 // resolveModelDependency resolves the physical relation name emitted by a
-// model transform. Transform SQL is authored in the global physical Model
+// model transform. ExecutionDefinition SQL is authored in the global physical Model
 // namespace; semantic dataset aliases are intentionally not an alternate
 // dependency syntax. After semantic lowering, validate only against bound
 // physical ModelNames (deduplicating aliases that share one Model).
@@ -869,10 +861,8 @@ func (s Source) Validate(name string, connections map[string]Connection) error {
 	if err := validateSemanticIdentifier(name); err != nil {
 		return fmt.Errorf("source %q has invalid name: %w", name, err)
 	}
-	for key := range s.Options {
-		if err := validateSemanticIdentifier(key); err != nil {
-			return fmt.Errorf("source %q option %q is invalid: %w", name, key, err)
-		}
+	if _, err := PathLocationHasOptions(s.PathLocation); err != nil {
+		return fmt.Errorf("source %q has invalid path options: %w", name, err)
 	}
 	mode := strings.ToLower(strings.TrimSpace(s.SchemaMode))
 	if mode == "" {
@@ -929,14 +919,22 @@ func (s Source) Validate(name string, connections map[string]Connection) error {
 		if !ok {
 			return fmt.Errorf("source %q has unsupported format %q", name, s.Format)
 		}
-		if !formatSpec.AllowsOptions && len(s.Options) > 0 {
+		hasOptions, err := PathLocationHasOptions(s.PathLocation)
+		if err != nil {
+			return fmt.Errorf("source %q has invalid path options: %w", name, err)
+		}
+		if !formatSpec.AllowsOptions && hasOptions {
 			return fmt.Errorf("source %q %s path cannot set options", name, s.Format)
 		}
 	case KindObject:
 		if s.Connection == "" {
 			return fmt.Errorf("source %q object requires connection", name)
 		}
-		if s.Format != "" || len(s.Options) > 0 {
+		hasOptions, err := PathLocationHasOptions(s.PathLocation)
+		if err != nil {
+			return fmt.Errorf("source %q has invalid path options: %w", name, err)
+		}
+		if s.Format != "" || hasOptions {
 			return fmt.Errorf("source %q object cannot set format or options", name)
 		}
 		connection, ok := connections[s.Connection]
@@ -1068,18 +1066,8 @@ func (c Connection) validate(name string, requireResolvedAuth bool) (Connection,
 		}
 		c.Auth = auth
 	}
-	for key := range c.Options {
-		if !connectionAllowsOption(connectionSpec, key) {
-			return c, fmt.Errorf("connection %q has unsupported option %q", name, key)
-		}
-	}
 	if err := validateConnectionOptions(name, c); err != nil {
 		return c, err
-	}
-	for key := range c.Defaults.Options {
-		if err := validateSemanticIdentifier(key); err != nil {
-			return c, fmt.Errorf("connection %q default option %q is invalid: %w", name, key, err)
-		}
 	}
 	return c, nil
 }
@@ -1197,7 +1185,7 @@ func validateConnectionAuth(name string, connection Connection, spec ConnectionS
 		if connection.Kind == "ducklake" && duckLakeNeedsAuth(connection) {
 			return nil, fmt.Errorf("connection %q ducklake remote path requires auth", name)
 		}
-		if connection.Kind == "sqlite" && connection.Options["path"] != nil {
+		if connection.Kind == "sqlite" && connection.RuntimeOptions.Path != "" {
 			return nil, nil
 		}
 		if spec.AllowNoAuth {
@@ -1298,7 +1286,7 @@ func duckLakeNeedsAuth(connection Connection) bool {
 	if connection.Path != "" && !IsLocalPath(connection.Path) {
 		return true
 	}
-	if dataPath, ok := connection.Options["data_path"]; ok && !IsLocalPath(fmt.Sprint(dataPath)) {
+	if connection.RuntimeOptions.DataPath != "" && !IsLocalPath(connection.RuntimeOptions.DataPath) {
 		return true
 	}
 	return false

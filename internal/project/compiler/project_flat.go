@@ -6,6 +6,7 @@ package compiler
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -127,9 +128,13 @@ func loadFlatModels(project *Project, includes []string) error {
 		if envelope.Kind != "Model" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Model", path, envelope.Kind)
 		}
-		var spec projectModelTableSpec
-		if err := envelope.Spec.Decode(&spec); err != nil {
-			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		table, aiContext, err := decodeModelResource(path, content, envelope.Metadata)
+		if err != nil {
+			return err
 		}
 		id, name, err := flatResourceIdentity(project, envelope, path, "model")
 		if err != nil {
@@ -138,10 +143,9 @@ func loadFlatModels(project *Project, includes []string) error {
 		if _, exists := project.Models[name]; exists {
 			return resourceError(path, id, "metadata.name", "duplicate Model %q", name)
 		}
-		table := projectModelTable(spec)
-		table.AIContext = envelope.AIContext
+		table.AIContext = aiContext
 		project.Models[name] = table
-		project.ModelAIContexts[name] = envelope.AIContext
+		project.ModelAIContexts[name] = aiContext
 		project.ModelIDs[name], project.ModelPaths[name] = id, path
 	}
 	return nil
@@ -368,11 +372,11 @@ func validateFlatProject(project Project) error {
 			return resourceError(project.SourcePaths[name], project.SourceIDs[name], "spec.location.format", "Source %q path requires explicit format", name)
 		}
 		if connection, ok := project.Connections[source.Connection]; ok && source.Path != "" {
-			effective, err := ResolveEffectiveSourceOptions(source, connection)
+			effective, err := ResolveEffectivePathLocation(source, connection)
 			if err != nil {
 				return resourceError(project.SourcePaths[name], project.SourceIDs[name], "spec.location.options", "Source %q: %s", name, err)
 			}
-			source.EffectiveOptions = effective
+			source.EffectivePathLocation = effective
 			project.Sources[name] = source
 		}
 		if err := source.Validate(localSourceName(name), project.Connections); err != nil {
@@ -421,12 +425,12 @@ func validateFlatProject(project Project) error {
 					table.SourceDependencies[index] = original
 				}
 			}
-			if original, ok := sourceReverse[table.Source]; ok {
-				table.Source = original
+			if original, ok := sourceReverse[table.Execution.Source]; ok {
+				table.Execution.Source = original
 			}
-			for index, source := range table.Sources {
+			for index, source := range table.SourceDependencies {
 				if original, ok := sourceReverse[source]; ok {
-					table.Sources[index] = original
+					table.SourceDependencies[index] = original
 				}
 			}
 			project.Models[name] = table
@@ -442,17 +446,11 @@ func validateFlatProject(project Project) error {
 	}
 	for name, model := range project.Models {
 		refs := append([]string{}, model.SourceDependencies...)
-		if len(refs) == 0 {
-			refs = append(refs, model.Sources...)
-			if model.Source != "" {
-				refs = append(refs, model.Source)
-			}
-		}
 		// A transform may derive solely from upstream model tables. ValidateAuthored
 		// already resolved those physical dependencies before this project-level
 		// source lineage check.
 		if len(refs) == 0 && len(model.ModelDependencies) == 0 {
-			return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec.sources", "Model %q requires source, sources, or a model dependency", name)
+			return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec.definition", "Model %q requires a governed source or model dependency", name)
 		}
 		for _, ref := range refs {
 			if _, err := resolver.resolve(ref, projectgraph.KindSource); err != nil {
@@ -720,12 +718,6 @@ func compileProjectGraph(project Project) (projectgraph.ProjectGraph, error) {
 	for name, model := range project.Models {
 		from, _ := resolver.resolve(project.ModelIDs[name], projectgraph.KindModel)
 		refs := append([]string{}, model.SourceDependencies...)
-		if len(refs) == 0 {
-			refs = append(refs, model.Sources...)
-			if model.Source != "" {
-				refs = append(refs, model.Source)
-			}
-		}
 		for _, ref := range refs {
 			to, err := resolver.resolve(ref, projectgraph.KindSource)
 			if err != nil {

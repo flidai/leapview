@@ -3,6 +3,8 @@ package model
 import (
 	"fmt"
 	"regexp"
+
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
 
 var (
@@ -44,32 +46,22 @@ const (
 	DataTypeOpaque     LogicalDataType = "Opaque"
 )
 
-type ModelFieldSpec struct {
+type FieldDefinition struct {
 	Datatype    LogicalDataType `yaml:"datatype"`
 	Label       string          `yaml:"label"`
 	Description string          `yaml:"description"`
 	AIContext   *AIContext      `yaml:"aiContext"`
 }
 
-type ModelEntitySpec struct {
+type EntityDefinition struct {
 	Type        string     `yaml:"type"`
 	Fields      []string   `yaml:"fields"`
 	Description string     `yaml:"description"`
 	AIContext   *AIContext `yaml:"aiContext"`
 }
 
-type ModelGrainSpec struct {
+type GrainDefinition struct {
 	Entity string `yaml:"entity"`
-}
-
-type ModelSpec struct {
-	Source      string                     `yaml:"source"`
-	Sources     []string                   `yaml:"sources"`
-	Transform   Transform                  `yaml:"transform"`
-	Entities    map[string]ModelEntitySpec `yaml:"entities"`
-	Grain       ModelGrainSpec             `yaml:"grain"`
-	Fields      map[string]ModelFieldSpec  `yaml:"fields"`
-	Description string                     `yaml:"description"`
 }
 
 type SemanticDatasetSpec struct {
@@ -197,11 +189,12 @@ type Connection struct {
 	SSLMode     string           `yaml:"sslMode" json:"-"`
 	// Auth is populated only on a short-lived refresh copy by the injected
 	// credential resolver. It is deliberately absent from authored contracts.
-	Auth           ConnectionAuth            `yaml:"-" json:"-"`
-	Credentials    ConnectionCredentials     `yaml:"credentials" json:"-"`
-	Options        map[string]any            `yaml:"options" json:"Options"`
-	Defaults       ConnectionDefaults        `yaml:"defaults" json:"Defaults"`
-	ReaderDefaults map[string]map[string]any `yaml:"-" json:"readerDefaults,omitempty"`
+	Auth        ConnectionAuth        `yaml:"-" json:"-"`
+	Credentials ConnectionCredentials `yaml:"credentials" json:"-"`
+	// RuntimeOptions contains only target-resolved filesystem hints. Authored
+	// connector defaults remain the generated typed DTO below.
+	RuntimeOptions ConnectionRuntimeOptions         `yaml:"-" json:"-"`
+	ReaderDefaults *projectcontracts.ReaderDefaults `yaml:"-" json:"readerDefaults,omitempty"`
 }
 
 type ConnectionAccess string
@@ -219,7 +212,11 @@ type ConnectionCredentials struct {
 }
 
 type ConnectionDefaults struct {
-	Options map[string]any `yaml:"options"`
+}
+
+type ConnectionRuntimeOptions struct {
+	Path     string
+	DataPath string
 }
 
 type ConnectionAuth map[string]any
@@ -232,38 +229,115 @@ type Source struct {
 	Object      string `yaml:"object"`
 	// Structured location evidence is retained after lowering. Object remains
 	// the canonical runtime relation string for existing adapters.
-	LocationType string         `yaml:"-" json:"locationType,omitempty"`
-	Catalog      string         `yaml:"-" json:"catalog,omitempty"`
-	SchemaName   string         `yaml:"-" json:"schemaName,omitempty"`
-	RelationName string         `yaml:"-" json:"relationName,omitempty"`
-	Options      map[string]any `yaml:"options"`
-	// EffectiveOptions is compiler-owned and excludes secrets. Runtime readers
-	// consume this resolved map instead of independently merging defaults.
-	EffectiveOptions map[string]any         `yaml:"-" json:"effectiveOptions"`
-	SchemaMode       string                 `yaml:"-" json:"schemaMode,omitempty"`
-	Fields           map[string]SourceField `yaml:"fields"`
-	Schema           TableSchema            `yaml:"-"`
+	LocationType string `yaml:"-" json:"locationType,omitempty"`
+	Catalog      string `yaml:"-" json:"catalog,omitempty"`
+	SchemaName   string `yaml:"-" json:"schemaName,omitempty"`
+	RelationName string `yaml:"-" json:"relationName,omitempty"`
+	// PathLocation is the generated closed path-format union lowered from the
+	// authored Source document. EffectivePathLocation is compiler-resolved after
+	// applying typed connection defaults and versioned reader defaults.
+	PathLocation          *projectcontracts.PathSourceLocation `yaml:"-" json:"-"`
+	EffectivePathLocation *projectcontracts.PathSourceLocation `yaml:"-" json:"-"`
+	SchemaMode            string                               `yaml:"-" json:"schemaMode,omitempty"`
+	Fields                map[string]SourceField               `yaml:"fields"`
+	Schema                TableSchema                          `yaml:"-"`
+}
+
+// PathLocationHasOptions checks typed option presence without lowering the
+// generated DTO into the DuckDB argument map.
+func PathLocationHasOptions(value *projectcontracts.PathSourceLocation) (bool, error) {
+	if value == nil {
+		return false, nil
+	}
+	switch variant := value.Value.(type) {
+	case *projectcontracts.CSVPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source csv variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.JSONPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source json variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.ParquetPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source parquet variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.ExcelPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source excel variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.TextPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source text variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.BlobPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source blob variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.VortexPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source vortex variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.DeltaPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source delta variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.IcebergPathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source iceberg variant is nil")
+		}
+		return variant.Options != nil, nil
+	case *projectcontracts.LancePathSourceLocation:
+		if variant == nil {
+			return false, fmt.Errorf("path source lance variant is nil")
+		}
+		return variant.Options != nil, nil
+	default:
+		if value.Value == nil {
+			return false, fmt.Errorf("path source variant is required")
+		}
+		return false, fmt.Errorf("unsupported path source variant %T", value.Value)
+	}
 }
 
 type Table struct {
 	// ModelName is populated only on lowered semantic execution tables. It
 	// preserves the project Model binding after the runtime table is keyed by
 	// its semantic dataset alias; authored Model resources do not expose it.
-	ModelName           string                     `yaml:"-" json:"modelName,omitempty"`
-	Source              string                     `yaml:"source"`
-	AIContext           *AIContext                 `yaml:"aiContext,omitempty" json:"-"`
-	Sources             []string                   `yaml:"sources"`
-	SourceReads         map[string][]string        `yaml:"source_reads"`
-	Transform           Transform                  `yaml:"transform"`
-	Columns             map[string]ModelColumn     `yaml:"columns"`
-	Entities            map[string]ModelEntitySpec `yaml:"entities"`
-	GrainEntity         string                     `yaml:"grain_entity"`
-	Dimensions          map[string]MetricDimension `yaml:"fields"`
-	Description         string                     `yaml:"description"`
-	Schema              TableSchema                `yaml:"-"`
-	SourceDependencies  []string                   `yaml:"-"`
-	ModelDependencies   []string                   `yaml:"-"`
-	SQLAnalysisEvidence *SQLAnalysisEvidence       `yaml:"-" json:"sqlAnalysisEvidence,omitempty"`
+	ModelName           string                      `yaml:"-" json:"modelName,omitempty"`
+	AIContext           *AIContext                  `yaml:"aiContext,omitempty" json:"-"`
+	Execution           ExecutionDefinition         `yaml:"-" json:"-"`
+	Columns             map[string]ModelColumn      `yaml:"columns"`
+	Entities            map[string]EntityDefinition `yaml:"entities"`
+	GrainEntity         string                      `yaml:"grain_entity"`
+	Dimensions          map[string]MetricDimension  `yaml:"fields"`
+	Description         string                      `yaml:"description"`
+	Schema              TableSchema                 `yaml:"-"`
+	SourceDependencies  []string                    `yaml:"-"`
+	ModelDependencies   []string                    `yaml:"-"`
+	SQLAnalysisEvidence *SQLAnalysisEvidence        `yaml:"-" json:"sqlAnalysisEvidence,omitempty"`
+	Checks              []ModelCheck                `yaml:"-" json:"checks,omitempty"`
+}
+
+// ModelCheck is the compiler-owned normalized form of the closed authored
+// Model check union. It is evidence input, not an authoring DTO.
+type ModelCheck struct {
+	Type     string
+	Field    string
+	Fields   []string
+	Values   []string
+	To       string
+	Minimum  *int64
+	Maximum  *int64
+	Severity string
 }
 
 // SQLAnalysisEvidence is normalized compiler-owned evidence from the pinned
@@ -297,8 +371,9 @@ func (t Table) SingularGrainField() (string, error) {
 	return fields[0], nil
 }
 
-type Transform struct {
-	SQL string `yaml:"sql"`
+type ExecutionDefinition struct {
+	Source string `yaml:"-" json:"Source,omitempty"`
+	SQL    string `yaml:"-" json:"SQL,omitempty"`
 }
 
 type SourceField struct {

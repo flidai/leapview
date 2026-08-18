@@ -18,11 +18,11 @@ func validateProject(project Project) error {
 			return resourceError(project.SourcePaths[sourceName], project.SourceIDs[sourceName], "spec.location.format", "Source %q path requires explicit format", sourceName)
 		}
 		if connection, ok := project.Connections[source.Connection]; ok && source.Path != "" {
-			effective, err := ResolveEffectiveSourceOptions(source, connection)
+			effective, err := ResolveEffectivePathLocation(source, connection)
 			if err != nil {
 				return resourceError(project.SourcePaths[sourceName], project.SourceIDs[sourceName], "spec.location.options", "Source %q: %s", sourceName, err)
 			}
-			source.EffectiveOptions = effective
+			source.EffectivePathLocation = effective
 			project.Sources[sourceName] = source
 		}
 		if err := source.Validate(localSourceName(sourceName), project.Connections); err != nil {

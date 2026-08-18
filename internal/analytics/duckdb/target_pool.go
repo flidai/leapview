@@ -325,12 +325,12 @@ func (pool *targetRuntimePool) Resolve(
 	resolved.SSLMode = pool.connection.SSLMode
 	resolved.Scope = pool.connection.Scope
 	resolved.Credentials = semanticmodel.ConnectionCredentials{}
-	resolved.Options = maps.Clone(logical.Options)
-	if resolved.Options == nil && len(pool.connection.Options) > 0 {
-		resolved.Options = make(map[string]any, len(pool.connection.Options))
+	resolved.RuntimeOptions = logical.RuntimeOptions
+	if pool.connection.RuntimeOptions.Path != "" {
+		resolved.RuntimeOptions.Path = pool.connection.RuntimeOptions.Path
 	}
-	for key, value := range pool.connection.Options {
-		resolved.Options[key] = value
+	if pool.connection.RuntimeOptions.DataPath != "" {
+		resolved.RuntimeOptions.DataPath = pool.connection.RuntimeOptions.DataPath
 	}
 	resolved.Auth = maps.Clone(pool.connection.Auth)
 	validated, err := resolved.Validate(strings.TrimSpace(name))
@@ -360,13 +360,5 @@ func (pool *targetRuntimePool) Close() error {
 
 func cloneTargetConnection(connection semanticmodel.Connection) semanticmodel.Connection {
 	connection.Auth = maps.Clone(connection.Auth)
-	connection.Options = maps.Clone(connection.Options)
-	connection.Defaults.Options = maps.Clone(connection.Defaults.Options)
-	if connection.ReaderDefaults != nil {
-		connection.ReaderDefaults = make(map[string]map[string]any, len(connection.ReaderDefaults))
-		for format, options := range connection.ReaderDefaults {
-			connection.ReaderDefaults[format] = maps.Clone(options)
-		}
-	}
 	return connection
 }

@@ -35,14 +35,8 @@ func ApplyTargetBinding(
 	if binding.Endpoint.ObjectScope != "" {
 		resolved.Scope = binding.Endpoint.ObjectScope
 	}
-	if len(binding.Endpoint.Options) > 0 {
-		resolved.Options = make(map[string]any, len(logical.Options)+len(binding.Endpoint.Options))
-		for key, value := range logical.Options {
-			resolved.Options[key] = value
-		}
-		for key, value := range binding.Endpoint.Options {
-			resolved.Options[key] = value
-		}
+	if err := applyEndpointRuntimeOptions(&resolved.RuntimeOptions, binding.Endpoint.Options); err != nil {
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	resolved.Credentials = semanticmodel.ConnectionCredentials{}
 	if binding.AuthenticationMode == connectionbinding.AuthenticationExternalBundle {
@@ -64,4 +58,25 @@ func ApplyTargetBinding(
 		return semanticmodel.Connection{}, connectionbinding.ErrInvalidCredentialBundle
 	}
 	return validated, nil
+}
+
+// applyEndpointRuntimeOptions is the only boundary where target endpoint
+// option strings enter the typed connection runtime. Reader options never
+// cross this boundary; endpoint options are limited to the connector-specific
+// filesystem hints represented by ConnectionRuntimeOptions.
+func applyEndpointRuntimeOptions(runtime *semanticmodel.ConnectionRuntimeOptions, values map[string]string) error {
+	if runtime == nil {
+		return connectionbinding.ErrIncompatibleBinding
+	}
+	for key, value := range values {
+		switch key {
+		case "path":
+			runtime.Path = value
+		case "data_path":
+			runtime.DataPath = value
+		default:
+			return connectionbinding.ErrIncompatibleBinding
+		}
+	}
+	return nil
 }
