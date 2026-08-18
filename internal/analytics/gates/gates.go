@@ -431,7 +431,7 @@ func evaluateFreshness(ctx context.Context, now time.Time, state *budget, source
 	}{Observed: observed.UTC(), AgeMillis: age.Milliseconds(), Revision: source.Revision}), nil
 }
 
-func evaluateCheck(ctx context.Context, state *budget, modelID string, table semanticmodel.Table, check semanticmodel.ModelCheckSpec) (result release.GateCheckEvidence, retErr error) {
+func evaluateCheck(ctx context.Context, state *budget, modelID string, table semanticmodel.Table, check semanticmodel.ModelCheck) (result release.GateCheckEvidence, retErr error) {
 	identity := checkIdentity(modelID, check)
 	result = release.GateCheckEvidence{Identity: identity, Kind: check.Type, ResourceID: modelID, Severity: severity(check.Severity)}
 	queriesBefore := state.Queries
@@ -633,25 +633,25 @@ func outcomeForError(identity string, err error) (release.GateOutcome, error) {
 	return release.GateUnavailable, gateError(identity, release.GateUnavailable, ErrGateUnavailable, err)
 }
 
-func impliedChecks(table semanticmodel.Table) []semanticmodel.ModelCheckSpec {
-	result := []semanticmodel.ModelCheckSpec{}
+func impliedChecks(table semanticmodel.Table) []semanticmodel.ModelCheck {
+	result := []semanticmodel.ModelCheck{}
 	for name, entity := range table.Entities {
 		if entity.Type == "primary" || entity.Type == "unique" {
 			fields := canonicalFields(entity.Fields)
-			result = append(result, semanticmodel.ModelCheckSpec{Type: "unique", Fields: fields, Severity: "error"})
+			result = append(result, semanticmodel.ModelCheck{Type: "unique", Fields: fields, Severity: "error"})
 		}
 		if name == table.GrainEntity {
 			for _, field := range entity.Fields {
-				result = append(result, semanticmodel.ModelCheckSpec{Type: "non_null", Field: field, Severity: "error"})
+				result = append(result, semanticmodel.ModelCheck{Type: "non_null", Field: field, Severity: "error"})
 			}
 		}
 	}
 	return result
 }
 
-func canonicalChecks(values []semanticmodel.ModelCheckSpec) []semanticmodel.ModelCheckSpec {
+func canonicalChecks(values []semanticmodel.ModelCheck) []semanticmodel.ModelCheck {
 	type item struct {
-		check semanticmodel.ModelCheckSpec
+		check semanticmodel.ModelCheck
 		key   string
 	}
 	items := make([]item, 0, len(values))
@@ -674,14 +674,14 @@ func canonicalChecks(values []semanticmodel.ModelCheckSpec) []semanticmodel.Mode
 		}
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
-	result := make([]semanticmodel.ModelCheckSpec, len(items))
+	result := make([]semanticmodel.ModelCheck, len(items))
 	for i, value := range items {
 		result[i] = value.check
 	}
 	return result
 }
 
-func checkIdentity(modelID string, check semanticmodel.ModelCheckSpec) string {
+func checkIdentity(modelID string, check semanticmodel.ModelCheck) string {
 	fields := canonicalFields(check.Fields)
 	values := append([]string(nil), check.Values...)
 	sort.Strings(values)
@@ -768,7 +768,7 @@ type sourceDigestInput struct {
 	Relation     string
 	SchemaMode   string
 	Fields       map[string]semanticmodel.SourceField
-	Effective    map[string]any
+	Effective    any
 	Freshness    *semanticmodel.SourceFreshnessSpec
 }
 
@@ -776,7 +776,7 @@ func sourceDigestInputFrom(id string, source semanticmodel.Source) sourceDigestI
 	return sourceDigestInput{
 		ID: id, Connection: source.Connection, Object: source.Object, Path: source.Path, Format: source.Format,
 		LocationType: source.LocationType, Catalog: source.Catalog, Schema: source.SchemaName, Relation: source.RelationName,
-		SchemaMode: source.SchemaMode, Fields: source.Fields, Effective: source.EffectiveOptions,
+		SchemaMode: source.SchemaMode, Fields: source.Fields, Effective: source.EffectivePathLocation,
 		Freshness: source.Freshness,
 	}
 }

@@ -11,6 +11,7 @@ import (
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -29,7 +30,7 @@ func observedSource() SourceInput {
 }
 
 func modelWithCheck(severity string) ModelInput {
-	return ModelInput{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheckSpec{{Type: "non_null", Field: "id", Severity: severity}}}}
+	return ModelInput{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheck{{Type: "non_null", Field: "id", Severity: severity}}}}
 }
 
 func rowsQuery(rows semanticquery.Rows) Query {
@@ -92,7 +93,7 @@ func TestEvaluateUnavailableEmptyTimeoutAndBounds(t *testing.T) {
 
 	bounded := baseInput(rowsQuery(nil))
 	bounded.Bounds = Bounds{MaxQueries: 1, MaxRows: 10, MaxMillis: 1000}
-	bounded.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheckSpec{{Type: "non_null", Field: "id"}, {Type: "non_null", Field: "name"}}}}}
+	bounded.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheck{{Type: "non_null", Field: "id"}, {Type: "non_null", Field: "name"}}}}}
 	_, err = Evaluate(context.Background(), bounded)
 	if !errors.As(err, &evaluationErr) || evaluationErr.Outcome != release.GateUnavailable || !errors.Is(err, ErrGateBounds) {
 		t.Fatalf("bounds error = %v", err)
@@ -103,8 +104,8 @@ func TestEvaluateDedupeImpliedAndExplicitChecks(t *testing.T) {
 	queries := 0
 	input := baseInput(func(context.Context, semanticquery.Plan) (semanticquery.Rows, error) { queries++; return nil, nil })
 	input.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{
-		Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}},
-		Checks:   []semanticmodel.ModelCheckSpec{{Type: "unique", Fields: []string{"id"}, Severity: "warning"}},
+		Entities: map[string]semanticmodel.EntityDefinition{"id": {Type: "primary", Fields: []string{"id"}}},
+		Checks:   []semanticmodel.ModelCheck{{Type: "unique", Fields: []string{"id"}, Severity: "warning"}},
 	}}}
 	evidence, err := Evaluate(context.Background(), input)
 	if err != nil {
@@ -117,7 +118,7 @@ func TestEvaluateDedupeImpliedAndExplicitChecks(t *testing.T) {
 
 func TestEvaluateAggregateOutcomeAndOverflowEvidence(t *testing.T) {
 	input := baseInput(rowsQuery(semanticquery.Rows{{"value": int64(1)}}))
-	input.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheckSpec{{Type: "non_null", Field: "id", Severity: "warning"}}}}}
+	input.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheck{{Type: "non_null", Field: "id", Severity: "warning"}}}}}
 	evidence, err := Evaluate(context.Background(), input)
 	if err != nil || evidence.Outcome != release.GateWarning {
 		t.Fatalf("warning aggregate = %q err=%v", evidence.Outcome, err)
@@ -128,7 +129,7 @@ func TestEvaluateAggregateOutcomeAndOverflowEvidence(t *testing.T) {
 
 	queryBound := baseInput(rowsQuery(nil))
 	queryBound.Bounds = Bounds{MaxQueries: 1, MaxRows: 10, MaxMillis: 1000}
-	queryBound.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheckSpec{{Type: "non_null", Field: "id"}, {Type: "non_null", Field: "name"}}}}}
+	queryBound.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheck{{Type: "non_null", Field: "id"}, {Type: "non_null", Field: "name"}}}}}
 	failed, err := Evaluate(context.Background(), queryBound)
 	if err == nil || !failed.QueriesExceeded || failed.Outcome != release.GateUnavailable {
 		t.Fatalf("query overflow evidence = %#v err=%v", failed, err)
@@ -139,7 +140,7 @@ func TestEvaluateAggregateOutcomeAndOverflowEvidence(t *testing.T) {
 
 	rowBound := baseInput(rowsQuery(semanticquery.Rows{{"value": 1}, {"value": 2}}))
 	rowBound.Bounds = Bounds{MaxQueries: 4, MaxRows: 1, MaxMillis: 1000}
-	rowBound.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheckSpec{{Type: "non_null", Field: "id"}}}}}
+	rowBound.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheck{{Type: "non_null", Field: "id"}}}}}
 	rows, err := Evaluate(context.Background(), rowBound)
 	if err == nil || !rows.RowsExceeded {
 		t.Fatalf("row overflow evidence = %#v err=%v", rows, err)
@@ -153,7 +154,7 @@ func TestEvaluateAggregateOutcomeAndOverflowEvidence(t *testing.T) {
 		return nil, nil
 	})
 	durationBound.Bounds = Bounds{MaxQueries: 2, MaxRows: 10, MaxMillis: 1}
-	durationBound.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheckSpec{{Type: "non_null", Field: "id"}}}}}
+	durationBound.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheck{{Type: "non_null", Field: "id"}}}}}
 	duration, err := Evaluate(context.Background(), durationBound)
 	if err != nil {
 		// A query adapter that ignores context still produces canonical timeout
@@ -176,8 +177,12 @@ func TestEvaluateEvidenceNeverSerializesSourceSecretsOrLocations(t *testing.T) {
 	source := observedSource()
 	source.Source.Path = "/private/sentinel-endpoint/path.parquet"
 	source.Source.Object = "sentinel-object-location"
-	source.Source.EffectiveOptions = map[string]any{"token": "sentinel-auth-token"}
-	source.Source.Options = map[string]any{"endpoint": "sentinel-endpoint"}
+	sensitive := "sentinel-auth-token"
+	source.Source.EffectivePathLocation = &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
+		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: source.Source.Path, Format: "csv"},
+		Format:                 "csv",
+		Options:                &projectcontracts.CSVReaderOptions{NullString: &sensitive},
+	}}
 	input.Sources = []SourceInput{source}
 	evidence, err := Evaluate(context.Background(), input)
 	if err != nil {
@@ -188,7 +193,7 @@ func TestEvaluateEvidenceNeverSerializesSourceSecretsOrLocations(t *testing.T) {
 		t.Fatal(err)
 	}
 	serialized := string(encoded)
-	for _, sentinel := range []string{"sentinel-endpoint", "sentinel-object-location", "sentinel-auth-token", "/private/sentinel"} {
+	for _, sentinel := range []string{"sentinel-object-location", "sentinel-auth-token", "/private/sentinel"} {
 		if strings.Contains(serialized, sentinel) {
 			t.Fatalf("gate evidence serialized source sentinel %q: %s", sentinel, serialized)
 		}

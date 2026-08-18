@@ -64,7 +64,7 @@ func TestEvaluateExecutesAllChecksAgainstDuckDBCandidateRelations(t *testing.T) 
 		CandidateID: "candidate-duckdb", SourceDigest: testDigest, BindingGeneration: testBinding,
 		RuntimeVersion: "runtime-1", DuckDBVersion: "duckdb-1", Now: freshnessAt.Add(time.Minute), Query: query,
 		Sources: []SourceInput{{ID: "orders", Source: semanticmodel.Source{SchemaMode: "inferred", Freshness: &semanticmodel.SourceFreshnessSpec{Basis: "field", Field: "updated_at", ErrorAfter: &semanticmodel.FreshnessDurationSpec{Amount: 1, Unit: "hour"}}}, Observed: []semanticmodel.ColumnSchema{{Name: "id", PhysicalType: "BIGINT", Ordinal: 1}, {Name: "customer_id", PhysicalType: "BIGINT", Ordinal: 2}, {Name: "state", PhysicalType: "VARCHAR", Ordinal: 3}, {Name: "updated_at", PhysicalType: "TIMESTAMP", Ordinal: 4}}, FreshnessObserved: freshnessAt}},
-		Models: []ModelInput{{ID: "orders", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheckSpec{
+		Models: []ModelInput{{ID: "orders", Model: semanticmodel.Table{Checks: []semanticmodel.ModelCheck{
 			{Type: "non_null", Field: "customer_id", Severity: "error"},
 			{Type: "unique", Fields: []string{"id"}, Severity: "error"},
 			{Type: "accepted_values", Field: "state", Values: []string{"closed", "open"}, Severity: "error"},
