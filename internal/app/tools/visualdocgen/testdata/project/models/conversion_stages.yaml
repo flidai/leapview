@@ -5,11 +5,8 @@ metadata:
   name: conversion_stages
   displayName: Conversion stages
 spec:
-  definition:
-    type: sql
-    sql: |
-      SELECT stage, CAST(conversions AS DOUBLE) AS conversions
-      FROM source."docs.conversion_stages"
+  sources:
+  - docs.conversion_stages
   fields:
     stage:
       datatype: String
@@ -17,6 +14,10 @@ spec:
     conversions:
       datatype: Float
       label: Conversions
+  transform:
+    sql: |
+      SELECT stage, CAST(conversions AS DOUBLE) AS conversions
+      FROM source."docs.conversion_stages"
   entities:
     stage:
       type: primary

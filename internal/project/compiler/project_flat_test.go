@@ -50,12 +50,12 @@ func TestDashboardDomainRoundTripsCompiledManifestAndExport(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -122,12 +122,12 @@ func TestAIContextIsPreservedWithoutChangingExecutableSemantics(t *testing.T) {
 			"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 			"sources/orders_source.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders_source, name: orders_source}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 			"models/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders}\n" + modelContext + `spec:
   source: orders_source
@@ -526,12 +526,12 @@ func TestFlatProjectAllowsModelOnlyTransform(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -585,12 +585,12 @@ func TestFlatProjectRejectsTopLevelModelSQLAlias(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -612,12 +612,12 @@ func TestFlatProjectPreservesStableIDForPunctuatedSourceName(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/foo-bar.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:foo-bar, name: foo-bar}
-spec: {connection: warehouse, format: csv, path: foo-bar.csv}
+spec: {connection: warehouse, location: {type: path, path: foo-bar.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -643,17 +643,17 @@ func TestFlatProjectRejectsCollidingSourceAliases(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/foo-bar.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:foo-bar, name: foo-bar}
-spec: {connection: warehouse, format: csv, path: foo-bar.csv}
+spec: {connection: warehouse, location: {type: path, path: foo-bar.csv, format: csv}}
 `,
 		"sources/foo_bar.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:foo_bar, name: foo_bar}
-spec: {connection: warehouse, format: csv, path: foo_bar.csv}
+spec: {connection: warehouse, location: {type: path, path: foo_bar.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -729,15 +729,17 @@ spec:
 	write("connections/warehouse.yaml", `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: conn:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `)
 	write("sources/orders.yaml", `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
 spec:
   connection: warehouse
-  format: csv
-  path: orders.csv
+  location:
+    type: path
+    path: orders.csv
+    format: csv
 `)
 	write("models/orders.yaml", `apiVersion: leapview.dev/v1
 kind: Model
@@ -864,8 +866,8 @@ spec:
   dashboards: {include: []}
   access: {include: []}
 `)
-	write("connections/c.yaml", "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:id, name: warehouse}\nspec: {kind: managed}\n")
-	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, format: csv, path: orders.csv}\n")
+	write("connections/c.yaml", "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:id, name: warehouse}\nspec: {type: managed}\n")
+	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n")
 	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {source: source:id, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n")
 	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {datasets: {orders: {model: orders_model}}, metrics: {count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}\n")
 	graph, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
@@ -882,12 +884,12 @@ func TestFlatProjectAllowsTwoSemanticConsumersOfOneModel(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -962,7 +964,7 @@ func TestFlatProjectRejectsDuplicateStableIDsAcrossKinds(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: resource:duplicate, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -985,12 +987,12 @@ func TestFlatProjectWrongReferenceReportsResourcePathAndField(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -1018,12 +1020,12 @@ func TestFlatProjectManifestIsCheckoutIndependentAndCanonical(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -1073,7 +1075,7 @@ func TestLoadProjectRejectsSymlinkEscapingInclude(t *testing.T) {
 	if err := os.WriteFile(outsideConnection, []byte(`apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1123,7 +1125,7 @@ func TestLoadProjectDeduplicatesOverlappingIncludes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte(`apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1165,13 +1167,13 @@ func TestFlatProjectRejectsTargetOwnedConnectionCredentials(t *testing.T) {
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
 spec:
-  kind: managed
+  type: managed
   credentials: {provider: env, secret: LEAPVIEW_WAREHOUSE_CREDENTIALS}
 `,
 	})
 	_, err := LoadProject(projectPath)
-	if err == nil || !strings.Contains(err.Error(), "target-owned") {
-		t.Fatalf("LoadProject() error = %v, want target-owned credential diagnostic", err)
+	if err == nil || !strings.Contains(err.Error(), "schema.generated") {
+		t.Fatalf("LoadProject() error = %v, want generated schema rejection", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
 	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" || diagnostics[0].FieldPath != "spec" {
@@ -1184,12 +1186,12 @@ func TestFlatProjectRejectsHiddenSQLImportsAndUnsafeIncludes(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -1224,12 +1226,12 @@ func TestFlatProjectRefreshPipelinesValidateAndNormalize(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -1289,10 +1291,10 @@ func TestFlatProjectRejectsInlineConnectionAuthAndSourceIdentity(t *testing.T) {
 		spec string
 		want string
 	}{
-		"auth": {spec: `spec: {kind: managed, auth: {token: secret}}
-`, want: "field not allowed"},
-		"source identity": {spec: `spec: {kind: postgres, username: privileged_runtime}
-`, want: "target-owned"},
+		"auth": {spec: `spec: {type: managed, auth: {token: secret}}
+`, want: "schema.generated"},
+		"source identity": {spec: `spec: {type: postgres, username: privileged_runtime}
+`, want: "schema.generated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			files := map[string]string{"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\n" + tc.spec}
@@ -1313,17 +1315,17 @@ func TestFlatProjectRejectsSQLSourceMismatchAndModelCycles(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"sources/customers.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:customers, name: customers}
-spec: {connection: warehouse, format: csv, path: customers.csv}
+spec: {connection: warehouse, location: {type: path, path: customers.csv, format: csv}}
 `,
 	}
 	t.Run("source mismatch", func(t *testing.T) {
@@ -1363,12 +1365,12 @@ func TestFlatProjectDashboardAdapterMatchesDirectCompilation(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
@@ -1418,12 +1420,12 @@ func TestFlatProjectPublicationValidationAndCanonicalization(t *testing.T) {
 		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
 kind: Connection
 metadata: {id: connection:warehouse, name: warehouse}
-spec: {kind: managed}
+spec: {type: managed}
 `,
 		"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders, name: orders}
-spec: {connection: warehouse, format: csv, path: orders.csv}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model

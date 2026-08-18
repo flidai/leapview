@@ -96,13 +96,13 @@ func ValidateFile(kind Kind, path string) error {
 }
 
 func ValidateBytes(kind Kind, filename string, content []byte) error {
-	// Connection, Source, and Model structure is owned by the generated
-	// TypeSpec contracts. Their compiler load paths call DecodeResource, which
-	// performs generated JSON Schema validation and tagged-union decoding. The
-	// legacy CUE definitions are retained only for non-generated resources and
-	// must not reject the canonical LEA-418 shapes before that boundary.
-	if kind == KindConnection || kind == KindSource || kind == KindModel {
-		return nil
+	// Connection and Source structure is owned by the generated TypeSpec
+	// contracts. ValidateBytes is also called directly by schema tests and
+	// callers, so route those kinds through the same generated JSON Schema
+	// boundary used by DecodeResource. Model remains on the legacy CUE path
+	// until its authoring cutover (LEA-428).
+	if kind == KindConnection || kind == KindSource {
+		return validateGeneratedResource(kind, filename, content)
 	}
 	ctx, value, definition, err := compiledDefinition(kind)
 	if err != nil {

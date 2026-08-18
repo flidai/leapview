@@ -6,7 +6,12 @@ metadata:
   displayName: Payments
 spec:
   connection: olist
-  path: olist_order_payments_dataset.csv
-  fields:
-    order_id: {type: string, description: Order identifier for the payment.}
-    payment_value: {type: number, description: Payment amount for the transaction.}
+  location:
+    type: path
+    path: olist_order_payments_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      order_id: {datatype: String, description: Order identifier for the payment.}
+      payment_value: {datatype: Float, description: Payment amount for the transaction.}

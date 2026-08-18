@@ -6,7 +6,12 @@ metadata:
   displayName: Order Items
 spec:
   connection: olist
-  path: olist_order_items_dataset.csv
-  fields:
-    order_id: {type: string, description: Order identifier for the item row.}
-    product_id: {type: string, description: Product identifier purchased in the order.}
+  location:
+    type: path
+    path: olist_order_items_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      order_id: {datatype: String, description: Order identifier for the item row.}
+      product_id: {datatype: String, description: Product identifier purchased in the order.}

@@ -106,29 +106,87 @@ func decodeGeneratedResource(kind Kind, filename string, content []byte, destina
 	if kind != KindConnection && kind != KindSource && kind != KindModel {
 		return resourceDiagnostic(filename, nil, "schema.decode", "generated decoding is only available for Connection, Source, and Model")
 	}
-	root, err := parseResourceDocument(filename, content)
+	normalized, err := generatedResourceJSON(kind, filename, content)
 	if err != nil {
-		return err
-	}
-	if err := checkResourceNode(filename, root); err != nil {
-		return err
-	}
-	if err := checkJSONNumbers(filename, content, root); err != nil {
-		return err
-	}
-	normalizedValue, err := normalizeResourceNode(filename, root)
-	if err != nil {
-		return err
-	}
-	normalized, err := json.Marshal(normalizedValue)
-	if err != nil {
-		return resourceDiagnostic(filename, root, "schema.normalize", err.Error())
-	}
-	if err := validateGeneratedJSON(filename, root, normalized); err != nil {
 		return err
 	}
 	if err := json.Unmarshal(normalized, destination); err != nil {
+		return resourceDiagnostic(filename, nil, "schema.decode", err.Error())
+	}
+	return nil
+}
+
+// validateGeneratedResource validates the generated Connection/Source
+// envelope without decoding into a destination. It is deliberately shared by
+// ValidateBytes and DecodeResource so direct schema callers cannot bypass the
+// generated tagged-union contract.
+func validateGeneratedResource(kind Kind, filename string, content []byte) error {
+	_, err := generatedResourceJSON(kind, filename, content)
+	return err
+}
+
+func generatedResourceJSON(kind Kind, filename string, content []byte) ([]byte, error) {
+	root, err := parseResourceDocument(filename, content)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkResourceNode(filename, root); err != nil {
+		return nil, err
+	}
+	if err := checkJSONNumbers(filename, content, root); err != nil {
+		return nil, err
+	}
+	normalizedValue, err := normalizeResourceNode(filename, root)
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := json.Marshal(normalizedValue)
+	if err != nil {
+		return nil, resourceDiagnostic(filename, root, "schema.normalize", err.Error())
+	}
+	if err := validateGeneratedJSON(filename, root, normalized); err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(normalized, &envelope); err != nil {
+		return nil, resourceDiagnostic(filename, root, "schema.decode", err.Error())
+	}
+	wantKind := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model"}[kind]
+	if envelope.Kind != wantKind {
+		return nil, resourceDiagnostic(filename, root, "schema.kind", fmt.Sprintf("resource kind %q does not match requested %s", envelope.Kind, wantKind))
+	}
+	if err := validateGeneratedMetadata(filename, root, normalized); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+var (
+	resourceIDPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*$`)
+	resourceNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+)
+
+// validateGeneratedMetadata retains the stable resource identity constraints
+// that are not represented in the generated JSON Schema yet. These checks are
+// intentionally applied after generated structural/union validation so the
+// generated schema remains the primary authoring contract.
+func validateGeneratedMetadata(filename string, root *yaml.Node, normalized []byte) error {
+	var envelope struct {
+		Metadata struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(normalized, &envelope); err != nil {
 		return resourceDiagnostic(filename, root, "schema.decode", err.Error())
+	}
+	if !resourceIDPattern.MatchString(envelope.Metadata.ID) {
+		return resourceDiagnostic(filename, root, "schema.contract", fmt.Sprintf("metadata.id %q is not a valid resource ID", envelope.Metadata.ID))
+	}
+	if !resourceNamePattern.MatchString(envelope.Metadata.Name) {
+		return resourceDiagnostic(filename, root, "schema.contract", fmt.Sprintf("metadata.name %q is not a valid resource name", envelope.Metadata.Name))
 	}
 	return nil
 }

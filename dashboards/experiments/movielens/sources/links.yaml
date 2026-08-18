@@ -6,8 +6,13 @@ metadata:
   displayName: External Links
 spec:
   connection: movielens
-  path: links.csv
-  fields:
-    movieId: {type: integer, description: MovieLens movie identifier.}
-    imdbId: {type: string, description: IMDb identifier without the tt prefix.}
-    tmdbId: {type: string, description: TMDb movie identifier.}
+  location:
+    type: path
+    path: links.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      movieId: {datatype: Integer, description: MovieLens movie identifier.}
+      imdbId: {datatype: String, description: IMDb identifier without the tt prefix.}
+      tmdbId: {datatype: String, description: TMDb movie identifier.}

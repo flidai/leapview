@@ -1005,10 +1005,10 @@ func TestSourceRelationResolvesSourcePlans(t *testing.T) {
 			"vectors":   {Kind: "s3", Scope: "s3://analytics-prod/", Auth: semanticmodel.ConnectionAuth{"access_key_id": "key", "secret_access_key": "secret"}},
 		},
 		Sources: map[string]semanticmodel.Source{
-			"orders":     {Path: "orders.csv"},
-			"events":     {Connection: "prod_lake", Path: "events/*", Format: "parquet"},
-			"delta":      {Connection: "azure", Path: "tables/orders", Format: "delta"},
-			"embeddings": {Connection: "vectors", Path: "vectors/products.lance"},
+			"orders":     {Path: "orders.csv", Format: "csv", EffectiveOptions: map[string]any{"header": true}},
+			"events":     {Connection: "prod_lake", Path: "events/*", Format: "parquet", EffectiveOptions: map[string]any{}},
+			"delta":      {Connection: "azure", Path: "tables/orders", Format: "delta", EffectiveOptions: map[string]any{}},
+			"embeddings": {Connection: "vectors", Path: "vectors/products.lance", Format: "lance", EffectiveOptions: map[string]any{}},
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {

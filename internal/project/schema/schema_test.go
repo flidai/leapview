@@ -206,6 +206,24 @@ spec:
 	assertDiagnostic(t, err, "schema.unknown_field", "sql")
 }
 
+func TestValidateBytesRetainsLegacyModelValidation(t *testing.T) {
+	// Model authoring remains on the CUE contract until LEA-428 moves its
+	// compiler load path to generated DTOs. An invalid current-shape Model must
+	// therefore still be rejected by direct schema callers.
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  sources: [source:orders]
+  fields:
+    order_id: {datatype: String}
+`))
+	if err == nil {
+		t.Fatal("ValidateBytes accepted Model missing required entities and grain")
+	}
+}
+
 func TestCanonicalDatasetModelUsesAuthoringName(t *testing.T) {
 	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`
 apiVersion: leapview.dev/v1
@@ -471,9 +489,9 @@ metadata:
   id: connection:files
   name: files
 spec:
-  kind: local
+  type: local
 `))
-	assertDiagnostic(t, err, "schema.enum", "local")
+	assertDiagnosticMessage(t, err, "schema.generated", "value must be 'managed'")
 }
 
 func TestValidateBytesRejectsInvalidIdentifierKey(t *testing.T) {
@@ -729,7 +747,7 @@ metadata:
   id: connection:files
   name: files
 spec:
-  kind: managed
+  type: managed
 `
 	if err := ValidateBytes(KindConnection, "connection.yaml", []byte(base)); err != nil {
 		t.Fatalf("valid metadata rejected: %v", err)

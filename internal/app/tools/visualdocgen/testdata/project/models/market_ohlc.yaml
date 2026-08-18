@@ -5,16 +5,8 @@ metadata:
   name: market_ohlc
   displayName: Monthly market prices
 spec:
-  definition:
-    type: sql
-    sql: |
-      SELECT
-        month,
-        CAST(open AS DOUBLE) AS open,
-        CAST(close AS DOUBLE) AS close,
-        CAST(low AS DOUBLE) AS low,
-        CAST(high AS DOUBLE) AS high
-      FROM source."docs.market_ohlc"
+  sources:
+  - docs.market_ohlc
   fields:
     month:
       datatype: String
@@ -31,6 +23,15 @@ spec:
     high:
       datatype: Float
       label: High
+  transform:
+    sql: |
+      SELECT
+        month,
+        CAST(open AS DOUBLE) AS open,
+        CAST(close AS DOUBLE) AS close,
+        CAST(low AS DOUBLE) AS low,
+        CAST(high AS DOUBLE) AS high
+      FROM source."docs.market_ohlc"
   entities:
     month:
       type: primary

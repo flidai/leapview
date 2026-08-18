@@ -6,9 +6,14 @@ metadata:
   displayName: Tags
 spec:
   connection: movielens
-  path: tags.csv
-  fields:
-    userId: {type: integer, description: Anonymized MovieLens user identifier.}
-    movieId: {type: integer, description: MovieLens movie identifier.}
-    tag: {type: string, description: User-generated movie tag.}
-    timestamp: {type: integer, description: Tag timestamp as Unix epoch seconds.}
+  location:
+    type: path
+    path: tags.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      userId: {datatype: Integer, description: Anonymized MovieLens user identifier.}
+      movieId: {datatype: Integer, description: MovieLens movie identifier.}
+      tag: {datatype: String, description: User-generated movie tag.}
+      timestamp: {datatype: Integer, description: Tag timestamp as Unix epoch seconds.}

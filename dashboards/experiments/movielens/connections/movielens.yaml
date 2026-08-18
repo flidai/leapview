@@ -5,10 +5,7 @@ metadata:
   name: movielens
   displayName: MovieLens CSV files
 spec:
-  kind: managed
-  description: Project-global managed MovieLens 32M experimental data.
-  credentials:
-    provider: none
+  type: managed
   defaults:
-    options:
+    csv:
       header: true
