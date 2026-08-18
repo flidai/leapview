@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/dashboard"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
@@ -50,22 +49,6 @@ func projectModelTable(spec projectModelTableSpec) semanticmodel.Table {
 		}
 	}
 	return table
-}
-
-func projectDashboardPages(pages []projectDashboardPage) []dashboard.Page {
-	out := make([]dashboard.Page, 0, len(pages))
-	for _, page := range pages {
-		out = append(out, dashboard.Page{
-			ID:             page.ID,
-			Title:          page.Title,
-			Description:    page.Description,
-			Canvas:         page.Canvas,
-			Grid:           page.Grid,
-			FilterBindings: page.FilterBindings,
-			Visuals:        append([]dashboard.PageVisual(nil), page.Components...),
-		})
-	}
-	return out
 }
 
 func projectAccessGroup(name string, spec projectGroupSpec) manifest.Group {
@@ -226,15 +209,15 @@ func projectManifest(project Project) (manifest.Project, error) {
 		if id == "" {
 			return manifest.Project{}, fmt.Errorf("dashboard %q has no stable id", name)
 		}
-		authoredDashboard := *dashboard
-		authoredDashboard.SemanticModel = projectgraph.ResourceID(canonicalRef(project, "semantic_model", dashboard.SemanticModel.String()))
-		compiled, err := dashboardcompiler.Compile(authoredDashboard, result.SemanticModels)
+		dashboardDocument := *dashboard
+		dashboardDocument.Spec.SemanticModel = canonicalRef(project, "semantic_model", dashboardDocument.Spec.SemanticModel)
+		compiled, err := dashboardcompiler.CompileDocument(dashboardDocument, result.SemanticModels)
 		if err != nil {
 			return manifest.Project{}, resourceError(project.DashboardPaths[name], id, "spec", "loading dashboard %q: %s", name, err)
 		}
 		result.DashboardDefinitions[id] = compiled.Definition
 		meta := project.DashboardMetadata[name]
-		result.DashboardSources[id] = manifest.DashboardSource{Document: compiled.Normalized, Metadata: manifest.DashboardSourceMetadata{Name: name, Title: dashboard.Title, Description: dashboard.Description, Owner: meta.Owner, Domain: meta.Domain, Tags: append([]string(nil), meta.Tags...)}, Path: projectRelativePath(&project, project.DashboardPaths[name])}
+		result.DashboardSources[id] = manifest.DashboardSource{Document: compiled.Normalized, Metadata: manifest.DashboardSourceMetadata{Name: name, Title: valueOrEmpty(dashboardDocument.Metadata.DisplayName), Description: valueOrEmpty(dashboardDocument.Metadata.Description), Owner: meta.Owner, Domain: meta.Domain, Tags: append([]string(nil), meta.Tags...)}, Path: projectRelativePath(&project, project.DashboardPaths[name])}
 		result.NameIndex.Dashboards[name] = id
 	}
 	for name, value := range project.Publications {

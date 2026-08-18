@@ -66,11 +66,50 @@ func compileVisualizationQueryBinding(ctx compileContext, authored dashboardauth
 			Series: compiledOptionalField(authored.Query.Series), Time: compiledTime(authored.Query.Time), Sort: compiledSort(authored.Query.Sort), Limit: limit,
 		},
 	}
+	// Statistical result shapes have explicit execution contracts.  The
+	// renderer-independent binding must retain the operands used by runtime
+	// delivery instead of relying on the visual type or result shape to infer
+	// them.  Legacy authoring has no separate statistical operand object yet;
+	// use the documented canonical defaults while this path is consumed by the
+	// executable documentation adapter.
+	switch resultShape {
+	case visualizationdefinition.ResultHistogramBins:
+		// The statistical operand is the sole metric identity. Keeping the
+		// generic aggregate metric list as well would expose the same field
+		// twice to QueryBinding validation.
+		binding.Aggregate.Metrics = nil
+		bins := authored.Presentation.HistogramBins
+		if bins <= 0 {
+			bins = 10
+		}
+		binding.Aggregate.Histogram = &visualizationdefinition.HistogramQueryBinding{
+			Metric: metricBindingForStatisticalQuery(authored), Bins: int64(bins),
+			NullPolicy: "omit", Approximation: "exact",
+		}
+	case visualizationdefinition.ResultDistribution:
+		binding.Aggregate.Metrics = nil
+		binding.Aggregate.Distribution = &visualizationdefinition.DistributionQueryBinding{
+			Metric: metricBindingForStatisticalQuery(authored),
+			Quantiles: []float64{0.25, 0.5, 0.75}, Outliers: "include", Approximation: "exact",
+		}
+	}
 	switch ctx.capability.Renderer {
 	case visualizationdefinition.RendererMapLibre:
 		return compiledSpatialBinding(ctx.modelID, authored, ctx.model)
 	}
 	return binding, nil
+}
+
+func metricBindingForStatisticalQuery(authored dashboardauthoring.Visual) visualizationdefinition.FieldBinding {
+	if len(authored.Query.Metrics) == 0 {
+		return visualizationdefinition.FieldBinding{}
+	}
+	metric := authored.Query.Metrics[0]
+	alias := metric.Alias
+	if alias == "" {
+		alias = fieldAlias(metric.Field)
+	}
+	return visualizationdefinition.FieldBinding{FieldID: metric.Field, Alias: alias}
 }
 
 func compiledVisualizationIdentity(authored dashboardauthoring.Visual) []string {

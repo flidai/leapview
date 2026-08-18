@@ -18,9 +18,9 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	"github.com/flidai/leapview/internal/dashboard"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -28,19 +28,27 @@ import (
 )
 
 func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
-	document := dashboardauthoring.Dashboard{
-		ID: "dashboard_sales", Title: "Sales", SemanticModel: "semantic_sales",
-		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"total": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}}},
-		}),
-		Pages: []dashboard.Page{{ID: "overview", Title: "Overview"}},
+	metric := "order_count"
+	document := dashboarddocument.DashboardDocument{
+		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
+		Kind:       dashboarddocument.DashboardResourceKindDashboard,
+		Metadata:   dashboarddocument.DashboardMetadata{ID: "dashboard_sales", Name: "sales_dashboard"},
+		Spec: dashboarddocument.DashboardSpec{
+			SemanticModel: "semantic_sales", Filters: []dashboarddocument.DashboardFilter{},
+			Visuals: map[string]dashboarddocument.DashboardVisual{"total": {
+				Type:         dashboarddocument.DashboardVisualTypeKpi,
+				Query:        dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Dimensions: []dashboarddocument.DashboardDimensionSelection{}, Metrics: []dashboarddocument.DashboardMetricSelection{{String: &metric}}}},
+				Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.KPIDashboardPresentation{Type: "kpi"}},
+			}},
+			Pages: []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{}}},
+		},
 	}
 	encoded, err := ExportDashboard(document, dashboardauthoring.DashboardExportMetadata{Name: "sales_dashboard"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	if !strings.Contains(text, "id: dashboard_sales") || !strings.Contains(text, "name: sales_dashboard") || !strings.Contains(text, "semanticModel: semantic_sales") {
+	if !strings.Contains(text, `"id": "dashboard_sales"`) || !strings.Contains(text, `"name": "sales_dashboard"`) || !strings.Contains(text, `"semanticModel": "semantic_sales"`) {
 		t.Fatalf("canonical dashboard omitted ResourceID strings: %s", text)
 	}
 }
@@ -73,12 +81,13 @@ spec:
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard, domain: revenue}
 spec:
-  title: Sales Dashboard
   semanticModel: sales
+  filters: []
   visuals:
     order_count:
       type: kpi
-      query: {metrics: {order_count: null}}
+      query: {type: aggregate, dimensions: [], metrics: [order_count]}
+      presentation: {type: kpi}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
@@ -103,7 +112,7 @@ spec:
 	if err != nil {
 		t.Fatalf("ExportDashboard() error = %v", err)
 	}
-	if !strings.Contains(string(encoded), "domain: revenue") {
+	if !strings.Contains(string(encoded), `"domain": "revenue"`) {
 		t.Fatalf("canonical dashboard export omitted authored domain: %s", encoded)
 	}
 }
@@ -764,12 +773,13 @@ spec: {semanticModel: sales}
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard}
 spec:
-  title: Sales Dashboard
   semanticModel: sales
+  filters: []
   visuals:
     order_count:
       type: kpi
-      query: {metrics: {order_count: null}}
+      query: {type: aggregate, dimensions: [], metrics: [order_count]}
+      presentation: {type: kpi}
   pages: [{id: overview, title: Overview, components: []}]
 `)
 
@@ -1384,9 +1394,9 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: 
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
-  title: Sales
   semanticModel: sales
-  visuals: {order_count: {type: kpi, query: {metrics: {order_count: null}}}}
+  filters: []
+  visuals: {order_count: {type: kpi, query: {type: aggregate, dimensions: [], metrics: [order_count]}, presentation: {type: kpi}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
@@ -1396,8 +1406,8 @@ spec:
 	}
 	authored := *project.Dashboards["sales_dashboard"]
 	model := project.Manifest.SemanticModels["semantic:sales"]
-	authored.SemanticModel = "semantic:sales"
-	direct, err := dashboardcompiler.Compile(authored, map[string]*semanticmodel.Model{"semantic:sales": model})
+	authored.Spec.SemanticModel = "semantic:sales"
+	direct, err := dashboardcompiler.CompileDocument(authored, map[string]*semanticmodel.Model{"semantic:sales": model})
 	if err != nil {
 		t.Fatalf("direct dashboard compilation error = %v", err)
 	}
@@ -1439,9 +1449,9 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: 
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
-  title: Sales
   semanticModel: sales
-  visuals: {order_count: {type: kpi, query: {metrics: {order_count: null}}}}
+  filters: []
+  visuals: {order_count: {type: kpi, query: {type: aggregate, dimensions: [], metrics: [order_count]}, presentation: {type: kpi}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 		"publications/website.yaml": `apiVersion: leapview.dev/v1

@@ -112,11 +112,7 @@ func (definition Definition) FilterStateFromURL(pageID string, values url.Values
 		if encoded == "" {
 			continue
 		}
-		encoding := binding.URL.Encoding
-		if encoding == "" {
-			encoding = dashboardfilter.URLEncodingTypedV1
-		}
-		expression, err := dashboardfilter.DefaultSharedLinkRegistry().Decode(encoding, encoded, specs[key].ValueKind)
+		expression, err := dashboardfilter.DefaultSharedLinkRegistry().DecodeDefault(encoded, specs[key].ValueKind)
 		if err != nil {
 			return machine.State(), fmt.Errorf("URL parameter %q: %w", binding.URL.Param, err)
 		}
@@ -150,11 +146,7 @@ func (definition Definition) URLParamsFromFilterState(pageID string, state dashb
 			continue
 		}
 		filterDefinition := definition.FilterDefinitions[binding.Filter]
-		encoding := binding.URL.Encoding
-		if encoding == "" {
-			encoding = dashboardfilter.URLEncodingTypedV1
-		}
-		encoded, err := dashboardfilter.DefaultSharedLinkRegistry().Encode(encoding, applied.Expression, filterDefinition.ValueKind)
+		encoded, err := dashboardfilter.DefaultSharedLinkRegistry().EncodeDefault(applied.Expression, filterDefinition.ValueKind)
 		if err != nil {
 			return nil, fmt.Errorf("encode binding %q URL: %w", binding.ID, err)
 		}

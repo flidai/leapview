@@ -5,345 +5,354 @@ metadata:
   name: ratings-overview
   displayName: Ratings Overview
   description: MovieLens rating volume, rating quality, users, movies, and trend overview.
-  tags: [movies, ratings, experiment]
+  tags:
+  - movies
+  - ratings
+  - experiment
 spec:
   semanticModel: movie_ratings
   filters:
-    rating_date:
-      label: Rating date
-      field: activity_date
-      predicates:
-        - kind: range
-        - kind: relative_period
-    release_decade:
-      label: Release decade
-      field: release_decade
-      predicates:
-        - kind: set
-          operators: [in, not_in]
-      options:
-        kind: distinct
-        limit: 20
-    rating_bucket:
-      label: Rating
-      field: rating_bucket
-      dataset: ratings
-      predicates:
-        - kind: set
-          operators: [in, not_in]
-      options:
-        kind: distinct
-        limit: 10
-    title:
-      label: Title
-      field: movie_title
-      predicates:
-        - kind: comparison
-          operators: [contains, equals, starts_with, not_contains]
-  filter_bindings:
-    rating_date:
-      filter: rating_date
-      default: {kind: unfiltered}
-      url: {param: period, encoding: typed_v1}
-      pane: {visible: true, order: 10}
-    release_decade:
-      filter: release_decade
-      default: {kind: unfiltered}
-      selection: {mode: multiple, max_selected_values: 20}
-      url: {param: decade, encoding: typed_v1}
-      pane: {visible: true, order: 20}
-    rating_bucket:
-      filter: rating_bucket
-      default: {kind: unfiltered}
-      selection: {mode: multiple, max_selected_values: 10}
-      url: {param: rating, encoding: typed_v1}
-      pane: {visible: true, order: 30}
-    title:
-      filter: title
-      default: {kind: unfiltered}
-      url: {param: title, encoding: typed_v1}
-      pane: {visible: true, order: 40}
-  filter_application: {mode: immediate}
+  - id: rating_date
+    label: Rating date
+    dimension: activity_date
+    control:
+      type: relativePeriod
+    urlParameter: period
+    operators: []
+  - id: release_decade
+    label: Release decade
+    dimension: release_decade
+    control:
+      type: multiSelect
+    operators:
+    - in
+    - notIn
+    urlParameter: decade
+  - id: rating_bucket
+    label: Rating
+    dimension: rating_bucket
+    control:
+      type: multiSelect
+    operators:
+    - in
+    - notIn
+    targets:
+    - overview/rating-distribution
+    - overview/movie-table
+    urlParameter: rating
+  - id: title
+    label: Title
+    dimension: movie_title
+    control:
+      type: text
+    operators:
+    - contains
+    - equals
+    - startsWith
+    - notContains
+    urlParameter: title
   visuals:
     rating_count:
       type: kpi
       query:
+        type: aggregate
+        dimensions: []
         metrics:
-          rating_count:
+        - rating_count
       presentation:
+        type: kpi
         note: Rating events
         tone: ink
     average_rating:
       type: kpi
       query:
+        type: aggregate
+        dimensions: []
         metrics:
-          average_rating:
+        - average_rating
       presentation:
+        type: kpi
         note: Mean rating
         tone: warning
     active_users:
       type: kpi
       query:
+        type: aggregate
+        dimensions: []
         metrics:
-          active_users:
+        - active_users
       presentation:
+        type: kpi
         note: Distinct users
         tone: success
     rated_movies:
       type: kpi
       query:
+        type: aggregate
+        dimensions: []
         metrics:
-          rated_movies:
+        - rated_movies
       presentation:
+        type: kpi
         note: Distinct movies
         tone: danger
     tags_per_rating:
       type: kpi
       query:
+        type: aggregate
+        dimensions: []
         metrics:
-          tags_per_rating:
+        - tags_per_rating
       presentation:
+        type: kpi
         note: Independently aggregated tags / ratings
         tone: success
     activity_by_month:
-      title: Ratings and tags by activity month
       type: combo
-      presentation:
-        series_types:
-          Ratings: column
-          Tags: line
       query:
-        time:
-          field: activity_date
+        type: aggregate
+        dimensions:
+        - dimension: activity_date
           grain: month
           alias: activity_month
         metrics:
-          rating_count:
-          tag_count:
+        - rating_count
+        - tag_count
         sort:
-          - field: label
-            direction: asc
+        - field: activity_month
+          direction: asc
         limit: 360
-      interaction:
-        point_selection:
-          toggle: true
-          mappings:
-            - field: activity_date
-              grain: month
-              value: label
-              label: label
-          targets:
-            - rating_count
-            - average_rating
-            - active_users
-            - rated_movies
-            - tags_per_rating
-            - tags_per_rating_by_decade
-            - movie_table
+      title: Ratings and tags by activity month
+      presentation:
+        type: cartesian
     tags_per_rating_by_decade:
-      title: Tags per rating by release decade
       type: bar
       query:
+        type: aggregate
         dimensions:
-          release_decade: release_decade
+        - release_decade
         metrics:
-          tags_per_rating:
+        - tags_per_rating
         sort:
-          - field: release_decade
-            direction: asc
+        - field: release_decade
+          direction: asc
         limit: 20
-      interaction:
-        point_selection:
-          toggle: true
-          mappings:
-            - field: release_decade
-              value: label
-              label: label
-          targets:
-            - rating_count
-            - average_rating
-            - active_users
-            - rated_movies
-            - tags_per_rating
-            - activity_by_month
-            - ratings_by_month
-            - rating_distribution
-            - top_movies
-            - average_by_decade
-            - movie_table
+      title: Tags per rating by release decade
+      presentation:
+        type: cartesian
     ratings_by_month:
-      title: Ratings by month
       type: area
       query:
+        type: aggregate
         dimensions:
-          rating_month: ratings.rating_month
+        - dimension: activity_date
+          grain: month
+          alias: rating_month
         metrics:
-          rating_count:
+        - rating_count
         sort:
-          - field: rating_month
-            direction: asc
+        - field: rating_month
+          direction: asc
         limit: 360
+      title: Ratings by month
+      presentation:
+        type: cartesian
     rating_distribution:
+      type: bar
+      query:
+        type: aggregate
+        dimensions:
+        - rating_bucket
+        metrics:
+        - rating_count
+        sort:
+        - field: rating_bucket
+          direction: asc
       title: Rating distribution
-      type: bar
-      query:
-        dimensions:
-          rating: ratings.rating_bucket
-        metrics:
-          rating_count:
-        sort:
-          - field: rating
-            direction: asc
-      interaction:
-        point_selection:
-          toggle: true
-          mappings:
-            - field: ratings.rating_bucket
-              dataset: ratings
-              value: label
-              label: label
-          targets:
-            - rating_count
-            - average_rating
-            - active_users
-            - rated_movies
-            - tags_per_rating
-            - activity_by_month
-            - ratings_by_month
-            - top_movies
-            - average_by_decade
-            - tags_per_rating_by_decade
-            - movie_table
+      presentation:
+        type: cartesian
     top_movies:
-      title: Most rated movies
       type: bar
       query:
+        type: aggregate
         dimensions:
-          title: movies.title
+        - movie_title
         metrics:
-          rating_count:
+        - rating_count
         sort:
-          - field: value
-            direction: desc
+        - field: rating_count
+          direction: desc
         limit: 15
+      title: Most rated movies
+      presentation:
+        type: cartesian
     average_by_decade:
-      title: Average rating by release decade
       type: bar
       query:
+        type: aggregate
         dimensions:
-          release_decade: movies.release_decade
+        - release_decade
         metrics:
-          average_rating:
+        - average_rating
         sort:
-          - field: release_decade
-            direction: asc
+        - field: release_decade
+          direction: asc
         limit: 20
+      title: Average rating by release decade
+      presentation:
+        type: cartesian
     movie_table:
-      title: Movie ratings
       type: table
       query:
+        type: records
         dataset: ratings
         fields:
-          - movies.title
-          - movies.release_year
-          - movies.release_decade
-          - ratings.rating_bucket
-          - ratings.rating_month
-          - ratings.rating
-      default_sort:
-        key: rating_month
-        direction: desc
-      columns:
-        - key: title
-          label: Title
-        - key: release_year
-          label: Year
-        - key: release_decade
-          label: Decade
-        - key: rating_bucket
-          label: Rating
-        - key: rating_month
-          label: Rated month
-        - key: rating
-          label: Rating value
-          align: right
+        - movies.title
+        - movies.release_year
+        - movies.release_decade
+        - ratings.rating_bucket
+        - ratings.rating_month
+        - ratings.rating
+      title: Movie ratings
+      presentation:
+        type: table
+        rowHeight: 32
+        showHeader: true
+        striped: false
   pages:
-    - id: overview
-      title: Overview
-      canvas:
-        width: 1366
-        height: 1420
-      grid:
-        columns: 12
-        row_height: 48
-        gap: 16
-        padding: 16
-      components:
-        - id: rating-date-filter
-          kind: slicer
-          binding: {scope: report, id: rating_date}
-          presentation: {style: date_range}
-          placement: {col: 1, row: 1, col_span: 3, row_span: 2}
-        - id: decade-filter
-          kind: slicer
-          binding: {scope: report, id: release_decade}
-          presentation: {style: dropdown, search: true}
-          placement: {col: 4, row: 1, col_span: 3, row_span: 2}
-        - id: rating-filter
-          kind: slicer
-          binding: {scope: report, id: rating_bucket}
-          presentation: {style: dropdown}
-          placement: {col: 7, row: 1, col_span: 3, row_span: 2}
-        - id: title-filter
-          kind: slicer
-          binding: {scope: report, id: title}
-          presentation: {style: input}
-          placement: {col: 10, row: 1, col_span: 3, row_span: 2}
-        - id: rating-count
-          kind: visual
-          visual: rating_count
-          placement: {col: 1, row: 4, col_span: 3, row_span: 3}
-        - id: average-rating
-          kind: visual
-          visual: average_rating
-          placement: {col: 4, row: 4, col_span: 3, row_span: 3}
-        - id: active-users
-          kind: visual
-          visual: active_users
-          placement: {col: 7, row: 4, col_span: 3, row_span: 3}
-        - id: rated-movies
-          kind: visual
-          visual: rated_movies
-          placement: {col: 10, row: 4, col_span: 3, row_span: 3}
-        - id: ratings-trend
-          kind: visual
-          visual: ratings_by_month
-          placement: {col: 1, row: 8, col_span: 8, row_span: 6}
-        - id: rating-distribution
-          kind: visual
-          visual: rating_distribution
-          placement: {col: 9, row: 8, col_span: 4, row_span: 6}
-        - id: top-movies
-          kind: visual
-          visual: top_movies
-          placement: {col: 1, row: 15, col_span: 6, row_span: 7}
-        - id: decade-average
-          kind: visual
-          visual: average_by_decade
-          placement: {col: 7, row: 15, col_span: 6, row_span: 7}
-        - id: movie-table
-          kind: visual
-          visual: movie_table
-          placement: {col: 1, row: 23, col_span: 12, row_span: 8}
-        - id: tags-per-rating
-          kind: visual
-          visual: tags_per_rating
-          placement: {col: 1, row: 32, col_span: 3, row_span: 3}
-        - id: activity-by-month
-          kind: visual
-          visual: activity_by_month
-          placement: {col: 4, row: 32, col_span: 9, row_span: 7}
-        - id: tags-per-rating-by-decade
-          kind: visual
-          visual: tags_per_rating_by_decade
-          placement: {col: 1, row: 40, col_span: 12, row_span: 7}
+  - id: overview
+    title: Overview
+    components:
+    - id: rating-date-filter
+      placement:
+        column: 1
+        row: 1
+        columnSpan: 3
+        rowSpan: 2
+      type: filter
+      filter: rating_date
+    - id: decade-filter
+      placement:
+        column: 4
+        row: 1
+        columnSpan: 3
+        rowSpan: 2
+      type: filter
+      filter: release_decade
+    - id: rating-filter
+      placement:
+        column: 7
+        row: 1
+        columnSpan: 3
+        rowSpan: 2
+      type: filter
+      filter: rating_bucket
+    - id: title-filter
+      placement:
+        column: 10
+        row: 1
+        columnSpan: 3
+        rowSpan: 2
+      type: filter
+      filter: title
+    - id: rating-count
+      placement:
+        column: 1
+        row: 4
+        columnSpan: 3
+        rowSpan: 3
+      type: visual
+      visual: rating_count
+    - id: average-rating
+      placement:
+        column: 4
+        row: 4
+        columnSpan: 3
+        rowSpan: 3
+      type: visual
+      visual: average_rating
+    - id: active-users
+      placement:
+        column: 7
+        row: 4
+        columnSpan: 3
+        rowSpan: 3
+      type: visual
+      visual: active_users
+    - id: rated-movies
+      placement:
+        column: 10
+        row: 4
+        columnSpan: 3
+        rowSpan: 3
+      type: visual
+      visual: rated_movies
+    - id: ratings-trend
+      placement:
+        column: 1
+        row: 8
+        columnSpan: 8
+        rowSpan: 6
+      type: visual
+      visual: ratings_by_month
+    - id: rating-distribution
+      placement:
+        column: 9
+        row: 8
+        columnSpan: 4
+        rowSpan: 6
+      type: visual
+      visual: rating_distribution
+    - id: top-movies
+      placement:
+        column: 1
+        row: 15
+        columnSpan: 6
+        rowSpan: 7
+      type: visual
+      visual: top_movies
+    - id: decade-average
+      placement:
+        column: 7
+        row: 15
+        columnSpan: 6
+        rowSpan: 7
+      type: visual
+      visual: average_by_decade
+    - id: movie-table
+      placement:
+        column: 1
+        row: 23
+        columnSpan: 12
+        rowSpan: 8
+      type: visual
+      visual: movie_table
+    - id: tags-per-rating
+      placement:
+        column: 1
+        row: 32
+        columnSpan: 3
+        rowSpan: 3
+      type: visual
+      visual: tags_per_rating
+    - id: activity-by-month
+      placement:
+        column: 4
+        row: 32
+        columnSpan: 9
+        rowSpan: 7
+      type: visual
+      visual: activity_by_month
+    - id: tags-per-rating-by-decade
+      placement:
+        column: 1
+        row: 40
+        columnSpan: 12
+        rowSpan: 7
+      type: visual
+      visual: tags_per_rating_by_decade
+  layout:
+    columns: 12
+    rowHeight: 48
+    gap: 16
+    padding: 16

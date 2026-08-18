@@ -70,6 +70,21 @@ spec:
         - week
         - month
         calendar: iso8601
+    purchase_month:
+      datatype: String
+      bindings:
+        orders:
+          field: orders.purchase_month
+    delivery_bucket:
+      datatype: String
+      bindings:
+        orders:
+          field: orders.delivery_bucket
+    order_id:
+      datatype: String
+      bindings:
+        orders:
+          field: orders.order_id
     state:
       datatype: String
       bindings:
@@ -82,6 +97,68 @@ spec:
           path:
           - delivery_routes_orders
           - orders_customers
+    zip_prefix:
+      datatype: String
+      bindings:
+        orders:
+          field: customers.zip_prefix
+          path:
+          - orders_customers
+        spatial_load_points:
+          field: spatial_load_points.point_id
+    city:
+      datatype: String
+      bindings:
+        orders:
+          field: customers.city
+          path:
+          - orders_customers
+        delivery_routes:
+          field: delivery_routes.route_label
+        spatial_load_points:
+          field: spatial_load_points.city
+    latitude:
+      datatype: Float
+      bindings:
+        orders:
+          field: customers.latitude
+          path:
+          - orders_customers
+        delivery_routes:
+          field: delivery_routes.latitude
+        spatial_load_points:
+          field: spatial_load_points.latitude
+    longitude:
+      datatype: Float
+      bindings:
+        orders:
+          field: customers.longitude
+          path:
+          - orders_customers
+        delivery_routes:
+          field: delivery_routes.longitude
+        spatial_load_points:
+          field: spatial_load_points.longitude
+    point_id:
+      datatype: String
+      bindings:
+        spatial_load_points:
+          field: spatial_load_points.point_id
+    route_id:
+      datatype: String
+      bindings:
+        delivery_routes:
+          field: delivery_routes.route_id
+    point_order:
+      datatype: String
+      bindings:
+        delivery_routes:
+          field: delivery_routes.point_order
+    route_label:
+      datatype: String
+      bindings:
+        delivery_routes:
+          field: delivery_routes.route_label
     order_status:
       datatype: String
       bindings:

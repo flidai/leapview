@@ -15,7 +15,6 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
-	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
@@ -220,17 +219,11 @@ func loadFlatDashboards(project *Project, includes []string) error {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		document, err := LoadDashboardDocumentForProject(path, project.BaseDir)
 		if err != nil {
 			return err
 		}
-		if envelope.Kind != "Dashboard" {
-			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Dashboard", path, envelope.Kind)
-		}
-		var spec dashboardSpec
-		if err := envelope.Spec.Decode(&spec); err != nil {
-			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err)
-		}
+		envelope := resourceEnvelope{APIVersion: string(document.APIVersion), Kind: string(document.Kind), Metadata: metadata{ID: document.Metadata.ID, Name: document.Metadata.Name, Description: valueOrEmpty(document.Metadata.Description), Owner: valueOrEmpty(document.Metadata.Owner), Domain: valueOrEmpty(document.Metadata.Domain), Tags: valueOrStrings(document.Metadata.Tags), Documentation: valueOrEmpty(document.Metadata.Documentation)}}
 		id, name, err := flatResourceIdentity(project, envelope, path, "dashboard")
 		if err != nil {
 			return err
@@ -238,13 +231,10 @@ func loadFlatDashboards(project *Project, includes []string) error {
 		if _, exists := project.Dashboards[name]; exists {
 			return resourceError(path, id, "metadata.name", "duplicate Dashboard %q", name)
 		}
-		if err := appearanceValidate(spec.Appearance); err != nil {
-			return resourceError(path, id, "spec.appearance", "%s", err)
-		}
-		dashboard := &authoring.Dashboard{ID: projectgraph.ResourceID(id), Appearance: spec.Appearance, Title: firstNonEmpty(spec.Title, envelope.Metadata.DisplayName, envelope.Metadata.Title, name), Description: envelope.Metadata.Description, SemanticModel: projectgraph.ResourceID(strings.TrimSpace(spec.SemanticModel)), FilterDefinitions: spec.Filters, FilterBindings: spec.FilterBindings, FilterApplication: spec.FilterApplication, Visuals: spec.Visuals, Pages: projectDashboardPages(spec.Pages)}
-		project.Dashboards[name] = dashboard
+		document.Metadata.ID = id
+		project.Dashboards[name] = &document
 		project.DashboardIDs[name], project.DashboardPaths[name] = id, path
-		project.DashboardMetadata[name] = projectgraph.Metadata{DisplayName: firstNonEmpty(envelope.Metadata.DisplayName, envelope.Metadata.Title, name), Description: envelope.Metadata.Description, Owner: envelope.Metadata.Owner, Domain: envelope.Metadata.Domain, Tags: append([]string(nil), envelope.Metadata.Tags...), Documentation: envelope.Metadata.Documentation}
+		project.DashboardMetadata[name] = projectgraph.Metadata{DisplayName: firstNonEmpty(valueOrEmpty(document.Metadata.DisplayName), name), Description: envelope.Metadata.Description, Owner: envelope.Metadata.Owner, Domain: envelope.Metadata.Domain, Tags: append([]string(nil), envelope.Metadata.Tags...), Documentation: envelope.Metadata.Documentation}
 	}
 	return nil
 }
@@ -460,7 +450,7 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	for name, dashboard := range project.Dashboards {
-		if _, err := resolver.resolve(dashboard.SemanticModel.String(), projectgraph.KindSemanticModel); err != nil {
+		if _, err := resolver.resolve(dashboard.Spec.SemanticModel, projectgraph.KindSemanticModel); err != nil {
 			return resourceError(project.DashboardPaths[name], project.DashboardIDs[name], "spec.semanticModel", "Dashboard %q: %v", name, err)
 		}
 	}
@@ -479,7 +469,7 @@ func validateFlatProject(project Project) error {
 		}
 		if strings.TrimSpace(pub.DefaultPage) != "" {
 			found := false
-			for _, page := range dashboard.Pages {
+			for _, page := range dashboard.Spec.Pages {
 				if page.ID == pub.DefaultPage {
 					found = true
 					break
@@ -740,7 +730,7 @@ func compileProjectGraph(project Project) (projectgraph.ProjectGraph, error) {
 	}
 	for name, dashboard := range project.Dashboards {
 		from, _ := resolver.resolve(project.DashboardIDs[name], projectgraph.KindDashboard)
-		to, err := resolver.resolve(dashboard.SemanticModel.String(), projectgraph.KindSemanticModel)
+		to, err := resolver.resolve(dashboard.Spec.SemanticModel, projectgraph.KindSemanticModel)
 		if err != nil {
 			return projectgraph.ProjectGraph{}, err
 		}

@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	"gopkg.in/yaml.v3"
@@ -348,7 +350,14 @@ func deleteYAMLMapKeys(node *yaml.Node, allowed map[string]struct{}) {
 // ExportDashboard emits one deterministic, schema-validated canonical
 // Dashboard resource. The input is authored state; compiled dashboard
 // definitions are intentionally not accepted by this function.
-func ExportDashboard(document dashboardauthoring.Dashboard, metadata dashboardauthoring.DashboardExportMetadata) ([]byte, error) {
+func ExportDashboard(value any, metadata dashboardauthoring.DashboardExportMetadata) ([]byte, error) {
+	if generated, ok := value.(document.DashboardDocument); ok {
+		return ExportDashboardDocument(generated)
+	}
+	document, ok := value.(dashboardauthoring.Dashboard)
+	if !ok {
+		return nil, fmt.Errorf("dashboard export requires generated DashboardDocument or authored Dashboard, got %T", value)
+	}
 	if err := document.ValidateContract(); err != nil {
 		return nil, fmt.Errorf("validate authored dashboard: %w", err)
 	}
@@ -416,6 +425,48 @@ func ExportDashboard(document dashboardauthoring.Dashboard, metadata dashboardau
 	}
 	if err := configschema.ValidateBytes(configschema.KindDashboard, "dashboard.yaml", bytes); err != nil {
 		return nil, fmt.Errorf("validate canonical dashboard: %w", err)
+	}
+	return bytes, nil
+}
+
+// ExportDashboardDocument serializes the generated Dashboard DTO without
+// introducing a second export schema. Callers that already crossed the
+// canonical document boundary should use this entry point so every field and
+// tagged union is marshaled by the generated contract itself.
+func ExportDashboardDocument(value document.DashboardDocument) ([]byte, error) {
+	if value.APIVersion == "" {
+		value.APIVersion = document.DashboardApiVersionLeapviewDevV1
+	}
+	if value.Kind == "" {
+		value.Kind = document.DashboardResourceKindDashboard
+	}
+	if value.Metadata.ID == "" || value.Metadata.Name == "" {
+		return nil, fmt.Errorf("dashboard metadata.id and metadata.name are required")
+	}
+	jsonBytes, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal generated dashboard document: %w", err)
+	}
+	var node yaml.Node
+	if err := yaml.Unmarshal(jsonBytes, &node); err != nil {
+		return nil, fmt.Errorf("normalize generated dashboard document: %w", err)
+	}
+	var output bytes.Buffer
+	encoder := yaml.NewEncoder(&output)
+	if err := encoder.Encode(&node); err != nil {
+		_ = encoder.Close()
+		return nil, fmt.Errorf("encode generated dashboard document: %w", err)
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, fmt.Errorf("close generated dashboard document: %w", err)
+	}
+	// The generated JSON encoder has already applied the canonical DTO
+	// omission rules. Do not run the legacy authoring YAML pruner here: its
+	// snake_case key allowlist would drop canonical zero values and required
+	// empty collections.
+	bytes := output.Bytes()
+	if err := configschema.ValidateBytes(configschema.KindDashboard, "dashboard.yaml", bytes); err != nil {
+		return nil, fmt.Errorf("validate generated dashboard document: %w", err)
 	}
 	return bytes, nil
 }

@@ -191,7 +191,6 @@ type DashboardCompiledFilterBinding struct {
 	MaxSelectedValues  int32                       `json:"maxSelectedValues"`
 	ReaderEditable     bool                        `json:"readerEditable"`
 	URLParam           string                      `json:"urlParam,omitempty"`
-	URLEncoding        string                      `json:"urlEncoding,omitempty"`
 	PaneVisible        bool                        `json:"paneVisible"`
 	PaneOrder          int32                       `json:"paneOrder"`
 	PaneLabel          string                      `json:"paneLabel,omitempty"`

@@ -82,6 +82,15 @@ spec:
 	assertDiagnostic(t, err, "schema.enum", "type")
 }
 
+func TestDashboardFieldPathUsesCamelCaseAndArrayIndexes(t *testing.T) {
+	if got := dashboardFieldPath([]string{"spec", "visuals", "revenue", "dataBudget", "requiredCompleteness"}); got != "spec.visuals.revenue.dataBudget.requiredCompleteness" {
+		t.Fatalf("field path = %q", got)
+	}
+	if got := dashboardFieldPath([]string{"spec", "pages", "0", "components", "1", "visual"}); got != "spec.pages[0].components[1].visual" {
+		t.Fatalf("array field path = %q", got)
+	}
+}
+
 func TestCanonicalModelAndSemanticModelContract(t *testing.T) {
 	model := []byte(`
 apiVersion: leapview.dev/v1
@@ -270,68 +279,65 @@ metadata:
 spec:
   semanticModel: sales
   filters:
-    state:
+    - id: state
       label: State
-      field: customers.state
-      predicates:
-        - kind: set
-          operators: [in, not_in]
-      options: {kind: distinct, limit: 50}
-  filter_bindings:
-    state:
-      filter: state
-      targets:
-        include: [overview/revenue]
-      default: {kind: unfiltered}
+      dimension: state
+      control: {type: multiSelect}
   visuals:
     revenue:
       type: line
       title: Revenue
       query:
+        type: aggregate
         dimensions: [orders.purchase_month]
         metrics: [revenue]
+      presentation: {type: cartesian}
     total:
       type: kpi
-      query:
-        metrics: [revenue]
+      query: {type: aggregate, dimensions: [], metrics: [revenue]}
+      presentation: {type: kpi}
     orders:
       type: table
       title: Orders
-      cardinality: bounded
       query:
+        type: records
         dataset: orders
-        fields: [orders.order_id, orders.revenue]
+        fields: [order_id, revenue]
+      presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
     state_status:
       type: matrix
       title: State status
       query:
-        rows: [customers.state]
-        columns: [orders.status]
+        type: pivot
+        rows: [state]
+        columns: [order_status]
         metrics: [order_count]
+      presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
     category_status:
       type: pivot
       title: Category status
       query:
+        type: pivot
         rows: [orders.category]
         columns: [orders.status]
         metrics: [order_count]
+      presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
   pages:
     - id: overview
       title: Overview
       components:
         - id: revenue
-          kind: visual
+          type: visual
           visual: revenue
-          placement: {col: 1, row: 1, col_span: 6, row_span: 4}
+          placement: {column: 1, row: 1, columnSpan: 6, rowSpan: 4}
         - id: state
-          kind: slicer
-          binding: {scope: report, id: state}
-          presentation: {style: dropdown}
-          placement: {col: 7, row: 1, col_span: 3, row_span: 2}
+          type: filter
+          filter: state
+          placement: {column: 7, row: 1, columnSpan: 3, rowSpan: 2}
         - id: heading
-          kind: header
+          type: header
           title: Sales
-          placement: {col: 1, row: 5, col_span: 12, row_span: 1}
+          placement: {column: 1, row: 5, columnSpan: 12, rowSpan: 1}
 `))
 	if err != nil {
 		t.Fatalf("ValidateBytes() error = %v", err)
@@ -347,42 +353,20 @@ metadata:
   name: sales
 spec:
   semanticModel: sales
+  filters: []
   visuals:
     revenue:
       type: line
       title: Revenue
       query:
+        type: aggregate
         dimensions: [orders.purchase_month]
-        series: {field: orders.status, alias: status}
         metrics: [revenue]
       presentation:
-        axes:
-          - {id: x, title: Month, tick_density: sparse}
-          - {id: primary_y, title: Revenue, scale: linear, zero: include, minimum: 0, maximum: 100, unit: USD}
-        reference_lines:
-          - {id: target, axis: primary_y, value: {number: 80}, label: Target, tone: success}
-        reference_bands:
-          - id: healthy
-            axis: primary_y
-            from: {field: value, reducer: minimum}
-            to: {field: value, reducer: maximum}
-            label: Healthy range
-        event_annotations:
-          - {id: launch, axis: x, value: {text: "2026-03-01"}, label: Launch}
-        tooltip: [label, value]
+        type: cartesian
         stacking: percent
-        series_order: [delivered, processing]
-        series_colors: {delivered: success, processing: data_3}
-        conditional_formatting:
-          - id: revenue-health
-            target: mark_fill
-            field: value
-            kind: gradient
-            minimum: 0
-            maximum: 100
-            low: {color: danger}
-            high: {color: success}
-            null: {color: neutral}
+        smooth: true
+        showSymbols: true
   pages:
     - id: overview
       title: Overview
@@ -674,6 +658,20 @@ func TestJSONSchemaFilesAreFresh(t *testing.T) {
 		if string(onDisk) != string(content) {
 			t.Fatalf("%s is stale; run leapview schema export --format json-schema --out schemas/json", path)
 		}
+	}
+}
+
+func TestDashboardGeneratedSchemaBytesMatchTrackedContract(t *testing.T) {
+	got, err := JSONSchema(KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("..", "..", "..", "schemas", "json", "dashboard-document.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("embedded Dashboard JSON Schema is stale; regenerate dashboard-document.schema.json")
 	}
 }
 

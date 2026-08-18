@@ -41,6 +41,16 @@ func newVisualPlan(definition visualizationdefinition.Definition) (visualPlan, e
 			return visualPlan{}, fmt.Errorf("visualization %q has no aggregate binding", definition.ID)
 		}
 		plan.Table, plan.Dimensions, plan.Series, plan.Metrics, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Metrics, query.Time, query.Sort, int(query.Limit)
+		// Histogram and distribution operands own their metric identity in the
+		// explicit statistical contract.  Do not require a duplicate generic
+		// aggregate metric just to build the runtime plan.
+		if len(plan.Metrics) == 0 {
+			if query.Histogram != nil {
+				plan.Metrics = []visualizationdefinition.FieldBinding{query.Histogram.Metric}
+			} else if query.Distribution != nil {
+				plan.Metrics = []visualizationdefinition.FieldBinding{query.Distribution.Metric}
+			}
+		}
 	case visualizationdefinition.QuerySpatial:
 		query := definition.Query.Spatial
 		if query == nil {

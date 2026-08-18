@@ -5977,7 +5977,6 @@ paths:
                   selectionMode: example
                   targets:
                     - example
-                  urlEncoding: example
                   urlParam: example
                 componentId: example
                 definition:
@@ -65176,11 +65175,6 @@ components:
         urlParam:
           type: string
           example: example
-        urlEncoding:
-          type: string
-          enum:
-            - typed_v1
-          example: example
         paneVisible:
           type: boolean
           example: true
@@ -65221,7 +65215,6 @@ components:
         selectionMode: example
         targets:
           - example
-        urlEncoding: example
         urlParam: example
     DashboardCompiledFilterDefinition:
       type: object
@@ -65504,7 +65497,6 @@ components:
           selectionMode: example
           targets:
             - example
-          urlEncoding: example
           urlParam: example
         componentId: example
         definition:

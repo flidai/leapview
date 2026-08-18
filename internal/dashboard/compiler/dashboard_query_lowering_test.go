@@ -158,7 +158,7 @@ func TestLowerDashboardQueryRejectsResultReferenceAndRootCollisions(t *testing.T
 		},
 		"records outside root": {
 			query: document.DashboardQuery{Value: &document.RecordsDashboardQuery{Type: "records", Dataset: "orders", Fields: []document.DashboardRecordFieldSelection{{String: stringPtr("customers.state")}}}},
-			want:  "outside records root",
+			want:  "not a safe physical field",
 		},
 		"records empty fields": {
 			query: document.DashboardQuery{Value: &document.RecordsDashboardQuery{Type: "records", Dataset: "orders"}},

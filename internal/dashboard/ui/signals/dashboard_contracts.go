@@ -164,14 +164,13 @@ func DashboardFilterContractFromDefinition(definition dashboarddefinition.Defini
 		for index, dependency := range item.OptionDependencies {
 			dependencies[index] = DashboardFilterBindingRef{Scope: string(dependency.Scope), ID: dependency.ID}
 		}
-		urlEncoding := string(item.URL.Encoding)
 		bindings[key] = DashboardCompiledFilterBinding{
 			Key: key, ID: item.ID, Filter: item.Filter, Scope: string(item.Scope), PageID: optionalValue(item.PageID),
 			Default: DashboardFilterExpressionFromDomain(item.Default), SelectionMode: string(item.Selection.Mode), Required: item.Required,
 			MaxSelectedValues: int32(item.Selection.MaxSelectedValues), ReaderEditable: item.Editable(),
 			URLParam: optionalValue(item.URL.Param), PaneVisible: item.Pane.IsVisible(), PaneOrder: int32(item.Pane.Order),
 			PaneLabel: optionalValue(item.Pane.Label), Targets: append([]string(nil), item.Targets...),
-			URLEncoding: optionalValue(urlEncoding), OptionDependencies: dependencies,
+			OptionDependencies: dependencies,
 		}
 	}
 	return DashboardFilterContract{

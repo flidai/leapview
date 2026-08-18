@@ -237,7 +237,9 @@ func compileCanonicalFilter(authored document.DashboardFilter, model *semanticmo
 		if err := validateCanonicalURLParameter(param); err != nil {
 			return dashboardfilter.Definition{}, dashboardfilter.Binding{}, fmt.Errorf("urlParameter: %w", err)
 		}
-		binding.URL = dashboardfilter.URLPolicy{Param: param, Encoding: dashboardfilter.URLEncodingTypedV1}
+		// The authored document owns only the parameter name. Wire codec
+		// selection belongs to the active shared-link registry lifecycle.
+		binding.URL = dashboardfilter.URLPolicy{Param: param}
 	}
 	if targets := authored.Targets; targets != nil {
 		if len(*targets) == 0 {
@@ -453,6 +455,12 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 			var datasets []string
 			if lowered, err := LowerCanonicalDashboardQuery(visual.Query, model, model.Name); err == nil {
 				datasets = append(datasets, lowered.Plan.Datasets...)
+				if len(datasets) == 0 {
+					datasets, err = canonicalQueryDatasets(visual.Query, model)
+					if err != nil {
+						return fmt.Errorf("visual %q query: %w", component.Visual, err)
+					}
+				}
 			} else {
 				var resolveErr error
 				datasets, resolveErr = canonicalQueryDatasets(visual.Query, model)
@@ -665,7 +673,7 @@ func canonicalPredicates(controlType string, operators *[]document.DashboardFilt
 		return nil, fmt.Errorf("unsupported control type %q", controlType)
 	}
 	if controlType == "numericRange" {
-		if operators != nil {
+		if operators != nil && len(*operators) > 0 {
 			return nil, fmt.Errorf("numericRange does not accept operators")
 		}
 		if kind != dashboardfilter.ValueInteger && kind != dashboardfilter.ValueDecimal {
@@ -674,7 +682,7 @@ func canonicalPredicates(controlType string, operators *[]document.DashboardFilt
 		return []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionRange}}, nil
 	}
 	if controlType == "dateRange" {
-		if operators != nil {
+		if operators != nil && len(*operators) > 0 {
 			return nil, fmt.Errorf("dateRange does not accept operators")
 		}
 		if kind != dashboardfilter.ValueDate && kind != dashboardfilter.ValueTimestamp {
@@ -683,7 +691,7 @@ func canonicalPredicates(controlType string, operators *[]document.DashboardFilt
 		return []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionRange}}, nil
 	}
 	if controlType == "relativePeriod" {
-		if operators != nil {
+		if operators != nil && len(*operators) > 0 {
 			return nil, fmt.Errorf("relativePeriod does not accept operators")
 		}
 		if kind != dashboardfilter.ValueDate && kind != dashboardfilter.ValueTimestamp {

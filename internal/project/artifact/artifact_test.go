@@ -8,8 +8,8 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -62,7 +62,7 @@ func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) 
 			Pipelines:      map[string]string{"sales_refresh": "pipeline:sales"},
 		},
 		DashboardSources: map[string]manifest.DashboardSource{
-			"dashboard:sales": {Document: dashboardauthoring.Dashboard{ID: "dashboard:sales", SemanticModel: "semantic:sales"}, Path: "dashboards/sales.yaml"},
+			"dashboard:sales": {Document: document.DashboardDocument{APIVersion: "leapview.dev/v1", Kind: document.DashboardResourceKindDashboard, Metadata: document.DashboardMetadata{ID: "dashboard:sales", Name: "sales_dashboard"}, Spec: document.DashboardSpec{SemanticModel: "semantic:sales"}}, Path: "dashboards/sales.yaml"},
 		},
 		ResourceFiles: map[string]string{
 			"project:demo":         "leapview.yaml",
@@ -219,7 +219,7 @@ func TestProjectRejectsDashboardIdentityAndSemanticReferenceDrift(t *testing.T) 
 
 	_, projectManifest = projectFixture(t)
 	source := projectManifest.DashboardSources["dashboard:sales"]
-	source.Document.ID = "dashboard:other"
+	source.Document.Metadata.ID = "dashboard:other"
 	projectManifest.DashboardSources["dashboard:sales"] = source
 	if _, err := NewProject(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), `manifest dashboardSources key "dashboard:sales" does not match document id "dashboard:other"`) {
 		t.Fatalf("NewProject() error = %v, want dashboard identity diagnostic", err)
@@ -316,7 +316,7 @@ func TestProjectRoundTripRetainsAuthoredSourceProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	source, ok := decoded.AuthoredDashboardSource("dashboard:sales")
-	if !ok || source.Path != "dashboards/sales.yaml" || source.Document.ID != "dashboard:sales" {
+	if !ok || source.Path != "dashboards/sales.yaml" || source.Document.Metadata.ID != "dashboard:sales" {
 		t.Fatalf("source = %#v, present = %v", source, ok)
 	}
 }

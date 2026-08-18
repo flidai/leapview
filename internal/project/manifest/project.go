@@ -2,8 +2,8 @@ package manifest
 
 import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
@@ -22,9 +22,9 @@ type DashboardSourceMetadata struct {
 }
 
 type DashboardSource struct {
-	Document dashboardauthoring.Dashboard `json:"document"`
-	Metadata DashboardSourceMetadata      `json:"metadata"`
-	Path     string                       `json:"path"`
+	Document document.DashboardDocument `json:"document"`
+	Metadata DashboardSourceMetadata    `json:"metadata"`
+	Path     string                     `json:"path"`
 }
 
 // Project is the mutable, project-wide compiler assembly contract. It is

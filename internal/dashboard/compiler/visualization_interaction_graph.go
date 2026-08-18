@@ -63,20 +63,21 @@ func validateHighlightTargets(
 		if target.Effect != visualizationir.VisualizationInteractionEffectHighlight {
 			continue
 		}
-		fields := make([]string, len(interaction.Mappings))
-		for index, mapping := range interaction.Mappings {
-			fields[index] = mapping.TargetFieldID
-		}
-		if missing, err := missingHighlightField(definitions[target.VisualID], fields); err != nil {
-			return err
-		} else if missing != "" {
-			return fmt.Errorf(
-				"visual %q interaction %q highlight target %q does not expose mapped field %q",
-				sourceID,
-				interaction.ID,
-				target.VisualID,
-				missing,
-			)
+		for _, mapping := range interaction.Mappings {
+			if err := validateTargetDataset(definitions[target.VisualID], mapping.TargetDatasetID); err != nil {
+				return fmt.Errorf("visual %q interaction %q highlight target %q: %w", sourceID, interaction.ID, target.VisualID, err)
+			}
+			if missing, err := missingHighlightField(definitions[target.VisualID], []string{mapping.TargetFieldID}, mapping.TargetDatasetID); err != nil {
+				return err
+			} else if missing != "" {
+				return fmt.Errorf(
+					"visual %q interaction %q highlight target %q does not expose mapped field %q",
+					sourceID,
+					interaction.ID,
+					target.VisualID,
+					missing,
+				)
+			}
 		}
 	}
 	return nil
@@ -91,23 +92,43 @@ func validateSpatialHighlightTargets(
 		if target.Effect != visualizationir.VisualizationInteractionEffectHighlight {
 			continue
 		}
-		fields := []string{interaction.Latitude.TargetFieldID, interaction.Longitude.TargetFieldID}
-		if missing, err := missingHighlightField(definitions[target.VisualID], fields); err != nil {
-			return err
-		} else if missing != "" {
-			return fmt.Errorf(
-				"visual %q spatial interaction %q highlight target %q does not expose mapped field %q",
-				sourceID,
-				interaction.ID,
-				target.VisualID,
-				missing,
-			)
+		for _, mapping := range []visualizationir.VisualizationSpatialFieldMapping{interaction.Latitude, interaction.Longitude} {
+			if err := validateTargetDataset(definitions[target.VisualID], mapping.TargetDatasetID); err != nil {
+				return fmt.Errorf("visual %q spatial interaction %q highlight target %q: %w", sourceID, interaction.ID, target.VisualID, err)
+			}
+			if missing, err := missingHighlightField(definitions[target.VisualID], []string{mapping.TargetFieldID}, mapping.TargetDatasetID); err != nil {
+				return err
+			} else if missing != "" {
+				return fmt.Errorf(
+					"visual %q spatial interaction %q highlight target %q does not expose mapped field %q",
+					sourceID,
+					interaction.ID,
+					target.VisualID,
+					missing,
+				)
+			}
 		}
 	}
 	return nil
 }
 
-func missingHighlightField(definition visualizationdefinition.Definition, fields []string) (string, error) {
+func validateTargetDataset(definition visualizationdefinition.Definition, datasetID *string) error {
+	if datasetID == nil || *datasetID == "" {
+		return nil
+	}
+	base, err := definition.Spec.Base()
+	if err != nil {
+		return err
+	}
+	for _, dataset := range base.Datasets {
+		if dataset.ID == *datasetID {
+			return nil
+		}
+	}
+	return fmt.Errorf("target dataset %q is not declared by visual %q", *datasetID, definition.ID)
+}
+
+func missingHighlightField(definition visualizationdefinition.Definition, fields []string, datasetID *string) (string, error) {
 	if _, isKPI := definition.Spec.Value.(*visualizationir.KPIVisualizationSpec); isKPI {
 		return "", nil
 	}
@@ -117,6 +138,9 @@ func missingHighlightField(definition visualizationdefinition.Definition, fields
 	}
 	exposed := map[string]struct{}{}
 	for _, dataset := range base.Datasets {
+		if datasetID != nil && dataset.ID != *datasetID {
+			continue
+		}
 		for _, field := range dataset.Fields {
 			exposed[field.ID] = struct{}{}
 			if field.SourceRef != nil {

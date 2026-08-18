@@ -2,7 +2,7 @@ package compiler
 
 import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -35,7 +35,7 @@ type Project struct {
 	SemanticModelAIContexts map[string]*semanticmodel.AIContext
 	SemanticModelIDs        map[string]string
 	SemanticModelPaths      map[string]string
-	Dashboards              map[string]*dashboardauthoring.Dashboard
+	Dashboards              map[string]*document.DashboardDocument
 	DashboardIDs            map[string]string
 	DashboardPaths          map[string]string
 	DashboardMetadata       map[string]projectgraph.Metadata

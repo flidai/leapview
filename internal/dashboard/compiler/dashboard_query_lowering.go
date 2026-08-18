@@ -342,8 +342,14 @@ func lowerCanonicalAggregate(query document.AggregateDashboardQuery, model *sema
 		return LoweredDashboardQuery{}, err
 	}
 	tableID := singleDataset(plan.Datasets)
+	resultShape := visualizationdefinition.ResultCategoryMultiMeasure
+	if len(fields) == 0 && len(metricFields) == 1 {
+		resultShape = visualizationdefinition.ResultScalar
+	} else if len(fields) == 1 && len(metricFields) == 1 {
+		resultShape = visualizationdefinition.ResultCategoryValue
+	}
 	binding := visualizationdefinition.QueryBinding{
-		Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryMultiMeasure,
+		Kind: visualizationdefinition.QueryAggregate, ResultShape: resultShape,
 		ModelID: modelID, DatasetID: "primary",
 		Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: tableID, Dimensions: fieldsToBindings(fields), Metrics: fieldsToBindings(metricFields), Sort: sortsToBindings(sorts), Limit: limit},
 	}
@@ -520,15 +526,19 @@ func canonicalRecordFields(values []document.DashboardRecordFieldSelection, data
 		}
 		parts := strings.Split(name, ".")
 		fieldName := name
+		qualified := dataset + "." + fieldName
 		if len(parts) == 2 {
-			if parts[0] != dataset {
-				return nil, nil, fmt.Errorf("field %q is outside records root dataset %q", name, dataset)
+			if parts[0] == dataset {
+				fieldName = parts[1]
+				qualified = dataset + "." + fieldName
+			} else {
+				// A records query may project a governed relationship field from a
+				// related dataset while retaining one root row grain.
+				qualified = name
 			}
-			fieldName = parts[1]
 		} else if len(parts) != 1 {
 			return nil, nil, fmt.Errorf("field %q must be a root physical field", name)
 		}
-		qualified := dataset + "." + fieldName
 		if _, err := model.ResolveDimension(qualified); err != nil {
 			return nil, nil, fmt.Errorf("field %q is not a safe physical field on dataset %q: %w", name, dataset, err)
 		}

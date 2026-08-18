@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -54,7 +54,7 @@ func LoadProject(projectPath string) (Project, error) {
 		SemanticModelAIContexts: map[string]*semanticmodel.AIContext{},
 		SemanticModelIDs:        map[string]string{},
 		SemanticModelPaths:      map[string]string{},
-		Dashboards:              map[string]*dashboardauthoring.Dashboard{},
+		Dashboards:              map[string]*document.DashboardDocument{},
 		DashboardIDs:            map[string]string{},
 		DashboardPaths:          map[string]string{},
 		DashboardMetadata:       map[string]projectgraph.Metadata{},

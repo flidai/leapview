@@ -3,536 +3,348 @@
     "#APIVersion": {
       "const": "leapview.dev/v1"
     },
-    "#CartesianAxis": {
+    "#DashboardAppearance": {
       "additionalProperties": false,
       "properties": {
-        "display_units": {
-          "enum": [
-            "auto",
-            "none",
-            "thousands",
-            "millions",
-            "billions",
-            "trillions"
-          ]
+        "color": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "#DashboardFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "control": {
+          "$ref": "#/$defs/%23DashboardFilterControl"
+        },
+        "default": {
+          "$ref": "#/$defs/%23DashboardFilterExpression"
+        },
+        "description": {
+          "type": "string"
+        },
+        "dimension": {
+          "$ref": "#/$defs/%23Identifier"
         },
         "id": {
-          "enum": [
-            "x",
-            "primary_y",
-            "secondary_y"
-          ]
+          "$ref": "#/$defs/%23Identifier"
         },
-        "maximum": {
-          "type": "number"
-        },
-        "minimum": {
-          "type": "number"
-        },
-        "scale": {
-          "enum": [
-            "automatic",
-            "linear",
-            "log"
-          ]
-        },
-        "tick_density": {
-          "enum": [
-            "automatic",
-            "sparse",
-            "normal",
-            "dense"
-          ]
-        },
-        "title": {
+        "label": {
           "type": "string"
         },
-        "unit": {
-          "type": "string"
+        "operators": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
-        "zero": {
-          "enum": [
-            "automatic",
-            "include",
-            "exclude"
-          ]
+        "readerEditable": {
+          "type": "boolean"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "urlParameter": {
+          "$ref": "#/$defs/%23Identifier"
         }
       },
       "required": [
-        "id"
+        "control",
+        "dimension",
+        "id",
+        "label"
       ],
       "type": "object"
     },
-    "#CartesianPresentation": {
-      "$ref": "#/$defs/%23PresentationCommon",
+    "#DashboardFilterControl": {
       "additionalProperties": false,
       "properties": {
-        "area": {
-          "type": "boolean"
+        "maxSelectedValues": {
+          "type": "integer"
         },
-        "axes": {
-          "items": {
-            "$ref": "#/$defs/%23CartesianAxis"
-          },
-          "type": "array"
-        },
-        "data_zoom": {
-          "type": "boolean"
-        },
-        "dual_axis": {
-          "type": "boolean"
-        },
-        "event_annotations": {
-          "items": {
-            "$ref": "#/$defs/%23EventAnnotation"
-          },
-          "type": "array"
-        },
-        "histogram_bins": {
-          "allOf": [
-            {
-              "type": "number"
-            },
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            }
-          ]
-        },
-        "label_position": {
-          "enum": [
-            "automatic",
-            "inside",
-            "outside",
-            "top"
-          ]
-        },
-        "orientation": {
-          "enum": [
-            "horizontal",
-            "vertical"
-          ]
-        },
-        "reference_bands": {
-          "items": {
-            "$ref": "#/$defs/%23ReferenceBand"
-          },
-          "type": "array"
-        },
-        "reference_lines": {
-          "items": {
-            "$ref": "#/$defs/%23ReferenceLine"
-          },
-          "type": "array"
-        },
-        "series_colors": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "series_order": {
-          "items": {
-            "not": {
-              "const": ""
-            },
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "series_types": {
-          "additionalProperties": {
-            "enum": [
-              "line",
-              "area",
-              "bar",
-              "column"
-            ]
-          },
-          "type": "object"
-        },
-        "show_symbols": {
-          "type": "boolean"
-        },
-        "smooth": {
-          "type": "boolean"
-        },
-        "stacked": {
-          "type": "boolean"
-        },
-        "stacking": {
-          "enum": [
-            "none",
-            "normal",
-            "percent"
-          ]
-        },
-        "step": {
-          "type": "boolean"
-        },
-        "symbol_size": {
-          "exclusiveMinimum": 0,
-          "type": "number"
-        },
-        "tooltip": {
-          "items": {
-            "not": {
-              "const": ""
-            },
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "#CartesianVisual": {
-      "$ref": "#/$defs/%23VisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "presentation": {
-          "$ref": "#/$defs/%23CartesianPresentation"
-        },
-        "query": {
-          "$ref": "#/$defs/%23VisualQuery"
+        "options": {
+          "$ref": "#/$defs/%23DashboardFilterOptions"
         },
         "type": {
           "enum": [
-            "line",
-            "area",
-            "bar",
-            "column",
-            "heatmap",
-            "candlestick",
-            "boxplot",
-            "combo",
-            "waterfall",
-            "histogram"
+            "singleSelect",
+            "multiSelect",
+            "text",
+            "numericRange",
+            "dateRange",
+            "relativePeriod"
           ]
         }
       },
       "required": [
-        "query",
         "type"
       ],
       "type": "object"
     },
-    "#ColorIntent": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/%23DecisionTone"
-        },
-        {
-          "const": "accent"
-        },
-        {
-          "const": "data_1"
-        },
-        {
-          "const": "data_2"
-        },
-        {
-          "const": "data_3"
-        },
-        {
-          "const": "data_4"
-        },
-        {
-          "const": "data_5"
-        },
-        {
-          "const": "data_6"
-        },
-        {
-          "const": "data_7"
-        },
-        {
-          "const": "data_8"
-        }
-      ]
-    },
-    "#ConditionalFormat": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/%23ConditionalFormatCommon",
-          "additionalProperties": false,
-          "properties": {
-            "high": {
-              "$ref": "#/$defs/%23ConditionalStyle"
-            },
-            "kind": {
-              "const": "gradient"
-            },
-            "low": {
-              "$ref": "#/$defs/%23ConditionalStyle"
-            },
-            "maximum": {
-              "type": "number"
-            },
-            "minimum": {
-              "type": "number"
-            },
-            "null": {
-              "$ref": "#/$defs/%23ConditionalStyle"
-            }
-          },
-          "required": [
-            "high",
-            "kind",
-            "low",
-            "maximum",
-            "minimum",
-            "null"
-          ],
-          "type": "object"
-        },
-        {
-          "$ref": "#/$defs/%23ConditionalFormatCommon",
-          "additionalProperties": false,
-          "properties": {
-            "default": {
-              "$ref": "#/$defs/%23ConditionalStyle"
-            },
-            "kind": {
-              "const": "rules"
-            },
-            "null": {
-              "$ref": "#/$defs/%23ConditionalStyle"
-            },
-            "rules": {
-              "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "operator": {
-                    "anyOf": [
-                      {
-                        "const": "less_than"
-                      },
-                      {
-                        "const": "less_or_equal"
-                      },
-                      {
-                        "const": "greater_than"
-                      },
-                      {
-                        "const": "greater_or_equal"
-                      },
-                      {
-                        "const": "equal"
-                      },
-                      {
-                        "const": "not_equal"
-                      }
-                    ]
-                  },
-                  "style": {
-                    "$ref": "#/$defs/%23ConditionalStyle"
-                  },
-                  "value": {
-                    "type": "number"
-                  }
-                },
-                "required": [
-                  "operator",
-                  "style",
-                  "value"
-                ],
-                "type": "object"
-              },
-              "minItems": 1,
-              "prefixItems": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "operator": {
-                      "anyOf": [
-                        {
-                          "const": "less_than"
-                        },
-                        {
-                          "const": "less_or_equal"
-                        },
-                        {
-                          "const": "greater_than"
-                        },
-                        {
-                          "const": "greater_or_equal"
-                        },
-                        {
-                          "const": "equal"
-                        },
-                        {
-                          "const": "not_equal"
-                        }
-                      ]
-                    },
-                    "style": {
-                      "$ref": "#/$defs/%23ConditionalStyle"
-                    },
-                    "value": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "operator",
-                    "style",
-                    "value"
-                  ],
-                  "type": "object"
-                }
-              ],
-              "type": "array"
-            }
-          },
-          "required": [
-            "default",
-            "kind",
-            "null",
-            "rules"
-          ],
-          "type": "object"
-        },
-        {
-          "$ref": "#/$defs/%23ConditionalFormatCommon",
-          "additionalProperties": false,
-          "properties": {
-            "default": {
-              "$ref": "#/$defs/%23ConditionalStyle"
-            },
-            "kind": {
-              "const": "field"
-            },
-            "null": {
-              "$ref": "#/$defs/%23ConditionalStyle"
-            },
-            "source_field": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            },
-            "values": {
-              "additionalProperties": true,
-              "type": "object"
-            }
-          },
-          "required": [
-            "default",
-            "kind",
-            "null",
-            "source_field",
-            "values"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "#ConditionalFormatCommon": {
-      "additionalProperties": false,
+    "#DashboardFilterExpression": {
+      "additionalProperties": true,
       "properties": {
-        "field": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "id": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "target": {
-          "$ref": "#/$defs/%23ConditionalTarget"
+        "type": {
+          "enum": [
+            "unfiltered",
+            "nullCheck",
+            "set",
+            "comparison",
+            "range",
+            "relativePeriod"
+          ]
         }
       },
       "required": [
-        "field",
-        "id",
-        "target"
+        "type"
       ],
       "type": "object"
     },
-    "#ConditionalStyle": {
+    "#DashboardFilterOption": {
       "additionalProperties": false,
       "properties": {
-        "color": {
-          "$ref": "#/$defs/%23ColorIntent"
+        "label": {
+          "type": "string"
         },
-        "icon": {
-          "$ref": "#/$defs/%23IconIntent"
+        "value": {
+          "$ref": "#/$defs/%23DashboardFilterValue"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#DashboardFilterOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "dataset": {
+          "$ref": "#/$defs/%23Identifier"
+        },
+        "dependsOn": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "type": "array"
+        },
+        "includeNull": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "distinct",
+            "static"
+          ]
+        },
+        "values": {
+          "items": {
+            "$ref": "#/$defs/%23DashboardFilterOption"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "#DashboardFilterValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "value": true
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "#DashboardIncludes": {
+      "additionalProperties": false,
+      "properties": {
+        "components": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filters": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "visuals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"
     },
-    "#ConditionalTarget": {
-      "enum": [
-        "mark_fill",
-        "mark_stroke",
-        "series_color",
-        "label_foreground",
-        "visual_background",
-        "cell_foreground",
-        "cell_background",
-        "kpi_value",
-        "icon"
-      ]
+    "#DashboardLayoutDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "type": "integer"
+        },
+        "gap": {
+          "type": "integer"
+        },
+        "padding": {
+          "type": "integer"
+        },
+        "rowHeight": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "columns",
+        "gap",
+        "padding",
+        "rowHeight"
+      ],
+      "type": "object"
+    },
+    "#DashboardPage": {
+      "additionalProperties": false,
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/%23DashboardPageComponent"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/%23Identifier"
+        },
+        "layout": {
+          "const": {}
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "components",
+        "id",
+        "title"
+      ],
+      "type": "object"
+    },
+    "#DashboardPageComponent": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/$defs/%23DashboardPlacement"
+        },
+        "type": {
+          "enum": [
+            "visual",
+            "filter",
+            "header"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "placement",
+        "type"
+      ],
+      "type": "object"
+    },
+    "#DashboardPlacement": {
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "type": "integer"
+        },
+        "columnSpan": {
+          "type": "integer"
+        },
+        "row": {
+          "type": "integer"
+        },
+        "rowSpan": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "column",
+        "columnSpan",
+        "row",
+        "rowSpan"
+      ],
+      "type": "object"
+    },
+    "#DashboardQuery": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "enum": [
+            "aggregate",
+            "records",
+            "pivot",
+            "histogram",
+            "distribution"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
     },
     "#DashboardSpec": {
       "additionalProperties": false,
       "properties": {
         "appearance": {
-          "additionalProperties": false,
-          "properties": {
-            "color": {
-              "enum": [
-                "gray",
-                "blue",
-                "green",
-                "yellow",
-                "orange",
-                "red",
-                "purple",
-                "pink",
-                "coral",
-                "default"
-              ]
-            },
-            "icon": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/%23ObjectID"
-                },
-                {
-                  "const": "default"
-                }
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "filter_application": {
-          "$ref": "#/$defs/%23FilterApplication"
-        },
-        "filter_bindings": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "$ref": "#/$defs/%23FilterBinding"
-            }
-          },
-          "type": "object"
+          "$ref": "#/$defs/%23DashboardAppearance"
         },
         "filters": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "$ref": "#/$defs/%23FilterDefinition"
-            }
+          "items": {
+            "$ref": "#/$defs/%23DashboardFilter"
           },
-          "type": "object"
+          "type": "array"
+        },
+        "includes": {
+          "$ref": "#/$defs/%23DashboardIncludes"
+        },
+        "layout": {
+          "$ref": "#/$defs/%23DashboardLayoutDefaults"
         },
         "pages": {
           "items": {
-            "$ref": "#/$defs/%23Page"
+            "$ref": "#/$defs/%23DashboardPage"
           },
           "minItems": 1,
           "type": "array"
@@ -540,1626 +352,102 @@
         "semanticModel": {
           "$ref": "#/$defs/%23ResourceID"
         },
-        "title": {
-          "type": "string"
-        },
         "visuals": {
           "additionalProperties": false,
           "minProperties": 1,
           "patternProperties": {
             "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "$ref": "#/$defs/%23Visual"
+              "$ref": "#/$defs/%23DashboardVisual"
             }
           },
           "type": "object"
         }
       },
       "required": [
+        "filters",
         "pages",
         "semanticModel",
         "visuals"
       ],
       "type": "object"
     },
-    "#DataTableVisual": {
-      "$ref": "#/$defs/%23TabularVisualCommon",
+    "#DashboardVisual": {
       "additionalProperties": false,
       "properties": {
-        "query": {
-          "$ref": "#/$defs/%23TableQuery"
+        "accessibility": {
+          "const": {}
         },
-        "type": {
-          "const": "table"
-        }
-      },
-      "required": [
-        "query",
-        "type"
-      ],
-      "type": "object"
-    },
-    "#DecisionTone": {
-      "enum": [
-        "neutral",
-        "ink",
-        "success",
-        "warning",
-        "danger"
-      ]
-    },
-    "#EventAnnotation": {
-      "additionalProperties": false,
-      "properties": {
-        "axis": {
-          "const": "x"
-        },
-        "description": {
-          "type": "string"
-        },
-        "id": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "label": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "tone": {
-          "$ref": "#/$defs/%23DecisionTone"
-        },
-        "value": {
-          "$ref": "#/$defs/%23ReferenceValue"
-        }
-      },
-      "required": [
-        "axis",
-        "id",
-        "label",
-        "value"
-      ],
-      "type": "object"
-    },
-    "#FieldRef": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
-      "type": "string"
-    },
-    "#FieldRefObject": {
-      "additionalProperties": false,
-      "properties": {
-        "alias": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "field": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/%23FieldRef"
-            },
-            {
-              "$ref": "#/$defs/%23Identifier"
-            }
-          ]
-        }
-      },
-      "required": [
-        "alias",
-        "field"
-      ],
-      "type": "object"
-    },
-    "#FieldRefValue": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/%23FieldRef"
-        },
-        {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        {
-          "$ref": "#/$defs/%23FieldRefObject"
-        }
-      ]
-    },
-    "#FieldRefs": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/%23FieldRefValue"
-          },
+        "calculations": {
           "type": "array"
         },
-        {
+        "dataBudget": {
+          "additionalProperties": false,
+          "properties": {
+            "maxRows": {
+              "type": "integer"
+            },
+            "requiredCompleteness": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "maxRows"
+          ],
+          "type": "object"
+        },
+        "datasets": {
           "additionalProperties": false,
           "patternProperties": {
             "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "anyOf": [
-                {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/%23FieldRef"
-                    },
-                    {
-                      "$ref": "#/$defs/%23Identifier"
-                    }
-                  ]
-                },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "field": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/$defs/%23FieldRef"
-                        },
-                        {
-                          "$ref": "#/$defs/%23Identifier"
-                        }
-                      ]
-                    }
-                  },
-                  "required": [
-                    "field"
-                  ],
-                  "type": "object"
-                }
-              ]
+              "$ref": "#/$defs/%23DashboardQuery"
             }
           },
           "type": "object"
-        }
-      ]
-    },
-    "#FilterApplication": {
-      "additionalProperties": false,
-      "properties": {
-        "mode": {
-          "enum": [
-            "immediate",
-            "deferred"
-          ]
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object"
-    },
-    "#FilterBinding": {
-      "additionalProperties": false,
-      "properties": {
-        "default": {
-          "$ref": "#/$defs/%23FilterExpression"
-        },
-        "filter": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "option_interactions": {
-          "additionalProperties": false,
-          "properties": {
-            "exclude": {
-              "items": {
-                "$ref": "#/$defs/%23FilterBindingRef"
-              },
-              "type": "array"
-            },
-            "include": {
-              "items": {
-                "$ref": "#/$defs/%23FilterBindingRef"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
-        "pane": {
-          "additionalProperties": false,
-          "properties": {
-            "label": {
-              "type": "string"
-            },
-            "order": {
-              "type": "integer"
-            },
-            "visible": {
-              "type": "boolean"
-            }
-          },
-          "type": "object"
-        },
-        "reader_editable": {
-          "type": "boolean"
-        },
-        "selection": {
-          "additionalProperties": false,
-          "properties": {
-            "max_selected_values": {
-              "allOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              ]
-            },
-            "mode": {
-              "enum": [
-                "single",
-                "multiple"
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "targets": {
-          "additionalProperties": false,
-          "properties": {
-            "exclude": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "include": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
-        "url": {
-          "additionalProperties": false,
-          "properties": {
-            "encoding": {
-              "const": "typed_v1"
-            },
-            "param": {
-              "type": "string"
-            }
-          },
-          "type": "object"
-        }
-      },
-      "required": [
-        "filter"
-      ],
-      "type": "object"
-    },
-    "#FilterBindingRef": {
-      "additionalProperties": false,
-      "properties": {
-        "id": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "scope": {
-          "enum": [
-            "page",
-            "report"
-          ]
-        }
-      },
-      "required": [
-        "id",
-        "scope"
-      ],
-      "type": "object"
-    },
-    "#FilterBound": {
-      "additionalProperties": false,
-      "properties": {
-        "inclusive": {
-          "type": "boolean"
-        },
-        "value": {
-          "$ref": "#/$defs/%23FilterValue"
-        }
-      },
-      "required": [
-        "inclusive",
-        "value"
-      ],
-      "type": "object"
-    },
-    "#FilterDefinition": {
-      "additionalProperties": false,
-      "properties": {
-        "dataset": {
-          "$ref": "#/$defs/%23Identifier"
         },
         "description": {
           "type": "string"
         },
-        "field": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/%23FieldRef"
-            },
-            {
-              "$ref": "#/$defs/%23Identifier"
-            }
-          ]
+        "interactions": {
+          "type": "array"
         },
-        "formatting": {
-          "additionalProperties": false,
+        "metadata": {
+          "const": {}
+        },
+        "presentation": {
+          "additionalProperties": true,
           "properties": {
-            "pattern": {
-              "type": "string"
-            },
-            "unit": {
+            "type": {
               "type": "string"
             }
           },
+          "required": [
+            "type"
+          ],
           "type": "object"
         },
-        "label": {
+        "query": {
+          "$ref": "#/$defs/%23DashboardQuery"
+        },
+        "subtitle": {
           "type": "string"
         },
-        "options": {
-          "$ref": "#/$defs/%23FilterOptionSource"
-        },
-        "predicates": {
-          "items": {
-            "$ref": "#/$defs/%23FilterPredicate"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "field",
-        "label",
-        "predicates"
-      ],
-      "type": "object"
-    },
-    "#FilterExpression": {
-      "anyOf": [
-        {
-          "const": {
-            "kind": "unfiltered"
-          }
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "null_check"
-            },
-            "operator": {
-              "anyOf": [
-                {
-                  "const": "is_null"
-                },
-                {
-                  "const": "is_not_null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "kind",
-            "operator"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "set"
-            },
-            "operator": {
-              "anyOf": [
-                {
-                  "const": "in"
-                },
-                {
-                  "const": "not_in"
-                }
-              ]
-            },
-            "values": {
-              "items": {
-                "$ref": "#/$defs/%23FilterValue"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "kind",
-            "operator",
-            "values"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "comparison"
-            },
-            "operator": {
-              "anyOf": [
-                {
-                  "const": "equals"
-                },
-                {
-                  "const": "not_equals"
-                },
-                {
-                  "const": "contains"
-                },
-                {
-                  "const": "not_contains"
-                },
-                {
-                  "const": "starts_with"
-                },
-                {
-                  "const": "ends_with"
-                },
-                {
-                  "const": "greater_than"
-                },
-                {
-                  "const": "greater_than_or_equal"
-                },
-                {
-                  "const": "less_than"
-                },
-                {
-                  "const": "less_than_or_equal"
-                }
-              ]
-            },
-            "value": {
-              "$ref": "#/$defs/%23FilterValue"
-            }
-          },
-          "required": [
-            "kind",
-            "operator",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "range"
-            },
-            "lower": {
-              "$ref": "#/$defs/%23FilterBound"
-            },
-            "upper": {
-              "$ref": "#/$defs/%23FilterBound"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "anchor": {
-              "anyOf": [
-                {
-                  "const": "current_time"
-                },
-                {
-                  "const": "first_available"
-                },
-                {
-                  "const": "last_available"
-                },
-                {
-                  "const": "fixed"
-                }
-              ]
-            },
-            "anchor_value": {
-              "$ref": "#/$defs/%23FilterValue"
-            },
-            "count": {
-              "allOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "exclusiveMinimum": 0,
-                  "type": "integer"
-                }
-              ]
-            },
-            "direction": {
-              "anyOf": [
-                {
-                  "const": "previous"
-                },
-                {
-                  "const": "current"
-                },
-                {
-                  "const": "next"
-                }
-              ]
-            },
-            "include_current": {
-              "type": "boolean"
-            },
-            "kind": {
-              "const": "relative_period"
-            },
-            "unit": {
-              "anyOf": [
-                {
-                  "const": "minute"
-                },
-                {
-                  "const": "hour"
-                },
-                {
-                  "const": "day"
-                },
-                {
-                  "const": "week"
-                },
-                {
-                  "const": "month"
-                },
-                {
-                  "const": "quarter"
-                },
-                {
-                  "const": "year"
-                }
-              ]
-            }
-          },
-          "required": [
-            "anchor",
-            "count",
-            "direction",
-            "kind",
-            "unit"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "#FilterOptionSource": {
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "enum": [
-            "static",
-            "distinct"
-          ]
-        },
-        "limit": {
-          "allOf": [
-            {
-              "type": "number"
-            },
-            {
-              "maximum": 500,
-              "minimum": 0,
-              "type": "integer"
-            }
-          ]
-        },
-        "values": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "label": {
-                "type": "string"
-              },
-              "value": {
-                "$ref": "#/$defs/%23FilterValue"
-              }
-            },
-            "required": [
-              "label",
-              "value"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "#FilterPredicate": {
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "enum": [
-            "null_check",
-            "set",
-            "comparison",
-            "range",
-            "relative_period"
-          ]
-        },
-        "operators": {
-          "items": {
-            "enum": [
-              "is_null",
-              "is_not_null",
-              "in",
-              "not_in",
-              "equals",
-              "not_equals",
-              "contains",
-              "not_contains",
-              "starts_with",
-              "ends_with",
-              "greater_than",
-              "greater_than_or_equal",
-              "less_than",
-              "less_than_or_equal"
-            ]
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "type": "object"
-    },
-    "#FilterValue": {
-      "anyOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "string"
-            },
-            "value": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "boolean"
-            },
-            "value": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "kind",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "anyOf": [
-                {
-                  "const": "integer"
-                },
-                {
-                  "const": "decimal"
-                },
-                {
-                  "const": "date"
-                },
-                {
-                  "const": "timestamp"
-                }
-              ]
-            },
-            "value": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "value"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "#GeographicLayer": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/%23GeographicLayerCommon",
-          "additionalProperties": false,
-          "properties": {
-            "geometry_asset": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "join": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "kind": {
-              "const": "choropleth"
-            }
-          },
-          "required": [
-            "geometry_asset",
-            "join",
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "$ref": "#/$defs/%23GeographicLayerCommon",
-          "additionalProperties": false,
-          "properties": {
-            "cluster": {
-              "additionalProperties": false,
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "max_zoom": {
-                  "allOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "maximum": 24,
-                      "minimum": 0,
-                      "type": "integer"
-                    }
-                  ]
-                },
-                "minimum_points": {
-                  "allOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "minimum": 2,
-                      "type": "integer"
-                    }
-                  ]
-                },
-                "radius": {
-                  "allOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "integer"
-                    }
-                  ]
-                },
-                "show_count": {
-                  "type": "boolean"
-                }
-              },
-              "type": "object"
-            },
-            "kind": {
-              "const": "point"
-            },
-            "latitude": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "longitude": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "size": {
-              "additionalProperties": false,
-              "properties": {
-                "domain_maximum": {
-                  "type": "number"
-                },
-                "domain_minimum": {
-                  "type": "number"
-                },
-                "maximum_radius": {
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "minimum_radius": {
-                  "minimum": 0,
-                  "type": "number"
-                }
-              },
-              "type": "object"
-            }
-          },
-          "required": [
-            "kind",
-            "latitude",
-            "longitude"
-          ],
-          "type": "object"
-        },
-        {
-          "$ref": "#/$defs/%23GeographicLayerCommon",
-          "additionalProperties": false,
-          "properties": {
-            "heat": {
-              "additionalProperties": false,
-              "properties": {
-                "intensity": {
-                  "exclusiveMinimum": 0,
-                  "type": "number"
-                },
-                "radius": {
-                  "exclusiveMinimum": 0,
-                  "type": "number"
-                }
-              },
-              "type": "object"
-            },
-            "kind": {
-              "anyOf": [
-                {
-                  "const": "heat"
-                },
-                {
-                  "const": "density"
-                }
-              ]
-            },
-            "latitude": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "longitude": {
-              "$ref": "#/$defs/%23Identifier"
-            }
-          },
-          "required": [
-            "kind",
-            "latitude",
-            "longitude"
-          ],
-          "type": "object"
-        },
-        {
-          "$ref": "#/$defs/%23GeographicLayerCommon",
-          "additionalProperties": false,
-          "properties": {
-            "geometry_asset": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "kind": {
-              "const": "reference"
-            }
-          },
-          "required": [
-            "geometry_asset",
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "$ref": "#/$defs/%23GeographicLayerCommon",
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "const": "path"
-            },
-            "latitude": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "line": {
-              "additionalProperties": false,
-              "properties": {
-                "curvature": {
-                  "maximum": 1,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "width": {
-                  "exclusiveMinimum": 0,
-                  "type": "number"
-                }
-              },
-              "type": "object"
-            },
-            "longitude": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "order": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "path": {
-              "$ref": "#/$defs/%23Identifier"
-            }
-          },
-          "required": [
-            "kind",
-            "latitude",
-            "longitude",
-            "order",
-            "path"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "#GeographicLayerCommon": {
-      "additionalProperties": false,
-      "properties": {
-        "category": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "color": {
-          "additionalProperties": false,
-          "properties": {
-            "domain_maximum": {
-              "type": "number"
-            },
-            "domain_midpoint": {
-              "type": "number"
-            },
-            "domain_minimum": {
-              "type": "number"
-            },
-            "kind": {
-              "enum": [
-                "sequential",
-                "diverging",
-                "categorical"
-              ]
-            },
-            "null_color": {
-              "type": "string"
-            },
-            "palette": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "reverse": {
-              "type": "boolean"
-            }
-          },
-          "type": "object"
-        },
-        "id": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "label": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "opacity": {
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "position": {
-          "enum": [
-            "below_labels",
-            "above_labels"
-          ]
-        },
-        "stroke": {
-          "additionalProperties": false,
-          "properties": {
-            "color": {
-              "type": "string"
-            },
-            "opacity": {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            },
-            "width": {
-              "minimum": 0,
-              "type": "number"
-            }
-          },
-          "type": "object"
-        },
-        "tooltip": {
-          "items": {
-            "$ref": "#/$defs/%23Identifier"
-          },
-          "type": "array"
-        },
-        "value": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "visibility": {
-          "additionalProperties": false,
-          "properties": {
-            "max_zoom": {
-              "maximum": 24,
-              "minimum": 0,
-              "type": "number"
-            },
-            "min_zoom": {
-              "maximum": 24,
-              "minimum": 0,
-              "type": "number"
-            }
-          },
-          "type": "object"
-        }
-      },
-      "required": [
-        "id"
-      ],
-      "type": "object"
-    },
-    "#GeographicVisual": {
-      "$ref": "#/$defs/%23VisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "geo": {
-          "additionalProperties": false,
-          "properties": {
-            "basemap": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/%23Identifier"
-                },
-                {
-                  "const": "blank"
-                }
-              ]
-            },
-            "camera": {
-              "additionalProperties": false,
-              "properties": {
-                "center": {
-                  "maxLength": 2,
-                  "minItems": 2,
-                  "prefixItems": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "type": "array"
-                },
-                "max_zoom": {
-                  "maximum": 24,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "min_zoom": {
-                  "maximum": 24,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "mode": {
-                  "enum": [
-                    "fit_data",
-                    "fixed",
-                    "preserve"
-                  ]
-                },
-                "padding": {
-                  "allOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "minimum": 0,
-                      "type": "integer"
-                    }
-                  ]
-                },
-                "zoom": {
-                  "maximum": 24,
-                  "minimum": 0,
-                  "type": "number"
-                }
-              },
-              "type": "object"
-            },
-            "controls": {
-              "additionalProperties": false,
-              "properties": {
-                "compass": {
-                  "type": "boolean"
-                },
-                "reset": {
-                  "type": "boolean"
-                },
-                "zoom": {
-                  "type": "boolean"
-                }
-              },
-              "type": "object"
-            },
-            "label_density": {
-              "enum": [
-                "hidden",
-                "normal",
-                "dense"
-              ]
-            },
-            "layers": {
-              "items": {
-                "$ref": "#/$defs/%23GeographicLayer"
-              },
-              "minItems": 1,
-              "prefixItems": [
-                {
-                  "$ref": "#/$defs/%23GeographicLayer"
-                }
-              ],
-              "type": "array"
-            },
-            "theme": {
-              "enum": [
-                "auto",
-                "light",
-                "dark"
-              ]
-            }
-          },
-          "required": [
-            "layers"
-          ],
-          "type": "object"
-        },
-        "presentation": {
-          "additionalProperties": false,
-          "properties": {
-            "conditional_formatting": {
-              "items": {
-                "$ref": "#/$defs/%23ConditionalFormat"
-              },
-              "type": "array"
-            },
-            "display_units": {
-              "enum": [
-                "auto",
-                "none",
-                "thousands",
-                "millions",
-                "billions",
-                "trillions"
-              ]
-            },
-            "labels": {
-              "$ref": "#/$defs/%23LabelPolicy"
-            },
-            "legend": {
-              "enum": [
-                "hidden",
-                "top",
-                "right",
-                "bottom",
-                "left"
-              ]
-            },
-            "show_labels": {
-              "type": "boolean"
-            }
-          },
-          "type": "object"
-        },
-        "query": {
-          "$ref": "#/$defs/%23VisualQuery"
+        "title": {
+          "type": "string"
         },
         "type": {
-          "const": "map"
+          "type": "string"
         }
       },
       "required": [
-        "geo",
+        "presentation",
         "query",
         "type"
       ],
       "type": "object"
-    },
-    "#HeaderComponent": {
-      "$ref": "#/$defs/%23PageComponentCommon",
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "const": "header"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "type": "object"
-    },
-    "#HierarchyPresentation": {
-      "$ref": "#/$defs/%23PresentationCommon",
-      "additionalProperties": false,
-      "properties": {
-        "breadcrumb": {
-          "type": "boolean"
-        },
-        "curveness": {
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "focus": {
-          "enum": [
-            "none",
-            "adjacency"
-          ]
-        },
-        "initial_depth": {
-          "allOf": [
-            {
-              "type": "number"
-            },
-            {
-              "minimum": 0,
-              "type": "integer"
-            }
-          ]
-        },
-        "layout": {
-          "enum": [
-            "standard",
-            "circular"
-          ]
-        },
-        "node_gap": {
-          "minimum": 0,
-          "type": "number"
-        },
-        "orientation": {
-          "enum": [
-            "horizontal",
-            "vertical"
-          ]
-        },
-        "roam": {
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "#HierarchyVisual": {
-      "$ref": "#/$defs/%23VisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "presentation": {
-          "$ref": "#/$defs/%23HierarchyPresentation"
-        },
-        "query": {
-          "$ref": "#/$defs/%23VisualQuery"
-        },
-        "type": {
-          "enum": [
-            "treemap",
-            "sankey",
-            "graph",
-            "tree",
-            "sunburst"
-          ]
-        }
-      },
-      "required": [
-        "query",
-        "type"
-      ],
-      "type": "object"
-    },
-    "#IconIntent": {
-      "enum": [
-        "circle",
-        "square",
-        "diamond",
-        "triangle_up",
-        "triangle_down",
-        "arrow_up",
-        "arrow_down",
-        "warning"
-      ]
     },
     "#Identifier": {
       "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
       "type": "string"
-    },
-    "#Interaction": {
-      "additionalProperties": false,
-      "properties": {
-        "point_selection": {
-          "$ref": "#/$defs/%23SelectionInteraction"
-        },
-        "row_selection": {
-          "$ref": "#/$defs/%23SelectionInteraction"
-        },
-        "spatial_selection": {
-          "$ref": "#/$defs/%23SpatialSelectionInteraction"
-        }
-      },
-      "type": "object"
-    },
-    "#KPIConfiguration": {
-      "additionalProperties": false,
-      "properties": {
-        "comparison": {
-          "$ref": "#/$defs/%23KPIValueBinding"
-        },
-        "delta": {
-          "enum": [
-            "absolute",
-            "relative"
-          ]
-        },
-        "favorable_direction": {
-          "enum": [
-            "increase",
-            "decrease",
-            "neutral"
-          ]
-        },
-        "goal": {
-          "$ref": "#/$defs/%23KPIValueBinding"
-        },
-        "missing_comparison": {
-          "enum": [
-            "show_unavailable",
-            "hide"
-          ]
-        },
-        "mode": {
-          "enum": [
-            "compact",
-            "bullet",
-            "progress"
-          ]
-        },
-        "ranges": {
-          "items": {
-            "$ref": "#/$defs/%23KPIQualitativeRange"
-          },
-          "type": "array"
-        },
-        "trend": {
-          "$ref": "#/$defs/%23KPITrendBinding"
-        }
-      },
-      "type": "object"
-    },
-    "#KPIQualitativeRange": {
-      "additionalProperties": false,
-      "properties": {
-        "label": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "maximum": {
-          "type": "number"
-        },
-        "minimum": {
-          "type": "number"
-        },
-        "tone": {
-          "enum": [
-            "neutral",
-            "ink",
-            "success",
-            "warning",
-            "danger"
-          ]
-        }
-      },
-      "required": [
-        "label",
-        "tone"
-      ],
-      "type": "object"
-    },
-    "#KPITrendBinding": {
-      "additionalProperties": false,
-      "properties": {
-        "category": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "dataset": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "value": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        }
-      },
-      "required": [
-        "category",
-        "dataset",
-        "value"
-      ],
-      "type": "object"
-    },
-    "#KPIValueBinding": {
-      "additionalProperties": false,
-      "properties": {
-        "dataset": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "field": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "reducer": {
-          "enum": [
-            "first",
-            "last",
-            "minimum",
-            "maximum",
-            "mean",
-            "median"
-          ]
-        }
-      },
-      "required": [
-        "dataset",
-        "field"
-      ],
-      "type": "object"
-    },
-    "#KPIVisual": {
-      "$ref": "#/$defs/%23VisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "kpi": {
-          "$ref": "#/$defs/%23KPIConfiguration"
-        },
-        "presentation": {
-          "$ref": "#/$defs/%23KPIVisualPresentation"
-        },
-        "query": {
-          "$ref": "#/$defs/%23VisualQuery"
-        },
-        "type": {
-          "const": "kpi"
-        }
-      },
-      "required": [
-        "query",
-        "type"
-      ],
-      "type": "object"
-    },
-    "#KPIVisualPresentation": {
-      "additionalProperties": false,
-      "properties": {
-        "conditional_formatting": {
-          "items": {
-            "$ref": "#/$defs/%23ConditionalFormat"
-          },
-          "type": "array"
-        },
-        "display_units": {
-          "enum": [
-            "auto",
-            "none",
-            "thousands",
-            "millions",
-            "billions",
-            "trillions"
-          ]
-        },
-        "note": {
-          "type": "string"
-        },
-        "thresholds": {
-          "items": {
-            "$ref": "#/$defs/%23Threshold"
-          },
-          "type": "array"
-        },
-        "tone": {
-          "enum": [
-            "neutral",
-            "ink",
-            "success",
-            "warning",
-            "danger"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "#LabelPolicy": {
-      "additionalProperties": false,
-      "properties": {
-        "density": {
-          "enum": [
-            "hidden",
-            "automatic",
-            "dense",
-            "always"
-          ]
-        },
-        "max_characters": {
-          "allOf": [
-            {
-              "type": "number"
-            },
-            {
-              "maximum": 200,
-              "minimum": 4,
-              "type": "integer"
-            }
-          ]
-        },
-        "minimum_spacing": {
-          "allOf": [
-            {
-              "type": "number"
-            },
-            {
-              "maximum": 64,
-              "minimum": 0,
-              "type": "integer"
-            }
-          ]
-        },
-        "priority": {
-          "items": {
-            "enum": [
-              "selected",
-              "anomaly",
-              "threshold"
-            ]
-          },
-          "type": "array"
-        },
-        "tooltip_fallback": {
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "#MatrixVisual": {
-      "$ref": "#/$defs/%23TabularVisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "query": {
-          "$ref": "#/$defs/%23TableQuery"
-        },
-        "type": {
-          "const": "matrix"
-        }
-      },
-      "required": [
-        "query",
-        "type"
-      ],
-      "type": "object"
     },
     "#Metadata": {
       "additionalProperties": false,
@@ -2201,569 +489,6 @@
       ],
       "type": "object"
     },
-    "#MetricRefs": {
-      "anyOf": [
-        {
-          "items": {
-            "$ref": "#/$defs/%23FieldRefValue"
-          },
-          "type": "array"
-        },
-        {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "anyOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "metric": {
-                      "$ref": "#/$defs/%23Identifier"
-                    }
-                  },
-                  "required": [
-                    "metric"
-                  ],
-                  "type": "object"
-                }
-              ]
-            }
-          },
-          "type": "object"
-        }
-      ]
-    },
-    "#ObjectID": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-      "type": "string"
-    },
-    "#Page": {
-      "additionalProperties": false,
-      "properties": {
-        "canvas": {
-          "additionalProperties": false,
-          "properties": {
-            "height": {
-              "type": "integer"
-            },
-            "width": {
-              "type": "integer"
-            }
-          },
-          "type": "object"
-        },
-        "components": {
-          "items": {
-            "$ref": "#/$defs/%23PageComponent"
-          },
-          "type": "array"
-        },
-        "description": {
-          "type": "string"
-        },
-        "filter_bindings": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "$ref": "#/$defs/%23FilterBinding"
-            }
-          },
-          "type": "object"
-        },
-        "grid": {
-          "additionalProperties": false,
-          "properties": {
-            "columns": {
-              "type": "integer"
-            },
-            "gap": {
-              "type": "integer"
-            },
-            "padding": {
-              "type": "integer"
-            },
-            "row_height": {
-              "type": "integer"
-            }
-          },
-          "type": "object"
-        },
-        "id": {
-          "$ref": "#/$defs/%23ObjectID"
-        },
-        "title": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "components",
-        "id",
-        "title"
-      ],
-      "type": "object"
-    },
-    "#PageComponent": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/%23VisualComponent"
-        },
-        {
-          "$ref": "#/$defs/%23SlicerComponent"
-        },
-        {
-          "$ref": "#/$defs/%23HeaderComponent"
-        }
-      ]
-    },
-    "#PageComponentCommon": {
-      "additionalProperties": false,
-      "properties": {
-        "badges": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "description": {
-          "type": "string"
-        },
-        "eyebrow": {
-          "type": "string"
-        },
-        "id": {
-          "$ref": "#/$defs/%23ObjectID"
-        },
-        "placement": {
-          "additionalProperties": false,
-          "properties": {
-            "col": {
-              "type": "integer"
-            },
-            "col_span": {
-              "type": "integer"
-            },
-            "row": {
-              "type": "integer"
-            },
-            "row_span": {
-              "type": "integer"
-            }
-          },
-          "required": [
-            "col",
-            "col_span",
-            "row",
-            "row_span"
-          ],
-          "type": "object"
-        },
-        "subtitle": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "placement"
-      ],
-      "type": "object"
-    },
-    "#PivotVisual": {
-      "$ref": "#/$defs/%23TabularVisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "query": {
-          "$ref": "#/$defs/%23TableQuery"
-        },
-        "type": {
-          "const": "pivot"
-        }
-      },
-      "required": [
-        "query",
-        "type"
-      ],
-      "type": "object"
-    },
-    "#PointVisual": {
-      "$ref": "#/$defs/%23VisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "point": {
-          "additionalProperties": false,
-          "properties": {
-            "brush": {
-              "items": {
-                "enum": [
-                  "rectangle",
-                  "lasso"
-                ]
-              },
-              "type": "array"
-            },
-            "color": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            },
-            "color_scale": {
-              "additionalProperties": false,
-              "properties": {
-                "kind": {
-                  "enum": [
-                    "categorical",
-                    "quantitative"
-                  ]
-                },
-                "maximum": {
-                  "type": "number"
-                },
-                "minimum": {
-                  "type": "number"
-                },
-                "scheme": {
-                  "not": {
-                    "const": ""
-                  },
-                  "type": "string"
-                }
-              },
-              "type": "object"
-            },
-            "identity": {
-              "items": {
-                "not": {
-                  "const": ""
-                },
-                "type": "string"
-              },
-              "minItems": 1,
-              "prefixItems": [
-                {
-                  "not": {
-                    "const": ""
-                  },
-                  "type": "string"
-                }
-              ],
-              "type": "array"
-            },
-            "label": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            },
-            "overplot": {
-              "additionalProperties": false,
-              "properties": {
-                "large_mode": {
-                  "enum": [
-                    "automatic",
-                    "always",
-                    "never"
-                  ]
-                },
-                "large_threshold": {
-                  "allOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "exclusiveMinimum": 0,
-                      "type": "integer"
-                    }
-                  ]
-                },
-                "opacity": {
-                  "maximum": 1,
-                  "minimum": 0,
-                  "type": "number"
-                },
-                "strategy": {
-                  "enum": [
-                    "show_all",
-                    "opacity"
-                  ]
-                }
-              },
-              "type": "object"
-            },
-            "series": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            },
-            "size": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            },
-            "size_scale": {
-              "additionalProperties": false,
-              "properties": {
-                "maximum": {
-                  "type": "number"
-                },
-                "maximum_pixels": {
-                  "exclusiveMinimum": 0,
-                  "type": "number"
-                },
-                "minimum": {
-                  "type": "number"
-                },
-                "minimum_pixels": {
-                  "exclusiveMinimum": 0,
-                  "type": "number"
-                }
-              },
-              "type": "object"
-            },
-            "tooltip": {
-              "items": {
-                "not": {
-                  "const": ""
-                },
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "x": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            },
-            "y": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            }
-          },
-          "required": [
-            "identity",
-            "x",
-            "y"
-          ],
-          "type": "object"
-        },
-        "presentation": {
-          "$ref": "#/$defs/%23PresentationCommon",
-          "additionalProperties": false,
-          "properties": {
-            "axes": {
-              "items": {
-                "$ref": "#/$defs/%23CartesianAxis"
-              },
-              "type": "array"
-            },
-            "event_annotations": {
-              "items": {
-                "$ref": "#/$defs/%23EventAnnotation"
-              },
-              "type": "array"
-            },
-            "reference_bands": {
-              "items": {
-                "$ref": "#/$defs/%23ReferenceBand"
-              },
-              "type": "array"
-            },
-            "reference_lines": {
-              "items": {
-                "$ref": "#/$defs/%23ReferenceLine"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
-        "query": {
-          "$ref": "#/$defs/%23VisualQuery"
-        },
-        "type": {
-          "const": "scatter"
-        }
-      },
-      "required": [
-        "point",
-        "query",
-        "type"
-      ],
-      "type": "object"
-    },
-    "#PolarPresentation": {
-      "$ref": "#/$defs/%23PresentationCommon",
-      "additionalProperties": false,
-      "properties": {
-        "area": {
-          "type": "boolean"
-        },
-        "maximum": {
-          "type": "number"
-        },
-        "minimum": {
-          "type": "number"
-        },
-        "progress_width": {
-          "exclusiveMinimum": 0,
-          "type": "number"
-        },
-        "target": {
-          "type": "number"
-        },
-        "thresholds": {
-          "items": {
-            "$ref": "#/$defs/%23Threshold"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "#PolarVisual": {
-      "$ref": "#/$defs/%23VisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "presentation": {
-          "$ref": "#/$defs/%23PolarPresentation"
-        },
-        "query": {
-          "$ref": "#/$defs/%23VisualQuery"
-        },
-        "type": {
-          "enum": [
-            "gauge",
-            "radar"
-          ]
-        }
-      },
-      "required": [
-        "query",
-        "type"
-      ],
-      "type": "object"
-    },
-    "#PresentationCommon": {
-      "additionalProperties": false,
-      "properties": {
-        "conditional_formatting": {
-          "items": {
-            "$ref": "#/$defs/%23ConditionalFormat"
-          },
-          "type": "array"
-        },
-        "display_units": {
-          "enum": [
-            "auto",
-            "none",
-            "thousands",
-            "millions",
-            "billions",
-            "trillions"
-          ]
-        },
-        "labels": {
-          "$ref": "#/$defs/%23LabelPolicy"
-        },
-        "legend": {
-          "enum": [
-            "hidden",
-            "top",
-            "right",
-            "bottom",
-            "left"
-          ]
-        },
-        "show_labels": {
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "#ProportionalPresentation": {
-      "$ref": "#/$defs/%23PresentationCommon",
-      "additionalProperties": false,
-      "properties": {
-        "align": {
-          "enum": [
-            "left",
-            "center",
-            "right"
-          ]
-        },
-        "center_label": {
-          "type": "string"
-        },
-        "inner_radius": {
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "label_position": {
-          "enum": [
-            "automatic",
-            "inside",
-            "outside",
-            "top"
-          ]
-        },
-        "orientation": {
-          "enum": [
-            "horizontal",
-            "vertical"
-          ]
-        },
-        "outer_radius": {
-          "exclusiveMinimum": 0,
-          "maximum": 1,
-          "type": "number"
-        },
-        "rose": {
-          "type": "boolean"
-        },
-        "sort": {
-          "enum": [
-            "ascending",
-            "descending"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "#ProportionalVisual": {
-      "$ref": "#/$defs/%23VisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "presentation": {
-          "$ref": "#/$defs/%23ProportionalPresentation"
-        },
-        "query": {
-          "$ref": "#/$defs/%23VisualQuery"
-        },
-        "type": {
-          "enum": [
-            "pie",
-            "donut",
-            "funnel"
-          ]
-        }
-      },
-      "required": [
-        "query",
-        "type"
-      ],
-      "type": "object"
-    },
     "#Provenance": {
       "additionalProperties": false,
       "properties": {
@@ -2779,150 +504,6 @@
       },
       "type": "object"
     },
-    "#ReferenceBand": {
-      "additionalProperties": false,
-      "properties": {
-        "axis": {
-          "enum": [
-            "x",
-            "primary_y",
-            "secondary_y"
-          ]
-        },
-        "from": {
-          "$ref": "#/$defs/%23ReferenceValue"
-        },
-        "id": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "to": {
-          "$ref": "#/$defs/%23ReferenceValue"
-        },
-        "tone": {
-          "$ref": "#/$defs/%23DecisionTone"
-        }
-      },
-      "required": [
-        "axis",
-        "from",
-        "id",
-        "to"
-      ],
-      "type": "object"
-    },
-    "#ReferenceLine": {
-      "additionalProperties": false,
-      "properties": {
-        "axis": {
-          "enum": [
-            "x",
-            "primary_y",
-            "secondary_y"
-          ]
-        },
-        "id": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "tone": {
-          "$ref": "#/$defs/%23DecisionTone"
-        },
-        "value": {
-          "$ref": "#/$defs/%23ReferenceValue"
-        }
-      },
-      "required": [
-        "axis",
-        "id",
-        "value"
-      ],
-      "type": "object"
-    },
-    "#ReferenceValue": {
-      "anyOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "number": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "number"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "text": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            }
-          },
-          "required": [
-            "text"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "dataset": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            },
-            "field": {
-              "not": {
-                "const": ""
-              },
-              "type": "string"
-            },
-            "reducer": {
-              "anyOf": [
-                {
-                  "const": "first"
-                },
-                {
-                  "const": "last"
-                },
-                {
-                  "const": "minimum"
-                },
-                {
-                  "const": "maximum"
-                },
-                {
-                  "const": "mean"
-                },
-                {
-                  "const": "median"
-                }
-              ]
-            }
-          },
-          "required": [
-            "field"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "#ResourceID": {
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
       "type": "string"
@@ -2930,880 +511,6 @@
     "#ResourceName": {
       "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
       "type": "string"
-    },
-    "#SelectionInteraction": {
-      "additionalProperties": false,
-      "properties": {
-        "highlight_targets": {
-          "items": {
-            "$ref": "#/$defs/%23Identifier"
-          },
-          "type": "array"
-        },
-        "mappings": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "dataset": {
-                "$ref": "#/$defs/%23Identifier"
-              },
-              "field": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/%23FieldRef"
-                  },
-                  {
-                    "$ref": "#/$defs/%23Identifier"
-                  }
-                ]
-              },
-              "grain": {
-                "enum": [
-                  "day",
-                  "week",
-                  "month",
-                  "quarter",
-                  "year"
-                ]
-              },
-              "label": {
-                "type": "string"
-              },
-              "value": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "field",
-              "value"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "none_targets": {
-          "items": {
-            "$ref": "#/$defs/%23Identifier"
-          },
-          "type": "array"
-        },
-        "targets": {
-          "items": {
-            "$ref": "#/$defs/%23Identifier"
-          },
-          "type": "array"
-        },
-        "toggle": {
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
-    "#SlicerComponent": {
-      "$ref": "#/$defs/%23PageComponentCommon",
-      "additionalProperties": false,
-      "properties": {
-        "binding": {
-          "$ref": "#/$defs/%23FilterBindingRef"
-        },
-        "kind": {
-          "const": "slicer"
-        },
-        "presentation": {
-          "additionalProperties": false,
-          "properties": {
-            "aria_label": {
-              "type": "string"
-            },
-            "compact": {
-              "type": "boolean"
-            },
-            "description": {
-              "type": "string"
-            },
-            "search": {
-              "type": "boolean"
-            },
-            "select_all": {
-              "type": "boolean"
-            },
-            "show_counts": {
-              "type": "boolean"
-            },
-            "show_summary": {
-              "type": "boolean"
-            },
-            "style": {
-              "enum": [
-                "dropdown",
-                "list",
-                "buttons",
-                "input",
-                "numeric_range",
-                "date_range",
-                "relative_period"
-              ]
-            },
-            "title": {
-              "type": "string"
-            }
-          },
-          "type": "object"
-        }
-      },
-      "required": [
-        "binding",
-        "kind"
-      ],
-      "type": "object"
-    },
-    "#Sort": {
-      "additionalProperties": false,
-      "properties": {
-        "direction": {
-          "anyOf": [
-            {
-              "const": "asc"
-            },
-            {
-              "const": "desc"
-            },
-            {
-              "type": "string"
-            }
-          ]
-        },
-        "expr": {
-          "type": "string"
-        },
-        "field": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "#SpatialSelectionInteraction": {
-      "additionalProperties": false,
-      "properties": {
-        "gestures": {
-          "items": {
-            "enum": [
-              "box",
-              "lasso",
-              "radius"
-            ]
-          },
-          "type": "array"
-        },
-        "highlight_targets": {
-          "items": {
-            "$ref": "#/$defs/%23Identifier"
-          },
-          "type": "array"
-        },
-        "latitude": {
-          "$ref": "#/$defs/%23SpatialSelectionMapping"
-        },
-        "longitude": {
-          "$ref": "#/$defs/%23SpatialSelectionMapping"
-        },
-        "none_targets": {
-          "items": {
-            "$ref": "#/$defs/%23Identifier"
-          },
-          "type": "array"
-        },
-        "targets": {
-          "items": {
-            "$ref": "#/$defs/%23Identifier"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "gestures",
-        "latitude",
-        "longitude",
-        "targets"
-      ],
-      "type": "object"
-    },
-    "#SpatialSelectionMapping": {
-      "additionalProperties": false,
-      "properties": {
-        "dataset": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "field": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/%23FieldRef"
-            },
-            {
-              "$ref": "#/$defs/%23Identifier"
-            }
-          ]
-        },
-        "source": {
-          "$ref": "#/$defs/%23Identifier"
-        }
-      },
-      "required": [
-        "field",
-        "source"
-      ],
-      "type": "object"
-    },
-    "#TableColumn": {
-      "additionalProperties": false,
-      "properties": {
-        "align": {
-          "type": "string"
-        },
-        "column_value": {
-          "type": "string"
-        },
-        "format": {
-          "anyOf": [
-            {
-              "const": "text"
-            },
-            {
-              "const": "integer"
-            },
-            {
-              "const": "decimal"
-            },
-            {
-              "const": "currency"
-            },
-            {
-              "const": "days"
-            },
-            {
-              "type": "string"
-            }
-          ]
-        },
-        "formatting": {
-          "items": {
-            "$ref": "#/$defs/%23TableFormattingRule"
-          },
-          "type": "array"
-        },
-        "group": {
-          "type": "string"
-        },
-        "key": {
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "metric": {
-          "type": "string"
-        },
-        "role": {
-          "type": "string"
-        },
-        "width": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "key"
-      ],
-      "type": "object"
-    },
-    "#TableFormattingRule": {
-      "additionalProperties": false,
-      "properties": {
-        "background": {
-          "type": "string"
-        },
-        "color": {
-          "type": "string"
-        },
-        "high_color": {
-          "type": "string"
-        },
-        "kind": {
-          "enum": [
-            "badge",
-            "text_color",
-            "background_scale",
-            "data_bar"
-          ]
-        },
-        "low_color": {
-          "type": "string"
-        },
-        "max": {
-          "type": "number"
-        },
-        "min": {
-          "type": "number"
-        },
-        "values": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "type": "object"
-    },
-    "#TableQuery": {
-      "additionalProperties": false,
-      "properties": {
-        "columns": {
-          "$ref": "#/$defs/%23FieldRefs"
-        },
-        "dataset": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "fields": {
-          "items": {
-            "$ref": "#/$defs/%23FieldRef"
-          },
-          "type": "array"
-        },
-        "metrics": {
-          "$ref": "#/$defs/%23MetricRefs"
-        },
-        "rows": {
-          "$ref": "#/$defs/%23FieldRefs"
-        }
-      },
-      "type": "object"
-    },
-    "#TabularVisualCommon": {
-      "$ref": "#/$defs/%23VisualCommon",
-      "additionalProperties": false,
-      "properties": {
-        "cardinality": {
-          "enum": [
-            "bounded",
-            "exact"
-          ]
-        },
-        "columns": {
-          "items": {
-            "$ref": "#/$defs/%23TableColumn"
-          },
-          "type": "array"
-        },
-        "conditional_formatting": {
-          "items": {
-            "$ref": "#/$defs/%23ConditionalFormat"
-          },
-          "type": "array"
-        },
-        "default_sort": {
-          "additionalProperties": false,
-          "properties": {
-            "direction": {
-              "anyOf": [
-                {
-                  "const": "asc"
-                },
-                {
-                  "const": "desc"
-                },
-                {
-                  "type": "string"
-                }
-              ]
-            },
-            "key": {
-              "type": "string"
-            }
-          },
-          "type": "object"
-        },
-        "metric_formatting": {
-          "additionalProperties": {
-            "items": {
-              "$ref": "#/$defs/%23TableFormattingRule"
-            },
-            "type": "array"
-          },
-          "type": "object"
-        },
-        "presentation": {
-          "additionalProperties": false,
-          "properties": {
-            "density": {
-              "anyOf": [
-                {
-                  "const": "compact"
-                },
-                {
-                  "const": "comfortable"
-                },
-                {
-                  "const": "spacious"
-                },
-                {
-                  "type": "string"
-                }
-              ]
-            },
-            "grid": {
-              "anyOf": [
-                {
-                  "const": "none"
-                },
-                {
-                  "const": "rows"
-                },
-                {
-                  "const": "columns"
-                },
-                {
-                  "const": "full"
-                },
-                {
-                  "type": "string"
-                }
-              ]
-            },
-            "zebra": {
-              "type": "boolean"
-            }
-          },
-          "type": "object"
-        },
-        "title": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "title"
-      ],
-      "type": "object"
-    },
-    "#Threshold": {
-      "additionalProperties": false,
-      "properties": {
-        "tone": {
-          "enum": [
-            "neutral",
-            "ink",
-            "success",
-            "warning",
-            "danger"
-          ]
-        },
-        "value": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "tone",
-        "value"
-      ],
-      "type": "object"
-    },
-    "#Visual": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/%23CartesianVisual"
-        },
-        {
-          "$ref": "#/$defs/%23PointVisual"
-        },
-        {
-          "$ref": "#/$defs/%23ProportionalVisual"
-        },
-        {
-          "$ref": "#/$defs/%23HierarchyVisual"
-        },
-        {
-          "$ref": "#/$defs/%23PolarVisual"
-        },
-        {
-          "$ref": "#/$defs/%23GeographicVisual"
-        },
-        {
-          "$ref": "#/$defs/%23KPIVisual"
-        },
-        {
-          "$ref": "#/$defs/%23DataTableVisual"
-        },
-        {
-          "$ref": "#/$defs/%23MatrixVisual"
-        },
-        {
-          "$ref": "#/$defs/%23PivotVisual"
-        }
-      ]
-    },
-    "#VisualCalculation": {
-      "additionalProperties": false,
-      "properties": {
-        "axis": {
-          "enum": [
-            "rows",
-            "columns",
-            "hierarchy",
-            "facets"
-          ]
-        },
-        "format": {
-          "enum": [
-            "number",
-            "decimal",
-            "integer",
-            "percent",
-            "compact",
-            "currency"
-          ]
-        },
-        "hidden": {
-          "type": "boolean"
-        },
-        "id": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "label": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "lookup": {
-          "$ref": "#/$defs/%23VisualCalculationLookup"
-        },
-        "offset": {
-          "allOf": [
-            {
-              "type": "number"
-            },
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            }
-          ]
-        },
-        "order_by": {
-          "items": {
-            "$ref": "#/$defs/%23VisualCalculationOrder"
-          },
-          "type": "array"
-        },
-        "parent": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "partition_by": {
-          "items": {
-            "not": {
-              "const": ""
-            },
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "reset": {
-          "enum": [
-            "none",
-            "highest_parent",
-            "lowest_parent"
-          ]
-        },
-        "source": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "template": {
-          "enum": [
-            "running_total",
-            "moving_average",
-            "difference",
-            "percentage_difference",
-            "percent_of_parent",
-            "percent_of_grand_total",
-            "rank",
-            "cumulative_contribution",
-            "lookup"
-          ]
-        },
-        "window": {
-          "allOf": [
-            {
-              "type": "number"
-            },
-            {
-              "exclusiveMinimum": 0,
-              "type": "integer"
-            }
-          ]
-        }
-      },
-      "required": [
-        "id",
-        "source",
-        "template"
-      ],
-      "type": "object"
-    },
-    "#VisualCalculationLookup": {
-      "additionalProperties": false,
-      "properties": {
-        "field": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "value": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "field",
-        "value"
-      ],
-      "type": "object"
-    },
-    "#VisualCalculationOrder": {
-      "additionalProperties": false,
-      "properties": {
-        "direction": {
-          "enum": [
-            "asc",
-            "desc"
-          ]
-        },
-        "field": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        }
-      },
-      "required": [
-        "field"
-      ],
-      "type": "object"
-    },
-    "#VisualCommon": {
-      "additionalProperties": false,
-      "properties": {
-        "accessibility": {
-          "additionalProperties": false,
-          "properties": {
-            "announce_changes": {
-              "type": "boolean"
-            },
-            "description": {
-              "type": "string"
-            },
-            "summary": {
-              "type": "string"
-            },
-            "title": {
-              "type": "string"
-            }
-          },
-          "type": "object"
-        },
-        "calculations": {
-          "items": {
-            "$ref": "#/$defs/%23VisualCalculation"
-          },
-          "type": "array"
-        },
-        "data_budget": {
-          "additionalProperties": false,
-          "properties": {
-            "max_rows": {
-              "allOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "exclusiveMinimum": 0,
-                  "type": "integer"
-                }
-              ]
-            },
-            "required_completeness": {
-              "enum": [
-                "complete",
-                "truncated",
-                "partial",
-                "empty"
-              ]
-            }
-          },
-          "type": "object"
-        },
-        "datasets": {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        "description": {
-          "type": "string"
-        },
-        "interaction": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "$ref": "#/$defs/%23Interaction"
-            }
-          ]
-        },
-        "metadata": {
-          "$ref": "#/$defs/%23VisualMetadataBindings"
-        },
-        "subtitle": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "#VisualComponent": {
-      "$ref": "#/$defs/%23PageComponentCommon",
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "const": "visual"
-        },
-        "visual": {
-          "$ref": "#/$defs/%23Identifier"
-        }
-      },
-      "required": [
-        "kind",
-        "visual"
-      ],
-      "type": "object"
-    },
-    "#VisualMetadataBindings": {
-      "additionalProperties": false,
-      "properties": {
-        "description": {
-          "$ref": "#/$defs/%23VisualTextBinding"
-        },
-        "subtitle": {
-          "$ref": "#/$defs/%23VisualTextBinding"
-        },
-        "summary": {
-          "$ref": "#/$defs/%23VisualTextBinding"
-        },
-        "title": {
-          "$ref": "#/$defs/%23VisualTextBinding"
-        }
-      },
-      "type": "object"
-    },
-    "#VisualQuery": {
-      "additionalProperties": false,
-      "properties": {
-        "dataset": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "dimensions": {
-          "$ref": "#/$defs/%23FieldRefs"
-        },
-        "limit": {
-          "type": "integer"
-        },
-        "metrics": {
-          "$ref": "#/$defs/%23MetricRefs"
-        },
-        "series": {
-          "$ref": "#/$defs/%23FieldRefObject"
-        },
-        "sort": {
-          "items": {
-            "$ref": "#/$defs/%23Sort"
-          },
-          "type": "array"
-        },
-        "time": {
-          "additionalProperties": false,
-          "properties": {
-            "alias": {
-              "$ref": "#/$defs/%23Identifier"
-            },
-            "field": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/%23FieldRef"
-                },
-                {
-                  "$ref": "#/$defs/%23Identifier"
-                }
-              ]
-            },
-            "grain": {
-              "type": "string"
-            }
-          },
-          "type": "object"
-        }
-      },
-      "type": "object"
-    },
-    "#VisualTextBinding": {
-      "additionalProperties": false,
-      "properties": {
-        "dataset": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "fallback": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "field": {
-          "not": {
-            "const": ""
-          },
-          "type": "string"
-        },
-        "prefix": {
-          "type": "string"
-        },
-        "reducer": {
-          "enum": [
-            "first",
-            "last",
-            "minimum",
-            "maximum",
-            "mean",
-            "median"
-          ]
-        },
-        "suffix": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "fallback",
-        "field"
-      ],
-      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

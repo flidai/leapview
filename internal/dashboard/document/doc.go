@@ -7,3 +7,23 @@
 // This package intentionally contains no YAML union unmarshallers, aliases,
 // translators, or runtime/compiler resolution fields.
 package document
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+// Clone returns a lossless deep copy of the generated canonical DTO. JSON is
+// the generated contract's own tagged-union representation, so this copy path
+// cannot reintroduce the legacy authoring model or silently drop variants.
+func (value DashboardDocument) Clone() (DashboardDocument, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return DashboardDocument{}, fmt.Errorf("clone dashboard document: %w", err)
+	}
+	var clone DashboardDocument
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		return DashboardDocument{}, fmt.Errorf("decode cloned dashboard document: %w", err)
+	}
+	return clone, nil
+}

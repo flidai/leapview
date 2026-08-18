@@ -327,6 +327,15 @@ func (state *fragmentState) expandFile(path, expected string) error {
 				return state.errorf(canonical, root.Line, "decode components: %v", err)
 			}
 			for pageID, components := range values {
+				// Page-keyed component collections are mapping collections: each
+				// page key may be contributed by at most one fragment.  Appending
+				// repeated keys would be an implicit deep merge and makes source
+				// order affect the canonical document.  Reject the duplicate at the
+				// composition boundary while retaining the second key's location.
+				if _, exists := state.components[pageID]; exists {
+					line := collectionPageKeyLine(collectionNode, pageID)
+					return state.errorf(relativePath, line, "component page key %q is duplicated (mapping key is defined more than once)", pageID)
+				}
 				state.components[pageID] = append(state.components[pageID], components...)
 				lines := collectionPageComponentLines(collectionNode, pageID, len(components))
 				for _, line := range lines {
@@ -409,7 +418,6 @@ func (state *fragmentState) validateExpandedIDs(document DashboardDocument) erro
 		filters[filter.ID] = struct{}{}
 	}
 	pages := map[string]struct{}{}
-	components := map[string]struct{}{}
 	for pageIndex, page := range document.Spec.Pages {
 		pageOrigin := originAt(state.pageOrigins, pageIndex)
 		if strings.TrimSpace(page.ID) == "" {
@@ -419,6 +427,11 @@ func (state *fragmentState) validateExpandedIDs(document DashboardDocument) erro
 			return state.errorf(pageOrigin.path, pageOrigin.line, "dashboard page %q is duplicated after fragment expansion", page.ID)
 		}
 		pages[page.ID] = struct{}{}
+		// Component IDs are scoped to their containing page.  This matches the
+		// canonical compiler's page-local uniqueness rule and allows reusable
+		// fragment snippets (for example, a shared period filter) to be mounted
+		// on multiple pages without a false cross-page collision.
+		components := map[string]struct{}{}
 		for componentIndex, component := range page.Components {
 			origin := componentOriginAt(state, page.ID, componentIndex)
 			id := componentID(component)
@@ -562,6 +575,17 @@ func collectionPageComponentLines(node *yaml.Node, pageID string, count int) []i
 		}
 	}
 	return make([]int, count)
+}
+
+// collectionPageKeyLine returns the source line of a page key in a keyed
+// component collection.  It is kept separate from component-entry locations
+// so duplicate mapping keys report the precise key rather than an arbitrary
+// child component line.
+func collectionPageKeyLine(node *yaml.Node, pageID string) int {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return 0
+	}
+	return collectionMapKeyLine(node, pageID)
 }
 
 func (state *fragmentState) relativePath(path string) (string, error) {

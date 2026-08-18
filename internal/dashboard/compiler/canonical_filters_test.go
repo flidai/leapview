@@ -59,7 +59,7 @@ func TestCompileCanonicalDashboardFiltersPreservesOrderDefaultsAndPlacement(t *t
 		t.Fatalf("filter order = %q", got)
 	}
 	binding := compiled.Bindings["status"]
-	if binding.Scope != "report" || binding.URL.Param != "status" || binding.Pane.Order != 0 || len(binding.Targets) != 1 || binding.Targets[0] != "overview/orders-card" {
+	if binding.Scope != "report" || binding.URL.Param != "status" || binding.URL.Encoding != "" || binding.Pane.Order != 0 || len(binding.Targets) != 1 || binding.Targets[0] != "overview/orders-card" {
 		t.Fatalf("compiled status binding = %#v", binding)
 	}
 	if got := compiled.Pages[0].Visuals[0].Binding; got.Scope != "report" || got.ID != "status" {

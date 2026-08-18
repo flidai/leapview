@@ -167,7 +167,6 @@ model DashboardCompiledFilterBinding {
   maxSelectedValues: int32;
   readerEditable: boolean;
   urlParam?: string;
-  urlEncoding?: "typed_v1";
   paneVisible: boolean;
   paneOrder: int32;
   paneLabel?: string;

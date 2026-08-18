@@ -231,10 +231,10 @@ func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.Pro
 		}
 	}
 	for id, source := range project.DashboardSources {
-		if source.Document.ID.String() != id {
-			return fmt.Errorf("manifest dashboardSources key %q does not match document id %q", id, source.Document.ID)
+		if source.Document.Metadata.ID != id {
+			return fmt.Errorf("manifest dashboardSources key %q does not match document id %q", id, source.Document.Metadata.ID)
 		}
-		if err := requireManifestReference(resources, edges, "dashboard", id, "semantic model", source.Document.SemanticModel.String(), projectgraph.KindSemanticModel); err != nil {
+		if err := requireManifestReference(resources, edges, "dashboard", id, "semantic model", source.Document.Spec.SemanticModel, projectgraph.KindSemanticModel); err != nil {
 			return err
 		}
 	}

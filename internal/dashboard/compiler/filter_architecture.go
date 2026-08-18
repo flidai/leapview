@@ -207,9 +207,6 @@ func compileFilterBinding(d *dashboardauthoring.Dashboard, model *semanticmodel.
 	if binding.Selection.Mode == dashboardfilter.SelectionSingle && binding.Selection.MaxSelectedValues > 1 {
 		return dashboardfilter.Binding{}, fmt.Errorf("%s filter binding %q single selection cannot allow more than one value", scope, id)
 	}
-	if binding.URL.Param != "" && binding.URL.Encoding == "" {
-		binding.URL.Encoding = dashboardfilter.URLEncodingTypedV1
-	}
 	targets, err := resolveBindingTargets(d, model, definition, binding)
 	if err != nil {
 		return dashboardfilter.Binding{}, fmt.Errorf("%s filter binding %q: %w", scope, id, err)

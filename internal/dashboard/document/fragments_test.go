@@ -238,6 +238,15 @@ func TestExpandDashboardFragmentsReportsSequenceDuplicateOrigins(t *testing.T) {
 	if _, err := ExpandDashboardFragments(input, dashboardPath, root); err == nil || !strings.Contains(err.Error(), "scoped.yaml") || !strings.Contains(err.Error(), "duplicated") {
 		t.Fatalf("mixed component diagnostic = %v, want scoped second origin", err)
 	}
+	pageKeyOne := "components:\n  local:\n    - type: visual\n      id: page-key-one\n      visual: local\n      placement: {column: 1, row: 1, columnSpan: 1, rowSpan: 1}\n"
+	pageKeyTwo := "components:\n  local:\n    - type: visual\n      id: page-key-two\n      visual: local\n      placement: {column: 2, row: 1, columnSpan: 1, rowSpan: 1}\n"
+	write("page-key-one.yaml", pageKeyOne)
+	write("page-key-two.yaml", pageKeyTwo)
+	input = fragmentTestDocument(&DashboardIncludes{Components: ptrStrings("page-key-one.yaml", "page-key-two.yaml")})
+	input.Spec.Pages = []DashboardPage{{ID: "local", Title: "Local", Components: []DashboardPageComponent{}}}
+	if _, err := ExpandDashboardFragments(input, dashboardPath, root); err == nil || !strings.Contains(err.Error(), "page-key-two.yaml") || !strings.Contains(err.Error(), "page key") {
+		t.Fatalf("duplicate component page key accepted: %v", err)
+	}
 }
 
 func canonicalTestVisual() DashboardVisual {

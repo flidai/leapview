@@ -106,6 +106,37 @@ func (registry *SharedLinkRegistry) Decode(encoding URLEncoding, value string, k
 	return codec.Decode(value, kind)
 }
 
+// EncodeDefault and DecodeDefault are the protocol-owned lifecycle entry
+// points.  Dashboard documents carry only a friendly parameter name; codec
+// selection is deliberately resolved by this registry so a protocol rollout
+// never requires rewriting or redeploying authored YAML.
+func (registry *SharedLinkRegistry) EncodeDefault(expression Expression, kind ValueKind) (string, error) {
+	if registry == nil {
+		return "", fmt.Errorf("shared-link registry is nil")
+	}
+	for _, encoding := range registry.SupportedCodecs() {
+		if codec, err := registry.codec(encoding, false); err == nil {
+			return codec.Encode(expression, kind)
+		}
+	}
+	return "", fmt.Errorf("shared-link registry has no active codec")
+}
+
+func (registry *SharedLinkRegistry) DecodeDefault(value string, kind ValueKind) (Expression, error) {
+	if registry == nil {
+		return Expression{}, fmt.Errorf("shared-link registry is nil")
+	}
+	// Existing links carry a protocol prefix; probe non-retired codecs in
+	// deterministic registry order. Deprecated codecs remain readable for the
+	// declared lifecycle while retired codecs are rejected.
+	for _, encoding := range registry.SupportedCodecs() {
+		if expression, err := registry.Decode(encoding, value, kind); err == nil {
+			return expression, nil
+		}
+	}
+	return Expression{}, fmt.Errorf("shared-link value is not decodable by the active protocol")
+}
+
 func (registry *SharedLinkRegistry) codec(encoding URLEncoding, decode bool) (SharedLinkCodec, error) {
 	if registry == nil {
 		return SharedLinkCodec{}, fmt.Errorf("shared-link registry is nil")
