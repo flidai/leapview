@@ -786,7 +786,7 @@ func (c *Controller) bootstrapQualificationServingGeneration(
 	if err != nil {
 		return fmt.Errorf("bootstrap qualification candidate: %w", err)
 	}
-	candidate, err := parseQualificationCandidate(string(devOutput), options.SourceRevision)
+	candidate, err := parseQualificationCandidateBootstrap(string(devOutput), options.SourceRevision)
 	if err != nil {
 		return err
 	}

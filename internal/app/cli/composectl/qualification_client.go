@@ -28,6 +28,18 @@ type qualificationLoginChallenge struct {
 }
 
 func parseQualificationCandidate(output, sourceRevision string) (QualificationCandidate, error) {
+	return parseQualificationCandidateWithPlan(output, sourceRevision, true)
+}
+
+// parseQualificationCandidateBootstrap accepts the candidate projection emitted
+// before the first serving generation exists. Bootstrap synchronization still
+// prepares the target-owned candidate, but deliberately does not resolve a
+// delivery plan until the first generation is active.
+func parseQualificationCandidateBootstrap(output, sourceRevision string) (QualificationCandidate, error) {
+	return parseQualificationCandidateWithPlan(output, sourceRevision, false)
+}
+
+func parseQualificationCandidateWithPlan(output, sourceRevision string, requirePlan bool) (QualificationCandidate, error) {
 	var wire struct {
 		SchemaVersion    int    `json:"schemaVersion"`
 		CandidateID      string `json:"candidateId"`
@@ -54,18 +66,24 @@ func parseQualificationCandidate(output, sourceRevision string) (QualificationCa
 		PlanID:         wire.PlanID, PlanDigest: wire.PlanDigest,
 	}
 	if result.ID == "" || result.Revision <= 0 || result.TargetID == "" ||
-		result.PrincipalID == "" || result.PreviewURL == "" ||
-		result.PlanID == "" || result.PlanDigest == "" {
+		result.PrincipalID == "" || result.PreviewURL == "" {
 		return QualificationCandidate{}, fmt.Errorf("incomplete candidate output")
+	}
+	if requirePlan || result.PlanID != "" || result.PlanDigest != "" {
+		if result.PlanID == "" || result.PlanDigest == "" {
+			return QualificationCandidate{}, fmt.Errorf("incomplete candidate output")
+		}
 	}
 	for name, value := range map[string]string{
 		"artifact digest":   result.ArtifactDigest,
 		"provenance digest": result.ProvenanceDigest,
-		"plan digest":       result.PlanDigest,
 	} {
 		if !strings.HasPrefix(value, "sha256:") || len(value) != 71 {
 			return QualificationCandidate{}, fmt.Errorf("invalid %s %q", name, value)
 		}
+	}
+	if result.PlanDigest != "" && (!strings.HasPrefix(result.PlanDigest, "sha256:") || len(result.PlanDigest) != 71) {
+		return QualificationCandidate{}, fmt.Errorf("invalid plan digest %q", result.PlanDigest)
 	}
 	return result, nil
 }

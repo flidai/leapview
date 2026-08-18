@@ -848,6 +848,24 @@ func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
 	}
 }
 
+func TestQualificationBootstrapCandidateAllowsMissingDeliveryPlan(t *testing.T) {
+	output := fmt.Sprintf(
+		`{"schemaVersion":1,"candidateId":"cand_bootstrap","revision":7,"targetId":"target_1",`+
+			`"principalId":"principal_1","artifactDigest":"sha256:%s","provenanceDigest":"sha256:%s",`+
+			`"previewUrl":"https://localhost/candidates/cand_bootstrap"}`,
+		strings.Repeat("a", 64),
+		strings.Repeat("b", 64),
+	)
+	if _, err := parseQualificationCandidate(output, ""); err == nil {
+		t.Fatal("normal candidate parser accepted a missing delivery plan")
+	}
+	candidate, err := parseQualificationCandidateBootstrap(output, "")
+	require.NoError(t, err)
+	if candidate.ID != "cand_bootstrap" || candidate.PlanID != "" || candidate.PlanDigest != "" {
+		t.Fatalf("bootstrap candidate = %+v", candidate)
+	}
+}
+
 type qualificationTestWriteCloser struct{ bytes.Buffer }
 
 func (*qualificationTestWriteCloser) Close() error { return nil }
