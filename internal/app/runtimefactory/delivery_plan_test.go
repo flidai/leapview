@@ -9,8 +9,8 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/deployment"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
@@ -422,7 +422,7 @@ func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVarian
 		Models:               map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}}},
 		SemanticModels:       map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}}}},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{"dashboard:sales": {ID: "dashboard:sales", Title: dashboardTitle, SemanticModel: "semantic:sales"}},
-		DashboardSources:     map[string]projectmanifest.DashboardSource{"dashboard:sales": {Document: dashboardauthoring.Dashboard{ID: "dashboard:sales", SemanticModel: "semantic:sales"}}},
+		DashboardSources:     map[string]projectmanifest.DashboardSource{"dashboard:sales": {Document: dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: "dashboard:sales", Name: "sales_dashboard"}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "semantic:sales"}}}},
 		Access:               access,
 	})
 	if err != nil {

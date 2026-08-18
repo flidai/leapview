@@ -9,8 +9,8 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -142,7 +142,7 @@ func TestAuthoredDashboardSourcesRetainsDescriptiveDomain(t *testing.T) {
 	sources, err := authoredDashboardSources(projectmanifest.Project{
 		DashboardSources: map[string]projectmanifest.DashboardSource{
 			string(dashboardID): {
-				Document: dashboardauthoring.Dashboard{ID: dashboardID},
+				Document: dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: dashboardID.String(), Name: "sales_dashboard"}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "sales"}},
 				Metadata: projectmanifest.DashboardSourceMetadata{
 					Name: "sales_dashboard", Domain: "revenue", Tags: []string{"finance"},
 				},
