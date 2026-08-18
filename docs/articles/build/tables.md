@@ -88,4 +88,4 @@ components:
 
 Test sorting, loading another window, compact widths, null values, empty results, and row selections. Compare aggregate matrix values with direct semantic queries and confirm data-table rows preserve the declared model-table grain.
 
-The full table, query, and interaction fields are generated in [Dashboard configuration](/docs/config/dashboard).
+The full table, query, and interaction fields are generated in [Dashboard configuration](/docs/config/dashboard-document).

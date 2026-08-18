@@ -97,4 +97,4 @@ After deployment to development:
 - verify charts resize without clipped labels or legends;
 - confirm tables remain usable without document-wide horizontal scrolling.
 
-Use the sample Sales dashboard and visual showcase as working layout examples. See [Dashboard configuration](/docs/config/dashboard) for the current page and placement contract.
+Use the sample Sales dashboard and visual showcase as working layout examples. See [Dashboard configuration](/docs/config/dashboard-document) for the current page and placement contract.

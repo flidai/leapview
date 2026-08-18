@@ -146,7 +146,6 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Model configuration](/docs/config/model): Fields and validation rules for the Model YAML resource.
 - [Semantic Model configuration](/docs/config/semantic-model): Fields and validation rules for the SemanticModel YAML resource.
 - [Pipeline configuration](/docs/config/pipeline): Fields and validation rules for the Pipeline YAML resource.
-- [Dashboard configuration](/docs/config/dashboard): Fields and validation rules for the Dashboard YAML resource.
 - [Group configuration](/docs/config/group): Fields and validation rules for the Group YAML resource.
 - [Role Binding configuration](/docs/config/role-binding): Fields and validation rules for the RoleBinding YAML resource.
 - [Grant configuration](/docs/config/grant): Fields and validation rules for the Grant YAML resource.

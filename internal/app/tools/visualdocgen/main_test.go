@@ -34,7 +34,7 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 		"      type: cartesian\n" +
 		"    query:\n" +
 		"      type: aggregate\n" +
-		"      dimensions: [orders.month]\n" +
+		"      dimensions: [month]\n" +
 		"      metrics: [revenue]\n" +
 		"```\n")
 
@@ -53,8 +53,8 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 	if !ok || len(query.Dimensions) != 1 || query.Dimensions[0].String == nil {
 		t.Fatalf("query = %#v", example.Visual.Query)
 	}
-	if got := *query.Dimensions[0].String; got != "orders.month" {
-		t.Fatalf("dimension = %q, want orders.month", got)
+	if got := *query.Dimensions[0].String; got != "month" {
+		t.Fatalf("dimension = %q, want month", got)
 	}
 }
 
@@ -645,7 +645,7 @@ func TestParseVisualExamplesRejectsBrokenContracts(t *testing.T) {
 		},
 		{
 			name: "missing shortcode",
-			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    query:\n      dimensions: [orders.month]\n      metrics: [revenue]\n```",
+			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    presentation:\n      type: cartesian\n    query:\n      type: aggregate\n      dimensions: [month]\n      metrics: [revenue]\n```",
 			want: `visual example "line_basic" has no matching shortcode`,
 		},
 		{

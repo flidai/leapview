@@ -116,4 +116,4 @@ Cross-filter, cross-highlight, and applied filters are separate state roots. An 
 - Verify behavior when page filters and selections are both active.
 - Ensure superseded interactions cannot restore an older result.
 
-Start with standalone correct visuals, then add one interaction at a time. The generated [Dashboard configuration](/docs/config/dashboard) lists current filter and interaction fields.
+Start with standalone correct visuals, then add one interaction at a time. The generated [Dashboard configuration](/docs/config/dashboard-document) lists current filter and interaction fields.

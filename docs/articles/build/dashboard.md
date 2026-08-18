@@ -3,7 +3,7 @@
 A dashboard chooses one project semantic model and composes reusable filters, visual queries, tabular queries, and report pages. Build the smallest useful page first, verify its query behavior, and add interactions only after standalone results are correct.
 
 > [!TIP]
-> Use this guide for the authoring workflow and representative configuration. Use [Dashboard configuration](/docs/config/dashboard) and [Visual types](/docs/visuals/overview) for the complete accepted field contract.
+> Use this guide for the authoring workflow and representative configuration. Use [Dashboard configuration](/docs/config/dashboard-document) and [Visual types](/docs/visuals/overview) for the complete accepted field contract.
 
 ## Before you begin
 
@@ -138,4 +138,4 @@ If a visual is empty, first run its semantic query without dashboard filters, th
 
 ## Next steps
 
-Continue with [Pages and layout](/docs/guides/build/pages-layout), [Filters and interactions](/docs/guides/build/filters-interactions), and [Tables, matrices, and pivots](/docs/guides/build/tables). Use [Dashboard configuration](/docs/config/dashboard) and [Visual types](/docs/visuals/overview) for exact contracts.
+Continue with [Pages and layout](/docs/guides/build/pages-layout), [Filters and interactions](/docs/guides/build/filters-interactions), and [Tables, matrices, and pivots](/docs/guides/build/tables). Use [Dashboard configuration](/docs/config/dashboard-document) and [Visual types](/docs/visuals/overview) for exact contracts.

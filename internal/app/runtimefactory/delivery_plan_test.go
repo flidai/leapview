@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
@@ -395,6 +396,10 @@ func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) 
 
 func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVariant bool) projectartifact.Project {
 	t.Helper()
+	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
+		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "orders.csv", Format: "csv"},
+		Format:                 "csv",
+	}}
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "project:dashboard", Kind: projectgraph.KindProject, Name: "dashboard"},
 		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
@@ -417,8 +422,8 @@ func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVarian
 	}
 	artifact, err := projectartifact.NewProject(graphValue, projectmanifest.Project{
 		ID: "project:dashboard", Name: "dashboard",
-		Connections:          map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed", Scope: "warehouse"}},
-		Sources:              map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv"}},
+		Connections:          map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
+		Sources:              map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}},
 		Models:               map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}}},
 		SemanticModels:       map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}}}},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{"dashboard:sales": {ID: "dashboard:sales", Title: dashboardTitle, SemanticModel: "semantic:sales"}},
