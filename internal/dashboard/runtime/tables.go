@@ -314,6 +314,27 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 	for _, axisRow := range selectedAxisRows {
 		selectedIdentities[pivotRowIdentity(axisRow, table.Rows)] = struct{}{}
 	}
+	cellFilters := append([]reportdef.QueryFilter(nil), queryFilters...)
+	if len(selectedAxisRows) > 0 && pivotRowsCanUseTypedFilters(table.Rows) {
+		groups := make([]reportdef.QueryFilterGroup, 0, len(selectedAxisRows))
+		for _, axisRow := range selectedAxisRows {
+			group := reportdef.QueryFilterGroup{}
+			for _, dimension := range table.Rows {
+				value := axisRow[dimension.Alias]
+				if value == nil {
+					group.Filters = append(group.Filters, reportdef.QueryFilter{Field: dimension.FieldID, Operator: "is_null"})
+				} else {
+					group.Filters = append(group.Filters, reportdef.QueryFilter{Field: dimension.FieldID, Operator: "equals", Values: []any{value}})
+				}
+			}
+			groups = append(groups, group)
+		}
+		if len(groups) == 1 {
+			cellFilters = append(cellFilters, groups[0].Filters...)
+		} else {
+			cellFilters = append(cellFilters, reportdef.QueryFilter{Groups: groups})
+		}
+	}
 	normalizedRows := []map[string]any(nil)
 	if len(selectedIdentities) > 0 {
 		cellLimit := int(base.DataBudget.MaxRows) + 1
@@ -322,14 +343,19 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 		}
 		rawRows, queryErr := runtime.data.Query(ctx, reportdef.AggregateQuery{
 			Dataset: table.Table, Dimensions: dimensions, Metrics: metrics,
-			Filters: queryFilters, Sort: sorts, Offset: 0, Limit: cellLimit,
+			Filters: cellFilters, Sort: sorts, Offset: 0, Limit: cellLimit,
 		})
 		if queryErr != nil {
 			return nil, nil, false, queryErr
 		}
 		normalizedRows = tableRowsFromAnalytics(rawRows)
-		if len(normalizedRows) >= cellLimit {
+		cellIncomplete := len(normalizedRows) >= cellLimit
+		if cellIncomplete && base.DataBudget.RequiredCompleteness == visualizationir.VisualizationCompletenessComplete {
 			return nil, nil, false, fmt.Errorf("table %q pivot cells exceed data budget maxRows %d", table.Definition.ID, base.DataBudget.MaxRows)
+		}
+		if cellIncomplete {
+			calculationIncomplete = true
+			normalizedRows = normalizedRows[:min(len(normalizedRows), int(base.DataBudget.MaxRows))]
 		}
 		filtered := normalizedRows[:0]
 		for _, raw := range normalizedRows {
@@ -496,6 +522,18 @@ func pivotRowIdentity(row map[string]any, dimensions []visualizationdefinition.F
 		values = append(values, row[dimension.Alias])
 	}
 	return typedTupleIdentity(values)
+}
+
+func pivotRowsCanUseTypedFilters(dimensions []visualizationdefinition.FieldBinding) bool {
+	for _, dimension := range dimensions {
+		// QueryFilter has no grain/conformed-dimension operand. Avoid applying
+		// a display-grain value to the raw field; the bounded cell query below
+		// then fails closed if the complete relation exceeds the data budget.
+		if dimension.Grain != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func dedupePivotAxisRows(rows []map[string]any, dimensions []visualizationdefinition.FieldBinding) []map[string]any {
