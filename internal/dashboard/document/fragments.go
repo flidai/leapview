@@ -58,6 +58,15 @@ func (e *FragmentError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Path, e.Message)
 }
 
+// Diagnostic allows callers to project fragment failures into the same
+// source-position diagnostic stream used by project schema/compiler errors.
+func (e *FragmentError) Diagnostic() configschema.Diagnostic {
+	if e == nil {
+		return configschema.Diagnostic{Severity: configschema.SeverityError, Code: "compiler.fragment"}
+	}
+	return configschema.Diagnostic{File: e.Path, Line: e.Line, Severity: configschema.SeverityError, Code: "compiler.fragment", Message: e.Message}
+}
+
 type fragmentState struct {
 	visuals               map[string]DashboardVisual
 	visualOrigins         map[string]idOrigin
