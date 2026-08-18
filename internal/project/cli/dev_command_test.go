@@ -176,6 +176,41 @@ func TestDevCommandOwnsOneAuthenticatedRemoteWorkflow(t *testing.T) {
 	}
 }
 
+type devPlanRecorder struct {
+	called bool
+}
+
+func (recorder *devPlanRecorder) Create(context.Context, DeliveryPlanOptions) (DeliveryPlanResult, error) {
+	recorder.called = true
+	return DeliveryPlanResult{}, errors.New("bootstrap must not resolve a delivery plan")
+}
+
+func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
+	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	checkpoints := NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json"))
+	plan := &devPlanRecorder{}
+	command := DevCommand(
+		t.Context(),
+		&devCommandClient{},
+		checkpoints,
+		&devRemoteFactory{},
+		nil,
+		plan,
+	)
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{
+		"--once", "--no-browser", "--bootstrap",
+		"--project", projectPath, "--target", "prod",
+	})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if plan.called {
+		t.Fatal("bootstrap dev resolved a delivery plan")
+	}
+}
+
 func TestDevCommandCanRemainHeadlessAndTreatsBrowserFailureAsRecoverable(t *testing.T) {
 	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
 	tests := []struct {

@@ -776,6 +776,7 @@ func (c *Controller) bootstrapQualificationServingGeneration(
 		environment[0],
 		environment[1],
 		"leapview", "dev", "--once", "--no-browser",
+		"--bootstrap",
 		"--project", options.Project,
 		"--target", "http://localhost:8080",
 		"--candidate-key", "qualification-serving-bootstrap",

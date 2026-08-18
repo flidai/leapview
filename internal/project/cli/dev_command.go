@@ -23,6 +23,7 @@ type DevOptions struct {
 	Credentials       cliapi.Credentials
 	UploadConcurrency int
 	Once              bool
+	Bootstrap         bool
 	NoBrowser         bool
 	CandidateKey      string
 	SourceRevision    devloop.SourceRevision
@@ -112,6 +113,13 @@ func DevCommand(
 		false,
 		"synchronize one candidate and exit",
 	)
+	command.Flags().BoolVar(
+		&values.Bootstrap,
+		"bootstrap",
+		false,
+		"synchronize the initial serving candidate without resolving a delivery plan",
+	)
+	_ = command.Flags().MarkHidden("bootstrap")
 	command.Flags().BoolVar(
 		&values.NoBrowser,
 		"no-browser",
@@ -258,7 +266,7 @@ func RunDev(
 			ProvenanceDigest:  candidate.ProvenanceDigest,
 		}
 		var planResult DeliveryPlanResult
-		if len(planOperations) > 0 && planOperations[0] != nil {
+		if !options.Bootstrap && len(planOperations) > 0 && planOperations[0] != nil {
 			planResult, err = planOperations[0].Create(ctx, DeliveryPlanOptions{
 				ProjectPath: options.ProjectPath, Credentials: credentials,
 				TargetID: candidate.TargetID, Operation: "code_change",
