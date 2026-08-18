@@ -313,8 +313,8 @@ func testAgentModel() *semanticmodel.Model {
 		Name: "commerce", Sources: map[string]semanticmodel.Source{"orders": {Path: "orders.csv"}},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]semanticmodel.Table{"orders": {
-			ModelName: "orders", Source: "orders", GrainEntity: "order_id",
-			Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+			ModelName: "orders", Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, GrainEntity: "order_id",
+			Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
 			Dimensions: map[string]semanticmodel.MetricDimension{
 				"country":  {Field: "orders.country", Type: "string", Datatype: semanticmodel.DataTypeString},
 				"order_id": {Field: "orders.order_id", Type: "string", Datatype: semanticmodel.DataTypeString},
