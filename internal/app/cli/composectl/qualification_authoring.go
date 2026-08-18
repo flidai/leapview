@@ -819,7 +819,7 @@ func (c *Controller) bootstrapQualificationServingGeneration(
 	}
 	waitCtx, cancel := qualificationContext(ctx, 5*time.Minute)
 	defer cancel()
-	err = qualificationWait(waitCtx, 250*time.Millisecond, func(pollCtx context.Context) (bool, error) {
+	err = qualificationWait(waitCtx, 2*time.Second, func(pollCtx context.Context) (bool, error) {
 		current, getErr := client.GetDeployment(
 			pollCtx,
 			deploymentgen.GenGetDeploymentClientRequest{
@@ -827,7 +827,7 @@ func (c *Controller) bootstrapQualificationServingGeneration(
 			},
 		)
 		if getErr != nil {
-			if qualificationServiceUnavailable(getErr) {
+			if qualificationTransientDeploymentError(getErr) {
 				return false, nil
 			}
 			return false, getErr
@@ -851,20 +851,21 @@ func (c *Controller) bootstrapQualificationServingGeneration(
 	return err
 }
 
-// qualificationServiceUnavailable treats both generated problem responses and
-// plain-text 503s from authorization/readiness middleware as transient while
-// the first serving generation is still being activated. The latter bypasses
-// APIGen's problem+json envelope, so checking only ProblemError would abort
-// the bootstrap poll before the async activation worker can finish.
-func qualificationServiceUnavailable(err error) bool {
+// qualificationServiceUnavailable treats generated problem responses and
+// plain-text 503/429s from authorization, readiness, or rate-limit middleware
+// as transient while the first serving generation is still being activated.
+// These responses may bypass APIGen's problem+json envelope, so checking only
+// ProblemError would abort the bootstrap poll before the async worker finishes.
+func qualificationTransientDeploymentError(err error) bool {
 	if err == nil {
 		return false
 	}
 	var problem *apigenclient.ProblemError
-	if errors.As(err, &problem) && problem.Problem.Status == http.StatusServiceUnavailable {
-		return true
+	if errors.As(err, &problem) {
+		return problem.Problem.Status == http.StatusServiceUnavailable || problem.Problem.Status == http.StatusTooManyRequests || problem.Response.StatusCode == http.StatusServiceUnavailable || problem.Response.StatusCode == http.StatusTooManyRequests
 	}
-	return strings.HasSuffix(strings.TrimSpace(err.Error()), ": "+http.StatusText(http.StatusServiceUnavailable))
+	message := strings.TrimSpace(err.Error())
+	return strings.HasSuffix(message, ": "+http.StatusText(http.StatusServiceUnavailable)) || strings.HasSuffix(message, ": "+http.StatusText(http.StatusTooManyRequests))
 }
 
 func approveQualificationPublication(

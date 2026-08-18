@@ -65,7 +65,7 @@ func TestInstalledQualificationAcceptsExplicitReleaseBundle(t *testing.T) {
 	}
 }
 
-func TestQualificationServiceUnavailableRecognizesStructuredAndPlainErrors(t *testing.T) {
+func TestQualificationTransientDeploymentErrorRecognizesStructuredAndPlainErrors(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
@@ -73,12 +73,14 @@ func TestQualificationServiceUnavailableRecognizesStructuredAndPlainErrors(t *te
 	}{
 		{name: "structured problem", err: &apigenclient.ProblemError{Response: apigenclient.Response{StatusCode: http.StatusServiceUnavailable}, Problem: apigenclient.ProblemDetails{Status: http.StatusServiceUnavailable}}, want: true},
 		{name: "plain middleware response", err: errors.New("GET https://localhost/api/v1/deployments/deployment_1: Service Unavailable"), want: true},
+		{name: "plain rate limit response", err: errors.New("GET https://localhost/api/v1/deployments/deployment_1: Too Many Requests"), want: true},
+		{name: "structured rate limit response", err: &apigenclient.ProblemError{Response: apigenclient.Response{StatusCode: http.StatusTooManyRequests}, Problem: apigenclient.ProblemDetails{Status: http.StatusTooManyRequests}}, want: true},
 		{name: "other transport error", err: errors.New("GET https://localhost/api/v1/deployments/deployment_1: connection reset"), want: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := qualificationServiceUnavailable(test.err); got != test.want {
-				t.Fatalf("qualificationServiceUnavailable() = %t, want %t", got, test.want)
+			if got := qualificationTransientDeploymentError(test.err); got != test.want {
+				t.Fatalf("qualificationTransientDeploymentError() = %t, want %t", got, test.want)
 			}
 		})
 	}
