@@ -2,15 +2,21 @@ package compiler
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -21,11 +27,131 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
+	extensionsupply "github.com/flidai/leapview/internal/deployment/extensionsupply"
+	"github.com/flidai/leapview/internal/extension"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	"github.com/flidai/leapview/internal/workload"
 )
+
+type compilerTestExtensionAdmission struct{ admitted extension.AdmittedExtension }
+
+var _ extension.Admission = compilerTestExtensionAdmission{}
+var _ extension.Preparation = compilerTestExtensionAdmission{}
+
+func (a compilerTestExtensionAdmission) AdmitExtension(ctx context.Context, name string) (extension.AdmittedExtension, error) {
+	if err := ctx.Err(); err != nil {
+		return extension.AdmittedExtension{}, err
+	}
+	if name != a.admitted.Name {
+		return extension.AdmittedExtension{}, fmt.Errorf("test extension %q was not admitted", name)
+	}
+	return a.admitted, nil
+}
+
+func (a compilerTestExtensionAdmission) PrepareExtensions(ctx context.Context, names []string) ([]extension.Evidence, error) {
+	evidence := make([]extension.Evidence, 0, len(names))
+	for _, name := range names {
+		admitted, err := a.AdmitExtension(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, admitted.Evidence())
+	}
+	return evidence, nil
+}
+
+func newCompilerTestExtensionAdmission(t *testing.T, name string) extension.Admission {
+	t.Helper()
+	version, platform := compilerTestRuntimeTarget(t)
+	setupRoot := t.TempDir()
+	sourcePath := findCompilerTestExtension(name, version, platform)
+	if sourcePath == "" {
+		installCompilerTestExtension(t, name, setupRoot)
+		sourcePath = findCompilerTestExtensionInRoot(setupRoot, name, version, platform)
+	}
+	if sourcePath == "" {
+		t.Fatalf("reviewed local test extension %q is unavailable for DuckDB %s/%s", name, version, platform)
+	}
+	contents, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read test extension %q: %v", name, err)
+	}
+	ownedPath := filepath.Join(setupRoot, name+".duckdb_extension")
+	if err := os.WriteFile(ownedPath, contents, 0o600); err != nil {
+		t.Fatalf("stage test extension %q: %v", name, err)
+	}
+	digest := sha256.Sum256(contents)
+	digestValue := "sha256:" + hex.EncodeToString(digest[:])
+	identity := extension.Identity{DuckDBVersion: version, ExtensionVersion: "test-fixture", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, Name: name, Digest: digestValue, SupportProfile: "test-fixture"}
+	canonical, err := identity.Canonical()
+	if err != nil {
+		t.Fatalf("canonicalize test extension %q: %v", name, err)
+	}
+	return compilerTestExtensionAdmission{admitted: extension.AdmittedExtension{Name: name, Identity: canonical, Version: "test-fixture", ExtensionVersion: "test-fixture", DuckDBVersion: version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, SupportProfile: "test-fixture", Digest: digestValue, Path: ownedPath, Origin: "reviewed-local-test-fixture", Provenance: "attest:compiler-test", Signature: "sig:compiler-test"}}
+}
+
+func compilerTestRuntimeTarget(t *testing.T) (string, string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open DuckDB runtime probe: %v", err)
+	}
+	defer db.Close()
+	var version, platform string
+	if err := db.QueryRowContext(t.Context(), "SELECT version()").Scan(&version); err != nil {
+		t.Fatalf("read DuckDB runtime version: %v", err)
+	}
+	if err := db.QueryRowContext(t.Context(), "PRAGMA platform").Scan(&platform); err != nil {
+		t.Fatalf("read DuckDB runtime platform: %v", err)
+	}
+	if version != extensionsupply.CurrentDuckDBVersion {
+		t.Fatalf("DuckDB runtime = %q, want pinned %q", version, extensionsupply.CurrentDuckDBVersion)
+	}
+	return strings.TrimSpace(version), strings.TrimSpace(platform)
+}
+
+func findCompilerTestExtension(name, version, platform string) string {
+	roots := []string{}
+	if configured := strings.TrimSpace(os.Getenv("DUCKDB_EXTENSION_DIRECTORY")); configured != "" {
+		roots = append(roots, configured)
+	} else if home, err := os.UserHomeDir(); err == nil {
+		roots = append(roots, filepath.Join(home, ".duckdb", "extensions"))
+	}
+	for _, root := range roots {
+		if found := findCompilerTestExtensionInRoot(root, name, version, platform); found != "" {
+			return found
+		}
+	}
+	return ""
+}
+
+func findCompilerTestExtensionInRoot(root, name, version, platform string) string {
+	filename := name + ".duckdb_extension"
+	platformDir := strings.ReplaceAll(platform, "-", "_")
+	for _, path := range []string{filepath.Join(root, version, platformDir, filename), filepath.Join(root, version, platform, filename)} {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			return filepath.Clean(path)
+		}
+	}
+	return ""
+}
+
+func installCompilerTestExtension(t *testing.T, name, root string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open test extension installer: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("SET extension_directory = '" + strings.ReplaceAll(root, "'", "''") + "'"); err != nil {
+		t.Fatalf("set test extension directory: %v", err)
+	}
+	if _, err := db.Exec("INSTALL " + name + " FROM core"); err != nil {
+		t.Fatalf("install test extension %q: %v", name, err)
+	}
+}
 
 func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
 	document := dashboardauthoring.Dashboard{
@@ -343,7 +469,8 @@ spec:
 	execute := func(model *semanticmodel.Model) dataquery.Result {
 		ctx := context.Background()
 		dir := t.TempDir()
-		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+		admission := newCompilerTestExtensionAdmission(t, "ducklake")
+		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
 		if err != nil {
 			t.Fatalf("open DuckLake fixture environment: %v", err)
 		}
@@ -359,7 +486,7 @@ spec:
 			t.Fatalf("admit fixture refresh: %v", err)
 		}
 		runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(lease.Context(), analyticsduckdb.ProjectRuntimeConfig{
-			ProjectID: "project:test", Models: map[string]*semanticmodel.Model{"semantic:sales": model}, Database: environment,
+			ProjectID: "project:test", Models: map[string]*semanticmodel.Model{"semantic:sales": model}, Database: environment, ExtensionAdmission: admission,
 		})
 		if err != nil {
 			lease.Release()

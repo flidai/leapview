@@ -2,10 +2,14 @@ package duckdb
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,9 +20,131 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	extensionsupply "github.com/flidai/leapview/internal/deployment/extensionsupply"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/stretchr/testify/require"
 )
+
+type duckdbTestExtensionAdmission struct {
+	admitted map[string]extension.AdmittedExtension
+}
+
+var _ extension.Admission = duckdbTestExtensionAdmission{}
+var _ extension.Preparation = duckdbTestExtensionAdmission{}
+
+func (a duckdbTestExtensionAdmission) AdmitExtension(ctx context.Context, name string) (extension.AdmittedExtension, error) {
+	if err := ctx.Err(); err != nil {
+		return extension.AdmittedExtension{}, err
+	}
+	admitted, ok := a.admitted[name]
+	if !ok {
+		return extension.AdmittedExtension{}, fmt.Errorf("test extension %q was not admitted", name)
+	}
+	return admitted, nil
+}
+
+func (a duckdbTestExtensionAdmission) PrepareExtensions(ctx context.Context, names []string) ([]extension.Evidence, error) {
+	evidence := make([]extension.Evidence, 0, len(names))
+	for _, name := range names {
+		admitted, err := a.AdmitExtension(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, admitted.Evidence())
+	}
+	return evidence, nil
+}
+
+func newDuckDBTestExtensionAdmission(t *testing.T, names ...string) extension.Admission {
+	t.Helper()
+	version, platform := duckdbTestRuntimeTarget(t)
+	setupRoot := t.TempDir()
+	admitted := make(map[string]extension.AdmittedExtension, len(names))
+	for _, name := range names {
+		sourcePath := findDuckDBTestExtension(name, version, platform)
+		if sourcePath == "" {
+			installDuckDBTestExtension(t, name, setupRoot)
+			sourcePath = findDuckDBTestExtensionInRoot(setupRoot, name, version, platform)
+		}
+		if sourcePath == "" {
+			t.Fatalf("reviewed local test extension %q is unavailable for DuckDB %s/%s", name, version, platform)
+		}
+		contents, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("read test extension %q: %v", name, err)
+		}
+		digest := sha256.Sum256(contents)
+		digestValue := "sha256:" + hex.EncodeToString(digest[:])
+		ownedPath := filepath.Join(setupRoot, name+".duckdb_extension")
+		if err := os.WriteFile(ownedPath, contents, 0o600); err != nil {
+			t.Fatalf("stage test extension %q: %v", name, err)
+		}
+		identity := extension.Identity{DuckDBVersion: version, ExtensionVersion: "test-fixture", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, Name: name, Digest: digestValue, SupportProfile: "test-fixture"}
+		canonical, err := identity.Canonical()
+		if err != nil {
+			t.Fatalf("canonicalize test extension %q: %v", name, err)
+		}
+		admitted[name] = extension.AdmittedExtension{Name: name, Identity: canonical, Version: "test-fixture", ExtensionVersion: "test-fixture", DuckDBVersion: version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, SupportProfile: "test-fixture", Digest: digestValue, Path: ownedPath, Origin: "reviewed-local-test-fixture", Provenance: "attest:duckdb-test", Signature: "sig:duckdb-test"}
+	}
+	return duckdbTestExtensionAdmission{admitted: admitted}
+}
+
+func duckdbTestRuntimeTarget(t *testing.T) (string, string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open DuckDB runtime probe: %v", err)
+	}
+	defer db.Close()
+	var version, platform string
+	if err := db.QueryRowContext(t.Context(), "SELECT version()").Scan(&version); err != nil {
+		t.Fatalf("read DuckDB runtime version: %v", err)
+	}
+	if err := db.QueryRowContext(t.Context(), "PRAGMA platform").Scan(&platform); err != nil {
+		t.Fatalf("read DuckDB runtime platform: %v", err)
+	}
+	if version != extensionsupply.CurrentDuckDBVersion {
+		t.Fatalf("DuckDB runtime = %q, want pinned %q", version, extensionsupply.CurrentDuckDBVersion)
+	}
+	return strings.TrimSpace(version), strings.TrimSpace(platform)
+}
+
+func findDuckDBTestExtension(name, version, platform string) string {
+	if configured := strings.TrimSpace(os.Getenv("DUCKDB_EXTENSION_DIRECTORY")); configured != "" {
+		return findDuckDBTestExtensionInRoot(configured, name, version, platform)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return findDuckDBTestExtensionInRoot(filepath.Join(home, ".duckdb", "extensions"), name, version, platform)
+	}
+	return ""
+}
+
+func findDuckDBTestExtensionInRoot(root, name, version, platform string) string {
+	filename := name + ".duckdb_extension"
+	platformDir := strings.ReplaceAll(platform, "-", "_")
+	for _, path := range []string{filepath.Join(root, version, platformDir, filename), filepath.Join(root, version, platform, filename)} {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			return filepath.Clean(path)
+		}
+	}
+	return ""
+}
+
+func installDuckDBTestExtension(t *testing.T, name, root string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open test extension installer: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("SET extension_directory = '" + strings.ReplaceAll(root, "'", "''") + "'"); err != nil {
+		t.Fatalf("set test extension directory: %v", err)
+	}
+	if _, err := db.Exec("INSTALL " + name + " FROM core"); err != nil {
+		t.Fatalf("install test extension %q: %v", name, err)
+	}
+}
 
 func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 	ctx := context.Background()
@@ -409,13 +535,14 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 
 func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (context.Context, *analyticsducklake.Environment, *ProjectRuntime) {
 	t.Helper()
-	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+	admission := newDuckDBTestExtensionAdmission(t, "ducklake")
+	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
 	require.NoError(t, err)
 	controller, err := workload.New(workload.DefaultConfig())
 	require.NoError(t, err)
 	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "schema-test", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
-	runtime, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
+	runtime, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment, ExtensionAdmission: admission})
 	if err != nil {
 		lease.Release()
 		controller.Close()
@@ -436,7 +563,8 @@ func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model 
 
 func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (*ProjectRuntime, error) {
 	t.Helper()
-	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+	admission := newDuckDBTestExtensionAdmission(t, "ducklake")
+	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +579,7 @@ func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir str
 		return nil, err
 	}
 	defer lease.Release()
-	return OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
+	return OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment, ExtensionAdmission: admission})
 }
 
 func TestCompileSourceRelation(t *testing.T) {
