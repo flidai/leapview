@@ -19,7 +19,23 @@ func PlanModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	return planModelTable(ctx, runtimeDB, model, tableName, table, nil)
 }
 
-func planModelTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]string) (analyticsmaterialize.ModelTablePlan, error) {
+type stagedRelationKind uint8
+
+const (
+	stagedRelationTable stagedRelationKind = iota + 1
+	stagedRelationQuery
+)
+
+// stagedRelation keeps the relation boundary explicit. Prepared source
+// sessions use either a temporary table identifier or a generated SELECT
+// query; treating both as raw SQL text lets a query be emitted as `FROM
+// SELECT ...`, which DuckDB rejects.
+type stagedRelation struct {
+	value string
+	kind  stagedRelationKind
+}
+
+func planModelTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]stagedRelation) (analyticsmaterialize.ModelTablePlan, error) {
 	if err := validateIdentifier(tableName); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
@@ -106,7 +122,7 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	return materializationPlan(analyticsmaterialize.PlanModeProjectedSourceInline, tableName, rewritten), nil
 }
 
-func planDirectSourceTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]string) (analyticsmaterialize.ModelTablePlan, error) {
+func planDirectSourceTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]stagedRelation) (analyticsmaterialize.ModelTablePlan, error) {
 	source, ok := model.Sources[table.Execution.Source]
 	if !ok {
 		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("unknown source %q", table.Execution.Source)
@@ -474,7 +490,7 @@ func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sou
 	return plans, nil
 }
 
-func inlineSourceReplacements(model *semanticmodel.Model, plans []sourceReadPlan, staged map[string]string) (map[string]string, error) {
+func inlineSourceReplacements(model *semanticmodel.Model, plans []sourceReadPlan, staged map[string]stagedRelation) (map[string]string, error) {
 	replacements := map[string]string{}
 	for _, plan := range plans {
 		source, ok := model.Sources[plan.Source]
@@ -490,9 +506,18 @@ func inlineSourceReplacements(model *semanticmodel.Model, plans []sourceReadPlan
 	return replacements, nil
 }
 
-func sourceReadRelation(model *semanticmodel.Model, sourceName string, source semanticmodel.Source, fields []string, columns []sourceReadColumn, rowPresenceOnly bool, staged map[string]string) (string, error) {
-	if relation := staged[sourceName]; relation != "" {
-		return projectedRelation(relation, fields, columns, rowPresenceOnly)
+func sourceReadRelation(model *semanticmodel.Model, sourceName string, source semanticmodel.Source, fields []string, columns []sourceReadColumn, rowPresenceOnly bool, staged map[string]stagedRelation) (string, error) {
+	if relation, ok := staged[sourceName]; ok {
+		if strings.TrimSpace(relation.value) == "" {
+			return "", fmt.Errorf("staged source %q has an empty relation", sourceName)
+		}
+		sourceRelation := relation.value
+		if relation.kind == stagedRelationQuery {
+			sourceRelation = "(" + sourceRelation + ")"
+		} else if relation.kind != stagedRelationTable {
+			return "", fmt.Errorf("staged source %q has unknown relation kind", sourceName)
+		}
+		return projectedRelation(sourceRelation, fields, columns, rowPresenceOnly)
 	}
 	return SourceReadRelation(model, source, fields, columns, rowPresenceOnly)
 }

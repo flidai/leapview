@@ -100,6 +100,93 @@ func TestPlanModelTableCompilesDirectSourceFromColumns(t *testing.T) {
 	}
 }
 
+func TestPlanModelTableUsesStagedQueryAsSubqueryForDirectSource(t *testing.T) {
+	ctx := context.Background()
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	model := planningModel(map[string][]string{
+		"orders": {"raw_order_id", "gross_revenue"},
+	}, semanticmodel.Table{
+		Execution: semanticmodel.ExecutionDefinition{Source: "orders"},
+		ModelName: "orders",
+		Columns: map[string]semanticmodel.ModelColumn{
+			"order_id": {SourceField: "raw_order_id", Datatype: semanticmodel.DataTypeString},
+			"revenue":  {SourceField: "gross_revenue", Datatype: semanticmodel.DataTypeFloat},
+		},
+		Entities:    map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+		GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
+			"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
+		},
+	})
+	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
+
+	plan, err := planModelTable(ctx, db, model, "orders", model.Tables["orders"], map[string]stagedRelation{
+		"orders": {value: "SELECT 'o-1' AS raw_order_id, 42.5 AS gross_revenue", kind: stagedRelationQuery},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plan.SQL, "FROM SELECT") {
+		t.Fatalf("plan SQL has an unparenthesized staged query: %s", plan.SQL)
+	}
+	if _, err := db.ExecContext(ctx, "CREATE SCHEMA model"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, plan.SQL); err != nil {
+		t.Fatalf("executing staged direct-source plan failed: %v\nSQL: %s", err, plan.SQL)
+	}
+}
+
+func TestPlanModelTableUsesStagedQueriesAsSubqueriesForSQLModel(t *testing.T) {
+	ctx := context.Background()
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	model := planningModel(map[string][]string{
+		"orders":   {"order_id", "customer_id", "status"},
+		"payments": {"order_id", "payment_value"},
+	}, semanticmodel.Table{
+		SourceDependencies: []string{"orders", "payments"},
+		Columns: map[string]semanticmodel.ModelColumn{
+			"order_id":    {Datatype: semanticmodel.DataTypeString},
+			"customer_id": {Datatype: semanticmodel.DataTypeString},
+			"revenue":     {Datatype: semanticmodel.DataTypeFloat},
+		},
+		Entities:    map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+		GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"order_id":    {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
+			"customer_id": {Label: "Customer ID", Datatype: semanticmodel.DataTypeString},
+			"revenue":     {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
+		},
+		Execution: semanticmodel.ExecutionDefinition{SQL: `
+			SELECT o.order_id, o.customer_id, SUM(try_cast(p.payment_value AS DOUBLE)) AS revenue
+			FROM source.orders o
+			JOIN source.payments p USING (order_id)
+			GROUP BY o.order_id, o.customer_id
+		`},
+	})
+	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
+
+	plan, err := planModelTable(ctx, db, model, "orders", model.Tables["orders"], map[string]stagedRelation{
+		"orders":   {value: "SELECT 'o-1' AS order_id, 'c-1' AS customer_id, 'paid' AS status", kind: stagedRelationQuery},
+		"payments": {value: "SELECT 'o-1' AS order_id, 42.5 AS payment_value", kind: stagedRelationQuery},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plan.SQL, "FROM SELECT") || strings.Contains(plan.SQL, "JOIN SELECT") {
+		t.Fatalf("plan SQL has an unparenthesized staged query: %s", plan.SQL)
+	}
+	if _, err := db.ExecContext(ctx, "CREATE SCHEMA model"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, plan.SQL); err != nil {
+		t.Fatalf("executing staged SQL-model plan failed: %v\nSQL: %s", err, plan.SQL)
+	}
+}
+
 func TestPlanModelTableCompilesCountStarToInlineRowPresence(t *testing.T) {
 	ctx := context.Background()
 	db := openPlanningRuntimeDB(t)

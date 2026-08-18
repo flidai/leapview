@@ -86,7 +86,7 @@ var sourceScopeLocks sync.Map
 type PreparedSources struct {
 	model           *semanticmodel.Model
 	session         analyticsresource.Session
-	relations       map[string]string
+	relations       map[string]stagedRelation
 	relationQueries map[string]string
 	tables          []string
 	once            sync.Once
@@ -139,7 +139,7 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 	}
 	releaseScopes := lockSourceScopes(resolved, telemetry)
 	defer releaseScopes()
-	prepared := &PreparedSources{model: resolved, session: session, relations: map[string]string{}, relationQueries: map[string]string{}, telemetry: telemetry}
+	prepared := &PreparedSources{model: resolved, session: session, relations: map[string]stagedRelation{}, relationQueries: map[string]string{}, telemetry: telemetry}
 	prepared.reporter, _ = r.db.(fatalReporter)
 	for _, sourceName := range sortedKeys(resolved.Sources) {
 		source := resolved.Sources[sourceName]
@@ -160,7 +160,7 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 			// Keep the resolved relation on the live prepared session so the
 			// freshness observation seam can query it before Close releases the
 			// target-owned connection.
-			prepared.relations[sourceName] = relation
+			prepared.relations[sourceName] = stagedRelation{value: relation, kind: stagedRelationQuery}
 			prepared.relationQueries[sourceName] = "(" + relation + ")"
 			original := model.Sources[sourceName]
 			original.Schema = source.Schema
@@ -199,7 +199,7 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 			return nil, safeSourceError(sourceName, err)
 		}
 		prepared.tables = append(prepared.tables, table)
-		prepared.relations[sourceName] = quoteIdentifier(table)
+		prepared.relations[sourceName] = stagedRelation{value: quoteIdentifier(table), kind: stagedRelationTable}
 		prepared.relationQueries[sourceName] = quoteIdentifier(table)
 		columns, err := describeRelationSchema(ctx, session, quoteIdentifier(table))
 		if err != nil {
