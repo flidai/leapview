@@ -352,7 +352,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		}
 		columns := make([]visualizationir.TableVisualizationColumn, 0, len(query.ResultFrame))
 		for i := range query.ResultFrame {
-			columns = append(columns, visualizationir.TableVisualizationColumn{Field: ref(i), Label: query.ResultFrame[i].Name})
+			columns = append(columns, visualizationir.TableVisualizationColumn{Field: ref(i), Label: query.ResultFrame[i].Name, Formatting: []visualizationir.TableVisualizationFormattingRule{}})
 		}
 		base.Kind = "table"
 		return visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: base, Kind: "table", Columns: columns, Presentation: p}}, nil
@@ -505,7 +505,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("spatial interactions: %w", spatialErr)
 		}
 		lat, lon := dimensions[0], dimensions[1]
-		layerBase := visualizationir.VisualizationGeographicLayerBase{ID: "points", Kind: "point", Position: visualizationir.VisualizationMapLayerPositionBelowLabels, Visibility: visualizationir.VisualizationMapVisibility{MinimumZoom: 0, MaximumZoom: 24}}
+		layerBase := visualizationir.VisualizationGeographicLayerBase{ID: "points", Kind: "point", Tooltip: []visualizationir.VisualizationFieldRef{}, Position: visualizationir.VisualizationMapLayerPositionBelowLabels, Visibility: visualizationir.VisualizationMapVisibility{MinimumZoom: 0, MaximumZoom: 24}}
 		layer := visualizationir.VisualizationPointLayer{VisualizationGeographicLayerBase: layerBase, Kind: "point", Latitude: lat, Longitude: lon, Size: visualizationir.VisualizationMapSizeScale{MinimumRadius: 2, MaximumRadius: 12}, Color: visualizationir.VisualizationMapColorScale{Kind: visualizationir.VisualizationMapColorScaleKindSequential, Palette: "default"}, Stroke: visualizationir.VisualizationMapStroke{Color: "#ffffff", Width: 1, Opacity: .8}, Cluster: visualizationir.VisualizationMapCluster{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 2}, Opacity: .8}
 		return visualizationir.VisualizationSpec{Value: &visualizationir.GeographicVisualizationSpec{VisualizationSpecBase: base, Kind: "geographic", Layers: []visualizationir.VisualizationGeographicLayer{{Value: &layer}}, SpatialInteractions: spatialInteractions, Presentation: p}}, nil
 	case document.DashboardVisualTypeHistogram, document.DashboardVisualTypeBoxplot:
@@ -590,7 +590,9 @@ func canonicalPointPresentation(value visualizationir.CartesianVisualizationPres
 	}
 	return visualizationir.PointVisualizationPresentation{
 		VisualizationPresentation: value.VisualizationPresentation,
+		Overplot:                  visualizationir.VisualizationPointOverplotStrategyOpacity,
 		Opacity:                   .7,
+		LargeMode:                 visualizationir.VisualizationPointLargeModeAutomatic,
 		LargeThreshold:            10000,
 		Brush:                     []visualizationir.VisualizationPointBrushGesture{},
 	}, nil
