@@ -125,6 +125,7 @@ func TestAnalyzeSQLRejectsAcceptedKeyWrongTypesAndOpaquePayloads(t *testing.T) {
 	}{
 		{"aggregate handling", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"aggregate_handling":1}`, "aggregate_handling"},
 		{"group set index", `{"type":"SELECT_NODE","select_list":[{"class":"COLUMN_REF","type":"COLUMN_REF","column_names":["id"]}],"from_table":{"type":"EMPTY"},"group_sets":[[-1]]}`, "group_sets"},
+		{"group set range", `{"type":"SELECT_NODE","select_list":[{"class":"COLUMN_REF","type":"COLUMN_REF","column_names":["id"]}],"from_table":{"type":"EMPTY"},"group_expressions":[],"group_sets":[[0]]}`, "group_sets"},
 		{"sample", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"sample":{}}`, "samples"},
 		{"window definition name", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"window_definitions":[{"name":1,"expression":{"class":"STAR","type":"STAR"}}]}`, "window definition name"},
 		{"window definition expression", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"EMPTY"},"window_definitions":[{"name":"w"}]}`, "window definition expression"},
@@ -137,6 +138,7 @@ func TestAnalyzeSQLRejectsAcceptedKeyWrongTypesAndOpaquePayloads(t *testing.T) {
 		{"column names type", `{"type":"SELECT_NODE","select_list":[{"class":"COLUMN_REF","type":"COLUMN_REF","column_names":[1]}],"from_table":{"type":"EMPTY"}}`, "column reference names"},
 		{"column namespace", `{"type":"SELECT_NODE","select_list":[{"class":"COLUMN_REF","type":"COLUMN_REF","column_names":["raw","orders","id"]}],"from_table":{"type":"EMPTY"}}`, "namespace"},
 		{"cast width fractional", `{"type":"SELECT_NODE","select_list":[{"class":"CAST","type":"OPERATOR_CAST","child":{"class":"CONSTANT","type":"VALUE_CONSTANT","value":{"type":{"id":"INTEGER"},"is_null":false,"value":1}},"cast_type":{"id":"DECIMAL","type_info":{"type":"DECIMAL_TYPE_INFO","width":1.5,"scale":2}}}],"from_table":{"type":"EMPTY"}}`, "bounded integer"},
+		{"cast type missing", `{"type":"SELECT_NODE","select_list":[{"class":"CAST","type":"OPERATOR_CAST","child":{"class":"CONSTANT","type":"VALUE_CONSTANT","value":{"type":{"id":"INTEGER"},"is_null":false,"value":1}}}],"from_table":{"type":"EMPTY"}}`, "cast_type is required"},
 		{"window boundary", `{"type":"SELECT_NODE","select_list":[{"class":"WINDOW","type":"WINDOW_AGGREGATE","function_name":"count","partitions":[],"orders":[],"children":[],"start":1,"end":"CURRENT_ROW_RANGE"}],"from_table":{"type":"EMPTY"}}`, "WINDOW start"},
 		{"pivot relation", `{"type":"SELECT_NODE","select_list":[],"from_table":{"type":"PIVOT","source":{"type":"EMPTY"},"aggregates":[],"pivots":[]}}`, "PIVOT relations"},
 	}

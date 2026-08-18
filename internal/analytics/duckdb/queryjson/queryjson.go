@@ -213,7 +213,9 @@ func (v *astVisitor) selectNode(node map[string]any) error {
 				return fmt.Errorf("SELECT_NODE %s must be an expression", key)
 			}
 		}
+		groupExpressionCount := 0
 		if groups, ok := node["group_expressions"].([]any); ok {
+			groupExpressionCount = len(groups)
 			for _, item := range groups {
 				if err := v.expressionObject(item); err != nil {
 					return err
@@ -233,7 +235,7 @@ func (v *astVisitor) selectNode(node map[string]any) error {
 					return fmt.Errorf("SELECT_NODE group_sets entry must be an array")
 				}
 				for _, item := range set {
-					if !nonNegativeInteger(item) {
+					if !nonNegativeInteger(item) || integerValue(item) >= int64(groupExpressionCount) {
 						return fmt.Errorf("SELECT_NODE group_sets entries must be non-negative integer indexes")
 					}
 				}
@@ -729,10 +731,12 @@ func (v *astVisitor) expression(obj map[string]any) error {
 			}
 		}
 	case "CAST":
-		if castType, present := obj["cast_type"]; present {
-			if err := validateCastType(castType); err != nil {
-				return err
-			}
+		castType, present := obj["cast_type"]
+		if !present || castType == nil {
+			return fmt.Errorf("CAST cast_type is required")
+		}
+		if err := validateCastType(castType); err != nil {
+			return err
 		}
 		if tryCast, present := obj["try_cast"]; present {
 			if _, ok := tryCast.(bool); !ok {
@@ -1017,6 +1021,19 @@ func nonNegativeInteger(value any) bool {
 		return value >= 0 && value == float64(int64(value))
 	default:
 		return false
+	}
+}
+
+func integerValue(value any) int64 {
+	switch value := value.(type) {
+	case int:
+		return int64(value)
+	case int64:
+		return value
+	case float64:
+		return int64(value)
+	default:
+		return -1
 	}
 }
 
