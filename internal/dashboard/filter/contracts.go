@@ -1,8 +1,8 @@
 package filter
 
 type PredicatePolicy struct {
-	Kind      ExpressionKind `json:"kind" yaml:"kind"`
-	Operators []Operator     `json:"operators,omitempty" yaml:"operators,omitempty"`
+	Kind      ExpressionKind `json:"kind" yaml:"-"`
+	Operators []Operator     `json:"operators,omitempty" yaml:"-"`
 }
 
 type OptionSourceKind string
@@ -14,32 +14,32 @@ const (
 )
 
 type OptionSource struct {
-	Kind        OptionSourceKind `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Limit       int              `json:"limit,omitempty" yaml:"limit,omitempty"`
-	IncludeNull bool             `json:"includeNull,omitempty" yaml:"include_null,omitempty"`
-	Values      []Option         `json:"values,omitempty" yaml:"values,omitempty"`
+	Kind        OptionSourceKind `json:"kind,omitempty" yaml:"-"`
+	Limit       int              `json:"limit,omitempty" yaml:"-"`
+	IncludeNull bool             `json:"includeNull,omitempty" yaml:"-"`
+	Values      []Option         `json:"values,omitempty" yaml:"-"`
 }
 
 type Option struct {
-	Value Value  `json:"value" yaml:"value"`
-	Label string `json:"label" yaml:"label"`
+	Value Value  `json:"value" yaml:"-"`
+	Label string `json:"label" yaml:"-"`
 }
 
 type Formatting struct {
-	Pattern string `json:"pattern,omitempty" yaml:"pattern,omitempty"`
-	Unit    string `json:"unit,omitempty" yaml:"unit,omitempty"`
+	Pattern string `json:"pattern,omitempty" yaml:"-"`
+	Unit    string `json:"unit,omitempty" yaml:"-"`
 }
 
 type Definition struct {
-	Label       string            `json:"label" yaml:"label"`
-	Description string            `json:"description,omitempty" yaml:"description,omitempty"`
-	Field       string            `json:"field" yaml:"field"`
-	Dataset     string            `json:"dataset,omitempty" yaml:"dataset,omitempty"`
+	Label       string            `json:"label" yaml:"-"`
+	Description string            `json:"description,omitempty" yaml:"-"`
+	Field       string            `json:"field" yaml:"-"`
+	Dataset     string            `json:"dataset,omitempty" yaml:"-"`
 	ValueKind   ValueKind         `json:"valueKind,omitempty" yaml:"-"`
 	Time        TimeSemantics     `json:"time,omitempty" yaml:"-"`
-	Predicates  []PredicatePolicy `json:"predicates" yaml:"predicates"`
-	Options     OptionSource      `json:"options,omitempty" yaml:"options,omitempty"`
-	Formatting  Formatting        `json:"formatting,omitempty" yaml:"formatting,omitempty"`
+	Predicates  []PredicatePolicy `json:"predicates" yaml:"-"`
+	Options     OptionSource      `json:"options,omitempty" yaml:"-"`
+	Formatting  Formatting        `json:"formatting,omitempty" yaml:"-"`
 }
 
 type SelectionMode string
@@ -50,8 +50,8 @@ const (
 )
 
 type SelectionPolicy struct {
-	Mode              SelectionMode `json:"mode,omitempty" yaml:"mode,omitempty"`
-	MaxSelectedValues int           `json:"maxSelectedValues,omitempty" yaml:"max_selected_values,omitempty"`
+	Mode              SelectionMode `json:"mode,omitempty" yaml:"-"`
+	MaxSelectedValues int           `json:"maxSelectedValues,omitempty" yaml:"-"`
 }
 
 type URLEncoding string
@@ -59,41 +59,41 @@ type URLEncoding string
 const URLEncodingTypedV1 URLEncoding = "typed_v1"
 
 type URLPolicy struct {
-	Param    string      `json:"param,omitempty" yaml:"param,omitempty"`
-	Encoding URLEncoding `json:"encoding,omitempty" yaml:"encoding,omitempty"`
+	Param    string      `json:"param,omitempty" yaml:"-"`
+	Encoding URLEncoding `json:"encoding,omitempty" yaml:"-"`
 }
 
 type PanePolicy struct {
-	Visible *bool  `json:"visible,omitempty" yaml:"visible,omitempty"`
-	Order   int    `json:"order,omitempty" yaml:"order,omitempty"`
-	Label   string `json:"label,omitempty" yaml:"label,omitempty"`
+	Visible *bool  `json:"visible,omitempty" yaml:"-"`
+	Order   int    `json:"order,omitempty" yaml:"-"`
+	Label   string `json:"label,omitempty" yaml:"-"`
 }
 
 type TargetPolicy struct {
-	Include []string `json:"include,omitempty" yaml:"include,omitempty"`
-	Exclude []string `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	Include []string `json:"include,omitempty" yaml:"-"`
+	Exclude []string `json:"exclude,omitempty" yaml:"-"`
 }
 
 type BindingRef struct {
-	Scope Scope  `json:"scope" yaml:"scope"`
-	ID    string `json:"id" yaml:"id"`
+	Scope Scope  `json:"scope" yaml:"-"`
+	ID    string `json:"id" yaml:"-"`
 }
 
 type OptionInteractions struct {
-	Include []BindingRef `json:"include,omitempty" yaml:"include,omitempty"`
-	Exclude []BindingRef `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	Include []BindingRef `json:"include,omitempty" yaml:"-"`
+	Exclude []BindingRef `json:"exclude,omitempty" yaml:"-"`
 }
 
 type Binding struct {
-	Filter             string             `json:"filter" yaml:"filter"`
-	Default            Expression         `json:"default" yaml:"default"`
-	Required           bool               `json:"required,omitempty" yaml:"required,omitempty"`
-	Selection          SelectionPolicy    `json:"selection,omitempty" yaml:"selection,omitempty"`
-	ReaderEditable     *bool              `json:"readerEditable,omitempty" yaml:"reader_editable,omitempty"`
-	URL                URLPolicy          `json:"url,omitempty" yaml:"url,omitempty"`
-	Pane               PanePolicy         `json:"pane,omitempty" yaml:"pane,omitempty"`
-	TargetPolicy       TargetPolicy       `json:"targetPolicy,omitempty" yaml:"targets,omitempty"`
-	OptionInteractions OptionInteractions `json:"optionInteractions,omitempty" yaml:"option_interactions,omitempty"`
+	Filter             string             `json:"filter" yaml:"-"`
+	Default            Expression         `json:"default" yaml:"-"`
+	Required           bool               `json:"required,omitempty" yaml:"-"`
+	Selection          SelectionPolicy    `json:"selection,omitempty" yaml:"-"`
+	ReaderEditable     *bool              `json:"readerEditable,omitempty" yaml:"-"`
+	URL                URLPolicy          `json:"url,omitempty" yaml:"-"`
+	Pane               PanePolicy         `json:"pane,omitempty" yaml:"-"`
+	TargetPolicy       TargetPolicy       `json:"targetPolicy,omitempty" yaml:"-"`
+	OptionInteractions OptionInteractions `json:"optionInteractions,omitempty" yaml:"-"`
 
 	Key                string       `json:"key,omitempty" yaml:"-"`
 	ID                 string       `json:"id,omitempty" yaml:"-"`
@@ -120,7 +120,7 @@ const (
 )
 
 type ApplicationPolicy struct {
-	Mode ApplicationMode `json:"mode" yaml:"mode"`
+	Mode ApplicationMode `json:"mode" yaml:"-"`
 }
 
 func (policy ApplicationPolicy) WithDefaults() ApplicationPolicy {
@@ -143,13 +143,13 @@ const (
 )
 
 type Presentation struct {
-	Style       PresentationStyle `json:"style" yaml:"style"`
-	Search      bool              `json:"search,omitempty" yaml:"search,omitempty"`
-	SelectAll   bool              `json:"selectAll,omitempty" yaml:"select_all,omitempty"`
-	ShowCounts  bool              `json:"showCounts,omitempty" yaml:"show_counts,omitempty"`
-	ShowSummary bool              `json:"showSummary,omitempty" yaml:"show_summary,omitempty"`
-	Compact     bool              `json:"compact,omitempty" yaml:"compact,omitempty"`
-	Title       string            `json:"title,omitempty" yaml:"title,omitempty"`
-	Description string            `json:"description,omitempty" yaml:"description,omitempty"`
-	AriaLabel   string            `json:"ariaLabel,omitempty" yaml:"aria_label,omitempty"`
+	Style       PresentationStyle `json:"style" yaml:"-"`
+	Search      bool              `json:"search,omitempty" yaml:"-"`
+	SelectAll   bool              `json:"selectAll,omitempty" yaml:"-"`
+	ShowCounts  bool              `json:"showCounts,omitempty" yaml:"-"`
+	ShowSummary bool              `json:"showSummary,omitempty" yaml:"-"`
+	Compact     bool              `json:"compact,omitempty" yaml:"-"`
+	Title       string            `json:"title,omitempty" yaml:"-"`
+	Description string            `json:"description,omitempty" yaml:"-"`
+	AriaLabel   string            `json:"ariaLabel,omitempty" yaml:"-"`
 }

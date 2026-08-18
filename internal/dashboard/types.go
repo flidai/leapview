@@ -41,17 +41,19 @@ type CatalogModel = catalog.Model
 type CatalogDashboard = catalog.Dashboard
 
 type Page struct {
-	ID          string     `json:"id" yaml:"id"`
-	Title       string     `json:"title" yaml:"title"`
-	Description string     `json:"description,omitempty" yaml:"description"`
-	Canvas      PageCanvas `json:"canvas" yaml:"canvas"`
-	Grid        PageGrid   `json:"grid" yaml:"grid"`
-	// ResponsiveLayout is populated only by the canonical Dashboard compiler.
-	// Its presence distinguishes responsive pages from legacy fixed-canvas
-	// pages, so renderers do not call WithDefaults and fabricate a viewport.
+	// Page is a runtime projection of the generated canonical Dashboard page.
+	// It is never a YAML authoring model; canonical documents are decoded into
+	// dashboard/document types and compiled into this structure.
+	ID          string     `json:"id" yaml:"-"`
+	Title       string     `json:"title" yaml:"-"`
+	Description string     `json:"description,omitempty" yaml:"-"`
+	Canvas      PageCanvas `json:"canvas" yaml:"-"`
+	Grid        PageGrid   `json:"grid" yaml:"-"`
+	// ResponsiveLayout is populated by the canonical Dashboard compiler.
+	// Width and height are derived runtime geometry, never authored values.
 	ResponsiveLayout *PageResponsiveLayout              `json:"responsiveLayout,omitempty" yaml:"-"`
-	FilterBindings   map[string]dashboardfilter.Binding `json:"filterBindings,omitempty" yaml:"filter_bindings,omitempty"`
-	Visuals          []PageVisual                       `json:"visuals" yaml:"visuals"`
+	FilterBindings   map[string]dashboardfilter.Binding `json:"filterBindings,omitempty" yaml:"-"`
+	Visuals          []PageVisual                       `json:"visuals" yaml:"-"`
 	Width            int                                `json:"width,omitempty" yaml:"-"`
 	Height           int                                `json:"height,omitempty" yaml:"-"`
 }
@@ -59,52 +61,38 @@ type Page struct {
 // PageResponsiveLayout is immutable compiler metadata attached to the shared
 // runtime Page. Grid values remain on Page.Grid; component placement remains
 // on Page.Visuals. Height is persisted on Page.Height and derived from the
-// final occupied row; no canvas width/height is authored for responsive pages.
+// final occupied row; no canvas width/height is authored.
 type PageResponsiveLayout struct {
 	OccupiedRows int    `json:"occupiedRows"`
 	NarrowView   string `json:"narrowView"`
 }
 
 type PageCanvas struct {
-	Width  int `json:"width" yaml:"width"`
-	Height int `json:"height" yaml:"height"`
+	Width  int `json:"width" yaml:"-"`
+	Height int `json:"height" yaml:"-"`
 }
 
 type PageGrid struct {
-	Columns   int `json:"columns" yaml:"columns"`
-	RowHeight int `json:"rowHeight" yaml:"row_height"`
-	Gap       int `json:"gap" yaml:"gap"`
-	Padding   int `json:"padding" yaml:"padding"`
+	Columns   int `json:"columns" yaml:"-"`
+	RowHeight int `json:"rowHeight" yaml:"-"`
+	Gap       int `json:"gap" yaml:"-"`
+	Padding   int `json:"padding" yaml:"-"`
 }
 
 type PagePlacement struct {
-	Col     int `json:"col" yaml:"col"`
-	Row     int `json:"row" yaml:"row"`
-	ColSpan int `json:"colSpan" yaml:"col_span"`
-	RowSpan int `json:"rowSpan" yaml:"row_span"`
+	Col     int `json:"col" yaml:"-"`
+	Row     int `json:"row" yaml:"-"`
+	ColSpan int `json:"colSpan" yaml:"-"`
+	RowSpan int `json:"rowSpan" yaml:"-"`
 }
 
 func (p Page) WithDefaults() Page {
-	if p.ResponsiveLayout != nil {
-		// Canonical responsive pages intentionally have no fixed canvas. Keep the
-		// resolved grid and derived height while preventing legacy defaults from
-		// inventing width/height values.
-		p.Width = 0
-		return p
-	}
-	if p.Canvas.Width <= 0 {
-		if p.Width > 0 {
-			p.Canvas.Width = p.Width
-		} else {
-			p.Canvas.Width = 1366
-		}
-	}
-	if p.Canvas.Height <= 0 {
-		if p.Height > 0 {
-			p.Canvas.Height = p.Height
-		} else {
-			p.Canvas.Height = 940
-		}
+	// Canonical pages carry a resolved grid and derive height from occupied
+	// rows. Do not fabricate a viewport or preserve an authored fixed canvas.
+	p.Canvas = PageCanvas{}
+	p.Width = 0
+	if p.ResponsiveLayout == nil {
+		p.Height = 0
 	}
 	if p.Grid.Columns <= 0 {
 		p.Grid.Columns = 12
@@ -121,8 +109,6 @@ func (p Page) WithDefaults() Page {
 	if p.Grid.Padding < 0 {
 		p.Grid.Padding = 0
 	}
-	p.Width = p.Canvas.Width
-	p.Height = p.Canvas.Height
 	return p
 }
 
@@ -130,18 +116,8 @@ func (p Page) PlacedVisuals() []PageVisual {
 	p = p.WithDefaults()
 	visuals := make([]PageVisual, 0, len(p.Visuals))
 	for _, visual := range p.Visuals {
-		if p.ResponsiveLayout != nil {
-			// Responsive renderers consume the cell placement and resolved grid
-			// directly. Pixel bounds depend on the current viewport and must not
-			// be fabricated from the legacy canvas helper.
-			visuals = append(visuals, visual)
-			continue
-		}
-		if visual.Placement.IsZero() {
-			visuals = append(visuals, visual)
-			continue
-		}
-		visual.X, visual.Y, visual.Width, visual.Height = p.Grid.Rect(p.Canvas, visual.Placement)
+		// Placement is a responsive grid cell. Pixel geometry belongs to the
+		// browser viewport and is deliberately not computed in the runtime Page.
 		visuals = append(visuals, visual)
 	}
 	return visuals
@@ -163,21 +139,21 @@ func (p PagePlacement) IsZero() bool {
 }
 
 type PageVisual struct {
-	ID           string                       `json:"id" yaml:"id"`
-	Kind         string                       `json:"kind" yaml:"kind"`
-	Visual       string                       `json:"visual,omitempty" yaml:"visual"`
-	Binding      dashboardfilter.BindingRef   `json:"binding,omitempty" yaml:"binding,omitempty"`
-	Presentation dashboardfilter.Presentation `json:"presentation,omitempty" yaml:"presentation,omitempty"`
-	Description  string                       `json:"description,omitempty" yaml:"description"`
-	Placement    PagePlacement                `json:"placement" yaml:"placement"`
+	ID           string                       `json:"id" yaml:"-"`
+	Kind         string                       `json:"kind" yaml:"-"`
+	Visual       string                       `json:"visual,omitempty" yaml:"-"`
+	Binding      dashboardfilter.BindingRef   `json:"binding,omitempty" yaml:"-"`
+	Presentation dashboardfilter.Presentation `json:"presentation,omitempty" yaml:"-"`
+	Description  string                       `json:"description,omitempty" yaml:"-"`
+	Placement    PagePlacement                `json:"placement" yaml:"-"`
 	X            float64                      `json:"x" yaml:"-"`
 	Y            float64                      `json:"y" yaml:"-"`
 	Width        float64                      `json:"width" yaml:"-"`
 	Height       float64                      `json:"height" yaml:"-"`
-	Eyebrow      string                       `json:"eyebrow,omitempty" yaml:"eyebrow"`
-	Title        string                       `json:"title,omitempty" yaml:"title"`
-	Subtitle     string                       `json:"subtitle,omitempty" yaml:"subtitle"`
-	Badges       []string                     `json:"badges,omitempty" yaml:"badges"`
+	Eyebrow      string                       `json:"eyebrow,omitempty" yaml:"-"`
+	Title        string                       `json:"title,omitempty" yaml:"-"`
+	Subtitle     string                       `json:"subtitle,omitempty" yaml:"-"`
+	Badges       []string                     `json:"badges,omitempty" yaml:"-"`
 }
 
 type Filters struct {
