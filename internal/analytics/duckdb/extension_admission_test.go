@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
 
 func TestValidateAdmittedExtensionRequiresExactIdentity(t *testing.T) {
@@ -35,11 +36,18 @@ func TestLoadExtensionStatementUsesExactQuotedArtifactPath(t *testing.T) {
 }
 
 func TestResolveSourcePlanUsesCompiledEffectiveOptionsVerbatim(t *testing.T) {
-	effective := map[string]any{"header": true, "delimiter": ";"}
+	location := testPathLocation("csv", "orders.csv")
+	variant := location.Value.(*projectcontracts.CSVPathSourceLocation)
+	semicolon := ";"
+	variant.Options.Delimiter = &semicolon
+	effective, err := duckDBPathOptions(location)
+	if err != nil {
+		t.Fatalf("duckDBPathOptions() error = %v", err)
+	}
 	model := &semanticmodel.Model{
 		Connections: map[string]semanticmodel.Connection{"files": {Kind: "managed", Root: "/tmp/revision"}},
 	}
-	source := semanticmodel.Source{LocationType: semanticmodel.KindPath, Connection: "files", Path: "orders.csv", Format: "csv", EffectiveOptions: effective}
+	source := semanticmodel.Source{LocationType: semanticmodel.KindPath, Connection: "files", Path: "orders.csv", Format: "csv", EffectivePathLocation: location}
 	plan, err := ResolveSourcePlan(model, source)
 	if err != nil {
 		t.Fatalf("ResolveSourcePlan() error = %v", err)
@@ -47,7 +55,7 @@ func TestResolveSourcePlanUsesCompiledEffectiveOptionsVerbatim(t *testing.T) {
 	if !reflect.DeepEqual(plan.options, effective) {
 		t.Fatalf("runtime plan options = %#v, want compiled effective options %#v", plan.options, effective)
 	}
-	empty := semanticmodel.Source{LocationType: semanticmodel.KindPath, Connection: "files", Path: "orders.vortex", Format: "vortex", EffectiveOptions: map[string]any{}}
+	empty := semanticmodel.Source{LocationType: semanticmodel.KindPath, Connection: "files", Path: "orders.vortex", Format: "vortex", EffectivePathLocation: testPathLocation("vortex", "orders.vortex")}
 	emptyPlan, err := ResolveSourcePlan(model, empty)
 	if err != nil {
 		t.Fatalf("ResolveSourcePlan(empty effective options) error = %v", err)

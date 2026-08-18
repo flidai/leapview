@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
 
 func TestTypedDataResourceLoweringPreservesStructureAndSecrets(t *testing.T) {
@@ -18,7 +19,7 @@ spec:
 	if err != nil {
 		t.Fatalf("decode typed connection: %v", err)
 	}
-	if connection.Kind != "managed" || connection.ReaderDefaults["csv"]["header"] != true || len(connection.Auth) != 0 || connection.Host != "" {
+	if connection.Kind != "managed" || connection.ReaderDefaults == nil || connection.ReaderDefaults.Csv == nil || connection.ReaderDefaults.Csv.Header == nil || *connection.ReaderDefaults.Csv.Header != true || len(connection.Auth) != 0 || connection.Host != "" {
 		t.Fatalf("lowered connection leaked or lost fields: %#v", connection)
 	}
 	source, err := decodeSourceResource("source.yaml", []byte(`apiVersion: leapview.dev/v1
@@ -42,11 +43,12 @@ spec:
 	if source.LocationType != semanticmodel.KindPath || source.Path != "orders.csv" || source.Fields["id"].Datatype != semanticmodel.DataTypeInteger {
 		t.Fatalf("lowered source = %#v", source)
 	}
-	effective, err := ResolveEffectiveSourceOptions(source, connection)
+	effective, err := ResolveEffectivePathLocation(source, connection)
 	if err != nil {
 		t.Fatalf("resolve effective options: %v", err)
 	}
-	if effective["header"] != false {
+	variant, ok := effective.Value.(*projectcontracts.CSVPathSourceLocation)
+	if !ok || variant.Options == nil || variant.Options.Header == nil || *variant.Options.Header != false {
 		t.Fatalf("source option did not override connection default: %#v", effective)
 	}
 }

@@ -21,19 +21,19 @@ func TestPlanModelTableCompilesCSVSQLModelToInlineRelations(t *testing.T) {
 		"orders":   {"order_id", "customer_id", "status"},
 		"payments": {"order_id", "payment_value"},
 	}, semanticmodel.Table{
-		Sources: []string{"orders", "payments"},
+		SourceDependencies: []string{"orders", "payments"},
 		Columns: map[string]semanticmodel.ModelColumn{
 			"order_id":    {Datatype: semanticmodel.DataTypeString},
 			"customer_id": {Datatype: semanticmodel.DataTypeString},
 			"revenue":     {Datatype: semanticmodel.DataTypeFloat},
 		},
-		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Dimensions: map[string]semanticmodel.MetricDimension{
 			"order_id":    {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
 			"customer_id": {Label: "Customer ID", Datatype: semanticmodel.DataTypeString},
 			"revenue":     {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
 		},
-		Transform: semanticmodel.Transform{SQL: `
+		Execution: semanticmodel.ExecutionDefinition{SQL: `
 			SELECT o.order_id, o.customer_id, SUM(try_cast(p.payment_value AS DOUBLE)) AS revenue
 			FROM source.orders o
 			JOIN source.payments p USING (order_id)
@@ -52,8 +52,8 @@ func TestPlanModelTableCompilesCSVSQLModelToInlineRelations(t *testing.T) {
 	}
 	for _, want := range []string{
 		"CREATE OR REPLACE TABLE model.orders AS",
-		"FROM (SELECT customer_id, order_id FROM read_csv('/managed/revision/orders.csv')) o",
-		"JOIN (SELECT order_id, payment_value FROM read_csv('/managed/revision/payments.csv')) p",
+		"FROM (SELECT customer_id, order_id FROM read_csv('/managed/revision/orders.csv', delim = ',', escape = '\"', header = false, quote = '\"')) o",
+		"JOIN (SELECT order_id, payment_value FROM read_csv('/managed/revision/payments.csv', delim = ',', escape = '\"', header = false, quote = '\"')) p",
 	} {
 		if !strings.Contains(plan.SQL, want) {
 			t.Fatalf("plan SQL = %s, want %q", plan.SQL, want)
@@ -71,9 +71,9 @@ func TestPlanModelTableCompilesDirectSourceFromColumns(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"raw_order_id", "gross_revenue", "status"},
 	}, semanticmodel.Table{
-		Source:    "orders",
+		Execution: semanticmodel.ExecutionDefinition{Source: "orders"},
 		ModelName: "orders",
-		Entities:  map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Entities:  map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Columns: map[string]semanticmodel.ModelColumn{
 			"order_id": {SourceField: "raw_order_id", Datatype: semanticmodel.DataTypeString},
 			"revenue":  {SourceField: "gross_revenue", Datatype: semanticmodel.DataTypeFloat},
@@ -94,7 +94,7 @@ func TestPlanModelTableCompilesDirectSourceFromColumns(t *testing.T) {
 	if plan.Mode != analyticsmaterialize.PlanModeDirectSourceRead {
 		t.Fatalf("mode = %q, want direct", plan.Mode)
 	}
-	want := "CREATE OR REPLACE TABLE model.orders AS SELECT raw_order_id AS order_id, gross_revenue AS revenue, status FROM read_csv('/managed/revision/orders.csv')"
+	want := "CREATE OR REPLACE TABLE model.orders AS SELECT raw_order_id AS order_id, gross_revenue AS revenue, status FROM read_csv('/managed/revision/orders.csv', delim = ',', escape = '\"', header = false, quote = '\"')"
 	if plan.SQL != want {
 		t.Fatalf("plan SQL = %q, want %q", plan.SQL, want)
 	}
@@ -107,12 +107,12 @@ func TestPlanModelTableCompilesCountStarToInlineRowPresence(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"order_id", "customer_id"},
 	}, semanticmodel.Table{
-		Sources:  []string{"orders"},
-		Entities: map[string]semanticmodel.ModelEntitySpec{"order_count": {Type: "primary", Fields: []string{"order_count"}}}, GrainEntity: "order_count",
+		SourceDependencies: []string{"orders"},
+		Entities:           map[string]semanticmodel.EntityDefinition{"order_count": {Type: "primary", Fields: []string{"order_count"}}}, GrainEntity: "order_count",
 		Dimensions: map[string]semanticmodel.MetricDimension{
 			"order_count": {Label: "Order Count", Datatype: semanticmodel.DataTypeInteger},
 		},
-		Transform: semanticmodel.Transform{SQL: `SELECT COUNT(*) AS order_count FROM source.orders`},
+		Execution: semanticmodel.ExecutionDefinition{SQL: `SELECT COUNT(*) AS order_count FROM source.orders`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 
@@ -120,7 +120,7 @@ func TestPlanModelTableCompilesCountStarToInlineRowPresence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "FROM (SELECT 1 AS __leapview_row_present FROM read_csv('/managed/revision/orders.csv'))") {
+	if !strings.Contains(plan.SQL, "FROM (SELECT 1 AS __leapview_row_present FROM read_csv('/managed/revision/orders.csv', delim = ',', escape = '\"', header = false, quote = '\"'))") {
 		t.Fatalf("plan SQL = %s, want row-presence inline relation", plan.SQL)
 	}
 }
@@ -136,11 +136,14 @@ func TestPlanModelTableAliasesUnaliasedInlineSourceRefs(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"order_id"},
 	}, semanticmodel.Table{
-		Sources:  []string{"orders"},
-		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		SourceDependencies: []string{"orders"},
+		Entities:           map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
-		Transform:  semanticmodel.Transform{SQL: `SELECT orders.order_id FROM source.orders`},
+		Execution:  semanticmodel.ExecutionDefinition{SQL: `SELECT orders.order_id FROM source.orders`},
 	})
+	ordersSource := model.Sources["orders"]
+	ordersSource.EffectivePathLocation = testCSVPathLocationWithHeader("orders.csv", true)
+	model.Sources["orders"] = ordersSource
 	validateAndBindPlanningManagedRoot(t, model, dir)
 
 	plan, err := PlanModelTable(ctx, db, model, "orders", model.Tables["orders"])
@@ -166,17 +169,17 @@ func TestPlanModelTablePreservesMixedInlineSourceAliases(t *testing.T) {
 		"orders":   {"order_id"},
 		"payments": {"order_id", "payment_value"},
 	}, semanticmodel.Table{
-		Sources: []string{"orders", "payments"},
+		SourceDependencies: []string{"orders", "payments"},
 		Columns: map[string]semanticmodel.ModelColumn{
 			"order_id":      {Datatype: semanticmodel.DataTypeString},
 			"payment_value": {Datatype: semanticmodel.DataTypeString},
 		},
-		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Dimensions: map[string]semanticmodel.MetricDimension{
 			"order_id":      {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
 			"payment_value": {Label: "Payment Value", Datatype: semanticmodel.DataTypeString},
 		},
-		Transform: semanticmodel.Transform{SQL: `SELECT orders.order_id, p.payment_value FROM source.orders JOIN source.payments p USING (order_id)`},
+		Execution: semanticmodel.ExecutionDefinition{SQL: `SELECT orders.order_id, p.payment_value FROM source.orders JOIN source.payments p USING (order_id)`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 
@@ -184,10 +187,10 @@ func TestPlanModelTablePreservesMixedInlineSourceAliases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, "FROM (SELECT order_id FROM read_csv('/managed/revision/orders.csv')) AS orders") {
+	if !strings.Contains(plan.SQL, "FROM (SELECT order_id FROM read_csv('/managed/revision/orders.csv', delim = ',', escape = '\"', header = false, quote = '\"')) AS orders") {
 		t.Fatalf("plan SQL = %s, want generated alias for orders", plan.SQL)
 	}
-	if !strings.Contains(plan.SQL, "JOIN (SELECT order_id, payment_value FROM read_csv('/managed/revision/payments.csv')) p") {
+	if !strings.Contains(plan.SQL, "JOIN (SELECT order_id, payment_value FROM read_csv('/managed/revision/payments.csv', delim = ',', escape = '\"', header = false, quote = '\"')) p") {
 		t.Fatalf("plan SQL = %s, want explicit payments alias preserved", plan.SQL)
 	}
 }
@@ -199,10 +202,10 @@ func TestPlanModelTableRejectsQualifiedSourceColumnRefs(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"order_id"},
 	}, semanticmodel.Table{
-		Sources:  []string{"orders"},
-		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		SourceDependencies: []string{"orders"},
+		Entities:           map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
-		Transform:  semanticmodel.Transform{SQL: `SELECT source.orders.order_id FROM source.orders`},
+		Execution:  semanticmodel.ExecutionDefinition{SQL: `SELECT source.orders.order_id FROM source.orders`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 
@@ -219,17 +222,17 @@ func TestPlanModelTableFailsClosedWhenInlineExplainOmitsSourceScan(t *testing.T)
 	model := planningModel(map[string][]string{
 		"orders": {"order_id", "customer_id"},
 	}, semanticmodel.Table{
-		Sources: []string{"orders"},
+		SourceDependencies: []string{"orders"},
 		Columns: map[string]semanticmodel.ModelColumn{
 			"order_id":    {Datatype: semanticmodel.DataTypeString},
 			"customer_id": {Datatype: semanticmodel.DataTypeString},
 		},
-		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Dimensions: map[string]semanticmodel.MetricDimension{
 			"order_id":    {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
 			"customer_id": {Label: "Customer ID", Datatype: semanticmodel.DataTypeString},
 		},
-		Transform: semanticmodel.Transform{SQL: `SELECT * FROM source.orders WHERE 1=0`},
+		Execution: semanticmodel.ExecutionDefinition{SQL: `SELECT * FROM source.orders WHERE 1=0`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 
@@ -247,10 +250,10 @@ func TestPlanModelTableFailsClosedForUnusedCTESourceRef(t *testing.T) {
 		"orders":   {"order_id"},
 		"payments": {"order_id"},
 	}, semanticmodel.Table{
-		Sources:  []string{"orders", "payments"},
-		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		SourceDependencies: []string{"orders", "payments"},
+		Entities:           map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
-		Transform: semanticmodel.Transform{SQL: `
+		Execution: semanticmodel.ExecutionDefinition{SQL: `
 			WITH unused_payments AS (SELECT order_id FROM source.payments)
 			SELECT order_id FROM source.orders
 		`},
@@ -296,15 +299,15 @@ func planningModel(sourceColumns map[string][]string, table semanticmodel.Table)
 			schemaColumns = append(schemaColumns, semanticmodel.ColumnSchema{Name: column, Ordinal: index + 1, PhysicalType: "VARCHAR"})
 		}
 		sources[name] = semanticmodel.Source{
-			Connection:       "local_files",
-			Path:             name + ".csv",
-			Format:           "csv",
-			EffectiveOptions: map[string]any{},
-			Schema:           semanticmodel.TableSchema{Columns: schemaColumns},
+			Connection:            "local_files",
+			Path:                  name + ".csv",
+			Format:                "csv",
+			EffectivePathLocation: testPathLocation("csv", name+".csv"),
+			Schema:                semanticmodel.TableSchema{Columns: schemaColumns},
 		}
 	}
-	if strings.TrimSpace(table.Transform.SQL) != "" {
-		table.SQLAnalysisEvidence = &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: append([]string(nil), table.Sources...), ModelRefs: append([]string(nil), table.ModelDependencies...)}
+	if strings.TrimSpace(table.Execution.SQL) != "" {
+		table.SQLAnalysisEvidence = &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: append([]string(nil), table.SourceDependencies...), ModelRefs: append([]string(nil), table.ModelDependencies...)}
 	}
 	return &semanticmodel.Model{
 		Name:        "test",
