@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
 	"github.com/creachadair/jrpc2/handler"
+	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,6 +73,8 @@ func TestVerifyExactAuthoringCandidate(t *testing.T) {
 		ArtifactDigest:   "sha256:" + strings.Repeat("a", 64),
 		ProvenanceDigest: "sha256:" + strings.Repeat("b", 64),
 		SourceRevision:   "sha256:" + strings.Repeat("c", 64),
+		PlanID:           "plan_1",
+		PlanDigest:       "sha256:" + strings.Repeat("e", 64),
 	}
 	publication := QualificationPublication{
 		CandidateID:       candidate.ID,
@@ -80,7 +84,10 @@ func TestVerifyExactAuthoringCandidate(t *testing.T) {
 		ArtifactDigest:    "sha256:" + strings.Repeat("d", 64),
 		ReleaseDigest:     candidate.ProvenanceDigest,
 		SourceRevision:    candidate.SourceRevision,
-		Status:            "queued",
+		GenerationID:      "generation_1",
+		PlanID:            candidate.PlanID,
+		PlanDigest:        candidate.PlanDigest,
+		Status:            "pending",
 	}
 	deployment := QualificationDeployment{
 		CandidateID:       candidate.ID,
@@ -89,6 +96,9 @@ func TestVerifyExactAuthoringCandidate(t *testing.T) {
 		PrincipalID:       candidate.PrincipalID,
 		ArtifactDigest:    publication.ArtifactDigest,
 		ReleaseDigest:     candidate.ProvenanceDigest,
+		GenerationID:      publication.GenerationID,
+		PlanID:            candidate.PlanID,
+		PlanDigest:        candidate.PlanDigest,
 		Status:            "active",
 	}
 
@@ -741,6 +751,56 @@ func TestQualificationRecoveryUsesIsolatedCandidateKeys(t *testing.T) {
 	}
 }
 
+func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) {
+	root := t.TempDir()
+	executor := &recordingQualificationExecutor{output: []byte("ok")}
+	controller, err := New(Options{
+		Root: root, DockerBin: "docker-probe", qualificationExecutor: executor,
+	})
+	require.NoError(t, err)
+	workDir := t.TempDir()
+	if err := controller.armQualificationActivationBarrier(t.Context(), "app-container", workDir); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.requests) != 2 {
+		t.Fatalf("docker requests = %d, want clear + cp", len(executor.requests))
+	}
+	if got, want := executor.requests[0].Arguments, []string{
+		"exec", "app-container", "rm", "-f",
+		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
+		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+	}; !slices.Equal(got, want) {
+		t.Fatalf("clear arguments = %v, want %v", got, want)
+	}
+	cp := executor.requests[1].Arguments
+	if len(cp) != 3 || cp[0] != "cp" || cp[2] != "app-container:"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker) {
+		t.Fatalf("arm copy arguments = %v", cp)
+	}
+	if contents, err := os.ReadFile(cp[1]); err != nil || string(contents) != "qualification-recovery\n" {
+		t.Fatalf("arm marker contents = %q, err = %v", contents, err)
+	}
+}
+
+func TestQualificationRunningCommandCanBeCheckedAndStoppedOnce(t *testing.T) {
+	output, err := os.CreateTemp(t.TempDir(), "running-command-*.log")
+	require.NoError(t, err)
+	command := exec.Command("sh", "-c", "sleep 10")
+	require.NoError(t, command.Start())
+	running := newQualificationRunningCommand(command, output)
+	if !running.Running() {
+		t.Fatal("newly started qualification command is not running")
+	}
+	if err := running.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if running.Running() {
+		t.Fatal("stopped qualification command still reports running")
+	}
+	if err := running.Stop(); err != nil {
+		t.Fatalf("second Stop() = %v, want idempotent success", err)
+	}
+}
+
 func TestQualificationRecoveryClientUsesPublicTarget(t *testing.T) {
 	got := qualificationClientExecArguments(
 		"recovery-client",
@@ -764,9 +824,10 @@ func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
 	candidate, err := parseQualificationCandidate(fmt.Sprintf(
 		`{"schemaVersion":1,"candidateId":"cand_1","revision":7,"targetId":"target_1",`+
 			`"principalId":"principal_1","artifactDigest":"sha256:%s","provenanceDigest":"sha256:%s",`+
-			`"previewUrl":"https://localhost/candidates/cand_1"}`,
+			`"planId":"plan_1","planDigest":"sha256:%s","previewUrl":"https://localhost/candidates/cand_1"}`,
 		strings.Repeat("a", 64),
 		strings.Repeat("b", 64),
+		strings.Repeat("e", 64),
 	), "sha256:"+strings.Repeat("c", 64))
 	require.NoError(t, err)
 	if candidate.ID != "cand_1" || candidate.Revision != 7 ||
@@ -775,16 +836,12 @@ func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
 	}
 
 	publication, err := parseQualificationPublication(fmt.Sprintf(
-		`{"schemaVersion":1,"deploymentId":"deployment_1","status":"queued",`+
-			`"candidateId":"cand_1","candidateRevision":7,"targetId":"target_1",`+
-			`"principalId":"principal_1","artifactDigest":"sha256:%s",`+
-			`"sourceRevision":"sha256:%s","releaseDigest":"sha256:%s"}`,
-		strings.Repeat("d", 64),
-		strings.Repeat("c", 64),
-		strings.Repeat("b", 64),
-	))
+		`{"schemaVersion":1,"publicationId":"publication_1","generationId":"generation_1",`+
+			`"planId":"plan_1","planDigest":"sha256:%s","status":"pending","candidateId":"cand_1"}`,
+		strings.Repeat("e", 64),
+	), candidate)
 	require.NoError(t, err)
-	if publication.DeploymentID != "deployment_1" ||
+	if publication.DeploymentID != "publication_1" ||
 		publication.CandidateID != candidate.ID ||
 		publication.ReleaseDigest != candidate.ProvenanceDigest {
 		t.Fatalf("publication = %+v", publication)

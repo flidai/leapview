@@ -16,15 +16,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 )
 
 const qualificationRecoveryDiskLimitKiB = int64(51200)
 const qualificationRecoveryReleaseInterruptionDelay = 15 * time.Second
+const qualificationRecoveryActivationBarrierTimeout = 2 * time.Minute
 
 const (
 	qualificationRecoveryFullCPUs               = "1"
@@ -105,20 +108,6 @@ type qualificationUploadSessions struct {
 	} `json:"items"`
 }
 
-type qualificationReleaseList struct {
-	Items []struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-	} `json:"items"`
-}
-
-type qualificationDeploymentList struct {
-	Items []struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-	} `json:"items"`
-}
-
 type qualificationEventList struct {
 	Items []struct {
 		Event string `json:"event"`
@@ -128,6 +117,10 @@ type qualificationEventList struct {
 type qualificationRunningCommand struct {
 	command *exec.Cmd
 	output  *os.File
+	done    chan struct{}
+	mu      sync.Mutex
+	waitErr error
+	close   sync.Once
 }
 
 func (c *Controller) runQualificationRecovery(
@@ -368,27 +361,6 @@ func (c *Controller) runQualificationRecovery(
 	report.Stage = "release finalization interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
 	releaseLog := filepath.Join(options.EvidenceDir, "recovery-release-finalization.log")
-	if _, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
-		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-a/leapview.yaml",
-		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
-		"--format", "json",
-	); err != nil {
-		return report, err
-	}
-	var releasesBefore qualificationReleaseList
-	releaseListURL := apiRoot + "/api/v1/projects/" + urlPath(options.ProjectID) + "/releases?limit=100"
-	if err := qualificationAPI(
-		ctx, client, http.MethodGet, releaseListURL,
-		options.PublisherToken, nil, "", &releasesBefore,
-	); err != nil {
-		return report, err
-	}
-	existingReleases := make(map[string]bool, len(releasesBefore.Items))
-	for _, release := range releasesBefore.Items {
-		existingReleases[release.ID] = true
-	}
 	if _, err := c.qualificationDocker(
 		ctx,
 		nil,
@@ -398,7 +370,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	releaseCommand, err := c.startQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, releaseLog,
-		"leapview", "publish",
+		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-a/leapview.yaml",
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
 		"--format", "json",
@@ -410,50 +382,37 @@ func (c *Controller) runQualificationRecovery(
 		_ = releaseCommand.Stop()
 		return report, fmt.Errorf("wait for release finalization boundary: %w", err)
 	}
+	if !releaseCommand.Running() {
+		_ = releaseCommand.Stop()
+		return report, fmt.Errorf("release finalization command completed before interruption boundary")
+	}
 	if err := c.killAndRecoverQualificationCandidate(ctx, options.ContainerID, report.Stage); err != nil {
 		_ = releaseCommand.Stop()
 		return report, err
 	}
 	_ = releaseCommand.Stop()
-	if _, err := c.runQualificationClientCommand(
+	releaseOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken,
-		"leapview", "publish",
+		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-a/leapview.yaml",
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
 		"--format", "json",
-	); err != nil {
-		return report, err
-	}
-	var releasesAfter qualificationReleaseList
-	if err := qualificationAPI(
-		ctx, client, http.MethodGet, releaseListURL,
-		options.PublisherToken, nil, "", &releasesAfter,
-	); err != nil {
-		return report, err
-	}
-	interruptedRelease := ""
-	for _, release := range releasesAfter.Items {
-		if existingReleases[release.ID] {
-			continue
-		}
-		if interruptedRelease != "" {
-			return report, fmt.Errorf("release retry created more than one release")
-		}
-		interruptedRelease = release.ID
-	}
-	if interruptedRelease == "" {
-		return report, fmt.Errorf("release retry did not retain a release")
-	}
-	releaseURL := apiRoot + "/api/v1/projects/" + urlPath(options.ProjectID) + "/releases/" + urlPath(interruptedRelease)
-	if err := waitForQualificationStatus(
-		ctx, client, releaseURL, options.PublisherToken, "ready",
-	); err != nil {
-		return report, err
-	}
-	releaseEvents, err := waitForQualificationEvents(
-		ctx, client, releaseURL+"/events?limit=100", options.PublisherToken,
-		[]string{"release.ready"},
 	)
+	if err != nil {
+		return report, err
+	}
+	releaseCandidate, err := parseQualificationCandidate(string(releaseOutput), "")
+	if err != nil {
+		return report, err
+	}
+	releaseEvidence, err := waitForQualificationCandidateEvidence(
+		ctx, client, apiRoot, options.ProjectID, options.PublisherToken,
+		releaseCandidate,
+	)
+	if err != nil {
+		return report, err
+	}
+	releaseEvents, err := json.Marshal(releaseEvidence)
 	if err != nil {
 		return report, err
 	}
@@ -467,98 +426,114 @@ func (c *Controller) runQualificationRecovery(
 	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", "0.25", options.ContainerID); err != nil {
 		return report, err
 	}
-	if _, err := c.runQualificationClientCommand(
+	deploymentCandidateOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken,
 		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-b/leapview.yaml",
 		"--candidate-key", qualificationRecoveryDeploymentCandidateKey,
 		"--format", "json",
-	); err != nil {
+	)
+	if err != nil {
 		return report, err
 	}
-	deploymentListURL := apiRoot + "/api/v1/projects/" + urlPath(options.ProjectID) + "/deployments?limit=100"
-	var deploymentsBefore qualificationDeploymentList
-	if err := qualificationAPI(
-		ctx,
-		client,
-		http.MethodGet,
-		deploymentListURL,
-		options.PublisherToken,
-		nil,
-		"",
-		&deploymentsBefore,
-	); err != nil {
+	deploymentCandidate, err := parseQualificationCandidate(string(deploymentCandidateOutput), "")
+	if err != nil {
 		return report, err
 	}
-	existingDeployments := make(map[string]bool, len(deploymentsBefore.Items))
-	for _, deployment := range deploymentsBefore.Items {
-		existingDeployments[deployment.ID] = true
-	}
-	deploymentLog := filepath.Join(options.EvidenceDir, "recovery-deployment-activation.log")
-	deploymentCommand, err := c.startQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken, deploymentLog,
-		"leapview", "publish",
-		"--project", "/work/project-b/leapview.yaml",
-		"--candidate-key", qualificationRecoveryDeploymentCandidateKey,
+	pendingOutput, err := c.runQualificationClientCommand(
+		ctx, recoveryClient, options.PublisherToken,
+		"leapview", "publish", deploymentCandidate.ID,
 		"--format", "json",
 	)
 	if err != nil {
 		return report, err
 	}
-	var interruptedDeployment string
-	deploymentCtx, cancelDeployment := qualificationContext(ctx, 10*time.Minute)
-	err = qualificationWait(deploymentCtx, 500*time.Millisecond, func(waitCtx context.Context) (bool, error) {
-		var deployments qualificationDeploymentList
-		if apiErr := qualificationAPI(
-			waitCtx, client, http.MethodGet, deploymentListURL,
-			options.PublisherToken, nil, "", &deployments,
-		); apiErr != nil {
-			return false, nil
-		}
-		for _, deployment := range deployments.Items {
-			if existingDeployments[deployment.ID] {
-				continue
-			}
-			if deployment.Status == "queued" || deployment.Status == "running" {
-				interruptedDeployment = deployment.ID
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-	cancelDeployment()
+	pendingPublication, err := parseQualificationPublication(string(pendingOutput), deploymentCandidate)
 	if err != nil {
-		_ = deploymentCommand.Stop()
-		return report, fmt.Errorf("observe deployment activation boundary: %w", err)
+		return report, err
 	}
-	if err := startQualificationDeploymentActivation(
+	if pendingPublication.Status != "pending" {
+		return report, fmt.Errorf("recovery publication status %q is not pending", pendingPublication.Status)
+	}
+	if err := approveQualificationPublication(
 		ctx,
 		client,
-		apiRoot,
-		options.ProjectID,
-		interruptedDeployment,
+		qualificationAuthoringOptions{Target: apiRoot, ProjectID: options.ProjectID},
+		options.PublisherToken,
 		options.RecoveryControlToken,
-		options.ComposeProject,
-	); err != nil {
-		_ = deploymentCommand.Stop()
-		return report, err
-	}
-	if err := c.killAndRecoverQualificationCandidate(ctx, options.ContainerID, report.Stage); err != nil {
-		_ = deploymentCommand.Stop()
-		return report, err
-	}
-	_ = deploymentCommand.Stop()
-	deploymentURL := apiRoot + "/api/v1/projects/" + urlPath(options.ProjectID) +
-		"/deployments/" + urlPath(interruptedDeployment)
-	if err := waitForQualificationStatus(
-		ctx, client, deploymentURL, options.PublisherToken, "active",
+		pendingPublication,
+		options.ComposeProject+"-recovery",
 	); err != nil {
 		return report, err
 	}
-	deploymentEvents, err := waitForQualificationEvents(
-		ctx, client, deploymentURL+"/events?limit=100", options.PublisherToken,
-		[]string{"deployment.activation_requested", "deployment.active"},
+	if err := c.armQualificationActivationBarrier(ctx, options.ContainerID, workDir); err != nil {
+		return report, err
+	}
+	deploymentLog := filepath.Join(options.EvidenceDir, "recovery-deployment-activation.log")
+	deploymentCommand, err := c.startQualificationClientCommand(
+		ctx, recoveryClient, options.PublisherToken, deploymentLog,
+		"leapview", "publish", deploymentCandidate.ID,
+		"--format", "json",
 	)
+	if err != nil {
+		return report, err
+	}
+	barrierCtx, cancelBarrier := qualificationContext(ctx, qualificationRecoveryActivationBarrierTimeout)
+	err = c.waitForQualificationActivationBarrier(barrierCtx, options.ContainerID, workDir)
+	cancelBarrier()
+	if err != nil {
+		_ = deploymentCommand.Stop()
+		return report, fmt.Errorf("wait for canonical publication activation barrier: %w", err)
+	}
+	if err := c.killAndRecoverQualificationCandidate(
+		ctx,
+		options.ContainerID,
+		report.Stage,
+		func() { _ = deploymentCommand.Stop() },
+	); err != nil {
+		_ = deploymentCommand.Stop()
+		return report, err
+	}
+	recoveredEvidence, err := qualificationPublicationEvidence(
+		ctx, client, apiRoot, options.ProjectID, options.PublisherToken,
+		deploymentCandidate, pendingPublication,
+	)
+	if err != nil {
+		return report, err
+	}
+	if recoveredEvidence.Status != deploymentgen.DeliveryPublicationStatusPending {
+		return report, fmt.Errorf(
+			"canonical publication reached %q instead of preserving the interrupted pending request",
+			recoveredEvidence.Status,
+		)
+	}
+	committedOutput, err := c.runQualificationClientCommand(
+		ctx, recoveryClient, options.PublisherToken,
+		"leapview", "publish", deploymentCandidate.ID,
+		"--format", "json",
+	)
+	if err != nil {
+		return report, err
+	}
+	committedPublication, err := parseQualificationPublication(string(committedOutput), deploymentCandidate)
+	if err != nil {
+		return report, err
+	}
+	if committedPublication.Status != "committed" ||
+		committedPublication.DeploymentID != pendingPublication.DeploymentID {
+		return report, fmt.Errorf("canonical publication retry did not commit the exact interrupted publication")
+	}
+	deploymentEvidence, err := waitForQualificationPublicationEvidence(
+		ctx, client, apiRoot, options.ProjectID, options.PublisherToken,
+		deploymentCandidate, pendingPublication,
+	)
+	if err != nil {
+		return report, err
+	}
+	if deploymentEvidence.GenerationId != committedPublication.GenerationID {
+		return report, fmt.Errorf("canonical publication retry returned a different generation")
+	}
+	deploymentEvents, err := json.Marshal(deploymentEvidence)
 	if err != nil {
 		return report, err
 	}
@@ -1118,7 +1093,7 @@ func (c *Controller) startQualificationClientCommand(
 		_ = output.Close()
 		return nil, err
 	}
-	return &qualificationRunningCommand{command: command, output: output}, nil
+	return newQualificationRunningCommand(command, output), nil
 }
 
 func (c *Controller) runQualificationClientCommand(
@@ -1145,15 +1120,112 @@ func (r *qualificationRunningCommand) Stop() error {
 	if r == nil {
 		return nil
 	}
-	if r.command.Process != nil {
+	if r.command != nil && r.Running() && r.command.Process != nil {
 		_ = r.command.Process.Kill()
 	}
-	waitErr := r.command.Wait()
-	closeErr := r.output.Close()
+	if r.done != nil {
+		<-r.done
+	}
+	r.mu.Lock()
+	waitErr := r.waitErr
+	r.mu.Unlock()
+	var closeErr error
+	r.close.Do(func() {
+		if r.output != nil {
+			closeErr = r.output.Close()
+		}
+	})
 	if waitErr != nil && !strings.Contains(waitErr.Error(), "signal: killed") {
 		return errorsJoin(waitErr, closeErr)
 	}
 	return closeErr
+}
+
+func newQualificationRunningCommand(command *exec.Cmd, output *os.File) *qualificationRunningCommand {
+	running := &qualificationRunningCommand{command: command, output: output, done: make(chan struct{})}
+	go func() {
+		err := command.Wait()
+		running.mu.Lock()
+		running.waitErr = err
+		running.mu.Unlock()
+		close(running.done)
+	}()
+	return running
+}
+
+// Running reports whether the command has completed. The process is reaped by
+// the constructor's single waiter, so callers can inspect state without racing
+// a second Wait (the old implementation used to double-Wait during recovery
+// cleanup).
+func (r *qualificationRunningCommand) Running() bool {
+	if r == nil || r.command == nil {
+		return false
+	}
+	if r.done == nil {
+		return r.command.ProcessState == nil
+	}
+	select {
+	case <-r.done:
+		return false
+	default:
+		return true
+	}
+}
+
+func qualificationActivationBarrierContainerPath(marker string) string {
+	return "/var/lib/leapview/home/" + marker
+}
+
+func (c *Controller) armQualificationActivationBarrier(
+	ctx context.Context,
+	containerID string,
+	workDir string,
+) error {
+	container := c.qualificationContainers.Existing(containerID)
+	// Reached evidence is durable across a restart. Remove both sides before
+	// arming so a stale marker can never satisfy this run's bounded wait.
+	if _, err := container.Exec(ctx, nil, "rm", "-f",
+		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
+		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+	); err != nil {
+		return fmt.Errorf("clear qualification activation barrier markers: %w", err)
+	}
+	armedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierArmedMarker)
+	if err := os.WriteFile(armedFile, []byte("qualification-recovery\n"), 0o600); err != nil {
+		return fmt.Errorf("write qualification activation barrier marker: %w", err)
+	}
+	if _, err := c.qualificationDocker(
+		ctx,
+		nil,
+		"cp", armedFile,
+		containerID+":"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
+	); err != nil {
+		return fmt.Errorf("arm qualification activation barrier: %w", err)
+	}
+	return nil
+}
+
+func (c *Controller) waitForQualificationActivationBarrier(
+	ctx context.Context,
+	containerID string,
+	workDir string,
+) error {
+	reachedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierReachedMarker)
+	return qualificationWait(ctx, 250*time.Millisecond, func(waitCtx context.Context) (bool, error) {
+		_ = os.Remove(reachedFile)
+		_, err := c.qualificationDocker(
+			waitCtx,
+			nil,
+			"cp",
+			containerID+":"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+			reachedFile,
+		)
+		if err != nil {
+			return false, nil
+		}
+		_, statErr := os.Stat(reachedFile)
+		return statErr == nil, statErr
+	})
 }
 
 func startQualificationControllerCommand(
@@ -1179,17 +1251,23 @@ func startQualificationControllerCommand(
 		_ = output.Close()
 		return nil, err
 	}
-	return &qualificationRunningCommand{command: command, output: output}, nil
+	return newQualificationRunningCommand(command, output), nil
 }
 
 func (c *Controller) killAndRecoverQualificationCandidate(
 	ctx context.Context,
 	containerID string,
 	stage string,
+	afterKill ...func(),
 ) error {
 	container := c.qualificationContainers.Existing(containerID)
 	if _, err := container.Kill(ctx, "KILL"); err != nil {
 		return err
+	}
+	for _, callback := range afterKill {
+		if callback != nil {
+			callback()
+		}
 	}
 	if _, err := container.Start(ctx); err != nil {
 		return err
@@ -1252,68 +1330,126 @@ func waitForQualificationStatus(
 	})
 }
 
-func startQualificationDeploymentActivation(
+func waitForQualificationCandidateEvidence(
 	ctx context.Context,
-	client *http.Client,
-	apiRoot string,
+	httpClient *http.Client,
+	target string,
 	projectID string,
-	deploymentID string,
 	token string,
-	idempotencySuffix string,
-) error {
-	deployments := deploymentgen.NewGenClient(qualificationGeneratedTransport(
-		apiRoot,
+	candidate QualificationCandidate,
+) (deploymentgen.DeliveryCandidateStatusResponse, error) {
+	client := deploymentgen.NewGenClient(qualificationGeneratedTransport(
+		target,
 		token,
-		client,
+		httpClient,
 	))
-	deployment, err := deployments.GetDeployment(
-		ctx,
-		deploymentgen.GenGetDeploymentClientRequest{
-			Project: projectID, Deployment: deploymentID,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	if deployment.Body.Approval == nil ||
-		deployment.Body.Approval.Status != "pending" {
-		return fmt.Errorf("recovery deployment approval is not pending")
-	}
-	approval, err := deployments.ApproveDeployment(
-		ctx,
-		deploymentgen.GenApproveDeploymentClientRequest{
-			Project: projectID, Deployment: deploymentID,
-			Approval: deployment.Body.Approval.Id,
-			Headers: deploymentgen.GenApproveDeploymentClientHeaders{
-				IdempotencyKey: "recovery-approve-" + idempotencySuffix,
+	waitCtx, cancel := qualificationContext(ctx, 10*time.Minute)
+	defer cancel()
+	var evidence deploymentgen.DeliveryCandidateStatusResponse
+	err := qualificationWait(waitCtx, time.Second, func(requestCtx context.Context) (bool, error) {
+		response, err := client.GetDeliveryCandidateStatus(
+			requestCtx,
+			deploymentgen.GenGetDeliveryCandidateStatusClientRequest{
+				Project: projectID, Candidate: candidate.ID,
 			},
-			Body: deploymentgen.GenSchemaDeploymentApprovalDecisionRequest{
-				ExpectedRevision: deployment.Body.Approval.Revision,
-			},
-		},
-	)
+		)
+		if err != nil {
+			return false, nil
+		}
+		evidence = response.Body
+		if evidence.Status == deploymentgen.DeliveryCandidateStatusFailed ||
+			evidence.Status == deploymentgen.DeliveryCandidateStatusRetired {
+			return false, fmt.Errorf("canonical recovery candidate reached terminal status %q", evidence.Status)
+		}
+		return evidence.Status == deploymentgen.DeliveryCandidateStatusReady, nil
+	})
 	if err != nil {
-		return mapQualificationApproveDeploymentFailure(err)
+		return deploymentgen.DeliveryCandidateStatusResponse{}, err
 	}
-	if approval.Body.Status != "approved" {
-		return fmt.Errorf(
-			"recovery deployment approval transitioned to %q",
-			approval.Body.Status,
+	if evidence.Id != candidate.ID ||
+		evidence.PlanId != candidate.PlanID ||
+		evidence.PlanDigest != candidate.PlanDigest ||
+		evidence.SourceDigest != candidate.ArtifactDigest ||
+		evidence.TargetId != candidate.TargetID {
+		return deploymentgen.DeliveryCandidateStatusResponse{}, fmt.Errorf(
+			"canonical recovery candidate evidence does not match the resumed candidate",
 		)
 	}
-	_, err = deployments.ActivateDeployment(
+	return evidence, nil
+}
+
+func qualificationPublicationEvidence(
+	ctx context.Context,
+	httpClient *http.Client,
+	target string,
+	projectID string,
+	token string,
+	candidate QualificationCandidate,
+	publication QualificationPublication,
+) (deploymentgen.DeliveryPublicationEvidenceResponse, error) {
+	client := deploymentgen.NewGenClient(qualificationGeneratedTransport(
+		target,
+		token,
+		httpClient,
+	))
+	response, err := client.GetDeliveryPublicationEvidence(
 		ctx,
-		deploymentgen.GenActivateDeploymentClientRequest{
-			Project: projectID, Deployment: deploymentID,
-			Headers: deploymentgen.GenActivateDeploymentClientHeaders{
-				IdempotencyKey: "recovery-activate-" + idempotencySuffix,
-			},
+		deploymentgen.GenGetDeliveryPublicationEvidenceClientRequest{
+			Project: projectID, Publication: publication.DeploymentID,
 		},
 	)
 	if err != nil {
-		return mapQualificationActivateDeploymentFailure(err)
+		return deploymentgen.DeliveryPublicationEvidenceResponse{}, err
 	}
-	return nil
+	evidence := response.Body
+	if evidence.Id != publication.DeploymentID ||
+		evidence.CandidateId != candidate.ID ||
+		evidence.GenerationId != publication.GenerationID ||
+		evidence.PlanId != candidate.PlanID ||
+		evidence.PlanDigest != candidate.PlanDigest ||
+		evidence.TargetId != candidate.TargetID {
+		return deploymentgen.DeliveryPublicationEvidenceResponse{}, fmt.Errorf(
+			"canonical recovery publication evidence does not match the interrupted publication",
+		)
+	}
+	return evidence, nil
+}
+
+func waitForQualificationPublicationEvidence(
+	ctx context.Context,
+	httpClient *http.Client,
+	target string,
+	projectID string,
+	token string,
+	candidate QualificationCandidate,
+	publication QualificationPublication,
+) (deploymentgen.DeliveryPublicationEvidenceResponse, error) {
+	waitCtx, cancel := qualificationContext(ctx, 10*time.Minute)
+	defer cancel()
+	var evidence deploymentgen.DeliveryPublicationEvidenceResponse
+	err := qualificationWait(waitCtx, time.Second, func(requestCtx context.Context) (bool, error) {
+		observed, err := qualificationPublicationEvidence(
+			requestCtx,
+			httpClient,
+			target,
+			projectID,
+			token,
+			candidate,
+			publication,
+		)
+		if err != nil {
+			return false, nil
+		}
+		evidence = observed
+		if evidence.Status == deploymentgen.DeliveryPublicationStatusRejected {
+			return false, fmt.Errorf("canonical recovery publication was rejected")
+		}
+		return evidence.Status == deploymentgen.DeliveryPublicationStatusCommitted, nil
+	})
+	if err != nil {
+		return deploymentgen.DeliveryPublicationEvidenceResponse{}, err
+	}
+	return evidence, nil
 }
 
 func waitForQualificationEvents(

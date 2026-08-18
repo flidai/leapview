@@ -47,6 +47,17 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	sourceAttestationDigest := strings.TrimSpace(options.SourceAttestationDigest)
 	targetID, candidateID := strings.TrimSpace(options.TargetID), strings.TrimSpace(options.CandidateID)
 	environment := strings.TrimSpace(options.Environment)
+	if options.ResolveCandidatePlan {
+		return operations.resolveCandidatePlan(
+			ctx,
+			credentials,
+			projectID,
+			candidateID,
+			targetID,
+			environment,
+			sourceDigest,
+		)
+	}
 	if projectID == "" || targetID == "" || sourceDigest == "" || sourceAttestationDigest == "" {
 		generic, err := operations.client.Transport(ctx, credentials)
 		if err != nil {
@@ -119,6 +130,72 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	if operations.checkpoints != nil {
 		if err := operations.checkpoints.SavePlan(projectcli.DeliveryPlanCheckpoint{PlanID: result.PlanID, ProjectID: result.ProjectID, TargetID: result.TargetID, Environment: result.Environment, TargetOrigin: credentials.Target, SourceDigest: result.SourceDigest, SourceAttestationDigest: result.SourceAttestationDigest, PlanDigest: result.PlanDigest, ExecutionDigest: result.ExecutionDigest, EvidenceDigest: result.EvidenceDigest}); err != nil {
 			return projectcli.DeliveryPlanResult{}, fmt.Errorf("persist delivery plan checkpoint: %w", err)
+		}
+	}
+	return result, nil
+}
+
+func (operations projectDeliveryPlanOperations) resolveCandidatePlan(
+	ctx context.Context,
+	credentials cliapi.Credentials,
+	projectID string,
+	candidateID string,
+	targetID string,
+	environment string,
+	sourceDigest string,
+) (projectcli.DeliveryPlanResult, error) {
+	if projectID == "" || candidateID == "" {
+		return projectcli.DeliveryPlanResult{}, fmt.Errorf("candidate plan lookup requires project and candidate identities")
+	}
+	transport, err := operations.client.Transport(ctx, credentials)
+	if err != nil {
+		return projectcli.DeliveryPlanResult{}, err
+	}
+	client := deploymentgen.NewGenClient(transport)
+	candidate, err := client.GetDeliveryCandidateStatus(
+		ctx,
+		deploymentgen.GenGetDeliveryCandidateStatusClientRequest{
+			Project: projectID, Candidate: candidateID,
+		},
+	)
+	if err != nil {
+		return projectcli.DeliveryPlanResult{}, mapDeliveryCLIError("read synchronized delivery candidate", err)
+	}
+	if candidate.Body.Id != candidateID || candidate.Body.ProjectId != projectID ||
+		(targetID != "" && candidate.Body.TargetId != targetID) ||
+		(environment != "" && candidate.Body.Environment != environment) ||
+		(sourceDigest != "" && candidate.Body.SourceDigest != sourceDigest) ||
+		candidate.Body.Status != deploymentgen.DeliveryCandidateStatusReady {
+		return projectcli.DeliveryPlanResult{}, fmt.Errorf("synchronized delivery candidate does not match the dev result")
+	}
+	plan, err := client.GetDeliveryPlanPreview(
+		ctx,
+		deploymentgen.GenGetDeliveryPlanPreviewClientRequest{
+			Project: projectID, Plan: candidate.Body.PlanId,
+		},
+	)
+	if err != nil {
+		return projectcli.DeliveryPlanResult{}, mapDeliveryCLIError("read synchronized delivery plan", err)
+	}
+	if plan.Body.Id != candidate.Body.PlanId ||
+		plan.Body.PlanDigest != candidate.Body.PlanDigest ||
+		plan.Body.ProjectId != candidate.Body.ProjectId ||
+		plan.Body.TargetId != candidate.Body.TargetId ||
+		plan.Body.Environment != candidate.Body.Environment ||
+		plan.Body.SourceDigest != candidate.Body.SourceDigest {
+		return projectcli.DeliveryPlanResult{}, fmt.Errorf("synchronized delivery plan does not match its candidate")
+	}
+	result := deliveryPlanResult(plan.Body)
+	if operations.checkpoints != nil {
+		if err := operations.checkpoints.SavePlan(projectcli.DeliveryPlanCheckpoint{
+			PlanID: result.PlanID, ProjectID: result.ProjectID,
+			TargetID: result.TargetID, Environment: result.Environment,
+			TargetOrigin: credentials.Target, SourceDigest: result.SourceDigest,
+			SourceAttestationDigest: result.SourceAttestationDigest,
+			PlanDigest:              result.PlanDigest, ExecutionDigest: result.ExecutionDigest,
+			EvidenceDigest: result.EvidenceDigest,
+		}); err != nil {
+			return projectcli.DeliveryPlanResult{}, fmt.Errorf("persist synchronized delivery plan checkpoint: %w", err)
 		}
 	}
 	return result, nil

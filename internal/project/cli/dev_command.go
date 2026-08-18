@@ -259,7 +259,8 @@ func RunDev(
 				ProjectPath: options.ProjectPath, Credentials: credentials,
 				TargetID: candidate.TargetID, Operation: "code_change",
 				CandidateKey: options.CandidateKey, UploadConcurrency: options.UploadConcurrency,
-				CandidateID: candidate.ID, ProjectID: candidate.ProjectID.String(), SourceDigest: candidate.ArtifactDigest,
+				CandidateID: candidate.ID, ResolveCandidatePlan: true,
+				ProjectID: candidate.ProjectID.String(), SourceDigest: candidate.ArtifactDigest,
 				Environment: candidate.Environment,
 			})
 			if err != nil {

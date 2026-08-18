@@ -1,0 +1,13 @@
+apiVersion: leapview.dev/v1
+kind: Grant
+metadata:
+  id: grant:qualification-reviewer-admin
+  name: qualification-reviewer-admin
+spec:
+  object:
+    kind: project
+    id: project:leapview-evaluation
+  subject:
+    kind: principal
+    principalId: email_6f53ef0fb859d8d683ad4bb70d2e693b
+  capability: PROJECT_ADMIN

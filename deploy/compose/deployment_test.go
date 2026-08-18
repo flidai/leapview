@@ -464,7 +464,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(client, "LEAPVIEW_API_TOKEN") {
 		t.Error("authoring must use browser-approved login")
 	}
-	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "ApproveDeployment", "ActivateDeployment", "dbus-run-session", "PLATFORM_ADMIN", "PROJECT_ADMIN", "capabilities"} {
+	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "PROJECT_ADMIN", "capabilities"} {
 		if !strings.Contains(authoring, required) {
 			t.Errorf("typed authoring controller missing %q", required)
 		}
@@ -476,6 +476,9 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	}
 	if strings.Contains(authoring, "MANAGE_PLATFORM") {
 		t.Error("qualification reviewer must not receive a platform grant")
+	}
+	if strings.Contains(authoring, "PLATFORM_ADMIN") {
+		t.Error("authoring credentials must not claim the durable platform-admin role")
 	}
 	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "Governed order rows"} {
 		if !strings.Contains(worker, required) {

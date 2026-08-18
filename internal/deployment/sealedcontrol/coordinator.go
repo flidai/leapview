@@ -115,7 +115,12 @@ type Coordinator struct {
 	VerifySeal       VerifiedSealVerifier
 	Authorize        Authorization
 	ApprovalVerifier ApprovalVerifier
-	Now              func() time.Time
+	// BeforePublicationCommit is an optional qualification hook. It runs only
+	// on a fresh pending publication, after approval and seal verification and
+	// immediately before the durable activation CAS. Committed retries never
+	// invoke it.
+	BeforePublicationCommit func(context.Context, deployment.PublicationIntent) error
+	Now                     func() time.Time
 }
 
 // PublicationActivation wraps the final durable CAS with a prepared runtime
@@ -254,6 +259,11 @@ func (c *Coordinator) PublishWithActivation(ctx context.Context, request Publish
 	// publication by request identity. Do not retry here with a new generation.
 	var committed deployment.PublicationIntent
 	commit := func() error {
+		if c.BeforePublicationCommit != nil {
+			if err := c.BeforePublicationCommit(ctx, publication); err != nil {
+				return err
+			}
+		}
 		var err error
 		committed, err = c.Publications.ActivatePublication(ctx, publication.ID, now)
 		return err

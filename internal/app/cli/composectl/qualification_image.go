@@ -375,7 +375,6 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
-	credentials.PublisherToken = ""
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}

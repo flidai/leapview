@@ -645,8 +645,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	var sealedActiveState func(context.Context) (servingstate.ID, error)
 	var deliveryStartupCheck func(context.Context) error
 	{
+		var beforePublicationCommit func(context.Context, deployment.PublicationIntent) error
+		if string(environment) == "evaluation" {
+			beforePublicationCommit = func(ctx context.Context, publication deployment.PublicationIntent) error {
+				return sealedcontrol.QualificationActivationBarrier(ctx, publication.Environment)
+			}
+		}
 		sealedCoordinator = &sealedcontrol.Coordinator{
 			Publications: sealedDelivery, Rollbacks: sealedDelivery,
+			BeforePublicationCommit: beforePublicationCommit,
 			Authorize: func(ctx context.Context, binding sealedcontrol.SealBinding) error {
 				if binding.Operation == "publish" {
 					marker, marked := accessmodule.BootstrapAuthorizationFromContext(ctx)
@@ -1184,7 +1191,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			}
 			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: protectedPublishingTarget(production, cfg.EvaluationMode), RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String()}, reuse)
 		}
-		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, key string) (deployment.DeliveryPublication, error) {
+		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, _ string) (deployment.DeliveryPublication, error) {
 			candidateRecord, candidateErr := sealedDelivery.DeliveryCandidateByID(publishCtx, candidate)
 			if candidateErr != nil {
 				return deployment.DeliveryPublication{}, candidateErr
@@ -1192,7 +1199,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if candidateRecord.ProjectID.String() != project {
 				return deployment.DeliveryPublication{}, fmt.Errorf("%w: publication project scope changed", deployment.ErrDeliveryConflict)
 			}
-			request, err := buildCanonicalPublishRequest(publishCtx, sealedDelivery, candidate, key, instanceID)
+			request, err := buildCanonicalPublishRequest(publishCtx, sealedDelivery, candidate, instanceID)
 			if err != nil {
 				return deployment.DeliveryPublication{}, err
 			}
@@ -1698,8 +1705,8 @@ func buildSealedPublishRequest(ctx context.Context, delivery *deploymentsqlite.R
 // exact durable tuple. It deliberately does not recapture source or create a
 // new serving artifact; publication is a control-plane operation over the
 // ready candidate's persisted generation and verified seal.
-func buildCanonicalPublishRequest(ctx context.Context, delivery canonicalPublishReader, candidateID, idempotencyKey, targetID string) (sealedcontrol.PublishRequest, error) {
-	if delivery == nil || strings.TrimSpace(candidateID) == "" || strings.TrimSpace(idempotencyKey) == "" {
+func buildCanonicalPublishRequest(ctx context.Context, delivery canonicalPublishReader, candidateID, targetID string) (sealedcontrol.PublishRequest, error) {
+	if delivery == nil || strings.TrimSpace(candidateID) == "" {
 		return sealedcontrol.PublishRequest{}, fmt.Errorf("canonical publication inputs are incomplete")
 	}
 	candidate, err := delivery.DeliveryCandidateByID(ctx, candidateID)
@@ -1733,7 +1740,14 @@ func buildCanonicalPublishRequest(ctx context.Context, delivery canonicalPublish
 	if err != nil {
 		return sealedcontrol.PublishRequest{}, err
 	}
-	publicationID := "publication-" + strings.TrimPrefix(deployment.CanonicalDeliveryDigest([]byte("publish:"+candidateID+":"+idempotencyKey)), "sha256:")
+	// HTTP idempotency identifies one transport attempt. The durable
+	// publication identity belongs to the immutable candidate so a later CLI
+	// attempt can recover the exact approval and activation request after an
+	// indeterminate transport outcome.
+	publicationID := "publication-" + strings.TrimPrefix(
+		deployment.CanonicalDeliveryDigest([]byte("candidate-publication:"+candidate.ID)),
+		"sha256:",
+	)
 	publication, err := deployment.NewPublicationIntent(deployment.PublicationIntent{ID: publicationID, RequestDigest: deployment.CanonicalDeliveryDigest([]byte("publication:" + publicationID)), TargetID: candidate.TargetID, ProjectID: candidate.ProjectID, Environment: candidate.Environment, PlanID: candidate.PlanID, PlanDigest: candidate.PlanDigest, CandidateID: candidate.ID, GenerationID: candidate.ServingStateID, ExpectedBaseGenerationID: candidate.BaseGenerationID, ExpectedTargetRevision: candidate.BaseTargetRevision, CreatedAt: createdAt})
 	if err != nil {
 		return sealedcontrol.PublishRequest{}, err

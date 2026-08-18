@@ -37,6 +37,8 @@ func parseQualificationCandidate(output, sourceRevision string) (QualificationCa
 		ArtifactDigest   string `json:"artifactDigest"`
 		ProvenanceDigest string `json:"provenanceDigest"`
 		PreviewURL       string `json:"previewUrl"`
+		PlanID           string `json:"planId"`
+		PlanDigest       string `json:"planDigest"`
 	}
 	if err := json.Unmarshal([]byte(output), &wire); err != nil {
 		return QualificationCandidate{}, fmt.Errorf("decode dev result: %w", err)
@@ -49,14 +51,17 @@ func parseQualificationCandidate(output, sourceRevision string) (QualificationCa
 		PrincipalID: wire.PrincipalID, ArtifactDigest: wire.ArtifactDigest,
 		ProvenanceDigest: wire.ProvenanceDigest, PreviewURL: wire.PreviewURL,
 		SourceRevision: strings.TrimSpace(sourceRevision),
+		PlanID:         wire.PlanID, PlanDigest: wire.PlanDigest,
 	}
 	if result.ID == "" || result.Revision <= 0 || result.TargetID == "" ||
-		result.PrincipalID == "" || result.PreviewURL == "" {
+		result.PrincipalID == "" || result.PreviewURL == "" ||
+		result.PlanID == "" || result.PlanDigest == "" {
 		return QualificationCandidate{}, fmt.Errorf("incomplete candidate output")
 	}
 	for name, value := range map[string]string{
 		"artifact digest":   result.ArtifactDigest,
 		"provenance digest": result.ProvenanceDigest,
+		"plan digest":       result.PlanDigest,
 	} {
 		if !strings.HasPrefix(value, "sha256:") || len(value) != 71 {
 			return QualificationCandidate{}, fmt.Errorf("invalid %s %q", name, value)
@@ -65,10 +70,18 @@ func parseQualificationCandidate(output, sourceRevision string) (QualificationCa
 	return result, nil
 }
 
-func parseQualificationPublication(output string) (QualificationPublication, error) {
+func parseQualificationPublication(
+	output string,
+	candidate QualificationCandidate,
+) (QualificationPublication, error) {
 	var wire struct {
-		SchemaVersion int `json:"schemaVersion"`
-		QualificationPublication
+		SchemaVersion int    `json:"schemaVersion"`
+		PublicationID string `json:"publicationId"`
+		CandidateID   string `json:"candidateId"`
+		GenerationID  string `json:"generationId"`
+		PlanID        string `json:"planId"`
+		PlanDigest    string `json:"planDigest"`
+		Status        string `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(output), &wire); err != nil {
 		return QualificationPublication{}, fmt.Errorf("decode publish result: %w", err)
@@ -76,13 +89,27 @@ func parseQualificationPublication(output string) (QualificationPublication, err
 	if wire.SchemaVersion != 1 {
 		return QualificationPublication{}, fmt.Errorf("unsupported publish result schema %d", wire.SchemaVersion)
 	}
-	result := wire.QualificationPublication
-	if result.DeploymentID == "" || result.Status == "" || result.CandidateID == "" ||
-		result.CandidateRevision <= 0 || result.TargetID == "" || result.PrincipalID == "" ||
-		result.ArtifactDigest == "" || result.ReleaseDigest == "" {
+	if wire.PublicationID == "" || wire.GenerationID == "" ||
+		wire.PlanID == "" || wire.PlanDigest == "" || wire.Status == "" ||
+		wire.CandidateID == "" {
 		return QualificationPublication{}, fmt.Errorf("incomplete publication output")
 	}
-	return result, nil
+	if wire.CandidateID != candidate.ID || wire.PlanID != candidate.PlanID ||
+		wire.PlanDigest != candidate.PlanDigest {
+		return QualificationPublication{}, fmt.Errorf("publication output does not match the previewed candidate")
+	}
+	if wire.Status != "pending" && wire.Status != "committed" {
+		return QualificationPublication{}, fmt.Errorf("unsupported publication status %q", wire.Status)
+	}
+	return QualificationPublication{
+		CandidateID: wire.CandidateID, CandidateRevision: candidate.Revision,
+		TargetID: candidate.TargetID, PrincipalID: candidate.PrincipalID,
+		ArtifactDigest: candidate.ArtifactDigest,
+		ReleaseDigest:  candidate.ProvenanceDigest,
+		SourceRevision: candidate.SourceRevision,
+		DeploymentID:   wire.PublicationID, GenerationID: wire.GenerationID,
+		PlanID: wire.PlanID, PlanDigest: wire.PlanDigest, Status: wire.Status,
+	}, nil
 }
 
 func (c *Controller) RunQualificationClientWorker(
@@ -110,6 +137,7 @@ func (c *Controller) RunQualificationClientWorker(
 		return err
 	}
 
+	var currentCandidate QualificationCandidate
 	server := jrpc2.NewServer(handler.Map{
 		"login": handler.New(func(callCtx context.Context) (map[string]bool, error) {
 			err := runQualificationLogin(
@@ -137,21 +165,24 @@ func (c *Controller) RunQualificationClientWorker(
 			if err != nil {
 				return QualificationCandidate{}, err
 			}
-			return parseQualificationCandidate(output, options.SourceRevision)
+			currentCandidate, err = parseQualificationCandidate(output, options.SourceRevision)
+			return currentCandidate, err
 		}),
 		"publish": handler.New(func(callCtx context.Context) (QualificationPublication, error) {
+			if currentCandidate.ID == "" {
+				return QualificationPublication{}, fmt.Errorf("qualification candidate is unavailable; run dev first")
+			}
 			output, err := runQualificationCLI(
 				callCtx,
 				environment,
 				"publish",
-				"--project", options.Project,
-				"--target", options.Target,
+				currentCandidate.ID,
 				"--format", "json",
 			)
 			if err != nil {
 				return QualificationPublication{}, err
 			}
-			return parseQualificationPublication(output)
+			return parseQualificationPublication(output, currentCandidate)
 		}),
 	}, &jrpc2.ServerOptions{
 		AllowPush:   true,

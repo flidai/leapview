@@ -75,6 +75,8 @@ type QualificationCandidate struct {
 	ProvenanceDigest string `json:"provenanceDigest"`
 	SourceRevision   string `json:"sourceRevision"`
 	PreviewURL       string `json:"previewUrl,omitempty"`
+	PlanID           string `json:"planId,omitempty"`
+	PlanDigest       string `json:"planDigest,omitempty"`
 }
 
 type QualificationPublication struct {
@@ -86,6 +88,9 @@ type QualificationPublication struct {
 	ReleaseDigest     string `json:"releaseDigest"`
 	SourceRevision    string `json:"sourceRevision"`
 	DeploymentID      string `json:"deploymentId,omitempty"`
+	GenerationID      string `json:"generationId,omitempty"`
+	PlanID            string `json:"planId,omitempty"`
+	PlanDigest        string `json:"planDigest,omitempty"`
 	Status            string `json:"status"`
 }
 
@@ -96,6 +101,9 @@ type QualificationDeployment struct {
 	PrincipalID       string `json:"principalId"`
 	ArtifactDigest    string `json:"artifactDigest"`
 	ReleaseDigest     string `json:"releaseDigest"`
+	GenerationID      string `json:"generationId,omitempty"`
+	PlanID            string `json:"planId,omitempty"`
+	PlanDigest        string `json:"planDigest,omitempty"`
 	Status            string `json:"status"`
 }
 
@@ -219,11 +227,11 @@ func verifyExactAuthoringCandidate(
 	publication QualificationPublication,
 	deployment QualificationDeployment,
 ) error {
-	if publication.Status != "queued" {
-		return fmt.Errorf("publication status %q is not queued", publication.Status)
+	if publication.Status != "pending" {
+		return fmt.Errorf("publication status %q is not pending", publication.Status)
 	}
 	if deployment.Status != "active" {
-		return fmt.Errorf("deployment status %q is not active", deployment.Status)
+		return fmt.Errorf("generation status %q is not active", deployment.Status)
 	}
 	for _, check := range []struct {
 		name string
@@ -236,6 +244,11 @@ func verifyExactAuthoringCandidate(
 		{name: "deployed revision", want: candidate.Revision, got: deployment.CandidateRevision},
 		{name: "published target", want: candidate.TargetID, got: publication.TargetID},
 		{name: "deployed target", want: candidate.TargetID, got: deployment.TargetID},
+		{name: "published plan", want: candidate.PlanID, got: publication.PlanID},
+		{name: "deployed plan", want: candidate.PlanID, got: deployment.PlanID},
+		{name: "published plan digest", want: candidate.PlanDigest, got: publication.PlanDigest},
+		{name: "deployed plan digest", want: candidate.PlanDigest, got: deployment.PlanDigest},
+		{name: "deployed generation", want: publication.GenerationID, got: deployment.GenerationID},
 		{name: "published principal", want: candidate.PrincipalID, got: publication.PrincipalID},
 		{name: "deployed principal", want: candidate.PrincipalID, got: deployment.PrincipalID},
 		{name: "published release", want: candidate.ProvenanceDigest, got: publication.ReleaseDigest},
