@@ -103,14 +103,27 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if err != nil {
 			return nil, err
 		}
-		return visualizationir.GeographicVisualizationPresentation{VisualizationPresentation: base}, nil
+		base.LabelPolicy = visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, Priority: []visualizationir.VisualizationLabelPriority{}, MaxCharacters: 24, MinimumSpacing: 0, TooltipFallback: true}
+		if variant.Labels != nil {
+			base.LabelPolicy, err = lowerLabelPolicy(*variant.Labels)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return visualizationir.GeographicVisualizationPresentation{
+			VisualizationPresentation: base,
+			Roam:                      true, Theme: visualizationir.VisualizationMapThemeAuto,
+			LabelDensity: visualizationir.VisualizationMapLabelDensityNormal,
+			Camera:       visualizationir.VisualizationMapCamera{Mode: visualizationir.VisualizationMapCameraModeFitData, Padding: 32, MaximumZoom: 14},
+			Controls:     visualizationir.VisualizationMapControls{Zoom: true, Reset: true, Compass: true},
+		}, nil
 	case *document.TableDashboardPresentation:
 		if variant.RowHeight <= 0 {
 			return nil, fmt.Errorf("table rowHeight must be greater than zero")
 		}
 		return visualizationir.GridVisualizationPresentation{RowHeight: int64(variant.RowHeight), ShowHeader: variant.ShowHeader, Striped: variant.Striped}, nil
 	case *document.KPIDashboardPresentation:
-		return visualizationir.KPIVisualizationPresentation{Mode: visualizationir.VisualizationKPIModeCompact, Delta: visualizationir.VisualizationKPIDeltaModeAbsolute, FavorableDirection: visualizationir.VisualizationKPIDirectionIncrease, MissingComparison: visualizationir.VisualizationKPIMissingComparisonHide, Ranges: []visualizationir.VisualizationKPIQualitativeRange{}, DisplayUnits: variant.DisplayUnits, Note: variant.Note, Tone: variant.Tone}, nil
+		return visualizationir.KPIVisualizationPresentation{Mode: visualizationir.VisualizationKPIModeCompact, Delta: visualizationir.VisualizationKPIDeltaModeAbsolute, FavorableDirection: visualizationir.VisualizationKPIDirectionNeutral, MissingComparison: visualizationir.VisualizationKPIMissingComparisonShowUnavailable, Ranges: []visualizationir.VisualizationKPIQualitativeRange{}, DisplayUnits: variant.DisplayUnits, Note: variant.Note, Tone: variant.Tone}, nil
 	default:
 		return nil, fmt.Errorf("unsupported Dashboard presentation variant %T", value.Value)
 	}

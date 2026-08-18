@@ -48,8 +48,71 @@ func TestLowerCanonicalPresentationVariantsPreserveTableAndKPIFields(t *testing.
 		t.Fatal(err)
 	}
 	value := kpi.(visualizationir.KPIVisualizationPresentation)
-	if value.DisplayUnits == nil || *value.DisplayUnits != visualizationir.VisualizationDisplayUnitsThousands || value.Note == nil || *value.Note != "Target" || value.Tone == nil || *value.Tone != visualizationir.VisualizationToneWarning {
+	if value.DisplayUnits == nil || *value.DisplayUnits != visualizationir.VisualizationDisplayUnitsThousands || value.Note == nil || *value.Note != "Target" || value.Tone == nil || *value.Tone != visualizationir.VisualizationToneWarning || value.FavorableDirection != visualizationir.VisualizationKPIDirectionNeutral || value.MissingComparison != visualizationir.VisualizationKPIMissingComparisonShowUnavailable {
 		t.Fatalf("kpi presentation = %#v", value)
+	}
+}
+
+func TestLowerCanonicalPresentationVariantsPreserveFieldsAndDefaults(t *testing.T) {
+	legend := document.DashboardLegendPositionTop
+	labels := document.DashboardLabelPolicy{Density: document.DashboardLabelDensityAlways}
+	orientation := document.DashboardOrientationHorizontal
+	units := visualizationir.VisualizationDisplayUnitsBillions
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		value      document.DashboardPresentation
+		check      func(t *testing.T, value any)
+	}{
+		{
+			name: "proportional", visualType: document.DashboardVisualTypePie,
+			value: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional", Legend: &legend, Labels: &labels, DisplayUnits: &units}},
+			check: func(t *testing.T, value any) {
+				got := value.(visualizationir.ProportionalVisualizationPresentation)
+				if got.Legend != visualizationir.VisualizationLegendPositionTop || got.LabelPolicy.Density != visualizationir.VisualizationLabelDensityAlways || got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsBillions || got.Orientation != visualizationir.VisualizationOrientationVertical {
+					t.Fatalf("proportional = %#v", got)
+				}
+			},
+		},
+		{
+			name: "hierarchy", visualType: document.DashboardVisualTypeTree,
+			value: document.DashboardPresentation{Value: &document.HierarchyDashboardPresentation{Type: "hierarchy", Orientation: &orientation}},
+			check: func(t *testing.T, value any) {
+				got := value.(visualizationir.HierarchyVisualizationPresentation)
+				if got.Orientation != visualizationir.VisualizationOrientationHorizontal || got.Legend != visualizationir.VisualizationLegendPositionBottom {
+					t.Fatalf("hierarchy = %#v", got)
+				}
+			},
+		},
+		{
+			name: "polar", visualType: document.DashboardVisualTypeGauge,
+			value: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", DisplayUnits: &units}},
+			check: func(t *testing.T, value any) {
+				got := value.(visualizationir.PolarVisualizationPresentation)
+				if got.DisplayUnits == nil || *got.DisplayUnits != visualizationir.VisualizationDisplayUnitsBillions || !got.ShowPointer {
+					t.Fatalf("polar = %#v", got)
+				}
+			},
+		},
+		{
+			name: "geographic", visualType: document.DashboardVisualTypeMap,
+			value: document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{Type: "geographic"}},
+			check: func(t *testing.T, value any) {
+				got := value.(visualizationir.GeographicVisualizationPresentation)
+				if !got.Roam || got.Theme != visualizationir.VisualizationMapThemeAuto || got.LabelDensity != visualizationir.VisualizationMapLabelDensityNormal || got.Camera.Mode != visualizationir.VisualizationMapCameraModeFitData || got.Camera.Padding != 32 || got.Camera.MaximumZoom != 14 || !got.Controls.Zoom || !got.Controls.Reset || !got.Controls.Compass {
+					t.Fatalf("geographic = %#v", got)
+				}
+			},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			value, err := LowerCanonicalDashboardPresentation(test.value, test.visualType)
+			if err != nil {
+				t.Fatalf("lower: %v", err)
+			}
+			test.check(t, value)
+		})
 	}
 }
 
