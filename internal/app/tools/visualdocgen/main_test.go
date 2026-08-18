@@ -444,7 +444,7 @@ func assertCuratedShowcaseExamples(t *testing.T, artifact visualExamplesArtifact
 
 func TestVisualDocumentationCoversEveryPublicTypeAndGeographicLayer(t *testing.T) {
 	docsDir := filepath.Join("..", "..", "..", "..", "docs", "visuals")
-	schemaPath := filepath.Join("..", "..", "..", "..", "schemas", "json", "dashboard.schema.json")
+	schemaPath := filepath.Join("..", "..", "..", "..", "schemas", "json", "dashboard-document.schema.json")
 	publicTypes, publicGeographicLayers := publicVisualizationDiscriminators(t, schemaPath)
 	catalogContents, err := os.ReadFile(filepath.Join(docsDir, "catalog.json"))
 	if err != nil {

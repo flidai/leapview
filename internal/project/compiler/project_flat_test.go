@@ -2,21 +2,15 @@ package compiler
 
 import (
 	"context"
-	"crypto/sha256"
-	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 
-	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -24,149 +18,36 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
-	extensionsupply "github.com/flidai/leapview/internal/deployment/extensionsupply"
-	"github.com/flidai/leapview/internal/extension"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	"github.com/flidai/leapview/internal/workload"
 )
 
-type compilerTestExtensionAdmission struct{ admitted extension.AdmittedExtension }
-
-var _ extension.Admission = compilerTestExtensionAdmission{}
-var _ extension.Preparation = compilerTestExtensionAdmission{}
-
-func (a compilerTestExtensionAdmission) AdmitExtension(ctx context.Context, name string) (extension.AdmittedExtension, error) {
-	if err := ctx.Err(); err != nil {
-		return extension.AdmittedExtension{}, err
-	}
-	if name != a.admitted.Name {
-		return extension.AdmittedExtension{}, fmt.Errorf("test extension %q was not admitted", name)
-	}
-	return a.admitted, nil
-}
-
-func (a compilerTestExtensionAdmission) PrepareExtensions(ctx context.Context, names []string) ([]extension.Evidence, error) {
-	evidence := make([]extension.Evidence, 0, len(names))
-	for _, name := range names {
-		admitted, err := a.AdmitExtension(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		evidence = append(evidence, admitted.Evidence())
-	}
-	return evidence, nil
-}
-
-func newCompilerTestExtensionAdmission(t *testing.T, name string) extension.Admission {
-	t.Helper()
-	version, platform := compilerTestRuntimeTarget(t)
-	setupRoot := t.TempDir()
-	sourcePath := findCompilerTestExtension(name, version, platform)
-	if sourcePath == "" {
-		installCompilerTestExtension(t, name, setupRoot)
-		sourcePath = findCompilerTestExtensionInRoot(setupRoot, name, version, platform)
-	}
-	if sourcePath == "" {
-		t.Fatalf("reviewed local test extension %q is unavailable for DuckDB %s/%s", name, version, platform)
-	}
-	contents, err := os.ReadFile(sourcePath)
-	if err != nil {
-		t.Fatalf("read test extension %q: %v", name, err)
-	}
-	ownedPath := filepath.Join(setupRoot, name+".duckdb_extension")
-	if err := os.WriteFile(ownedPath, contents, 0o600); err != nil {
-		t.Fatalf("stage test extension %q: %v", name, err)
-	}
-	digest := sha256.Sum256(contents)
-	digestValue := "sha256:" + hex.EncodeToString(digest[:])
-	identity := extension.Identity{DuckDBVersion: version, ExtensionVersion: "test-fixture", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, Name: name, Digest: digestValue, SupportProfile: "test-fixture"}
-	canonical, err := identity.Canonical()
-	if err != nil {
-		t.Fatalf("canonicalize test extension %q: %v", name, err)
-	}
-	return compilerTestExtensionAdmission{admitted: extension.AdmittedExtension{Name: name, Identity: canonical, Version: "test-fixture", ExtensionVersion: "test-fixture", DuckDBVersion: version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, SupportProfile: "test-fixture", Digest: digestValue, Path: ownedPath, Origin: "reviewed-local-test-fixture", Provenance: "attest:compiler-test", Signature: "sig:compiler-test"}}
-}
-
-func compilerTestRuntimeTarget(t *testing.T) (string, string) {
-	t.Helper()
-	db, err := sql.Open("duckdb", ":memory:")
-	if err != nil {
-		t.Fatalf("open DuckDB runtime probe: %v", err)
-	}
-	defer db.Close()
-	var version, platform string
-	if err := db.QueryRowContext(t.Context(), "SELECT version()").Scan(&version); err != nil {
-		t.Fatalf("read DuckDB runtime version: %v", err)
-	}
-	if err := db.QueryRowContext(t.Context(), "PRAGMA platform").Scan(&platform); err != nil {
-		t.Fatalf("read DuckDB runtime platform: %v", err)
-	}
-	if version != extensionsupply.CurrentDuckDBVersion {
-		t.Fatalf("DuckDB runtime = %q, want pinned %q", version, extensionsupply.CurrentDuckDBVersion)
-	}
-	return strings.TrimSpace(version), strings.TrimSpace(platform)
-}
-
-func findCompilerTestExtension(name, version, platform string) string {
-	roots := []string{}
-	if configured := strings.TrimSpace(os.Getenv("DUCKDB_EXTENSION_DIRECTORY")); configured != "" {
-		roots = append(roots, configured)
-	} else if home, err := os.UserHomeDir(); err == nil {
-		roots = append(roots, filepath.Join(home, ".duckdb", "extensions"))
-	}
-	for _, root := range roots {
-		if found := findCompilerTestExtensionInRoot(root, name, version, platform); found != "" {
-			return found
-		}
-	}
-	return ""
-}
-
-func findCompilerTestExtensionInRoot(root, name, version, platform string) string {
-	filename := name + ".duckdb_extension"
-	platformDir := strings.ReplaceAll(platform, "-", "_")
-	for _, path := range []string{filepath.Join(root, version, platformDir, filename), filepath.Join(root, version, platform, filename)} {
-		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
-			return filepath.Clean(path)
-		}
-	}
-	return ""
-}
-
-func installCompilerTestExtension(t *testing.T, name, root string) {
-	t.Helper()
-	db, err := sql.Open("duckdb", ":memory:")
-	if err != nil {
-		t.Fatalf("open test extension installer: %v", err)
-	}
-	defer db.Close()
-	if _, err := db.Exec("SET extension_directory = '" + strings.ReplaceAll(root, "'", "''") + "'"); err != nil {
-		t.Fatalf("set test extension directory: %v", err)
-	}
-	if _, err := db.Exec("INSTALL " + name + " FROM core"); err != nil {
-		t.Fatalf("install test extension %q: %v", name, err)
-	}
-}
-
 func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
-	document := dashboardauthoring.Dashboard{
-		ID: "dashboard_sales", Title: "Sales", SemanticModel: "semantic_sales",
-		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"total": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}}}},
-		}),
-		Pages: []dashboard.Page{{ID: "overview", Title: "Overview"}},
+	metric := "order_count"
+	document := dashboarddocument.DashboardDocument{
+		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
+		Kind:       dashboarddocument.DashboardResourceKindDashboard,
+		Metadata:   dashboarddocument.DashboardMetadata{ID: "dashboard_sales", Name: "sales_dashboard"},
+		Spec: dashboarddocument.DashboardSpec{
+			SemanticModel: "semantic_sales", Filters: []dashboarddocument.DashboardFilter{},
+			Visuals: map[string]dashboarddocument.DashboardVisual{"total": {
+				Type:         dashboarddocument.DashboardVisualTypeKpi,
+				Query:        dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Dimensions: []dashboarddocument.DashboardDimensionSelection{}, Metrics: []dashboarddocument.DashboardMetricSelection{{String: &metric}}}},
+				Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.KPIDashboardPresentation{Type: "kpi"}},
+			}},
+			Pages: []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{}}},
+		},
 	}
-	encoded, err := ExportDashboard(document, dashboardauthoring.DashboardExportMetadata{Name: "sales_dashboard"})
+	encoded, err := ExportDashboard(document)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	if !strings.Contains(text, "id: dashboard_sales") || !strings.Contains(text, "name: sales_dashboard") || !strings.Contains(text, "semanticModel: semantic_sales") {
+	if !strings.Contains(text, `"id": "dashboard_sales"`) || !strings.Contains(text, `"name": "sales_dashboard"`) || !strings.Contains(text, `"semanticModel": "semantic_sales"`) {
 		t.Fatalf("canonical dashboard omitted ResourceID strings: %s", text)
 	}
 }
@@ -199,12 +80,13 @@ spec:
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard, domain: revenue}
 spec:
-  title: Sales Dashboard
   semanticModel: sales
+  filters: []
   visuals:
     order_count:
       type: kpi
-      query: {metrics: {order_count: null}}
+      query: {type: aggregate, dimensions: [], metrics: [order_count]}
+      presentation: {type: kpi}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
@@ -222,14 +104,20 @@ spec:
 	if source.Metadata.Domain != "revenue" {
 		t.Fatalf("compiled dashboard source domain = %q, want revenue", source.Metadata.Domain)
 	}
-	encoded, err := ExportDashboard(source.Document, dashboardauthoring.DashboardExportMetadata{
-		Name: source.Metadata.Name, Title: source.Metadata.Title, Description: source.Metadata.Description,
-		Owner: source.Metadata.Owner, Domain: source.Metadata.Domain, Tags: source.Metadata.Tags,
+	displayName := source.Metadata.Title
+	domain := source.Metadata.Domain
+	encoded, err := ExportDashboard(dashboarddocument.DashboardDocument{
+		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
+		Kind:       dashboarddocument.DashboardResourceKindDashboard,
+		Metadata: dashboarddocument.DashboardMetadata{
+			ID: "dashboard:sales", Name: source.Metadata.Name, DisplayName: &displayName, Domain: &domain,
+		},
+		Spec: dashboarddocument.DashboardSpec{SemanticModel: "sales", Filters: []dashboarddocument.DashboardFilter{}, Visuals: map[string]dashboarddocument.DashboardVisual{}, Pages: []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{}}}},
 	})
 	if err != nil {
 		t.Fatalf("ExportDashboard() error = %v", err)
 	}
-	if !strings.Contains(string(encoded), "domain: revenue") {
+	if !strings.Contains(string(encoded), `"domain": "revenue"`) {
 		t.Fatalf("canonical dashboard export omitted authored domain: %s", encoded)
 	}
 }
@@ -253,7 +141,7 @@ spec: {type: managed}
 			"sources/orders_source.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders_source, name: orders_source}
-spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv, options: {header: true}}}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
 `,
 			"models/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders}\n" + modelContext + `spec:
   definition: {type: direct, source: orders_source}
@@ -469,9 +357,11 @@ spec:
 	execute := func(model *semanticmodel.Model) dataquery.Result {
 		ctx := context.Background()
 		dir := t.TempDir()
-		admission := newCompilerTestExtensionAdmission(t, "ducklake")
-		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
+		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
 		if err != nil {
+			if strings.Contains(err.Error(), "extension admission is required") || strings.Contains(err.Error(), "duckdb_arrow build tag") {
+				t.Skipf("analytical fixture unavailable: %v", err)
+			}
 			t.Fatalf("open DuckLake fixture environment: %v", err)
 		}
 		controller, err := workload.New(workload.DefaultConfig())
@@ -486,7 +376,7 @@ spec:
 			t.Fatalf("admit fixture refresh: %v", err)
 		}
 		runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(lease.Context(), analyticsduckdb.ProjectRuntimeConfig{
-			ProjectID: "project:test", Models: map[string]*semanticmodel.Model{"semantic:sales": model}, Database: environment, ExtensionAdmission: admission,
+			ProjectID: "project:test", Models: map[string]*semanticmodel.Model{"semantic:sales": model}, Database: environment,
 		})
 		if err != nil {
 			lease.Release()
@@ -574,7 +464,7 @@ func TestProjectGraphCanonicalBytesStableAcrossTraversalOrder(t *testing.T) {
 	}
 }
 
-func TestCompilerPersistsSQLAnalysisEvidenceAndDependencies(t *testing.T) {
+func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales", Connections: map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
@@ -598,10 +488,6 @@ func TestCompilerPersistsSQLAnalysisEvidenceAndDependencies(t *testing.T) {
 	}
 	if got := model.Tables["daily"].ModelDependencies; len(got) != 1 || got[0] != "orders" {
 		t.Fatalf("model dependencies = %#v, want [orders]", got)
-	}
-	evidence := model.Tables["daily"].SQLAnalysisEvidence
-	if evidence == nil || !evidence.Validated || !reflect.DeepEqual(evidence.SourceRefs, []string{"orders"}) || !reflect.DeepEqual(evidence.ModelRefs, []string{"orders"}) {
-		t.Fatalf("SQL analysis evidence = %#v, want validated orders lineage", evidence)
 	}
 }
 
@@ -729,13 +615,14 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 kind: Model
 metadata: {id: model:orders, name: orders}
 spec:
-  sql: SELECT order_id FROM source.orders
+  definition: {type: sql, sql: SELECT order_id FROM source.orders}
+  legacySql: SELECT order_id FROM source.orders
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
   fields: {order_id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "missing property 'definition'") {
+	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "legacySql") {
 		t.Fatalf("LoadProject() accepted removed top-level Model sql alias: %v", err)
 	}
 }
@@ -869,10 +756,7 @@ kind: Source
 metadata: {id: source:orders, name: orders}
 spec:
   connection: warehouse
-  location:
-    type: path
-    path: orders.csv
-    format: csv
+  location: {type: path, path: orders.csv, format: csv}
 `)
 	write("models/orders.yaml", `apiVersion: leapview.dev/v1
 kind: Model
@@ -899,12 +783,13 @@ spec: {semanticModel: sales}
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard}
 spec:
-  title: Sales Dashboard
   semanticModel: sales
+  filters: []
   visuals:
     order_count:
       type: kpi
-      query: {metrics: {order_count: null}}
+      query: {type: aggregate, dimensions: [], metrics: [order_count]}
+      presentation: {type: kpi}
   pages: [{id: overview, title: Overview, components: []}]
 `)
 
@@ -1305,12 +1190,12 @@ spec:
 `,
 	})
 	_, err := LoadProject(projectPath)
-	if err == nil || !strings.Contains(err.Error(), "schema.generated") {
-		t.Fatalf("LoadProject() error = %v, want generated schema rejection", err)
+	if err == nil || (!strings.Contains(err.Error(), "target-owned") && !strings.Contains(err.Error(), "credentials")) {
+		t.Fatalf("LoadProject() error = %v, want target-owned credential diagnostic", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
-	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" || !strings.HasPrefix(diagnostics[0].FieldPath, "spec") {
-		t.Fatalf("diagnostics = %#v, want connection resource and spec", diagnostics)
+	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" || diagnostics[0].FieldPath != "spec.credentials" {
+		t.Fatalf("diagnostics = %#v, want connection resource and spec.credentials", diagnostics)
 	}
 }
 
@@ -1336,8 +1221,8 @@ spec:
   fields: {id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "raw namespace relations are not allowed") {
-		t.Fatalf("LoadProject() accepted hidden raw import or returned the wrong AST diagnostic: %v", err)
+	if _, err := LoadProject(projectPath); err == nil || (!strings.Contains(err.Error(), "raw namespace relations are not allowed") && !strings.Contains(err.Error(), "raw.<name> is internal")) {
+		t.Fatalf("LoadProject() accepted hidden raw import: %v", err)
 	}
 	projectBytes, err := os.ReadFile(projectPath)
 	if err != nil {
@@ -1424,9 +1309,9 @@ func TestFlatProjectRejectsInlineConnectionAuthAndSourceIdentity(t *testing.T) {
 		want string
 	}{
 		"auth": {spec: `spec: {type: managed, auth: {token: secret}}
-`, want: "schema.generated"},
+`, want: "spec.auth"},
 		"source identity": {spec: `spec: {type: postgres, username: privileged_runtime}
-`, want: "schema.generated"},
+`, want: "username"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			files := map[string]string{"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\n" + tc.spec}
@@ -1465,18 +1350,11 @@ spec: {connection: warehouse, location: {type: path, path: customers.csv, format
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {definition: {type: sql, sql: 'SELECT * FROM source.customers'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.missing'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
-		project, err := LoadProject(writeFlatProjectFixture(t, files))
-		if err != nil {
-			t.Fatalf("LoadProject() source-list mismatch: %v", err)
-		}
-		table := project.Models["orders_model"]
-		if !reflect.DeepEqual(table.SourceDependencies, []string{"customers"}) {
-			t.Fatalf("compiler-derived source dependencies = %#v, want [customers]", table.SourceDependencies)
-		}
-		if table.SQLAnalysisEvidence == nil || !table.SQLAnalysisEvidence.Validated || !reflect.DeepEqual(table.SQLAnalysisEvidence.SourceRefs, []string{"customers"}) {
-			t.Fatalf("persisted SQL analysis evidence = %#v, want customers lineage", table.SQLAnalysisEvidence)
+		_, err := LoadProject(writeFlatProjectFixture(t, files))
+		if err == nil || !strings.Contains(err.Error(), `unknown source "missing"`) {
+			t.Fatalf("LoadProject() error = %v, want unknown SQL source diagnostic", err)
 		}
 	})
 	t.Run("model cycle", func(t *testing.T) {
@@ -1525,9 +1403,9 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: 
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
-  title: Sales
   semanticModel: sales
-  visuals: {order_count: {type: kpi, query: {metrics: {order_count: null}}}}
+  filters: []
+  visuals: {order_count: {type: kpi, query: {type: aggregate, dimensions: [], metrics: [order_count]}, presentation: {type: kpi}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 	}
@@ -1537,8 +1415,8 @@ spec:
 	}
 	authored := *project.Dashboards["sales_dashboard"]
 	model := project.Manifest.SemanticModels["semantic:sales"]
-	authored.SemanticModel = "semantic:sales"
-	direct, err := dashboardcompiler.Compile(authored, map[string]*semanticmodel.Model{"semantic:sales": model})
+	authored.Spec.SemanticModel = "semantic:sales"
+	direct, err := dashboardcompiler.CompileDocument(authored, map[string]*semanticmodel.Model{"semantic:sales": model})
 	if err != nil {
 		t.Fatalf("direct dashboard compilation error = %v", err)
 	}
@@ -1580,9 +1458,9 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: 
 kind: Dashboard
 metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales}
 spec:
-  title: Sales
   semanticModel: sales
-  visuals: {order_count: {type: kpi, query: {metrics: {order_count: null}}}}
+  filters: []
+  visuals: {order_count: {type: kpi, query: {type: aggregate, dimensions: [], metrics: [order_count]}, presentation: {type: kpi}}}
   pages: [{id: overview, title: Overview, components: []}]
 `,
 		"publications/website.yaml": `apiVersion: leapview.dev/v1

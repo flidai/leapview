@@ -276,7 +276,7 @@ func dashboardQueryTestModel() *semanticmodel.Model {
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{"orders": {
 			ModelName:   "orders",
-			GrainEntity: "order", Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}},
+			GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
 			Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id": {Datatype: semanticmodel.DataTypeInteger}, "ordered_at": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
 				"status": {Type: "string", Datatype: semanticmodel.DataTypeString}, "revenue": {Type: "number", Datatype: semanticmodel.DataTypeDecimal},

@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
@@ -16,6 +18,8 @@ import (
 	cuejsonschema "cuelang.org/go/encoding/jsonschema"
 	cueyaml "cuelang.org/go/encoding/yaml"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	canonicalschemas "github.com/flidai/leapview/schemas"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 )
 
@@ -97,6 +101,9 @@ func ValidateFile(kind Kind, path string) error {
 }
 
 func ValidateBytes(kind Kind, filename string, content []byte) error {
+	if kind == KindDashboard {
+		return validateDashboardDocument(filename, content)
+	}
 	// Connection, Source, and Model structure is owned by the generated
 	// TypeSpec contracts. ValidateBytes is also called directly by schema tests
 	// and callers, so route all three kinds through the same generated JSON
@@ -129,6 +136,9 @@ func ValidateBytes(kind Kind, filename string, content []byte) error {
 }
 
 func JSONSchema(kind Kind) ([]byte, error) {
+	if kind == KindDashboard {
+		return append([]byte(nil), canonicalschemas.DashboardDocumentSchema...), nil
+	}
 	if kind == KindConnection || kind == KindSource || kind == KindModel {
 		return generatedJSONSchema(kind)
 	}
@@ -240,6 +250,71 @@ func JSONSchemaFiles() (map[string][]byte, error) {
 	return files, nil
 }
 
+var (
+	dashboardSchemaOnce sync.Once
+	dashboardSchema     *jsonschema.Schema
+	dashboardSchemaErr  error
+)
+
+func compiledDashboardSchema() (*jsonschema.Schema, error) {
+	dashboardSchemaOnce.Do(func() {
+		var document any
+		if err := json.Unmarshal(canonicalschemas.DashboardDocumentSchema, &document); err != nil {
+			dashboardSchemaErr = fmt.Errorf("decode generated dashboard schema: %w", err)
+			return
+		}
+		compiler := jsonschema.NewCompiler()
+		const schemaURL = "https://leapview.dev/schemas/dashboard-document.schema.json"
+		if err := compiler.AddResource(schemaURL, document); err != nil {
+			dashboardSchemaErr = fmt.Errorf("register generated dashboard schema: %w", err)
+			return
+		}
+		dashboardSchema, dashboardSchemaErr = compiler.Compile(schemaURL)
+	})
+	return dashboardSchema, dashboardSchemaErr
+}
+
+func validateDashboardDocument(filename string, content []byte) error {
+	root, err := parseResourceDocument(filename, content)
+	if err != nil {
+		return err
+	}
+	if err := checkResourceNode(filename, root); err != nil {
+		return err
+	}
+	normalizedValue, err := normalizeResourceNode(filename, root)
+	if err != nil {
+		return err
+	}
+	normalized, err := json.Marshal(normalizedValue)
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.normalize", err.Error())
+	}
+	schema, err := compiledDashboardSchema()
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", err.Error())
+	}
+	value, err := decodeJSONForCUE(normalized)
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", "decode normalized dashboard resource: "+err.Error())
+	}
+	if err := schema.Validate(value); err != nil {
+		diagnosticErr := generatedValidationDiagnostic(filename, root, err)
+		var schemaErr *Error
+		if errors.As(diagnosticErr, &schemaErr) && len(schemaErr.Diagnostics) > 0 {
+			message := err.Error()
+			switch {
+			case strings.Contains(message, "value must be one of"), strings.Contains(message, "does not match pattern"):
+				schemaErr.Diagnostics[0].Code = "schema.enum"
+			case strings.Contains(message, "missing propert"):
+				schemaErr.Diagnostics[0].Code = "schema.contract"
+			}
+		}
+		return diagnosticErr
+	}
+	return nil
+}
+
 func JSONSchemaFilename(kind Kind) string {
 	switch kind {
 	case KindProject:
@@ -255,7 +330,7 @@ func JSONSchemaFilename(kind Kind) string {
 	case KindPipeline:
 		return "pipeline.schema.json"
 	case KindDashboard:
-		return "dashboard.schema.json"
+		return "dashboard-document.schema.json"
 	case KindGroup:
 		return "group.schema.json"
 	case KindRoleBinding:
@@ -294,6 +369,26 @@ func DiagnosticForError(err error) Diagnostic {
 		Code:     compilerCode(err),
 		Message:  err.Error(),
 	}
+}
+
+func dashboardFieldPath(path []string) string {
+	var builder strings.Builder
+	for index, segment := range path {
+		if segment == "" {
+			continue
+		}
+		if _, err := strconv.Atoi(segment); err == nil && index > 0 {
+			builder.WriteByte('[')
+			builder.WriteString(segment)
+			builder.WriteByte(']')
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('.')
+		}
+		builder.WriteString(segment)
+	}
+	return builder.String()
 }
 
 func definitionName(kind Kind) (string, error) {

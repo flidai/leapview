@@ -80,7 +80,7 @@ spec:
   pages:
     - id: overview
       title: Overview
-      visuals: []
+      components: []
 `))
 	assertDiagnostic(t, err, "schema.enum", "type")
 }
@@ -309,7 +309,7 @@ spec:
       title: Revenue
       query:
         type: aggregate
-        dimensions: [orders.purchase_month]
+        dimensions: [purchase_month]
         metrics: [revenue]
       presentation: {type: cartesian}
     total:
@@ -338,8 +338,8 @@ spec:
       title: Category status
       query:
         type: pivot
-        rows: [orders.category]
-        columns: [orders.status]
+        rows: [category]
+        columns: [status]
         metrics: [order_count]
       presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
   pages:
@@ -380,7 +380,7 @@ spec:
       title: Revenue
       query:
         type: aggregate
-        dimensions: [orders.purchase_month]
+        dimensions: [purchase_month]
         metrics: [revenue]
       presentation:
         type: cartesian

@@ -116,14 +116,20 @@ func TestCompileCanonicalDashboardFiltersRequiresExplicitNarrowingForIncompatibl
 	if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "narrow targets") {
 		t.Fatalf("all-target incompatibility error = %v", err)
 	}
-	target := "overview/orders-card"
+	target := "orders"
 	doc.Spec.Filters[0].Targets = &[]string{target}
 	compiled, err := CompileCanonicalDashboardFilters(doc, model)
 	if err != nil {
 		t.Fatalf("explicit narrowing rejected: %v", err)
 	}
-	if got := compiled.Bindings["status"].Targets; len(got) != 1 || got[0] != target {
+	if got := compiled.Bindings["status"].Targets; len(got) != 1 || got[0] != "overview/orders-card" {
 		t.Fatalf("narrowed targets = %#v", got)
+	}
+	for _, removed := range []string{"overview/orders-card", "orders-card"} {
+		doc.Spec.Filters[0].Targets = &[]string{removed}
+		if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "unknown target") {
+			t.Fatalf("removed target form %q was accepted: %v", removed, err)
+		}
 	}
 }
 

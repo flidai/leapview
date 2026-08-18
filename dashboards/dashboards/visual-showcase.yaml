@@ -22,7 +22,7 @@ spec:
       type: dateRange
     description: Filters dashboard content by the calendar purchase date.
     urlParameter: period
-    targets: [filters/total-orders-filtered]
+    targets: [total_orders]
     operators: []
   - id: purchase_time
     label: Relative purchase period
@@ -31,7 +31,7 @@ spec:
       type: relativePeriod
     description: Filters dashboard content using a timestamp-relative period.
     operators: []
-    targets: [filters/total-orders-filtered]
+    targets: [total_orders]
   - id: state
     label: State
     dimension: state
@@ -42,7 +42,7 @@ spec:
     - in
     - notIn
     urlParameter: state
-    targets: [filters/total-orders-filtered]
+    targets: [total_orders]
   - id: order_status
     label: Order status
     dimension: order_status
@@ -52,7 +52,7 @@ spec:
     operators:
     - in
     - notIn
-    targets: [filters/total-orders-filtered]
+    targets: [total_orders]
   - id: category_text
     label: Category text
     dimension: category
@@ -65,7 +65,7 @@ spec:
     - startsWith
     - notContains
     - notEquals
-    targets: [filters/total-orders-filtered]
+    targets: [total_orders]
   - id: delivered
     label: Delivery state
     dimension: delivered
@@ -75,7 +75,7 @@ spec:
     operators:
     - in
     - notIn
-    targets: [filters/total-orders-filtered]
+    targets: [total_orders]
   - id: delivery_days
     label: Delivery days
     dimension: delivery_days
@@ -83,7 +83,7 @@ spec:
       type: numericRange
     description: Filters dashboard content by an integer delivery-day range.
     operators: []
-    targets: [filters/total-orders-filtered]
+    targets: [total_orders]
   - id: revenue_amount
     label: Order revenue
     dimension: revenue_amount
@@ -91,7 +91,7 @@ spec:
       type: numericRange
     description: Filters dashboard content by a decimal order-revenue range.
     operators: []
-    targets: [filters/total-orders-filtered]
+    targets: [total_orders]
   visuals:
     total_orders:
       type: kpi
@@ -464,7 +464,6 @@ spec:
       query:
         type: aggregate
         dimensions:
-        - state
         - order_status
         metrics:
         - order_count
@@ -1284,7 +1283,6 @@ spec:
         type: aggregate
         dimensions:
         - category
-        - state
         metrics:
         - order_count
         sort:
@@ -1299,7 +1297,6 @@ spec:
       query:
         type: aggregate
         dimensions:
-        - state
         - order_status
         metrics:
         - order_count
@@ -1332,14 +1329,13 @@ spec:
         type: records
         dataset: orders
         fields:
-        - orders.order_id
-        - orders.purchase_date
-        - orders.status
-        - customers.state
-        - orders.category
-        - orders.revenue
-        - orders.review_score
-        - orders.delivery_days
+        - order_id
+        - purchase_date
+        - status
+        - category
+        - revenue
+        - review_score
+        - delivery_days
       title: Orders
       description: Detailed order records with status, geography, revenue, review,
         and delivery columns.
@@ -1354,11 +1350,10 @@ spec:
         type: records
         dataset: orders
         fields:
-        - orders.order_id
-        - orders.status
-        - customers.state
-        - orders.revenue
-        - orders.review_score
+        - order_id
+        - status
+        - revenue
+        - review_score
       title: Orders compact
       description: Compact order table for dense scanning.
       presentation:
@@ -1372,11 +1367,11 @@ spec:
         type: records
         dataset: orders
         fields:
-        - orders.order_id
-        - orders.purchase_date
-        - orders.category
-        - orders.revenue
-        - orders.delivery_days
+        - order_id
+        - purchase_date
+        - category
+        - revenue
+        - delivery_days
       title: Orders spacious
       description: Spacious order table focused on date, category, revenue, and delivery.
       presentation:
@@ -1390,12 +1385,11 @@ spec:
         type: records
         dataset: orders
         fields:
-        - orders.order_id
-        - orders.status
-        - customers.state
-        - orders.category
-        - orders.revenue
-        - orders.delivery_days
+        - order_id
+        - status
+        - category
+        - revenue
+        - delivery_days
       title: Orders full grid
       description: Full-grid order table with visible row and column borders.
       presentation:
@@ -1409,11 +1403,11 @@ spec:
         type: records
         dataset: orders
         fields:
-        - orders.order_id
-        - orders.status
-        - orders.revenue
-        - orders.review_score
-        - orders.delivery_days
+        - order_id
+        - status
+        - revenue
+        - review_score
+        - delivery_days
       title: Orders conditional formatting
       description: Order table demonstrating badges, data bars, and threshold formatting.
       presentation:

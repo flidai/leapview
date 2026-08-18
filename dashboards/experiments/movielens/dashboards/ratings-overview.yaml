@@ -37,8 +37,8 @@ spec:
     - in
     - notIn
     targets:
-    - overview/rating-distribution
-    - overview/movie-table
+    - rating_distribution
+    - movie_table
     urlParameter: rating
   - id: title
     label: Title
@@ -207,12 +207,9 @@ spec:
         type: records
         dataset: ratings
         fields:
-        - movies.title
-        - movies.release_year
-        - movies.release_decade
-        - ratings.rating_bucket
-        - ratings.rating_month
-        - ratings.rating
+        - rating_bucket
+        - rating_month
+        - rating
       title: Movie ratings
       presentation:
         type: table

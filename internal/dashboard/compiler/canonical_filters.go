@@ -460,7 +460,7 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 			for filterID, definition := range definitions {
 				binding := bindings[filterID]
 				explicit := len(binding.TargetPolicy.Include) > 0
-				matches := explicit && canonicalTargetMatches(binding.TargetPolicy.Include, page.ID, component.ID)
+				matches := explicit && canonicalTargetMatches(binding.TargetPolicy.Include, component.Visual)
 				compatible := canonicalDimensionApplies(definition.Field, datasets, model)
 				if explicit && matches && !compatible {
 					return fmt.Errorf("filter %q target %q is semantically incompatible with dimension %q", filterID, page.ID+"/"+component.ID, definition.Field)
@@ -584,9 +584,9 @@ func canonicalOptionDependencyRefs(filters []document.DashboardFilter, id string
 	return nil
 }
 
-func canonicalTargetMatches(targets []string, pageID, componentID string) bool {
+func canonicalTargetMatches(targets []string, visualID string) bool {
 	for _, target := range targets {
-		if target == pageID+"/"+componentID {
+		if target == visualID {
 			return true
 		}
 	}
@@ -599,7 +599,7 @@ func canonicalTargetExists(target string, pages []dashboard.Page) bool {
 			if component.Kind != "visual" {
 				continue
 			}
-			if target == page.ID+"/"+component.ID {
+			if target == component.Visual {
 				return true
 			}
 		}

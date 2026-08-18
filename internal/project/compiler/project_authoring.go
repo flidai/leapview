@@ -2,10 +2,6 @@ package compiler
 
 import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/dashboard"
-	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
-	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"gopkg.in/yaml.v3"
 )
 
@@ -65,27 +61,6 @@ type projectSemanticModelSpec struct {
 	Dimensions    map[string]semanticmodel.SemanticDimensionSpec `yaml:"dimensions"`
 	Filters       map[string]semanticmodel.SemanticFilterSpec    `yaml:"filters"`
 	Metrics       map[string]semanticmodel.SemanticMetricSpec    `yaml:"metrics"`
-}
-
-type dashboardSpec struct {
-	Title             string                                               `yaml:"title"`
-	Appearance        dashboardappearance.Patch                            `yaml:"appearance"`
-	SemanticModel     string                                               `yaml:"semanticModel"`
-	Filters           map[string]dashboardfilter.Definition                `yaml:"filters"`
-	FilterBindings    map[string]dashboardfilter.Binding                   `yaml:"filter_bindings"`
-	FilterApplication dashboardfilter.ApplicationPolicy                    `yaml:"filter_application"`
-	Visuals           map[string]dashboardauthoring.AuthoringVisualization `yaml:"visuals"`
-	Pages             []projectDashboardPage                               `yaml:"pages"`
-}
-
-type projectDashboardPage struct {
-	ID             string                             `yaml:"id"`
-	Title          string                             `yaml:"title"`
-	Description    string                             `yaml:"description"`
-	Canvas         dashboard.PageCanvas               `yaml:"canvas"`
-	Grid           dashboard.PageGrid                 `yaml:"grid"`
-	FilterBindings map[string]dashboardfilter.Binding `yaml:"filter_bindings"`
-	Components     []dashboard.PageVisual             `yaml:"components"`
 }
 
 type projectGroupSpec struct {

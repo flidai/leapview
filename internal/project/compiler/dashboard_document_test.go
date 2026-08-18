@@ -121,25 +121,6 @@ func TestExportDashboardPreservesZeroDomainAndEmptyFilters(t *testing.T) {
 	}
 }
 
-func TestCanonicalDashboardYAMLJSONFingerprintMatches(t *testing.T) {
-	path := filepath.Join("..", "..", "dashboard", "document", "testdata", "canonical.yaml")
-	want, err := LoadDashboardDocument(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := ExportDashboard(want)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got document.DashboardDocument
-	if err := configschema.DecodeResource(configschema.KindDashboard, "cross-origin.json", encoded, &got); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("canonical document changed across YAML/JSON boundary:\n got=%#v\nwant=%#v", got, want)
-	}
-}
-
 func TestExportDashboardReliesOnCanonicalSchemaForEnvelopeAndName(t *testing.T) {
 	path := filepath.Join("..", "..", "dashboard", "document", "testdata", "canonical.yaml")
 	value, err := LoadDashboardDocument(path)
@@ -163,5 +144,24 @@ func TestExportDashboardReliesOnCanonicalSchemaForEnvelopeAndName(t *testing.T) 
 				t.Fatal("ExportDashboard accepted an invalid generated document")
 			}
 		})
+	}
+}
+
+func TestCanonicalDashboardYAMLJSONFingerprintMatches(t *testing.T) {
+	path := filepath.Join("..", "..", "dashboard", "document", "testdata", "canonical.yaml")
+	want, err := LoadDashboardDocument(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := ExportDashboard(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got document.DashboardDocument
+	if err := configschema.DecodeResource(configschema.KindDashboard, "cross-origin.json", encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("canonical document changed across YAML/JSON boundary:\n got=%#v\nwant=%#v", got, want)
 	}
 }
