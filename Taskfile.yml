@@ -821,6 +821,9 @@ tasks:
 
   test:go:minio-conformance:
     desc: Run the object-backed candidate-catalog, shared-pool, and GC namespace MinIO conformance tests
+    deps:
+      - db:generate
+      - api:generate
     env:
       LEAPVIEW_MINIO_CONFORMANCE_REQUIRED: "1"
       LEAPVIEW_CONFORMANCE_EVIDENCE_OUT: "{{.ROOT_DIR}}/.tmp/minio-conformance/shared-pool-evidence.json"
