@@ -51,6 +51,47 @@ spec:
 	}
 }
 
+func TestTypedConnectionLoweringPreservesExplicitPublicAccess(t *testing.T) {
+	public, err := decodeConnectionResource("connection.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:files, name: files}
+spec:
+  type: s3
+  access: public
+`), metadata{})
+	if err != nil {
+		t.Fatalf("decode public connection: %v", err)
+	}
+	omitted, err := decodeConnectionResource("connection.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:files, name: files}
+spec:
+  type: s3
+`), metadata{})
+	if err != nil {
+		t.Fatalf("decode omitted connection: %v", err)
+	}
+	if public.Access != semanticmodel.ConnectionAccessPublic || omitted.Access != "" || public.Access == omitted.Access {
+		t.Fatalf("access lowering public=%q omitted=%q", public.Access, omitted.Access)
+	}
+	if public.Credentials.Provider != "" || len(public.Auth) != 0 || public.Host != "" {
+		t.Fatalf("public connection leaked target state: %#v", public)
+	}
+}
+
+func TestTypedConnectionLoweringRejectsUnsupportedPublicVariant(t *testing.T) {
+	_, err := decodeConnectionResource("connection.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec:
+  type: postgres
+  access: public
+`), metadata{})
+	if err == nil {
+		t.Fatal("postgres public access was accepted despite generated variant having no access property")
+	}
+}
+
 func TestTypedDataResourceLoweringRejectsWrongLocationOption(t *testing.T) {
 	_, err := decodeSourceResource("source.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: Source

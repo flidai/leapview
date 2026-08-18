@@ -182,16 +182,19 @@ type Model struct {
 }
 
 type Connection struct {
-	Kind        string `yaml:"kind" json:"Kind"`
-	Description string `yaml:"description" json:"Description"`
-	Path        string `yaml:"path" json:"Path"`
-	Root        string `yaml:"root" json:"Root"`
-	Scope       string `yaml:"scope" json:"Scope"`
-	Host        string `yaml:"host" json:"-"`
-	Port        int    `yaml:"port" json:"-"`
-	Database    string `yaml:"database" json:"-"`
-	Username    string `yaml:"username" json:"-"`
-	SSLMode     string `yaml:"sslMode" json:"-"`
+	Kind string `yaml:"kind" json:"Kind"`
+	// Access is a portable, non-secret connection policy. Empty means the
+	// normal target-owned authentication path; Public is explicit no-auth.
+	Access      ConnectionAccess `yaml:"access,omitempty" json:"access,omitempty"`
+	Description string           `yaml:"description" json:"Description"`
+	Path        string           `yaml:"path" json:"Path"`
+	Root        string           `yaml:"root" json:"Root"`
+	Scope       string           `yaml:"scope" json:"Scope"`
+	Host        string           `yaml:"host" json:"-"`
+	Port        int              `yaml:"port" json:"-"`
+	Database    string           `yaml:"database" json:"-"`
+	Username    string           `yaml:"username" json:"-"`
+	SSLMode     string           `yaml:"sslMode" json:"-"`
 	// Auth is populated only on a short-lived refresh copy by the injected
 	// credential resolver. It is deliberately absent from authored contracts.
 	Auth           ConnectionAuth            `yaml:"-" json:"-"`
@@ -200,6 +203,12 @@ type Connection struct {
 	Defaults       ConnectionDefaults        `yaml:"defaults" json:"Defaults"`
 	ReaderDefaults map[string]map[string]any `yaml:"-" json:"readerDefaults,omitempty"`
 }
+
+type ConnectionAccess string
+
+const (
+	ConnectionAccessPublic ConnectionAccess = "public"
+)
 
 type ConnectionCredentials struct {
 	Provider    string `yaml:"provider" json:"provider"`

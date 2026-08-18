@@ -1,6 +1,7 @@
 package connectors
 
 import (
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"net/url"
 	pathpkg "path"
 	"sort"
@@ -60,8 +61,11 @@ type ConnectionSpec struct {
 	AuthKeys           []string
 	RequiredAuthSets   [][]string
 	AllowNoAuth        bool
-	AttachKind         string
-	ObjectRelation     string
+	// AllowPublicAccess indicates that the portable `access: public` policy
+	// can be lowered to a target binding with no credential snapshot.
+	AllowPublicAccess bool
+	AttachKind        string
+	ObjectRelation    string
 }
 
 var formats = map[string]Format{
@@ -263,6 +267,11 @@ func LookupFormat(name string) (Format, bool) {
 
 func LookupConnection(kind string) (ConnectionSpec, bool) {
 	spec, ok := connections[kind]
+	if ok {
+		if profile, profileOK := projectcontracts.LookupConnector(kind); profileOK {
+			spec.AllowPublicAccess = profile.AllowPublicAccess
+		}
+	}
 	return spec, ok
 }
 

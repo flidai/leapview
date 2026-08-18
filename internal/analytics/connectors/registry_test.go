@@ -49,6 +49,21 @@ func TestConnectionActivationModesAreExplicit(t *testing.T) {
 	}
 }
 
+func TestPublicAccessCapabilityMatchesGeneratedConnectorDeclarations(t *testing.T) {
+	for _, kind := range []string{"managed", "s3", "r2", "gcs", "http", "azure_blob"} {
+		spec, ok := LookupConnection(kind)
+		if !ok || !spec.AllowPublicAccess {
+			t.Fatalf("connector %q public capability = %#v, want generated access support", kind, spec)
+		}
+	}
+	for _, kind := range []string{"postgres", "mysql", "sqlite", "ducklake", "quack"} {
+		spec, ok := LookupConnection(kind)
+		if !ok || spec.AllowPublicAccess {
+			t.Fatalf("connector %q public capability = %#v, want generated access rejection", kind, spec)
+		}
+	}
+}
+
 func TestInferFormat(t *testing.T) {
 	cases := map[string]string{
 		"orders.csv":       "csv",

@@ -129,6 +129,34 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 }
 
+func TestConnectionActivationCarriesCanonicalAccessPolicy(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed", Access: semanticmodel.ConnectionAccessPublic}
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatalf("NewProject() public connection: %v", err)
+	}
+	activations, err := project.ConnectionActivations()
+	if err != nil {
+		t.Fatalf("ConnectionActivations(): %v", err)
+	}
+	if len(activations) != 1 || activations[0].Access != semanticmodel.ConnectionAccessPublic {
+		t.Fatalf("activation access = %#v, want public", activations)
+	}
+	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed"}
+	omitted, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatalf("NewProject() omitted connection: %v", err)
+	}
+	omittedActivations, err := omitted.ConnectionActivations()
+	if err != nil {
+		t.Fatalf("omitted ConnectionActivations(): %v", err)
+	}
+	if activations[0].Access == omittedActivations[0].Access {
+		t.Fatal("public and omitted activation access collapsed")
+	}
+}
+
 func TestProjectArtifactRoundTripPreservesLoweredSemanticModelBinding(t *testing.T) {
 	graphValue, projectManifest := projectFixture(t)
 	projectManifest.SemanticModels["semantic:sales"] = &semanticmodel.Model{

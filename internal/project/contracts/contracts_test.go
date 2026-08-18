@@ -278,4 +278,16 @@ func TestGeneratedConnectorRegistryIsComplete(t *testing.T) {
 			t.Fatalf("connector %q profile = %#v, ok=%v", key, profile, ok)
 		}
 	}
+	for _, key := range []string{"managed", "s3", "r2", "gcs", "http", "azure_blob"} {
+		profile, _ := contracts.LookupConnector(key)
+		if !profile.AllowPublicAccess {
+			t.Fatalf("connector %q profile does not expose generated public-access capability", key)
+		}
+	}
+	for _, key := range []string{"postgres", "mysql", "sqlite", "ducklake", "quack"} {
+		profile, _ := contracts.LookupConnector(key)
+		if profile.AllowPublicAccess {
+			t.Fatalf("connector %q profile unexpectedly exposes public-access capability", key)
+		}
+	}
 }

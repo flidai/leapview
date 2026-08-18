@@ -22,7 +22,7 @@ func decodeConnectionResource(path string, content []byte, metadata metadata) (s
 	// Generated variants intentionally expose no shared option interface. The
 	// type switch keeps the closed union explicit and mechanically extracts only
 	// portable fields.
-	kind, defaults, err := connectionVariant(authored.Spec.Value)
+	kind, access, defaults, err := connectionVariant(authored.Spec.Value)
 	if err != nil {
 		return semanticmodel.Connection{}, err
 	}
@@ -36,60 +36,68 @@ func decodeConnectionResource(path string, content []byte, metadata metadata) (s
 	}
 	return semanticmodel.Connection{
 		Kind: kind, Description: metadata.Description,
+		Access:         access,
 		ReaderDefaults: readerDefaults,
 		Defaults:       semanticmodel.ConnectionDefaults{Options: map[string]any{}},
 		Options:        map[string]any{},
 	}, nil
 }
 
-func connectionVariant(value projectcontracts.ConnectionSpecVariant) (string, map[string]any, error) {
+func connectionVariant(value projectcontracts.ConnectionSpecVariant) (string, semanticmodel.ConnectionAccess, map[string]any, error) {
 	defaults := map[string]any{}
 	switch variant := value.(type) {
 	case *projectcontracts.ManagedConnection:
 		if variant.Defaults != nil {
 			defaults = readerDefaults(variant.Defaults)
 		}
-		return variant.Type, defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
 	case *projectcontracts.S3Connection:
 		if variant.Defaults != nil {
 			defaults = readerDefaults(variant.Defaults)
 		}
-		return variant.Type, defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
 	case *projectcontracts.R2Connection:
 		if variant.Defaults != nil {
 			defaults = readerDefaults(variant.Defaults)
 		}
-		return variant.Type, defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
 	case *projectcontracts.GCSConnection:
 		if variant.Defaults != nil {
 			defaults = readerDefaults(variant.Defaults)
 		}
-		return variant.Type, defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
 	case *projectcontracts.HTTPConnection:
 		if variant.Defaults != nil {
 			defaults = readerDefaults(variant.Defaults)
 		}
-		return variant.Type, defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
 	case *projectcontracts.AzureBlobConnection:
 		if variant.Defaults != nil {
 			defaults = readerDefaults(variant.Defaults)
 		}
-		return variant.Type, defaults, nil
+		return variant.Type, lowerConnectionAccess(variant.Access), defaults, nil
 	case *projectcontracts.PostgresConnection:
-		return variant.Type, defaults, nil
+		return variant.Type, "", defaults, nil
 	case *projectcontracts.MySQLConnection:
-		return variant.Type, defaults, nil
+		return variant.Type, "", defaults, nil
 	case *projectcontracts.SQLiteConnection:
-		return variant.Type, defaults, nil
+		return variant.Type, "", defaults, nil
 	case *projectcontracts.DuckLakeConnection:
-		return variant.Type, defaults, nil
+		return variant.Type, "", defaults, nil
 	case *projectcontracts.QuackConnection:
-		return variant.Type, defaults, nil
+		return variant.Type, "", defaults, nil
 	case nil:
-		return "", nil, fmt.Errorf("connection spec variant is required")
+		return "", "", nil, fmt.Errorf("connection spec variant is required")
 	default:
-		return "", nil, fmt.Errorf("unsupported connection spec variant %T", value)
+		return "", "", nil, fmt.Errorf("unsupported connection spec variant %T", value)
 	}
+}
+
+func lowerConnectionAccess(value *projectcontracts.PublicAccess) semanticmodel.ConnectionAccess {
+	if value == nil {
+		return ""
+	}
+	return semanticmodel.ConnectionAccess(*value)
 }
 
 func readerDefaults(value *projectcontracts.ReaderDefaults) map[string]any {

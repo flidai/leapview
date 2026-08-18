@@ -91,8 +91,12 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	if err := validateTargetProbeBinding(binding, factory.requireTLS); err != nil {
 		return nil, err
 	}
+	logical := semanticmodel.Connection{Kind: binding.ConnectorKind}
+	if binding.AuthenticationMode == connectionbinding.AuthenticationNone {
+		logical.Access = semanticmodel.ConnectionAccessPublic
+	}
 	connection, err := ApplyTargetBinding(
-		semanticmodel.Connection{Kind: binding.ConnectorKind},
+		logical,
 		binding,
 		snapshot,
 	)
@@ -123,7 +127,9 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		healthStatement = fmt.Sprintf("SELECT * FROM quack_query('%s', 'SELECT 1')", sqlString(uri))
 		activationStatements = append(activationStatements, healthStatement)
 	default:
-		return nil, connectionbinding.ErrInvalidBinding
+		// Path-backed target bindings still use the isolated pool as a
+		// bounded activation/health gate. Source reads happen later through
+		// the governed relation compiler, so there is no attach statement.
 	}
 	session, err := factory.open(ctx)
 	if err != nil {

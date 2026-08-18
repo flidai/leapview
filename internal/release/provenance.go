@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -46,18 +47,20 @@ type ManagedDataPin struct {
 }
 
 type BindingEvidence struct {
-	BindingID          string `json:"bindingId"`
-	ConnectionID       string `json:"connectionId"`
-	ConnectorKind      string `json:"connectorKind"`
-	Revision           int64  `json:"revision"`
-	ValidatedVersion   string `json:"validatedVersion"`
-	EndpointConfigHash string `json:"endpointConfigHash"`
+	BindingID          string                         `json:"bindingId"`
+	ConnectionID       string                         `json:"connectionId"`
+	ConnectorKind      string                         `json:"connectorKind"`
+	Revision           int64                          `json:"revision"`
+	ValidatedVersion   string                         `json:"validatedVersion"`
+	EndpointConfigHash string                         `json:"endpointConfigHash"`
+	Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
 }
 
 type AuthoredConnectionEvidence struct {
-	ConnectionID  string `json:"connectionId"`
-	ConnectorKind string `json:"connectorKind"`
-	DisplayName   string `json:"displayName,omitempty"`
+	ConnectionID  string                         `json:"connectionId"`
+	ConnectorKind string                         `json:"connectorKind"`
+	DisplayName   string                         `json:"displayName,omitempty"`
+	Access        semanticmodel.ConnectionAccess `json:"access,omitempty"`
 }
 
 type GenerationDataMode string

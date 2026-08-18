@@ -245,10 +245,10 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	// governance digests below.
 	bindingParts := []string{}
 	for _, requirement := range append([]release.CandidateConnectionRequirement(nil), artifacts.Generation.Connections...) {
-		bindingParts = append(bindingParts, requirement.ConnectionID.String()+"\x00"+requirement.ConnectorKind)
+		bindingParts = append(bindingParts, requirement.ConnectionID.String()+"\x00"+requirement.ConnectorKind+"\x00"+string(requirement.Access))
 	}
 	for _, authored := range append([]release.CandidateAuthoredConnection(nil), artifacts.Generation.AuthoredConnections...) {
-		bindingParts = append(bindingParts, authored.ConnectionID.String()+"\x00"+authored.ConnectorKind)
+		bindingParts = append(bindingParts, authored.ConnectionID.String()+"\x00"+authored.ConnectorKind+"\x00"+string(authored.Access))
 	}
 	sort.Strings(bindingParts)
 	bindingDigest := planDigest(strings.Join(bindingParts, "\x00"))

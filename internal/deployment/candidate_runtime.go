@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -18,11 +19,13 @@ import (
 type CandidateConnectionRequirement struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string
+	Access        semanticmodel.ConnectionAccess
 }
 
 type CandidateAuthoredConnection struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string
+	Access        semanticmodel.ConnectionAccess
 }
 
 type CandidateRestriction struct {
@@ -50,6 +53,7 @@ type CandidateConnectionEvidence struct {
 	Revision           int64
 	ProviderVersion    string
 	EndpointConfigHash string
+	Access             semanticmodel.ConnectionAccess
 }
 
 // CandidateConnectionRequest is one project-generation connection lease.
@@ -272,7 +276,7 @@ func normalizeCandidateRestrictions(values []CandidateRestriction) ([]CandidateR
 func candidateAuthoredConnections(values []CandidateAuthoredConnection) []runtimehost.CandidateAuthoredConnection {
 	result := make([]runtimehost.CandidateAuthoredConnection, len(values))
 	for i, value := range values {
-		result[i] = runtimehost.CandidateAuthoredConnection{LogicalConnection: value.ConnectionID.String(), ConnectorKind: value.ConnectorKind}
+		result[i] = runtimehost.CandidateAuthoredConnection{LogicalConnection: value.ConnectionID.String(), ConnectorKind: value.ConnectorKind, Access: value.Access}
 	}
 	return result
 }
@@ -284,7 +288,7 @@ func candidateConnectionEvidence(values []runtimehost.CandidateBindingVersion) [
 		if err != nil {
 			continue
 		}
-		result[i] = CandidateConnectionEvidence{BindingID: value.BindingID, ConnectionID: connectionID, ConnectorKind: value.ConnectorKind, Revision: value.Revision, ProviderVersion: value.ProviderVersion, EndpointConfigHash: value.EndpointConfigHash}
+		result[i] = CandidateConnectionEvidence{BindingID: value.BindingID, ConnectionID: connectionID, ConnectorKind: value.ConnectorKind, Revision: value.Revision, ProviderVersion: value.ProviderVersion, EndpointConfigHash: value.EndpointConfigHash, Access: value.Access}
 	}
 	return result
 }
@@ -315,7 +319,7 @@ func candidateBindingVersions(evidence []CandidateConnectionEvidence) ([]runtime
 		if i > 0 && evidence[i-1].BindingID == item.BindingID {
 			return nil, ErrCandidateInvalid
 		}
-		result = append(result, runtimehost.CandidateBindingVersion{BindingID: item.BindingID, LogicalConnection: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ProviderVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash})
+		result = append(result, runtimehost.CandidateBindingVersion{BindingID: item.BindingID, LogicalConnection: item.ConnectionID.String(), ConnectorKind: item.ConnectorKind, Revision: item.Revision, ProviderVersion: item.ProviderVersion, EndpointConfigHash: item.EndpointConfigHash, Access: item.Access})
 	}
 	return result, nil
 }

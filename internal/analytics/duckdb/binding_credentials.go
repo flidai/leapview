@@ -14,10 +14,19 @@ func ApplyTargetBinding(
 ) (semanticmodel.Connection, error) {
 	if err := binding.Validate(); err != nil || !binding.Enabled ||
 		strings.TrimSpace(logical.Kind) != binding.ConnectorKind ||
-		binding.AuthenticationMode != connectionbinding.AuthenticationExternalBundle {
+		binding.AuthenticationMode != connectionbinding.AuthenticationExternalBundle &&
+			binding.AuthenticationMode != connectionbinding.AuthenticationNone {
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
 	resolved := logical
+	if binding.AuthenticationMode == connectionbinding.AuthenticationNone {
+		if logical.Access != semanticmodel.ConnectionAccessPublic {
+			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+		}
+		resolved.Access = semanticmodel.ConnectionAccessPublic
+	} else if logical.Access == semanticmodel.ConnectionAccessPublic {
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+	}
 	resolved.Host = binding.Endpoint.Host
 	resolved.Port = binding.Endpoint.Port
 	resolved.Database = binding.Endpoint.Database
@@ -36,14 +45,18 @@ func ApplyTargetBinding(
 		}
 	}
 	resolved.Credentials = semanticmodel.ConnectionCredentials{}
-	if err := snapshot.Use(func(values map[string]string) error {
-		resolved.Auth = make(semanticmodel.ConnectionAuth, len(values))
-		for key, value := range values {
-			resolved.Auth[key] = value
+	if binding.AuthenticationMode == connectionbinding.AuthenticationExternalBundle {
+		if err := snapshot.Use(func(values map[string]string) error {
+			resolved.Auth = make(semanticmodel.ConnectionAuth, len(values))
+			for key, value := range values {
+				resolved.Auth[key] = value
+			}
+			return nil
+		}); err != nil {
+			return semanticmodel.Connection{}, connectionbinding.ErrInvalidCredentialBundle
 		}
-		return nil
-	}); err != nil {
-		return semanticmodel.Connection{}, connectionbinding.ErrInvalidCredentialBundle
+	} else {
+		resolved.Auth = nil
 	}
 	validated, err := resolved.Validate(binding.ConnectionID.String())
 	if err != nil {

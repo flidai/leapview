@@ -74,6 +74,23 @@ func TestProvenanceRefreshAcceptsManagedAndAuthoredEvidence(t *testing.T) {
 	require.Len(t, provenance.Plan.AuthoredConnections, 1)
 }
 
+func TestPublicBindingProvenanceRetainsOnlyPolicyAndNonSecretEvidence(t *testing.T) {
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	input.Plan.Bindings[0].Access = "public"
+	input.Plan.Bindings[0].ValidatedVersion = "public-no-auth:v1"
+	encoded, err := json.Marshal(input.Plan.Bindings)
+	require.NoError(t, err)
+	text := string(encoded)
+	if !strings.Contains(text, `"access":"public"`) || !strings.Contains(text, "public-no-auth:v1") {
+		t.Fatalf("public binding evidence omitted policy/version: %s", text)
+	}
+	for _, secret := range []string{"password", "token", "secret_access_key", "warehouse.internal", "s3://"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("public binding evidence leaked credential/endpoint field %q: %s", secret, text)
+		}
+	}
+}
+
 func TestProvenanceInitialGenerationAllowsMissingBaseIdentity(t *testing.T) {
 	provenance, err := NewProvenance(testGenerationInput(t, GenerationDataRefreshSources))
 	require.NoError(t, err)

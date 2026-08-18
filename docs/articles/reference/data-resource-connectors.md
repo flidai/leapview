@@ -6,19 +6,19 @@ This reference is generated from the reviewed TypeSpec connector profiles and ru
 
 ## Connectors
 
-| Key | Activation | Locations | Approved extensions | Secret type | Support | Adapter |
-| --- | --- | --- | --- | --- | --- | --- |
-| `azure_blob` | `target_binding` | `path` | `azure` | `azure` | `stable` | `azure_blob` |
-| `ducklake` | `target_binding` | `relation` | `ducklake` | `ducklake` | `stable` | `ducklake` |
-| `gcs` | `target_binding` | `path` | `httpfs` | `gcs` | `stable` | `gcs` |
-| `http` | `authored` | `path` | `httpfs` | `http` | `stable` | `http` |
-| `managed` | `managed` | `path` | `none` | `none` | `stable` | `managed` |
-| `mysql` | `target_binding` | `relation` | `mysql` | `mysql` | `stable` | `mysql` |
-| `postgres` | `target_binding` | `relation` | `postgres` | `postgres` | `stable` | `postgres` |
-| `quack` | `target_binding` | `relation` | `httpfs`, `quack` | `quack` | `experimental` | `quack` |
-| `r2` | `target_binding` | `path` | `httpfs` | `r2` | `stable` | `r2` |
-| `s3` | `target_binding` | `path` | `httpfs` | `s3` | `stable` | `s3` |
-| `sqlite` | `target_binding` | `relation` | `sqlite` | `sqlite` | `stable` | `sqlite` |
+| Key | Activation | Locations | Public access | Approved extensions | Secret type | Support | Adapter |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `azure_blob` | `target_binding` | `path` | `true` | `azure` | `azure` | `stable` | `azure_blob` |
+| `ducklake` | `target_binding` | `relation` | `false` | `ducklake` | `ducklake` | `stable` | `ducklake` |
+| `gcs` | `target_binding` | `path` | `true` | `httpfs` | `gcs` | `stable` | `gcs` |
+| `http` | `authored` | `path` | `true` | `httpfs` | `http` | `stable` | `http` |
+| `managed` | `managed` | `path` | `true` | `none` | `none` | `stable` | `managed` |
+| `mysql` | `target_binding` | `relation` | `false` | `mysql` | `mysql` | `stable` | `mysql` |
+| `postgres` | `target_binding` | `relation` | `false` | `postgres` | `postgres` | `stable` | `postgres` |
+| `quack` | `target_binding` | `relation` | `false` | `httpfs`, `quack` | `quack` | `experimental` | `quack` |
+| `r2` | `target_binding` | `path` | `true` | `httpfs` | `r2` | `stable` | `r2` |
+| `s3` | `target_binding` | `path` | `true` | `httpfs` | `s3` | `stable` | `s3` |
+| `sqlite` | `target_binding` | `relation` | `false` | `sqlite` | `sqlite` | `stable` | `sqlite` |
 
 ## Path format options
 

@@ -13,6 +13,7 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/analytics/connectors"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -259,20 +260,22 @@ func (binding TargetBinding) Validate() error {
 type Requirement struct {
 	ConnectionID     projectgraph.ResourceID
 	ConnectorKind    string
+	Access           semanticmodel.ConnectionAccess
 	BindingRevision  int64
 	ValidatedVersion string
 }
 
 type BindingEvidence struct {
-	BindingID          BindingID               `json:"bindingId"`
-	TargetID           TargetID                `json:"targetId"`
-	ConnectionID       projectgraph.ResourceID `json:"connectionId"`
-	ConnectorKind      string                  `json:"connectorKind"`
-	Scope              BindingScope            `json:"scope"`
-	BindingRevision    int64                   `json:"bindingRevision"`
-	ValidatedVersion   string                  `json:"validatedVersion,omitempty"`
-	EndpointConfigHash string                  `json:"endpointConfigHash"`
-	Health             BindingHealth           `json:"health"`
+	BindingID          BindingID                      `json:"bindingId"`
+	TargetID           TargetID                       `json:"targetId"`
+	ConnectionID       projectgraph.ResourceID        `json:"connectionId"`
+	ConnectorKind      string                         `json:"connectorKind"`
+	Scope              BindingScope                   `json:"scope"`
+	BindingRevision    int64                          `json:"bindingRevision"`
+	ValidatedVersion   string                         `json:"validatedVersion,omitempty"`
+	EndpointConfigHash string                         `json:"endpointConfigHash"`
+	Health             BindingHealth                  `json:"health"`
+	Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
 }
 
 // RuntimeBindingEvidence adds the exact immutable serving generation to
@@ -503,6 +506,13 @@ func NewCredentialSnapshot(values map[string]string, providerVersion string, ret
 		cloned[key] = value
 	}
 	return CredentialSnapshot{values: cloned, providerVersion: providerVersion, retrievedAt: retrievedAt, expiresAt: expiresAt}, nil
+}
+
+// NewNoAuthCredentialSnapshot produces non-secret activation evidence for a
+// public binding. It contains no credential values and is consumed only by
+// target-pool preparation.
+func NewNoAuthCredentialSnapshot(now time.Time) CredentialSnapshot {
+	return CredentialSnapshot{providerVersion: NoAuthProviderVersion, retrievedAt: now.UTC()}
 }
 
 func (snapshot CredentialSnapshot) ProviderVersion() string { return snapshot.providerVersion }

@@ -21,7 +21,7 @@ func (adapter candidateConnectionLeaser) Acquire(
 	requirements := make([]analyticsmodule.ConnectionRequirement, 0, len(request.Requirements))
 	for _, requirement := range request.Requirements {
 		requirements = append(requirements, analyticsmodule.ConnectionRequirement{
-			ConnectionID: requirement.ConnectionID, ConnectorKind: requirement.ConnectorKind,
+			ConnectionID: requirement.ConnectionID, ConnectorKind: requirement.ConnectorKind, Access: requirement.Access,
 		})
 	}
 	leases, err := adapter.leaser.Acquire(ctx, analyticsmodule.RuntimeBindingRequest{
@@ -52,6 +52,7 @@ func candidateAuthoredConnections(
 		result[index] = analyticsmodule.CandidateAuthoredConnection{
 			ConnectionID:  value.ConnectionID,
 			ConnectorKind: value.ConnectorKind,
+			Access:        value.Access,
 		}
 	}
 	return result
@@ -60,7 +61,7 @@ func candidateAuthoredConnections(
 func candidateReleaseAuthoredConnections(values []release.CandidateAuthoredConnection) []deploymentmodule.CandidateAuthoredConnection {
 	result := make([]deploymentmodule.CandidateAuthoredConnection, len(values))
 	for i, value := range values {
-		result[i] = deploymentmodule.CandidateAuthoredConnection{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+		result[i] = deploymentmodule.CandidateAuthoredConnection{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind, Access: value.Access}
 	}
 	return result
 }
@@ -68,7 +69,7 @@ func candidateReleaseAuthoredConnections(values []release.CandidateAuthoredConne
 func candidateConnectionRequirements(values []release.CandidateConnectionRequirement) []deploymentmodule.CandidateConnectionRequirement {
 	result := make([]deploymentmodule.CandidateConnectionRequirement, len(values))
 	for i, value := range values {
-		result[i] = deploymentmodule.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+		result[i] = deploymentmodule.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind, Access: value.Access}
 	}
 	return result
 }
@@ -99,7 +100,7 @@ func (leases candidateConnectionLeases) Evidence() []deploymentmodule.CandidateC
 	for _, evidence := range source {
 		result = append(result, deploymentmodule.CandidateConnectionEvidence{
 			BindingID: evidence.BindingID.String(), ConnectionID: evidence.ConnectionID,
-			ConnectorKind: evidence.ConnectorKind, Revision: evidence.BindingRevision,
+			ConnectorKind: evidence.ConnectorKind, Revision: evidence.BindingRevision, Access: evidence.Access,
 			ProviderVersion: evidence.ValidatedVersion, EndpointConfigHash: evidence.EndpointConfigHash,
 		})
 	}

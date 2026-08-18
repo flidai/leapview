@@ -12,6 +12,7 @@ import (
 	"time"
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -30,6 +31,7 @@ type CandidateBindingVersion struct {
 	BindingID, LogicalConnection, ConnectorKind string
 	Revision                                    int64
 	ProviderVersion, EndpointConfigHash         string
+	Access                                      semanticmodel.ConnectionAccess
 }
 type CandidateRestriction struct {
 	ID             string
@@ -48,7 +50,11 @@ const (
 	CandidateDataRefreshSources CandidateDataMode = "refresh_sources"
 )
 
-type CandidateAuthoredConnection struct{ LogicalConnection, ConnectorKind string }
+type CandidateAuthoredConnection struct {
+	LogicalConnection string
+	ConnectorKind     string
+	Access            semanticmodel.ConnectionAccess
+}
 type CandidateCompatibility struct {
 	ArtifactDigest, DataRevision             string
 	DataMode                                 CandidateDataMode
@@ -298,6 +304,9 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 		if b.BindingID != strings.TrimSpace(b.BindingID) || b.LogicalConnection != strings.TrimSpace(b.LogicalConnection) || b.ConnectorKind != strings.TrimSpace(b.ConnectorKind) || b.ProviderVersion != strings.TrimSpace(b.ProviderVersion) || b.EndpointConfigHash != strings.TrimSpace(b.EndpointConfigHash) {
 			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity must be canonical", ErrCandidateRuntimeInvalid)
 		}
+		if b.Access != "" && b.Access != semanticmodel.ConnectionAccessPublic {
+			return CandidateCompatibility{}, fmt.Errorf("%w: unsupported binding access policy", ErrCandidateRuntimeInvalid)
+		}
 		if b.BindingID == "" || b.LogicalConnection == "" || b.ConnectorKind == "" || b.Revision < 1 || b.ProviderVersion == "" {
 			return CandidateCompatibility{}, fmt.Errorf("%w: binding identity, positive revision, and provider version are required", ErrCandidateRuntimeInvalid)
 		}
@@ -316,6 +325,9 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 	for i := range connections {
 		if connections[i].LogicalConnection != strings.TrimSpace(connections[i].LogicalConnection) || connections[i].ConnectorKind != strings.TrimSpace(connections[i].ConnectorKind) || connections[i].LogicalConnection == "" || connections[i].ConnectorKind == "" {
 			return CandidateCompatibility{}, fmt.Errorf("%w: authored connection identity and connector kind are required and canonical", ErrCandidateRuntimeInvalid)
+		}
+		if connections[i].Access != "" && connections[i].Access != semanticmodel.ConnectionAccessPublic {
+			return CandidateCompatibility{}, fmt.Errorf("%w: unsupported authored connection access policy", ErrCandidateRuntimeInvalid)
 		}
 	}
 	sort.Slice(connections, func(i, j int) bool { return connections[i].LogicalConnection < connections[j].LogicalConnection })

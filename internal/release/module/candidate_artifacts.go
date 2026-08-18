@@ -798,9 +798,9 @@ func candidateConnectionRequirements(activations []projectartifact.ConnectionAct
 		case projectartifact.ManagedActivation:
 			managed = append(managed, activation.LogicalConnectionID)
 		case projectartifact.AuthoredActivation:
-			authored = append(authored, release.CandidateAuthoredConnection{ConnectionID: connectionID, ConnectorKind: activation.ConnectorKind})
+			authored = append(authored, release.CandidateAuthoredConnection{ConnectionID: connectionID, ConnectorKind: activation.ConnectorKind, Access: activation.Access})
 		case projectartifact.TargetBindingActivation:
-			requirements = append(requirements, release.CandidateConnectionRequirement{ConnectionID: connectionID, ConnectorKind: activation.ConnectorKind})
+			requirements = append(requirements, release.CandidateConnectionRequirement{ConnectionID: connectionID, ConnectorKind: activation.ConnectorKind, Access: activation.Access})
 		}
 	}
 	return requirements, managed, authored, nil

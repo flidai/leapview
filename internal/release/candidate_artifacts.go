@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/project"
@@ -25,11 +26,13 @@ var (
 type CandidateConnectionRequirement struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string
+	Access        semanticmodel.ConnectionAccess
 }
 
 type CandidateAuthoredConnection struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string
+	Access        semanticmodel.ConnectionAccess
 }
 
 type CandidateRestriction struct {

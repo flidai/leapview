@@ -1031,6 +1031,15 @@ func (c Connection) validate(name string, requireResolvedAuth bool) (Connection,
 	if !ok {
 		return c, fmt.Errorf("connection %q has unsupported kind %q", name, c.Kind)
 	}
+	if c.Access != "" && c.Access != ConnectionAccessPublic {
+		return c, fmt.Errorf("connection %q has unsupported access policy %q", name, c.Access)
+	}
+	if c.Access == ConnectionAccessPublic && !connectionSpec.AllowPublicAccess {
+		return c, fmt.Errorf("connection %q connector %q does not support public access", name, c.Kind)
+	}
+	if c.Access == ConnectionAccessPublic && (len(c.Auth) != 0 || connectionCredentialReferenceConfigured(c.Credentials)) {
+		return c, fmt.Errorf("connection %q public access cannot include credentials", name)
+	}
 	if c.Kind == "managed" && (strings.TrimSpace(c.Root) != "" || strings.TrimSpace(c.Scope) != "") {
 		return c, fmt.Errorf("connection %q managed physical location is supplied by the active revision and cannot be authored", name)
 	}
@@ -1172,6 +1181,12 @@ func validateConnectionCredentials(name, kind, scope string, credentials Connect
 }
 
 func validateConnectionAuth(name string, connection Connection, spec ConnectionSpec) (ConnectionAuth, error) {
+	if connection.Access == ConnectionAccessPublic {
+		if len(connection.Auth) != 0 {
+			return nil, fmt.Errorf("connection %q public access cannot include resolved auth", name)
+		}
+		return nil, nil
+	}
 	if len(connection.Auth) == 0 {
 		if connection.Credentials.Provider == "ambient" || connection.Credentials.Provider == "env" {
 			return nil, nil
@@ -1207,6 +1222,12 @@ func validateConnectionAuth(name string, connection Connection, spec ConnectionS
 }
 
 func ResolveConnectionAuth(connection Connection) (ConnectionAuth, error) {
+	if connection.Access == ConnectionAccessPublic {
+		if len(connection.Auth) != 0 || ConnectionCredentialsConfigured(connection) {
+			return nil, fmt.Errorf("public connection cannot resolve credentials")
+		}
+		return nil, nil
+	}
 	if len(connection.Auth) > 0 {
 		resolved := make(ConnectionAuth, len(connection.Auth))
 		for key, value := range connection.Auth {
@@ -1231,7 +1252,14 @@ func ResolveConnectionAuth(connection Connection) (ConnectionAuth, error) {
 }
 
 func ConnectionCredentialsConfigured(connection Connection) bool {
-	return len(connection.Auth) > 0 || connection.Credentials.Provider != "" && connection.Credentials.Provider != "none"
+	if connection.Access == ConnectionAccessPublic {
+		return false
+	}
+	return len(connection.Auth) > 0 || connectionCredentialReferenceConfigured(connection.Credentials)
+}
+
+func connectionCredentialReferenceConfigured(credentials ConnectionCredentials) bool {
+	return credentials.Provider != "" && credentials.Provider != "none"
 }
 
 func connectionAllowsAuthKey(connection ConnectionSpec, key string) bool {

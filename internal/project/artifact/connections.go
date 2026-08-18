@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/connectors"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
 type ConnectionActivationMode = connectors.ActivationMode
@@ -23,6 +24,7 @@ type ConnectionActivation struct {
 	LogicalConnectionID string
 	ConnectorKind       string
 	Mode                ConnectionActivationMode
+	Access              semanticmodel.ConnectionAccess
 }
 
 func (p Project) ConnectionActivations() ([]ConnectionActivation, error) {
@@ -46,7 +48,13 @@ func (p Project) ConnectionActivations() ([]ConnectionActivation, error) {
 		if spec.ActivationMode == "" {
 			return nil, fmt.Errorf("project connection %q has no activation mode", id)
 		}
-		result = append(result, ConnectionActivation{LogicalConnectionID: id, ConnectorKind: kind, Mode: spec.ActivationMode})
+		if connection.Access != "" && connection.Access != semanticmodel.ConnectionAccessPublic {
+			return nil, fmt.Errorf("project connection %q has unsupported access policy %q", id, connection.Access)
+		}
+		if connection.Access == semanticmodel.ConnectionAccessPublic && !spec.AllowPublicAccess {
+			return nil, fmt.Errorf("project connection %q connector %q does not support public access", id, kind)
+		}
+		result = append(result, ConnectionActivation{LogicalConnectionID: id, ConnectorKind: kind, Mode: spec.ActivationMode, Access: connection.Access})
 	}
 	return result, nil
 }

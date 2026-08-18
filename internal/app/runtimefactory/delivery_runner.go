@@ -269,7 +269,7 @@ func (r *candidateCatalogRunner) SetCandidateArtifacts(value any) error {
 func candidateConnectionRequirements(values []release.CandidateConnectionRequirement) []deployment.CandidateConnectionRequirement {
 	result := make([]deployment.CandidateConnectionRequirement, len(values))
 	for i, value := range values {
-		result[i] = deployment.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+		result[i] = deployment.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind, Access: value.Access}
 	}
 	return result
 }
@@ -277,7 +277,7 @@ func candidateConnectionRequirements(values []release.CandidateConnectionRequire
 func candidateAuthoredConnections(values []release.CandidateAuthoredConnection) []deployment.CandidateAuthoredConnection {
 	result := make([]deployment.CandidateAuthoredConnection, len(values))
 	for i, value := range values {
-		result[i] = deployment.CandidateAuthoredConnection{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+		result[i] = deployment.CandidateAuthoredConnection{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind, Access: value.Access}
 	}
 	return result
 }

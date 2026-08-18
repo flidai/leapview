@@ -44,6 +44,7 @@ type profile struct {
 	SupportStatus        string   `json:"supportStatus"`
 	AdapterKey           string   `json:"adapterKey"`
 	SchemaName           string
+	AllowPublicAccess    bool
 }
 
 func main() {
@@ -139,6 +140,9 @@ func buildProfiles(doc document) ([]profile, error) {
 			return nil, fmt.Errorf("connector profile %s is missing required metadata", name)
 		}
 		item.SchemaName = name
+		// Public access is a structural capability: only connector variants
+		// exposing the generated `access` property may declare it.
+		_, item.AllowPublicAccess = schema.Properties["access"]
 		if err := checkRuntimeProfile(item); err != nil {
 			return nil, err
 		}
@@ -467,7 +471,7 @@ func writeConnectorReference(path string, profiles []profile, pairs []pathFormat
 	b.WriteString("# Data-resource connector capabilities\n\n")
 	b.WriteString("This reference is generated from the reviewed TypeSpec connector profiles and runtime registry checks. It describes authored capabilities only; target endpoints and credentials remain target-owned.\n\n")
 	b.WriteString("## Connectors\n\n")
-	b.WriteString("| Key | Activation | Locations | Approved extensions | Secret type | Support | Adapter |\n| --- | --- | --- | --- | --- | --- | --- |\n")
+	b.WriteString("| Key | Activation | Locations | Public access | Approved extensions | Secret type | Support | Adapter |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, item := range profiles {
 		b.WriteString("| `")
 		b.WriteString(item.Key)
@@ -475,6 +479,8 @@ func writeConnectorReference(path string, profiles []profile, pairs []pathFormat
 		b.WriteString(item.ActivationMode)
 		b.WriteString("` | `")
 		b.WriteString(strings.Join(item.LocationCapabilities, "`, `"))
+		b.WriteString("` | `")
+		b.WriteString(strconv.FormatBool(item.AllowPublicAccess))
 		b.WriteString("` | `")
 		if len(item.ApprovedExtensions) == 0 {
 			b.WriteString("none")
@@ -529,6 +535,9 @@ func checkRuntimeProfile(item profile) error {
 	if item.AdapterKey != item.Key {
 		return fmt.Errorf("connector %q adapter key %q does not match its registered runtime key", item.Key, item.AdapterKey)
 	}
+	if item.AllowPublicAccess != runtime.AllowPublicAccess {
+		return fmt.Errorf("connector %q public access capability %v differs from runtime %v", item.Key, item.AllowPublicAccess, runtime.AllowPublicAccess)
+	}
 	return nil
 }
 
@@ -568,7 +577,7 @@ func emit(profiles []profile) string {
 	b.WriteString("\tConnectorSupportExperimental ConnectorSupportStatus = \"experimental\"\n")
 	b.WriteString(")\n\n")
 	b.WriteString("type ConnectorProfile struct {\n")
-	b.WriteString("\tKey string\n\tSchemaName string\n\tActivationMode ConnectorActivationMode\n\tLocationCapabilities []string\n\tApprovedExtensions []string\n\tSecretType string\n\tSupportStatus ConnectorSupportStatus\n\tAdapterKey string\n")
+	b.WriteString("\tKey string\n\tSchemaName string\n\tActivationMode ConnectorActivationMode\n\tLocationCapabilities []string\n\tApprovedExtensions []string\n\tSecretType string\n\tSupportStatus ConnectorSupportStatus\n\tAdapterKey string\n\tAllowPublicAccess bool\n")
 	b.WriteString("}\n\n")
 	b.WriteString("var ConnectorRegistry = []ConnectorProfile{\n")
 	for _, item := range profiles {
@@ -588,6 +597,8 @@ func emit(profiles []profile) string {
 		b.WriteString(strconv.Quote(item.SupportStatus))
 		b.WriteString("), AdapterKey: ")
 		b.WriteString(strconv.Quote(item.AdapterKey))
+		b.WriteString(", AllowPublicAccess: ")
+		b.WriteString(strconv.FormatBool(item.AllowPublicAccess))
 		b.WriteString("},\n")
 	}
 	b.WriteString("}\n\n")

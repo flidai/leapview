@@ -332,6 +332,11 @@ func (r *SourceRuntime) resolveCredentials(ctx context.Context, model *semanticm
 			// Managed-data roots are already resolved from immutable
 			// serving-state bindings by Runtime Host. They must never be
 			// replaced by a secret-backed target connection.
+		} else if connection.Access == semanticmodel.ConnectionAccessPublic {
+			// Public is an explicit no-auth policy. Target-bound public
+			// connectors are prepared with AuthenticationNone; authored and
+			// managed connectors need no resolver at all.
+			connection.Auth = nil
 		} else if r.connectionResolver != nil {
 			var err error
 			connection, err = r.connectionResolver.Resolve(ctx, name, connection)

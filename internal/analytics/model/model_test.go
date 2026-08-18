@@ -37,6 +37,30 @@ func TestLogicalExternalConnectionDefersTargetOwnedAuthOnlyDuringAuthoring(t *te
 	}
 }
 
+func TestPublicAccessIsExplicitAndConnectorBounded(t *testing.T) {
+	public := Connection{Kind: "s3", Access: ConnectionAccessPublic}
+	if _, err := public.Validate("objects"); err != nil {
+		t.Fatalf("public s3 connection rejected: %v", err)
+	}
+	omitted := Connection{Kind: "s3"}
+	if _, err := omitted.ValidateAuthored("objects"); err != nil {
+		t.Fatalf("omitted s3 authored connection rejected: %v", err)
+	}
+	if public.Access == omitted.Access || ConnectionCredentialsConfigured(public) {
+		t.Fatalf("public and omitted access collapsed: public=%q credentials=%v", public.Access, ConnectionCredentialsConfigured(public))
+	}
+	if _, err := (Connection{Kind: "postgres", Access: ConnectionAccessPublic}).ValidateAuthored("warehouse"); err == nil {
+		t.Fatal("unsupported public postgres access accepted")
+	}
+}
+
+func TestPublicAccessRejectsCredentialMaterial(t *testing.T) {
+	connection := Connection{Kind: "s3", Access: ConnectionAccessPublic, Auth: ConnectionAuth{"secret_access_key": "secret"}}
+	if _, err := connection.Validate("objects"); err == nil || !strings.Contains(err.Error(), "public access cannot include") {
+		t.Fatalf("public credential-bearing connection error = %v", err)
+	}
+}
+
 func TestLogicalQuackConnectionRequiresTargetOwnedEndpointAndTokenAtRuntime(t *testing.T) {
 	logical := Connection{Kind: "quack"}
 	if _, err := logical.ValidateAuthored("lakehouse"); err != nil {

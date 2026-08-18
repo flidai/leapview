@@ -97,6 +97,30 @@ func TestActiveRuntimeResolverLeavesCredentialFreeAuthoredConnectionUnbound(t *t
 	require.Zero(t, source.calls)
 }
 
+func TestActiveRuntimeResolverPublicTargetBindingSkipsCredentialResolver(t *testing.T) {
+	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
+		ID: "binding_public_s3", TargetID: "production", ConnectionID: "public_files", ConnectorKind: "s3",
+		AuthenticationMode: connectionbinding.AuthenticationNone,
+		Scope:              connectionbinding.BindingScope{ProjectID: "sales", Environment: "prod"},
+		Endpoint:           connectionbinding.EndpointConfig{ObjectScope: "s3://public/"}, Enabled: true, Now: time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	evidence := binding.Evidence()
+	evidence.Access = semanticmodel.ConnectionAccessPublic
+	evidence.ValidatedVersion = connectionbinding.NoAuthProviderVersion
+	versioned := &activeVersionedResolver{}
+	module := activeTestModule(binding, versioned, ActiveRuntimeBindingEvidence{
+		BindingID: evidence.BindingID, ConnectionID: evidence.ConnectionID, ConnectorKind: evidence.ConnectorKind,
+		Revision: evidence.BindingRevision, ValidatedVersion: evidence.ValidatedVersion,
+		EndpointConfigHash: evidence.EndpointConfigHash, Access: semanticmodel.ConnectionAccessPublic,
+	})
+	resolver := &activeRuntimeConnectionResolver{module: module, servingStateID: "state_sales", projectID: "sales", environment: "prod"}
+	resolved, err := resolver.Resolve(context.Background(), "public_files", semanticmodel.Connection{Kind: "s3", Access: semanticmodel.ConnectionAccessPublic})
+	require.NoError(t, err)
+	require.Zero(t, versioned.calls)
+	require.Equal(t, semanticmodel.ConnectionAccessPublic, resolved.Access)
+}
+
 func TestActiveRuntimeResolverRetriesTransientBindingEvidenceFailure(t *testing.T) {
 	binding := activeTestBinding(t)
 	evidence := binding.Evidence()
@@ -206,6 +230,9 @@ type activePoolFactory struct{ healthChecks int }
 
 func (factory *activePoolFactory) Prepare(_ context.Context, _ connectionbinding.TargetBinding, snapshot connectionbinding.CredentialSnapshot) (connectionbinding.RuntimePool, error) {
 	values := map[string]string{}
+	if snapshot.ProviderVersion() == connectionbinding.NoAuthProviderVersion {
+		return &activeRuntimePool{factory: factory, values: values}, nil
+	}
 	if err := snapshot.Use(func(source map[string]string) error {
 		for key, value := range source {
 			values[key] = value
@@ -228,6 +255,10 @@ func (pool *activeRuntimePool) HealthCheck(context.Context) error {
 }
 func (pool *activeRuntimePool) Close() error { return nil }
 func (pool *activeRuntimePool) Resolve(_ context.Context, _ string, logical semanticmodel.Connection) (semanticmodel.Connection, error) {
+	if len(pool.values) == 0 {
+		logical.Auth = nil
+		return logical, nil
+	}
 	logical.Auth = map[string]any{"token": pool.values["token"]}
 	return logical, nil
 }
