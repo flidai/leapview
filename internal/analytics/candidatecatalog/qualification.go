@@ -396,7 +396,7 @@ func (w *WorkingCatalog) Normalize(ctx context.Context) (NormalizationResult, er
 		return NormalizationResult{}, fmt.Errorf("%w: normalize data-inlining policy: %v", ErrNormalizationFailed, err)
 	}
 	if err := policy.ValidateZero(); err != nil {
-		return NormalizationResult{}, fmt.Errorf("%w: %v", ErrNormalizationFailed, err)
+		return NormalizationResult{}, fmt.Errorf("%w: %w", ErrNormalizationFailed, err)
 	}
 	if err := w.env.ValidateNoLiveInlineData(ctx); err != nil {
 		return NormalizationResult{}, fmt.Errorf("%w: %w", ErrNormalizationFailed, err)
@@ -406,7 +406,7 @@ func (w *WorkingCatalog) Normalize(ctx context.Context) (NormalizationResult, er
 		return NormalizationResult{}, fmt.Errorf("%w: re-read data-inlining policy: %v", ErrNormalizationFailed, policyErr)
 	}
 	if err := verifiedPolicy.ValidateZero(); err != nil {
-		return NormalizationResult{}, fmt.Errorf("%w: verify data-inlining policy: %v", ErrNormalizationFailed, err)
+		return NormalizationResult{}, fmt.Errorf("%w: verify data-inlining policy: %w", ErrNormalizationFailed, err)
 	}
 	policy = verifiedPolicy
 	snapshots, err := w.env.Snapshots(ctx)
