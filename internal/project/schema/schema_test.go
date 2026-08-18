@@ -518,6 +518,67 @@ spec:
 	}
 }
 
+func TestValidateBytesRejectsGeneratedMetadataAndMapViolations(t *testing.T) {
+	cases := []struct {
+		name string
+		kind Kind
+		yaml string
+	}{
+		{
+			name: "resource id pattern",
+			kind: KindModel,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: "model:invalid id", name: orders}
+spec:
+  definition: {type: direct, source: orders}
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`,
+		},
+		{
+			name: "source schema map key",
+			kind: KindSource,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: managed:local
+  location: {type: path, path: orders.csv, format: csv}
+  schema:
+    mode: strict
+    fields: {"invalid-name": {datatype: String}}
+`,
+		},
+		{
+			name: "freshness duration lower bound",
+			kind: KindSource,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: managed:local
+  location: {type: path, path: orders.csv, format: csv}
+  freshness:
+    basis: field
+    field: order_id
+    warningAfter: {amount: 0, unit: hour}
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateBytes(tc.kind, tc.name+".yaml", []byte(tc.yaml)); err == nil {
+				t.Fatal("ValidateBytes accepted generated contract violation")
+			}
+		})
+	}
+}
+
 func TestGeneratedSchemaDiagnosticsPointToField(t *testing.T) {
 	err := ValidateBytes(KindModel, "model.yaml", []byte(`
 apiVersion: leapview.dev/v1

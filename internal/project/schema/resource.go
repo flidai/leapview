@@ -162,41 +162,10 @@ func generatedResourceJSON(kind Kind, filename string, content []byte) ([]byte, 
 	if envelope.Kind != wantKind {
 		return nil, resourceDiagnostic(filename, root, "schema.kind", fmt.Sprintf("resource kind %q does not match requested %s", envelope.Kind, wantKind))
 	}
-	if err := validateGeneratedMetadata(filename, root, normalized); err != nil {
-		return nil, err
-	}
 	return normalized, nil
 }
 
-var (
-	resourceIDPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*$`)
-	resourceNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
-)
-
 const sourceFreshnessConstraint = `spec: {freshness?: {matchN(>=1, [{warningAfter!: _}, {errorAfter!: _}])}}`
-
-// validateGeneratedMetadata retains the stable resource identity constraints
-// that are not represented in the generated JSON Schema yet. These checks are
-// intentionally applied after generated structural/union validation so the
-// generated schema remains the primary authoring contract.
-func validateGeneratedMetadata(filename string, root *yaml.Node, normalized []byte) error {
-	var envelope struct {
-		Metadata struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"metadata"`
-	}
-	if err := json.Unmarshal(normalized, &envelope); err != nil {
-		return resourceDiagnostic(filename, root, "schema.decode", err.Error())
-	}
-	if !resourceIDPattern.MatchString(envelope.Metadata.ID) {
-		return resourceDiagnostic(filename, root, "schema.contract", fmt.Sprintf("metadata.id %q is not a valid resource ID", envelope.Metadata.ID))
-	}
-	if !resourceNamePattern.MatchString(envelope.Metadata.Name) {
-		return resourceDiagnostic(filename, root, "schema.contract", fmt.Sprintf("metadata.name %q is not a valid resource name", envelope.Metadata.Name))
-	}
-	return nil
-}
 
 var (
 	generatedSchemaOnce sync.Once

@@ -7,6 +7,15 @@ import "@yacobolo/apigen";
 })
 namespace LeapViewDataResources;
 
+@pattern("^[A-Za-z_][A-Za-z0-9_]*$")
+scalar Identifier extends string;
+
+@pattern("^[A-Za-z_][A-Za-z0-9_.-]*$")
+scalar ResourceName extends string;
+
+@pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+scalar ResourceID extends string;
+
 /**
  * Portable access is intentionally tiny. Endpoints, credentials, secret
  * providers, and resolved authentication are target-owned bindings.
@@ -266,11 +275,13 @@ model InferredSourceSchema {
 
 model CompatibleSourceSchema {
   mode: "compatible";
+  @apigen.propertyNames(Identifier)
   fields: Record<SourceSchemaField>;
 }
 
 model StrictSourceSchema {
   mode: "strict";
+  @apigen.propertyNames(Identifier)
   fields: Record<SourceSchemaField>;
 }
 
@@ -282,13 +293,14 @@ union SourceSchema {
 }
 
 model FreshnessDuration {
+  @minValue(1)
   amount: int64;
   unit: "second" | "minute" | "hour" | "day";
 }
 
 model FieldFreshness {
   basis: "field";
-  field: string;
+  field: Identifier;
   warningAfter?: FreshnessDuration;
   errorAfter?: FreshnessDuration;
 }
@@ -370,9 +382,9 @@ model LancePathSourceLocation extends PathSourceLocation {
 
 model RelationSourceLocation {
   type: "relation";
-  catalog?: string;
-  schema?: string;
-  name: string;
+  catalog?: Identifier;
+  schema?: Identifier;
+  name: Identifier;
 }
 
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
@@ -382,7 +394,7 @@ union SourceLocation {
 }
 
 model SourceSpec {
-  connection: string;
+  connection: ResourceID;
   location: SourceLocation;
   schema?: SourceSchema;
   freshness?: SourceFreshness;
@@ -390,7 +402,7 @@ model SourceSpec {
 
 model DirectModelDefinition extends ModelDefinition {
   type: "direct";
-  source: string;
+  source: ResourceID;
 }
 
 model SQLModelDefinition extends ModelDefinition {
@@ -412,38 +424,38 @@ model ModelField {
 
 model ModelEntity {
   type: "primary" | "unique" | "foreign" | "natural";
-  fields: string[];
+  fields: Identifier[];
   description?: string;
   aiContext?: AIContext;
 }
 
 model ModelGrain {
-  entity: string;
+  entity: Identifier;
 }
 
 model NonNullModelCheck {
   type: "non_null";
-  field: string;
+  field: Identifier;
   severity?: "warning" | "error";
 }
 
 model UniqueModelCheck {
   type: "unique";
-  fields: string[];
+  fields: Identifier[];
   severity?: "warning" | "error";
 }
 
 model AcceptedValuesModelCheck {
   type: "accepted_values";
-  field: string;
+  field: Identifier;
   values: string[];
   severity?: "warning" | "error";
 }
 
 model RelationshipModelCheck {
   type: "relationship";
-  field: string;
-  to: string;
+  field: Identifier;
+  to: Identifier;
   severity?: "warning" | "error";
 }
 
@@ -465,8 +477,10 @@ union ModelCheck {
 
 model ModelSpec {
   definition: ModelDefinition;
+  @apigen.propertyNames(Identifier)
   entities: Record<ModelEntity>;
   grain: ModelGrain;
+  @apigen.propertyNames(Identifier)
   fields: Record<ModelField>;
   checks?: ModelCheck[];
 }
@@ -478,8 +492,8 @@ model ResourceProvenance {
 }
 
 model ResourceMetadata {
-  id: string;
-  name: string;
+  id: ResourceID;
+  name: ResourceName;
   displayName?: string;
   description?: string;
   owner?: string;
