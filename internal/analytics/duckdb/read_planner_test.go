@@ -21,14 +21,23 @@ func TestPlanModelTableCompilesCSVSQLModelToInlineRelations(t *testing.T) {
 		"orders":   {"order_id", "customer_id", "status"},
 		"payments": {"order_id", "payment_value"},
 	}, semanticmodel.Table{
-		Sources:  []string{"orders", "payments"},
+		Sources: []string{"orders", "payments"},
+		Columns: map[string]semanticmodel.ModelColumn{
+			"order_id":    {Datatype: semanticmodel.DataTypeString},
+			"customer_id": {Datatype: semanticmodel.DataTypeString},
+			"revenue":     {Datatype: semanticmodel.DataTypeFloat},
+		},
 		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"order_id":    {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
+			"customer_id": {Label: "Customer ID", Datatype: semanticmodel.DataTypeString},
+			"revenue":     {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
+		},
 		Transform: semanticmodel.Transform{SQL: `
 			SELECT o.order_id, o.customer_id, SUM(try_cast(p.payment_value AS DOUBLE)) AS revenue
 			FROM source.orders o
 			JOIN source.payments p USING (order_id)
-			WHERE o.status = 'delivered'
+			WHERE o.status IS NOT NULL
 			GROUP BY o.order_id, o.customer_id
 		`},
 	})
@@ -43,7 +52,7 @@ func TestPlanModelTableCompilesCSVSQLModelToInlineRelations(t *testing.T) {
 	}
 	for _, want := range []string{
 		"CREATE OR REPLACE TABLE model.orders AS",
-		"FROM (SELECT customer_id, order_id, status FROM read_csv('/managed/revision/orders.csv')) o",
+		"FROM (SELECT customer_id, order_id FROM read_csv('/managed/revision/orders.csv')) o",
 		"JOIN (SELECT order_id, payment_value FROM read_csv('/managed/revision/payments.csv')) p",
 	} {
 		if !strings.Contains(plan.SQL, want) {
@@ -157,10 +166,17 @@ func TestPlanModelTablePreservesMixedInlineSourceAliases(t *testing.T) {
 		"orders":   {"order_id"},
 		"payments": {"order_id", "payment_value"},
 	}, semanticmodel.Table{
-		Sources:  []string{"orders", "payments"},
+		Sources: []string{"orders", "payments"},
+		Columns: map[string]semanticmodel.ModelColumn{
+			"order_id":      {Datatype: semanticmodel.DataTypeString},
+			"payment_value": {Datatype: semanticmodel.DataTypeString},
+		},
 		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
-		Transform:  semanticmodel.Transform{SQL: `SELECT orders.order_id, p.payment_value FROM source.orders JOIN source.payments p USING (order_id)`},
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"order_id":      {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
+			"payment_value": {Label: "Payment Value", Datatype: semanticmodel.DataTypeString},
+		},
+		Transform: semanticmodel.Transform{SQL: `SELECT orders.order_id, p.payment_value FROM source.orders JOIN source.payments p USING (order_id)`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 
@@ -203,10 +219,17 @@ func TestPlanModelTableFailsClosedWhenInlineExplainOmitsSourceScan(t *testing.T)
 	model := planningModel(map[string][]string{
 		"orders": {"order_id", "customer_id"},
 	}, semanticmodel.Table{
-		Sources:  []string{"orders"},
+		Sources: []string{"orders"},
+		Columns: map[string]semanticmodel.ModelColumn{
+			"order_id":    {Datatype: semanticmodel.DataTypeString},
+			"customer_id": {Datatype: semanticmodel.DataTypeString},
+		},
 		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
-		Transform:  semanticmodel.Transform{SQL: `SELECT * FROM source.orders WHERE 1=0`},
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"order_id":    {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
+			"customer_id": {Label: "Customer ID", Datatype: semanticmodel.DataTypeString},
+		},
+		Transform: semanticmodel.Transform{SQL: `SELECT * FROM source.orders WHERE 1=0`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 

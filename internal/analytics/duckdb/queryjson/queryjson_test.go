@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestAnalyzeSQLFindsSourceRefsAliasesAndRawRefs(t *testing.T) {
+func TestAnalyzeSQLFindsGovernedSourceRefsAndAliases(t *testing.T) {
 	input := []byte(`{
 		"error": false,
 		"statements": [{

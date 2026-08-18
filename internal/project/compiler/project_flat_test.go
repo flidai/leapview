@@ -447,7 +447,7 @@ func TestProjectGraphCanonicalBytesStableAcrossTraversalOrder(t *testing.T) {
 	}
 }
 
-func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
+func TestCompilerPersistsSQLAnalysisEvidenceAndDependencies(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales", Connections: map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv"}},
@@ -460,6 +460,9 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
 		},
 	}
+	if err := deriveModelSQLDependencies(model); err != nil {
+		t.Fatalf("deriveModelSQLDependencies() error = %v", err)
+	}
 	if err := model.ValidateAuthored(); err != nil {
 		t.Fatalf("ValidateAuthored() error = %v", err)
 	}
@@ -468,6 +471,10 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 	}
 	if got := model.Tables["daily"].ModelDependencies; len(got) != 1 || got[0] != "orders" {
 		t.Fatalf("model dependencies = %#v, want [orders]", got)
+	}
+	evidence := model.Tables["daily"].SQLAnalysisEvidence
+	if evidence == nil || !evidence.Validated || !reflect.DeepEqual(evidence.SourceRefs, []string{"orders"}) || !reflect.DeepEqual(evidence.ModelRefs, []string{"orders"}) {
+		t.Fatalf("SQL analysis evidence = %#v, want validated orders lineage", evidence)
 	}
 }
 
@@ -1204,8 +1211,8 @@ spec:
   fields: {id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "raw.<name> is internal") {
-		t.Fatalf("LoadProject() accepted hidden raw import: %v", err)
+	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "raw namespace relations are not allowed") {
+		t.Fatalf("LoadProject() accepted hidden raw import or returned the wrong AST diagnostic: %v", err)
 	}
 	projectBytes, err := os.ReadFile(projectPath)
 	if err != nil {
@@ -1335,9 +1342,16 @@ kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
-		_, err := LoadProject(writeFlatProjectFixture(t, files))
-		if err == nil || !strings.Contains(err.Error(), "SQL source references") {
-			t.Fatalf("LoadProject() error = %v, want SQL source mismatch", err)
+		project, err := LoadProject(writeFlatProjectFixture(t, files))
+		if err != nil {
+			t.Fatalf("LoadProject() source-list mismatch: %v", err)
+		}
+		table := project.Models["orders_model"]
+		if !reflect.DeepEqual(table.SourceDependencies, []string{"customers"}) {
+			t.Fatalf("compiler-derived source dependencies = %#v, want [customers]", table.SourceDependencies)
+		}
+		if table.SQLAnalysisEvidence == nil || !table.SQLAnalysisEvidence.Validated || !reflect.DeepEqual(table.SQLAnalysisEvidence.SourceRefs, []string{"customers"}) {
+			t.Fatalf("persisted SQL analysis evidence = %#v, want customers lineage", table.SQLAnalysisEvidence)
 		}
 	})
 	t.Run("model cycle", func(t *testing.T) {

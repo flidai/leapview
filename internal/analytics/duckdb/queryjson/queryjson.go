@@ -211,7 +211,28 @@ func (v *astVisitor) selectNode(node map[string]any) error {
 		}
 		return nil
 	case "SET_OPERATION_NODE":
-		return fmt.Errorf("set operation nodes are not allowed; model SQL must contain exactly one SELECT")
+		if err := requireKeys(node, "type", "setop_type", "setop_all", "left", "right"); err != nil {
+			return err
+		}
+		setopType, ok := node["setop_type"].(string)
+		if !ok || setopType != "UNION" {
+			return fmt.Errorf("set operation %q is not allowed in model SQL", setopType)
+		}
+		if rawAll, ok := node["setop_all"]; ok {
+			if _, ok := rawAll.(bool); !ok {
+				return fmt.Errorf("SET_OPERATION_NODE setop_all must be a boolean")
+			}
+		}
+		for _, key := range []string{"left", "right"} {
+			child, ok := node[key].(map[string]any)
+			if !ok {
+				return fmt.Errorf("SET_OPERATION_NODE %s must be a SELECT or set operation node", key)
+			}
+			if err := v.selectNode(child); err != nil {
+				return err
+			}
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported DuckDB SQL AST node %q", typ)
 	}
@@ -312,8 +333,25 @@ func (v *astVisitor) relation(obj map[string]any) error {
 	case "EMPTY":
 		return requireKeys(obj, "type")
 	case "JOIN":
-		if err := requireKeys(obj, "type", "query_location", "left", "right", "condition", "join_type", "ref_type"); err != nil {
+		if err := requireKeys(obj, "type", "query_location", "left", "right", "condition", "join_type", "ref_type", "using_columns"); err != nil {
 			return err
+		}
+		if raw, ok := obj["using_columns"]; ok {
+			columns, ok := raw.([]any)
+			if !ok || len(columns) == 0 {
+				return fmt.Errorf("JOIN using_columns must be a non-empty array")
+			}
+			seen := make(map[string]struct{}, len(columns))
+			for _, rawColumn := range columns {
+				column, ok := rawColumn.(string)
+				if !ok || !validIdentifier(column) {
+					return fmt.Errorf("JOIN using_columns must contain valid identifiers")
+				}
+				if _, duplicate := seen[strings.ToLower(column)]; duplicate {
+					return fmt.Errorf("JOIN using_columns contains duplicate column %q", column)
+				}
+				seen[strings.ToLower(column)] = struct{}{}
+			}
 		}
 		for _, key := range []string{"left", "right"} {
 			child, ok := obj[key].(map[string]any)
@@ -467,7 +505,7 @@ func (v *astVisitor) expression(obj map[string]any) error {
 		if !approvedFunction(name) {
 			return fmt.Errorf("function %q is not allowed in model SQL", name)
 		}
-		if schema, _ := obj["schema"].(string); schema != "" {
+		if schema, _ := obj["schema"].(string); schema != "" && !strings.EqualFold(schema, "main") {
 			return fmt.Errorf("qualified function %q is not allowed", name)
 		}
 		if catalog, _ := obj["catalog"].(string); catalog != "" {
@@ -713,6 +751,9 @@ func validRelationName(value string) bool {
 	return true
 }
 func approvedOperator(value string) bool {
+	if value == "CONJUNCTION_AND" || value == "CONJUNCTION_OR" {
+		return true
+	}
 	if strings.HasPrefix(value, "OPERATOR_") {
 		switch value {
 		case "OPERATOR_COALESCE", "OPERATOR_IS_NULL", "OPERATOR_IS_NOT_NULL", "OPERATOR_NOT", "OPERATOR_NEGATE", "OPERATOR_PLUS", "OPERATOR_MINUS", "OPERATOR_MULTIPLY", "OPERATOR_DIVIDE", "OPERATOR_MOD", "OPERATOR_CONCAT":
@@ -722,6 +763,9 @@ func approvedOperator(value string) bool {
 	return false
 }
 func approvedFunction(value string) bool {
+	if strings.EqualFold(value, "lpad") || strings.EqualFold(value, "list_contains") || strings.EqualFold(value, "str_split") {
+		return true
+	}
 	switch strings.ToLower(value) {
 	case "+", "-", "*", "/", "%", "||", "and", "or", "not", "coalesce", "nullif", "if", "greatest", "least", "abs", "ceil", "ceiling", "floor", "round", "trunc", "sign", "sqrt", "pow", "power", "exp", "ln", "log", "log10", "lower", "upper", "trim", "ltrim", "rtrim", "replace", "regexp_replace", "regexp_matches", "regexp_extract", "length", "len", "left", "right", "substr", "substring", "concat", "concat_ws", "split_part", "printf", "date_trunc", "date_part", "date_diff", "datediff", "strftime", "to_timestamp", "make_date", "make_timestamp", "year", "month", "day", "hour", "minute", "second", "hash", "md5", "sha256", "try_cast", "count", "count_star", "sum", "avg", "min", "max", "median", "mode", "quantile", "quantile_cont", "quantile_disc", "stddev", "stddev_pop", "stddev_samp", "variance", "var_pop", "var_samp", "bool_and", "bool_or", "string_agg", "array_agg", "list", "list_value", "row_number", "rank", "dense_rank", "percent_rank", "cume_dist", "ntile", "lag", "lead", "first_value", "last_value":
 		return true
