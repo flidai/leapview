@@ -2,7 +2,6 @@ package release
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -34,36 +33,10 @@ func TestProvenanceDetectsArtifactAndPlanTampering(t *testing.T) {
 }
 
 func TestProvenanceSnapshotReuseRejectsAuthoredRefreshEvidence(t *testing.T) {
-	input := testGenerationInput(t, GenerationDataReuseSnapshot)
+	input := testGenerationInput(t, GenerationDataReuseBase)
 	input.Plan.AuthoredConnections = []AuthoredConnectionEvidence{{ConnectionID: "connection_2", ConnectorKind: "http"}}
 	_, err := NewProvenance(input)
 	require.Error(t, err)
-}
-
-func TestLegacySnapshotReuseRemainsAuditableButRequiresControlledRebuild(t *testing.T) {
-	input := testGenerationInput(t, GenerationDataReuseBase)
-	canonical, err := NewProvenance(input)
-	require.NoError(t, err)
-	input.Plan.DataMode = GenerationDataReuseSnapshotLegacy
-	legacy, err := newProvenance(input, true)
-	require.NoError(t, err)
-	require.NoError(t, legacy.ValidateStored())
-	require.ErrorIs(t, legacy.Validate(), ErrLegacyReuseSnapshot)
-
-	encoded, err := json.Marshal(legacy)
-	require.NoError(t, err)
-	var decoded Provenance
-	require.NoError(t, json.Unmarshal(encoded, &decoded))
-	require.NoError(t, decoded.ValidateStored())
-	require.Equal(t, GenerationDataReuseSnapshotLegacy, decoded.Plan.DataMode)
-	require.Equal(t, canonical.ArtifactProvenanceDigest, decoded.ArtifactProvenanceDigest)
-	require.True(t, errors.Is(decoded.Validate(), ErrLegacyReuseSnapshot))
-}
-
-func TestNewProvenanceRejectsLegacySnapshotReuseLiteral(t *testing.T) {
-	input := testGenerationInput(t, GenerationDataReuseSnapshotLegacy)
-	_, err := NewProvenance(input)
-	require.ErrorIs(t, err, ErrLegacyReuseSnapshot)
 }
 
 func TestProvenanceRefreshAcceptsManagedAndAuthoredEvidence(t *testing.T) {

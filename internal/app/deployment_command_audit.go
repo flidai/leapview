@@ -25,12 +25,3 @@ func candidateSourceAuditRecorder(
 		})
 	}
 }
-
-// candidateSourceBlobAuditRecorder remains the compatibility name used by
-// existing composition and tests; source snapshots and source blobs share the
-// same project-scoped access-audit sink.
-func candidateSourceBlobAuditRecorder(
-	accessModule *accessmodule.Module,
-) func(context.Context, deploymentmodule.CandidateSourceBlobAuditEvent) error {
-	return candidateSourceAuditRecorder(accessModule)
-}

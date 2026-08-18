@@ -39,7 +39,7 @@ func candidateRegistration(expires time.Time) CandidateRegistration {
 		CandidateID: "candidate_1", OwnerID: "owner_1", ProjectID: "project_demo", ExpiresAt: expires,
 		Compatibility: CandidateCompatibility{
 			ArtifactDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			DataRevision:   "snapshot:42", DataMode: CandidateDataReuseSnapshot, RuntimeVersion: "runtime-v1",
+			DataRevision:   "snapshot:42", DataMode: CandidateDataReuseBase, RuntimeVersion: "runtime-v1",
 			AuthorizationFingerprint: "auth-v1", ManagedDataConnections: []string{"warehouse"},
 		},
 	}

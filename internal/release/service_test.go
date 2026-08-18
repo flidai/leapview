@@ -220,7 +220,7 @@ func candidateServiceTestProvenance(t *testing.T) Provenance {
 	provenance, err := NewProvenance(ProvenanceInput{
 		Artifact:  ProjectArtifactProvenance{SourceDigest: "sha256:" + strings.Repeat("1", 64), ProjectDigest: "sha256:" + strings.Repeat("2", 64), ContentDigest: "sha256:" + strings.Repeat("3", 64), CompilerVersion: "leapview:test", SchemaVersion: 3},
 		Candidate: CandidateProvenance{ID: "candidate_1", Revision: 4, OwnerID: "publisher"},
-		Plan:      GenerationPlanProvenance{Identity: identity, BaseIdentity: &projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_0"}, TargetID: "target_dev", RuntimeVersion: "runtime:test", PolicyDigest: "sha256:" + strings.Repeat("4", 64), DataRevision: "snapshot:17", DataMode: GenerationDataReuseSnapshot},
+		Plan:      GenerationPlanProvenance{Identity: identity, BaseIdentity: &projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_0"}, TargetID: "target_dev", RuntimeVersion: "runtime:test", PolicyDigest: "sha256:" + strings.Repeat("4", 64), DataRevision: "snapshot:17", DataMode: GenerationDataReuseBase},
 	})
 	require.NoError(t, err)
 	return provenance

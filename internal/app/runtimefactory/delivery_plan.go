@@ -197,9 +197,6 @@ func CandidatePlanRequestWithPolicy(input deployment.DeliveryCandidateBuildInput
 // target composition layer supplies this context from the active generation,
 // candidate, and verified seal; the compiler never guesses catalog identity.
 func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy, now time.Time, reuse *deployment.DeliveryReuseInput) (deployment.DeliveryPlanRequest, error) {
-	if artifacts.Generation.DataMode == release.GenerationDataReuseSnapshotLegacy {
-		return deployment.DeliveryPlanRequest{}, fmt.Errorf("candidate plan requires controlled rebuild for legacy data mode: %w", release.ErrLegacyReuseSnapshot)
-	}
 	if input.Candidate.ID == "" || input.Candidate.TargetID == "" || input.ProjectID.Validate() != nil {
 		return deployment.DeliveryPlanRequest{}, fmt.Errorf("candidate plan scope is incomplete")
 	}

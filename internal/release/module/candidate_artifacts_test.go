@@ -89,7 +89,7 @@ func TestCandidateSourcesDataRevisionChangesWhenManagedDataPinChanges(t *testing
 func TestCandidateArtifactSetCarriesOneGenerationIdentity(t *testing.T) {
 	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_1")
 	require.NoError(t, err)
-	set := release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{Identity: identity, ArtifactDigest: "sha256:artifact", DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseSnapshot}}
+	set := release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{Identity: identity, ArtifactDigest: "sha256:artifact", DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseBase}}
 	require.Equal(t, identity, set.Generation.Identity)
 	require.Empty(t, set.Generation.AuthoredConnections)
 }

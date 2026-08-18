@@ -335,7 +335,7 @@ func TestDeliveryPlanRequiresExplicitEvidenceAndCanonicalizesOrder(t *testing.T)
 	}
 }
 
-func TestResolvedBuildInputsEnforcePlannedModesWithoutRawObservedValues(t *testing.T) {
+func TestResolvedBuildInputsRequireObservedEvidenceDigest(t *testing.T) {
 	d := deliveryTestDigest
 	pinned, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{Inputs: []DeliveryResolvedDataInput{{ID: "orders", Mode: DeliveryDataPinned, PlannedRevision: "rev-1", ActualRevision: "rev-1", Explanation: "read immutable revision"}}})
 	if err != nil || pinned.EvidenceDigest == "" {
@@ -345,8 +345,8 @@ func TestResolvedBuildInputsEnforcePlannedModesWithoutRawObservedValues(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{Inputs: []DeliveryResolvedDataInput{{ID: "live", Mode: DeliveryDataObserved, ObservedValue: "secret-source-value", ObservationDigest: d('a'), Explanation: "observed"}}}); !errors.Is(err, ErrDeliveryInvalid) {
-		t.Fatalf("raw observed value err=%v", err)
+	if _, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{Inputs: []DeliveryResolvedDataInput{{ID: "live", Mode: DeliveryDataObserved, Explanation: "observed"}}}); !errors.Is(err, ErrDeliveryInvalid) {
+		t.Fatalf("missing observed digest err=%v", err)
 	}
 	if _, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{Inputs: []DeliveryResolvedDataInput{{ID: "live", Mode: DeliveryDataObserved, ObservationDigest: d('a'), Explanation: "observed"}}}); err != nil {
 		t.Fatal(err)

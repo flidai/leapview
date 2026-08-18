@@ -711,9 +711,6 @@ func (service *candidateArtifactService) generationBase(ctx context.Context, ide
 		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
 	}
 	if err := baseProvenance.Validate(); err != nil {
-		if errors.Is(err, release.ErrLegacyReuseSnapshot) {
-			return candidateGenerationBase{}, candidateArtifactInvalid(fmt.Errorf("candidate base provenance requires controlled rebuild: %w", err))
-		}
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance identity mismatch"))
 	}
 	if baseProvenance.Plan.Identity != *identity {

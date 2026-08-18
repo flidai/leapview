@@ -42,7 +42,7 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 			CompilerVersion: "compiler:test", SchemaVersion: 2,
 		},
 		AuthorizationFingerprint: "sha256:" + strings.Repeat("f", 64),
-		Generation:               release.CandidateGenerationArtifact{Identity: testServingIdentity("state_sales"), ArtifactDigest: digest, DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseSnapshot},
+		Generation:               release.CandidateGenerationArtifact{Identity: testServingIdentity("state_sales"), ArtifactDigest: digest, DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseBase},
 	}}
 	module.candidateArtifacts = artifacts
 	runtimes := &candidateRuntimePreparerStub{
@@ -146,8 +146,8 @@ func TestCandidateSourceBlobUploadPersistsGeneratedCommandAuditExactlyOnce(t *te
 	blobDigest := "sha256:" + strings.Repeat("b", 64)
 	sources := &candidateSourceSynchronizerStub{}
 	module.candidateSources = sources
-	var events []CandidateSourceBlobAuditEvent
-	module.candidateSourceBlobAudit = func(_ context.Context, event CandidateSourceBlobAuditEvent) error {
+	var events []CandidateSourceAuditEvent
+	module.candidateSourceBlobAudit = func(_ context.Context, event CandidateSourceAuditEvent) error {
 		events = append(events, event)
 		return nil
 	}
@@ -207,7 +207,7 @@ func TestCandidateSourceBlobUploadPreservesSuccessWhenBestEffortAuditFails(t *te
 	sources := &candidateSourceSynchronizerStub{}
 	module.candidateSources = sources
 	auditCalls := 0
-	module.candidateSourceBlobAudit = func(context.Context, CandidateSourceBlobAuditEvent) error {
+	module.candidateSourceBlobAudit = func(context.Context, CandidateSourceAuditEvent) error {
 		auditCalls++
 		return errors.New("audit store unavailable")
 	}
@@ -333,7 +333,7 @@ func TestCandidateSynchronizationNeverMarksReadyBeforeProvenanceIsRetained(t *te
 	digest := "sha256:" + strings.Repeat("a", 64)
 	module.candidateSources = &candidateSourceSynchronizerStub{}
 	module.candidateArtifacts = &candidateArtifactPreparerStub{
-		result:    candidateArtifactSetForTest(digest, "state_sales", release.GenerationDataReuseSnapshot),
+		result:    candidateArtifactSetForTest(digest, "state_sales", release.GenerationDataReuseBase),
 		retainErr: release.ErrConflict,
 	}
 	module.candidateRuntimes = &candidateRuntimePreparerStub{
@@ -374,7 +374,7 @@ func TestCandidateSynchronizationRejectsReadyCandidateWithInvalidProvenance(t *t
 	digest := "sha256:" + strings.Repeat("a", 64)
 	module.candidateSources = &candidateSourceSynchronizerStub{}
 	artifacts := &candidateArtifactPreparerStub{
-		result:    candidateArtifactSetForTest(digest, "state_sales", release.GenerationDataReuseSnapshot),
+		result:    candidateArtifactSetForTest(digest, "state_sales", release.GenerationDataReuseBase),
 		lookupErr: release.ErrProvenanceInvalid,
 	}
 	module.candidateArtifacts = artifacts
@@ -424,7 +424,7 @@ func TestCandidateReleaseProvenanceRejectsMismatchedSourceIdentity(t *testing.T)
 	require.NoError(t, err)
 	_, err = candidateReleaseProvenance(
 		started.Candidate,
-		candidateArtifactSetForTest("sha256:"+strings.Repeat("b", 64), "state_sales", release.GenerationDataReuseSnapshot),
+		candidateArtifactSetForTest("sha256:"+strings.Repeat("b", 64), "state_sales", release.GenerationDataReuseBase),
 		deployment.CandidateRuntimeReceipt{RuntimeVersion: "runtime:test"},
 		nil,
 	)
@@ -737,7 +737,7 @@ func testCandidateModuleWithClock(t *testing.T, principalID string, now func() t
 	return &Module{
 		candidates:                service,
 		candidateRuntimeLifecycle: lifecycle,
-		candidateSourceBlobAudit: func(context.Context, CandidateSourceBlobAuditEvent) error {
+		candidateSourceBlobAudit: func(context.Context, CandidateSourceAuditEvent) error {
 			return nil
 		},
 		handler: deploymenthttp.NewHandler(deploymenthttp.Options{

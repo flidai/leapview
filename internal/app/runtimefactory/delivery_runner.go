@@ -177,9 +177,6 @@ func SQLiteWriterLeaseVerifier(repository interface {
 // writer lease can reach physical work.
 func BuildRequestFactory(config CandidateCatalogRunnerConfig) func(context.Context, deployment.DeliveryCandidateBuildInput, release.CandidateArtifactSet) (deployment.DeliveryBuildRequest, error) {
 	return func(ctx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet) (deployment.DeliveryBuildRequest, error) {
-		if artifacts.Generation.DataMode == release.GenerationDataReuseSnapshotLegacy {
-			return deployment.DeliveryBuildRequest{}, fmt.Errorf("candidate build requires controlled rebuild for legacy data mode: %w", release.ErrLegacyReuseSnapshot)
-		}
 		if config.PoolContract == nil || config.PoolContract.Validate() != nil || config.Materialize == nil || config.Connections == nil || config.ObjectStore == nil || config.SealRepository == nil || config.RemoteVerifier == nil || config.VerifyLease == nil || input.Plan == nil {
 			return deployment.DeliveryBuildRequest{}, fmt.Errorf("candidate delivery physical-pool admission and materialization adapters are required")
 		}
@@ -367,9 +364,6 @@ func validateReuseEvidenceCoverage(plan *deployment.DeliveryPlan, artifacts rele
 }
 
 func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deployment.DeliveryBuildInput) (any, error) {
-	if r.artifacts.Generation.DataMode == release.GenerationDataReuseSnapshotLegacy {
-		return nil, fmt.Errorf("candidate build requires controlled rebuild for legacy data mode: %w", release.ErrLegacyReuseSnapshot)
-	}
 	var base *candidatecatalog.SealedArtifact
 	var err error
 	if err := validateReuseEvidenceCoverage(&buildInput.Plan, r.artifacts, r.input.Candidate.ID); err != nil {
@@ -589,11 +583,7 @@ func (v ReadOnlyCatalogVerifier) verify(ctx context.Context, verification catalo
 	if err := policy.ValidateZero(); err != nil {
 		return fmt.Errorf("remote catalog data inlining policy is not zero: %w", err)
 	}
-	inline, err := preview.LegacyInlineTables(ctx)
-	if err != nil {
-		return err
-	}
-	if err := ducklake.ValidateNoLiveInlineData(inline); err != nil {
+	if err := preview.ValidateNoLiveInlineData(ctx); err != nil {
 		return fmt.Errorf("remote catalog has live inline data: %w", err)
 	}
 	closure, err := preview.CurrentClosure(ctx, v.PoolContract.Pool.ID.String())

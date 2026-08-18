@@ -368,18 +368,14 @@ func (e DeliveryPlanEvidence) Digest() (string, error) {
 // constraint it enforced. Planning declarations never masquerade as actual
 // pinned values.
 type DeliveryResolvedDataInput struct {
-	ID              string                `json:"id"`
-	Mode            DeliveryDataInputMode `json:"mode"`
-	PlannedRevision string                `json:"plannedRevision,omitempty"`
-	PlannedBound    string                `json:"plannedBound,omitempty"`
-	ActualRevision  string                `json:"actualRevision,omitempty"`
-	ActualBound     string                `json:"actualBound,omitempty"`
-	// ObservedValue is accepted only as an in-memory compatibility field and is
-	// never serialized. Persisted evidence carries a connector-provided digest
-	// or equivalence token instead of a raw source value.
-	ObservedValue     string `json:"-"`
-	ObservationDigest string `json:"observationDigest,omitempty"`
-	Explanation       string `json:"explanation"`
+	ID                string                `json:"id"`
+	Mode              DeliveryDataInputMode `json:"mode"`
+	PlannedRevision   string                `json:"plannedRevision,omitempty"`
+	PlannedBound      string                `json:"plannedBound,omitempty"`
+	ActualRevision    string                `json:"actualRevision,omitempty"`
+	ActualBound       string                `json:"actualBound,omitempty"`
+	ObservationDigest string                `json:"observationDigest,omitempty"`
+	Explanation       string                `json:"explanation"`
 }
 
 type DeliveryResolvedBuildInputs struct {
@@ -422,9 +418,6 @@ func (inputs DeliveryResolvedBuildInputs) Validate() error {
 				return fmt.Errorf("%w: bounded input %q did not enforce its planned bound", ErrDeliveryInvalid, input.ID)
 			}
 		case DeliveryDataObserved:
-			if input.ObservedValue != "" {
-				return fmt.Errorf("%w: observed input %q contains a raw value", ErrDeliveryInvalid, input.ID)
-			}
 			if err := ValidateDeliveryDigest(input.ObservationDigest); err != nil {
 				return fmt.Errorf("observed input %q: %w", input.ID, err)
 			}

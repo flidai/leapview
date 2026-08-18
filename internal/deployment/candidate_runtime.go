@@ -40,9 +40,7 @@ type CandidateRestriction struct {
 type CandidateDataMode string
 
 const (
-	CandidateDataReuseBase CandidateDataMode = "reuse_base"
-	// CandidateDataReuseSnapshot is retained as a source-compatible alias.
-	CandidateDataReuseSnapshot  CandidateDataMode = CandidateDataReuseBase
+	CandidateDataReuseBase      CandidateDataMode = "reuse_base"
 	CandidateDataRefreshSources CandidateDataMode = "refresh_sources"
 )
 

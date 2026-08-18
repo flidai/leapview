@@ -67,12 +67,12 @@ func TestCandidateRuntimeServiceRetainsBindingEvidenceWhenReusingSnapshot(t *tes
 	connections, host := &candidateRuntimeConnections{}, &candidateRuntimeHost{}
 	service, err := NewCandidateRuntimeService(CandidateRuntimeServiceConfig{Connections: connections, Runtime: host, RuntimeVersion: "leapview:test"})
 	require.NoError(t, err)
-	generation := candidateRuntimeGeneration(projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "prod", GenerationID: "generation_2"}, CandidateDataReuseSnapshot, "snapshot:42")
+	generation := candidateRuntimeGeneration(projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "prod", GenerationID: "generation_2"}, CandidateDataReuseBase, "snapshot:42")
 	generation.Connections = []CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}}
 	receipt, err := service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: candidateRuntimeTestCandidate(t, now), AuthorizationFingerprint: "policy:v1", Generation: generation})
 	require.NoError(t, err)
 	require.Len(t, receipt.Bindings, 1)
-	require.Equal(t, runtimehost.CandidateDataReuseSnapshot, host.inputs[0].Registration.Compatibility.DataMode)
+	require.Equal(t, runtimehost.CandidateDataReuseBase, host.inputs[0].Registration.Compatibility.DataMode)
 }
 
 func TestCandidateRuntimeServiceReleasesConnectionOnFailure(t *testing.T) {
