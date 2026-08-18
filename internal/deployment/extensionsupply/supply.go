@@ -529,6 +529,9 @@ func verifyFile(path, expected string) (bool, error) {
 	} else if n > MaxArtifactBytes {
 		return true, fmt.Errorf("%w: cache artifact exceeds size limit", extension.ErrExtensionIntegrity)
 	}
+	if after, statErr := file.Stat(); statErr != nil || after.Size() != info.Size() || after.Size() > MaxArtifactBytes {
+		return true, fmt.Errorf("%w: cache artifact changed while verifying", extension.ErrExtensionIntegrity)
+	}
 	if hex.EncodeToString(hash.Sum(nil)) != strings.TrimPrefix(expected, "sha256:") {
 		return true, fmt.Errorf("%w: cache artifact digest mismatch", extension.ErrExtensionIntegrity)
 	}
