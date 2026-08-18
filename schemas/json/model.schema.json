@@ -24,6 +24,7 @@
     "AcceptedValuesModelCheck": {
       "properties": {
         "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "severity": {
@@ -206,6 +207,10 @@
           "additionalProperties": {
             "$ref": "#/$defs/SourceSchemaField"
           },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
           "type": "object"
         },
         "mode": {
@@ -348,6 +353,7 @@
       ],
       "properties": {
         "source": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
         },
         "type": {
@@ -456,6 +462,7 @@
           "$ref": "#/$defs/FreshnessDuration"
         },
         "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "warningAfter": {
@@ -472,6 +479,7 @@
       "properties": {
         "amount": {
           "format": "int64",
+          "minimum": 1,
           "type": "integer"
         },
         "unit": {
@@ -940,6 +948,7 @@
         },
         "fields": {
           "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
             "type": "string"
           },
           "type": "array"
@@ -997,6 +1006,7 @@
     "ModelGrain": {
       "properties": {
         "entity": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         }
       },
@@ -1021,11 +1031,19 @@
           "additionalProperties": {
             "$ref": "#/$defs/ModelEntity"
           },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
           "type": "object"
         },
         "fields": {
           "additionalProperties": {
             "$ref": "#/$defs/ModelField"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
           },
           "type": "object"
         },
@@ -1078,6 +1096,7 @@
     "NonNullModelCheck": {
       "properties": {
         "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "severity": {
@@ -1356,12 +1375,15 @@
     "RelationSourceLocation": {
       "properties": {
         "catalog": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "schema": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "type": {
@@ -1380,6 +1402,7 @@
     "RelationshipModelCheck": {
       "properties": {
         "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "severity": {
@@ -1390,6 +1413,7 @@
           "type": "string"
         },
         "to": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "type": {
@@ -1421,9 +1445,11 @@
           "type": "string"
         },
         "id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
         },
         "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
           "type": "string"
         },
         "owner": {
@@ -1473,6 +1499,7 @@
           "$ref": "#/$defs/FreshnessDuration"
         },
         "revision": {
+          "format": "date-time",
           "type": "string"
         },
         "warningAfter": {
@@ -1846,6 +1873,7 @@
     "SourceSpec": {
       "properties": {
         "connection": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
         },
         "freshness": {
@@ -1870,6 +1898,10 @@
         "fields": {
           "additionalProperties": {
             "$ref": "#/$defs/SourceSchemaField"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
           },
           "type": "object"
         },
@@ -1941,6 +1973,7 @@
       "properties": {
         "fields": {
           "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
             "type": "string"
           },
           "type": "array"
