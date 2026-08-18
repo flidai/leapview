@@ -47,6 +47,7 @@ func deriveModelSQLDependencies(model *semanticmodel.Model) error {
 		}
 		table.SourceDependencies = append([]string(nil), analysis.SourceRefs...)
 		table.ModelDependencies = append([]string(nil), analysis.ModelRefs...)
+		table.SQLAnalysisEvidence = &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: append([]string(nil), analysis.SourceRefs...), ModelRefs: append([]string(nil), analysis.ModelRefs...)}
 		model.Tables[tableName] = table
 	}
 	return nil

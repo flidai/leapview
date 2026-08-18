@@ -229,20 +229,29 @@ type Table struct {
 	// ModelName is populated only on lowered semantic execution tables. It
 	// preserves the project Model binding after the runtime table is keyed by
 	// its semantic dataset alias; authored Model resources do not expose it.
-	ModelName          string                     `yaml:"-" json:"modelName,omitempty"`
-	Source             string                     `yaml:"source"`
-	AIContext          *AIContext                 `yaml:"aiContext,omitempty" json:"-"`
-	Sources            []string                   `yaml:"sources"`
-	SourceReads        map[string][]string        `yaml:"source_reads"`
-	Transform          Transform                  `yaml:"transform"`
-	Columns            map[string]ModelColumn     `yaml:"columns"`
-	Entities           map[string]ModelEntitySpec `yaml:"entities"`
-	GrainEntity        string                     `yaml:"grain_entity"`
-	Dimensions         map[string]MetricDimension `yaml:"fields"`
-	Description        string                     `yaml:"description"`
-	Schema             TableSchema                `yaml:"-"`
-	SourceDependencies []string                   `yaml:"-"`
-	ModelDependencies  []string                   `yaml:"-"`
+	ModelName           string                     `yaml:"-" json:"modelName,omitempty"`
+	Source              string                     `yaml:"source"`
+	AIContext           *AIContext                 `yaml:"aiContext,omitempty" json:"-"`
+	Sources             []string                   `yaml:"sources"`
+	SourceReads         map[string][]string        `yaml:"source_reads"`
+	Transform           Transform                  `yaml:"transform"`
+	Columns             map[string]ModelColumn     `yaml:"columns"`
+	Entities            map[string]ModelEntitySpec `yaml:"entities"`
+	GrainEntity         string                     `yaml:"grain_entity"`
+	Dimensions          map[string]MetricDimension `yaml:"fields"`
+	Description         string                     `yaml:"description"`
+	Schema              TableSchema                `yaml:"-"`
+	SourceDependencies  []string                   `yaml:"-"`
+	ModelDependencies   []string                   `yaml:"-"`
+	SQLAnalysisEvidence *SQLAnalysisEvidence       `yaml:"-" json:"-"`
+}
+
+// SQLAnalysisEvidence is normalized compiler-owned evidence from the pinned
+// DuckDB AST. It intentionally excludes the ephemeral/raw serialized AST.
+type SQLAnalysisEvidence struct {
+	Validated  bool     `json:"validated"`
+	SourceRefs []string `json:"sourceRefs,omitempty"`
+	ModelRefs  []string `json:"modelRefs,omitempty"`
 }
 
 // GrainFields returns the ordered business-identity tuple selected by the

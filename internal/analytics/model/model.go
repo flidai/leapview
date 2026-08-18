@@ -350,48 +350,6 @@ func (m *Model) resolveModelDependency(name string) (string, error) {
 	return "", fmt.Errorf("unknown model table %q", name)
 }
 
-func (m *Model) modelSQLSourceRefs(sql string) ([]string, []string, []string) {
-	if sql == "" {
-		return nil, nil, nil
-	}
-	sourceSeen := map[string]struct{}{}
-	rawSeen := map[string]struct{}{}
-	unqualifiedSeen := map[string]struct{}{}
-	for _, ref := range scanSQLRelationRefs(sql) {
-		switch ref.Namespace {
-		case "source":
-			sourceSeen[ref.Name] = struct{}{}
-		case "raw":
-			rawSeen[ref.Name] = struct{}{}
-		case "":
-			unqualifiedSeen[ref.Name] = struct{}{}
-		}
-	}
-	sourceRefs := sortedStringSet(sourceSeen)
-	rawRefs := sortedStringSet(rawSeen)
-	unqualifiedRefs := sortedStringSet(unqualifiedSeen)
-	return sourceRefs, rawRefs, unqualifiedRefs
-}
-
-func (m *Model) SQLSourceRefs(sql string) ([]string, []string, []string) {
-	return nil, nil, nil
-}
-
-func validateModelSQLQuery(tableName string, sql string) error {
-	keyword, _, ok := firstSQLKeyword(sql)
-	if !ok || (keyword != "select" && keyword != "with") {
-		return fmt.Errorf("model table %q transform.sql must be a read-only SELECT or WITH query", tableName)
-	}
-	if keyword == "with" {
-		start := scanSQLCTEs(sql, map[string]struct{}{}, &[]sqlRelationRef{})
-		nextKeyword, _, ok := firstSQLKeyword(sql[start:])
-		if !ok || nextKeyword != "select" {
-			return fmt.Errorf("model table %q transform.sql must be a read-only SELECT or WITH query", tableName)
-		}
-	}
-	return nil
-}
-
 func firstSQLKeyword(sql string) (string, int, bool) {
 	for index := 0; index < len(sql); {
 		switch sql[index] {

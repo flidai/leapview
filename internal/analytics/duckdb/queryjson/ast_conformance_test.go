@@ -11,6 +11,7 @@ func TestAnalyzeSQLTextPinnedAcceptedFixture(t *testing.T) {
 		`WITH recent AS (SELECT id, amount FROM source.orders WHERE amount > 0) SELECT id, SUM(amount) AS total FROM recent GROUP BY id`,
 		`SELECT CAST(o.purchase_ts AS TIMESTAMP) AS purchase_ts, strftime(CAST(o.purchase_ts AS TIMESTAMP), '%Y-%m') AS purchase_month, COALESCE(round(revenue, 2), CAST(0 AS DECIMAL(38,2))) AS revenue FROM source.orders o`,
 		`SELECT CASE WHEN amount > 0 THEN 'positive' ELSE 'zero' END AS bucket, count(*) AS n FROM source.orders GROUP BY bucket`,
+		`WITH sellers AS (SELECT DISTINCT order_id, seller_id FROM source."olist.order_items"), allocated AS (SELECT order_id, count(*) OVER (PARTITION BY order_id) AS n FROM sellers) SELECT printf('%05d', try_cast(n AS INTEGER)) AS label FROM allocated`,
 	}
 	got, err := AnalyzeSQLText(context.Background(), queries[0])
 	if err != nil {

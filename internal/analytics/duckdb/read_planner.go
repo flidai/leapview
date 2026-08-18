@@ -47,8 +47,16 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	if err := validateSQLAnalysis(tableName, table, sqlAnalysis); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	table.SourceDependencies = append([]string(nil), sqlAnalysis.SourceRefs...)
-	table.ModelDependencies = append([]string(nil), sqlAnalysis.ModelRefs...)
+	if evidence := table.SQLAnalysisEvidence; evidence != nil {
+		if !evidence.Validated || !sameStringSet(sortedStrings(evidence.SourceRefs), sortedStrings(sqlAnalysis.SourceRefs)) || !sameStringSet(sortedStrings(evidence.ModelRefs), sortedStrings(sqlAnalysis.ModelRefs)) {
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q SQL AST analysis does not match compiled evidence", tableName)
+		}
+		table.SourceDependencies = append([]string(nil), evidence.SourceRefs...)
+		table.ModelDependencies = append([]string(nil), evidence.ModelRefs...)
+	} else {
+		table.SourceDependencies = append([]string(nil), sqlAnalysis.SourceRefs...)
+		table.ModelDependencies = append([]string(nil), sqlAnalysis.ModelRefs...)
+	}
 	for _, dependency := range table.ModelDependencies {
 		if dependency == tableName {
 			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q cannot read itself", tableName)
