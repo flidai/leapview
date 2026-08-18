@@ -54,8 +54,7 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 		table.SourceDependencies = append([]string(nil), evidence.SourceRefs...)
 		table.ModelDependencies = append([]string(nil), evidence.ModelRefs...)
 	} else {
-		table.SourceDependencies = append([]string(nil), sqlAnalysis.SourceRefs...)
-		table.ModelDependencies = append([]string(nil), sqlAnalysis.ModelRefs...)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q has no compiled SQL analysis evidence", tableName)
 	}
 	for _, dependency := range table.ModelDependencies {
 		if dependency == tableName {

@@ -243,7 +243,7 @@ type Table struct {
 	Schema              TableSchema                `yaml:"-"`
 	SourceDependencies  []string                   `yaml:"-"`
 	ModelDependencies   []string                   `yaml:"-"`
-	SQLAnalysisEvidence *SQLAnalysisEvidence       `yaml:"-" json:"-"`
+	SQLAnalysisEvidence *SQLAnalysisEvidence       `yaml:"-" json:"sqlAnalysisEvidence,omitempty"`
 }
 
 // SQLAnalysisEvidence is normalized compiler-owned evidence from the pinned

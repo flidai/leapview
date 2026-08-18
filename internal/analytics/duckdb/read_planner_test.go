@@ -279,6 +279,9 @@ func planningModel(sourceColumns map[string][]string, table semanticmodel.Table)
 			Schema:     semanticmodel.TableSchema{Columns: schemaColumns},
 		}
 	}
+	if strings.TrimSpace(table.Transform.SQL) != "" {
+		table.SQLAnalysisEvidence = &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: append([]string(nil), table.Sources...), ModelRefs: append([]string(nil), table.ModelDependencies...)}
+	}
 	return &semanticmodel.Model{
 		Name:        "test",
 		Connections: map[string]semanticmodel.Connection{"local_files": {Kind: "managed"}},
