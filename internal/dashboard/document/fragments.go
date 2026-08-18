@@ -59,17 +59,28 @@ func (e *FragmentError) Error() string {
 }
 
 type fragmentState struct {
-	visuals       map[string]DashboardVisual
-	filters       []DashboardFilter
-	pages         []DashboardPage
-	components    map[string][]DashboardPageComponent
-	unscoped      []DashboardPageComponent
-	active        map[string]struct{}
-	paths         []string
-	layout        FragmentLayout
-	projectRoot   string
-	dashboardDir  string
-	dashboardPath string
+	visuals               map[string]DashboardVisual
+	visualOrigins         map[string]idOrigin
+	filters               []DashboardFilter
+	filterOrigins         []idOrigin
+	pages                 []DashboardPage
+	pageOrigins           []idOrigin
+	components            map[string][]DashboardPageComponent
+	componentOrigins      map[string][]idOrigin
+	localComponentOrigins map[string][]idOrigin
+	unscoped              []DashboardPageComponent
+	unscopedOrigins       []idOrigin
+	active                map[string]struct{}
+	paths                 []string
+	layout                FragmentLayout
+	projectRoot           string
+	dashboardDir          string
+	dashboardPath         string
+}
+
+type idOrigin struct {
+	path string
+	line int
 }
 
 // ExpandDashboardFragments expands all typed local include collections in a
@@ -81,9 +92,6 @@ func ExpandDashboardFragments(input DashboardDocument, dashboardPath, projectRoo
 	document, err := cloneDashboardDocument(input)
 	if err != nil {
 		return FragmentExpansion{}, fmt.Errorf("clone canonical dashboard: %w", err)
-	}
-	if document.Spec.Includes == nil {
-		return FragmentExpansion{Document: document}, validateExpandedIDs(document)
 	}
 	root, err := filepath.Abs(projectRoot)
 	if err != nil {
@@ -97,9 +105,25 @@ func ExpandDashboardFragments(input DashboardDocument, dashboardPath, projectRoo
 	if err != nil {
 		return FragmentExpansion{}, fmt.Errorf("resolve dashboard path: %w", err)
 	}
+	canonicalDashboard, err := filepath.EvalSymlinks(dashboardPath)
+	if err != nil {
+		return FragmentExpansion{}, fmt.Errorf("resolve dashboard path: %w", err)
+	}
+	if info, statErr := os.Stat(canonicalDashboard); statErr != nil {
+		return FragmentExpansion{}, fmt.Errorf("resolve dashboard path: %w", statErr)
+	} else if info.IsDir() {
+		return FragmentExpansion{}, fmt.Errorf("dashboard path %q is a directory", dashboardPath)
+	}
+	relativeDashboard, err := filepath.Rel(root, canonicalDashboard)
+	if err != nil || filepath.IsAbs(relativeDashboard) || relativeDashboard == ".." || strings.HasPrefix(relativeDashboard, ".."+string(filepath.Separator)) {
+		return FragmentExpansion{}, fmt.Errorf("dashboard path %q resolves outside project boundary", dashboardPath)
+	}
+	if document.Spec.Includes == nil {
+		return FragmentExpansion{Document: document}, validateExpandedIDs(document)
+	}
 	state := &fragmentState{
-		visuals: make(map[string]DashboardVisual), components: make(map[string][]DashboardPageComponent),
-		active: make(map[string]struct{}), projectRoot: root, dashboardDir: filepath.Dir(dashboardPath), dashboardPath: dashboardPath,
+		visuals: make(map[string]DashboardVisual), visualOrigins: make(map[string]idOrigin), components: make(map[string][]DashboardPageComponent), componentOrigins: make(map[string][]idOrigin), localComponentOrigins: make(map[string][]idOrigin),
+		active: make(map[string]struct{}), projectRoot: root, dashboardDir: filepath.Dir(canonicalDashboard), dashboardPath: filepath.ToSlash(relativeDashboard),
 	}
 	includes := document.Spec.Includes
 	if err := state.expandIncludes(includes); err != nil {
@@ -112,15 +136,27 @@ func ExpandDashboardFragments(input DashboardDocument, dashboardPath, projectRoo
 			return FragmentExpansion{}, state.errorf(dashboardPath, 0, "visual %q is redefined after fragment expansion", id)
 		}
 		state.visuals[id] = value
+		state.visualOrigins[id] = idOrigin{path: state.dashboardPath}
 	}
 	state.filters = append(state.filters, document.Spec.Filters...)
+	for range document.Spec.Filters {
+		state.filterOrigins = append(state.filterOrigins, idOrigin{path: state.dashboardPath})
+	}
 	state.pages = append(state.pages, document.Spec.Pages...)
+	for range document.Spec.Pages {
+		state.pageOrigins = append(state.pageOrigins, idOrigin{path: state.dashboardPath})
+	}
+	for _, page := range document.Spec.Pages {
+		for range page.Components {
+			state.localComponentOrigins[page.ID] = append(state.localComponentOrigins[page.ID], idOrigin{path: state.dashboardPath})
+		}
+	}
 	document.Spec.Visuals, document.Spec.Filters, document.Spec.Pages = state.visuals, state.filters, state.pages
 	if err := attachComponents(&document, state); err != nil {
 		return FragmentExpansion{}, err
 	}
 	document.Spec.Includes = nil
-	if err := validateExpandedIDs(document); err != nil {
+	if err := state.validateExpandedIDs(document); err != nil {
 		return FragmentExpansion{}, err
 	}
 	return FragmentExpansion{Document: document, Paths: append([]string(nil), state.paths...), Layout: state.layout}, nil
@@ -180,11 +216,19 @@ func (state *fragmentState) expandFile(path, expected string) error {
 	}
 	state.active[canonical] = struct{}{}
 	defer delete(state.active, canonical)
-	state.paths = appendUnique(state.paths, canonical)
-	state.addLayout(expected, canonical)
+	relativePath, err := state.relativePath(canonical)
+	if err != nil {
+		return err
+	}
+	state.paths = appendUnique(state.paths, relativePath)
+	state.addLayout(expected, relativePath)
 	content, err := os.ReadFile(canonical)
 	if err != nil {
 		return state.errorf(canonical, 0, "read fragment: %v", err)
+	}
+	normalized, err := configschema.NormalizeJSONDocument(canonical, content)
+	if err != nil {
+		return err
 	}
 	var documentNode yaml.Node
 	if err := yaml.Unmarshal(content, &documentNode); err != nil {
@@ -205,71 +249,76 @@ func (state *fragmentState) expandFile(path, expected string) error {
 			}
 		}
 	}
-	if nested, ok := fragmentMapNode(&root, "includes"); ok {
+	fragmentJSON, nestedJSON, err := selectFragmentJSON(normalized, expected)
+	if err != nil {
+		return state.errorf(canonical, root.Line, "%v", err)
+	}
+	if nestedJSON != nil {
 		var includes DashboardIncludes
-		if err := decodeNodeJSON(nested, &includes); err != nil {
-			return state.errorf(canonical, nested.Line, "decode includes: %v", err)
+		if err := decodeJSONBytes(nestedJSON, &includes); err != nil {
+			return state.errorf(canonical, root.Line, "decode includes: %v", err)
 		}
 		if err := state.expandIncludes(&includes); err != nil {
 			return err
 		}
 	}
-	value := &root
-	if wrapped, ok := fragmentMapNode(&root, expected); ok {
-		for i := 0; i+1 < len(root.Content); i += 2 {
-			key := root.Content[i].Value
-			if key != expected && key != "includes" {
-				return state.errorf(canonical, root.Content[i].Line, "fragment collection %q cannot contain %q", expected, key)
-			}
-		}
-		value = wrapped
-	} else if root.Kind == yaml.MappingNode {
-		value = fragmentMapWithout(&root, "includes")
-	}
+	collectionNode := fragmentCollectionNode(&root, expected)
 	switch expected {
 	case "visuals":
 		var values map[string]DashboardVisual
-		if err := decodeNodeJSON(value, &values); err != nil {
-			return state.errorf(canonical, value.Line, "decode visuals: %v", err)
+		if err := decodeJSONBytes(fragmentJSON, &values); err != nil {
+			return state.errorf(canonical, root.Line, "decode visuals: %v", err)
 		}
 		for id, visual := range values {
 			if _, exists := state.visuals[id]; exists {
-				return state.errorf(canonical, value.Line, "visual %q is defined more than once", id)
+				return state.errorf(relativePath, collectionMapKeyLine(collectionNode, id), "visual %q is defined more than once", id)
 			}
 			state.visuals[id] = visual
+			state.visualOrigins[id] = idOrigin{path: relativePath, line: collectionMapKeyLine(collectionNode, id)}
 		}
 	case "filters":
-		if value.Kind == yaml.MappingNode && len(value.Content) == 0 {
-			return nil
-		}
 		var values []DashboardFilter
-		if err := decodeNodeJSON(value, &values); err != nil {
-			return state.errorf(canonical, value.Line, "decode filters: %v", err)
+		if err := decodeJSONBytes(fragmentJSON, &values); err != nil {
+			return state.errorf(canonical, root.Line, "decode filters: %v", err)
 		}
 		state.filters = append(state.filters, values...)
-	case "pages":
-		if value.Kind == yaml.MappingNode && len(value.Content) == 0 {
-			return nil
+		for index := range values {
+			state.filterOrigins = append(state.filterOrigins, idOrigin{path: relativePath, line: collectionSequenceLine(collectionNode, index)})
 		}
+	case "pages":
 		var values []DashboardPage
-		if err := decodeNodeJSON(value, &values); err != nil {
-			return state.errorf(canonical, value.Line, "decode pages: %v", err)
+		if err := decodeJSONBytes(fragmentJSON, &values); err != nil {
+			return state.errorf(canonical, root.Line, "decode pages: %v", err)
 		}
 		state.pages = append(state.pages, values...)
+		for index := range values {
+			state.pageOrigins = append(state.pageOrigins, idOrigin{path: relativePath, line: collectionSequenceLine(collectionNode, index)})
+		}
 	case "components":
-		if value.Kind == yaml.SequenceNode {
+		var shape any
+		if err := json.Unmarshal(fragmentJSON, &shape); err != nil {
+			return state.errorf(canonical, root.Line, "decode components: %v", err)
+		}
+		if _, sequence := shape.([]any); sequence {
 			var values []DashboardPageComponent
-			if err := decodeNodeJSON(value, &values); err != nil {
-				return state.errorf(canonical, value.Line, "decode components: %v", err)
+			if err := decodeJSONBytes(fragmentJSON, &values); err != nil {
+				return state.errorf(canonical, root.Line, "decode components: %v", err)
 			}
 			state.unscoped = append(state.unscoped, values...)
+			for index := range values {
+				state.unscopedOrigins = append(state.unscopedOrigins, idOrigin{path: relativePath, line: collectionSequenceLine(collectionNode, index)})
+			}
 		} else {
 			var values map[string][]DashboardPageComponent
-			if err := decodeNodeJSON(value, &values); err != nil {
-				return state.errorf(canonical, value.Line, "decode components: %v", err)
+			if err := decodeJSONBytes(fragmentJSON, &values); err != nil {
+				return state.errorf(canonical, root.Line, "decode components: %v", err)
 			}
 			for pageID, components := range values {
 				state.components[pageID] = append(state.components[pageID], components...)
+				lines := collectionPageComponentLines(collectionNode, pageID, len(components))
+				for _, line := range lines {
+					state.componentOrigins[pageID] = append(state.componentOrigins[pageID], idOrigin{path: relativePath, line: line})
+				}
 			}
 		}
 	}
@@ -312,6 +361,10 @@ func attachComponents(document *DashboardDocument, state *fragmentState) error {
 }
 
 func validateExpandedIDs(document DashboardDocument) error {
+	return (&fragmentState{}).validateExpandedIDs(document)
+}
+
+func (state *fragmentState) validateExpandedIDs(document DashboardDocument) error {
 	visuals := make(map[string]struct{}, len(document.Spec.Visuals))
 	for id := range document.Spec.Visuals {
 		if strings.TrimSpace(id) == "" {
@@ -323,37 +376,63 @@ func validateExpandedIDs(document DashboardDocument) error {
 		visuals[id] = struct{}{}
 	}
 	filters := map[string]struct{}{}
-	for _, filter := range document.Spec.Filters {
+	for index, filter := range document.Spec.Filters {
+		origin := originAt(state.filterOrigins, index)
 		if strings.TrimSpace(filter.ID) == "" {
-			return fmt.Errorf("dashboard filter id is required after fragment expansion")
+			return state.errorf(origin.path, origin.line, "dashboard filter id is required after fragment expansion")
 		}
 		if _, exists := filters[filter.ID]; exists {
-			return fmt.Errorf("dashboard filter %q is duplicated after fragment expansion", filter.ID)
+			return state.errorf(origin.path, origin.line, "dashboard filter %q is duplicated after fragment expansion", filter.ID)
 		}
 		filters[filter.ID] = struct{}{}
 	}
 	pages := map[string]struct{}{}
 	components := map[string]struct{}{}
-	for _, page := range document.Spec.Pages {
+	for pageIndex, page := range document.Spec.Pages {
+		pageOrigin := originAt(state.pageOrigins, pageIndex)
 		if strings.TrimSpace(page.ID) == "" {
-			return fmt.Errorf("dashboard page id is required after fragment expansion")
+			return state.errorf(pageOrigin.path, pageOrigin.line, "dashboard page id is required after fragment expansion")
 		}
 		if _, exists := pages[page.ID]; exists {
-			return fmt.Errorf("dashboard page %q is duplicated after fragment expansion", page.ID)
+			return state.errorf(pageOrigin.path, pageOrigin.line, "dashboard page %q is duplicated after fragment expansion", page.ID)
 		}
 		pages[page.ID] = struct{}{}
-		for _, component := range page.Components {
+		for componentIndex, component := range page.Components {
+			origin := componentOriginAt(state, page.ID, componentIndex)
 			id := componentID(component)
 			if strings.TrimSpace(id) == "" {
-				return fmt.Errorf("dashboard component id is required after fragment expansion")
+				return state.errorf(origin.path, origin.line, "dashboard component id is required after fragment expansion")
 			}
 			if _, exists := components[id]; exists {
-				return fmt.Errorf("dashboard component %q is duplicated after fragment expansion", id)
+				return state.errorf(origin.path, origin.line, "dashboard component %q is duplicated after fragment expansion", id)
 			}
 			components[id] = struct{}{}
 		}
 	}
 	return nil
+}
+
+func originAt(values []idOrigin, index int) idOrigin {
+	if index >= 0 && index < len(values) {
+		return values[index]
+	}
+	return idOrigin{}
+}
+
+func componentOriginAt(state *fragmentState, pageID string, index int) idOrigin {
+	if values := state.componentOrigins[pageID]; index >= 0 && index < len(values) {
+		return values[index]
+	}
+	if len(state.unscopedOrigins) > 0 && index < len(state.unscopedOrigins) {
+		return state.unscopedOrigins[index]
+	}
+	if included := len(state.componentOrigins[pageID]); index >= included {
+		localIndex := index - included
+		if values := state.localComponentOrigins[pageID]; localIndex >= 0 && localIndex < len(values) {
+			return values[localIndex]
+		}
+	}
+	return idOrigin{}
 }
 
 func componentID(value DashboardPageComponent) string {
@@ -381,24 +460,103 @@ func cloneDashboardDocument(value DashboardDocument) (DashboardDocument, error) 
 	return clone, nil
 }
 
-func decodeNodeJSON(node *yaml.Node, target any) error {
-	if node == nil {
-		return fmt.Errorf("empty fragment collection")
-	}
-	var raw any
-	if err := node.Decode(&raw); err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(configschema.NormalizeYAMLValue(raw))
-	if err != nil {
-		return err
-	}
+func decodeJSONBytes(encoded []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
 	return nil
+}
+
+func selectFragmentJSON(normalized []byte, expected string) ([]byte, []byte, error) {
+	var root any
+	if err := json.Unmarshal(normalized, &root); err != nil {
+		return nil, nil, err
+	}
+	if object, ok := root.(map[string]any); ok {
+		var nested []byte
+		if includes, exists := object["includes"]; exists {
+			var err error
+			nested, err = json.Marshal(includes)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		if collection, exists := object[expected]; exists {
+			for key := range object {
+				if key != expected && key != "includes" {
+					return nil, nil, fmt.Errorf("fragment collection %q cannot contain %q", expected, key)
+				}
+			}
+			value, err := json.Marshal(collection)
+			return value, nested, err
+		}
+		delete(object, "includes")
+		value, err := json.Marshal(object)
+		return value, nested, err
+	}
+	return normalized, nil, nil
+}
+
+func fragmentCollectionNode(root *yaml.Node, expected string) *yaml.Node {
+	if root == nil {
+		return nil
+	}
+	if root.Kind == yaml.MappingNode {
+		for index := 0; index+1 < len(root.Content); index += 2 {
+			if root.Content[index].Value == expected {
+				return root.Content[index+1]
+			}
+		}
+	}
+	return root
+}
+
+func collectionMapKeyLine(node *yaml.Node, key string) int {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return 0
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		if node.Content[index].Value == key {
+			return node.Content[index].Line
+		}
+	}
+	return node.Line
+}
+
+func collectionSequenceLine(node *yaml.Node, index int) int {
+	if node != nil && node.Kind == yaml.SequenceNode && index >= 0 && index < len(node.Content) {
+		return node.Content[index].Line
+	}
+	if node != nil {
+		return node.Line
+	}
+	return 0
+}
+
+func collectionPageComponentLines(node *yaml.Node, pageID string, count int) []int {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return make([]int, count)
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		if node.Content[index].Value == pageID {
+			lines := make([]int, count)
+			for childIndex := range lines {
+				lines[childIndex] = collectionSequenceLine(node.Content[index+1], childIndex)
+			}
+			return lines
+		}
+	}
+	return make([]int, count)
+}
+
+func (state *fragmentState) relativePath(path string) (string, error) {
+	relative, err := filepath.Rel(state.projectRoot, path)
+	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", state.errorf(path, 0, "fragment resolves outside project boundary")
+	}
+	return filepath.ToSlash(relative), nil
 }
 
 func resolveFragmentPaths(projectRoot, dashboardDir, pattern string) ([]string, error) {
@@ -464,33 +622,6 @@ func isWindowsAbsolute(path string) bool {
 	return len(path) >= 3 && ((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) && path[1] == ':' && (path[2] == '\\' || path[2] == '/')
 }
 
-func fragmentMapNode(root *yaml.Node, key string) (*yaml.Node, bool) {
-	if root == nil || root.Kind != yaml.MappingNode {
-		return nil, false
-	}
-	for index := 0; index+1 < len(root.Content); index += 2 {
-		if root.Content[index].Value == key {
-			return root.Content[index+1], true
-		}
-	}
-	return nil, false
-}
-
-func fragmentMapWithout(root *yaml.Node, omit string) *yaml.Node {
-	if root == nil || root.Kind != yaml.MappingNode {
-		return root
-	}
-	copyNode := *root
-	copyNode.Content = make([]*yaml.Node, 0, len(root.Content))
-	for index := 0; index+1 < len(root.Content); index += 2 {
-		if root.Content[index].Value == omit {
-			continue
-		}
-		copyNode.Content = append(copyNode.Content, root.Content[index], root.Content[index+1])
-	}
-	return &copyNode
-}
-
 func appendUnique(values []string, value string) []string {
 	for _, existing := range values {
 		if existing == value {
@@ -501,5 +632,10 @@ func appendUnique(values []string, value string) []string {
 }
 
 func (state *fragmentState) errorf(path string, line int, format string, args ...any) error {
+	if filepath.IsAbs(path) {
+		if relative, err := filepath.Rel(state.projectRoot, path); err == nil && !filepath.IsAbs(relative) && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			path = filepath.ToSlash(relative)
+		}
+	}
 	return &FragmentError{Path: path, Line: line, Message: fmt.Sprintf(format, args...)}
 }

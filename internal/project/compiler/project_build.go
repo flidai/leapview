@@ -15,7 +15,6 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
-	configschema "github.com/flidai/leapview/internal/project/schema"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
@@ -106,7 +105,28 @@ func projectAccessDataPolicy(name string, spec projectDataPolicySpec) (manifest.
 }
 
 func normalizeYAMLValue(value any) any {
-	return configschema.NormalizeYAMLValue(value)
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = normalizeYAMLValue(item)
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[fmt.Sprint(key)] = normalizeYAMLValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeYAMLValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func sortedUniqueTrimmed(values []string) []string {

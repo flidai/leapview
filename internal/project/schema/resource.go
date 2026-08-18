@@ -27,6 +27,26 @@ import (
 // keys, non-string object keys, and non-finite numbers are not part of the
 // authoring contract.
 func NormalizeResource(kind Kind, filename string, content []byte) ([]byte, error) {
+	normalized, err := NormalizeJSONDocument(filename, content)
+	if err != nil {
+		return nil, err
+	}
+	// Validate through the existing CUE structural/contextual facade. Keeping
+	// this call here (rather than introducing a second structural contract) is
+	// important: contextual checks and generated schema diagnostics remain
+	// authoritative in one place.
+	if err := ValidateBytes(kind, filename, content); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+// NormalizeJSONDocument parses one YAML or JSON document and returns a
+// deterministic JSON representation without applying a resource schema. It
+// is the strict, validation-neutral boundary for local fragment collections.
+// Anchors, aliases, tags, duplicate keys, non-string keys, multiple
+// documents, and non-finite/overflowing/underflowing numbers are rejected.
+func NormalizeJSONDocument(filename string, content []byte) ([]byte, error) {
 	root, err := parseResourceDocument(filename, content)
 	if err != nil {
 		return nil, err
@@ -35,14 +55,6 @@ func NormalizeResource(kind Kind, filename string, content []byte) ([]byte, erro
 		return nil, err
 	}
 	if err := checkJSONNumbers(filename, content, root); err != nil {
-		return nil, err
-	}
-
-	// Validate through the existing CUE structural/contextual facade. Keeping
-	// this call here (rather than introducing a second structural contract) is
-	// important: contextual checks and generated schema diagnostics remain
-	// authoritative in one place.
-	if err := ValidateBytes(kind, filename, content); err != nil {
 		return nil, err
 	}
 
