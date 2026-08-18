@@ -7,6 +7,7 @@ package compiler
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 
@@ -38,6 +39,7 @@ type LoweredDashboardQuery struct {
 	Type        string
 	Request     semanticquery.Request
 	RowRequest  *semanticquery.RowRequest
+	RawRequest  *semanticquery.RawValueRequest
 	Plan        semanticquery.Plan
 	Binding     visualizationdefinition.QueryBinding
 	ResultFrame []DashboardQueryResultField
@@ -120,10 +122,9 @@ func ValidateDashboardResultReferences(query LoweredDashboardQuery, names []stri
 	return nil
 }
 
-// LowerDashboardQuery lowers an explicit canonical aggregate, records, or
-// pivot query. Histogram and distribution semantics are intentionally deferred
-// to their dedicated query contracts and are rejected here rather than inferred
-// from a visual type.
+// LowerDashboardQuery lowers an explicit canonical aggregate, records, pivot,
+// histogram, or distribution query. Statistical query semantics are selected
+// only by their tagged generated DTO, never by a visual type.
 func LowerDashboardQuery(query document.DashboardQuery, model *semanticmodel.Model, modelID string) (LoweredDashboardQuery, error) {
 	if model == nil {
 		return LoweredDashboardQuery{}, fmt.Errorf("semantic model is required")
@@ -158,11 +159,154 @@ func LowerDashboardQuery(query document.DashboardQuery, model *semanticmodel.Mod
 			return LoweredDashboardQuery{}, fmt.Errorf("pivot query variant is required")
 		}
 		return lowerCanonicalPivot(*value, model, modelID)
-	case "histogram", "distribution":
-		return LoweredDashboardQuery{}, fmt.Errorf("dashboard query type %q is not implemented by LEA-430", variant)
+	case "histogram":
+		value, ok := query.Value.(*document.HistogramDashboardQuery)
+		if !ok || value == nil {
+			return LoweredDashboardQuery{}, fmt.Errorf("histogram query variant is required")
+		}
+		return lowerCanonicalHistogram(*value, model, modelID)
+	case "distribution":
+		value, ok := query.Value.(*document.DistributionDashboardQuery)
+		if !ok || value == nil {
+			return LoweredDashboardQuery{}, fmt.Errorf("distribution query variant is required")
+		}
+		return lowerCanonicalDistribution(*value, model, modelID)
 	default:
 		return LoweredDashboardQuery{}, fmt.Errorf("unsupported dashboard query type %q", variant)
 	}
+}
+
+func lowerCanonicalHistogram(query document.HistogramDashboardQuery, model *semanticmodel.Model, modelID string) (LoweredDashboardQuery, error) {
+	name, alias, err := canonicalMetric(query.Field)
+	if err != nil {
+		return LoweredDashboardQuery{}, fmt.Errorf("histogram metric: %w", err)
+	}
+	if query.Bins <= 0 || query.Bins > 100000 {
+		return LoweredDashboardQuery{}, fmt.Errorf("histogram bins must be between 1 and 100000")
+	}
+	if query.NullPolicy != document.DashboardHistogramNullPolicyOmit && query.NullPolicy != document.DashboardHistogramNullPolicyInclude {
+		return LoweredDashboardQuery{}, fmt.Errorf("histogram null policy must be omit or include")
+	}
+	if query.Approximation != document.DashboardHistogramApproximationExact && query.Approximation != document.DashboardHistogramApproximationApproximate {
+		return LoweredDashboardQuery{}, fmt.Errorf("histogram approximation must be exact or approximate")
+	}
+	var domain *semanticquery.HistogramDomain
+	if query.Domain != nil {
+		if query.Domain.Minimum == nil || query.Domain.Maximum == nil || !finiteDashboardFloat(pointerValue(query.Domain.Minimum)) || !finiteDashboardFloat(pointerValue(query.Domain.Maximum)) || *query.Domain.Minimum >= *query.Domain.Maximum {
+			return LoweredDashboardQuery{}, fmt.Errorf("histogram domain requires finite minimum less than maximum")
+		}
+		domain = &semanticquery.HistogramDomain{Minimum: *query.Domain.Minimum, Maximum: *query.Domain.Maximum}
+	}
+	raw := semanticquery.RawValueRequest{Metric: semanticquery.Field{Field: name, Alias: alias}}
+	plan, err := planCanonicalHistogram(raw, model, int(query.Bins), semanticquery.HistogramOptions{Domain: domain, NullPolicy: string(query.NullPolicy), Approximation: string(query.Approximation)})
+	if err != nil {
+		return LoweredDashboardQuery{}, err
+	}
+	raw.Dataset = singleDataset(plan.Datasets)
+	resultFrame := histogramResultFrame()
+	binding := visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultHistogramBins, ModelID: modelID, DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: singleDataset(plan.Datasets), Limit: 1, Histogram: &visualizationdefinition.HistogramQueryBinding{Metric: visualizationdefinition.FieldBinding{FieldID: name, Alias: alias}, Bins: int64(query.Bins), Domain: histogramBindingDomain(domain), NullPolicy: string(query.NullPolicy), Approximation: string(query.Approximation)}}}
+	if err := binding.Validate(); err != nil {
+		return LoweredDashboardQuery{}, fmt.Errorf("histogram query binding: %w", err)
+	}
+	return LoweredDashboardQuery{Type: "histogram", Request: semanticquery.Request{Dataset: singleDataset(plan.Datasets), Metrics: []semanticquery.Field{{Field: name, Alias: alias}}}, RawRequest: &raw, Plan: plan, Binding: binding, ResultFrame: resultFrame}, nil
+}
+
+func lowerCanonicalDistribution(query document.DistributionDashboardQuery, model *semanticmodel.Model, modelID string) (LoweredDashboardQuery, error) {
+	name, alias, err := canonicalMetric(query.Field)
+	if err != nil {
+		return LoweredDashboardQuery{}, fmt.Errorf("distribution metric: %w", err)
+	}
+	if len(query.Quantiles) == 0 {
+		return LoweredDashboardQuery{}, fmt.Errorf("distribution requires at least one quantile")
+	}
+	previous := 0.0
+	for index, quantile := range query.Quantiles {
+		if !finiteDashboardFloat(quantile) || quantile <= 0 || quantile >= 1 || (index > 0 && quantile <= previous) {
+			return LoweredDashboardQuery{}, fmt.Errorf("distribution quantiles must be finite, strictly increasing, and between 0 and 1")
+		}
+		previous = quantile
+	}
+	if query.Outliers != document.DashboardDistributionOutlierPolicyOmit && query.Outliers != document.DashboardDistributionOutlierPolicyInclude {
+		return LoweredDashboardQuery{}, fmt.Errorf("distribution outliers must be omit or include")
+	}
+	if query.Approximation != document.DashboardHistogramApproximationExact && query.Approximation != document.DashboardHistogramApproximationApproximate {
+		return LoweredDashboardQuery{}, fmt.Errorf("distribution approximation must be exact or approximate")
+	}
+	var whiskers *semanticquery.DistributionWhiskers
+	if query.Whiskers != nil {
+		if !finiteDashboardFloat(query.Whiskers.Lower) || !finiteDashboardFloat(query.Whiskers.Upper) || query.Whiskers.Lower <= 0 || query.Whiskers.Upper >= 1 || query.Whiskers.Lower >= query.Whiskers.Upper {
+			return LoweredDashboardQuery{}, fmt.Errorf("distribution whiskers require finite probabilities 0 < lower < upper < 1")
+		}
+		whiskers = &semanticquery.DistributionWhiskers{Lower: query.Whiskers.Lower, Upper: query.Whiskers.Upper}
+	}
+	raw := semanticquery.RawValueRequest{Metric: semanticquery.Field{Field: name, Alias: alias}}
+	plan, err := planCanonicalDistribution(raw, model, nil, 0, semanticquery.DistributionOptions{Quantiles: append([]float64(nil), query.Quantiles...), Whiskers: whiskers, Outliers: string(query.Outliers), Approximation: string(query.Approximation)})
+	if err != nil {
+		return LoweredDashboardQuery{}, err
+	}
+	raw.Dataset = singleDataset(plan.Datasets)
+	resultFrame := make([]DashboardQueryResultField, len(plan.Columns))
+	for index, column := range plan.Columns {
+		resultFrame[index] = DashboardQueryResultField{Source: column, Name: column}
+	}
+	binding := visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultDistribution, ModelID: modelID, DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: singleDataset(plan.Datasets), Limit: 1, Distribution: &visualizationdefinition.DistributionQueryBinding{Metric: visualizationdefinition.FieldBinding{FieldID: name, Alias: alias}, Quantiles: append([]float64(nil), query.Quantiles...), Whiskers: distributionBindingWhiskers(whiskers), Outliers: string(query.Outliers), Approximation: string(query.Approximation)}}}
+	if err := binding.Validate(); err != nil {
+		return LoweredDashboardQuery{}, fmt.Errorf("distribution query binding: %w", err)
+	}
+	return LoweredDashboardQuery{Type: "distribution", Request: semanticquery.Request{Dataset: singleDataset(plan.Datasets), Metrics: []semanticquery.Field{{Field: name, Alias: alias}}}, RawRequest: &raw, Plan: plan, Binding: binding, ResultFrame: resultFrame}, nil
+}
+
+func planCanonicalHistogram(request semanticquery.RawValueRequest, model *semanticmodel.Model, bins int, options semanticquery.HistogramOptions) (semanticquery.Plan, error) {
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		return semanticquery.Plan{}, fmt.Errorf("compile semantic planner: %w", err)
+	}
+	plan, err := planner.PlanHistogram(request, bins, options)
+	if err != nil {
+		return semanticquery.Plan{}, fmt.Errorf("plan histogram query: %w", err)
+	}
+	return plan, nil
+}
+
+func planCanonicalDistribution(request semanticquery.RawValueRequest, model *semanticmodel.Model, sorts []semanticquery.Sort, limit int, options semanticquery.DistributionOptions) (semanticquery.Plan, error) {
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		return semanticquery.Plan{}, fmt.Errorf("compile semantic planner: %w", err)
+	}
+	plan, err := planner.PlanDistribution(request, sorts, limit, options)
+	if err != nil {
+		return semanticquery.Plan{}, fmt.Errorf("plan distribution query: %w", err)
+	}
+	return plan, nil
+}
+
+func histogramResultFrame() []DashboardQueryResultField {
+	return []DashboardQueryResultField{{Source: "bucket", Name: "bucket"}, {Source: "count", Name: "count"}, {Source: "start", Name: "start"}, {Source: "end", Name: "end"}}
+}
+
+func histogramBindingDomain(domain *semanticquery.HistogramDomain) *visualizationdefinition.HistogramDomain {
+	if domain == nil {
+		return nil
+	}
+	return &visualizationdefinition.HistogramDomain{Minimum: domain.Minimum, Maximum: domain.Maximum}
+}
+
+func distributionBindingWhiskers(whiskers *semanticquery.DistributionWhiskers) *visualizationdefinition.DistributionWhiskers {
+	if whiskers == nil {
+		return nil
+	}
+	return &visualizationdefinition.DistributionWhiskers{Lower: whiskers.Lower, Upper: whiskers.Upper}
+}
+
+func finiteDashboardFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func pointerValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 // LowerCanonicalDashboardQuery is an explicit alias for callers at the

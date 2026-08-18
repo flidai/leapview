@@ -5,6 +5,7 @@ package definition
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
@@ -89,6 +90,40 @@ type AggregateQueryBinding struct {
 	Time       *TimeBinding   `json:"time,omitempty" yaml:"time,omitempty"`
 	Sort       []Sort         `json:"sort,omitempty" yaml:"sort,omitempty"`
 	Limit      int64          `json:"limit" yaml:"limit"`
+	// Statistical query contracts remain under the aggregate branch because
+	// they consume one governed semantic metric relation. Their operands are
+	// immutable compiler/runtime state rather than renderer configuration.
+	Histogram    *HistogramQueryBinding    `json:"histogram,omitempty" yaml:"histogram,omitempty"`
+	Distribution *DistributionQueryBinding `json:"distribution,omitempty" yaml:"distribution,omitempty"`
+}
+
+type HistogramQueryBinding struct {
+	Metric        FieldBinding     `json:"metric" yaml:"metric"`
+	Bins          int64            `json:"bins" yaml:"bins"`
+	Domain        *HistogramDomain `json:"domain,omitempty" yaml:"domain,omitempty"`
+	NullPolicy    string           `json:"nullPolicy" yaml:"null_policy"`
+	Approximation string           `json:"approximation" yaml:"approximation"`
+}
+
+type HistogramDomain struct {
+	Minimum float64 `json:"minimum" yaml:"minimum"`
+	Maximum float64 `json:"maximum" yaml:"maximum"`
+}
+
+type DistributionQueryBinding struct {
+	Metric    FieldBinding `json:"metric" yaml:"metric"`
+	Quantiles []float64    `json:"quantiles" yaml:"quantiles"`
+	// Whiskers use probabilities in (0,1). Omit filters observations outside
+	// the inclusive fence; include retains them while preserving the same
+	// stable result frame.
+	Whiskers      *DistributionWhiskers `json:"whiskers,omitempty" yaml:"whiskers,omitempty"`
+	Outliers      string                `json:"outliers" yaml:"outliers"`
+	Approximation string                `json:"approximation" yaml:"approximation"`
+}
+
+type DistributionWhiskers struct {
+	Lower float64 `json:"lower" yaml:"lower"`
+	Upper float64 `json:"upper" yaml:"upper"`
 }
 
 type DetailQueryBinding struct {
@@ -196,6 +231,11 @@ func (query QueryBinding) Validate() error {
 	if !queryKindSupportsResult(query.Kind, query.ResultShape) {
 		return fmt.Errorf("visualization query kind %q does not support result shape %q", query.Kind, query.ResultShape)
 	}
+	if query.Kind == QueryAggregate {
+		if err := validateAggregateStatisticalContract(query.ResultShape, query.Aggregate); err != nil {
+			return err
+		}
+	}
 	if query.Kind == QueryDetail && view.tableID == "" {
 		return fmt.Errorf("visualization detail query requires table ID")
 	}
@@ -243,6 +283,88 @@ func (query QueryBinding) Validate() error {
 	}
 	return nil
 }
+
+func validateAggregateStatisticalContract(shape ResultShape, aggregate *AggregateQueryBinding) error {
+	if aggregate == nil {
+		return fmt.Errorf("aggregate statistical query requires aggregate branch")
+	}
+	if shape == ResultHistogramBins {
+		if aggregate.Histogram == nil || aggregate.Distribution != nil {
+			return fmt.Errorf("histogram result requires exactly one histogram contract")
+		}
+		return aggregate.Histogram.validate()
+	}
+	if shape == ResultDistribution {
+		if aggregate.Distribution == nil || aggregate.Histogram != nil {
+			return fmt.Errorf("distribution result requires exactly one distribution contract")
+		}
+		return aggregate.Distribution.validate()
+	}
+	if aggregate.Histogram != nil || aggregate.Distribution != nil {
+		return fmt.Errorf("statistical query contract is only valid for histogram or distribution results")
+	}
+	return nil
+}
+
+func (binding HistogramQueryBinding) validate() error {
+	if binding.Metric.FieldID == "" || binding.Metric.Alias == "" {
+		return fmt.Errorf("histogram metric requires field ID and alias")
+	}
+	if binding.Bins <= 0 || binding.Bins > 100000 {
+		return fmt.Errorf("histogram bins must be between 1 and 100000")
+	}
+	if binding.NullPolicy != "omit" && binding.NullPolicy != "include" {
+		return fmt.Errorf("histogram null policy must be omit or include")
+	}
+	if binding.Approximation != "exact" && binding.Approximation != "approximate" {
+		return fmt.Errorf("histogram approximation must be exact or approximate")
+	}
+	if binding.Domain != nil {
+		if !finite(binding.Domain.Minimum) || !finite(binding.Domain.Maximum) || binding.Domain.Minimum >= binding.Domain.Maximum {
+			return fmt.Errorf("histogram domain requires finite minimum less than maximum")
+		}
+	}
+	return nil
+}
+
+func (binding DistributionQueryBinding) validate() error {
+	if binding.Metric.FieldID == "" || binding.Metric.Alias == "" {
+		return fmt.Errorf("distribution metric requires field ID and alias")
+	}
+	if len(binding.Quantiles) == 0 {
+		return fmt.Errorf("distribution requires at least one quantile")
+	}
+	previous := 0.0
+	for index, quantile := range binding.Quantiles {
+		if !finite(quantile) || quantile <= 0 || quantile >= 1 {
+			return fmt.Errorf("distribution quantile %d must be finite and strictly between 0 and 1", index)
+		}
+		if index > 0 && quantile <= previous {
+			return fmt.Errorf("distribution quantiles must be strictly increasing and unique")
+		}
+		previous = quantile
+	}
+	if binding.Whiskers != nil {
+		if !finite(binding.Whiskers.Lower) || !finite(binding.Whiskers.Upper) || binding.Whiskers.Lower <= 0 || binding.Whiskers.Upper >= 1 || binding.Whiskers.Lower >= binding.Whiskers.Upper {
+			return fmt.Errorf("distribution whiskers require finite probabilities 0 < lower < upper < 1")
+		}
+	}
+	if binding.Outliers == "omit" && binding.Whiskers == nil {
+		return fmt.Errorf("distribution outliers omit requires whiskers")
+	}
+	if binding.Outliers == "include" && binding.Whiskers != nil {
+		return fmt.Errorf("distribution whiskers require outliers omit")
+	}
+	if binding.Outliers != "omit" && binding.Outliers != "include" {
+		return fmt.Errorf("distribution outliers must be omit or include")
+	}
+	if binding.Approximation != "exact" && binding.Approximation != "approximate" {
+		return fmt.Errorf("distribution approximation must be exact or approximate")
+	}
+	return nil
+}
+
+func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
 
 func queryKindSupportsResult(kind QueryKind, shape ResultShape) bool {
 	switch kind {
@@ -305,6 +427,12 @@ func (query QueryBinding) validationView() (queryBindingView, error) {
 		}
 		view.tableID, view.sorts, view.limit = query.Aggregate.TableID, query.Aggregate.Sort, query.Aggregate.Limit
 		addAggregateFields(query.Aggregate.Dimensions, query.Aggregate.Series, query.Aggregate.Time, query.Aggregate.Metrics)
+		if query.Aggregate.Histogram != nil {
+			view.fields = append(view.fields, query.Aggregate.Histogram.Metric)
+		}
+		if query.Aggregate.Distribution != nil {
+			view.fields = append(view.fields, query.Aggregate.Distribution.Metric)
+		}
 	case QueryDetail:
 		if query.Detail == nil {
 			return queryBindingView{}, fmt.Errorf("detail query binding requires detail branch")

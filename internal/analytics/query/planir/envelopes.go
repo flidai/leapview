@@ -2,6 +2,7 @@ package planir
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -211,24 +212,116 @@ func (r *duckRenderer) renderAnalyticalEnvelope(id string, n AnalyticalEnvelope)
 	r.ctes = append(r.ctes, rawName+" AS (SELECT * FROM "+relation+")")
 	switch n.Operation {
 	case AnalyticalEnvelopeHistogram:
-		last := n.BinCount - 1
-		bounds := r.cteName(id + "_bounds")
-		bucketed := r.cteName(id + "_bucketed")
-		r.ctes = append(r.ctes, bounds+" AS (SELECT MIN("+quoteName(n.Value)+") AS min_value, MAX("+quoteName(n.Value)+") AS max_value FROM "+quoteName(rawName)+")")
-		ratio := histogramDivide("(r."+quoteName(n.Value)+" - b.min_value)", "NULLIF(b.max_value - b.min_value, 0)", n.ValueType)
-		width := histogramDivide("(MAX(max_value) - MIN(min_value))", fmt.Sprintf("CAST(%d AS DECIMAL(38,0))", n.BinCount), n.ValueType)
-		r.ctes = append(r.ctes, bucketed+fmt.Sprintf(" AS (SELECT CASE WHEN b.min_value = b.max_value THEN 0 ELSE LEAST(%d, CAST(FLOOR((%s) * %d) AS INTEGER)) END AS bucket, b.min_value, b.max_value FROM %s r CROSS JOIN %s b)", last, ratio, n.BinCount, quoteName(rawName), quoteName(bounds)))
-		return fmt.Sprintf("SELECT bucket, COUNT(*) AS count, MIN(min_value) + bucket * (%s) AS start, CASE WHEN MIN(min_value) = MIN(max_value) THEN MIN(max_value) ELSE MIN(min_value) + (bucket + 1) * (%s) END AS end FROM %s GROUP BY bucket ORDER BY bucket ASC", width, width, quoteName(bucketed)), nodeColumns(n), nil
+		return r.renderHistogramEnvelope(rawName, n), nodeColumns(n), nil
 	case AnalyticalEnvelopeDistribution:
-		sortSQL := analyticalSortSQL(n.Sort)
-		query := "SELECT " + quoteName(n.Group) + " AS label, MIN(" + quoteName(n.Value) + ") AS min, quantile_cont(" + quoteName(n.Value) + ", 0.25) AS q1, median(" + quoteName(n.Value) + ") AS median, quantile_cont(" + quoteName(n.Value) + ", 0.75) AS q3, MAX(" + quoteName(n.Value) + ") AS max FROM " + quoteName(rawName) + " GROUP BY " + quoteName(n.Group) + " ORDER BY " + sortSQL
-		if n.Limit > 0 {
-			query += fmt.Sprintf(" LIMIT %d", n.Limit)
-		}
-		return query, nodeColumns(n), nil
+		return r.renderDistributionEnvelope(rawName, n), nodeColumns(n), nil
 	default:
 		return "", nil, fmt.Errorf("unsupported analytical envelope operation %q", n.Operation)
 	}
+}
+
+func (r *duckRenderer) renderHistogramEnvelope(rawName string, n AnalyticalEnvelope) string {
+	last := n.BinCount - 1
+	bounds := r.cteName(rawName + "_bounds")
+	classified := r.cteName(rawName + "_classified")
+	minExpr, maxExpr := "MIN("+quoteName(n.Value)+")", "MAX("+quoteName(n.Value)+")"
+	if n.Approximation == "approximate" {
+		minExpr = "approx_quantile(" + quoteName(n.Value) + ", 0.0)"
+		maxExpr = "approx_quantile(" + quoteName(n.Value) + ", 1.0)"
+	}
+	if n.DomainMinimum != nil {
+		minExpr = histogramLiteral(*n.DomainMinimum)
+		maxExpr = histogramLiteral(*n.DomainMaximum)
+		if n.Approximation == "approximate" {
+			minExpr = "CAST(" + minExpr + " AS DOUBLE)"
+			maxExpr = "CAST(" + maxExpr + " AS DOUBLE)"
+		}
+	}
+	boundsSQL := bounds + " AS (SELECT " + minExpr + " AS min_value, " + maxExpr + " AS max_value FROM " + quoteName(rawName)
+	if n.DomainMinimum != nil {
+		boundsSQL += " LIMIT 1"
+	}
+	boundsSQL += ")"
+	r.ctes = append(r.ctes, boundsSQL)
+	width := histogramDivide("(b.max_value - b.min_value)", fmt.Sprintf("CAST(%d AS DECIMAL(38,0))", n.BinCount), n.ValueType)
+	value := "r." + quoteName(n.Value)
+	bucket := fmt.Sprintf("CASE WHEN %s IS NULL THEN -2 WHEN %s < b.min_value THEN -1 WHEN %s > b.max_value THEN %d WHEN b.min_value = b.max_value THEN 0 ELSE LEAST(%d, CAST(FLOOR(%s) AS INTEGER)) END", value, value, value, n.BinCount, last, histogramDivide("("+value+" - b.min_value)", "NULLIF(b.max_value - b.min_value, 0)", n.ValueType)+fmt.Sprintf(" * %d", n.BinCount))
+	r.ctes = append(r.ctes, classified+" AS (SELECT "+bucket+" AS bucket, "+value+" AS value, b.min_value, b.max_value, "+width+" AS width FROM "+quoteName(rawName)+" r CROSS JOIN "+quoteName(bounds)+" b)")
+	start := fmt.Sprintf("CASE WHEN bucket < 0 OR bucket >= %d THEN NULL WHEN ANY_VALUE(min_value) = ANY_VALUE(max_value) THEN ANY_VALUE(min_value) ELSE ANY_VALUE(min_value) + bucket * ANY_VALUE(width) END", n.BinCount)
+	end := fmt.Sprintf("CASE WHEN bucket < 0 OR bucket >= %d THEN NULL WHEN ANY_VALUE(min_value) = ANY_VALUE(max_value) THEN ANY_VALUE(max_value) ELSE ANY_VALUE(min_value) + (bucket + 1) * ANY_VALUE(width) END", n.BinCount)
+	return fmt.Sprintf("SELECT bucket, COUNT(*) AS count, %s AS start, %s AS end FROM %s GROUP BY bucket ORDER BY bucket ASC", start, end, quoteName(classified))
+}
+
+func (r *duckRenderer) renderDistributionEnvelope(rawName string, n AnalyticalEnvelope) string {
+	quantiles := n.Quantiles
+	if len(quantiles) == 0 {
+		quantiles = []float64{0.25, 0.5, 0.75}
+	}
+	fn := "quantile_cont"
+	if n.Approximation == "approximate" {
+		fn = "approx_quantile"
+	}
+	value := quoteName(n.Value)
+	columns := n.DistributionColumns
+	if len(columns) != len(quantiles)+2 {
+		columns = append([]string{"label", "min"}, make([]string, len(quantiles))...)
+		for index := range quantiles {
+			columns[index+2] = fmt.Sprintf("q%d", index)
+		}
+		columns = append(columns, "max")
+	}
+	selectStats := make([]string, 0, len(quantiles))
+	for index, quantile := range quantiles {
+		selectStats = append(selectStats, fmt.Sprintf("%s(%s, %s) AS %s", fn, value, histogramLiteral(quantile), quoteName(columns[index+2])))
+	}
+	group := ""
+	groupSelect := "'all'"
+	groupBy := ""
+	statsGroupBy := ""
+	join := ""
+	where := ""
+	if n.Group != "" {
+		group = quoteName(n.Group)
+		groupSelect = "r." + group
+		groupBy = " GROUP BY r." + group
+		statsGroupBy = " GROUP BY " + group
+	}
+	if n.WhiskerLower != nil {
+		lower := fmt.Sprintf("%s(%s, %s)", fn, value, histogramLiteral(*n.WhiskerLower))
+		upper := fmt.Sprintf("%s(%s, %s)", fn, value, histogramLiteral(*n.WhiskerUpper))
+		stats := r.cteName(rawName + "_whiskers")
+		if group != "" {
+			r.ctes = append(r.ctes, stats+" AS (SELECT "+group+" AS label, "+lower+" AS lower_value, "+upper+" AS upper_value FROM "+quoteName(rawName)+statsGroupBy+")")
+			join = " JOIN " + quoteName(stats) + " s ON r." + group + " IS NOT DISTINCT FROM s.label"
+			where = " WHERE r." + value + " >= s.lower_value AND r." + value + " <= s.upper_value"
+		} else {
+			r.ctes = append(r.ctes, stats+" AS (SELECT "+lower+" AS lower_value, "+upper+" AS upper_value FROM "+quoteName(rawName)+")")
+			join = " CROSS JOIN " + quoteName(stats) + " s"
+			where = " WHERE r." + value + " >= s.lower_value AND r." + value + " <= s.upper_value"
+		}
+		if n.Outliers != "omit" {
+			where = ""
+		}
+	}
+	projections := []string{groupSelect + " AS label", "MIN(" + value + ") AS min"}
+	projections = append(projections, selectStats...)
+	projections = append(projections, "MAX("+value+") AS max")
+	query := "SELECT " + strings.Join(projections, ", ") + " FROM " + quoteName(rawName) + " r" + join + where + groupBy
+	// Empty and null-only populations produce an empty frame instead of a
+	// synthetic all-null statistic row.
+	query += " HAVING COUNT(" + value + ") > 0"
+	query += " ORDER BY " + analyticalSortSQL(n.Sort)
+	if n.Limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", n.Limit)
+	}
+	return query
+}
+
+func histogramLiteral(value float64) string {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return "NULL"
+	}
+	return fmt.Sprintf("%.17g", value)
 }
 
 func histogramDivide(left, right, typ string) string {

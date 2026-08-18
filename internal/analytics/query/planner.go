@@ -175,8 +175,11 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	}
 	filterSpecs := append(requestFlatPlanFilters(request.Filters), metricFilterSpecs...)
 	// The input null guard is a request-local execution constraint, not part of
-	// the compiled named population identity.
-	filterSpecs = append(filterSpecs, flatPlanFilter{Filter: Filter{Field: metric.InputField, Operator: "is_not_null"}, Source: planir.FilterSourceRequest})
+	// the compiled named population identity. Statistical histogram queries may
+	// explicitly retain nulls so the envelope can emit its null bucket.
+	if !request.IncludeNull {
+		filterSpecs = append(filterSpecs, flatPlanFilter{Filter: Filter{Field: metric.InputField, Operator: "is_not_null"}, Source: planir.FilterSourceRequest})
+	}
 	irGraph, irErr := p.buildFlatPlanIRWithFilters(view.Dataset, request.Dimensions, []Field{{Field: metricField, Alias: valueAlias}}, filterSpecs, view.Paths, request.Sort, request.Limit, 0)
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("build raw-value plan IR: %w", irErr)

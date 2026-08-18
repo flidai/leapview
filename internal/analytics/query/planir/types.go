@@ -885,14 +885,23 @@ const (
 
 type AnalyticalEnvelope struct {
 	NodeMeta
-	Operation AnalyticalEnvelopeOperation `json:"operation"`
-	Input     string                      `json:"input"`
-	Value     string                      `json:"value"`
-	ValueType string                      `json:"value_type"`
-	Group     string                      `json:"group,omitempty"`
-	BinCount  int                         `json:"bin_count,omitempty"`
-	Sort      []SortKey                   `json:"sort,omitempty"`
-	Limit     int                         `json:"limit,omitempty"`
+	Operation           AnalyticalEnvelopeOperation `json:"operation"`
+	Input               string                      `json:"input"`
+	Value               string                      `json:"value"`
+	ValueType           string                      `json:"value_type"`
+	Group               string                      `json:"group,omitempty"`
+	BinCount            int                         `json:"bin_count,omitempty"`
+	DomainMinimum       *float64                    `json:"domain_minimum,omitempty"`
+	DomainMaximum       *float64                    `json:"domain_maximum,omitempty"`
+	NullPolicy          string                      `json:"null_policy,omitempty"`
+	Approximation       string                      `json:"approximation,omitempty"`
+	Quantiles           []float64                   `json:"quantiles,omitempty"`
+	WhiskerLower        *float64                    `json:"whisker_lower,omitempty"`
+	WhiskerUpper        *float64                    `json:"whisker_upper,omitempty"`
+	Outliers            string                      `json:"outliers,omitempty"`
+	DistributionColumns []string                    `json:"distribution_columns,omitempty"`
+	Sort                []SortKey                   `json:"sort,omitempty"`
+	Limit               int                         `json:"limit,omitempty"`
 }
 
 func (AnalyticalEnvelope) Kind() Kind         { return KindAnalyticalEnvelope }

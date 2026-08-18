@@ -187,10 +187,87 @@ func TestLowerDashboardQueryRejectsResultReferenceAndRootCollisions(t *testing.T
 	}
 }
 
-func TestLowerDashboardQueryRejectsDeferredQueryKinds(t *testing.T) {
+func TestLowerDashboardQueryLowersHistogramStatisticalContract(t *testing.T) {
 	query := document.DashboardQuery{Value: &document.HistogramDashboardQuery{Type: "histogram", Field: document.DashboardMetricSelection{String: stringPtr("revenue")}, Bins: 10, NullPolicy: document.DashboardHistogramNullPolicyOmit, Approximation: document.DashboardHistogramApproximationExact}}
-	if _, err := LowerDashboardQuery(query, dashboardQueryTestModel(), "sales"); err == nil || !strings.Contains(err.Error(), "not implemented by LEA-430") {
-		t.Fatalf("error = %v, want deferred histogram diagnostic", err)
+	lowered, err := LowerDashboardQuery(query, dashboardQueryTestModel(), "sales")
+	if err != nil {
+		t.Fatalf("LowerDashboardQuery() error = %v", err)
+	}
+	if lowered.Binding.ResultShape != visualizationdefinition.ResultHistogramBins || lowered.Binding.Aggregate == nil || lowered.Binding.Aggregate.Histogram == nil {
+		t.Fatalf("histogram binding = %#v", lowered.Binding)
+	}
+	if got := lowerResultNames(lowered); got != "bucket,count,start,end" {
+		t.Fatalf("histogram result frame = %q", got)
+	}
+}
+
+func TestLowerDashboardQueryLowersDistributionAndPreservesStatisticalOperands(t *testing.T) {
+	query := document.DashboardQuery{Value: &document.DistributionDashboardQuery{
+		Type: "distribution", Field: document.DashboardMetricSelection{Reference: &document.DashboardMetricReference{Metric: "revenue", Alias: stringPtr("amount")}},
+		Quantiles: []float64{0.1, 0.5, 0.9}, Whiskers: &document.DashboardDistributionWhiskers{Lower: 0.05, Upper: 0.95}, Outliers: document.DashboardDistributionOutlierPolicyOmit, Approximation: document.DashboardHistogramApproximationApproximate,
+	}}
+	lowered, err := LowerDashboardQuery(query, dashboardQueryTestModel(), "sales")
+	if err != nil {
+		t.Fatalf("LowerDashboardQuery() error = %v", err)
+	}
+	binding := lowered.Binding.Aggregate.Distribution
+	if binding == nil || binding.Metric.Alias != "amount" || binding.Approximation != "approximate" || binding.Outliers != "omit" || len(binding.Quantiles) != 3 || binding.Whiskers == nil || binding.Whiskers.Lower != 0.05 {
+		t.Fatalf("distribution binding = %#v", binding)
+	}
+	if got := lowerResultNames(lowered); got != "label,min,q0,q1,q2,max" {
+		t.Fatalf("distribution result frame = %q", got)
+	}
+	if !strings.Contains(lowered.Plan.SQL, "approx_quantile") || !strings.Contains(lowered.Plan.SQL, "lower_value") {
+		t.Fatalf("distribution SQL does not preserve approximation/whisker semantics: %s", lowered.Plan.SQL)
+	}
+	explain, err := lowered.Plan.Explain()
+	if err != nil || !strings.Contains(explain, "approximation=approximate") || !strings.Contains(explain, "outliers=omit") {
+		t.Fatalf("distribution PlanIR explanation omitted statistical policy: %s (err=%v)", explain, err)
+	}
+}
+
+func TestLowerDashboardQueryRejectsInvalidStatisticalOperands(t *testing.T) {
+	model := dashboardQueryTestModel()
+	tests := map[string]struct {
+		query document.DashboardQuery
+		want  string
+	}{
+		"zero bins": {
+			query: document.DashboardQuery{Value: &document.HistogramDashboardQuery{Type: "histogram", Field: document.DashboardMetricSelection{String: stringPtr("revenue")}, Bins: 0, NullPolicy: document.DashboardHistogramNullPolicyOmit, Approximation: document.DashboardHistogramApproximationExact}}, want: "bins",
+		},
+		"excessive bins": {
+			query: document.DashboardQuery{Value: &document.HistogramDashboardQuery{Type: "histogram", Field: document.DashboardMetricSelection{String: stringPtr("revenue")}, Bins: 100001, NullPolicy: document.DashboardHistogramNullPolicyOmit, Approximation: document.DashboardHistogramApproximationExact}}, want: "bins",
+		},
+		"partial domain": {
+			query: document.DashboardQuery{Value: &document.HistogramDashboardQuery{Type: "histogram", Field: document.DashboardMetricSelection{String: stringPtr("revenue")}, Bins: 2, Domain: &document.DashboardHistogramDomain{Minimum: floatPtr(0)}, NullPolicy: document.DashboardHistogramNullPolicyOmit, Approximation: document.DashboardHistogramApproximationExact}}, want: "domain",
+		},
+		"nonnumeric metric": {
+			query: document.DashboardQuery{Value: &document.HistogramDashboardQuery{Type: "histogram", Field: document.DashboardMetricSelection{String: stringPtr("statusMetric")}, Bins: 2, NullPolicy: document.DashboardHistogramNullPolicyOmit, Approximation: document.DashboardHistogramApproximationExact}}, want: "unsupported datatype",
+		},
+		"duplicate quantiles": {
+			query: document.DashboardQuery{Value: &document.DistributionDashboardQuery{Type: "distribution", Field: document.DashboardMetricSelection{String: stringPtr("revenue")}, Quantiles: []float64{0.5, 0.5}, Outliers: document.DashboardDistributionOutlierPolicyInclude, Approximation: document.DashboardHistogramApproximationExact}}, want: "quantiles",
+		},
+		"invalid whiskers": {
+			query: document.DashboardQuery{Value: &document.DistributionDashboardQuery{Type: "distribution", Field: document.DashboardMetricSelection{String: stringPtr("revenue")}, Quantiles: []float64{0.5}, Whiskers: &document.DashboardDistributionWhiskers{Lower: 0.9, Upper: 0.1}, Outliers: document.DashboardDistributionOutlierPolicyInclude, Approximation: document.DashboardHistogramApproximationExact}}, want: "whiskers",
+		},
+		"inert outlier omit": {
+			query: document.DashboardQuery{Value: &document.DistributionDashboardQuery{Type: "distribution", Field: document.DashboardMetricSelection{String: stringPtr("revenue")}, Quantiles: []float64{0.5}, Outliers: document.DashboardDistributionOutlierPolicyOmit, Approximation: document.DashboardHistogramApproximationExact}}, want: "requires whiskers",
+		},
+		"inert whisker include": {
+			query: document.DashboardQuery{Value: &document.DistributionDashboardQuery{Type: "distribution", Field: document.DashboardMetricSelection{String: stringPtr("revenue")}, Quantiles: []float64{0.5}, Whiskers: &document.DashboardDistributionWhiskers{Lower: 0.1, Upper: 0.9}, Outliers: document.DashboardDistributionOutlierPolicyInclude, Approximation: document.DashboardHistogramApproximationExact}}, want: "require outliers omit",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			caseModel := model
+			if name == "nonnumeric metric" {
+				caseModel = dashboardQueryTestModel()
+				caseModel.Metrics["statusMetric"] = semanticmodel.Metric{Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.status"}}
+			}
+			if _, err := LowerDashboardQuery(test.query, caseModel, "sales"); err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(test.want)) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -216,6 +293,8 @@ func dashboardQueryTestModel() *semanticmodel.Model {
 }
 
 func stringPtr(value string) *string { return &value }
+
+func floatPtr(value float64) *float64 { return &value }
 
 func lowerResultNames(value LoweredDashboardQuery) string {
 	parts := make([]string, len(value.ResultFrame))

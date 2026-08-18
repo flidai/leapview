@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -742,21 +743,77 @@ func validateAnalyticalEnvelope(n AnalyticalEnvelope, nodes map[string]Node) err
 	}
 	switch n.Operation {
 	case AnalyticalEnvelopeHistogram:
-		if n.BinCount <= 0 {
+		if n.BinCount <= 0 || n.BinCount > 100000 {
 			return fmt.Errorf("histogram bin count must be positive")
 		}
+		if n.NullPolicy != "" && n.NullPolicy != "omit" && n.NullPolicy != "include" {
+			return fmt.Errorf("histogram null policy must be omit or include")
+		}
+		if n.Approximation != "" && n.Approximation != "exact" && n.Approximation != "approximate" {
+			return fmt.Errorf("histogram approximation must be exact or approximate")
+		}
+		if (n.DomainMinimum == nil) != (n.DomainMaximum == nil) {
+			return fmt.Errorf("histogram domain requires both minimum and maximum")
+		}
+		if n.DomainMinimum != nil && (*n.DomainMinimum >= *n.DomainMaximum || math.IsNaN(*n.DomainMinimum) || math.IsNaN(*n.DomainMaximum) || math.IsInf(*n.DomainMinimum, 0) || math.IsInf(*n.DomainMaximum, 0)) {
+			return fmt.Errorf("histogram domain requires finite minimum less than maximum")
+		}
 	case AnalyticalEnvelopeDistribution:
-		if n.Group == "" || !available[n.Group] {
+		// An omitted group computes one deterministic "all" population. When
+		// present, the group must be a governed input field.
+		if n.Group != "" && !available[n.Group] {
 			return fmt.Errorf("distribution group %q is unavailable", n.Group)
 		}
 		if n.Limit < 0 {
 			return fmt.Errorf("distribution limit cannot be negative")
+		}
+		if n.Approximation != "" && n.Approximation != "exact" && n.Approximation != "approximate" {
+			return fmt.Errorf("distribution approximation must be exact or approximate")
+		}
+		if n.Outliers != "" && n.Outliers != "omit" && n.Outliers != "include" {
+			return fmt.Errorf("distribution outliers must be omit or include")
+		}
+		if len(n.Quantiles) > 0 {
+			previous := 0.0
+			for index, quantile := range n.Quantiles {
+				if math.IsNaN(quantile) || math.IsInf(quantile, 0) || quantile <= 0 || quantile >= 1 || (index > 0 && quantile <= previous) {
+					return fmt.Errorf("distribution quantiles must be finite, strictly increasing, and between 0 and 1")
+				}
+				previous = quantile
+			}
+		}
+		if (n.WhiskerLower == nil) != (n.WhiskerUpper == nil) {
+			return fmt.Errorf("distribution whiskers require both lower and upper probabilities")
+		}
+		if n.WhiskerLower != nil && (math.IsNaN(*n.WhiskerLower) || math.IsNaN(*n.WhiskerUpper) || math.IsInf(*n.WhiskerLower, 0) || math.IsInf(*n.WhiskerUpper, 0) || *n.WhiskerLower <= 0 || *n.WhiskerUpper >= 1 || *n.WhiskerLower >= *n.WhiskerUpper) {
+			return fmt.Errorf("distribution whiskers require finite probabilities 0 < lower < upper < 1")
+		}
+		if n.Outliers == "omit" && n.WhiskerLower == nil {
+			return fmt.Errorf("distribution outliers omit requires whiskers")
+		}
+		if n.Outliers == "include" && n.WhiskerLower != nil {
+			return fmt.Errorf("distribution whiskers require outliers omit")
 		}
 		for _, key := range n.Sort {
 			switch key.Field {
 			case "label", "min", "q1", "median", "q3", "max":
 			default:
 				return fmt.Errorf("unsupported distribution sort field %q", key.Field)
+			}
+		}
+		if len(n.DistributionColumns) > 0 {
+			if len(n.DistributionColumns) != len(n.Quantiles)+3 {
+				return fmt.Errorf("distribution columns must contain label, min, quantiles, and max")
+			}
+			seen := make(map[string]struct{}, len(n.DistributionColumns))
+			for _, column := range n.DistributionColumns {
+				if column == "" {
+					return fmt.Errorf("distribution result column cannot be empty")
+				}
+				if _, exists := seen[column]; exists {
+					return fmt.Errorf("distribution result column %q is duplicated", column)
+				}
+				seen[column] = struct{}{}
 			}
 		}
 	default:
@@ -1222,15 +1279,24 @@ func canonicalData(node Node) (json.RawMessage, error) {
 	case AnalyticalEnvelope:
 		sortKeys := append([]SortKey(nil), n.Sort...)
 		value = struct {
-			Operation AnalyticalEnvelopeOperation `json:"operation"`
-			Input     string                      `json:"input"`
-			Value     string                      `json:"value"`
-			ValueType string                      `json:"value_type"`
-			Group     string                      `json:"group,omitempty"`
-			BinCount  int                         `json:"bin_count,omitempty"`
-			Sort      []SortKey                   `json:"sort,omitempty"`
-			Limit     int                         `json:"limit,omitempty"`
-		}{n.Operation, n.Input, n.Value, n.ValueType, n.Group, n.BinCount, sortKeys, n.Limit}
+			Operation           AnalyticalEnvelopeOperation `json:"operation"`
+			Input               string                      `json:"input"`
+			Value               string                      `json:"value"`
+			ValueType           string                      `json:"value_type"`
+			Group               string                      `json:"group,omitempty"`
+			BinCount            int                         `json:"bin_count,omitempty"`
+			DomainMinimum       *float64                    `json:"domain_minimum,omitempty"`
+			DomainMaximum       *float64                    `json:"domain_maximum,omitempty"`
+			NullPolicy          string                      `json:"null_policy,omitempty"`
+			Approximation       string                      `json:"approximation,omitempty"`
+			Quantiles           []float64                   `json:"quantiles,omitempty"`
+			WhiskerLower        *float64                    `json:"whisker_lower,omitempty"`
+			WhiskerUpper        *float64                    `json:"whisker_upper,omitempty"`
+			Outliers            string                      `json:"outliers,omitempty"`
+			DistributionColumns []string                    `json:"distribution_columns,omitempty"`
+			Sort                []SortKey                   `json:"sort,omitempty"`
+			Limit               int                         `json:"limit,omitempty"`
+		}{n.Operation, n.Input, n.Value, n.ValueType, n.Group, n.BinCount, n.DomainMinimum, n.DomainMaximum, n.NullPolicy, n.Approximation, append([]float64(nil), n.Quantiles...), n.WhiskerLower, n.WhiskerUpper, n.Outliers, append([]string(nil), n.DistributionColumns...), sortKeys, n.Limit}
 	default:
 		return nil, fmt.Errorf("unsupported node kind %q", node.Kind())
 	}
@@ -1555,6 +1621,21 @@ func (g *Graph) Explain() (string, error) {
 			}
 		case AnalyticalEnvelope:
 			fmt.Fprintf(&b, " operation=%s value=%s", value.Operation, value.Value)
+			if value.NullPolicy != "" || value.Approximation != "" {
+				fmt.Fprintf(&b, " null_policy=%s approximation=%s", value.NullPolicy, value.Approximation)
+			}
+			if value.DomainMinimum != nil || value.DomainMaximum != nil {
+				fmt.Fprintf(&b, " domain=%v..%v", value.DomainMinimum, value.DomainMaximum)
+			}
+			if len(value.Quantiles) > 0 {
+				fmt.Fprintf(&b, " quantiles=%v", value.Quantiles)
+			}
+			if value.WhiskerLower != nil || value.WhiskerUpper != nil {
+				fmt.Fprintf(&b, " whiskers=%v..%v outliers=%s", value.WhiskerLower, value.WhiskerUpper, value.Outliers)
+			}
+			if len(value.DistributionColumns) > 0 {
+				fmt.Fprintf(&b, " columns=%v", value.DistributionColumns)
+			}
 		}
 		b.WriteByte('\n')
 	}
