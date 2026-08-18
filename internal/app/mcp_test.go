@@ -166,7 +166,7 @@ func TestMCPRequiresBearerAndSupportsInitializeAndTools(t *testing.T) {
 		t.Fatalf("structured and text output differ: structured=%#v text=%#v", callResponse.Result.StructuredContent, textContent)
 	}
 
-	visual := mcpRequest(t, handler, "mcp-secret", "2025-11-25", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"query_visual","arguments":{"semanticModelId":"test","visual":{"type":"bar","query":{"type":"aggregate","dimensions":["orders.status"],"metrics":["order_count"],"limit":10},"presentation":{"type":"cartesian"}}}}}`)
+	visual := mcpRequest(t, handler, "mcp-secret", "2025-11-25", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"query_visual","arguments":{"semanticModelId":"test","visual":{"type":"bar","query":{"type":"aggregate","dimensions":["status"],"metrics":["order_count"],"limit":10},"presentation":{"type":"cartesian"},"dataBudget":{"maxRows":50}}}}}`)
 	if visual.Code != http.StatusOK {
 		t.Fatalf("query_visual = %d body=%s", visual.Code, visual.Body.String())
 	}
@@ -221,12 +221,15 @@ func TestMCPGoSDKClientInteroperability(t *testing.T) {
 	result, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name: "query_visual",
 		Arguments: map[string]any{
-			"type":            "bar",
 			"semanticModelId": "test",
-			"dataset":         "orders",
-			"dimensions":      []map[string]any{{"field": "orders.status"}},
-			"metrics":         []map[string]any{{"field": "order_count"}},
-			"limit":           10,
+			"visual": map[string]any{
+				"type": "bar",
+				"query": map[string]any{
+					"type": "aggregate", "dimensions": []string{"status"}, "metrics": []string{"order_count"}, "limit": 10,
+				},
+				"presentation": map[string]any{"type": "cartesian"},
+				"dataBudget":   map[string]any{"maxRows": 50},
+			},
 		},
 	})
 	if err != nil {

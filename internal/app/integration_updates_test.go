@@ -131,7 +131,7 @@ func requireStatusError(t *testing.T, patches []map[string]any, setupRequired bo
 
 func requireFilterValues(t *testing.T, patches []map[string]any, pageID, filterID string, want ...string) {
 	t.Helper()
-	bindingKey := dashboardfilter.BindingKey("executive-sales", dashboardfilter.ScopePage, pageID, filterID)
+	bindingKey := dashboardfilter.BindingKey("executive-sales", dashboardfilter.ScopeReport, "", filterID)
 	requirePatch(t, patches, func(patch map[string]any) bool {
 		expression := mapAt(patch, "filterState", "appliedControls", bindingKey, "expression")
 		values, ok := expression["values"].([]any)

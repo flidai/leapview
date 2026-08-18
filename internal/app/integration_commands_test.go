@@ -30,14 +30,14 @@ func TestCommandsPublishReloadPatchesToOpenStream(t *testing.T) {
 			assert: func(t *testing.T, patches []map[string]any) {
 				t.Helper()
 				requireStatusLoading(t, patches, true)
-				requireSelection(t, patches, "orders", "orders.status", "delivered")
+				requireSelection(t, patches, "orders", "status", "delivered")
 			},
 		},
 		{
 			name: "/commands/clear-selection",
 			path: "/commands/clear-selection",
 			signals: mergeSignals(runtimeSignals("cmd-clear", "overview"), map[string]any{
-				"interactionSelections": []map[string]any{selectionSignal("orders", "orders.status", "delivered")},
+				"interactionSelections": []map[string]any{selectionSignal("orders", "status", "delivered")},
 				"visualWindowCommand":   visualWindowCommand("order_rows", "all", 0, 50, 4, 0),
 			}),
 			assert: func(t *testing.T, patches []map[string]any) {
@@ -282,10 +282,9 @@ func ordersRowSelectionCommand(t *testing.T, status string, patches []map[string
 		"interactionRevision": visual["interactionRevision"],
 		"mappings": []map[string]any{
 			{
-				"field":   "orders.status",
-				"dataset": "orders",
-				"value":   status,
-				"label":   status,
+				"field": "status",
+				"value": status,
+				"label": status,
 			},
 		},
 	}

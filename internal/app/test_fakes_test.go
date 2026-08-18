@@ -98,7 +98,7 @@ func (fakeMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Re
 		switch target.Kind {
 		case consumer.KindVisual:
 			definition, _ := fakeMetrics{}.visualizationDefinition(request.DashboardID, target.ID)
-			envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
+			envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"status", "order_count"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
 			publish(consumer.Result{Target: target, Envelope: envelope, Err: err})
 		case consumer.KindWindow:
 			table, err := fakeMetrics{}.queryWindow(ctx, request.DashboardID, request.PageID, request.Filters, target.WindowRequest)
@@ -120,6 +120,20 @@ func (fakeMetrics) QueryVisualization(ctx context.Context, dashboardID, pageID s
 		return visualizationir.VisualizationEnvelope{}, err
 	}
 	return patch.Visuals[visualID], nil
+}
+
+func (fakeMetrics) QueryVisualizationForDefinition(_ context.Context, definition dashboarddefinition.Definition, _ string, _ dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
+	visual, ok := definition.Visualizations[visualID]
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("unknown visualization %q", visualID)
+	}
+	return visualizationruntime.EnvelopeFromFrame(visual, visualizationruntime.Frame{
+		Columns: []string{"status", "order_count"}, Rows: [][]any{{"delivered", 1}},
+	}, nil, 0, 0)
+}
+
+func (fakeMetrics) DefaultFiltersForDefinition(definition dashboarddefinition.Definition) dashboard.Filters {
+	return definition.DefaultFilters()
 }
 
 func (fakeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
@@ -325,7 +339,7 @@ func (fakeMetrics) QueryDashboardPage(ctx context.Context, _ string, pageID stri
 		chartID = "ops_pipeline"
 	}
 	definition, _ := fakeMetrics{}.visualizationDefinition("executive-sales", chartID)
-	envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
+	envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"status", "order_count"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
 	if err != nil {
 		return dashboard.Patch{}, err
 	}
