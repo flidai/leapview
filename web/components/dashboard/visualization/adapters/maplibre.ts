@@ -683,8 +683,8 @@ class MapLibreHandle implements RendererHandle {
     this.showMapError()
   }
 
-  private readonly handleSourceData = (event: { sourceId?: string; isSourceLoaded?: boolean }) => {
-    if (event.sourceId !== this.tiledSourceID || !event.isSourceLoaded || !this.envelope) return
+  private readonly handleSourceData = (event: { sourceId?: string; isSourceLoaded?: boolean; sourceDataType?: string }) => {
+    if (event.sourceId !== this.tiledSourceID || !event.isSourceLoaded || !tiledSourceDataReady(event.sourceDataType, event.isSourceLoaded) || !this.envelope) return
     this.hideMapError()
     if (this.tiledSourceTransitioning) {
       this.tiledSourceTransitioning = false
@@ -775,6 +775,11 @@ export function tiledSourceTransition(previousTileTemplate: string | undefined, 
 export function tiledSourceLifecycle(transition: 'stable' | 'replace', sourceUpdated: boolean): 'stable' | 'waiting' | 'error' {
   if (!sourceUpdated) return 'error'
   return transition === 'replace' ? 'waiting' : 'stable'
+}
+
+/** Only MapLibre's idle source event proves replacement content is settled. */
+export function tiledSourceDataReady(sourceDataType: string | undefined, isSourceLoaded: boolean): boolean {
+  return sourceDataType === 'idle' && isSourceLoaded
 }
 
 export function tiledPrecisionLayerFamily(transitioning: boolean, zoom: number, rawMinimumZoom: number): TiledPrecisionLayerFamily {
