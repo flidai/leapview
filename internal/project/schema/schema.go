@@ -59,6 +59,35 @@ type Error struct {
 	Diagnostics []Diagnostic
 }
 
+// NormalizeYAMLValue converts yaml.v3's interface-keyed mappings into the
+// JSON-compatible value tree consumed by generated contracts. It performs no
+// validation or schema interpretation and is shared by canonical document
+// loaders that must decode generated unions through JSON.
+func NormalizeYAMLValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = NormalizeYAMLValue(item)
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[fmt.Sprint(key)] = NormalizeYAMLValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for index, item := range typed {
+			out[index] = NormalizeYAMLValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
 func (e *Error) Error() string {
 	if len(e.Diagnostics) == 0 {
 		return "configuration schema validation failed"
