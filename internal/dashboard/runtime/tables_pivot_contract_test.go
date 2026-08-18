@@ -1,10 +1,17 @@
 package runtime
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
 func TestAddPivotTotalsPreservesMultipleColumnAndMetricCells(t *testing.T) {
@@ -89,11 +96,82 @@ func TestPivotTotalsUseCompleteColumnAndGrandAggregates(t *testing.T) {
 	columns, rows = addPivotTotalsExact(columns, rows, table, values,
 		[]map[string]any{{"quarter": "East", "revenue": 10.0}},
 		[]map[string]any{{"revenue": 30.0}},
+		map[string]string{"pivot_east": typedTupleIdentity([]any{"East"})},
 	)
 	if len(rows) != 2 || rows[1]["pivot_east"] != 10.0 || rows[1]["pivot_grand"] != 30.0 {
 		t.Fatalf("exact totals row = %#v", rows)
 	}
 	if len(columns) != 2 {
 		t.Fatalf("exact totals columns = %#v", columns)
+	}
+}
+
+type pivotWindowDataRuntime struct {
+	queries []reportdef.AggregateQuery
+}
+
+func (r *pivotWindowDataRuntime) Query(_ context.Context, query reportdef.AggregateQuery) (reportdef.QueryRows, error) {
+	r.queries = append(r.queries, query)
+	if len(query.Dimensions) == 1 {
+		rows := reportdef.QueryRows{}
+		for index := query.Offset; index < query.Offset+query.Limit-1; index++ {
+			rows = append(rows, reportdef.QueryRow{"row": index})
+		}
+		return rows, nil
+	}
+	rows := reportdef.QueryRows{}
+	for _, row := range []int{dashboard.TableInteractiveRowCap + 2, dashboard.TableInteractiveRowCap + 3} {
+		rows = append(rows,
+			reportdef.QueryRow{"row": row, "column": "East", "value": float64(row)},
+			reportdef.QueryRow{"row": row, "column": "West", "value": float64(row + 1)},
+		)
+	}
+	return rows, nil
+}
+func (*pivotWindowDataRuntime) Rows(context.Context, reportdef.RowQuery) (reportdef.QueryRows, error) {
+	return nil, nil
+}
+func (*pivotWindowDataRuntime) Count(context.Context, reportdef.CountQuery) (int, error) {
+	return 0, nil
+}
+func (*pivotWindowDataRuntime) Histogram(context.Context, reportdef.RawValueQuery, int) ([]reportdef.HistogramBin, error) {
+	return nil, nil
+}
+func (*pivotWindowDataRuntime) Distribution(context.Context, reportdef.RawValueQuery, []reportdef.QuerySort, int) (reportdef.QueryRows, error) {
+	return nil, nil
+}
+func (r *pivotWindowDataRuntime) ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error) {
+	return dataquery.Result{}, nil
+}
+func (r *pivotWindowDataRuntime) Refresh(context.Context) error { return nil }
+func (r *pivotWindowDataRuntime) Close() error                  { return nil }
+func (r *pivotWindowDataRuntime) LastRefresh() time.Time        { return time.Time{} }
+
+func TestPivotExecutionWindowsRowAxisBeyondCellCap(t *testing.T) {
+	fake := &pivotWindowDataRuntime{}
+	base := visualizationir.VisualizationSpecBase{Title: "Pivot", Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: []visualizationir.VisualizationField{{ID: "row", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeInteger}, {ID: "column", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString}, {ID: "value", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal}}}}, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 1000, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete}, Accessibility: visualizationir.VisualizationAccessibility{Title: "Pivot", Description: "Pivot"}}
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.PivotVisualizationSpec{VisualizationSpecBase: base, Kind: "pivot", Rows: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "row"}}, Columns: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "column"}}, Metrics: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "value"}}, Presentation: visualizationir.GridVisualizationPresentation{RowHeight: 24, ShowHeader: true}}}
+	table := tablePlan{Definition: visualizationdefinition.Definition{ID: "pivot", Spec: spec, Query: visualizationdefinition.QueryBinding{DatasetID: "primary"}}, Table: "orders", Rows: []visualizationdefinition.FieldBinding{{FieldID: "row", Alias: "row"}}, ColumnDims: []visualizationdefinition.FieldBinding{{FieldID: "column", Alias: "column"}}, Metrics: []visualizationdefinition.FieldBinding{{FieldID: "value", Alias: "value"}}, Offset: dashboard.TableInteractiveRowCap + 2, Limit: 2}
+	runtime := &modelRuntime{model: &semanticmodel.Model{}, data: fake}
+	service := &VisualizationDataService{filters: &FilterService{}}
+	definition := &dashboarddefinition.Definition{Visualizations: map[string]visualizationdefinition.Definition{}}
+	_, rows, incomplete, err := service.crossTabTableRows(context.Background(), runtime, definition, table, dashboard.Filters{}, dashboard.TableRequest{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0]["row"] != dashboard.TableInteractiveRowCap+2 || incomplete {
+		t.Fatalf("rows=%#v incomplete=%v", rows, incomplete)
+	}
+	if len(fake.queries) != 2 || fake.queries[0].Offset != dashboard.TableInteractiveRowCap+2 || fake.queries[0].Limit != 3 || fake.queries[1].Limit <= 0 {
+		t.Fatalf("governed query shapes = %#v", fake.queries)
+	}
+}
+
+func TestPivotTupleIdentityPreservesTypesAndNulls(t *testing.T) {
+	if typedTupleIdentity([]any{int64(1)}) == typedTupleIdentity([]any{float64(1)}) {
+		t.Fatal("integer and float tuple identities collided")
+	}
+	if typedTupleIdentity([]any{nil}) == typedTupleIdentity([]any{"<nil>"}) {
+		t.Fatal("null and text tuple identities collided")
 	}
 }

@@ -240,6 +240,10 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 	if len(table.ColumnDims) == 0 {
 		return nil, nil, false, fmt.Errorf("table %q has no pivot column dimensions", table.Definition.ID)
 	}
+	base, err := visualizationir.SpecificationBase(table.Definition.Spec)
+	if err != nil {
+		return nil, nil, false, err
+	}
 	rowDimensions := make([]reportdef.QueryField, 0, len(table.Rows))
 	dimensions := make([]reportdef.QueryField, 0, len(table.Rows)+len(table.ColumnDims))
 	baseColumns := make([]dashboard.TableColumn, 0, len(table.Rows))
@@ -283,77 +287,50 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 	if rowLimit <= 0 {
 		rowLimit = dashboard.TableInteractiveRowCap
 	}
-	rowFetchLimit := rowLimit + table.Offset + 1
+	rowFetchLimit := rowLimit + 1
 	if rowFetchLimit <= 0 || rowFetchLimit > int64(^uint(0)>>1) {
 		return nil, nil, false, fmt.Errorf("table %q pivot window is too large", table.Definition.ID)
 	}
-	rowSorts := make([]reportdef.QuerySort, 0, len(sorts))
-	rowFields := make(map[string]struct{}, len(rowDimensions))
-	for _, field := range rowDimensions {
-		rowFields[field.Alias] = struct{}{}
-	}
-	for _, sort := range sorts {
-		if _, ok := rowFields[sort.Field]; ok {
-			rowSorts = append(rowSorts, sort)
-		}
-	}
-	if len(rowSorts) == 0 {
-		rowSorts = append(rowSorts, rowDimensionSorts(table.Rows)...)
-	}
+	rowSorts := sortsForPivotDimensions(sorts, rowDimensions, metrics)
 	rawAxisRows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
 		Dataset:    table.Table,
 		Dimensions: rowDimensions,
 		Metrics:    metrics,
 		Filters:    queryFilters,
 		Sort:       rowSorts,
-		Offset:     0,
+		Offset:     int(table.Offset),
 		Limit:      int(rowFetchLimit),
 	})
 	if err != nil {
 		return nil, nil, false, err
 	}
 	axisRows := dedupePivotAxisRows(tableRowsFromAnalytics(rawAxisRows), table.Rows)
-	calculationIncomplete := len(axisRows) > int(table.Offset+rowLimit)
-	selectedAxisRows := applyPivotWindow(axisRows, table.Offset, table.Limit)
+	calculationIncomplete := len(axisRows) >= int(rowFetchLimit)
+	selectedAxisRows := axisRows
+	if len(selectedAxisRows) > int(rowLimit) {
+		selectedAxisRows = selectedAxisRows[:int(rowLimit)]
+	}
 	selectedIdentities := make(map[string]struct{}, len(selectedAxisRows))
 	for _, axisRow := range selectedAxisRows {
 		selectedIdentities[pivotRowIdentity(axisRow, table.Rows)] = struct{}{}
 	}
-	cellFilters := append([]reportdef.QueryFilter(nil), queryFilters...)
-	if len(selectedAxisRows) > 0 {
-		groups := make([]reportdef.QueryFilterGroup, 0, len(selectedAxisRows))
-		for _, axisRow := range selectedAxisRows {
-			group := reportdef.QueryFilterGroup{}
-			for _, dimension := range table.Rows {
-				value := axisRow[dimension.Alias]
-				if value == nil {
-					group.Filters = append(group.Filters, reportdef.QueryFilter{Field: dimension.FieldID, Operator: "is_null"})
-				} else {
-					group.Filters = append(group.Filters, reportdef.QueryFilter{Field: dimension.FieldID, Operator: "equals", Values: []any{value}})
-				}
-			}
-			groups = append(groups, group)
-		}
-		if len(groups) == 1 {
-			cellFilters = append(cellFilters, groups[0].Filters...)
-		} else {
-			cellFilters = append(cellFilters, reportdef.QueryFilter{Groups: groups})
-		}
-	}
-	rawRows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
-		Dataset:    table.Table,
-		Dimensions: dimensions,
-		Metrics:    metrics,
-		Filters:    cellFilters,
-		Sort:       sorts,
-		Offset:     0,
-		Limit:      0,
-	})
-	if err != nil {
-		return nil, nil, false, err
-	}
-	normalizedRows := tableRowsFromAnalytics(rawRows)
+	normalizedRows := []map[string]any(nil)
 	if len(selectedIdentities) > 0 {
+		cellLimit := int(base.DataBudget.MaxRows) + 1
+		if cellLimit <= 1 {
+			return nil, nil, false, fmt.Errorf("table %q has invalid data budget maxRows %d", table.Definition.ID, base.DataBudget.MaxRows)
+		}
+		rawRows, queryErr := runtime.data.Query(ctx, reportdef.AggregateQuery{
+			Dataset: table.Table, Dimensions: dimensions, Metrics: metrics,
+			Filters: queryFilters, Sort: sorts, Offset: 0, Limit: cellLimit,
+		})
+		if queryErr != nil {
+			return nil, nil, false, queryErr
+		}
+		normalizedRows = tableRowsFromAnalytics(rawRows)
+		if len(normalizedRows) >= cellLimit {
+			return nil, nil, false, fmt.Errorf("table %q pivot cells exceed data budget maxRows %d", table.Definition.ID, base.DataBudget.MaxRows)
+		}
 		filtered := normalizedRows[:0]
 		for _, raw := range normalizedRows {
 			if _, ok := selectedIdentities[pivotRowIdentity(raw, table.Rows)]; ok {
@@ -361,12 +338,6 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 			}
 		}
 		normalizedRows = filtered
-	} else {
-		normalizedRows = nil
-	}
-	base, err := visualizationir.SpecificationBase(table.Definition.Spec)
-	if err != nil {
-		return nil, nil, false, err
 	}
 	if base.Calculations != nil && len(*base.Calculations) > 0 {
 		completeness := boundedFrameCompleteness(len(axisRows), int(rowFetchLimit))
@@ -376,18 +347,26 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 		}
 	}
 	valueFields := crossTabValueFields(table, base, runtime.model)
+	if table.Totals != nil && (table.Totals.Columns || table.Totals.Grand) && len(valueFields) > len(table.Metrics) {
+		return nil, nil, false, fmt.Errorf("table %q exact column/grand totals do not support calculated metrics", table.Definition.ID)
+	}
 	var columnTotalRows, grandTotalRows []map[string]any
 	if table.Totals != nil && (table.Totals.Columns || table.Totals.Grand) {
 		totalDimensions := []reportdef.QueryField(nil)
 		if table.Totals.Columns {
 			totalDimensions = append(totalDimensions, dimensions[len(table.Rows):]...)
 		}
+		totalSorts := sortsForPivotDimensions(sorts, totalDimensions, metrics)
+		totalLimit := int(base.DataBudget.MaxRows) + 1
 		totalRows, totalErr := runtime.data.Query(ctx, reportdef.AggregateQuery{
 			Dataset: table.Table, Dimensions: totalDimensions, Metrics: metrics,
-			Filters: queryFilters, Sort: sorts, Limit: 0,
+			Filters: queryFilters, Sort: totalSorts, Limit: totalLimit,
 		})
 		if totalErr != nil {
 			return nil, nil, false, totalErr
+		}
+		if len(totalRows) >= totalLimit {
+			return nil, nil, false, fmt.Errorf("table %q pivot totals exceed data budget maxRows %d", table.Definition.ID, base.DataBudget.MaxRows)
 		}
 		if table.Totals.Columns {
 			columnTotalRows = tableRowsFromAnalytics(totalRows)
@@ -397,7 +376,7 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 		if table.Totals.Columns && table.Totals.Grand {
 			grandRows, grandErr := runtime.data.Query(ctx, reportdef.AggregateQuery{
 				Dataset: table.Table, Dimensions: nil, Metrics: metrics,
-				Filters: queryFilters, Limit: 1,
+				Filters: queryFilters, Limit: 2,
 			})
 			if grandErr != nil {
 				return nil, nil, false, grandErr
@@ -409,6 +388,7 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 	pivotKeys := map[string]string{}
 	usedKeys := map[string]string{}
 	columnKeys := map[string]string{}
+	columnIdentityByKey := map[string]string{}
 	for _, column := range baseColumns {
 		usedKeys[column.Key] = column.Key
 	}
@@ -428,7 +408,7 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 			pivotKeys[pivotIdentity] = pivotKey
 		}
 		metricKey := valueField.key
-		columnIdentity := label + "\x00" + metricKey
+		columnIdentity := typedTupleIdentity(columnValues) + "\x00" + metricKey
 		if columnKey, ok := columnKeys[columnIdentity]; ok {
 			return columnKey
 		}
@@ -445,6 +425,7 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 		}
 		columnKey := uniqueTableColumnKey(candidate, usedKeys)
 		columnKeys[columnIdentity] = columnKey
+		columnIdentityByKey[columnKey] = typedTupleIdentity(columnValues)
 		usedKeys[columnKey] = columnKey
 		column := dashboard.TableColumn{Key: columnKey, Label: columnLabel, Align: "right", Role: "metric", Group: groupLabel, Metric: metricKey, ColumnValue: label, Format: valueField.format, DataType: string(valueField.dataType), Formatting: valueField.formatting}
 		columns = append(columns, mergeTableColumn(column, tableColumnOverride(table, metricKey)))
@@ -483,21 +464,30 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 	for _, key := range order {
 		result = append(result, resultByKey[key])
 	}
+	sortAggregateTableRows(result, request.Sort)
 	if table.Totals != nil && (table.Totals.Columns || table.Totals.Grand) {
-		columns, result = addPivotTotalsExact(columns, result, table, valueFields, columnTotalRows, grandTotalRows)
+		columns, result = addPivotTotalsExact(columns, result, table, valueFields, columnTotalRows, grandTotalRows, columnIdentityByKey)
 	} else if table.Totals != nil && table.Totals.Rows {
 		columns, result = addPivotTotals(columns, result, table, valueFields)
 	}
-	sortAggregateTableRows(result, request.Sort)
 	return columns, result, calculationIncomplete, nil
 }
 
 func typedTupleIdentity(values []any) string {
-	// Values are already rendered for display, so include each element's byte
-	// length and JSON representation. Length-prefixing makes identities
-	// collision-free even when labels contain the visual separator.
-	encoded, _ := json.Marshal(values)
-	return fmt.Sprintf("%d:%s", len(encoded), encoded)
+	// Include the concrete scalar type as well as a length-prefixed JSON value;
+	// otherwise numerically equal int/float values or display labels can alias
+	// distinct pivot identities.
+	var result strings.Builder
+	for _, value := range values {
+		if value == nil {
+			result.WriteString("<nil>;0:")
+			continue
+		}
+		encoded, _ := json.Marshal(value)
+		result.WriteString(fmt.Sprintf("%T;%d:", value, len(encoded)))
+		result.Write(encoded)
+	}
+	return result.String()
 }
 
 func pivotRowIdentity(row map[string]any, dimensions []visualizationdefinition.FieldBinding) string {
@@ -522,12 +512,30 @@ func dedupePivotAxisRows(rows []map[string]any, dimensions []visualizationdefini
 	return result
 }
 
-func rowDimensionSorts(dimensions []visualizationdefinition.FieldBinding) []reportdef.QuerySort {
-	sorts := make([]reportdef.QuerySort, 0, len(dimensions))
-	for _, dimension := range dimensions {
-		sorts = append(sorts, reportdef.QuerySort{Field: dimension.Alias, Direction: "asc"})
+func sortsForPivotDimensions(sorts []reportdef.QuerySort, dimensions []reportdef.QueryField, metrics []reportdef.QueryField) []reportdef.QuerySort {
+	allowed := make(map[string]struct{}, len(dimensions)+len(metrics))
+	for _, field := range dimensions {
+		allowed[field.Alias] = struct{}{}
 	}
-	return sorts
+	for _, field := range metrics {
+		allowed[field.Alias] = struct{}{}
+	}
+	result := make([]reportdef.QuerySort, 0, len(sorts)+len(dimensions))
+	seen := make(map[string]struct{}, len(sorts)+len(dimensions))
+	for _, sort := range sorts {
+		if _, ok := allowed[sort.Field]; !ok {
+			continue
+		}
+		result = append(result, sort)
+		seen[sort.Field] = struct{}{}
+	}
+	for _, field := range dimensions {
+		if _, ok := seen[field.Alias]; ok {
+			continue
+		}
+		result = append(result, reportdef.QuerySort{Field: field.Alias, Direction: "asc"})
+	}
+	return result
 }
 
 func applyPivotWindow(rows []map[string]any, offset, limit int64) []map[string]any {
@@ -639,7 +647,7 @@ func addPivotTotals(columns []dashboard.TableColumn, rows []map[string]any, tabl
 // addPivotTotalsExact combines row-window cells with independently governed
 // column/grand aggregates. Row totals are scoped to the selected row window;
 // column and grand totals are scoped to the complete filtered relation.
-func addPivotTotalsExact(columns []dashboard.TableColumn, rows []map[string]any, table tablePlan, values []crossTabValueField, columnTotalRows, grandTotalRows []map[string]any) ([]dashboard.TableColumn, []map[string]any) {
+func addPivotTotalsExact(columns []dashboard.TableColumn, rows []map[string]any, table tablePlan, values []crossTabValueField, columnTotalRows, grandTotalRows []map[string]any, columnIdentityByKey map[string]string) ([]dashboard.TableColumn, []map[string]any) {
 	metricColumns := make(map[string][]dashboard.TableColumn)
 	for _, column := range columns {
 		if column.Role == "metric" && column.ColumnValue != "" {
@@ -674,11 +682,11 @@ func addPivotTotalsExact(columns []dashboard.TableColumn, rows []map[string]any,
 	}
 	columnTotals := make(map[string]map[string]any)
 	for _, raw := range columnTotalRows {
-		labelValues := make([]string, 0, len(table.ColumnDims))
+		columnValues := make([]any, 0, len(table.ColumnDims))
 		for _, dimension := range table.ColumnDims {
-			labelValues = append(labelValues, fmt.Sprint(raw[dimension.Alias]))
+			columnValues = append(columnValues, raw[dimension.Alias])
 		}
-		columnTotals[strings.Join(labelValues, " / ")] = raw
+		columnTotals[typedTupleIdentity(columnValues)] = raw
 	}
 	grand := map[string]any{}
 	if len(grandTotalRows) > 0 {
@@ -693,7 +701,7 @@ func addPivotTotalsExact(columns []dashboard.TableColumn, rows []map[string]any,
 			if column.Role != "metric" || column.ColumnValue == "" {
 				continue
 			}
-			if raw, ok := columnTotals[column.ColumnValue]; ok {
+			if raw, ok := columnTotals[columnIdentityByKey[column.Key]]; ok {
 				totalRow[column.Key] = raw[column.Metric]
 			}
 		}
