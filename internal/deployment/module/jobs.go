@@ -77,14 +77,20 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	if m.jobs.Coordinator == nil {
 		return fmt.Errorf("deployment coordinator is unavailable")
 	}
+	logger := m.jobs.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	var payload ActivateJob
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		return err
 	}
+	logger.InfoContext(ctx, "deployment activation started", "deployment", payload.Deployment, "bootstrap", payload.Bootstrap, "rollback", payload.Rollback)
 	pending, err := m.jobs.Coordinator.Get(ctx, apiadapter.Scope{Project: payload.Project, DeploymentID: payload.Deployment})
 	if err != nil {
 		return err
 	}
+	logger.InfoContext(ctx, "deployment activation loaded pending row", "deployment", payload.Deployment, "status", pending.Status, "generation", pending.GenerationID)
 	releaseID := ""
 	if m.sealedCoordinator != nil && m.api.Releases != nil {
 		resolved, _, resolveErr := m.api.Releases.DeploymentRelease(ctx, payload.Project, payload.Deployment)
@@ -175,15 +181,18 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			}
 			row = mapSealedDeployment(activated)
 		} else {
+			logger.InfoContext(ctx, "deployment activation sealed publish starting", "deployment", payload.Deployment, "bootstrap", payload.Bootstrap)
 			request, resolveErr := m.sealedPublishRequest(ctx, pending, releaseID, payload.Credential, payload.Bootstrap)
 			if resolveErr != nil {
 				return resolveErr
 			}
 			_, publishErr := m.sealedCoordinator.Publish(ctx, request)
 			if publishErr != nil {
+				logger.ErrorContext(ctx, "deployment activation sealed publish failed", "deployment", payload.Deployment, "error", publishErr)
 				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
 				return publishErr
 			}
+			logger.InfoContext(ctx, "deployment activation sealed publish committed", "deployment", payload.Deployment)
 			activation := sealedActivationInput(pending, payload.Actor, request.Seal.CatalogDigest)
 			activated, markErr := m.sealedActivationMarker(ctx, activation)
 			if markErr != nil {

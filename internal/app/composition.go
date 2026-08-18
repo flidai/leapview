@@ -695,6 +695,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return authorizeSealedPublication(ctx, binding, instanceID, sealedDelivery, accessModule, runtimeHostModule)
 			},
 			VerifySeal: func(ctx context.Context, binding sealedcontrol.SealBinding) error {
+				slog.Default().InfoContext(ctx, "sealed publication seal verification started", "deployment", binding.DeploymentID, "candidate", binding.CandidateID, "bootstrap", binding.Bootstrap)
 				candidate, err := sealedDelivery.DeliveryCandidateByID(ctx, binding.CandidateID)
 				if err != nil {
 					return err
@@ -721,6 +722,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 					return fmt.Errorf("open sealed catalog object: %w", err)
 				}
 				defer object.Body.Close()
+				slog.Default().InfoContext(ctx, "sealed publication catalog object opened", "deployment", binding.DeploymentID, "objectKey", binding.Seal.CatalogObjectKey, "size", binding.Seal.ObjectSize)
 				hash := sha256.New()
 				n, err := io.Copy(hash, object.Body)
 				if err != nil {
@@ -729,6 +731,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				if n != binding.Seal.ObjectSize || object.Size != binding.Seal.ObjectSize || "sha256:"+hex.EncodeToString(hash.Sum(nil)) != binding.Seal.CatalogDigest {
 					return fmt.Errorf("sealed catalog object bytes or metadata do not match verified seal")
 				}
+				slog.Default().InfoContext(ctx, "sealed publication seal verification completed", "deployment", binding.DeploymentID, "candidate", binding.CandidateID)
 				return nil
 			},
 		}
@@ -1519,6 +1522,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if sealedCoordinator != nil && routes.deploymentModule != nil {
 		durableApproval := routes.deploymentModule.SealedApprovalVerifier()
 		sealedCoordinator.ApprovalVerifier = func(approvalCtx context.Context, binding sealedcontrol.SealBinding, publication deployment.PublicationIntent) error {
+			slog.Default().InfoContext(approvalCtx, "sealed publication approval verification started", "deployment", binding.DeploymentID, "bootstrap", binding.Bootstrap)
 			if binding.Bootstrap {
 				// The activation worker has already revalidated the durable
 				// one-shot bootstrap policy. Recheck the active-generation fence
@@ -1537,6 +1541,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				if activeErr != nil {
 					return activeErr
 				}
+				slog.Default().InfoContext(approvalCtx, "sealed publication bootstrap fence checked", "deployment", binding.DeploymentID, "active", active)
 				if !active {
 					return nil
 				}
@@ -1546,9 +1551,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return planErr
 			}
 			if !plan.Governance.RequiresApproval {
+				slog.Default().InfoContext(approvalCtx, "sealed publication approval not required", "deployment", binding.DeploymentID)
 				return nil
 			}
-			return durableApproval(approvalCtx, binding, publication)
+			err := durableApproval(approvalCtx, binding, publication)
+			if err != nil {
+				slog.Default().ErrorContext(approvalCtx, "sealed publication approval verification failed", "deployment", binding.DeploymentID, "error", err)
+			}
+			return err
 		}
 	}
 	runtime.runtimeHostModule = runtimeHostModule
