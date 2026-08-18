@@ -698,23 +698,11 @@
             "lance"
           ],
           "type": "string"
-        },
-        "options": {
-          "$ref": "#/$defs/LanceReaderOptions"
         }
       },
       "required": [
         "format"
       ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "LanceReaderOptions": {
-      "properties": {
-        "version": {
-          "type": "string"
-        }
-      },
       "type": "object",
       "unevaluatedProperties": false,
       "x-leapview-format": {
@@ -1358,9 +1346,6 @@
         "json": {
           "$ref": "#/$defs/JSONReaderOptions"
         },
-        "lance": {
-          "$ref": "#/$defs/LanceReaderOptions"
-        },
         "parquet": {
           "$ref": "#/$defs/ParquetReaderOptions"
         },
@@ -1415,7 +1400,7 @@
           "type": "string"
         },
         "to": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*\\.[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "type": {
@@ -1451,7 +1436,7 @@
           "type": "string"
         },
         "name": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$",
           "type": "string"
         },
         "owner": {

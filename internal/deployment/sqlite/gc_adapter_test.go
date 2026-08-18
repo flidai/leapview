@@ -169,7 +169,7 @@ func TestQuarantineRootCommitsOperatorAuditWithProjection(t *testing.T) {
 	if seal, err = repo.VerifyCatalogSeal(ctx, seal.ID, repoDeliveryDigest('f'), repoDeliveryDigest('0'), now.Add(4*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := repo.CreateCandidateReady(ctx, deployment.DeliveryCandidate{ID: "candidate-quarantine-audit", PlanID: plan.ID, PlanDigest: plan.Digest, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, BaseTargetRevision: 0, SealID: seal.ID, CatalogDigest: seal.CatalogDigest, CompatibilityDigest: seal.CompatibilityDigest, CatalogObjectKey: seal.ObjectKey, PhysicalPoolID: pool, ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateID: "state-quarantine-audit", CreatedAt: now}, seal, now.Add(5*time.Minute))
+	candidate, err := repo.CreateCandidateReady(ctx, deployment.DeliveryCandidate{ID: "candidate-quarantine-audit", PlanID: plan.ID, PlanDigest: plan.Digest, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, BaseTargetRevision: 0, SealID: seal.ID, CatalogDigest: seal.CatalogDigest, CompatibilityDigest: seal.CompatibilityDigest, CatalogObjectKey: seal.ObjectKey, PhysicalPoolID: pool, ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateID: "state-quarantine-audit", CreatedAt: now, ResolvedInputs: sqliteResolvedInputs(t, plan, "candidate-quarantine-audit")}, seal, now.Add(5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}

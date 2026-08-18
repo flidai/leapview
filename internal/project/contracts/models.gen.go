@@ -582,12 +582,7 @@ type JSONReaderOptions struct {
 
 type LancePathSourceLocation struct {
 	PathSourceLocationBase
-	Format  string              `json:"format" yaml:"format"`
-	Options *LanceReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
-}
-
-type LanceReaderOptions struct {
-	Version *string `json:"version,omitempty" yaml:"version,omitempty"`
+	Format string `json:"format" yaml:"format"`
 }
 
 type ManagedConnection struct {
@@ -1562,7 +1557,6 @@ type ReaderDefaults struct {
 	Vortex  *VortexReaderOptions  `json:"vortex,omitempty" yaml:"vortex,omitempty"`
 	Delta   *DeltaReaderOptions   `json:"delta,omitempty" yaml:"delta,omitempty"`
 	Iceberg *IcebergReaderOptions `json:"iceberg,omitempty" yaml:"iceberg,omitempty"`
-	Lance   *LanceReaderOptions   `json:"lance,omitempty" yaml:"lance,omitempty"`
 }
 
 type RelationSourceLocation struct {

@@ -120,8 +120,9 @@ type GenerationPlanProvenance struct {
 	// artifacts admitted while preparing this candidate. It is optional for
 	// historical releases and canonicalized when present.
 	Extensions []extension.Evidence `json:"extensions,omitempty"`
-	// GateEvidence is optional for historical provenance rows. New candidates
-	// carrying executable source/model gates persist the exact sealed record.
+	// GateEvidence is required for every v1 provenance row. Projects without
+	// authored checks still persist a canonical success record with empty
+	// components, so nil cannot represent a current candidate.
 	GateEvidence *GateEvidence `json:"gateEvidence,omitempty"`
 }
 
@@ -164,6 +165,9 @@ func newProvenance(input ProvenanceInput) (Provenance, error) {
 	plan, err := normalizeGenerationPlanProvenance(input.Plan, artifact)
 	if err != nil {
 		return Provenance{}, err
+	}
+	if plan.GateEvidence == nil || plan.GateEvidence.CandidateID != candidate.ID {
+		return Provenance{}, provenanceInvalid(errors.New("gate evidence is not bound to candidate identity"))
 	}
 	artifactDigest, err := canonicalDigest(artifact)
 	if err != nil {
@@ -290,16 +294,20 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	if err != nil {
 		return GenerationPlanProvenance{}, err
 	}
-	if p.GateEvidence != nil {
-		canonical, gateErr := p.GateEvidence.Canonical()
-		if gateErr != nil {
-			return GenerationPlanProvenance{}, provenanceInvalid(gateErr)
-		}
-		if canonical.SourceDigest != artifact.SourceDigest || canonical.RuntimeVersion != p.RuntimeVersion || canonical.BindingGeneration != BindingFingerprint(p.Bindings) {
-			return GenerationPlanProvenance{}, provenanceInvalid(errors.New("gate evidence is not bound to artifact, runtime, or generation identity"))
-		}
-		p.GateEvidence = &canonical
+	if p.GateEvidence == nil {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("gate evidence is required for v1 provenance"))
 	}
+	canonical, gateErr := p.GateEvidence.Canonical()
+	if gateErr != nil {
+		return GenerationPlanProvenance{}, provenanceInvalid(gateErr)
+	}
+	if canonical.SourceDigest != artifact.SourceDigest || canonical.RuntimeVersion != p.RuntimeVersion || canonical.BindingGeneration != BindingFingerprint(p.Bindings) {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("gate evidence is not bound to artifact, runtime, or generation identity"))
+	}
+	if canonical.Outcome != GateSuccess && canonical.Outcome != GateWarning {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("failed gate evidence cannot be sealed into generation provenance"))
+	}
+	p.GateEvidence = &canonical
 	if p.DataMode == GenerationDataReuseBase && len(p.AuthoredConnections) != 0 {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("snapshot reuse cannot retain authored refresh connection evidence"))
 	}

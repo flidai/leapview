@@ -16,29 +16,26 @@ metadata:
   name: orders
   displayName: Orders
 spec:
+  definition:
+    type: sql
+    sql: |
+      SELECT order_id, try_cast(order_purchase_timestamp AS DATE) AS purchase_date,
+        CAST(0 AS DECIMAL(38, 2)) AS revenue
+      FROM source."olist.orders"
+      WHERE order_id IS NOT NULL
   entities:
     order:
       type: primary
       fields: [order_id]
   grain:
     entity: order
-  sources:
-    - olist.orders
   fields:
     order_id: {datatype: String, label: Order ID}
     purchase_date: {datatype: Date, label: Purchase date}
     revenue: {datatype: Decimal, label: Revenue}
-  transform:
-    sql: |
-      SELECT
-        order_id,
-        try_cast(order_purchase_timestamp AS DATE) AS purchase_date,
-        CAST(0 AS DECIMAL(38, 2)) AS revenue
-      FROM source."olist.orders"
-      WHERE order_id IS NOT NULL
 ```
 
-The generated [Model configuration](/docs/config/model) is the exact field reference. Real transformations can use several declared sources and should expose every field needed by downstream semantic models.
+The generated [Model configuration](/docs/config/model) is the exact field reference. Governed source/model relations can feed a transformation, and the compiler derives the resulting lineage so downstream semantic models see every exposed field.
 
 ## Grain and identity entities
 
@@ -73,7 +70,7 @@ Business aggregations such as revenue, active customers, or conversion rate gene
 
 ## Source namespace
 
-Transform SQL reads permitted project sources through the source namespace. Quoted names are important when source IDs contain dots. Depend only on sources declared on the model table; this keeps lineage and refresh planning accurate.
+Transform SQL reads permitted project sources through the source namespace. Quoted names are important when source IDs contain dots. The compiler derives lineage from governed SQL and keeps refresh planning accurate.
 
 ## Refresh and activation
 

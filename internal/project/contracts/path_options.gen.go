@@ -76,11 +76,6 @@ func DefaultIcebergReaderOptions() *IcebergReaderOptions {
 	return nil
 }
 
-// DefaultLanceReaderOptions returns the generated, versioned defaults for lance path sources.
-func DefaultLanceReaderOptions() *LanceReaderOptions {
-	return nil
-}
-
 // PathFormatNames is generated from PathSourceLocation.format.
 var PathFormatNames = []string{"csv", "json", "parquet", "excel", "text", "blob", "vortex", "delta", "iceberg", "lance"}
 

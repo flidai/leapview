@@ -444,10 +444,14 @@ func TestCandidateReleaseProvenanceCarriesAuthoredConnections(t *testing.T) {
 	artifacts := candidateArtifactSetForTest(digest, "state_public", release.GenerationDataRefreshSources)
 	connectionID, _ := projectgraph.NewResourceID("public_http")
 	artifacts.Generation.AuthoredConnections = []release.CandidateAuthoredConnection{{ConnectionID: connectionID, ConnectorKind: "http"}}
+	binding, err := deployment.BindingFingerprint(nil)
+	require.NoError(t, err)
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: started.Candidate.ID, SourceDigest: digest, BindingGeneration: binding, RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	require.NoError(t, err)
 	provenance, err := candidateReleaseProvenance(
 		started.Candidate,
 		artifacts,
-		deployment.CandidateRuntimeReceipt{RuntimeVersion: "runtime:test"},
+		deployment.CandidateRuntimeReceipt{RuntimeVersion: "runtime:test", BindingFingerprint: binding, GateEvidence: &evidence},
 		nil,
 	)
 	require.NoError(t, err)
@@ -888,7 +892,7 @@ func (recorder *candidateRuntimeLifecycleRecorder) ReapExpiredCandidates(time.Ti
 
 func (stub *candidateRuntimePreparerStub) Prepare(
 	ctx context.Context,
-	_ deployment.CandidateRuntimeRequest,
+	request deployment.CandidateRuntimeRequest,
 ) (deployment.CandidateRuntimeReceipt, error) {
 	stub.calls++
 	if stub.requireAdmission {
@@ -898,7 +902,18 @@ func (stub *candidateRuntimePreparerStub) Prepare(
 			)
 		}
 	}
-	return stub.receipt, stub.err
+	receipt := stub.receipt
+	if receipt.GateEvidence == nil && receipt.RuntimeVersion != "" {
+		binding := receipt.BindingFingerprint
+		if binding == "" {
+			binding, _ = deployment.BindingFingerprint(receipt.Bindings)
+		}
+		evidence, err := (release.GateEvidence{Version: 1, CandidateID: request.Candidate.ID, SourceDigest: request.Candidate.ArtifactDigest, BindingGeneration: binding, RuntimeVersion: receipt.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Now().UTC(), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+		if err == nil {
+			receipt.GateEvidence = &evidence
+		}
+	}
+	return receipt, stub.err
 }
 
 type candidatePreparationAdmissionKey struct{}

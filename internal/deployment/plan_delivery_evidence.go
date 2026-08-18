@@ -384,8 +384,8 @@ type DeliveryResolvedBuildInputs struct {
 	Inputs         []DeliveryResolvedDataInput `json:"inputs,omitempty"`
 	PolicyDigest   string                      `json:"policyDigest"`
 	EvidenceDigest string                      `json:"evidenceDigest,omitempty"`
-	// GateEvidence is optional only for historical rows. New candidates that
-	// declare executable gates must populate the canonical release record.
+	// GateEvidence is required for every v1 resolved-input record. No-gate
+	// projects persist canonical success evidence with empty components.
 	GateEvidence *release.GateEvidence `json:"gateEvidence,omitempty"`
 }
 
@@ -407,14 +407,18 @@ func (inputs DeliveryResolvedBuildInputs) Validate() error {
 			return fmt.Errorf("resolved input policy: %w", err)
 		}
 	}
-	if inputs.GateEvidence != nil {
-		canonical, err := inputs.GateEvidence.Canonical()
-		if err != nil {
-			return fmt.Errorf("resolved gate evidence: %w", err)
-		}
-		if canonical.Digest != inputs.GateEvidence.Digest {
-			return fmt.Errorf("%w: resolved gate evidence is not canonical", ErrDeliveryConflict)
-		}
+	if inputs.GateEvidence == nil {
+		return fmt.Errorf("%w: resolved gate evidence is required", ErrDeliveryInvalid)
+	}
+	canonical, err := inputs.GateEvidence.Canonical()
+	if err != nil {
+		return fmt.Errorf("resolved gate evidence: %w", err)
+	}
+	if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+		return fmt.Errorf("%w: resolved gate evidence outcome %q cannot qualify", ErrDeliveryConflict, canonical.Outcome)
+	}
+	if canonical.Digest != inputs.GateEvidence.Digest {
+		return fmt.Errorf("%w: resolved gate evidence is not canonical", ErrDeliveryConflict)
 	}
 	seen := map[string]bool{}
 	for _, input := range inputs.Inputs {
@@ -482,14 +486,21 @@ func NewDeliveryResolvedBuildInputs(inputs DeliveryResolvedBuildInputs) (Deliver
 // canonical empty evidence digest so ready candidates never carry ambiguous
 // zero-value evidence.
 func ValidateDeliveryResolvedBuildInputs(plan DeliveryPlan, inputs DeliveryResolvedBuildInputs) (DeliveryResolvedBuildInputs, error) {
-	if inputs.GateEvidence != nil {
-		canonical, gateErr := inputs.GateEvidence.Canonical()
-		if gateErr != nil {
-			return DeliveryResolvedBuildInputs{}, gateErr
-		}
-		if canonical.Digest != inputs.GateEvidence.Digest {
-			return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence digest does not match canonical evidence", ErrDeliveryConflict)
-		}
+	if inputs.GateEvidence == nil {
+		return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence is required", ErrDeliveryInvalid)
+	}
+	canonical, gateErr := inputs.GateEvidence.Canonical()
+	if gateErr != nil {
+		return DeliveryResolvedBuildInputs{}, gateErr
+	}
+	if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+		return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence outcome %q cannot qualify", ErrDeliveryConflict, canonical.Outcome)
+	}
+	if canonical.SourceDigest != plan.SourceDigest {
+		return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence source digest does not match plan", ErrDeliveryConflict)
+	}
+	if canonical.Digest != inputs.GateEvidence.Digest {
+		return DeliveryResolvedBuildInputs{}, fmt.Errorf("%w: resolved gate evidence digest does not match canonical evidence", ErrDeliveryConflict)
 	}
 	resolved, err := NewDeliveryResolvedBuildInputs(inputs)
 	if err != nil {

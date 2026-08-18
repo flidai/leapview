@@ -143,8 +143,8 @@ func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testin
 			format:   "lance",
 			location: &projectcontracts.LancePathSourceLocation{PathSourceLocationBase: pathBase("lance"), Format: "lance"},
 			assert: func(t *testing.T, got *projectcontracts.PathSourceLocation) {
-				if got.Value.(*projectcontracts.LancePathSourceLocation).Options != nil {
-					t.Fatalf("lance options = %#v, want nil", got.Value)
+				if _, ok := got.Value.(*projectcontracts.LancePathSourceLocation); !ok {
+					t.Fatalf("lance location = %#v, want lance variant", got.Value)
 				}
 			},
 		},

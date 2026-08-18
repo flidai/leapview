@@ -211,13 +211,14 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 	if generation.Identity.ProjectID != candidate.Scope.ProjectID || generation.Identity.Environment != candidate.Scope.Environment {
 		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
-	if generation.GateEvidence != nil {
-		canonical, gateErr := generation.GateEvidence.Canonical()
-		if gateErr != nil || canonical.CandidateID == "" || canonical.CandidateID != candidate.ID || canonical.RuntimeVersion != service.runtimeVersion || generation.BindingFingerprint == "" || canonical.BindingGeneration != generation.BindingFingerprint {
-			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
-		}
-		generation.GateEvidence = &canonical
+	if generation.GateEvidence == nil {
+		return CandidateRuntimeReceipt{}, fmt.Errorf("%w: canonical gate evidence is required", ErrCandidateInvalid)
 	}
+	canonical, gateErr := generation.GateEvidence.Canonical()
+	if gateErr != nil || canonical.CandidateID == "" || canonical.CandidateID != candidate.ID || canonical.SourceDigest != candidate.ArtifactDigest || canonical.RuntimeVersion != service.runtimeVersion || (canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning) {
+		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
+	}
+	generation.GateEvidence = &canonical
 	projectID := generation.Identity.ProjectID
 	leases, err := service.connections.Acquire(ctx, CandidateConnectionRequest{
 		CandidateID: candidate.ID, Actor: candidate.OwnerID, TargetID: candidate.TargetID,
@@ -241,6 +242,10 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 	if generation.BindingFingerprint != "" && generation.BindingFingerprint != bindingFingerprint {
 		_ = leases.Close()
 		return CandidateRuntimeReceipt{}, fmt.Errorf("%w: acquired connection binding evidence changed", ErrCandidateInvalid)
+	}
+	if generation.GateEvidence.BindingGeneration != bindingFingerprint {
+		_ = leases.Close()
+		return CandidateRuntimeReceipt{}, fmt.Errorf("%w: gate evidence binding evidence changed", ErrCandidateInvalid)
 	}
 	preparation := runtimehost.CandidatePreparation{
 		Registration: runtimehost.CandidateRegistration{

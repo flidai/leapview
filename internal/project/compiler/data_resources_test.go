@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -137,5 +138,38 @@ spec:
 	pathSource := semanticmodel.Source{LocationType: semanticmodel.KindPath, Path: "orders.csv", Format: "csv", Connection: "warehouse"}
 	if err := pathSource.Validate("orders", map[string]semanticmodel.Connection{"warehouse": {Kind: "postgres"}}); err == nil {
 		t.Fatal("path source accepted relation-only connector")
+	}
+}
+
+func TestTypedModelRelationshipReferenceRequiresDatasetAndField(t *testing.T) {
+	valid := `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  definition: {type: direct, source: source:orders}
+  entities: {id: {type: primary, fields: [id]}}
+  grain: {entity: id}
+  fields: {id: {datatype: Integer}, customer_id: {datatype: Integer}}
+  checks:
+    - {type: relationship, field: customer_id, to: customers.customer_id}
+`
+	table, _, err := decodeModelResource("model.yaml", []byte(valid), metadata{})
+	if err != nil {
+		t.Fatalf("valid relationship reference rejected: %v", err)
+	}
+	if len(table.Checks) != 1 || table.Checks[0].To != "customers.customer_id" {
+		t.Fatalf("lowered relationship check = %#v", table.Checks)
+	}
+	dotted := strings.Replace(valid, "customers.customer_id", "customers.v2.customer_id", 1)
+	if dottedTable, _, err := decodeModelResource("model-dotted.yaml", []byte(dotted), metadata{}); err != nil || len(dottedTable.Checks) != 1 || dottedTable.Checks[0].To != "customers.v2.customer_id" {
+		t.Fatalf("dotted relationship reference table=%#v err=%v", dottedTable, err)
+	}
+	for _, reference := range []string{"customers", "customers..customer_id", "customers;DROP.customer_id"} {
+		t.Run(reference, func(t *testing.T) {
+			invalid := strings.Replace(valid, "customers.customer_id", reference, 1)
+			if _, _, err := decodeModelResource("model.yaml", []byte(invalid), metadata{}); err == nil {
+				t.Fatalf("relationship reference %q was accepted", reference)
+			}
+		})
 	}
 }

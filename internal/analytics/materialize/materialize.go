@@ -28,8 +28,11 @@ type PreparedSources interface {
 }
 
 // SourceObservation is captured from the resolved source session before that
-// session (and its credentials) is closed.  Runtime gate evaluation consumes
+// session (and its credentials) is closed. Runtime gate evaluation consumes
 // this value after detachment; it never re-opens authored paths or relations.
+// For revision freshness, RevisionObserved is the canonical UTC timestamp
+// selected by the authored revision contract; adapters may replace it with
+// target metadata when a connector exposes a stronger equivalent.
 type SourceObservation struct {
 	ID                 string
 	Schema             []semanticmodel.ColumnSchema

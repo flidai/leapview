@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -99,6 +100,11 @@ func TestReleaseRepositoryRetainsCandidateProvenanceImmutably(t *testing.T) {
 
 	changed := provenance
 	changed.Plan.RuntimeVersion = "runtime:changed"
+	changedGate := *changed.Plan.GateEvidence
+	changedGate.RuntimeVersion = changed.Plan.RuntimeVersion
+	changedGate, err = changedGate.Canonical()
+	require.NoError(t, err)
+	changed.Plan.GateEvidence = &changedGate
 	changed, err = release.NewProvenance(release.ProvenanceInput{Artifact: changed.Artifact, Candidate: changed.Candidate, Plan: changed.Plan})
 	require.NoError(t, err)
 	if _, err := repo.RetainCandidateProvenance(t.Context(), projectID, changed); !errors.Is(err, release.ErrConflict) {
@@ -330,11 +336,12 @@ func testServingIdentity(project, environment, generation string) projectgraph.S
 
 func testReleaseProvenance(t *testing.T, identity projectgraph.ServingIdentity) release.Provenance {
 	t.Helper()
-	p, err := release.NewProvenance(release.ProvenanceInput{
-		Artifact:  release.ProjectArtifactProvenance{SourceDigest: testDigest("1"), ProjectDigest: testDigest("2"), ContentDigest: testDigest("3"), CompilerVersion: "leapview:test", SchemaVersion: 3},
-		Candidate: release.CandidateProvenance{ID: "cand_1", Revision: 2, OwnerID: "principal_1"},
-		Plan:      release.GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:test", PolicyDigest: testDigest("4"), DataRevision: "snapshot:1", DataMode: release.GenerationDataRefreshSources, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: testDigest("7")}}, Bindings: []release.BindingEvidence{{BindingID: "warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 2, ValidatedVersion: "version-7", EndpointConfigHash: testDigest("8")}}},
-	})
+	input := release.ProvenanceInput{Artifact: release.ProjectArtifactProvenance{SourceDigest: testDigest("1"), ProjectDigest: testDigest("2"), ContentDigest: testDigest("3"), CompilerVersion: "leapview:test", SchemaVersion: 3}, Candidate: release.CandidateProvenance{ID: "cand_1", Revision: 2, OwnerID: "principal_1"}, Plan: release.GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:test", PolicyDigest: testDigest("4"), DataRevision: "snapshot:1", DataMode: release.GenerationDataRefreshSources, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: testDigest("7")}}, Bindings: []release.BindingEvidence{{BindingID: "warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 2, ValidatedVersion: "version-7", EndpointConfigHash: testDigest("8")}}}}
+	binding := release.BindingFingerprint(input.Plan.Bindings)
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: input.Candidate.ID, SourceDigest: input.Artifact.SourceDigest, BindingGeneration: binding, RuntimeVersion: input.Plan.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	require.NoError(t, err)
+	input.Plan.GateEvidence = &evidence
+	p, err := release.NewProvenance(input)
 	require.NoError(t, err)
 	return p
 }

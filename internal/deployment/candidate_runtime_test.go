@@ -13,7 +13,21 @@ import (
 )
 
 func candidateRuntimeGeneration(identity projectgraph.ServingIdentity, mode CandidateDataMode, revision string) CandidateGenerationRuntime {
-	return CandidateGenerationRuntime{Identity: identity, ArtifactDigest: "sha256:" + strings.Repeat("b", 64), DataRevision: revision, DataMode: mode}
+	binding, _ := BindingFingerprint(nil)
+	evidence, _ := (release.GateEvidence{Version: 1, CandidateID: "cand_1", SourceDigest: "sha256:" + strings.Repeat("a", 64), BindingGeneration: binding, RuntimeVersion: "leapview:test", DuckDBVersion: "duckdb:1", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}).Canonical()
+	return CandidateGenerationRuntime{Identity: identity, ArtifactDigest: "sha256:" + strings.Repeat("b", 64), DataRevision: revision, DataMode: mode, GateEvidence: &evidence, BindingFingerprint: binding}
+}
+
+func candidateRuntimeSetGateBinding(t *testing.T, generation *CandidateGenerationRuntime, bindings []CandidateConnectionEvidence) {
+	t.Helper()
+	binding, err := BindingFingerprint(bindings)
+	require.NoError(t, err)
+	evidence := *generation.GateEvidence
+	evidence.BindingGeneration = binding
+	evidence, err = evidence.Canonical()
+	require.NoError(t, err)
+	generation.BindingFingerprint = binding
+	generation.GateEvidence = &evidence
 }
 
 func TestCandidateRuntimeServicePreparesProjectGenerationWithConnectionEvidence(t *testing.T) {
@@ -27,6 +41,7 @@ func TestCandidateRuntimeServicePreparesProjectGenerationWithConnectionEvidence(
 	generation := candidateRuntimeGeneration(identity, CandidateDataRefreshSources, "sources:managed")
 	generation.ManagedDataConnections = []string{"managed_1"}
 	generation.Connections = []CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}}
+	candidateRuntimeSetGateBinding(t, &generation, []CandidateConnectionEvidence{{BindingID: "binding_warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 7, ProviderVersion: "provider:v3", EndpointConfigHash: "sha256:" + strings.Repeat("9", 64)}})
 	receipt, err := service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: candidate, AuthorizationFingerprint: "policy:v1", Generation: generation})
 	require.NoError(t, err)
 	require.Equal(t, "leapview:test", receipt.RuntimeVersion)
@@ -62,6 +77,47 @@ func TestCandidateRuntimeServiceBindsGateEvidenceIntoReceiptAndCompatibility(t *
 	require.Equal(t, evidence.Digest, host.inputs[0].Registration.Compatibility.GateEvidenceDigest)
 }
 
+func TestCandidateRuntimeServiceRequiresQualifyingGateEvidence(t *testing.T) {
+	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
+	connections, host := &candidateRuntimeConnections{}, &candidateRuntimeHost{}
+	service, err := NewCandidateRuntimeService(CandidateRuntimeServiceConfig{Connections: connections, Runtime: host, RuntimeVersion: "leapview:test"})
+	require.NoError(t, err)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "prod", GenerationID: "generation_2"}
+	requestCandidate := candidateRuntimeTestCandidate(t, now)
+	missing := candidateRuntimeGeneration(identity, CandidateDataRefreshSources, "sources:managed")
+	missing.GateEvidence = nil
+	_, err = service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: requestCandidate, AuthorizationFingerprint: "policy:v1", Generation: missing})
+	require.ErrorIs(t, err, ErrCandidateInvalid)
+
+	failed := candidateRuntimeGeneration(identity, CandidateDataRefreshSources, "sources:managed")
+	evidence := *failed.GateEvidence
+	evidence.Outcome = release.GateBlocking
+	evidence.Sources = []release.GateSourceEvidence{{ID: "source-1", Mode: "inferred", SourceDigest: evidence.SourceDigest, SchemaOutcome: release.GateBlocking}}
+	evidence, err = evidence.Canonical()
+	require.NoError(t, err)
+	failed.GateEvidence = &evidence
+	_, err = service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: requestCandidate, AuthorizationFingerprint: "policy:v1", Generation: failed})
+	require.ErrorIs(t, err, ErrCandidateInvalid)
+	require.Empty(t, connections.requests)
+}
+
+func TestCandidateRuntimeServiceRejectsGateEvidenceFromAnotherArtifact(t *testing.T) {
+	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
+	connections, host := &candidateRuntimeConnections{}, &candidateRuntimeHost{}
+	service, err := NewCandidateRuntimeService(CandidateRuntimeServiceConfig{Connections: connections, Runtime: host, RuntimeVersion: "leapview:test"})
+	require.NoError(t, err)
+	candidate := candidateRuntimeTestCandidate(t, now)
+	generation := candidateRuntimeGeneration(projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "prod", GenerationID: "generation_2"}, CandidateDataRefreshSources, "sources:managed")
+	evidence := *generation.GateEvidence
+	evidence.SourceDigest = "sha256:" + strings.Repeat("c", 64)
+	evidence, err = evidence.Canonical()
+	require.NoError(t, err)
+	generation.GateEvidence = &evidence
+	_, err = service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: candidate, AuthorizationFingerprint: "policy:v1", Generation: generation})
+	require.ErrorIs(t, err, ErrCandidateInvalid)
+	require.Empty(t, connections.requests)
+}
+
 func TestCandidateRuntimeServiceAllowsManagedOnlyRefreshWithoutSecretBinding(t *testing.T) {
 	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
 	connections, host := &candidateRuntimeConnections{}, &candidateRuntimeHost{}
@@ -95,6 +151,7 @@ func TestCandidateRuntimeServiceRetainsBindingEvidenceWhenReusingSnapshot(t *tes
 	require.NoError(t, err)
 	generation := candidateRuntimeGeneration(projectgraph.ServingIdentity{ProjectID: "project_1", Environment: "prod", GenerationID: "generation_2"}, CandidateDataReuseBase, "snapshot:42")
 	generation.Connections = []CandidateConnectionRequirement{{ConnectionID: "warehouse", ConnectorKind: "postgres"}}
+	candidateRuntimeSetGateBinding(t, &generation, []CandidateConnectionEvidence{{BindingID: "binding_warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 7, ProviderVersion: "provider:v3", EndpointConfigHash: "sha256:" + strings.Repeat("9", 64)}})
 	receipt, err := service.Prepare(t.Context(), CandidateRuntimeRequest{Candidate: candidateRuntimeTestCandidate(t, now), AuthorizationFingerprint: "policy:v1", Generation: generation})
 	require.NoError(t, err)
 	require.Len(t, receipt.Bindings, 1)

@@ -22,7 +22,7 @@ This reference is generated from the reviewed TypeSpec connector profiles and ru
 
 ## Path format options
 
-Path Sources retain the scalar ADR shape (`format` plus sibling `options`). Each format is paired with exactly one generated reader option model; unknown or cross-format option fields are rejected.
+Path Sources retain the scalar ADR shape (`format` plus sibling `options`) where a format supports reader options. Optionless formats are emitted without an options model; unknown or cross-format option fields are rejected.
 
 | Format | Option model |
 | --- | --- |
@@ -35,4 +35,4 @@ Path Sources retain the scalar ADR shape (`format` plus sibling `options`). Each
 | `vortex` | `VortexReaderOptions` |
 | `delta` | `DeltaReaderOptions` |
 | `iceberg` | `IcebergReaderOptions` |
-| `lance` | `LanceReaderOptions` |
+| `lance` | none |

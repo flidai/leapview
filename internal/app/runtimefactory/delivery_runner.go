@@ -501,6 +501,9 @@ func (r *candidateCatalogRunner) Qualify(ctx context.Context, buildInput deploym
 		if gateErr != nil {
 			return deployment.DeliveryBuildOutput{}, gateErr
 		}
+		if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+			return deployment.DeliveryBuildOutput{GateEvidence: &canonical}, fmt.Errorf("candidate gate outcome %q cannot qualify or seal", canonical.Outcome)
+		}
 		gateEvidence = &canonical
 	}
 	qualified, err := candidatecatalog.NormalizeAndQualify(ctx, working, qualification)

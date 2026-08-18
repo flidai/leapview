@@ -149,9 +149,6 @@ func ResolveEffectivePathLocation(source semanticmodel.Source, connection semant
 		if variant == nil {
 			return nil, fmt.Errorf("lance path location variant is nil")
 		}
-		if variant.Options != nil || (defaults != nil && defaults.Lance != nil) {
-			return nil, fmt.Errorf("lance source does not support options")
-		}
 		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.LancePathSourceLocation{PathSourceLocationBase: base(variant.Path, variant.Type, "lance"), Format: "lance"}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported path location variant %T", source.PathLocation.Value)

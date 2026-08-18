@@ -250,9 +250,6 @@ func duckDBPathOptions(value *projectcontracts.PathSourceLocation) (map[string]a
 		if variant == nil {
 			return nil, fmt.Errorf("lance path variant is nil")
 		}
-		if variant.Options != nil {
-			return nil, fmt.Errorf("lance source cannot set options")
-		}
 	default:
 		if value.Value == nil {
 			return nil, fmt.Errorf("path variant is required")

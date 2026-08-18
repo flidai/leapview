@@ -29,6 +29,17 @@ func TestProvenanceBindsGateEvidenceAndDetectsTampering(t *testing.T) {
 	require.Error(t, provenance.Validate())
 }
 
+func TestProvenanceRejectsGateEvidenceFromAnotherCandidate(t *testing.T) {
+	input := testGenerationInput(t, GenerationDataRefreshSources)
+	evidence := *input.Plan.GateEvidence
+	evidence.CandidateID = "candidate_other"
+	evidence, err := evidence.Canonical()
+	require.NoError(t, err)
+	input.Plan.GateEvidence = &evidence
+	_, err = NewProvenance(input)
+	require.Error(t, err)
+}
+
 func TestProvenanceDetectsArtifactAndPlanTampering(t *testing.T) {
 	provenance, err := NewProvenance(testGenerationInput(t, GenerationDataRefreshSources))
 	require.NoError(t, err)
@@ -121,11 +132,20 @@ func testGenerationInput(t *testing.T, mode GenerationDataMode) ProvenanceInput 
 	t.Helper()
 	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_2")
 	require.NoError(t, err)
-	return ProvenanceInput{
-		Artifact:  ProjectArtifactProvenance{SourceDigest: testDigest("a"), ProjectDigest: testDigest("b"), ContentDigest: testDigest("c"), CompilerVersion: "compiler:v1", SchemaVersion: 1},
-		Candidate: CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"},
-		Plan:      GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("d"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil},
+	artifact := ProjectArtifactProvenance{SourceDigest: testDigest("a"), ProjectDigest: testDigest("b"), ContentDigest: testDigest("c"), CompilerVersion: "compiler:v1", SchemaVersion: 1}
+	candidate := CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"}
+	plan := GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("d"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil}
+	plan.GateEvidence = testPlanGateEvidence(t, artifact, candidate, plan)
+	return ProvenanceInput{Artifact: artifact, Candidate: candidate, Plan: plan}
+}
+
+func testPlanGateEvidence(t *testing.T, artifact ProjectArtifactProvenance, candidate CandidateProvenance, plan GenerationPlanProvenance) *GateEvidence {
+	t.Helper()
+	evidence, err := (GateEvidence{Version: 1, CandidateID: candidate.ID, SourceDigest: artifact.SourceDigest, BindingGeneration: BindingFingerprint(plan.Bindings), RuntimeVersion: plan.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
 	}
+	return &evidence
 }
 
 func testDigest(value string) string { return "sha256:" + strings.Repeat(value, 64)[:64] }

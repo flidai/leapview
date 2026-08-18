@@ -28,7 +28,7 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 		return planDirectSourceTable(ctx, runtimeDB, model, tableName, table, staged)
 	}
 	if sqlText == "" {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q requires source or transform.sql", tableName)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q requires a direct source binding or definition.sql", tableName)
 	}
 	plannerDB, err := sql.Open("duckdb", "")
 	if err != nil {
@@ -441,7 +441,7 @@ func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sou
 			continue
 		}
 		if _, ok := declared[scan.Table]; !ok {
-			return nil, fmt.Errorf("model table %q SQL plan scanned undeclared source %q", tableName, scan.Table)
+			return nil, fmt.Errorf("model table %q SQL plan scanned source %q outside governed dependencies", tableName, scan.Table)
 		}
 		current := accumulators[scan.Table]
 		if len(scan.Projections) == 0 {
@@ -456,7 +456,7 @@ func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sou
 	for _, source := range sortedStrings(table.SourceDependencies) {
 		current := accumulators[source]
 		if current == nil {
-			return nil, fmt.Errorf("model table %q SQL plan did not scan declared source %q", tableName, source)
+			return nil, fmt.Errorf("model table %q SQL plan did not scan governed source dependency %q", tableName, source)
 		}
 		fields := sortedSet(current.fields)
 		if len(fields) == 0 && !current.rowPresenceOnly {

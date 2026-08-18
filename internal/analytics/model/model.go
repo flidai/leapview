@@ -506,6 +506,9 @@ func validateModelChecks(model *Model, tableName string, table Table) error {
 				return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, check.Field)
 			}
 			if check.Type == "accepted_values" {
+				if table.Dimensions[check.Field].Datatype != DataTypeString {
+					return fmt.Errorf("model table %q check %d accepted_values requires a String field", tableName, index)
+				}
 				if len(check.Values) == 0 {
 					return fmt.Errorf("model table %q check %d accepted_values requires values", tableName, index)
 				}
@@ -536,15 +539,27 @@ func validateModelChecks(model *Model, tableName string, table Table) error {
 				return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, check.Field)
 			}
 			parts := strings.Split(strings.TrimSpace(check.To), ".")
-			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			if len(parts) < 2 || parts[len(parts)-1] == "" {
 				return fmt.Errorf("model table %q check %d relationship target %q is invalid", tableName, index, check.To)
 			}
-			target, ok := model.Tables[parts[0]]
-			if !ok {
-				return fmt.Errorf("model table %q check %d references unknown model %q", tableName, index, parts[0])
+			targetName := strings.Join(parts[:len(parts)-1], ".")
+			var target Table
+			found := false
+			for name, candidate := range model.Tables {
+				if name == targetName || candidate.ModelName == targetName {
+					target, found = candidate, true
+					break
+				}
 			}
-			if _, ok := target.Dimensions[parts[1]]; !ok {
+			if !found {
+				return fmt.Errorf("model table %q check %d references unknown model %q", tableName, index, targetName)
+			}
+			targetField := parts[len(parts)-1]
+			if _, ok := target.Dimensions[targetField]; !ok {
 				return fmt.Errorf("model table %q check %d references unknown target field %q", tableName, index, check.To)
+			}
+			if !relationshipTypesCompatible(table.Dimensions[check.Field], target.Dimensions[targetField]) {
+				return fmt.Errorf("model table %q check %d relationship field %q type %q is incompatible with target %q type %q", tableName, index, check.Field, relationshipFieldType(table.Dimensions[check.Field]), check.To, relationshipFieldType(target.Dimensions[targetField]))
 			}
 		case "row_count":
 			if check.Minimum == nil && check.Maximum == nil || check.Minimum != nil && *check.Minimum < 0 || check.Maximum != nil && *check.Maximum < 0 || check.Minimum != nil && check.Maximum != nil && *check.Minimum > *check.Maximum {

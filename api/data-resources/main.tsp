@@ -10,7 +10,11 @@ namespace LeapViewDataResources;
 @pattern("^[A-Za-z_][A-Za-z0-9_]*$")
 scalar Identifier extends string;
 
-@pattern("^[A-Za-z_][A-Za-z0-9_.-]*$")
+// Governed relationship checks always name an authored model and field explicitly.
+@pattern("^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*\\.[A-Za-z_][A-Za-z0-9_]*$")
+scalar ModelReference extends string;
+
+@pattern("^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$")
 scalar ResourceName extends string;
 
 @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
@@ -78,11 +82,6 @@ model IcebergReaderOptions {
   snapshot?: string;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "lance", extensions: #[".lance"], scanKind: "replacement", requiredExtension: "lance", sourceSecretType: "lance", tableLike: true, allowsOptions: false, defaults: #{} } })
-model LanceReaderOptions {
-  version?: string;
-}
-
 /** Connection defaults are closed by reader format; arbitrary option maps are not public. */
 model ReaderDefaults {
   csv?: CSVReaderOptions;
@@ -94,7 +93,6 @@ model ReaderDefaults {
   vortex?: VortexReaderOptions;
   delta?: DeltaReaderOptions;
   iceberg?: IcebergReaderOptions;
-  lance?: LanceReaderOptions;
 }
 
 @discriminator("type")
@@ -375,9 +373,9 @@ model IcebergPathSourceLocation extends PathSourceLocation {
   options?: IcebergReaderOptions;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "lance", extensions: #[".lance"], scanKind: "replacement", requiredExtension: "lance", sourceSecretType: "lance", tableLike: true, allowsOptions: false, defaults: #{} } })
 model LancePathSourceLocation extends PathSourceLocation {
   format: "lance";
-  options?: LanceReaderOptions;
 }
 
 model RelationSourceLocation {
@@ -455,7 +453,7 @@ model AcceptedValuesModelCheck {
 model RelationshipModelCheck {
   type: "relationship";
   field: Identifier;
-  to: Identifier;
+  to: ModelReference;
   severity?: "warning" | "error";
 }
 

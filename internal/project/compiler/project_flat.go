@@ -454,7 +454,7 @@ func validateFlatProject(project Project) error {
 		}
 		for _, ref := range refs {
 			if _, err := resolver.resolve(ref, projectgraph.KindSource); err != nil {
-				return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec.sources", "Model %q: %v", name, err)
+				return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec.definition", "Model %q governed dependency %q: %v", name, ref, err)
 			}
 		}
 	}

@@ -616,6 +616,17 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 			}
 			return DeliveryBuildResult{}, fail(failureAttempt, "GATE_EVIDENCE_INVALID", fmt.Errorf("%w: gate evidence is not bound to candidate, source, runtime, or acquired bindings", ErrDeliveryConflict))
 		}
+		if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+			failureAttempt := validating
+			if failureAttempt.ID == "" {
+				failureAttempt = normalizing
+			}
+			gateFailure := fmt.Errorf("%w: candidate gate outcome %q cannot qualify or seal", ErrDeliveryInvalid, canonical.Outcome)
+			if evidenceErr := l.recordFailedGateEvidence(ctx, failureAttempt, &canonical); evidenceErr != nil {
+				gateFailure = errors.Join(gateFailure, fmt.Errorf("record failed gate evidence: %w", evidenceErr))
+			}
+			return DeliveryBuildResult{}, fail(failureAttempt, "GATE_BLOCKED", gateFailure)
+		}
 		output.GateEvidence = &canonical
 		output.ResolvedInputs.GateEvidence = &canonical
 	}
@@ -637,6 +648,17 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 	}
 	output.ResolvedInputs = resolvedInputs
 	if resolvedInputs.GateEvidence != nil {
+		if resolvedInputs.GateEvidence.Outcome != release.GateSuccess && resolvedInputs.GateEvidence.Outcome != release.GateWarning {
+			failureAttempt := validating
+			if failureAttempt.ID == "" {
+				failureAttempt = normalizing
+			}
+			gateFailure := fmt.Errorf("%w: resolved candidate gate outcome %q cannot qualify or seal", ErrDeliveryInvalid, resolvedInputs.GateEvidence.Outcome)
+			if evidenceErr := l.recordFailedGateEvidence(ctx, failureAttempt, resolvedInputs.GateEvidence); evidenceErr != nil {
+				gateFailure = errors.Join(gateFailure, fmt.Errorf("record failed gate evidence: %w", evidenceErr))
+			}
+			return DeliveryBuildResult{}, fail(failureAttempt, "GATE_BLOCKED", gateFailure)
+		}
 		output.GateEvidence = resolvedInputs.GateEvidence
 	}
 	if output.Catalog == nil || output.ObjectStore == nil || output.SealRepository == nil || output.RemoteVerifier == nil {

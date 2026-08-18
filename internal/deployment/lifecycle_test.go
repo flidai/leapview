@@ -226,6 +226,10 @@ type lifecycleGateFailurePhase struct {
 	evidence *release.GateEvidence
 }
 
+type lifecycleCanonicalGatePhase struct {
+	evidence *release.GateEvidence
+}
+
 func (lifecycleGateFailurePhase) Construct(context.Context, DeliveryBuildInput) (any, error) {
 	return lifecycleGateFailurePhase{}, nil
 }
@@ -236,6 +240,19 @@ func (p lifecycleGateFailurePhase) Qualify(context.Context, DeliveryBuildInput, 
 	return DeliveryBuildOutput{GateEvidence: p.evidence}, errors.New("candidate gate blocked")
 }
 func (lifecycleGateFailurePhase) Close() error { return nil }
+
+func (p lifecycleCanonicalGatePhase) Construct(context.Context, DeliveryBuildInput) (any, error) {
+	return p, nil
+}
+func (lifecycleCanonicalGatePhase) Normalize(context.Context, DeliveryBuildInput, any) error {
+	return nil
+}
+func (p lifecycleCanonicalGatePhase) Qualify(context.Context, DeliveryBuildInput, any) (DeliveryBuildOutput, error) {
+	// Injected canonical evidence must still be rejected by the delivery
+	// boundary; this phase intentionally returns no evaluator error.
+	return DeliveryBuildOutput{GateEvidence: p.evidence}, nil
+}
+func (lifecycleCanonicalGatePhase) Close() error { return nil }
 
 type lifecycleSuccessPhase struct {
 	path   string
@@ -516,6 +533,42 @@ func TestDeliveryLifecycleFailedGateEvidenceDoesNotChangeActiveGeneration(t *tes
 	}
 	if activeTarget.states[0].ActiveGenerationID != "generation-active" || activeTarget.states[0].TargetRevision != 0 {
 		t.Fatalf("active generation changed after failed gate: %#v", activeTarget.states[0])
+	}
+}
+
+func TestDeliveryLifecycleRejectsInjectedCanonicalFailedEvidence(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	plan.BaseGenerationID, plan.BaseTargetRevision = "generation-active", 0
+	plan.ExecutionDigest, _ = plan.Execution.ExecutionDigest()
+	plan.GovernanceDigest, _ = canonicalJSONDigest(plan.Governance)
+	plan.EvidenceDigest, _ = plan.Evidence.Digest()
+	plan.Digest = ""
+	plan, err := NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeTarget := &lifecycleSequencedTarget{states: []DeliveryTarget{{TargetID: "target", ProjectID: "project", Environment: "prod", ActiveGenerationID: "generation-active", TargetRevision: 0}}}
+	for _, outcome := range []release.GateOutcome{release.GateUnavailable, release.GateTimeout} {
+		t.Run(string(outcome), func(t *testing.T) {
+			store := &lifecycleBuildStore{plan: plan}
+			failure := release.GateObservationFailureUnavailable
+			if outcome == release.GateTimeout {
+				failure = release.GateObservationFailureTimeout
+			}
+			evidence, err := (release.GateEvidence{Version: 1, CandidateID: "candidate-injected-" + string(outcome), SourceDigest: plan.SourceDigest, BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: outcome, EvaluatedAt: now, Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 100}, Sources: []release.GateSourceEvidence{{ID: "source-1", Mode: "inferred", SourceDigest: plan.SourceDigest, SchemaOutcome: outcome, SchemaFailure: failure}}}).Canonical()
+			if err != nil {
+				t.Fatal(err)
+			}
+			lifecycle := &DeliveryLifecycle{Targets: activeTarget, Store: store, Now: func() time.Time { return now }}
+			_, err = lifecycle.Build(t.Context(), DeliveryBuildRequest{PlanID: plan.ID, AttemptID: "attempt-injected-" + string(outcome), WriterLeaseID: "writer-injected-" + string(outcome), CandidateID: evidence.CandidateID, SealID: "seal-injected-" + string(outcome), ServingArtifactID: "artifact-injected-" + string(outcome), ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: "state-injected-" + string(outcome), PhysicalPoolID: "pool-build", BaseCatalogDigest: lifecycleDigest('6'), BasePhysicalPoolID: "pool-build", OwnerID: "owner-build", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now, PhasedRunner: lifecycleCanonicalGatePhase{evidence: &evidence}})
+			if err == nil || store.failedGate == nil || store.attempt.Status != DeliveryBuildFailed {
+				t.Fatalf("injected %s build err=%v failedGate=%#v attempt=%#v", outcome, err, store.failedGate, store.attempt)
+			}
+			if activeTarget.states[0].ActiveGenerationID != "generation-active" || activeTarget.states[0].TargetRevision != 0 {
+				t.Fatalf("active generation changed after injected %s: %#v", outcome, activeTarget.states[0])
+			}
+		})
 	}
 }
 

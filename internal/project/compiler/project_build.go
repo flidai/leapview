@@ -152,6 +152,7 @@ func projectManifest(project Project) (manifest.Project, error) {
 		value.Execution.Source = canonicalRef(project, "source", value.Execution.Source)
 		value.SourceDependencies = canonicalRefs(project, "source", value.SourceDependencies)
 		value.ModelDependencies = canonicalRefs(project, "model", value.ModelDependencies)
+		value.ModelName = name
 		result.Models[id] = value
 		result.NameIndex.Models[name] = id
 	}

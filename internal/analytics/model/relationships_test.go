@@ -156,6 +156,35 @@ func TestRelationshipKeyTupleRequiresExactLogicalDatatype(t *testing.T) {
 	}
 }
 
+func TestModelChecksRejectImplicitAcceptedValueAndRelationshipCasts(t *testing.T) {
+	model := relationshipMatrixModel()
+	orders := model.Tables["orders"]
+	orders.Checks = []ModelCheck{{Type: "accepted_values", Field: "customer_id", Values: []string{"1"}}}
+	model.Tables["orders"] = orders
+	if err := model.validateSemanticGraph(); err != nil {
+		t.Fatalf("string accepted_values unexpectedly rejected: %v", err)
+	}
+
+	orders = model.Tables["orders"]
+	orders.Dimensions["customer_id"] = MetricDimension{Type: "number", Datatype: DataTypeInteger}
+	orders.Checks = []ModelCheck{{Type: "accepted_values", Field: "customer_id", Values: []string{"1"}}}
+	model.Tables["orders"] = orders
+	if err := model.validateSemanticGraph(); err == nil || !strings.Contains(err.Error(), "accepted_values requires a String field") {
+		t.Fatalf("numeric accepted_values error = %v", err)
+	}
+
+	model = relationshipMatrixModel()
+	orders = model.Tables["orders"]
+	orders.Checks = []ModelCheck{{Type: "relationship", Field: "customer_id", To: "customers.customer_id"}}
+	model.Tables["orders"] = orders
+	customers := model.Tables["customers"]
+	customers.Dimensions["customer_id"] = MetricDimension{Type: "number", Datatype: DataTypeDecimal}
+	model.Tables["customers"] = customers
+	if err := model.validateSemanticGraph(); err == nil || !strings.Contains(err.Error(), "incompatible") {
+		t.Fatalf("incompatible check relationship error = %v", err)
+	}
+}
+
 func relationshipMatrixModel() *Model {
 	return &Model{
 		Name: "fanout_matrix",

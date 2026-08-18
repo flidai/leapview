@@ -440,10 +440,9 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 		observation.ObservationQueries = sourceQueries
 		observation.ObservationRows = sourceRows
 		if source.Freshness != nil && source.Freshness.Basis == "revision" {
-			// A revision selector is not itself a freshness timestamp. A
-			// connector/managed-data adapter must populate RevisionObserved from
-			// target-owned revision metadata; absent that evidence the gate fails
-			// closed instead of synthesizing "now".
+			// The typed revision contract is a canonical UTC timestamp and thus
+			// supplies the observation used for freshness age. Connectors may
+			// replace it with equivalent target metadata when available.
 			observation.Revision = source.Freshness.Revision
 			if source.Freshness.RevisionAt != nil {
 				observation.RevisionObserved = source.Freshness.RevisionAt.UTC()

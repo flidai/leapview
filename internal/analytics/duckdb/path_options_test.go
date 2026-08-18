@@ -37,16 +37,15 @@ func TestDuckDBPathOptionsRendersEveryTypedFormat(t *testing.T) {
 	}
 }
 
-func TestDuckDBPathOptionsRejectsNilAndUnsupportedLanceOptions(t *testing.T) {
+func TestDuckDBPathOptionsRejectsNilAndKeepsLanceOptionless(t *testing.T) {
 	if _, err := duckDBPathOptions(nil); err == nil {
 		t.Fatal("nil path location was accepted")
 	}
-	version := "v1"
 	location := &projectcontracts.PathSourceLocation{Value: &projectcontracts.LancePathSourceLocation{
 		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "fixture.lance", Format: "lance"},
-		Format:                 "lance", Options: &projectcontracts.LanceReaderOptions{Version: &version},
+		Format:                 "lance",
 	}}
-	if _, err := duckDBPathOptions(location); err == nil {
-		t.Fatal("lance options were accepted despite replacement scan not supporting options")
+	if got, err := duckDBPathOptions(location); err != nil || len(got) != 0 {
+		t.Fatalf("lance options = %#v, err = %v; want empty", got, err)
 	}
 }

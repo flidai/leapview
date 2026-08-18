@@ -362,7 +362,12 @@ func conformanceBuild(t *testing.T, ctx context.Context, lifecycle *deployment.D
 }
 
 func conformanceResolvedInputs(plan deployment.DeliveryPlan, mode deployment.DeliveryDataInputMode) deployment.DeliveryResolvedBuildInputs {
-	resolved := deployment.DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest}
+	binding := release.BindingFingerprint(nil)
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: "candidate-conformance", SourceDigest: plan.SourceDigest, BindingGeneration: binding, RuntimeVersion: "runtime:test", DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 15, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	if err != nil {
+		panic(err)
+	}
+	resolved := deployment.DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: &evidence}
 	for _, declaration := range plan.Execution.DataInputs {
 		input := deployment.DeliveryResolvedDataInput{ID: declaration.ID, Mode: declaration.Mode, PlannedRevision: declaration.Revision, PlannedBound: declaration.Bound, Explanation: "conformance resolved input"}
 		switch mode {
@@ -480,7 +485,11 @@ func (s *conformanceCatalogStore) Create(_ context.Context, key string, reader i
 		return catalogseal.ErrObjectExists
 	}
 	digest := metadata[catalogseal.MetadataDigest]
-	s.objects.objects[key] = conformanceObject{body: append([]byte(nil), body...), digest: digest, version: "v1", createdAt: time.Now().UTC(), metadata: metadata}
+	// Catalog objects are created as part of a fixture whose control-plane clock
+	// is intentionally detached from wall clock. Keep their physical age
+	// deterministic so orphan-grace decisions do not depend on when the test
+	// happens to run.
+	s.objects.objects[key] = conformanceObject{body: append([]byte(nil), body...), digest: digest, version: "v1", createdAt: time.Unix(0, 0).UTC(), metadata: metadata}
 	if s.ambiguous || s.objects.ambiguous {
 		s.objects.ambiguous = false
 		return catalogseal.ErrObjectAmbiguous

@@ -300,7 +300,7 @@ func PathLocationHasOptions(value *projectcontracts.PathSourceLocation) (bool, e
 		if variant == nil {
 			return false, fmt.Errorf("path source lance variant is nil")
 		}
-		return variant.Options != nil, nil
+		return false, nil
 	default:
 		if value.Value == nil {
 			return false, fmt.Errorf("path source variant is required")

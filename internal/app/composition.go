@@ -115,7 +115,10 @@ func sourceInputsFromManifest(artifacts release.CandidateArtifactSet, runtime an
 			if !ok {
 				continue
 			}
-			observation := analyticsmaterialize.SourceObservation{ID: item.ID, Schema: append([]semanticmodel.ColumnSchema(nil), item.ObservedSchema...), FreshnessObserved: item.ObservedAt, ObservationQueries: item.ObservationQueries, ObservationRows: item.ObservationRows, ObservationMillis: item.ObservationMillis}
+			// Base observations are immutable evidence reused for schema/freshness
+			// comparison; they are not work performed by this candidate. Do not
+			// charge their historical query/row/time totals to the new gate budget.
+			observation := analyticsmaterialize.SourceObservation{ID: item.ID, Schema: append([]semanticmodel.ColumnSchema(nil), item.ObservedSchema...), FreshnessObserved: item.ObservedAt}
 			if source.Freshness != nil && source.Freshness.Basis == "revision" {
 				observation.Revision = source.Freshness.Revision
 				observation.RevisionObserved = item.ObservedAt
