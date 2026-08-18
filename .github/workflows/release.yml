@@ -181,11 +181,10 @@ jobs:
       - name: Checkout candidate source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
         with:
-          go-version-file: go.mod
-          cache: true
+          browser: "false"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -278,6 +277,9 @@ jobs:
               if actual[field] != value:
                   raise SystemExit(f"published runtime {field}={actual[field]!r}, expected {value!r}")
           PY
+
+      - name: Generate release build inputs
+        run: task generate
 
       - name: Build candidate Compose archives
         env:

@@ -610,6 +610,11 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 			t.Fatalf("release workflow missing Go controller packaging contract %q", required)
 		}
 	}
+	generation := strings.Index(release, "- name: Generate release build inputs\n        run: task generate")
+	packaging := strings.Index(release, "- name: Build candidate Compose archives")
+	if generation < 0 || packaging < 0 || generation > packaging {
+		t.Fatal("release workflow must generate every ignored build input before compiling Compose archives")
+	}
 	dockerfile := read(t, filepath.Join("..", "..", "Dockerfile"))
 	if !strings.Contains(dockerfile, "/usr/local/libexec/leapviewctl") {
 		t.Fatal("application image must carry the matching Linux controller for provider extraction")
