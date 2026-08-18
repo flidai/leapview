@@ -14,10 +14,14 @@ import (
 )
 
 type Definition struct {
-	ID                string                                        `json:"id"`
-	Title             string                                        `json:"title"`
-	Description       string                                        `json:"description,omitempty"`
-	SemanticModel     string                                        `json:"semanticModel"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	Description   string `json:"description,omitempty"`
+	SemanticModel string `json:"semanticModel"`
+	// Layout is populated by the canonical Dashboard compiler. Legacy
+	// authoring callers may leave it nil while LEA-426 wires the generated
+	// document into the project loader.
+	Layout            *Layout                                       `json:"layout,omitempty"`
 	FilterDefinitions map[string]dashboardfilter.Definition         `json:"filterDefinitions,omitempty"`
 	FilterBindings    map[string]dashboardfilter.Binding            `json:"filterBindings,omitempty"`
 	FilterApplication dashboardfilter.ApplicationPolicy             `json:"filterApplication,omitempty"`

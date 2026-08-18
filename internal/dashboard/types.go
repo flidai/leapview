@@ -41,15 +41,28 @@ type CatalogModel = catalog.Model
 type CatalogDashboard = catalog.Dashboard
 
 type Page struct {
-	ID             string                             `json:"id" yaml:"id"`
-	Title          string                             `json:"title" yaml:"title"`
-	Description    string                             `json:"description,omitempty" yaml:"description"`
-	Canvas         PageCanvas                         `json:"canvas" yaml:"canvas"`
-	Grid           PageGrid                           `json:"grid" yaml:"grid"`
-	FilterBindings map[string]dashboardfilter.Binding `json:"filterBindings,omitempty" yaml:"filter_bindings,omitempty"`
-	Visuals        []PageVisual                       `json:"visuals" yaml:"visuals"`
-	Width          int                                `json:"width,omitempty" yaml:"-"`
-	Height         int                                `json:"height,omitempty" yaml:"-"`
+	ID          string     `json:"id" yaml:"id"`
+	Title       string     `json:"title" yaml:"title"`
+	Description string     `json:"description,omitempty" yaml:"description"`
+	Canvas      PageCanvas `json:"canvas" yaml:"canvas"`
+	Grid        PageGrid   `json:"grid" yaml:"grid"`
+	// ResponsiveLayout is populated only by the canonical Dashboard compiler.
+	// Its presence distinguishes responsive pages from legacy fixed-canvas
+	// pages, so renderers do not call WithDefaults and fabricate a viewport.
+	ResponsiveLayout *PageResponsiveLayout              `json:"responsiveLayout,omitempty" yaml:"-"`
+	FilterBindings   map[string]dashboardfilter.Binding `json:"filterBindings,omitempty" yaml:"filter_bindings,omitempty"`
+	Visuals          []PageVisual                       `json:"visuals" yaml:"visuals"`
+	Width            int                                `json:"width,omitempty" yaml:"-"`
+	Height           int                                `json:"height,omitempty" yaml:"-"`
+}
+
+// PageResponsiveLayout is immutable compiler metadata attached to the shared
+// runtime Page. Grid values remain on Page.Grid; component placement remains
+// on Page.Visuals. Height is persisted on Page.Height and derived from the
+// final occupied row; no canvas width/height is authored for responsive pages.
+type PageResponsiveLayout struct {
+	OccupiedRows int    `json:"occupiedRows"`
+	NarrowView   string `json:"narrowView"`
 }
 
 type PageCanvas struct {
@@ -72,6 +85,13 @@ type PagePlacement struct {
 }
 
 func (p Page) WithDefaults() Page {
+	if p.ResponsiveLayout != nil {
+		// Canonical responsive pages intentionally have no fixed canvas. Keep the
+		// resolved grid and derived height while preventing legacy defaults from
+		// inventing width/height values.
+		p.Width = 0
+		return p
+	}
 	if p.Canvas.Width <= 0 {
 		if p.Width > 0 {
 			p.Canvas.Width = p.Width
@@ -110,6 +130,13 @@ func (p Page) PlacedVisuals() []PageVisual {
 	p = p.WithDefaults()
 	visuals := make([]PageVisual, 0, len(p.Visuals))
 	for _, visual := range p.Visuals {
+		if p.ResponsiveLayout != nil {
+			// Responsive renderers consume the cell placement and resolved grid
+			// directly. Pixel bounds depend on the current viewport and must not
+			// be fabricated from the legacy canvas helper.
+			visuals = append(visuals, visual)
+			continue
+		}
 		if visual.Placement.IsZero() {
 			visuals = append(visuals, visual)
 			continue
