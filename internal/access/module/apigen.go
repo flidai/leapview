@@ -23,11 +23,19 @@ var errAPIGenResourceNotFound = errors.New("generated API resource not found")
 // infer a project or resource from an untyped fallback.
 type APIGenResourceResolver func(*http.Request, projectgraph.ResourceID) []access.ResourceRef
 
+// APIGenDeliveryAuthorizer handles target-owned delivery routes whose public
+// project path is an authorization scope, not a graph ResourceRef. The
+// callback authorizes against the leased active snapshot and exact operation
+// capability; generated project-resource validation is intentionally bypassed
+// for this narrow route family.
+type APIGenDeliveryAuthorizer func(context.Context, *http.Request, string, string, projectgraph.ResourceID, access.Capability) (bool, error)
+
 type APIGenResourceResolvers struct {
 	Dashboard     APIGenResourceResolver
 	SemanticModel APIGenResourceResolver
 	Connection    APIGenResourceResolver
 	Project       APIGenResourceResolver
+	Delivery      APIGenDeliveryAuthorizer
 }
 
 type apiGenResourceScope struct {
@@ -72,6 +80,7 @@ type APIGenAuthorizer struct {
 	runtime    apigenRuntimeHost
 	scopes     map[string]apiGenResourceScope
 	operations map[string]APIGenOperationContract
+	delivery   APIGenDeliveryAuthorizer
 	// bootstrap is an explicit, narrow pre-activation authorization seam. It
 	// is intentionally optional and is only consulted for candidate routes;
 	// active generations continue through the immutable snapshot path.
@@ -116,6 +125,7 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 		module:     m,
 		runtime:    runtime,
 		operations: operations,
+		delivery:   resolvers.Delivery,
 		scopes: map[string]apiGenResourceScope{
 			"dashboard":      {pathParameter: "dashboard", resolver: resolvers.Dashboard, kind: projectgraph.KindDashboard},
 			"semantic-model": {pathParameter: "model", resolver: resolvers.SemanticModel, kind: projectgraph.KindSemanticModel},
@@ -221,6 +231,15 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if !ok {
 		return nil, false
 	}
+	if isDeliveryAPIGenOperation(contract) {
+		if a.delivery == nil || a.runtime == nil {
+			return nil, false
+		}
+		if (operationID == "createDeliveryPlan" || operationID == "buildDeliveryPlan" || operationID == "publishDeliveryCandidate") && a.bootstrap != nil {
+			return a.protectDeliveryBootstrapAware(operationID, capability, next), true
+		}
+		return a.protectDelivery(operationID, capability, next), true
+	}
 	resolver, ok := a.resourceResolverForContract(contract)
 	if !ok {
 		return nil, false
@@ -247,13 +266,116 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 // other project resource operations must use immutable snapshot authorization.
 func isBootstrapAPIGenOperation(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization",
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
 		return true
 	default:
 		return false
 	}
+}
+
+func isDeliveryAPIGenOperation(contract APIGenOperationContract) bool {
+	// Generated contracts carry the public API prefix (currently /api/v1),
+	// while this authorizer only cares about the target-owned delivery suffix.
+	return strings.Contains(contract.Path, "/projects/{project}/delivery")
+}
+
+func (a *APIGenAuthorizer) protectDelivery(operationID string, capability access.Capability, next http.Handler) http.Handler {
+	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.authorizeDeliveryRequest(w, r, operationID, capability, next)
+	}))
+}
+
+// protectDeliveryBootstrapAware admits the initial delivery commands through
+// the explicit pre-activation bootstrap decision. The opaque marker binds the
+// exact principal/project/capability for the downstream coordinator, which
+// rechecks the durable active-generation fence before committing publication.
+func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, capability access.Capability, next http.Handler) http.Handler {
+	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := a.module.CurrentPrincipal(r)
+		if !ok || strings.TrimSpace(principal.ID) == "" {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		projectID, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+		if err != nil || projectID != a.runtime.ProjectID() {
+			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+			return
+		}
+		decision, err := a.bootstrap(r.Context(), r, operationID, projectID, capability)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if decision.Handled {
+			if bearerToken(r) == "" {
+				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+				return
+			}
+			authorized, err := a.module.AuthorizeBootstrapRequest(r.Context(), r, capability)
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if !authorized || !decision.Allowed {
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			marked := r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability))
+			next.ServeHTTP(w, marked)
+			return
+		}
+		a.authorizeDeliveryRequest(w, r, operationID, capability, next)
+	}))
+}
+
+func (a *APIGenAuthorizer) authorizeDeliveryRequest(w http.ResponseWriter, r *http.Request, operationID string, capability access.Capability, next http.Handler) {
+	principal, ok := a.module.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	projectID, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+	if err != nil || projectID != a.runtime.ProjectID() {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+	allowed, err := a.delivery(r.Context(), r, operationID, deliveryObjectID(operationID, r), projectID, capability)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+	if !allowed {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+	next.ServeHTTP(w, r)
+}
+
+func deliveryObjectID(operationID string, r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	parameter := ""
+	switch operationID {
+	case "buildDeliveryPlan", "getDeliveryPlanPreview":
+		parameter = "plan"
+	case "publishDeliveryCandidate", "getDeliveryCandidateStatus":
+		parameter = "candidate"
+	case "rollbackDeliveryGeneration", "getDeliveryGenerationStatus":
+		parameter = "generation"
+	case "getDeliveryBuildStatus":
+		parameter = "build"
+	case "getDeliverySealStatus":
+		parameter = "seal"
+	case "getDeliveryPublicationEvidence":
+		parameter = "publication"
+	}
+	if parameter == "" {
+		return ""
+	}
+	return strings.TrimSpace(chi.URLParam(r, parameter))
 }
 
 func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capability access.Capability, next http.Handler) http.Handler {
@@ -477,6 +599,12 @@ func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGen
 		}
 		if _, ok := apiGenOperationCapability(contract); !ok {
 			return fmt.Errorf("APIGen operation %q has invalid capability", operationID)
+		}
+		if isDeliveryAPIGenOperation(contract) {
+			if a.delivery == nil {
+				return fmt.Errorf("APIGen delivery operation %q has no target authorizer", operationID)
+			}
+			return nil
 		}
 	}
 	if _, ok := a.resourceResolverForContract(contract); !ok {

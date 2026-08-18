@@ -11,6 +11,8 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	"github.com/flidai/leapview/internal/deployment"
+	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	manageddatacontrol "github.com/flidai/leapview/internal/manageddata/control"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
@@ -19,6 +21,40 @@ import (
 )
 
 type tusTargetResolverFunc func(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
+
+type canonicalRuntimeActivatorFake struct {
+	prepareID     string
+	prepareErr    error
+	activateErr   error
+	activateCalls int
+	commitCalls   int
+}
+
+type canonicalTargetReaderFake struct {
+	target deployment.DeliveryTarget
+	err    error
+}
+
+func (f canonicalTargetReaderFake) DeliveryTargetRevision(context.Context, string) (deployment.DeliveryTarget, error) {
+	return f.target, f.err
+}
+
+func (f *canonicalRuntimeActivatorFake) PrepareServingState(_ context.Context, id string) (*runtimehost.Prepared, error) {
+	f.prepareID = id
+	if f.prepareErr != nil {
+		return nil, f.prepareErr
+	}
+	return nil, nil
+}
+
+func (f *canonicalRuntimeActivatorFake) ActivatePreparedContext(_ context.Context, _ *runtimehost.Prepared, commit func() error) error {
+	f.activateCalls++
+	if f.activateErr != nil {
+		return f.activateErr
+	}
+	f.commitCalls++
+	return commit()
+}
 
 func (f tusTargetResolverFunc) ResolveTusTarget(ctx context.Context, id string) (projectgraph.ResourceID, projectgraph.ResourceID, error) {
 	return f(ctx, id)
@@ -107,6 +143,227 @@ func tusSnapshot(t *testing.T, principalID string, connectionID projectgraph.Res
 		t.Fatal(err)
 	}
 	return snapshot
+}
+
+func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardA, err := projectgraph.NewResourceID("dashboard_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardB, err := projectgraph.NewResourceID("dashboard_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "project_demo"},
+		{ID: dashboardA, Kind: projectgraph.KindDashboard, Name: "A"},
+		{ID: dashboardB, Kind: projectgraph.KindDashboard, Name: "B"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal_alice"}
+	resourceA, err := access.NewResourceRef(dashboardA, projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := access.NewCanonicalGrant(graph, subject, resourceA, access.CapabilityResourcePublish)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{{ID: "grant_a", Canonical: grant}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceB, err := access.NewResourceRef(dashboardB, projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subjects := []access.SubjectRef{subject}
+	if allowed, err := deliverySnapshotAllows(snapshot, subjects, []access.ResourceRef{resourceA}, access.CapabilityResourcePublish); err != nil || !allowed {
+		t.Fatalf("grant on A did not authorize A: allowed=%t err=%v", allowed, err)
+	}
+	if allowed, err := deliverySnapshotAllows(snapshot, subjects, []access.ResourceRef{resourceB}, access.CapabilityResourcePublish); err != nil || allowed {
+		t.Fatalf("grant on A authorized B: allowed=%t err=%v", allowed, err)
+	}
+	unknown, err := access.NewResourceRef(projectgraph.ResourceID("dashboard_unknown"), projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := deliverySnapshotAllows(snapshot, subjects, []access.ResourceRef{unknown}, access.CapabilityResourcePublish); err == nil || allowed {
+		t.Fatalf("unknown resource did not fail closed: allowed=%t err=%v", allowed, err)
+	}
+
+	roleSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{ID: "role_deployer", Subject: subject, Role: access.ProjectRoleDeployer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer)}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deliveryRoleAllows(roleSnapshot, subjects, access.CapabilityResourcePublish) {
+		t.Fatal("explicit deployer role did not authorize publish")
+	}
+	viewerSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{ID: "role_viewer", Subject: subject, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deliveryRoleAllows(viewerSnapshot, subjects, access.CapabilityResourcePublish) {
+		t.Fatal("viewer role unexpectedly authorized publish")
+	}
+}
+
+type sealedAuthorizationDeliveryStub struct {
+	candidate deployment.DeliveryCandidate
+	plan      deployment.DeliveryPlan
+}
+
+func TestSealedPublicationBootstrapDecisionBindsExactMarkerAndActiveFence(t *testing.T) {
+	binding := sealedcontrol.SealBinding{ProjectID: "project_demo", ActorID: "principal_alice", Operation: "publish"}
+	exact := accessmodule.BootstrapAuthorization{ProjectID: projectgraph.ResourceID("project_demo"), PrincipalID: "principal_alice", Capability: access.CapabilityResourcePublish}
+	activeErr := errors.New("active generation lookup failed")
+	for _, test := range []struct {
+		name       string
+		marker     accessmodule.BootstrapAuthorization
+		marked     bool
+		active     bool
+		activeErr  error
+		wantHandle bool
+		wantErr    bool
+	}{
+		{name: "exact marker on fresh target", marker: exact, marked: true, wantHandle: true},
+		{name: "missing marker", marker: exact, wantHandle: true, wantErr: true},
+		{name: "principal mismatch", marker: accessmodule.BootstrapAuthorization{ProjectID: exact.ProjectID, PrincipalID: "principal_other", Capability: exact.Capability}, marked: true, wantHandle: true, wantErr: true},
+		{name: "project mismatch", marker: accessmodule.BootstrapAuthorization{ProjectID: "project_other", PrincipalID: exact.PrincipalID, Capability: exact.Capability}, marked: true, wantHandle: true, wantErr: true},
+		{name: "capability mismatch", marker: accessmodule.BootstrapAuthorization{ProjectID: exact.ProjectID, PrincipalID: exact.PrincipalID, Capability: access.CapabilityResourceUse}, marked: true, wantHandle: true, wantErr: true},
+		{name: "active race falls through live snapshot", marker: accessmodule.BootstrapAuthorization{}, active: true, wantHandle: false},
+		{name: "active check error", marker: exact, marked: true, activeErr: activeErr, wantHandle: false, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handled, err := sealedPublicationBootstrapDecision(t.Context(), binding, test.marker, test.marked, func(context.Context) (bool, error) {
+				return test.active, test.activeErr
+			})
+			if handled != test.wantHandle || (err != nil) != test.wantErr {
+				t.Fatalf("sealedPublicationBootstrapDecision() = handled=%t err=%v, want handled=%t err=%t", handled, err, test.wantHandle, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestActivateCanonicalServingStatePreparesBeforeCommit(t *testing.T) {
+	var committed int
+	fake := &canonicalRuntimeActivatorFake{}
+	if err := activateCanonicalServingState(t.Context(), fake, "state_pending", func() error { committed++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if fake.prepareID != "state_pending" || fake.activateCalls != 1 || fake.commitCalls != 1 || committed != 1 {
+		t.Fatalf("activation ordering = prepare %q/activate %d/commit %d/%d", fake.prepareID, fake.activateCalls, fake.commitCalls, committed)
+	}
+
+	prepareFailure := &canonicalRuntimeActivatorFake{prepareErr: errors.New("prepare failed")}
+	committed = 0
+	if err := activateCanonicalServingState(t.Context(), prepareFailure, "state_pending", func() error { committed++; return nil }); err == nil {
+		t.Fatal("prepare failure unexpectedly succeeded")
+	}
+	if committed != 0 || prepareFailure.activateCalls != 0 {
+		t.Fatalf("prepare failure committed=%d activate=%d", committed, prepareFailure.activateCalls)
+	}
+
+	activateFailure := &canonicalRuntimeActivatorFake{activateErr: errors.New("activation failed")}
+	committed = 0
+	if err := activateCanonicalServingState(t.Context(), activateFailure, "state_pending", func() error { committed++; return nil }); err == nil {
+		t.Fatal("activation failure unexpectedly succeeded")
+	}
+	if committed != 0 || activateFailure.activateCalls != 1 {
+		t.Fatalf("activation failure committed=%d activate=%d", committed, activateFailure.activateCalls)
+	}
+}
+
+func TestVerifyCanonicalDeliveryTargetRejectsStaleCommittedReplay(t *testing.T) {
+	reader := canonicalTargetReaderFake{target: deployment.DeliveryTarget{TargetID: "target-1", ProjectID: "project-1", Environment: "prod", ActiveGenerationID: "generation-new", TargetRevision: 2}}
+	if err := verifyCanonicalDeliveryTarget(t.Context(), reader, "target-1", "project-1", "prod", "generation-old", 1); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("stale committed target = %v, want ErrDeliveryConflict", err)
+	}
+	reader.target.ActiveGenerationID = "generation-old"
+	reader.target.TargetRevision = 1
+	if err := verifyCanonicalDeliveryTarget(t.Context(), reader, "target-1", "project-1", "prod", "generation-old", 1); err != nil {
+		t.Fatalf("matching committed target = %v", err)
+	}
+}
+
+func (s sealedAuthorizationDeliveryStub) DeliveryCandidateByID(context.Context, string) (deployment.DeliveryCandidate, error) {
+	return s.candidate, nil
+}
+
+func (s sealedAuthorizationDeliveryStub) PlanByID(context.Context, string) (deployment.DeliveryPlan, error) {
+	return s.plan, nil
+}
+
+func TestSealedCoordinatorAuthorizationBindsEveryGraphImpactResource(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardA, err := projectgraph.NewResourceID("dashboard_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardB, err := projectgraph.NewResourceID("dashboard_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "project_demo"},
+		{ID: dashboardA, Kind: projectgraph.KindDashboard, Name: "A"},
+		{ID: dashboardB, Kind: projectgraph.KindDashboard, Name: "B"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal_alice"}
+	grant := func(id projectgraph.ResourceID) accesssnapshot.Grant {
+		resource, err := access.NewResourceRef(id, projectgraph.KindDashboard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical, err := access.NewCanonicalGrant(graph, principal, resource, access.CapabilityResourcePublish)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return accesssnapshot.Grant{ID: "grant:" + id.String(), Canonical: canonical}
+	}
+	newSnapshot := func(grants ...accesssnapshot.Grant) accesssnapshot.AuthorizationSnapshot {
+		snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, grants, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	planDigest := "sha256:" + strings.Repeat("a", 64)
+	plan := deployment.DeliveryPlan{
+		ID: "plan_demo", Digest: planDigest, TargetID: "target_demo", ProjectID: projectgraph.ResourceID("project_demo"), Environment: "prod",
+		Evidence: deployment.DeliveryPlanEvidence{GraphImpact: deployment.DeliveryGraphImpact{DirectlyModified: []deployment.DeliveryImpactResource{{ID: dashboardA.String(), Kind: string(projectgraph.KindDashboard), Change: "modified"}, {ID: dashboardB.String(), Kind: string(projectgraph.KindDashboard), Change: "modified"}}}},
+	}
+	candidate := deployment.DeliveryCandidate{ID: "candidate_demo", PlanID: plan.ID, PlanDigest: planDigest, TargetID: plan.TargetID, ProjectID: plan.ProjectID}
+	binding := sealedcontrol.SealBinding{ProjectID: "project_demo", Environment: "prod", TargetID: "target_demo", CandidateID: candidate.ID, GenerationID: "generation_demo", PlanDigest: planDigest, ActorID: principal.ID, Operation: "publish"}
+	accessModule := tusAccess{principal: accessmodule.Principal{ID: principal.ID}, ok: true, subjects: []access.SubjectRef{principal}}
+	for _, test := range []struct {
+		name     string
+		snapshot accesssnapshot.AuthorizationSnapshot
+		wantErr  bool
+	}{
+		{name: "one impacted resource missing", snapshot: newSnapshot(grant(dashboardA)), wantErr: true},
+		{name: "every impacted resource granted", snapshot: newSnapshot(grant(dashboardA), grant(dashboardB)), wantErr: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := tusRuntime{project: projectgraph.ResourceID("project_demo"), lease: tusLease{identity: identity, snapshot: test.snapshot}}
+			err := authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("authorizeSealedPublication() error=%v, wantErr=%t", err, test.wantErr)
+			}
+		})
+	}
 }
 
 func TestValidTusTransportIDRequiresCanonicalOpaqueToken(t *testing.T) {

@@ -44,7 +44,10 @@ type ProjectRequest struct {
 	AuthorizationFingerprint string
 	BindingFingerprint       string
 	RequiredExtensions       []string
-	ResultLimits             dataquery.ResultLimits
+	// SkipInitialRefresh is used when a private candidate starts from an
+	// exact sealed base and the caller refreshes only impacted relations.
+	SkipInitialRefresh bool
+	ResultLimits       dataquery.ResultLimits
 }
 
 // Project is the narrow analytical runtime consumed by dashboard adapters.

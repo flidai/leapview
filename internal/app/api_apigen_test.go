@@ -25,7 +25,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 180
+const expectedAPIGenAggregateOperationCount = 197
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -412,13 +412,13 @@ func TestAPIGenDeploymentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenDeploymentCapabilityOwnsItsOperationSurface(t *testing.T) {
 	contracts := deploymentgen.GetAPIGenOperationContracts()
-	if got, want := len(contracts), 23; got != want {
+	if got, want := len(contracts), 40; got != want {
 		t.Fatalf("Deployment generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
 	for operationID, contract := range contracts {
-		if len(contract.Tags) != 1 || contract.Tags[0] != "Deployments" {
-			t.Errorf("Deployment operation %q tags = %v, want [Deployments]", operationID, contract.Tags)
+		if len(contract.Tags) != 1 || (contract.Tags[0] != "Deployments" && contract.Tags[0] != "Delivery") {
+			t.Errorf("Deployment operation %q tags = %v, want [Deployments] or [Delivery]", operationID, contract.Tags)
 		}
 		if _, exists := appContracts[operationID]; exists {
 			t.Errorf("Deployment operation %q is still emitted by the application package", operationID)
@@ -623,6 +623,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"Connections":         "LeapViewAPI.Analytics",
 		"Publications":        "LeapViewAPI.Dashboard",
 		"Deployments":         "LeapViewAPI.Deployment",
+		"Delivery":            "LeapViewAPI.Deployment",
 		"Managed Data":        "LeapViewAPI.ManagedData",
 		"Projects":            "LeapViewAPI.Project",
 		"Search":              "LeapViewAPI.Project",
@@ -1243,7 +1244,7 @@ func TestAPIGenAsyncExecutionContractsAreGeneratedEndToEnd(t *testing.T) {
 		"retryDeployment",
 		"rollbackDeployment",
 	}
-	wantControls := []string{"cancelAgentRun", "cancelDeployment", "cancelRefreshRun"}
+	wantControls := []string{"cancelAgentRun", "cancelDeployment", "cancelRefreshRun", "publishDeliveryCandidate", "rollbackDeliveryGeneration"}
 	if !slices.Equal(starters, wantStarters) {
 		t.Errorf("async starters = %v, want %v", starters, wantStarters)
 	}

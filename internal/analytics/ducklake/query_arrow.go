@@ -44,6 +44,13 @@ func queryArrow(ctx context.Context, conn *sql.Conn, plan semanticquery.Plan, si
 		if !ok {
 			return fmt.Errorf("analytical connection does not expose a database driver connection")
 		}
+		if guarded, ok := driverConn.(*guardedConn); ok {
+			unwrapped, unwrapErr := guarded.arrowDriverConn(plan.SQL)
+			if unwrapErr != nil {
+				return unwrapErr
+			}
+			driverConn = unwrapped
+		}
 		arrowConn, err := duckdb.NewArrowFromConn(driverConn)
 		if err != nil {
 			return err

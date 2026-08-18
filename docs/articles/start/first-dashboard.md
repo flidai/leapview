@@ -91,12 +91,16 @@ aov_kpi:
 
 The visual owns its semantic query and typed presentation. A page component later places that reusable visual on the grid by referencing `aov_kpi`.
 
-## Review and deploy the change
+## Review and publish the change
 
 Inspect the candidate before activating it:
 
 ```sh
-go run ./cmd/leapview plan --project dashboards/leapview.yaml
+PLAN_JSON=$(go run ./cmd/leapview plan dashboards/leapview.yaml --format json)
+PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
+BUILD_JSON=$(go run ./cmd/leapview build "$PLAN_ID" --format json)
+CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
+go run ./cmd/leapview publish "$CANDIDATE_ID"
 ```
 
 Apply it to the managed development target:
@@ -111,7 +115,7 @@ Run validation and planning once more immediately before deployment if another e
 
 ```sh
 go run ./cmd/leapview validate --project dashboards/leapview.yaml
-go run ./cmd/leapview plan --project dashboards/leapview.yaml
+go run ./cmd/leapview plan dashboards/leapview.yaml
 ```
 
 The plan should contain only the resources you intended to change. Unexpected additions or removals usually indicate a discovery-pattern or stable-ID mistake.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploydb "github.com/flidai/leapview/internal/deployment/internal/db"
@@ -20,14 +21,60 @@ type Repository struct {
 	queries               *deploydb.Queries
 	hooks                 ActivationHooks
 	candidateBaseReadHook func()
+	// quarantineBeforeMutation is a deterministic race-test seam. Production
+	// leaves it nil; tests use it to commit a competing root change after the
+	// fenced read snapshot and before the first mutation statement.
+	quarantineBeforeMutation func()
+	// catalogSealNow is injectable for durable seal transition tests and for
+	// callers which need one deterministic completion timestamp. It is kept on
+	// the shared repository so all plan-delivery adapters use the same clock.
+	catalogSealNow func() time.Time
+	// deliveryNow controls authoritative publication eligibility checks. It is
+	// injectable for crash/expiry tests; production defaults to wall clock.
+	deliveryNow func() time.Time
 }
 type ActivationHooks struct {
 	LinkRelease    func(context.Context, transaction.Transaction, deployment.CreateInput) error
 	RecordWorkflow jobs.WorkflowRecorder
+	// CommitPublication replaces the final SQLite commit only in tests or
+	// controlled adapters. A hook may commit and return an error to model a
+	// lost activation acknowledgement; production leaves it nil and commits
+	// directly. The repository reconciles the durable publication identity
+	// before any retry can activate or clean a candidate.
+	CommitPublication func(context.Context, *sql.Tx) error
 }
 
 func NewRepositoryWithHooks(db *sql.DB, hooks ActivationHooks) *Repository {
-	return &Repository{db: db, queries: deploydb.New(db), hooks: hooks}
+	return &Repository{db: db, queries: deploydb.New(db), hooks: hooks, catalogSealNow: time.Now, deliveryNow: time.Now}
+}
+
+// WithDeliveryClock returns the repository with an explicit UTC clock for
+// publication eligibility checks. A nil function restores time.Now.
+func (r *Repository) WithDeliveryClock(now func() time.Time) *Repository {
+	if r == nil {
+		return r
+	}
+	if now == nil {
+		r.deliveryNow = time.Now
+	} else {
+		r.deliveryNow = now
+	}
+	return r
+}
+
+// WithCatalogSealClock returns the repository with an explicit UTC clock for
+// catalog-seal completion timestamps. A nil function restores time.Now.
+// Existing constructors remain valid and default to wall-clock time.
+func (r *Repository) WithCatalogSealClock(now func() time.Time) *Repository {
+	if r == nil {
+		return r
+	}
+	if now == nil {
+		r.catalogSealNow = time.Now
+	} else {
+		r.catalogSealNow = now
+	}
+	return r
 }
 
 func (r *Repository) CreateDeployment(ctx context.Context, input deployment.CreateInput) (deployment.Deployment, error) {
@@ -185,6 +232,57 @@ func (r *Repository) ActivateDeployment(ctx context.Context, input deployment.Ac
 		return deployment.Deployment{}, err
 	}
 	return r.DeploymentByID(ctx, row.ID)
+}
+
+// ActivateSealedDeployment updates only the legacy deployment status
+// projection after the sealed delivery coordinator has committed its durable
+// target CAS. It deliberately does not read or mutate serving_states,
+// project_active_serving_states, DuckLake snapshots, or runtime leases.
+func (r *Repository) ActivateSealedDeployment(ctx context.Context, input deployment.ActivationInput) (deployment.Deployment, error) {
+	if err := deployment.ValidateActivation(input); err != nil {
+		return deployment.Deployment{}, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return deployment.Deployment{}, err
+	}
+	defer tx.Rollback()
+	row, err := deploydb.New(tx).GetProjectDeployment(ctx, input.DeploymentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return deployment.Deployment{}, deployment.ErrNotFound
+	}
+	if err != nil {
+		return deployment.Deployment{}, err
+	}
+	if row.Status == string(deployment.StatusActive) {
+		if row.ProjectID != input.ServingIdentity.ProjectID.String() || row.Environment != input.ServingIdentity.Environment || row.GenerationID != input.ServingIdentity.GenerationID || row.ArtifactDigest != input.ArtifactDigest {
+			return deployment.Deployment{}, deployment.ErrConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return deployment.Deployment{}, err
+		}
+		return r.DeploymentByID(ctx, input.DeploymentID)
+	}
+	if row.Status != string(deployment.StatusPending) || row.ProjectID != input.ServingIdentity.ProjectID.String() || row.Environment != input.ServingIdentity.Environment || row.GenerationID != input.ServingIdentity.GenerationID || row.ArtifactDigest != input.ArtifactDigest {
+		return deployment.Deployment{}, deployment.ErrConflict
+	}
+	if row.PriorGenerationID.Valid && row.PriorGenerationID.String != input.PriorGenerationID || !row.PriorGenerationID.Valid && input.PriorGenerationID != "" {
+		return deployment.Deployment{}, deployment.ErrConflict
+	}
+	if err := deploydb.New(tx).SupersedeOtherProjectDeployments(ctx, deploydb.SupersedeOtherProjectDeploymentsParams{ProjectID: row.ProjectID, Environment: row.Environment, ID: row.ID}); err != nil {
+		return deployment.Deployment{}, err
+	}
+	result, err := deploydb.New(tx).ActivateProjectDeployment(ctx, deploydb.ActivateProjectDeploymentParams{ActivationPrincipal: sql.NullString{String: input.ActivationPrincipal, Valid: true}, VerificationDigest: sql.NullString{String: input.VerificationDigest, Valid: true}, ID: row.ID})
+	if err != nil {
+		return deployment.Deployment{}, err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return deployment.Deployment{}, deployment.ErrConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return deployment.Deployment{}, err
+	}
+	return r.DeploymentByID(ctx, input.DeploymentID)
 }
 
 func deploymentByTx(ctx context.Context, tx *sql.Tx, id string) (deployment.Deployment, error) {

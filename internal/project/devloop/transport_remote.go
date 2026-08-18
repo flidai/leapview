@@ -16,9 +16,12 @@ type ArtifactReference struct {
 }
 
 type SynchronizationPlanRequest struct {
-	ProjectID              projectgraph.ResourceID
-	ProjectFile            string
-	ArtifactDigest         string
+	ProjectID      projectgraph.ResourceID
+	ProjectFile    string
+	ArtifactDigest string
+	// SourceOnly asks the target to retain bytes without candidate preparation.
+	// It is used by canonical delivery plan before Build performs physical work.
+	SourceOnly             bool
 	CandidateKey           string
 	ExpectedCandidateID    string
 	ExpectedArtifactDigest string
@@ -37,6 +40,22 @@ type SynchronizationTransport interface {
 	Plan(context.Context, SynchronizationPlanRequest) (SynchronizationPlan, error)
 	Upload(context.Context, SynchronizationPlanRequest, Artifact) error
 	Commit(context.Context, SynchronizationPlanRequest) (Candidate, error)
+}
+
+// RetainedSource is the target-verified identity returned by the source-only
+// retention command. It intentionally has no candidate or physical storage
+// authority.
+type RetainedSource struct {
+	ProjectID               projectgraph.ResourceID
+	SourceDigest            string
+	SourceAttestationDigest string
+	ProjectDigest           string
+	TargetID                string
+	Environment             string
+}
+
+type SourceRetentionTransport interface {
+	RetainSource(context.Context, SynchronizationPlanRequest) (RetainedSource, error)
 }
 
 type TransportRemote struct {
@@ -63,6 +82,7 @@ func (remote *TransportRemote) Synchronize(ctx context.Context, request SyncRequ
 		ProjectID:              snapshot.ProjectID,
 		ProjectFile:            snapshot.ProjectFile,
 		ArtifactDigest:         snapshot.Digest,
+		SourceOnly:             request.SourceOnly,
 		CandidateKey:           snapshot.CandidateKey,
 		ExpectedCandidateID:    strings.TrimSpace(request.ExpectedCandidateID),
 		ExpectedArtifactDigest: strings.TrimSpace(request.ExpectedArtifactDigest),
@@ -103,6 +123,44 @@ func (remote *TransportRemote) Synchronize(ctx context.Context, request SyncRequ
 		return Candidate{}, fmt.Errorf("commit project synchronization: %w", err)
 	}
 	return candidate, nil
+}
+
+// RetainSource captures, uploads, and commits one exact source snapshot while
+// explicitly avoiding candidate preparation. The target source endpoint owns
+// byte retention and returns the verified portable digest.
+func (remote *TransportRemote) RetainSource(ctx context.Context, snapshot Snapshot) (RetainedSource, error) {
+	if remote == nil || remote.transport == nil {
+		return RetainedSource{}, fmt.Errorf("project source retention transport is not configured")
+	}
+	snapshot, err := normalizeSnapshot(snapshot)
+	if err != nil {
+		return RetainedSource{}, err
+	}
+	if retainer, ok := remote.transport.(SourceRetentionTransport); ok {
+		planRequest := SynchronizationPlanRequest{ProjectID: snapshot.ProjectID, ProjectFile: snapshot.ProjectFile, ArtifactDigest: snapshot.Digest, SourceOnly: true, CandidateKey: snapshot.CandidateKey, Artifacts: make([]ArtifactReference, len(snapshot.Artifacts)), SourceRevision: snapshot.SourceRevision}
+		artifactsByDigest := make(map[string]Artifact, len(snapshot.Artifacts))
+		for index, artifact := range snapshot.Artifacts {
+			planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest}
+			if _, exists := artifactsByDigest[artifact.Digest]; !exists {
+				artifactsByDigest[artifact.Digest] = artifact
+			}
+		}
+		plan, err := remote.transport.Plan(ctx, clonePlanRequest(planRequest))
+		if err != nil {
+			return RetainedSource{}, fmt.Errorf("plan project source retention: %w", err)
+		}
+		missing, err := missingArtifacts(plan.MissingDigests, artifactsByDigest)
+		if err != nil {
+			return RetainedSource{}, err
+		}
+		for _, artifact := range missing {
+			if err := remote.transport.Upload(ctx, clonePlanRequest(planRequest), artifact); err != nil {
+				return RetainedSource{}, fmt.Errorf("upload project source %q: %w", artifact.Path, err)
+			}
+		}
+		return retainer.RetainSource(ctx, clonePlanRequest(planRequest))
+	}
+	return RetainedSource{}, fmt.Errorf("target does not implement source-only retention")
 }
 
 func missingArtifacts(digests []string, available map[string]Artifact) ([]Artifact, error) {

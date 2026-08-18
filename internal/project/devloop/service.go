@@ -54,6 +54,7 @@ type SyncRequest struct {
 	Snapshot               Snapshot
 	ExpectedCandidateID    string
 	ExpectedArtifactDigest string
+	SourceOnly             bool
 }
 
 type Builder interface {

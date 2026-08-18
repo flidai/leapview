@@ -111,6 +111,37 @@ Check more than readiness:
 
 Keep the maintenance window open until these checks pass.
 
+### Plan-delivery pool admission migration
+
+Migrations 073–087 add the target-owned physical-pool contract, serving-state
+identity guards, rollback evidence, append-only delivery events, and durable GC
+actor attribution.
+They do not infer admission from configuration. After migration, a production
+target with no admitted pool remains administrable but reports a stable
+`missing_physical_pool_admission` readiness diagnostic. Run the controlled
+offline bootstrap in [Plan, build, and publish](plan-build-publish) with a
+fresh local or MinIO conformance artifact.
+
+Rows retained from an older schema with an empty serving-state identity are
+quarantined for inspection. They cannot be selected as a verified seal,
+ready candidate, prepared/active generation, or serving root; repair them by
+rebuilding and sealing a candidate with the current target revision. Do not
+update the identity columns manually.
+
+Restart the process once after the migration and before reopening traffic. The
+startup check must report the same target-owned pool admission and serving
+pointer on both starts. A missing target revision, missing serving identity,
+mixed legacy path, or indeterminate publication is a fail-closed diagnostic;
+do not infer activation from an object-store acknowledgement or retry publish
+with a new request. Reconcile the original publication against the durable
+target CAS, or restore the last validated control-plane backup and repeat the
+offline repair.
+
+One storage namespace has one deletion authority. Separate instance databases
+must not independently admit the same namespace. Use a shared control database
+or an external ownership/fencing service, or provision a distinct namespace
+and isolation boundary before migration.
+
 ## Roll back carefully
 
 If the failure is limited to application behavior and persistent state remains backward compatible, return to the previous immutable artifact. If a migration changed persistent state incompatibly, follow the release's restore procedure instead of starting old code against new state.

@@ -6,6 +6,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	"github.com/flidai/leapview/internal/release"
 )
 
 type candidateConnectionLeaser struct {
@@ -52,6 +53,38 @@ func candidateAuthoredConnections(
 			ConnectionID:  value.ConnectionID,
 			ConnectorKind: value.ConnectorKind,
 		}
+	}
+	return result
+}
+
+func candidateReleaseAuthoredConnections(values []release.CandidateAuthoredConnection) []deploymentmodule.CandidateAuthoredConnection {
+	result := make([]deploymentmodule.CandidateAuthoredConnection, len(values))
+	for i, value := range values {
+		result[i] = deploymentmodule.CandidateAuthoredConnection{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+	}
+	return result
+}
+
+func candidateConnectionRequirements(values []release.CandidateConnectionRequirement) []deploymentmodule.CandidateConnectionRequirement {
+	result := make([]deploymentmodule.CandidateConnectionRequirement, len(values))
+	for i, value := range values {
+		result[i] = deploymentmodule.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+	}
+	return result
+}
+
+func candidateManagedDataConnections(values []release.ManagedDataPin) []string {
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = value.ConnectionID
+	}
+	return result
+}
+
+func candidateRuntimeRestrictions(values []release.CandidateRestriction) []deploymentmodule.CandidateRestriction {
+	result := make([]deploymentmodule.CandidateRestriction, len(values))
+	for i, value := range values {
+		result[i] = deploymentmodule.CandidateRestriction{ID: value.ID, ObjectID: value.ObjectID, ObjectKind: value.ObjectKind, Subject: value.Subject, PolicyType: value.PolicyType, ExpressionJSON: value.ExpressionJSON}
 	}
 	return result
 }

@@ -6,21 +6,38 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
+	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 )
 
 type projectRuntimeFactory struct {
-	module *Module
+	module      *Module
+	environment *analyticsducklake.Environment
 }
 
 func (m *Module) ProjectRuntimeFactory() analyticsruntime.ProjectFactory {
 	return projectRuntimeFactory{module: m}
 }
 
+// ProjectRuntimeFactoryForEnvironment builds the governed project runtime
+// against one caller-owned immutable DuckLake environment. The module keeps
+// credential, binding, and cache policy while the caller owns that
+// environment's lifetime (for example a sealed read-only catalog reader).
+func (m *Module) ProjectRuntimeFactoryForEnvironment(environment *analyticsducklake.Environment) analyticsruntime.ProjectFactory {
+	return projectRuntimeFactory{module: m, environment: environment}
+}
+
 func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analyticsruntime.ProjectRequest) (analyticsruntime.Project, error) {
-	if f.module == nil || f.module.environment == nil || f.module.cache == nil {
+	if f.module == nil || f.module.cache == nil {
 		return nil, fmt.Errorf("analytical runtime is unavailable")
+	}
+	environment := f.environment
+	if environment == nil {
+		environment = f.module.environment
+	}
+	if environment == nil {
+		return nil, fmt.Errorf("analytical runtime environment is unavailable")
 	}
 	var connectionResolver analyticsruntime.ConnectionResolver
 	if request.CandidateID != "" {
@@ -45,7 +62,7 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		return nil, err
 	}
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
-		Models: request.Models, Database: f.module.environment,
+		Models: request.Models, Database: environment,
 		CredentialResolver: f.module.credentials,
 		ConnectionResolver: connectionResolver,
 		QueryCache:         cacheScope, ResultLimits: request.ResultLimits,
@@ -56,6 +73,7 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		CandidateID:      request.CandidateID, AuthorizationFingerprint: request.AuthorizationFingerprint,
 		BindingFingerprint: request.BindingFingerprint,
 		RequiredExtensions: request.RequiredExtensions,
+		SkipInitialRefresh: request.SkipInitialRefresh,
 	})
 	if err != nil {
 		_ = cacheScope.Close()

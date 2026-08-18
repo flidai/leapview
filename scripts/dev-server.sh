@@ -348,8 +348,15 @@ publish_project() {
       return 1
     }
 	fi
-  go run ./cmd/leapview dev --once --no-browser --project "$project" --target "http://localhost:${port}" --token dev
-	go run ./cmd/leapview publish --project "$project" --target "http://localhost:${port}" --token dev
+	local dev_output candidate_id
+	dev_output="$(go run ./cmd/leapview dev --once --no-browser --project "$project" --target "http://localhost:${port}" --token dev)" || return 1
+	printf '%s\n' "$dev_output"
+	candidate_id="$(awk '$1 == "candidate" { print $2; exit }' <<<"$dev_output")"
+	[[ "$candidate_id" =~ ^cand_[A-Za-z0-9_-]+$ ]] || {
+		echo "Development candidate publication did not return a canonical candidate ID." >&2
+		return 1
+	}
+	go run ./cmd/leapview publish "$candidate_id" --token dev
 	mcp_smoke "$port"
 }
 

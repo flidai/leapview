@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
+	"github.com/flidai/leapview/internal/app/gcadapter"
 )
 
 // runtimeLifecycle adapts process-owned workers and health signaling to
@@ -15,13 +16,18 @@ type runtimeLifecycle struct {
 	workers   Lifecycle
 	analytics *analyticsmodule.Module
 	workloads interface{ Close() }
+	gc        *gcadapter.Maintenance
 	fatal     chan error
 	stop      sync.Once
 	stopErr   error
 }
 
-func newRuntimeLifecycle(workers Lifecycle, analytics *analyticsmodule.Module, workloads interface{ Close() }) *runtimeLifecycle {
-	return &runtimeLifecycle{workers: workers, analytics: analytics, workloads: workloads, fatal: make(chan error, 1)}
+func newRuntimeLifecycle(workers Lifecycle, analytics *analyticsmodule.Module, workloads interface{ Close() }, maintenance ...*gcadapter.Maintenance) *runtimeLifecycle {
+	var gcMaintenance *gcadapter.Maintenance
+	if len(maintenance) > 0 {
+		gcMaintenance = maintenance[0]
+	}
+	return &runtimeLifecycle{workers: workers, analytics: analytics, workloads: workloads, gc: gcMaintenance, fatal: make(chan error, 1)}
 }
 
 func (l *runtimeLifecycle) Start(ctx context.Context) error {
@@ -30,6 +36,14 @@ func (l *runtimeLifecycle) Start(ctx context.Context) error {
 	}
 	if l.workers != nil {
 		if err := l.workers.Start(ctx); err != nil {
+			return err
+		}
+	}
+	if l.gc != nil {
+		if err := l.gc.Start(ctx); err != nil {
+			if l.workers != nil {
+				_ = l.workers.Stop(context.WithoutCancel(ctx))
+			}
 			return err
 		}
 	}
@@ -67,6 +81,9 @@ func (l *runtimeLifecycle) Stop(ctx context.Context) error {
 	l.stop.Do(func() {
 		if l.workers != nil {
 			l.stopErr = l.workers.Stop(ctx)
+		}
+		if l.gc != nil {
+			l.stopErr = errors.Join(l.stopErr, l.gc.Stop(ctx))
 		}
 		if l.workloads != nil {
 			l.workloads.Close()

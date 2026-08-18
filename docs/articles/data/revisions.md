@@ -39,18 +39,19 @@ Do not modify the source tree during transfer. If content changes, let the opera
 After staging every managed connection required by the project, create the
 private target candidate:
 
-```sh
-leapview dev --once \
-  --project dashboards/leapview.yaml \
-  --target "$LEAPVIEW_TARGET"
+For a private preview before the reviewed build, run `leapview dev --once` with
+the same project and target.
 
-leapview publish \
-  --project dashboards/leapview.yaml \
-  --target "$LEAPVIEW_TARGET"
+```sh
+PLAN_JSON=$(leapview plan dashboards/leapview.yaml --target "$LEAPVIEW_TARGET" --format json)
+PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
+BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
+CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
+leapview publish "$CANDIDATE_ID"
 ```
 
-Candidate preparation resolves the exact staged revision for every managed
-connection and retains those pins in immutable provenance. Missing,
+Build resolves the exact staged revision for every managed connection and
+retains those pins in immutable provenance. Missing,
 incompatible, or unavailable revisions reject the candidate. After review,
 `publish` activates that exact candidate without rebuilding it. Successful
 activation moves project configuration, project serving state, and managed

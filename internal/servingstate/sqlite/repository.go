@@ -35,6 +35,28 @@ func (r *Repository) ActiveServingStateGraph(ctx context.Context, projectID proj
 		}
 		return servingstate.AssetGraph{}, false, err
 	}
+	return r.servingStateGraph(ctx, projectID, servingstate.Environment(environment), state)
+}
+
+// ServingStateGraph returns the immutable asset projection for one exact
+// serving-state generation. Unlike ActiveServingStateGraph, it never consults
+// the legacy active-scope pointer; callers must bind the state ID to a live
+// runtime lease before requesting this projection.
+func (r *Repository) ServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string, servingStateID servingstate.ID) (servingstate.AssetGraph, bool, error) {
+	state, err := r.ByID(ctx, servingStateID)
+	if err != nil {
+		if errors.Is(err, servingstate.ErrNotFound) {
+			return servingstate.AssetGraph{}, false, nil
+		}
+		return servingstate.AssetGraph{}, false, err
+	}
+	return r.servingStateGraph(ctx, projectID, servingstate.Environment(environment), state)
+}
+
+func (r *Repository) servingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment, state servingstate.State) (servingstate.AssetGraph, bool, error) {
+	if state.ProjectID != projectID || state.Environment != environment {
+		return servingstate.AssetGraph{}, false, fmt.Errorf("serving state %q scope does not match project %q environment %q", state.ID, projectID, environment)
+	}
 	assets, err := r.q.ListAssetsByServingState(ctx, string(state.ID))
 	if err != nil {
 		return servingstate.AssetGraph{}, false, err
@@ -138,6 +160,32 @@ func (r *Repository) Create(ctx context.Context, input servingstate.CreateInput)
 		Source:      string(servingstate.NormalizeSource(input.Source)),
 		CreatedBy:   input.CreatedBy,
 	}); err != nil {
+		return servingstate.State{}, err
+	}
+	return r.ByID(ctx, id)
+}
+
+// CreateWithID is the idempotent serving-state reservation used by canonical
+// delivery attempts. The caller derives the ID from the durable attempt, so a
+// restart cannot allocate a second serving row after a crash during upload.
+func (r *Repository) CreateWithID(ctx context.Context, id servingstate.ID, input servingstate.CreateInput) (servingstate.State, error) {
+	if id == "" || string(id) != strings.TrimSpace(string(id)) {
+		return servingstate.State{}, fmt.Errorf("serving state id is required")
+	}
+	projectID, err := projectgraph.NewResourceID(input.ProjectID.String())
+	if err != nil {
+		return servingstate.State{}, err
+	}
+	if err := servingstate.ValidateEnvironment(input.Environment); err != nil {
+		return servingstate.State{}, err
+	}
+	if _, err := projectgraph.NewServingIdentity(projectID, string(input.Environment), string(id)); err != nil {
+		return servingstate.State{}, err
+	}
+	if err := r.q.CreateServingState(ctx, platformdb.CreateServingStateParams{ID: string(id), ProjectID: projectID.String(), Environment: string(input.Environment), Status: string(servingstate.StatusPending), Source: string(servingstate.NormalizeSource(input.Source)), CreatedBy: input.CreatedBy}); err != nil {
+		if existing, readErr := r.ByID(ctx, id); readErr == nil && existing.ProjectID == projectID && existing.Environment == input.Environment && existing.CreatedBy == input.CreatedBy && existing.Source == servingstate.NormalizeSource(input.Source) {
+			return existing, nil
+		}
 		return servingstate.State{}, err
 	}
 	return r.ByID(ctx, id)

@@ -81,6 +81,159 @@ type lifecycleRepo struct {
 	noActive       bool
 }
 
+type heartbeatLeaseRepo struct {
+	mu         sync.Mutex
+	results    []error
+	defaultErr error
+	calls      int
+	expires    []time.Time
+}
+
+type blockingHeartbeatLeaseRepo struct {
+	started chan struct{}
+}
+
+func (r *blockingHeartbeatLeaseRepo) CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error) {
+	return "heartbeat", nil
+}
+
+func (r *blockingHeartbeatLeaseRepo) ReleaseQuerySnapshotLease(context.Context, string) error {
+	return nil
+}
+
+func (r *blockingHeartbeatLeaseRepo) ExtendQuerySnapshotLease(ctx context.Context, _ string, _ time.Time) error {
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (r *heartbeatLeaseRepo) CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error) {
+	return "heartbeat", nil
+}
+
+func (r *heartbeatLeaseRepo) ReleaseQuerySnapshotLease(context.Context, string) error {
+	return nil
+}
+
+func (r *heartbeatLeaseRepo) ExtendQuerySnapshotLease(_ context.Context, _ string, expires time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	r.expires = append(r.expires, expires)
+	if len(r.results) == 0 {
+		return r.defaultErr
+	}
+	err := r.results[0]
+	r.results = r.results[1:]
+	return err
+}
+
+func (r *heartbeatLeaseRepo) Calls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+func TestHeartbeatLeaseRetriesTransientFailureBeforeConfirmedExpiry(t *testing.T) {
+	renewer := &heartbeatLeaseRepo{results: []error{errors.New("provider timeout"), nil}}
+	callbacks := make(chan error, 1)
+	m := NewManagerWithFactory(ManagerOptions{LeaseTTL: 24 * time.Millisecond, OnLeaseRenewalFailure: func(err error) { callbacks <- err }})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	confirmedExpiry := time.Now().UTC().Add(200 * time.Millisecond)
+	go func() {
+		m.heartbeatLease(ctx, renewer, "heartbeat-transient", confirmedExpiry)
+		close(done)
+	}()
+	select {
+	case err := <-callbacks:
+		if err != nil {
+			t.Fatalf("transient renewal callback error=%v, want no poison before expiry", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("successful retry callback missing")
+	}
+	deadline := time.Now().Add(time.Second)
+	for renewer.Calls() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := renewer.Calls(); got < 2 {
+		t.Fatalf("renewal calls=%d, want retry after transient failure", got)
+	}
+	if err := m.LeaseRenewalError(); err != nil {
+		t.Fatalf("transient renewal poisoned manager health: %v", err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop")
+	}
+}
+
+func TestHeartbeatLeasePoisonsOnlyAfterConfirmedExpiry(t *testing.T) {
+	renewer := &heartbeatLeaseRepo{defaultErr: errors.New("provider unavailable")}
+	callbacks := make(chan error, 1)
+	m := NewManagerWithFactory(ManagerOptions{LeaseTTL: 16 * time.Millisecond, OnLeaseRenewalFailure: func(err error) { callbacks <- err }})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	confirmedExpiry := time.Now().UTC().Add(40 * time.Millisecond)
+	go func() {
+		m.heartbeatLease(ctx, renewer, "heartbeat-expiry", confirmedExpiry)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not stop after confirmed expiry")
+	}
+	if err := m.LeaseRenewalError(); err == nil {
+		t.Fatal("sustained renewal failure did not poison manager health")
+	}
+	select {
+	case err := <-callbacks:
+		if err == nil {
+			t.Fatal("expiry callback was nil")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expiry callback missing")
+	}
+}
+
+func TestHeartbeatLeaseBoundsBlockingRenewalByConfirmedExpiry(t *testing.T) {
+	renewer := &blockingHeartbeatLeaseRepo{started: make(chan struct{}, 1)}
+	m := NewManagerWithFactory(ManagerOptions{LeaseTTL: 20 * time.Millisecond})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	confirmedExpiry := time.Now().UTC().Add(35 * time.Millisecond)
+	started := time.Now()
+	go func() {
+		m.heartbeatLease(ctx, renewer, "heartbeat-blocking", confirmedExpiry)
+		close(done)
+	}()
+	select {
+	case <-renewer.started:
+	case <-time.After(time.Second):
+		t.Fatal("renewal did not start")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("blocking renewal exceeded confirmed expiry bound")
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("blocking renewal elapsed=%v, want bounded by expiry", elapsed)
+	}
+	if err := m.LeaseRenewalError(); err == nil {
+		t.Fatal("blocking renewal expiry did not poison manager health")
+	}
+}
+
 type unboundLifecycleRepo struct {
 	*lifecycleRepo
 	scopes []servingstate.ActiveScope
@@ -665,6 +818,9 @@ func TestReloadNoChangeAndCloseAreIdempotent(t *testing.T) {
 	lease.Release()
 	if err := registry.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if err := registry.ReconcileSealed(t.Context(), "generation_1"); !errors.Is(err, ErrRegistryClosed) {
+		t.Fatalf("reconcile after close = %v, want ErrRegistryClosed", err)
 	}
 	if err := registry.Close(); err != nil {
 		t.Fatal(err)

@@ -48,6 +48,7 @@ func DevCommand(
 	checkpoints *CandidateCheckpointStore,
 	remotes DevRemoteFactory,
 	openBrowser func(string) error,
+	planOperations ...DeliveryPlanOperations,
 ) *cobra.Command {
 	values := DevOptions{
 		ProjectPath:       filepath.Join("dashboards", "leapview.yaml"),
@@ -77,6 +78,7 @@ func DevCommand(
 				openBrowser,
 				command.OutOrStdout(),
 				command.ErrOrStderr(),
+				planOperations...,
 			)
 		},
 	}
@@ -165,6 +167,10 @@ type DevResult struct {
 	ArtifactDigest   string `json:"artifactDigest"`
 	ProvenanceDigest string `json:"provenanceDigest"`
 	PreviewURL       string `json:"previewUrl"`
+	PlanID           string `json:"planId,omitempty"`
+	PlanDigest       string `json:"planDigest,omitempty"`
+	ExecutionDigest  string `json:"executionDigest,omitempty"`
+	EvidenceDigest   string `json:"evidenceDigest,omitempty"`
 }
 
 // RunDev executes the Project-owned candidate synchronization lifecycle. It is
@@ -179,6 +185,7 @@ func RunDev(
 	openBrowser func(string) error,
 	out,
 	errOut io.Writer,
+	planOperations ...DeliveryPlanOperations,
 ) error {
 	if client == nil {
 		return fmt.Errorf("Project CLI API client is required")
@@ -237,7 +244,7 @@ func RunDev(
 		); err != nil {
 			return err
 		}
-		if err := checkpoints.Save(CandidateCheckpoint{
+		checkpoint := CandidateCheckpoint{
 			ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target,
 			TargetID: candidate.TargetID, Environment: candidate.Environment,
 			ProjectID: candidate.ProjectID.String(), CandidateID: candidate.ID,
@@ -245,8 +252,30 @@ func RunDev(
 			CandidateRevision: candidate.Revision,
 			ArtifactDigest:    candidate.ArtifactDigest,
 			ProvenanceDigest:  candidate.ProvenanceDigest,
-		}); err != nil {
+		}
+		var planResult DeliveryPlanResult
+		if len(planOperations) > 0 && planOperations[0] != nil {
+			planResult, err = planOperations[0].Create(ctx, DeliveryPlanOptions{
+				ProjectPath: options.ProjectPath, Credentials: credentials,
+				TargetID: candidate.TargetID, Operation: "code_change",
+				CandidateKey: options.CandidateKey, UploadConcurrency: options.UploadConcurrency,
+				CandidateID: candidate.ID, ProjectID: candidate.ProjectID.String(), SourceDigest: candidate.ArtifactDigest,
+				Environment: candidate.Environment,
+			})
+			if err != nil {
+				return fmt.Errorf("create delivery plan: %w", err)
+			}
+			checkpoint.PlanID, checkpoint.PlanDigest = planResult.PlanID, planResult.PlanDigest
+			checkpoint.ExecutionDigest, checkpoint.EvidenceDigest = planResult.ExecutionDigest, planResult.EvidenceDigest
+		}
+		if err := checkpoints.Save(checkpoint); err != nil {
 			return fmt.Errorf("persist publish candidate: %w", err)
+		}
+		if err := checkpoints.SaveObjectIdentity("candidate", candidate.ID, DeliveryObjectCheckpoint{
+			ProjectID: candidate.ProjectID.String(), TargetOrigin: credentials.Target,
+			TargetID: candidate.TargetID, Environment: candidate.Environment,
+		}); err != nil {
+			return fmt.Errorf("persist candidate identity: %w", err)
 		}
 		if options.Format == "json" {
 			if err := json.NewEncoder(out).Encode(DevResult{
@@ -259,6 +288,10 @@ func RunDev(
 				ArtifactDigest:   candidate.ArtifactDigest,
 				ProvenanceDigest: candidate.ProvenanceDigest,
 				PreviewURL:       candidate.PreviewURL,
+				PlanID:           checkpoint.PlanID,
+				PlanDigest:       checkpoint.PlanDigest,
+				ExecutionDigest:  checkpoint.ExecutionDigest,
+				EvidenceDigest:   checkpoint.EvidenceDigest,
 			}); err != nil {
 				return fmt.Errorf("write dev result: %w", err)
 			}
@@ -274,6 +307,9 @@ func RunDev(
 				candidate.Environment,
 				candidate.OwnerID,
 			)
+			if checkpoint.PlanID != "" {
+				fmt.Fprintf(out, "plan %s digest %s evidence %s\n", checkpoint.PlanID, checkpoint.PlanDigest, checkpoint.EvidenceDigest)
+			}
 		}
 		if candidate.PreviewURL != "" &&
 			candidate.PreviewURL != lastPreviewURL {

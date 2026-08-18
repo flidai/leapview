@@ -32,9 +32,7 @@ Confirm the scheme, hostname, expected environment, and project. Saved credentia
 ```sh
 leapview plan \
   --project dashboards/leapview.yaml \
-  --target https://dash.example.com \
-  --environment production \
-  --project project:retail
+  --target https://dash.example.com
 ```
 
 For `401` responses, verify that a token was supplied for that target and is still valid. For `403`, inspect the authenticated identity's effective grants for the failed operation. Do not broaden the credential until the missing privilege is understood.

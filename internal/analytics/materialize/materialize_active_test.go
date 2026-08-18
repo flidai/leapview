@@ -51,6 +51,28 @@ func TestActiveRefreshExecutesPlannedTablesInDependencyOrder(t *testing.T) {
 	}
 }
 
+func TestActiveSelectedRefreshOrdersChangedDependenciesBeforeDependents(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"fact":  {ModelDependencies: []string{"z_dim"}},
+			"z_dim": {},
+		},
+	}
+	planner := &activeMaterializePlanner{plans: map[string]analyticsmaterialize.ModelTablePlan{
+		"fact":  {Mode: analyticsmaterialize.PlanModeModelSQL, SQL: "CREATE TABLE model.fact AS SELECT * FROM model.z_dim"},
+		"z_dim": {Mode: analyticsmaterialize.PlanModeDirectSourceRead, SQL: "CREATE TABLE model.z_dim AS SELECT 1"},
+	}}
+	executor := &activeMaterializeExecutor{}
+
+	if _, err := analyticsmaterialize.RefreshModelTables(context.Background(), executor, planner, model, []string{"fact", "z_dim"}); err != nil {
+		t.Fatalf("RefreshModelTables() error = %v", err)
+	}
+	if got, want := planner.calls, []string{"z_dim", "fact"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("planned tables = %#v, want %v", got, want)
+	}
+}
+
 func TestActiveRefreshPropagatesPlannerFailureAndStopsLaterTables(t *testing.T) {
 	plannerErr := errors.New("planner unavailable")
 	model := &semanticmodel.Model{

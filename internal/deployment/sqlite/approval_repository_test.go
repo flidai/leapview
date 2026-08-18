@@ -53,6 +53,76 @@ func TestApprovalRepositoryPersistsImmutableScopeAndOptimisticTransitions(t *tes
 	}
 }
 
+func TestApprovalRepositoryAppendsRequestedGrantedAndRejectedEvents(t *testing.T) {
+	ctx, db, repository := testRepository(t)
+	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
+	insertApprovalPrincipalsAndDeployment(t, ctx, db)
+	if _, err := db.ExecContext(ctx, `INSERT INTO delivery_target_revisions (target_id,project_id,environment,target_revision,created_at,updated_at) VALUES (?,?,?,?,?,?)`, "approval-target", "finance", "prod", 0, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	pending := deployment.Approval{ID: "approval-events", ProjectID: "finance", DeploymentID: "deployment_1", Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1", Status: deployment.ApprovalPending, RequestedBy: "publisher", RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "workload_1", RequestedAt: now, ExpiresAt: now.Add(time.Hour), Revision: 1}
+	if _, err := repository.CreateApproval(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	requested := deployment.DeliveryEventID("approval-target", pending.RequestDigest, "approval_requested", "approval", pending.ID)
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM delivery_events WHERE id=? AND actor_id=?`, requested, pending.RequestedBy).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("approval_requested count=%d", count)
+	}
+	approved := pending
+	approved.Status = deployment.ApprovalApproved
+	approved.ApprovedBy = "reviewer"
+	approved.ApprovalCredentialClass = deployment.CredentialClassHuman
+	approved.ApprovalCredentialID = "session-review"
+	approved.ApprovalCredentialExpiresAt = now.Add(time.Hour)
+	approved.ApprovedAt = now.Add(time.Minute)
+	approved.Revision++
+	if _, err := repository.SaveApproval(ctx, approved, pending.Revision); err != nil {
+		t.Fatal(err)
+	}
+	granted := deployment.DeliveryEventID("approval-target", pending.RequestDigest, "approval_granted", "approval", pending.ID)
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM delivery_events WHERE id=? AND actor_id=?`, granted, approved.ApprovedBy).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("approval_granted count=%d", count)
+	}
+
+	// A second approval identity exercises the rejection producer without
+	// changing the first immutable decision event.
+	if _, err := db.ExecContext(ctx, `INSERT INTO project_deployments (id,project_id,environment,generation_id,artifact_digest,request_digest,status,created_by) VALUES ('deployment_2','finance','prod','generation_approval',?,?, 'pending','publisher')`, deploymentDigest("a"), deploymentDigest("c")); err != nil {
+		t.Fatal(err)
+	}
+	denied := pending
+	denied.ID = "approval-denied-events"
+	denied.DeploymentID = "deployment_2"
+	denied.RequestDigest = deploymentDigest("c")
+	denied.RequestCredentialID = "workload-2"
+	if _, err := repository.CreateApproval(ctx, denied); err != nil {
+		t.Fatal(err)
+	}
+	denied.Status = deployment.ApprovalDenied
+	denied.ApprovedBy = "reviewer"
+	denied.ApprovalCredentialClass = deployment.CredentialClassHuman
+	denied.ApprovalCredentialID = "session-review"
+	denied.ApprovalCredentialExpiresAt = now.Add(time.Hour)
+	denied.ApprovedAt = now.Add(2 * time.Minute)
+	denied.Revision++
+	if _, err := repository.SaveApproval(ctx, denied, 1); err != nil {
+		t.Fatal(err)
+	}
+	rejected := deployment.DeliveryEventID("approval-target", denied.RequestDigest, "approval_rejected", "approval", denied.ID)
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM delivery_events WHERE id=? AND actor_id=?`, rejected, denied.ApprovedBy).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("approval_rejected count=%d", count)
+	}
+}
+
 func TestApprovalRepositoryFailsClosedOnTamperedEvidence(t *testing.T) {
 	ctx, db, repository := testRepository(t)
 	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)

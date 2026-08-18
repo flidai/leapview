@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"net/http"
 
 	projectcli "github.com/flidai/leapview/internal/project/cli"
 	"github.com/spf13/cobra"
@@ -12,7 +13,11 @@ func validateCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
 }
 
 func planCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
-	return projectcli.PlanCommand(ctx, nil)
+	client := capabilityAPIClient{
+		httpClient:        authoringRefreshingHTTPClient(http.DefaultClient),
+		validateAuthoring: true,
+	}
+	return projectcli.PlanCommand(ctx, projectDeliveryPlanOperations{client: client, remotes: projectDevRemoteFactory{client: client}, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())})
 }
 
 func schemaCommand(_ *rootOptions) *cobra.Command {

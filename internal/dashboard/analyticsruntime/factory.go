@@ -32,6 +32,7 @@ type Options struct {
 	CandidateID              string
 	AuthorizationFingerprint string
 	BindingFingerprint       string
+	SkipInitialRefresh       bool
 }
 
 type Factory struct{ options Options }
@@ -58,6 +59,7 @@ func (f Factory) OpenDashboardProjectDataRuntimes(ctx context.Context, config da
 		SemanticDigest: options.SemanticModelDigest, ArtifactDigest: options.ArtifactDigest, SourceDataDigest: options.SourceDataDigest,
 		CandidateID: options.CandidateID, AuthorizationFingerprint: options.AuthorizationFingerprint,
 		BindingFingerprint: options.BindingFingerprint,
+		SkipInitialRefresh: options.SkipInitialRefresh,
 	})
 	if err != nil {
 		return nil, err

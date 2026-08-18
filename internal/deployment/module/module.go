@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
+	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -25,9 +27,11 @@ type Module struct {
 	candidateRuntimes         CandidateRuntimePreparer
 	candidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle
 	candidateSources          deployment.CandidateSourceSynchronizer
+	candidateSourceAudit      func(context.Context, CandidateSourceAuditEvent) error
 	candidateSourceBlobAudit  func(context.Context, CandidateSourceBlobAuditEvent) error
 	candidateArtifacts        release.CandidateArtifactPreparer
 	candidateAdmission        CandidatePreparationAdmitter
+	deliveryCandidateBuilder  func(context.Context, deployment.DeliveryCandidateBuildInput) (deployment.Candidate, error)
 	logger                    *slog.Logger
 	jobs                      JobConfig
 	api                       APIConfig
@@ -39,6 +43,15 @@ type Module struct {
 	authorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
 	bootstrapPolicies         BootstrapPolicyStore
 	authorizeBootstrap        func(context.Context, deployment.BootstrapActivationPolicy) error
+	sealedCoordinator         SealedCoordinator
+	sealedPublishRequest      SealedPublishRequestResolver
+	sealedRollbackRequest     SealedRollbackRequestResolver
+	sealedActivationMarker    SealedActivationMarker
+	sealedReconcile           func(context.Context, string) error
+	sealedRollbackFence       func(context.Context, string) (string, int64, error)
+	requireSealedCoordinator  bool
+	deliveryReader            deployment.DeliveryReader
+	deliveryMutations         DeliveryMutationPort
 }
 
 type Principal struct {
@@ -105,20 +118,26 @@ type BootstrapPersistence interface {
 	ProjectClaimReader
 }
 
-// CandidateSourceBlobAuditEvent is the transport-neutral audit record emitted
-// after an immutable candidate source blob has been accepted. Action and
-// Capability is copied from the generated command contract by the module.
-type CandidateSourceBlobAuditEvent struct {
-	PrincipalID   string
-	ProjectID     projectgraph.ResourceID
-	Digest        string
-	Action        string
-	Capability    access.Capability
-	Status        string
-	RequestID     string
-	CorrelationID string
-	MetadataJSON  string
+// CandidateSourceAuditEvent is the transport-neutral audit record emitted
+// after an immutable candidate source or source blob has been accepted.
+// Action and Capability are copied from the generated command contract by the
+// module. SourceAttestationDigest is populated for retained source snapshots.
+type CandidateSourceAuditEvent struct {
+	PrincipalID            string
+	ProjectID              projectgraph.ResourceID
+	Digest                 string
+	SourceAttestationDigest string
+	Action                 string
+	Capability             access.Capability
+	Status                 string
+	RequestID              string
+	CorrelationID          string
+	MetadataJSON           string
 }
+
+// CandidateSourceBlobAuditEvent remains an alias for compatibility with
+// existing composition and tests while source and blob audits share one sink.
+type CandidateSourceBlobAuditEvent = CandidateSourceAuditEvent
 
 const (
 	CandidatePreparing          = deployment.CandidatePreparing
@@ -126,6 +145,7 @@ const (
 	CandidateFailed             = deployment.CandidateFailed
 	CandidateCancelled          = deployment.CandidateCancelled
 	CandidateExpired            = deployment.CandidateExpired
+	CandidateDataReuseBase      = deployment.CandidateDataReuseBase
 	CandidateDataReuseSnapshot  = deployment.CandidateDataReuseSnapshot
 	CandidateDataRefreshSources = deployment.CandidateDataRefreshSources
 )
@@ -138,6 +158,18 @@ var (
 type ServingStatePort interface {
 	deployment.ServingStateRepository
 }
+
+// SealedCoordinator contains only durable publication and rollback operations.
+// Catalog/seal lookup remains in the resolver callbacks so this HTTP module
+// never receives object-store credentials or paths.
+type SealedCoordinator interface {
+	Publish(context.Context, sealedcontrol.PublishRequest) (deployment.PublicationIntent, error)
+	Rollback(context.Context, sealedcontrol.RollbackRequest) (deployment.RollbackResult, error)
+}
+
+type SealedPublishRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor) (sealedcontrol.PublishRequest, error)
+type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, string, int64) (sealedcontrol.RollbackRequest, error)
+type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
 
 type Config struct {
 	Database                  *sql.DB
@@ -154,6 +186,7 @@ type Config struct {
 	ApprovalLifetime          time.Duration
 	MaxCandidatesPerOwner     int
 	CandidateAudit            func(context.Context, deployment.CandidateEvent) error
+	CandidateSourceAudit      func(context.Context, CandidateSourceAuditEvent) error
 	CandidateSourceBlobAudit  func(context.Context, CandidateSourceBlobAuditEvent) error
 	CandidateConnections      deployment.CandidateConnectionLeaser
 	CandidateRuntime          deployment.CandidateRuntimeHost
@@ -161,6 +194,16 @@ type Config struct {
 	CandidateSources          deployment.CandidateSourceSynchronizer
 	CandidateArtifacts        release.CandidateArtifactPreparer
 	CandidateAdmission        CandidatePreparationAdmitter
+	// DeliveryCandidateBuilder is the canonical plan -> build -> seal adapter.
+	// When configured, candidate synchronization delegates to it after the
+	// immutable source snapshot is committed. Production composition sets
+	// RequireCanonicalDelivery so an omitted adapter fails closed.
+	DeliveryCandidateBuilder func(context.Context, deployment.DeliveryCandidateBuildInput) (deployment.Candidate, error)
+	CanonicalDeliveryAdapter *CanonicalDeliveryAdapter
+	// RequireCanonicalDelivery makes production composition fail closed when
+	// the plan-driven adapter is missing. Development compatibility can leave
+	// this false until its target-owned adapter is wired.
+	RequireCanonicalDelivery bool
 	// BindClaimedProject binds the process runtime to the durable instance
 	// claim after candidate start commits.
 	BindClaimedProject   func(context.Context, projectgraph.ResourceID, servingstate.Environment) error
@@ -182,9 +225,33 @@ type Config struct {
 	Jobs                     JobConfig
 	API                      APIConfig
 	PublicationAuthorization PublicationAuthorizationConfig
+	SealedCoordinator        SealedCoordinator
+	SealedPublishRequest     SealedPublishRequestResolver
+	SealedRollbackRequest    SealedRollbackRequestResolver
+	SealedActivationMarker   SealedActivationMarker
+	SealedReconcile          func(context.Context, string) error
+	SealedRollbackFence      func(context.Context, string) (string, int64, error)
+	RequireSealedCoordinator bool
+	// DeliveryMutations owns the canonical plan -> build -> publish/rollback
+	// use cases. It is deliberately a narrow callback port so HTTP/CLI cannot
+	// bypass target admission, sealing, or the authoritative CAS fence.
+	DeliveryMutations DeliveryMutationPort
+	// DeliveryReader is the durable, read-only plan/build/seal/operator port.
+	// When Database is configured, Build installs the SQLite repository by
+	// default; tests and alternate control stores may provide an implementation.
+	DeliveryReader deployment.DeliveryReader
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	if config.DeliveryCandidateBuilder == nil && config.CanonicalDeliveryAdapter != nil {
+		config.DeliveryCandidateBuilder = config.CanonicalDeliveryAdapter.CandidateDeliveryBuilder()
+	}
+	if config.RequireCanonicalDelivery && config.DeliveryCandidateBuilder == nil {
+		return nil, fmt.Errorf("canonical delivery lifecycle is required")
+	}
+	if config.RequireSealedCoordinator && (config.SealedCoordinator == nil || config.SealedPublishRequest == nil || config.SealedRollbackRequest == nil || config.SealedReconcile == nil || config.SealedRollbackFence == nil) {
+		return nil, fmt.Errorf("sealed publication coordinator and durable request resolvers are required")
+	}
 	executions, err := loadDeploymentExecutionContracts()
 	if err != nil {
 		return nil, err
@@ -215,6 +282,18 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			config.API.Releases,
 			config.API.Workflow,
 		)
+		if config.DeliveryReader == nil {
+			if reader, ok := repository.(deployment.DeliveryReader); ok {
+				config.DeliveryReader = reader
+			}
+		}
+		if config.SealedActivationMarker == nil {
+			if marker, ok := repository.(interface {
+				ActivateSealedDeployment(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
+			}); ok {
+				config.SealedActivationMarker = marker.ActivateSealedDeployment
+			}
+		}
 		if policyStore, ok := repository.(BootstrapPolicyStore); ok {
 			durableBootstrapPolicies = policyStore
 		}
@@ -258,6 +337,14 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if err != nil {
 			return nil, err
 		}
+		if config.DeliveryMutations == nil && config.CanonicalDeliveryAdapter != nil && config.CandidateSources != nil {
+			config.DeliveryMutations = &CanonicalDeliveryMutations{
+				Lifecycle: config.CanonicalDeliveryAdapter.Lifecycle,
+				Sources:   config.CandidateSources, Artifacts: config.CandidateArtifacts,
+				Plan: config.CanonicalDeliveryAdapter.Plan, PlanPreview: config.CanonicalDeliveryAdapter.PlanPreview, BuildRequest: config.CanonicalDeliveryAdapter.BuildRequest,
+				Adapter: config.CanonicalDeliveryAdapter, Publish: config.CanonicalDeliveryAdapter.Publish, Rollback: config.CanonicalDeliveryAdapter.Rollback,
+			}
+		}
 		approvals, err = deployment.NewApprovalService(
 			approvalRepository,
 			deployment.ApprovalServiceConfig{
@@ -281,6 +368,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		candidateRuntimes: candidateRuntimes, candidateRuntimeLifecycle: config.CandidateRuntimeLifecycle, candidateSources: config.CandidateSources,
 		candidateArtifacts:       config.CandidateArtifacts,
 		candidateAdmission:       config.CandidateAdmission,
+		deliveryCandidateBuilder: config.DeliveryCandidateBuilder,
+		candidateSourceAudit:     config.CandidateSourceAudit,
 		candidateSourceBlobAudit: config.CandidateSourceBlobAudit,
 		logger:                   config.Logger,
 		jobs:                     jobs, api: config.API, protected: config.Protected,
@@ -289,6 +378,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		authorizeApproval:    config.AuthorizeApproval,
 		authorizeActivation:  config.AuthorizeActivation,
 		bootstrapPolicies:    config.BootstrapPolicies, authorizeBootstrap: config.AuthorizeBootstrap,
+		sealedCoordinator: config.SealedCoordinator, sealedPublishRequest: config.SealedPublishRequest,
+		sealedRollbackRequest: config.SealedRollbackRequest, sealedActivationMarker: config.SealedActivationMarker,
+		sealedReconcile: config.SealedReconcile, sealedRollbackFence: config.SealedRollbackFence,
+		requireSealedCoordinator: config.RequireSealedCoordinator, deliveryReader: config.DeliveryReader,
+		deliveryMutations: config.DeliveryMutations,
 	}
 	if m.bootstrapPolicies == nil {
 		m.bootstrapPolicies = durableBootstrapPolicies
@@ -306,6 +400,16 @@ func Build(_ context.Context, config Config) (*Module, error) {
 }
 
 func (m *Module) HTTP() *deploymenthttp.Handler { return m.handler }
+
+// SealedApprovalVerifier returns the module's durable approval check for the
+// sealed publication boundary. Composition installs it on the coordinator
+// after Build, once the SQLite-backed approval service exists.
+func (m *Module) SealedApprovalVerifier() sealedcontrol.ApprovalVerifier {
+	if m == nil {
+		return sealedcontrol.DurableApprovalVerifier(nil)
+	}
+	return sealedcontrol.DurableApprovalVerifier(m.approvals)
+}
 
 func (m *Module) PrepareCandidateRuntime(
 	ctx context.Context,

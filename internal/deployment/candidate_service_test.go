@@ -199,6 +199,57 @@ func TestCandidateServiceUsesNestedAuditContractDuringSynchronization(t *testing
 	}
 }
 
+func TestCandidateServiceAuditsExactReadyReplayWithoutRevision(t *testing.T) {
+	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
+	repository := newCandidateMemoryRepository()
+	var events []CandidateEvent
+	service, err := NewCandidateService(repository, CandidateServiceConfig{
+		TargetID: "lvinst_prod", CanonicalOrigin: "https://prod.leapview.example", Environment: "prod",
+		Lifetime: time.Hour, MaxActivePerOwner: 4, Now: func() time.Time { return now },
+		NewID: func() (string, error) { return "cand_ready_replay", nil },
+		Audit: func(_ context.Context, event CandidateEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	})
+	require.NoError(t, err)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	provenance := "sha256:" + strings.Repeat("b", 64)
+	started, err := service.Start(t.Context(), StartCandidateRequest{
+		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: digest,
+	})
+	require.NoError(t, err)
+	ready, err := service.MarkReady(t.Context(), candidateScopeForService(started.Candidate), digest, provenance)
+	require.NoError(t, err)
+
+	contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(string(deploymentgen.GenOperationCommitProjectCandidateSynchronization))
+	require.True(t, ok)
+	ctx, guard, err := apigencommand.Begin(t.Context(), contract)
+	require.NoError(t, err)
+	replayed, err := service.MarkReady(ctx, candidateScopeForService(ready), digest, provenance)
+	require.NoError(t, err)
+	if replayed != ready {
+		t.Fatalf("ready replay changed candidate: got %#v, want %#v", replayed, ready)
+	}
+	if !guard.Completed() {
+		t.Fatal("exact ready replay did not complete generated command guard")
+	}
+	if len(events) != 3 || events[2].Action != CandidateAuditReady {
+		t.Fatalf("ready replay audit events = %#v", events)
+	}
+	if !strings.Contains(events[2].MetadataJSON, `"operationId":"commitProjectCandidateSynchronization"`) {
+		t.Fatalf("ready replay audit metadata = %s", events[2].MetadataJSON)
+	}
+
+	_, err = service.MarkReady(t.Context(), candidateScopeForService(ready), digest, "sha256:"+strings.Repeat("c", 64))
+	if !errors.Is(err, ErrCandidateConflict) {
+		t.Fatalf("ready replay drift error = %v, want ErrCandidateConflict", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("drift unexpectedly emitted audit event: %#v", events)
+	}
+}
+
 func TestCandidateServiceIsolatesAutomationKeysAndCancelsByKey(t *testing.T) {
 	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
 	repository := newCandidateMemoryRepository()

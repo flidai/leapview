@@ -392,6 +392,86 @@ func (p Project) ModelTables() map[string]semanticmodel.Table {
 	return cloneValue(p.manifest.Models)
 }
 
+// RelationExecutionDigests returns per-model-table identities for physical
+// reuse. Each digest includes the table descriptor and transitive model-table
+// dependency descriptors; callers supply target-scoped pinned-input context
+// separately so a changed source revision cannot retain stale files.
+func (p Project) RelationExecutionDigests(context string) (map[string]string, error) {
+	contexts := make(map[string]string)
+	for id := range p.manifest.Models {
+		contexts[id] = context
+	}
+	return p.RelationExecutionDigestsByContext(contexts)
+}
+
+// RelationExecutionDigestsByContext is the relation-scoped form of
+// RelationExecutionDigests. Each model-table digest receives only its own
+// transitive source/binding/pin context; callers can therefore change an
+// unrelated source without invalidating untouched physical references.
+func (p Project) RelationExecutionDigestsByContext(contexts map[string]string) (map[string]string, error) {
+	tables := p.ModelTables()
+	resources := make(map[string]string)
+	resourceIDsByName := make(map[string]string)
+	for _, resource := range p.graph.Resources() {
+		if resource.Kind == projectgraph.KindModel {
+			resources[resource.ID.String()] = resource.Name
+			resourceIDsByName[resource.Name] = resource.ID.String()
+		}
+	}
+	byName := make(map[string]semanticmodel.Table, len(tables))
+	for id, table := range tables {
+		if name := resources[id]; name != "" {
+			byName[name] = table
+		}
+	}
+	var digestTable func(string, map[string]bool) (any, error)
+	digestTable = func(name string, visiting map[string]bool) (any, error) {
+		table, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("relation dependency %q is missing", name)
+		}
+		if visiting[name] {
+			return nil, fmt.Errorf("relation dependency cycle at %q", name)
+		}
+		visiting[name] = true
+		dependencies := make(map[string]any, len(table.ModelDependencies))
+		for _, dependency := range table.ModelDependencies {
+			dependencyName := dependency
+			if graphName := resources[dependency]; graphName != "" {
+				dependencyName = graphName
+			}
+			value, err := digestTable(dependencyName, visiting)
+			if err != nil {
+				return nil, err
+			}
+			dependencies[dependency] = value
+		}
+		delete(visiting, name)
+		return struct {
+			Table        semanticmodel.Table `json:"table"`
+			Dependencies map[string]any      `json:"dependencies,omitempty"`
+			Context      string              `json:"context"`
+		}{Table: table, Dependencies: dependencies, Context: contexts[resourceIDsByName[name]]}, nil
+	}
+	result := make(map[string]string, len(tables))
+	for id, name := range resources {
+		if _, ok := tables[id]; !ok {
+			continue
+		}
+		value, err := digestTable(name, map[string]bool{})
+		if err != nil {
+			return nil, err
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("encode relation %q: %w", id, err)
+		}
+		sum := sha256.Sum256(encoded)
+		result[id] = "sha256:" + hex.EncodeToString(sum[:])
+	}
+	return result, nil
+}
+
 // DashboardDefinitions returns detached compiled dashboard definitions keyed
 // by canonical dashboard ID.
 func (p Project) DashboardDefinitions() map[string]dashboarddefinition.Definition {

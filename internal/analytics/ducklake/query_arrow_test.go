@@ -14,6 +14,41 @@ import (
 	"github.com/flidai/leapview/internal/workload"
 )
 
+func TestQueryArrowUnwrapsGuardedConnectionWithoutBypassingSharedPoolGuard(t *testing.T) {
+	env, err := Open(context.Background(), fixtureConfig(t, Config{RootDir: t.TempDir(), MaxConnections: 2}))
+	if extensionUnavailable(err) {
+		t.Skipf("ducklake extension unavailable: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Close()
+	ctx, releaseWorkload := admittedTestContext(t, workload.Interactive, "shared-arrow")
+	defer releaseWorkload()
+	lease, err := env.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Release()
+
+	if err := env.QueryArrow(lease.Context(), semanticquery.Plan{SQL: "SELECT 42 AS value", Columns: []string{"value"}}, &countingArrowSink{}); err != nil {
+		t.Fatalf("guarded SELECT through native Arrow: %v", err)
+	}
+	unsafeStatements := []struct {
+		statement string
+		want      error
+	}{
+		{statement: "CHECKPOINT lake", want: ErrUnsafeCheckpoint},
+		{statement: "CALL ducklake_cleanup_old_files('lake')", want: ErrSharedPoolMaintenance},
+	}
+	for _, unsafe := range unsafeStatements {
+		err := env.QueryArrow(lease.Context(), semanticquery.Plan{SQL: unsafe.statement}, &countingArrowSink{})
+		if !errors.Is(err, unsafe.want) {
+			t.Fatalf("native Arrow statement %q error = %v, want %v", unsafe.statement, err, unsafe.want)
+		}
+	}
+}
+
 func TestQueryArrowPreservesNativeTypesNullsAndUsesAdmittedConnection(t *testing.T) {
 	env := openLeaseTestNode(t)
 	defer env.Close()

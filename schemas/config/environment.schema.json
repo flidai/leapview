@@ -1917,6 +1917,12 @@
       "x-lifecycle": "supported",
       "x-scope": "client commands"
     },
+    "LEAPVIEW_CONFORMANCE_EVIDENCE_OUT": {
+      "description": "Path where the required object-backed physical-pool conformance evidence artifact is written.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "MinIO conformance gate"
+    },
     "LEAPVIEW_COOKIE_SECURE": {
       "description": "Secure-cookie override; defaults to true for production browser authentication.",
       "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
@@ -1930,6 +1936,32 @@
       "writeOnly": true,
       "x-lifecycle": "supported",
       "x-scope": "serve"
+    },
+    "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST": {
+      "description": "Exact immutable compatibility tuple digest for the configured delivery pool admission; required when a pool has multiple admitted tuples.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve,admin"
+    },
+    "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID": {
+      "description": "Exact admitted physical-pool identity used by plan-driven candidate builds; startup never synthesizes admission.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve,admin"
+    },
+    "LEAPVIEW_DELIVERY_ROLLBACK_RETENTION_WINDOW": {
+      "default": "24h",
+      "description": "Target-owned duration for which immutable sealed generations remain eligible for rollback.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve,admin"
+    },
+    "LEAPVIEW_DELIVERY_STAGING_DIR": {
+      "description": "Private staging directory for disposable plan-driven candidate catalogs and remote verification.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve,admin"
     },
     "LEAPVIEW_DESKTOP_DISTRIBUTION": {
       "description": "Required desktop package identity; accepted values are preview and stable.",
@@ -2306,6 +2338,13 @@
       "writeOnly": true,
       "x-lifecycle": "supported",
       "x-scope": "serve"
+    },
+    "LEAPVIEW_MINIO_CONFORMANCE_REQUIRED": {
+      "description": "Require the real MinIO conformance lane to fail closed instead of skipping unavailable runtime or evidence checks.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "MinIO conformance gate"
     },
     "LEAPVIEW_OIDC_CALLBACK_URL": {
       "description": "HTTPS callback URL registered with the generic OIDC provider.",

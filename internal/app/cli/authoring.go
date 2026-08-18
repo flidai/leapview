@@ -38,6 +38,7 @@ func devCommand(ctx context.Context) *cobra.Command {
 		projectcli.NewCandidateCheckpointStore(candidateCheckpointPath()),
 		projectDevRemoteFactory{client: client},
 		openSystemBrowser,
+		projectDeliveryPlanOperations{client: client, remotes: projectDevRemoteFactory{client: client}, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())},
 	)
 }
 
@@ -177,12 +178,39 @@ func (transport *candidateSynchronizationTransport) Commit(
 	}, nil
 }
 
+func (transport *candidateSynchronizationTransport) RetainSource(
+	ctx context.Context,
+	request projectdevloop.SynchronizationPlanRequest,
+) (projectdevloop.RetainedSource, error) {
+	if transport == nil || transport.client == nil {
+		return projectdevloop.RetainedSource{}, fmt.Errorf("candidate synchronization client is not configured")
+	}
+	body := candidateSynchronizationBody(request)
+	idempotencyKey, err := candidateSynchronizationIdempotencyKey("source-retain", request.ProjectID.String(), transport.sessionID, body)
+	if err != nil {
+		return projectdevloop.RetainedSource{}, err
+	}
+	response, err := transport.client.RetainProjectCandidateSource(ctx, deploymentgen.GenRetainProjectCandidateSourceClientRequest{
+		Project: request.ProjectID.String(),
+		Headers: deploymentgen.GenRetainProjectCandidateSourceClientHeaders{IdempotencyKey: idempotencyKey},
+		Body:    body,
+	})
+	if err != nil {
+		return projectdevloop.RetainedSource{}, err
+	}
+	return projectdevloop.RetainedSource{ProjectID: request.ProjectID, SourceDigest: response.Body.SourceDigest, SourceAttestationDigest: response.Body.SourceAttestationDigest, ProjectDigest: response.Body.ProjectDigest, TargetID: response.Body.TargetId, Environment: response.Body.Environment}, nil
+}
+
 func candidateSynchronizationBody(
 	request projectdevloop.SynchronizationPlanRequest,
 ) deploymentgen.CandidateSynchronizationRequest {
 	body := deploymentgen.CandidateSynchronizationRequest{
 		ProjectFile: request.ProjectFile, ArtifactDigest: request.ArtifactDigest,
 		Artifacts: make([]deploymentgen.CandidateSourceArtifact, len(request.Artifacts)),
+	}
+	if request.SourceOnly {
+		value := true
+		body.SourceOnly = &value
 	}
 	if request.CandidateKey != "" {
 		value := request.CandidateKey

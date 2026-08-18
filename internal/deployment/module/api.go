@@ -30,6 +30,13 @@ var (
 	ErrPublicationForbidden = apigenfailure.New("publication_forbidden", "publication deployment forbidden")
 	ErrApprovalForbidden    = apigenfailure.New("approval_forbidden", "deployment approval forbidden")
 	ErrActivationForbidden  = apigenfailure.New("activation_forbidden", "deployment activation forbidden")
+	// Delivery mutation sentinels map one-to-one to the public TypeSpec
+	// failure contracts. Coordinators should wrap these instead of relying on
+	// message text for HTTP classification.
+	ErrDeliveryForbidden        = apigenfailure.New("delivery_forbidden", "delivery mutation forbidden")
+	ErrDeliveryInputUnavailable = apigenfailure.New("delivery_input_unavailable", "delivery inputs unavailable")
+	ErrDeliveryIdempotencyDrift = apigenfailure.New("delivery_idempotency_drift", "delivery idempotency key drift")
+	ErrDeliveryApprovalRequired = apigenfailure.New("delivery_approval_required", "delivery approval required")
 )
 
 type PageParams = deploymentapi.PageParams
@@ -136,19 +143,32 @@ func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	expectedRollbackBase, expectedRollbackRevision := "", int64(0)
+	rollbackIntent := operationIDValue == string(deploymentgen.GenOperationRollbackDeployment) || strings.TrimSpace(rollbackOf) != ""
+	if rollbackIntent && m.sealedCoordinator != nil {
+		if m.sealedRollbackFence == nil {
+			m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Sealed rollback fencing is unavailable"))
+			return
+		}
+		expectedRollbackBase, expectedRollbackRevision, err = m.sealedRollbackFence(r.Context(), m.instanceID)
+		if err != nil {
+			m.writeCommandFailure(w, r, operationID, err)
+			return
+		}
+	}
 	createRequest := apiadapter.CreateRequest{
 		Project: project, Environment: m.handlerEnvironment(), GenerationID: targetRelease.ServingIdentity.GenerationID, ArtifactDigest: targetRelease.ArtifactDigest, PriorGenerationID: evidence.BaseGenerationID, Actor: principal.ID, IdempotencyKey: idempotencyKey,
 		ReleaseID: releaseID, Evidence: evidence, RollbackOf: rollbackOf,
 	}
 	createRequest.Workflow = func(deploymentID string) (jobs.WorkflowIntent, error) {
-		return activationWorkflowForOperationWithBootstrap(operationIDValue, execution,
+		return activationWorkflowForOperationWithRollbackFence(operationIDValue, execution,
 			!m.protected || bootstrap,
 			project,
 			deploymentID,
 			releaseID,
 			approvalActor,
 			deployment.Approval{},
-			idempotencyKey+":cutover", bootstrap,
+			idempotencyKey+":cutover", bootstrap, expectedRollbackBase, expectedRollbackRevision, rollbackIntent,
 		)
 	}
 	if bootstrap {
@@ -215,7 +235,7 @@ func publishEvidence(
 	}
 	if err := targetRelease.Provenance.Validate(); err != nil {
 		return apiadapter.PublishEvidence{}, fmt.Errorf(
-			"%w: invalid release provenance: %v",
+			"%w: invalid release provenance: %w",
 			deployment.ErrConflict,
 			err,
 		)
@@ -352,7 +372,7 @@ func (m *Module) RetryDeployment(
 		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))
 		return
 	}
-	releaseID, _, err := m.api.Releases.DeploymentRelease(
+	releaseID, rollbackOf, err := m.api.Releases.DeploymentRelease(
 		r.Context(),
 		project,
 		deploymentID,
@@ -394,7 +414,7 @@ func (m *Module) RetryDeployment(
 		)
 		return
 	}
-	m.createDeployment(w, r, deploymentgen.GenCommandOperationRetryDeployment(), project, releaseID, idempotencyKey, "")
+	m.createDeployment(w, r, deploymentgen.GenCommandOperationRetryDeployment(), project, releaseID, idempotencyKey, rollbackOf)
 }
 
 func (m *Module) RollbackDeployment(w http.ResponseWriter, r *http.Request, project, deploymentID, idempotencyKey string) {
@@ -569,12 +589,80 @@ func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger
 
 type deploymentAPIGenHandler struct{ *Module }
 
+func (h deploymentAPIGenHandler) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
+	h.Module.RetainProjectCandidateSource(w, r, project, idempotencyKey)
+}
+
+func (h deploymentAPIGenHandler) CreateDeliveryPlan(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
+	h.Module.CreateDeliveryPlan(w, r, project, idempotencyKey)
+}
+
+func (h deploymentAPIGenHandler) BuildDeliveryPlan(w http.ResponseWriter, r *http.Request, project, plan, idempotencyKey string) {
+	h.Module.BuildDeliveryPlan(w, r, project, plan, idempotencyKey)
+}
+
+func (h deploymentAPIGenHandler) PublishDeliveryCandidate(w http.ResponseWriter, r *http.Request, project, candidate, idempotencyKey string) {
+	h.Module.PublishDeliveryCandidate(w, r, project, candidate, idempotencyKey)
+}
+
+func (h deploymentAPIGenHandler) RollbackDeliveryGeneration(w http.ResponseWriter, r *http.Request, project, generation, idempotencyKey string) {
+	h.Module.RollbackDeliveryGeneration(w, r, project, generation, idempotencyKey)
+}
+
 func (h deploymentAPIGenHandler) ListDeployments(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
 	h.Module.ListDeployments(w, r, project, deploymentapi.PageParams{Limit: limit, PageToken: pageToken})
 }
 
 func (h deploymentAPIGenHandler) ListDeploymentEvents(w http.ResponseWriter, r *http.Request, project, deploymentID string, limit *int32, pageToken *string) {
 	h.Module.ListDeploymentEvents(w, r, project, deploymentID, deploymentapi.PageParams{Limit: limit, PageToken: pageToken})
+}
+
+func (h deploymentAPIGenHandler) GetDeliveryPlanPreview(w http.ResponseWriter, r *http.Request, project, plan string) {
+	h.Module.GetDeliveryPlanPreview(w, r, project, plan)
+}
+
+func (h deploymentAPIGenHandler) GetDeliveryBuildStatus(w http.ResponseWriter, r *http.Request, project, build string) {
+	h.Module.GetDeliveryBuildStatus(w, r, project, build)
+}
+
+func (h deploymentAPIGenHandler) GetDeliverySealStatus(w http.ResponseWriter, r *http.Request, project, seal string) {
+	h.Module.GetDeliverySealStatus(w, r, project, seal)
+}
+
+func (h deploymentAPIGenHandler) GetDeliveryCandidateStatus(w http.ResponseWriter, r *http.Request, project, candidate string) {
+	h.Module.GetDeliveryCandidateStatus(w, r, project, candidate)
+}
+
+func (h deploymentAPIGenHandler) GetDeliveryGenerationStatus(w http.ResponseWriter, r *http.Request, project, generation string) {
+	h.Module.GetDeliveryGenerationStatus(w, r, project, generation)
+}
+
+func (h deploymentAPIGenHandler) GetDeliveryPublicationEvidence(w http.ResponseWriter, r *http.Request, project, publication string) {
+	h.Module.GetDeliveryPublicationEvidence(w, r, project, publication)
+}
+
+func (h deploymentAPIGenHandler) RequestDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publication, idempotencyKey string) {
+	h.Module.RequestDeliveryPublicationApproval(w, r, project, publication, idempotencyKey)
+}
+
+func (h deploymentAPIGenHandler) GetDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publication, approval string) {
+	h.Module.GetDeliveryPublicationApproval(w, r, project, publication, approval)
+}
+
+func (h deploymentAPIGenHandler) ApproveDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publication, approval, idempotencyKey string) {
+	h.Module.ApproveDeliveryPublicationApproval(w, r, project, publication, approval, idempotencyKey)
+}
+
+func (h deploymentAPIGenHandler) DenyDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publication, approval, idempotencyKey string) {
+	h.Module.DenyDeliveryPublicationApproval(w, r, project, publication, approval, idempotencyKey)
+}
+
+func (h deploymentAPIGenHandler) RevokeDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publication, approval, idempotencyKey string) {
+	h.Module.RevokeDeliveryPublicationApproval(w, r, project, publication, approval, idempotencyKey)
+}
+
+func (h deploymentAPIGenHandler) GetDeliveryOperatorSnapshot(w http.ResponseWriter, r *http.Request, project string) {
+	h.Module.GetDeliveryOperatorSnapshot(w, r, project)
 }
 
 func (m *Module) principal(r *http.Request) (deploymenthttp.Principal, bool) {

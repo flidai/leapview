@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"sort"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -24,7 +26,11 @@ type ProjectPlan struct {
 	DataPolicies      []string                      `json:"dataPolicies,omitempty"`
 	Changes           []ProjectPlanChange           `json:"changes,omitempty"`
 	DependencyChanges []ProjectPlanDependencyChange `json:"dependencyChanges,omitempty"`
-	Summary           ProjectPlanSummary            `json:"summary,omitempty"`
+	// Deterministic is compiler-produced evidence that the project expressions
+	// contain no known volatile SQL functions. Unknown/hand-built plans leave
+	// this false, so reuse remains fail-closed.
+	Deterministic bool               `json:"deterministic,omitempty"`
+	Summary       ProjectPlanSummary `json:"summary,omitempty"`
 }
 
 type ProjectPlanSummary struct {
@@ -75,8 +81,126 @@ func PlanProjectAgainstGraph(projectPath string, active projectgraph.ProjectGrap
 	return plan, nil
 }
 
+// PlanProjectAgainstArtifact compares authored definitions with the exact
+// compiled artifact retained by the active serving generation. Graph nodes
+// intentionally carry only identity/metadata, so comparing the graph alone
+// cannot detect SQL, source, or model-table changes at an unchanged ID/path.
+func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Project) (ProjectPlan, error) {
+	project, err := LoadProject(projectPath)
+	if err != nil {
+		return ProjectPlan{}, err
+	}
+	plan := planForProject(project)
+	changes, dependencyChanges, summary := diffProjectGraphs(project.Graph, active.Graph())
+	for _, materialization := range diffCompiledMaterialization(project, active) {
+		merged := false
+		for i := range changes {
+			if changes[i].ID == materialization.ID && changes[i].Action == materialization.Action {
+				changes[i].MaterializationImpact = true
+				changes[i].Reason = materialization.Reason
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			changes = append(changes, materialization)
+		}
+	}
+	sort.Slice(changes, func(i, j int) bool {
+		if changes[i].ID != changes[j].ID {
+			return changes[i].ID < changes[j].ID
+		}
+		return changes[i].Action < changes[j].Action
+	})
+	summary = ProjectPlanSummary{DependencyChanges: len(dependencyChanges)}
+	for _, change := range changes {
+		if change.Action == "add" {
+			summary.Added++
+		} else if change.Action == "remove" {
+			summary.Removed++
+		} else {
+			summary.Changed++
+		}
+		summary.Breaking = summary.Breaking || change.Breaking
+		summary.MaterializationImpact = summary.MaterializationImpact || change.MaterializationImpact
+	}
+	for _, change := range dependencyChanges {
+		summary.MaterializationImpact = summary.MaterializationImpact || change.MaterializationImpact
+	}
+	plan.Changes, plan.DependencyChanges, plan.Summary = changes, dependencyChanges, summary
+	return plan, nil
+}
+
+func diffCompiledMaterialization(project Project, active projectartifact.Project) []ProjectPlanChange {
+	changes := make([]ProjectPlanChange, 0)
+	activeTables := active.ModelTables()
+	authoredTables := make(map[string]semanticmodel.Table, len(project.Models))
+	for name, table := range project.Models {
+		if id := project.ModelIDs[name]; id != "" {
+			authoredTables[id] = table
+		}
+	}
+	seen := make(map[string]struct{}, len(activeTables)+len(authoredTables))
+	for id := range authoredTables {
+		seen[id] = struct{}{}
+	}
+	for id := range activeTables {
+		seen[id] = struct{}{}
+	}
+	for id := range seen {
+		authored, authoredOK := authoredTables[id]
+		retained, retainedOK := activeTables[id]
+		if authoredOK && retainedOK && reflect.DeepEqual(authored, retained) {
+			continue
+		}
+		resource, ok := project.Graph.Resource(projectgraph.ResourceID(id))
+		if !ok {
+			resource, _ = active.Graph().Resource(projectgraph.ResourceID(id))
+		}
+		action, reason := "change", "compiled model definition changed"
+		if !authoredOK {
+			action, reason = "remove", "model definition removed from authored artifact"
+		} else if !retainedOK {
+			action, reason = "add", "model definition added to authored artifact"
+		}
+		breaking, _ := projectResourceImpact(projectgraph.KindModel, projectgraph.KindModel, action)
+		changes = append(changes, ProjectPlanChange{Action: action, ID: id, Type: string(projectgraph.KindModel), Key: resource.Name, Reason: reason, Breaking: breaking, MaterializationImpact: true})
+	}
+	activeSources := active.Manifest().Sources
+	authoredSources := make(map[string]semanticmodel.Source, len(project.Sources))
+	for name, source := range project.Sources {
+		if id := project.SourceIDs[name]; id != "" {
+			authoredSources[id] = source
+		}
+	}
+	seen = make(map[string]struct{}, len(activeSources)+len(authoredSources))
+	for id := range authoredSources {
+		seen[id] = struct{}{}
+	}
+	for id := range activeSources {
+		seen[id] = struct{}{}
+	}
+	for id := range seen {
+		if reflect.DeepEqual(authoredSources[id], activeSources[id]) {
+			continue
+		}
+		resource, ok := project.Graph.Resource(projectgraph.ResourceID(id))
+		if !ok {
+			resource, _ = active.Graph().Resource(projectgraph.ResourceID(id))
+		}
+		action := "change"
+		if _, authored := authoredSources[id]; !authored {
+			action = "remove"
+		} else if _, retained := activeSources[id]; !retained {
+			action = "add"
+		}
+		changes = append(changes, ProjectPlanChange{Action: action, ID: id, Type: string(projectgraph.KindSource), Key: resource.Name, Reason: "compiled source definition changed", MaterializationImpact: true})
+	}
+	return changes
+}
+
 func planForProject(project Project) ProjectPlan {
-	plan := ProjectPlan{Project: string(project.ID)}
+	plan := ProjectPlan{Project: string(project.ID), Deterministic: projectDeterministic(project)}
 	plan.Connections = sortedIDValues(project.ConnectionIDs)
 	plan.Sources = sortedIDValues(project.SourceIDs)
 	plan.Models = sortedIDValues(project.ModelIDs)
@@ -108,6 +232,37 @@ func planForProject(project Project) ProjectPlan {
 	sort.Strings(plan.Grants)
 	sort.Strings(plan.DataPolicies)
 	return plan
+}
+
+func projectDeterministic(project Project) bool {
+	// SQL volatility cannot be established safely with a substring denylist:
+	// DuckDB exposes a large and evolving function registry, and a new
+	// context-dependent function would otherwise silently become reusable. The
+	// compiler therefore emits positive evidence only for the narrow static
+	// subset whose execution contains no authored SQL or expressions: direct
+	// source-backed tables and non-expression semantic metrics. Unknown or
+	// hand-built plans remain false and force a refresh.
+	for _, table := range project.Models {
+		if table.Transform.SQL != "" || table.Source == "" {
+			return false
+		}
+		source, ok := project.Sources[table.Source]
+		connection, connected := project.Connections[source.Connection]
+		// Only managed revisions are target-pinned at this phase. Authored
+		// connector bindings are observed/unbounded here and must not be reused
+		// without a target-issued equivalence token.
+		if !ok || !connected || connection.Kind != "managed" {
+			return false
+		}
+	}
+	for _, semantic := range project.SemanticModels {
+		for _, metric := range semantic.Metrics {
+			if metric.Expression != "" {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func sortedIDValues(values map[string]string) []string {

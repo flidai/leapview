@@ -27,9 +27,10 @@ type DeployOperations interface {
 func DeployCommand(ctx context.Context, client cliapi.Client, operations DeployOperations) *cobra.Command {
 	values := DeployOptions{ProjectPath: filepath.Join("dashboards", "leapview.yaml")}
 	command := &cobra.Command{
-		Use:   "deploy",
-		Short: "Atomically deploy a configuration-as-code project",
-		Args:  cobra.NoArgs,
+		Use:        "deploy",
+		Short:      "Deprecated composition of plan, build, and publish",
+		Deprecated: "use `leapview plan`, `leapview build`, and `leapview publish` so each durable identity can be reviewed and retried independently",
+		Args:       cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			if client == nil {
 				return fmt.Errorf("Project CLI API client is required")

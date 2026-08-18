@@ -79,8 +79,14 @@ REVISION="$(awk '$1 == "staged" { print $2 }' <<<"$SYNC_OUTPUT")"
   echo "managed data sync did not return a canonical revision" >&2
   exit 1
 }
-"$BIN" dev --once --no-browser --target "$TARGET" --token "$TOKEN" --project dashboards/leapview.yaml
-"$BIN" publish --target "$TARGET" --token "$TOKEN" --project dashboards/leapview.yaml
+DEV_OUTPUT="$("$BIN" dev --once --no-browser --target "$TARGET" --token "$TOKEN" --project dashboards/leapview.yaml)"
+echo "$DEV_OUTPUT"
+CANDIDATE_ID="$(awk '$1 == "candidate" { print $2; exit }' <<<"$DEV_OUTPUT")"
+[[ "$CANDIDATE_ID" =~ ^cand_[A-Za-z0-9_-]+$ ]] || {
+  echo "development candidate publication did not return a canonical candidate ID" >&2
+  exit 1
+}
+"$BIN" publish "$CANDIDATE_ID" --token "$TOKEN"
 
 ALLOWED_TOOLS='catalog_search,catalog_list,catalog_get,query_semantic_model,query_dashboard_visual,query_visual,docs_search,docs_read'
 

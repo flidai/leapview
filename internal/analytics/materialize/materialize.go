@@ -182,21 +182,78 @@ func ModelTablesNamed(ctx context.Context, executor Executor, sources ModelTable
 	if model == nil {
 		return fmt.Errorf("semantic model is required")
 	}
+	ordered, err := selectedModelTableOrder(model, tableNames)
+	if err != nil {
+		return err
+	}
 	if err := executor.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS model"); err != nil {
 		return err
 	}
-	for _, name := range tableNames {
-		if err := validateIdentifier(name); err != nil {
-			return err
-		}
-		if _, ok := model.Tables[name]; !ok {
-			return fmt.Errorf("unknown model table %q", name)
-		}
+	for _, name := range ordered {
 		if err := materializeModelTable(ctx, executor, sources, model, name); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// selectedModelTableOrder topologically orders only the requested tables.
+// Partial refreshes must not rematerialize unchanged dependencies, but every
+// dependency that is part of the selected set must be rebuilt first so model
+// SQL never observes a stale or missing prerequisite.
+func selectedModelTableOrder(model *semanticmodel.Model, tableNames []string) ([]string, error) {
+	if model == nil {
+		return nil, fmt.Errorf("semantic model is required")
+	}
+	selected := make(map[string]struct{}, len(tableNames))
+	for _, name := range tableNames {
+		if err := validateIdentifier(name); err != nil {
+			return nil, err
+		}
+		if _, ok := model.Tables[name]; !ok {
+			return nil, fmt.Errorf("unknown model table %q", name)
+		}
+		selected[name] = struct{}{}
+	}
+	orderedNames := make([]string, 0, len(selected))
+	for name := range selected {
+		orderedNames = append(orderedNames, name)
+	}
+	sort.Strings(orderedNames)
+
+	visiting := make(map[string]bool, len(selected))
+	visited := make(map[string]bool, len(selected))
+	ordered := make([]string, 0, len(selected))
+	var visit func(string) error
+	visit = func(name string) error {
+		if visited[name] {
+			return nil
+		}
+		if visiting[name] {
+			return fmt.Errorf("model table dependency cycle includes %q", name)
+		}
+		visiting[name] = true
+		dependencies := append([]string(nil), model.Tables[name].ModelDependencies...)
+		sort.Strings(dependencies)
+		for _, dependency := range dependencies {
+			if _, needed := selected[dependency]; !needed {
+				continue
+			}
+			if err := visit(dependency); err != nil {
+				return err
+			}
+		}
+		visiting[name] = false
+		visited[name] = true
+		ordered = append(ordered, name)
+		return nil
+	}
+	for _, name := range orderedNames {
+		if err := visit(name); err != nil {
+			return nil, err
+		}
+	}
+	return ordered, nil
 }
 
 func ModelTableDependencyOrder(model *semanticmodel.Model, selectedTable string) ([]string, error) {

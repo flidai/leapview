@@ -340,7 +340,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
 
-	for _, required := range []string{"cp -R deploy/compose/qualification", "./leapviewctl qualify installed-candidate", "gh release create", "needs: [image, qualify]"} {
+	for _, required := range []string{"cp -R deploy/compose/qualification", "./leapviewctl qualify installed-candidate", "gh release create", "needs: [image, qualify, minio-conformance, plan-gc-conformance]"} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)
 		}
@@ -609,6 +609,11 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 		if !strings.Contains(release, required) {
 			t.Fatalf("release workflow missing Go controller packaging contract %q", required)
 		}
+	}
+	generation := strings.Index(release, "- name: Generate release build inputs\n        run: task generate")
+	packaging := strings.Index(release, "- name: Build candidate Compose archives")
+	if generation < 0 || packaging < 0 || generation > packaging {
+		t.Fatal("release workflow must generate every ignored build input before compiling Compose archives")
 	}
 	dockerfile := read(t, filepath.Join("..", "..", "Dockerfile"))
 	if !strings.Contains(dockerfile, "/usr/local/libexec/leapviewctl") {

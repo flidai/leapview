@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -34,15 +35,371 @@ type candidateArtifactService struct {
 }
 
 type candidateGenerationBase struct {
-	graph      projectgraph.ProjectGraph
-	pins       map[string]string
-	snapshotID int64
-	active     bool
+	graph           projectgraph.ProjectGraph
+	artifact        projectartifact.Project
+	pins            map[string]string
+	bindings        map[string]string
+	snapshotID      int64
+	dataRevision    string
+	relationContext map[string]string
+	active          bool
+}
+
+// InspectCandidateArtifacts is the plan-phase, read-only half of candidate
+// preparation. It compiles the retained source, computes graph impact against
+// the exact active base, resolves managed-data pins, and derives authorization
+// evidence. It intentionally does not create serving rows, upload artifacts,
+// acquire connector credentials, or touch physical catalogs.
+func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRequest) (release.CandidateArtifactSet, error) {
+	if service == nil || service.states == nil {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
+	}
+	if request.Scope.Validate() != nil || request.OwnerID == "" || request.Source.ProjectID.Validate() != nil || request.Source.ProjectID != request.Scope.ProjectID || request.Source.ArtifactDigest != request.ArtifactDigest || platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(request.Source.ProjectDigest) != nil || request.Scope.Environment != string(service.environment) {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
+	}
+	projectBytes, err := os.ReadFile(request.Source.ProjectArtifactPath)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
+	}
+	compiledProject, err := projectartifact.Decode(projectBytes)
+	if err != nil || compiledProject.ProjectID() != request.Scope.ProjectID || compiledProject.Digest() != request.Source.ProjectDigest {
+		if err == nil {
+			err = fmt.Errorf("retained project artifact does not match synchronized project")
+		}
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	plan, err := projectcompiler.PlanProject(request.Source.ProjectPath)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	baseIdentity, err := request.Scope.BaseIdentity()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	base, err := service.generationBase(ctx, baseIdentity)
+	if err != nil {
+		return release.CandidateArtifactSet{}, err
+	}
+	if base.active {
+		plan, err = projectcompiler.PlanProjectAgainstArtifact(request.Source.ProjectPath, base.artifact)
+		if err != nil {
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+		}
+	}
+	activations, err := compiledProject.ConnectionActivations()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	requirements, managed, authored, err := candidateConnectionRequirements(activations)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	managedPins := candidateManagedDataPinMap(managed, base.pins)
+	missing := missingCandidateManagedConnections(managed, managedPins)
+	if len(missing) > 0 {
+		if service.pins == nil {
+			return release.CandidateArtifactSet{}, candidateArtifactUnavailable(errors.New("managed-data candidate pin resolution is unavailable"))
+		}
+		missingIDs := make([]projectgraph.ResourceID, len(missing))
+		for i, connection := range missing {
+			id, parseErr := projectgraph.NewResourceID(connection)
+			if parseErr != nil {
+				return release.CandidateArtifactSet{}, candidateArtifactInvalid(parseErr)
+			}
+			missingIDs[i] = id
+		}
+		resolved, resolveErr := service.pins.ResolveCandidatePins(ctx, request.Scope.ProjectID, missingIDs, request.Scope.Environment)
+		if resolveErr != nil {
+			return release.CandidateArtifactSet{}, candidateArtifactUnavailable(resolveErr)
+		}
+		missingSet := make(map[string]struct{}, len(missing))
+		for _, value := range missing {
+			missingSet[value] = struct{}{}
+		}
+		for connection, revision := range resolved {
+			if _, wanted := missingSet[connection.String()]; wanted {
+				managedPins[connection.String()] = revision
+			}
+		}
+		for _, connection := range missing {
+			if _, ok := managedPins[connection]; !ok {
+				return release.CandidateArtifactSet{}, candidateArtifactUnavailable(errors.New("managed-data candidate pin resolution returned incomplete result"))
+			}
+		}
+	}
+	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(projectgraph.ServingIdentity{ProjectID: request.Scope.ProjectID, Environment: request.Scope.Environment, GenerationID: "inspect"}, compiledProject.Graph(), compiledProject.Manifest().Access)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	authorizationFingerprint, err := authorizationSnapshot.Digest()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	dataMode := release.GenerationDataRefreshSources
+	dataRevision, err := candidateSourcesDataRevision(request.ArtifactDigest, managedPins)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if base.active && base.dataRevision != "" && !plan.Summary.MaterializationImpact && base.graph.Validate() == nil {
+		dataMode = release.GenerationDataReuseBase
+		dataRevision = base.dataRevision
+		if dataRevision == "" && base.snapshotID > 0 {
+			dataRevision = fmt.Sprintf("snapshot:%d", base.snapshotID)
+		}
+		authored = nil
+	}
+	if dataMode == release.GenerationDataRefreshSources && len(requirements) == 0 && len(managedPins) == 0 && len(authored) == 0 {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("project requires data preparation but has no refresh-capable connections"))
+	}
+	inspectIdentity, err := projectgraph.NewServingIdentity(request.Scope.ProjectID, request.Scope.Environment, "inspect-"+shortCandidateDigest(request.CandidateID))
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	relationContext, err := candidateRelationContexts(managedPins, compiledProject, candidateActivationBindings(activations))
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	relationExecution, err := compiledProject.RelationExecutionDigestsByContext(relationContext)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	baseRelationExecution, err := base.artifact.RelationExecutionDigestsByContext(base.relationContext)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	return release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()}, AuthorizationFingerprint: authorizationFingerprint, Generation: release.CandidateGenerationArtifact{Identity: inspectIdentity, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: candidateRestrictions(authorizationSnapshot)}, Compiler: release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution}}, nil
+}
+
+func shortCandidateDigest(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func candidateRelationContexts(pins map[string]string, artifact projectartifact.Project, bindingKinds ...map[string]string) (map[string]string, error) {
+	manifest := artifact.Manifest()
+	modelNames := make(map[string]string)
+	sourceNames := make(map[string]string)
+	connectionNames := make(map[string]string)
+	for _, resource := range artifact.Graph().Resources() {
+		switch resource.Kind {
+		case projectgraph.KindModel:
+			modelNames[resource.ID.String()] = resource.ID.String()
+			modelNames[resource.Name] = resource.ID.String()
+		case projectgraph.KindSource:
+			sourceNames[resource.ID.String()] = resource.ID.String()
+			sourceNames[resource.Name] = resource.ID.String()
+		case projectgraph.KindConnection:
+			connectionNames[resource.ID.String()] = resource.ID.String()
+			connectionNames[resource.Name] = resource.ID.String()
+		}
+	}
+	allSources := make(map[string]any, len(manifest.Sources))
+	for id, source := range manifest.Sources {
+		allSources[id] = source
+	}
+	allConnections := make(map[string]any, len(manifest.Connections))
+	for id, connection := range manifest.Connections {
+		allConnections[id] = connection
+	}
+	contexts := make(map[string]string, len(manifest.Models))
+	type relationRefs struct {
+		sources     map[string]struct{}
+		connections map[string]struct{}
+		unknown     bool
+	}
+	var collect func(string, map[string]bool) (relationRefs, error)
+	collect = func(modelID string, visiting map[string]bool) (relationRefs, error) {
+		if visiting[modelID] {
+			return relationRefs{}, fmt.Errorf("relation context dependency cycle at %q", modelID)
+		}
+		table, ok := manifest.Models[modelID]
+		if !ok {
+			return relationRefs{}, fmt.Errorf("relation context model %q is missing", modelID)
+		}
+		visiting[modelID] = true
+		refs := relationRefs{sources: make(map[string]struct{}), connections: make(map[string]struct{})}
+		addSource := func(reference string) {
+			reference = strings.TrimSpace(reference)
+			if reference == "" {
+				return
+			}
+			if sourceID := sourceNames[reference]; sourceID != "" {
+				refs.sources[sourceID] = struct{}{}
+			} else {
+				refs.unknown = true
+			}
+		}
+		addSource(table.Source)
+		for _, source := range table.Sources {
+			addSource(source)
+		}
+		for _, source := range table.SourceDependencies {
+			addSource(source)
+		}
+		for source := range table.SourceReads {
+			addSource(source)
+		}
+		for _, dependency := range table.ModelDependencies {
+			dependencyID := modelNames[strings.TrimSpace(dependency)]
+			if dependencyID == "" {
+				refs.unknown = true
+				continue
+			}
+			dependencyRefs, err := collect(dependencyID, visiting)
+			if err != nil {
+				return relationRefs{}, err
+			}
+			for source := range dependencyRefs.sources {
+				refs.sources[source] = struct{}{}
+			}
+			for connection := range dependencyRefs.connections {
+				refs.connections[connection] = struct{}{}
+			}
+			refs.unknown = refs.unknown || dependencyRefs.unknown
+		}
+		for sourceID := range refs.sources {
+			source, exists := manifest.Sources[sourceID]
+			if !exists {
+				refs.unknown = true
+				continue
+			}
+			connectionID := connectionNames[strings.TrimSpace(source.Connection)]
+			if connectionID == "" && strings.TrimSpace(source.Connection) != "" {
+				refs.unknown = true
+			} else if connectionID != "" {
+				refs.connections[connectionID] = struct{}{}
+			}
+		}
+		delete(visiting, modelID)
+		return refs, nil
+	}
+	for modelID := range manifest.Models {
+		refs, err := collect(modelID, map[string]bool{})
+		if err != nil {
+			return nil, err
+		}
+		sources, connections := make(map[string]any), make(map[string]any)
+		if refs.unknown {
+			sources, connections = allSources, allConnections
+		} else {
+			for sourceID := range refs.sources {
+				sources[sourceID] = manifest.Sources[sourceID]
+			}
+			for connectionID := range refs.connections {
+				connections[connectionID] = manifest.Connections[connectionID]
+			}
+		}
+		pinSubset := make(map[string]string)
+		for connectionID := range connections {
+			if revision, ok := pins[connectionID]; ok {
+				pinSubset[connectionID] = revision
+			}
+		}
+		selectedBindings := selectedBindingKinds(bindingKinds, connections)
+		encoded, err := json.Marshal(struct {
+			Pins        []release.ManagedDataPin `json:"pins"`
+			Sources     map[string]any           `json:"sources"`
+			Connections map[string]any           `json:"connections"`
+			Bindings    map[string]string        `json:"bindings,omitempty"`
+		}{Pins: candidateManagedDataPins(pinSubset), Sources: sources, Connections: connections, Bindings: selectedBindings})
+		if err != nil {
+			return nil, fmt.Errorf("encode candidate relation context %q: %w", modelID, err)
+		}
+		contexts[modelID] = string(encoded)
+	}
+	return contexts, nil
+}
+
+func selectedBindingKinds(bindingKinds []map[string]string, connections map[string]any) map[string]string {
+	if len(bindingKinds) == 0 || len(bindingKinds[0]) == 0 {
+		return nil
+	}
+	selected := make(map[string]string)
+	for connectionID := range connections {
+		if kind := strings.TrimSpace(bindingKinds[0][connectionID]); kind != "" {
+			selected[connectionID] = kind
+		}
+	}
+	return selected
+}
+
+func candidateActivationBindings(activations []projectartifact.ConnectionActivation) map[string]string {
+	bindings := make(map[string]string, len(activations))
+	for _, activation := range activations {
+		if connectionID := strings.TrimSpace(activation.LogicalConnectionID); connectionID != "" {
+			if kind := strings.TrimSpace(activation.ConnectorKind); kind != "" {
+				bindings[connectionID] = kind
+			}
+		}
+	}
+	return bindings
+}
+
+func (service *candidateArtifactService) MaterializeCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet) (release.CandidateArtifactSet, error) {
+	return service.prepare(ctx, request, &inspected)
+}
+
+// HydrateCandidateArtifacts reattaches a deterministic serving artifact that
+// was prepared and durably bound to an earlier attempt. It performs no writes
+// and preserves the inspected compiler evidence used by planning.
+func (service *candidateArtifactService) HydrateCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet, identity release.CandidateArtifactIdentity) (release.CandidateArtifactSet, error) {
+	if service == nil || service.states == nil || identity.ServingStateID == "" || identity.ServingArtifactID == "" || identity.ServingArtifactDigest == "" {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	state, err := service.states.ByID(ctx, servingstate.ID(identity.ServingStateID))
+	if err != nil || state.ProjectID != request.Scope.ProjectID || state.Environment != servingstate.Environment(request.Scope.Environment) || state.Digest == "" || state.Digest != identity.ServingArtifactDigest {
+		if err == nil {
+			err = errors.New("durable serving state identity mismatch")
+		}
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	artifact, err := service.states.ArtifactByServingState(ctx, state.ID)
+	if err != nil || artifact.ID != identity.ServingArtifactID || artifact.Digest != identity.ServingArtifactDigest || artifact.ServingStateID != state.ID {
+		if err == nil {
+			err = errors.New("durable serving artifact identity mismatch")
+		}
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if artifact.Path == "" {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("durable serving artifact path is empty"))
+	}
+	validation, err := projectbundle.ValidateArtifact(artifact.Path)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
+	}
+	if validation.ProjectID != request.Scope.ProjectID.String() || validation.Digest != artifact.Digest || validation.ProjectDigest != state.ProjectDigest || validation.ManifestJSON != artifact.ManifestJSON || validation.ManifestJSON != state.ManifestJSON {
+		if validation.RootDir != "" {
+			_ = os.RemoveAll(validation.RootDir)
+		}
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("durable serving artifact content identity mismatch"))
+	}
+	if validation.RootDir != "" {
+		defer os.RemoveAll(validation.RootDir)
+	}
+	result := inspected
+	result.Artifact.ContentDigest = artifact.Digest
+	result.Generation.Identity, err = projectgraph.NewServingIdentity(request.Scope.ProjectID, request.Scope.Environment, string(state.ID))
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	result.Generation.ServingArtifactID = artifact.ID
+	result.Generation.ArtifactDigest = artifact.Digest
+	if err := result.Generation.Identity.Validate(); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	return result, nil
 }
 
 // Prepare creates exactly one project-generation serving artifact for one
 // candidate target.
 func (service *candidateArtifactService) Prepare(ctx context.Context, request release.CandidateArtifactRequest) (release.CandidateArtifactSet, error) {
+	return service.prepare(ctx, request, nil)
+}
+
+func (service *candidateArtifactService) prepare(ctx context.Context, request release.CandidateArtifactRequest, expected *release.CandidateArtifactSet) (release.CandidateArtifactSet, error) {
 	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
 	}
@@ -78,7 +435,7 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 		return release.CandidateArtifactSet{}, err
 	}
 	if base.active {
-		plan, err = projectcompiler.PlanProjectAgainstGraph(request.Source.ProjectPath, base.graph)
+		plan, err = projectcompiler.PlanProjectAgainstArtifact(request.Source.ProjectPath, base.artifact)
 		if err != nil {
 			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 		}
@@ -128,17 +485,39 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 			}
 		}
 	}
+	if expected != nil {
+		if expected.Artifact.SourceDigest != request.ArtifactDigest || expected.Artifact.ProjectDigest != compiledProject.Digest() || expected.Compiler.Graph.Digest() != compiledProject.Graph().Digest() || !reflect.DeepEqual(expected.Compiler.Plan, plan) || !reflect.DeepEqual(expected.Generation.ManagedDataPins, candidateManagedDataPins(managedPins)) {
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized compiler evidence differs from inspected plan evidence"))
+		}
+	}
 	dataMode := release.GenerationDataRefreshSources
-	dataRevision := candidateSourcesDataRevision(request.ArtifactDigest, managedPins)
-	if base.active && base.snapshotID > 0 && !plan.Summary.MaterializationImpact && base.graph.Validate() == nil {
-		dataMode = release.GenerationDataReuseSnapshot
-		dataRevision = fmt.Sprintf("snapshot:%d", base.snapshotID)
+	dataRevision, err := candidateSourcesDataRevision(request.ArtifactDigest, managedPins)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if base.active && base.dataRevision != "" && !plan.Summary.MaterializationImpact && base.graph.Validate() == nil {
+		dataMode = release.GenerationDataReuseBase
+		dataRevision = base.dataRevision
+		if dataRevision == "" && base.snapshotID > 0 {
+			dataRevision = fmt.Sprintf("snapshot:%d", base.snapshotID)
+		}
 		authored = nil
 	}
 	if dataMode == release.GenerationDataRefreshSources && len(requirements) == 0 && len(managedPins) == 0 && len(authored) == 0 {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("project requires data preparation but has no refresh-capable connections"))
 	}
-	state, err := service.states.Create(ctx, servingstate.CreateInput{ProjectID: projectID, Environment: environment, CreatedBy: request.OwnerID, Source: servingstate.SourceCandidate})
+	if expected != nil && (expected.Generation.DataMode != dataMode || expected.Generation.DataRevision != dataRevision) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized data mode differs from inspected plan evidence"))
+	}
+	stateInput := servingstate.CreateInput{ProjectID: projectID, Environment: environment, CreatedBy: request.OwnerID, Source: servingstate.SourceCandidate}
+	var state servingstate.State
+	if deterministic, ok := service.states.(interface {
+		CreateWithID(context.Context, servingstate.ID, servingstate.CreateInput) (servingstate.State, error)
+	}); ok {
+		state, err = deterministic.CreateWithID(ctx, servingstate.ID("state-"+shortCandidateDigest(request.CandidateID)), stateInput)
+	} else {
+		state, err = service.states.Create(ctx, stateInput)
+	}
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
 	}
@@ -154,6 +533,13 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 	}
 	validated, err := service.validator.ValidateWithManagedDataRevisions(ctx, state.ID, managedPins)
 	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	artifact, err := service.states.ArtifactByServingState(ctx, validated.ID)
+	if err != nil || artifact.ID == "" || artifact.ServingStateID != validated.ID || artifact.Digest != validated.Digest {
+		if err == nil {
+			err = errors.New("validated serving artifact identity is incomplete")
+		}
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	if validated.Digest != expectedDigest {
@@ -172,10 +558,26 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	restrictions := candidateRestrictions(authorizationSnapshot)
+	relationContext, err := candidateRelationContexts(managedPins, compiledProject, candidateActivationBindings(activations))
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	relationExecution, err := compiledProject.RelationExecutionDigestsByContext(relationContext)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	baseRelationExecution, err := base.artifact.RelationExecutionDigestsByContext(base.relationContext)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if expected != nil && (!reflect.DeepEqual(expected.Compiler.RelationExecution, relationExecution) || !reflect.DeepEqual(expected.Compiler.BaseRelationExecution, baseRelationExecution)) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized relation execution evidence differs from inspected plan evidence"))
+	}
 	return release.CandidateArtifactSet{
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), ContentDigest: validated.Digest, CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()},
 		AuthorizationFingerprint: authorizationFingerprint,
-		Generation:               release.CandidateGenerationArtifact{Identity: identity, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions},
+		Generation:               release.CandidateGenerationArtifact{Identity: identity, ServingArtifactID: artifact.ID, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions},
+		Compiler:                 release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution},
 	}, nil
 }
 
@@ -224,7 +626,13 @@ func (service *candidateArtifactService) generationBase(ctx context.Context, ide
 		}
 		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
 	}
-	if err := baseProvenance.Validate(); err != nil || baseProvenance.Plan.Identity != *identity {
+	if err := baseProvenance.Validate(); err != nil {
+		if errors.Is(err, release.ErrLegacyReuseSnapshot) {
+			return candidateGenerationBase{}, candidateArtifactInvalid(fmt.Errorf("candidate base provenance requires controlled rebuild: %w", err))
+		}
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance identity mismatch"))
+	}
+	if baseProvenance.Plan.Identity != *identity {
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance identity mismatch"))
 	}
 	artifact, err := service.states.ArtifactByServingState(ctx, state.ID)
@@ -241,6 +649,14 @@ func (service *candidateArtifactService) generationBase(ctx context.Context, ide
 	if validation.RootDir != "" {
 		defer os.RemoveAll(validation.RootDir)
 	}
+	compiledBase, _, err := projectbundle.LoadCompiledProjectArtifact(validation.RootDir)
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
+	}
+	baseArtifact, err := projectartifact.NewProject(compiledBase.Graph, compiledBase.Manifest)
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
 	if artifact.ServingStateID != state.ID || artifact.Digest == "" || artifact.Digest != state.Digest || artifact.Digest != validation.Digest || state.ProjectDigest == "" || state.ProjectDigest != validation.ProjectDigest || validation.ProjectID != identity.ProjectID.String() || artifact.ManifestJSON != state.ManifestJSON || validation.ManifestJSON != artifact.ManifestJSON || baseProvenance.Artifact.ContentDigest != artifact.Digest || baseProvenance.Artifact.ProjectDigest != state.ProjectDigest {
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base generation content identity mismatch"))
 	}
@@ -255,7 +671,34 @@ func (service *candidateArtifactService) generationBase(ctx context.Context, ide
 		}
 		pins[connection] = revision
 	}
-	return candidateGenerationBase{graph: validation.Graph, pins: pins, snapshotID: state.DuckLakeSnapshotID, active: true}, nil
+	dataRevision := strings.TrimSpace(baseProvenance.Plan.DataRevision)
+	if dataRevision == "" && state.DuckLakeSnapshotID > 0 {
+		dataRevision = fmt.Sprintf("snapshot:%d", state.DuckLakeSnapshotID)
+	}
+	baseBindings := make(map[string]string, len(baseProvenance.Plan.Bindings))
+	for _, binding := range baseProvenance.Plan.Bindings {
+		connectionID := strings.TrimSpace(binding.ConnectionID)
+		kind := strings.TrimSpace(binding.ConnectorKind)
+		if connectionID == "" || kind == "" {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains noncanonical binding evidence"))
+		}
+		if existing, ok := baseBindings[connectionID]; ok && existing != kind {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains conflicting binding evidence"))
+		}
+		baseBindings[connectionID] = kind
+	}
+	if len(baseBindings) == 0 {
+		activations, activationErr := baseArtifact.ConnectionActivations()
+		if activationErr != nil {
+			return candidateGenerationBase{}, candidateArtifactInvalid(activationErr)
+		}
+		baseBindings = candidateActivationBindings(activations)
+	}
+	relationContext, err := candidateRelationContexts(pins, baseArtifact, baseBindings)
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	return candidateGenerationBase{graph: validation.Graph, artifact: baseArtifact, pins: pins, bindings: baseBindings, snapshotID: state.DuckLakeSnapshotID, dataRevision: dataRevision, relationContext: relationContext, active: true}, nil
 }
 
 func candidateConnectionRequirements(activations []projectartifact.ConnectionActivation) ([]release.CandidateConnectionRequirement, []string, []release.CandidateAuthoredConnection, error) {
@@ -305,19 +748,17 @@ func candidateManagedDataPinMap(managed []string, base map[string]string) map[st
 // candidateSourcesDataRevision is release provenance for a source-refresh
 // candidate. It includes the source artifact and the complete, sorted set of
 // managed-data pins so the same candidate cannot silently race a pin change.
-func candidateSourcesDataRevision(artifactDigest string, pins map[string]string) string {
+func candidateSourcesDataRevision(artifactDigest string, pins map[string]string) (string, error) {
 	payload := struct {
 		ArtifactDigest  string                   `json:"artifactDigest"`
 		ManagedDataPins []release.ManagedDataPin `json:"managedDataPins"`
 	}{ArtifactDigest: artifactDigest, ManagedDataPins: candidateManagedDataPins(pins)}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		// The payload contains only strings and a concrete slice, so marshal
-		// failure is impossible unless this shape changes incompatibly.
-		panic("marshal candidate source data revision: " + err.Error())
+		return "", fmt.Errorf("encode candidate source data revision: %w", err)
 	}
 	digest := sha256.Sum256(encoded)
-	return "sources:sha256:" + fmt.Sprintf("%x", digest[:])
+	return "sources:sha256:" + fmt.Sprintf("%x", digest[:]), nil
 }
 
 func missingCandidateManagedConnections(connections []string, pins map[string]string) []string {

@@ -15,52 +15,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDeployUsesExactCandidateSynchronizationAndPublicationLifecycle(t *testing.T) {
+func TestDeployComposesCanonicalPlanBuildAndPublication(t *testing.T) {
 	client := &deployLifecycleClient{environment: "prod"}
-	lifecycle := &deployLifecycleRecorder{}
-	operations := projectDeployOperations{client: client, lifecycle: lifecycle}
+	var sequence []string
+	planner := &deployPlanRecorder{result: projectcli.DeliveryPlanResult{
+		PlanID: "plan-1", ProjectID: "project-1", TargetID: "target-1", Environment: "prod",
+		SourceDigest: "sha256:" + strings.Repeat("a", 64), PlanDigest: "sha256:" + strings.Repeat("b", 64),
+		ExecutionDigest: "sha256:" + strings.Repeat("c", 64), EvidenceDigest: "sha256:" + strings.Repeat("d", 64),
+	}, sequence: &sequence}
+	builder := &deployBuildRecorder{result: projectcli.DeliveryBuildResult{BuildID: "build-1", PlanID: "plan-1", CandidateID: "candidate-1", Status: "sealed"}, sequence: &sequence}
+	publisher := &deployPublishRecorder{sequence: &sequence}
+	operations := projectDeployOperations{client: client, planner: planner, builder: builder, publisher: publisher}
 	credentials := cliapi.Credentials{Target: "https://example.test", Token: "secret"}
 
 	err := operations.Deploy(context.Background(), projectcli.DeployOptions{
 		ProjectPath: "dashboards/leapview.yaml", Credentials: credentials, Environment: "prod",
 	}, &bytes.Buffer{})
 	require.NoError(t, err)
-	require.Equal(t, []string{"synchronize", "publish"}, lifecycle.order)
+	require.Equal(t, []string{"plan", "build", "publish"}, sequence)
 	require.Equal(t, "prod", client.assertedEnvironment)
-	require.Equal(t, projectDeploymentCandidateKey, lifecycle.dev.CandidateKey)
-	require.Equal(t, projectDeploymentCandidateKey, lifecycle.publish.CandidateKey)
-	require.Equal(t, credentials, lifecycle.dev.Credentials)
-	require.Equal(t, credentials, lifecycle.publish.Credentials)
-	require.True(t, lifecycle.dev.Once)
-	require.True(t, lifecycle.dev.NoBrowser)
+	require.Equal(t, projectDeploymentCandidateKey, planner.options.CandidateKey)
+	require.Equal(t, "plan-1", builder.options.PlanID)
+	require.Equal(t, "candidate-1", publisher.options.CandidateID)
+	require.Equal(t, credentials, publisher.options.Credentials)
 }
 
-func TestDeployDoesNotPublishWhenCandidateSynchronizationFails(t *testing.T) {
-	syncErr := errors.New("synchronization failed")
-	lifecycle := &deployLifecycleRecorder{syncErr: syncErr}
-	operations := projectDeployOperations{
-		client: &deployLifecycleClient{environment: "prod"}, lifecycle: lifecycle,
-	}
+func TestDeployDoesNotBuildOrPublishWhenPlanFails(t *testing.T) {
+	planErr := errors.New("plan failed")
+	planner := &deployPlanRecorder{err: planErr}
+	builder := &deployBuildRecorder{}
+	publisher := &deployPublishRecorder{}
+	operations := projectDeployOperations{client: &deployLifecycleClient{environment: "prod"}, planner: planner, builder: builder, publisher: publisher}
 
 	err := operations.Deploy(context.Background(), projectcli.DeployOptions{
-		ProjectPath: "dashboards/leapview.yaml",
-		Credentials: cliapi.Credentials{Target: "https://example.test", Token: "secret"},
+		ProjectPath: "dashboards/leapview.yaml", Credentials: cliapi.Credentials{Target: "https://example.test"},
 	}, &bytes.Buffer{})
-	require.ErrorIs(t, err, syncErr)
-	require.Equal(t, []string{"synchronize"}, lifecycle.order)
+	require.ErrorIs(t, err, planErr)
+	require.Empty(t, builder.order)
+	require.Empty(t, publisher.order)
 }
 
-func TestDeployAdapterCannotBypassCandidatePublicationPipeline(t *testing.T) {
+func TestDeployAdapterDoesNotCallLegacyLifecycle(t *testing.T) {
 	source, err := os.ReadFile("deploy.go")
 	require.NoError(t, err)
 	body := string(source)
-	for _, required := range []string{"projectcli.RunDev", "projectcli.RunPublish"} {
-		require.Contains(t, body, required)
-	}
-	for _, forbidden := range []string{"createRelease(", "createDeployment("} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("deploy adapter bypasses candidate publication via %s", forbidden)
-		}
+	for _, forbidden := range []string{"projectcli.RunDev", "projectcli.RunPublish", "lifecycle.Synchronize", "lifecycle.Publish", "createRelease(", "createDeployment("} {
+		require.NotContains(t, body, forbidden)
 	}
 }
 
@@ -82,30 +82,52 @@ func (*deployLifecycleClient) Transport(context.Context, cliapi.Credentials) (ap
 	return nil, nil
 }
 
-type deployLifecycleRecorder struct {
-	order      []string
-	dev        projectcli.DevOptions
-	publish    projectcli.PublishOptions
-	syncErr    error
-	publishErr error
+type deployPlanRecorder struct {
+	order    []string
+	sequence *[]string
+	options  projectcli.DeliveryPlanOptions
+	result   projectcli.DeliveryPlanResult
+	err      error
 }
 
-func (lifecycle *deployLifecycleRecorder) Synchronize(
-	_ context.Context,
-	options projectcli.DevOptions,
-	_, _ io.Writer,
-) error {
-	lifecycle.order = append(lifecycle.order, "synchronize")
-	lifecycle.dev = options
-	return lifecycle.syncErr
+func (recorder *deployPlanRecorder) Create(_ context.Context, options projectcli.DeliveryPlanOptions) (projectcli.DeliveryPlanResult, error) {
+	recorder.order = append(recorder.order, "plan")
+	if recorder.sequence != nil {
+		*recorder.sequence = append(*recorder.sequence, "plan")
+	}
+	recorder.options = options
+	return recorder.result, recorder.err
 }
 
-func (lifecycle *deployLifecycleRecorder) Publish(
-	_ context.Context,
-	options projectcli.PublishOptions,
-	_ io.Writer,
-) error {
-	lifecycle.order = append(lifecycle.order, "publish")
-	lifecycle.publish = options
-	return lifecycle.publishErr
+type deployBuildRecorder struct {
+	order    []string
+	sequence *[]string
+	options  projectcli.DeliveryBuildOptions
+	result   projectcli.DeliveryBuildResult
+	err      error
+}
+
+func (recorder *deployBuildRecorder) Build(_ context.Context, options projectcli.DeliveryBuildOptions) (projectcli.DeliveryBuildResult, error) {
+	recorder.order = append(recorder.order, "build")
+	if recorder.sequence != nil {
+		*recorder.sequence = append(*recorder.sequence, "build")
+	}
+	recorder.options = options
+	return recorder.result, recorder.err
+}
+
+type deployPublishRecorder struct {
+	order    []string
+	sequence *[]string
+	options  projectcli.PublishOptions
+	err      error
+}
+
+func (recorder *deployPublishRecorder) Publish(_ context.Context, options projectcli.PublishOptions, _ io.Writer) error {
+	recorder.order = append(recorder.order, "publish")
+	if recorder.sequence != nil {
+		*recorder.sequence = append(*recorder.sequence, "publish")
+	}
+	recorder.options = options
+	return recorder.err
 }

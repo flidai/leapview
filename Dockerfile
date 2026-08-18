@@ -53,7 +53,9 @@ COPY --from=sourcegen /src/api/visualization ./api/visualization
 COPY --from=sourcegen /src/web/generated ./web/generated
 
 RUN bun install --frozen-lockfile --no-cache
-RUN bun scripts/generate_visualization_validator.ts && \
+RUN mkdir -p internal/dashboard/appearance && \
+    bun scripts/generate_lucide_icon_catalog.ts && \
+    bun scripts/generate_visualization_validator.ts && \
     bun run build
 
 FROM go-deps AS build
@@ -102,6 +104,7 @@ COPY --from=sourcegen /src/internal/access/ui/signals/models.gen.go ./internal/a
 COPY --from=sourcegen /src/internal/admin/ui/signals/models.gen.go ./internal/admin/ui/signals/models.gen.go
 COPY --from=sourcegen /src/internal/agent/ui/signals/models.gen.go ./internal/agent/ui/signals/models.gen.go
 COPY --from=sourcegen /src/internal/dashboard/ui/signals/models.gen.go ./internal/dashboard/ui/signals/models.gen.go
+COPY --from=web /src/internal/dashboard/appearance/icons_gen.go ./internal/dashboard/appearance/icons_gen.go
 COPY --from=sourcegen /src/docs ./docs
 COPY --from=sourcegen /src/schemas ./schemas
 COPY --from=sourcegen /src/web/generated ./web/generated

@@ -49,8 +49,10 @@ func TestRootHelpExposesCanonicalDeploymentLifecycle(t *testing.T) {
 	}
 
 	output := help("--help")
-	if !strings.Contains(output, "\n  deploy ") {
-		t.Fatalf("root help missing atomic deploy command:\n%s", output)
+	for _, lifecycle := range []string{"plan", "build", "publish", "rollback"} {
+		if !strings.Contains(output, "\n  "+lifecycle+" ") {
+			t.Fatalf("root help missing canonical %s command:\n%s", lifecycle, output)
+		}
 	}
 	if !strings.Contains(output, "\n  dev ") {
 		t.Fatalf("root help missing dev command:\n%s", output)
@@ -63,7 +65,7 @@ func TestRootHelpExposesCanonicalDeploymentLifecycle(t *testing.T) {
 	}
 	command := NewCommand(context.Background())
 	if found, _, err := command.Find([]string{"deploy"}); err != nil || found == command {
-		t.Fatalf("root command does not resolve atomic deploy path: command=%v err=%v", found, err)
+		t.Fatalf("root command does not resolve deprecated deploy path: command=%v err=%v", found, err)
 	}
 	if found, _, err := command.Find([]string{"search"}); err != nil || found == command {
 		t.Fatalf("root command does not resolve project-wide search: command=%v err=%v", found, err)
@@ -78,6 +80,62 @@ func TestDocumentationDoesNotAdvertiseWorkspaceCommands(t *testing.T) {
 		if strings.Contains(path, "workspace") {
 			t.Fatalf("documentation safety advertises removed workspace command %q", path)
 		}
+	}
+}
+
+func TestDeliveryPoolBootstrapDocumentsWriteEffectAndExplicitConfirmation(t *testing.T) {
+	command := NewCommand(context.Background())
+	found, _, err := command.Find([]string{"admin", "delivery", "pool", "bootstrap"})
+	if err != nil {
+		t.Fatalf("find delivery pool bootstrap: %v", err)
+	}
+	if got := found.Annotations[documentationEffectAnnotation]; got != "write" {
+		t.Fatalf("bootstrap effect = %q, want write", got)
+	}
+	if got := found.Annotations[documentationConfirmationAnnotation]; got != "required" {
+		t.Fatalf("bootstrap confirmation = %q, want required", got)
+	}
+	for _, flag := range []string{"pool", "evidence", "apply"} {
+		if found.Flags().Lookup(flag) == nil {
+			t.Fatalf("bootstrap command missing --%s", flag)
+		}
+	}
+}
+
+func TestDeliveryRepairDocumentsConditionalDestructiveEffect(t *testing.T) {
+	command := NewCommand(context.Background())
+	found, _, err := command.Find([]string{"admin", "delivery", "repair"})
+	if err != nil {
+		t.Fatalf("find delivery repair: %v", err)
+	}
+	if got := found.Annotations[documentationEffectAnnotation]; got != "destructive" {
+		t.Fatalf("repair effect = %q, want destructive", got)
+	}
+	if got := found.Annotations[documentationConfirmationAnnotation]; got != "conditional" {
+		t.Fatalf("repair confirmation = %q, want conditional", got)
+	}
+	if found.Flags().Lookup("apply") == nil {
+		t.Fatal("repair command missing --apply")
+	}
+}
+
+func TestDeliveryAuditDocumentsReadOnlyEffect(t *testing.T) {
+	command := NewCommand(context.Background())
+	found, _, err := command.Find([]string{"admin", "delivery", "audit"})
+	if err != nil {
+		t.Fatalf("find delivery audit: %v", err)
+	}
+	if got := found.Annotations[documentationEffectAnnotation]; got != "read" {
+		t.Fatalf("audit effect = %q, want read", got)
+	}
+	if got := found.Annotations[documentationConfirmationAnnotation]; got != "never" {
+		t.Fatalf("audit confirmation = %q, want never", got)
+	}
+	if found.Flags().Lookup("pool-id") == nil {
+		t.Fatal("audit command missing --pool-id")
+	}
+	if found.Flags().Lookup("apply") != nil {
+		t.Fatal("audit command unexpectedly exposes --apply")
 	}
 }
 
@@ -105,8 +163,8 @@ func TestDeployCommandUsesTargetOwnedAtomicCandidatePreparation(t *testing.T) {
 	if command.Name() != "deploy" {
 		t.Fatalf("command name = %q, want deploy", command.Name())
 	}
-	if !strings.Contains(strings.ToLower(command.Short), "atomically") || !strings.Contains(strings.ToLower(command.Short), "project") {
-		t.Fatalf("deploy short help = %q, want atomic project scope", command.Short)
+	if !strings.Contains(strings.ToLower(command.Short), "deprecated") || command.Deprecated == "" {
+		t.Fatalf("deploy command is not marked deprecated: short=%q deprecated=%q", command.Short, command.Deprecated)
 	}
 	if command.Flags().Lookup("revision") != nil {
 		t.Fatal("deploy command still exposes client-owned managed revision pins")

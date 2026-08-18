@@ -255,7 +255,11 @@ type workflowAssemblyInputs struct {
 }
 
 type runtimeAssemblyInputs struct {
-	RuntimeHost             *runtimehostmodule.Module
+	RuntimeHost *runtimehostmodule.Module
+	// DeliveryTargetReader is the durable target-owned active-generation
+	// pointer. Sealed production serving must consult it before the legacy
+	// serving-state scope table when deciding whether bootstrap is still open.
+	DeliveryTargetReader    deliveryTargetReader
 	ProjectID               projectgraph.ResourceID
 	ProjectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
 	ServingSnapshotResolver func(context.Context) (string, error)
@@ -269,6 +273,12 @@ type runtimeAssemblyInputs struct {
 	AllowedHosts            []string
 	Assets                  staticasset.Resolver
 	RequireActiveDeployment bool
+	SealedServing           bool
+	// DeliveryStartup is the production-only control-plane admission and
+	// migration check. It keeps a fresh target administrable while readiness
+	// fails closed until an operator admits a physical pool and repairs any
+	// legacy serving rows.
+	DeliveryStartup func(context.Context) error
 }
 
 type httpAssemblyInputs struct {
@@ -470,7 +480,7 @@ func buildApplicationSurfaces(
 	persistence.servingStateRepo = servingStateRepo
 	retentionStates, _ := servingStateRepo.(servingstatemodule.RetentionRepository)
 	runtime.storageRetention = data.StorageRetention
-	if runtime.storageRetention == nil {
+	if runtime.storageRetention == nil && !runtimeConfig.SealedServing {
 		runtime.storageRetention = servingstatemodule.NewRetention(servingstatemodule.RetentionConfig{
 			States: retentionStates, Snapshots: capabilities.AnalyticsModule.RetentionSnapshots(),
 			Admission: controller, Environment: runtimeConfig.DefaultEnvironment,
@@ -557,7 +567,7 @@ func buildApplicationSurfaces(
 		}
 		snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, routes.accessModule.AuthorizationSubjects)
 		authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection, func(ctx context.Context) (bool, error) {
-			return hasActiveBootstrapServingState(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, policy.defaultEnvironment)
+			return hasActiveBootstrapServingState(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, policy.defaultEnvironment, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID, runtimeConfig.ProjectID.String())
 		})
 		routes.accessModule.SetCurrentEffectiveCapabilities(func(ctx context.Context, principalID string) ([]access.Capability, error) {
 			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
@@ -731,7 +741,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Capability: access.CapabilityProjectAdmin, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
 			})
 		}
-		config.CandidateSourceBlobAudit = candidateSourceBlobAuditRecorder(routes.accessModule)
+		config.CandidateSourceAudit = candidateSourceAuditRecorder(routes.accessModule)
+		config.CandidateSourceBlobAudit = candidateSourceAuditRecorder(routes.accessModule)
 		config.Jobs = deploymentmodule.JobConfig{
 			Reconcile: func(ctx context.Context) error {
 				if routes.refreshModule == nil {
@@ -1220,6 +1231,61 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 			return []access.ResourceRef{resource}
 		},
+		Delivery: func(ctx context.Context, r *http.Request, operationID, objectID string, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			if !ok {
+				return false, nil
+			}
+			lease, err := runtime.runtimeHostModule.Acquire(ctx)
+			if err != nil {
+				return false, err
+			}
+			if lease == nil {
+				return false, fmt.Errorf("runtime host returned a nil lease")
+			}
+			defer lease.Release()
+			if lease.Identity().ProjectID != projectID {
+				return false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
+			}
+			authorizedLease, ok := lease.(interface {
+				AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+			})
+			if !ok {
+				return false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+			}
+			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
+			if err != nil {
+				return false, err
+			}
+			snapshot := authorizedLease.AuthorizationSnapshot()
+			if snapshot.Identity() != lease.Identity() {
+				return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
+			}
+			reader := moduleWorkflow.deploymentConfig.DeliveryReader
+			if reader == nil {
+				return false, fmt.Errorf("delivery authorization reader is unavailable")
+			}
+			if operationID == "createDeliveryPlan" || operationID == "getDeliveryOperatorSnapshot" {
+				return deliveryRoleAllows(snapshot, subjects, capability), nil
+			}
+			plan, err := deliveryAuthorizationPlan(ctx, reader, operationID, objectID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return false, nil
+				}
+				return false, err
+			}
+			resources, err := deliveryAuthorizationResources(plan)
+			if err != nil {
+				return false, err
+			}
+			if len(resources) == 0 {
+				// Unknown/new resources require an explicit target-owned role;
+				// a grant on an unrelated graph object must never widen scope.
+				return deliveryRoleAllows(snapshot, subjects, capability), nil
+			}
+			return deliverySnapshotAllows(snapshot, subjects, resources, capability)
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("build APIGen authorizer: %w", err)
@@ -1230,7 +1296,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return fmt.Errorf("bootstrap policy store does not expose the durable project claim")
 		}
 		bootstrapAuthorizer := func(ctx context.Context, _ *http.Request, operationID string, projectID projectgraph.ResourceID, _ access.Capability) (accessmodule.APIGenBootstrapDecision, error) {
-			return bootstrapAPIGenDecision(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, claimReader, policy.defaultEnvironment, operationID, projectID)
+			return bootstrapAPIGenDecision(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, claimReader, policy.defaultEnvironment, operationID, projectID, runtimeConfig.DeliveryTargetReader, runtimeConfig.InstanceID)
 		}
 		apiGenAuthorizer.SetBootstrapAuthorizer(bootstrapAuthorizer)
 		policy.managedDataBootstrap = bootstrapAuthorizer
@@ -1345,6 +1411,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return routes.dashboardAssets.Verify(ctx)
 			},
+			"deliveryStartup": runtimeConfig.DeliveryStartup,
 		},
 		ActiveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
 			if runtime.runtimeHostModule == nil {
@@ -1435,7 +1502,25 @@ func hasActiveBootstrapServingState(
 	_ *runtimehostmodule.Module,
 	states servingStateRepository,
 	environment string,
+	targets deliveryTargetReader,
+	targetID string,
+	projectID string,
 ) (bool, error) {
+	// The delivery target pointer is authoritative for sealed serving. Once a
+	// target row exists, an active generation there closes bootstrap even when
+	// the legacy serving-state scope table has not been updated (or is stale).
+	if targets != nil && strings.TrimSpace(targetID) != "" {
+		target, err := targets.DeliveryTargetRevision(ctx, targetID)
+		if err == nil {
+			if target.TargetID != targetID || target.ProjectID != strings.TrimSpace(projectID) || strings.TrimSpace(target.Environment) != strings.TrimSpace(environment) {
+				return false, fmt.Errorf("active delivery target scope does not match %q/%q/%q", targetID, projectID, environment)
+			}
+			return strings.TrimSpace(target.ActiveGenerationID) != "", nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
+			return false, fmt.Errorf("read active delivery target: %w", err)
+		}
+	}
 	if states == nil {
 		return false, errors.New("serving-state repository is unavailable")
 	}
@@ -1460,10 +1545,9 @@ func hasActiveBootstrapServingState(
 	if activeCount > 0 {
 		return true, nil
 	}
-	// ListActiveScopes is the authoritative durable check. A runtime host may
-	// still be warming up (or be nil in a fresh process) while the store has no
-	// active generation; consulting its cached artifact here would make an
-	// otherwise valid first activation fail spuriously.
+	// The legacy scope table is only a compatibility fallback when no canonical
+	// target row exists. A runtime host may still be warming up (or be nil in a
+	// fresh process) while the durable stores have no active generation.
 	return false, nil
 }
 
@@ -1480,8 +1564,10 @@ func bootstrapAPIGenDecision(
 	claims deploymentmodule.ProjectClaimReader,
 	environment, operationID string,
 	projectID projectgraph.ResourceID,
+	targets deliveryTargetReader,
+	targetID string,
 ) (accessmodule.APIGenBootstrapDecision, error) {
-	active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment)
+	active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
 	if err != nil {
 		return accessmodule.APIGenBootstrapDecision{}, err
 	}
@@ -1509,7 +1595,7 @@ func bootstrapAPIGenDecision(
 
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "commitProjectCandidateSynchronization",
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
 		return true
@@ -1530,4 +1616,121 @@ func bootstrapOperationAllowedWithoutClaim(operationID string) bool {
 	default:
 		return false
 	}
+}
+
+// deliveryRoleAllows is the only project-wide escape hatch in delivery
+// authorization. Explicit project role bindings are target-owned policy; a
+// direct resource grant must still match every affected graph resource.
+func deliveryRoleAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability) bool {
+	for _, binding := range snapshot.RoleBindings() {
+		for _, subject := range subjects {
+			if binding.Subject != subject {
+				continue
+			}
+			for _, captured := range binding.Capabilities {
+				if captured == capability {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
+	if strings.TrimSpace(objectID) == "" {
+		return deployment.DeliveryPlan{}, sql.ErrNoRows
+	}
+	loadPlan := func(planID string) (deployment.DeliveryPlan, error) {
+		if strings.TrimSpace(planID) == "" {
+			return deployment.DeliveryPlan{}, sql.ErrNoRows
+		}
+		return reader.PlanByID(ctx, planID)
+	}
+	switch operationID {
+	case "buildDeliveryPlan", "getDeliveryPlanPreview":
+		return loadPlan(objectID)
+	case "publishDeliveryCandidate", "getDeliveryCandidateStatus":
+		candidate, err := reader.DeliveryCandidateByID(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, err
+		}
+		return loadPlan(candidate.PlanID)
+	case "rollbackDeliveryGeneration", "getDeliveryGenerationStatus":
+		generation, err := reader.DeliveryGenerationByID(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, err
+		}
+		return loadPlan(generation.PlanID)
+	case "getDeliveryBuildStatus":
+		attempt, err := reader.DeliveryBuildAttemptByID(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, err
+		}
+		return loadPlan(attempt.PlanID)
+	case "getDeliverySealStatus":
+		seal, err := reader.DeliveryCatalogSealByID(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, err
+		}
+		return loadPlan(seal.PlanID)
+	case "getDeliveryPublicationEvidence":
+		publication, err := reader.DeliveryPublicationByID(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, err
+		}
+		return loadPlan(publication.PlanID)
+	default:
+		return deployment.DeliveryPlan{}, fmt.Errorf("unsupported delivery authorization operation %q", operationID)
+	}
+}
+
+func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.ResourceRef, error) {
+	impact := append([]deployment.DeliveryImpactResource{}, plan.Evidence.GraphImpact.Added...)
+	impact = append(impact, plan.Evidence.GraphImpact.Removed...)
+	impact = append(impact, plan.Evidence.GraphImpact.DirectlyModified...)
+	impact = append(impact, plan.Evidence.GraphImpact.IndirectlyAffected...)
+	resources := make([]access.ResourceRef, 0, len(impact))
+	seen := make(map[string]struct{}, len(impact))
+	for _, item := range impact {
+		id, err := projectgraph.NewResourceID(strings.TrimSpace(item.ID))
+		if err != nil {
+			return nil, err
+		}
+		kind, err := projectgraph.ParseKind(strings.TrimSpace(item.Kind))
+		if err != nil {
+			return nil, err
+		}
+		resource, err := access.NewResourceRef(id, kind)
+		if err != nil {
+			return nil, err
+		}
+		key := resource.ID().String() + "\x00" + string(resource.Kind())
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		resources = append(resources, resource)
+	}
+	return resources, nil
+}
+
+func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
+	for _, resource := range resources {
+		allowed := false
+		for _, subject := range subjects {
+			candidate, err := snapshot.Allows(subject, resource, capability)
+			if err != nil {
+				return false, err
+			}
+			if candidate {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return false, nil
+		}
+	}
+	return true, nil
 }

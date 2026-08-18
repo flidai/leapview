@@ -77,6 +77,8 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Health and observability](/docs/guides/operate/observability): Monitor health, query activity, refreshes, and deployments.
 - [Backup and restore](/docs/guides/operate/backup-restore): Create, validate, and restore consistent instance backups.
 - [Upgrades and migrations](/docs/guides/operate/upgrades): Upgrade binaries and persistent state with rollback boundaries.
+- [Operate the plan → build → publish delivery contract](/docs/guides/operate/plan-build-publish): Bootstrap an admitted physical pool and operate immutable target-bound delivery.
+- [Delivery reachability audit and bounded repair](/docs/guides/operate/delivery-recovery): Audit immutable delivery roots offline and apply a fail-closed quarantine repair.
 - [Operational troubleshooting](/docs/guides/operate/troubleshooting): Diagnose deployment and runtime failures systematically.
 
 ### Security and administration
@@ -156,17 +158,19 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview admin](/docs/cli/admin): Administrative utilities
 - [leapview agent](/docs/cli/agent): Use the LeapView governed BI agent
 - [leapview api](/docs/cli/api): Call any generated LeapView API operation
+- [leapview build](/docs/cli/build): Build and seal a target-owned delivery plan
 - [leapview config](/docs/cli/config): Inspect and validate process-global configuration
 - [leapview dashboards](/docs/cli/dashboards): Inspect dashboards
 - [leapview data](/docs/cli/data): Manage project-global data revisions
-- [leapview deploy](/docs/cli/deploy): Atomically deploy a configuration-as-code project
+- [leapview deploy](/docs/cli/deploy): Deprecated composition of plan, build, and publish
 - [leapview dev](/docs/cli/dev): Synchronize a project into your private target candidate
 - [leapview evaluate](/docs/cli/evaluate): Run the self-contained local evaluation server
 - [leapview healthcheck](/docs/cli/healthcheck): Check the local LeapView readiness endpoint
 - [leapview login](/docs/cli/login): Sign in to a LeapView target for project authoring
 - [leapview logout](/docs/cli/logout): Revoke a LeapView authoring session and remove local credentials
-- [leapview plan](/docs/cli/plan): Emit a deterministic configuration-as-code plan
-- [leapview publish](/docs/cli/publish): Publish the exact candidate last synchronized by dev
+- [leapview plan](/docs/cli/plan): Capture an exact source snapshot and create a target-owned delivery plan
+- [leapview publish](/docs/cli/publish): Publish an exact candidate through target policy
+- [leapview rollback](/docs/cli/rollback): Governed rollback to a retained serving generation
 - [leapview schema](/docs/cli/schema): Inspect LeapView YAML schemas
 - [leapview search](/docs/cli/search): Search accessible product objects
 - [leapview semantic-model](/docs/cli/semantic-model): Compile and interchange semantic models

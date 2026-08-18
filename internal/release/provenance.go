@@ -18,7 +18,13 @@ import (
 // evidence shape changes. Provenance is immutable release evidence.
 const ProvenanceVersion = 4
 
-var ErrProvenanceInvalid = errors.New("release provenance invalid")
+var (
+	ErrProvenanceInvalid = errors.New("release provenance invalid")
+	// ErrLegacyReuseSnapshot identifies immutable rows that predate the
+	// sealed-base reuse literal. Operators must rebuild/re-publish them under
+	// reuse_base; callers must not reinterpret or rewrite their digest.
+	ErrLegacyReuseSnapshot = errors.New("legacy reuse_snapshot provenance requires controlled rebuild")
+)
 
 type CandidateProvenance struct {
 	ID       string `json:"id"`
@@ -56,8 +62,21 @@ type AuthoredConnectionEvidence struct {
 type GenerationDataMode string
 
 const (
-	GenerationDataReuseSnapshot  GenerationDataMode = "reuse_snapshot"
-	GenerationDataRefreshSources GenerationDataMode = "refresh_sources"
+	// GenerationDataReuseBase is the canonical mode for retaining references
+	// from an exact sealed serving base. It is deliberately independent of a
+	// DuckLake snapshot number; sealed generations may have no snapshot ID.
+	GenerationDataReuseBase GenerationDataMode = "reuse_base"
+	// GenerationDataReuseSnapshot remains a source-compatible alias for callers
+	// compiled against the pre-sealed-base name. New production code must use
+	// GenerationDataReuseBase.
+	GenerationDataReuseSnapshot GenerationDataMode = GenerationDataReuseBase
+	// GenerationDataReuseSnapshotLegacy is the historical persisted literal
+	// emitted before sealed-base reuse became canonical. It is retained only so
+	// immutable provenance can be read and audited across the migration; new
+	// provenance and every physical-use path must reject it and require a
+	// controlled rebuild.
+	GenerationDataReuseSnapshotLegacy GenerationDataMode = "reuse_snapshot"
+	GenerationDataRefreshSources      GenerationDataMode = "refresh_sources"
 )
 
 // ProjectArtifactProvenance identifies one complete project artifact. There
@@ -104,6 +123,13 @@ type Provenance struct {
 }
 
 func NewProvenance(input ProvenanceInput) (Provenance, error) {
+	return newProvenance(input, false)
+}
+
+// newProvenance canonicalizes and digests provenance. allowLegacy is reserved
+// for validating immutable historical rows without changing their bytes; it
+// must never be enabled for newly-created or physically-used provenance.
+func newProvenance(input ProvenanceInput, allowLegacy bool) (Provenance, error) {
 	artifact, err := normalizeProjectArtifactProvenance(input.Artifact)
 	if err != nil {
 		return Provenance{}, err
@@ -116,7 +142,7 @@ func NewProvenance(input ProvenanceInput) (Provenance, error) {
 	if err != nil {
 		return Provenance{}, err
 	}
-	plan, err := normalizeGenerationPlanProvenance(input.Plan, artifact)
+	plan, err := normalizeGenerationPlanProvenance(input.Plan, artifact, allowLegacy)
 	if err != nil {
 		return Provenance{}, err
 	}
@@ -144,10 +170,27 @@ func NewProvenance(input ProvenanceInput) (Provenance, error) {
 }
 
 func (p Provenance) Validate() error {
+	if p.Plan.DataMode == GenerationDataReuseSnapshotLegacy {
+		return provenanceInvalid(ErrLegacyReuseSnapshot)
+	}
+	return p.validate(false)
+}
+
+// ValidateStored verifies an immutable persisted provenance row, including
+// the historical reuse_snapshot literal. It deliberately does not rewrite or
+// recalculate the stored digest and is intended only for read/audit paths.
+func (p Provenance) ValidateStored() error {
+	return p.validate(true)
+}
+
+func (p Provenance) validate(allowLegacy bool) error {
 	if p.Version != ProvenanceVersion {
 		return provenanceInvalid(fmt.Errorf("version = %d, want %d", p.Version, ProvenanceVersion))
 	}
-	expected, err := NewProvenance(ProvenanceInput{Artifact: p.Artifact, Candidate: p.Candidate, SourceRevision: p.SourceRevision, Plan: p.Plan})
+	if !allowLegacy && p.Plan.DataMode == GenerationDataReuseSnapshotLegacy {
+		return provenanceInvalid(ErrLegacyReuseSnapshot)
+	}
+	expected, err := newProvenance(ProvenanceInput{Artifact: p.Artifact, Candidate: p.Candidate, SourceRevision: p.SourceRevision, Plan: p.Plan}, allowLegacy)
 	if err != nil {
 		return err
 	}
@@ -199,7 +242,7 @@ func normalizeCandidateProvenance(c CandidateProvenance) (CandidateProvenance, e
 	return c, nil
 }
 
-func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact ProjectArtifactProvenance) (GenerationPlanProvenance, error) {
+func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact ProjectArtifactProvenance, allowLegacy bool) (GenerationPlanProvenance, error) {
 	if err := p.Identity.Validate(); err != nil {
 		return GenerationPlanProvenance{}, provenanceInvalid(err)
 	}
@@ -221,7 +264,10 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	if validateOperationalID(p.TargetID) != nil || p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ContentDigest == "" {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("runtime, policy, data, and artifact evidence are required"))
 	}
-	if p.DataMode != GenerationDataReuseSnapshot && p.DataMode != GenerationDataRefreshSources {
+	if p.DataMode == GenerationDataReuseSnapshotLegacy && !allowLegacy {
+		return GenerationPlanProvenance{}, provenanceInvalid(ErrLegacyReuseSnapshot)
+	}
+	if p.DataMode != GenerationDataReuseBase && p.DataMode != GenerationDataRefreshSources && (!allowLegacy || p.DataMode != GenerationDataReuseSnapshotLegacy) {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("data mode is invalid"))
 	}
 	var err error
@@ -237,7 +283,7 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	if err != nil {
 		return GenerationPlanProvenance{}, err
 	}
-	if p.DataMode == GenerationDataReuseSnapshot && len(p.AuthoredConnections) != 0 {
+	if (p.DataMode == GenerationDataReuseBase || p.DataMode == GenerationDataReuseSnapshotLegacy) && len(p.AuthoredConnections) != 0 {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("snapshot reuse cannot retain authored refresh connection evidence"))
 	}
 	if p.DataMode == GenerationDataRefreshSources && len(p.Bindings) == 0 && len(p.ManagedDataPins) == 0 && len(p.AuthoredConnections) == 0 {
@@ -325,4 +371,4 @@ func canonicalDigest(value any) (string, error) {
 	return ocidigest.FromBytes(b).String(), nil
 }
 
-func provenanceInvalid(err error) error { return fmt.Errorf("%w: %v", ErrProvenanceInvalid, err) }
+func provenanceInvalid(err error) error { return fmt.Errorf("%w: %w", ErrProvenanceInvalid, err) }
