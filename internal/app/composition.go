@@ -127,7 +127,7 @@ func sourceInputsFromManifest(artifacts release.CandidateArtifactSet, runtime an
 	result := make([]analyticsgates.SourceInput, 0, len(artifacts.Compiler.Manifest.Sources))
 	for id, source := range artifacts.Compiler.Manifest.Sources {
 		item := observed[id]
-		result = append(result, analyticsgates.SourceInput{ID: id, Source: source, Observed: append([]semanticmodel.ColumnSchema(nil), item.Schema...), Revision: item.Revision, RevisionObserved: item.RevisionObserved, FreshnessObserved: item.FreshnessObserved, FreshnessEmpty: item.FreshnessEmpty, ObservationQueries: item.ObservationQueries, ObservationRows: item.ObservationRows, ObservationMillis: item.ObservationMillis})
+		result = append(result, analyticsgates.SourceInput{ID: id, Source: source, Observed: append([]semanticmodel.ColumnSchema(nil), item.Schema...), Revision: item.Revision, RevisionObserved: item.RevisionObserved, FreshnessObserved: item.FreshnessObserved, FreshnessEmpty: item.FreshnessEmpty, SchemaFailure: item.SchemaFailure, FreshnessFailure: item.FreshnessFailure, ObservationQueries: item.ObservationQueries, ObservationRows: item.ObservationRows, ObservationMillis: item.ObservationMillis})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result

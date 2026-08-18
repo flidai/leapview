@@ -37,6 +37,8 @@ type SourceObservation struct {
 	RevisionObserved   time.Time
 	FreshnessObserved  time.Time
 	FreshnessEmpty     bool
+	SchemaFailure      string
+	FreshnessFailure   string
 	ObservationQueries int
 	ObservationRows    int64
 	ObservationMillis  int64

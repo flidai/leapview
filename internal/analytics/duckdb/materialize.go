@@ -398,7 +398,14 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 	queries := 0
 	for _, id := range ids {
 		if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
-			return nil, fmt.Errorf("source observation query bound exceeded")
+			failure := "bounds"
+			if budget.MaxMillis > 0 && (ctx.Err() != nil || time.Since(started).Milliseconds() >= budget.MaxMillis) {
+				failure = "timeout"
+			}
+			for _, remaining := range ids[len(result):] {
+				result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: failure})
+			}
+			break
 		}
 		sourceStarted := time.Now()
 		sourceQueries := 0
@@ -406,7 +413,8 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 		source := p.model.Sources[id]
 		relation := p.relationQueries[id]
 		if relation == "" {
-			return nil, fmt.Errorf("source %q observation relation is unavailable", id)
+			result = append(result, analyticsmaterialize.SourceObservation{ID: id, SchemaFailure: "unavailable"})
+			continue
 		}
 		// Re-describe the prepared relation on this still-live session. The
 		// schema carried on the semantic model is only a refresh aid; the gate
@@ -414,7 +422,15 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 		// candidate.
 		columns, err := describeRelationSchema(ctx, p.session, relation)
 		if err != nil {
-			return nil, fmt.Errorf("source %q schema observation: %w", id, err)
+			failure := sourceObservationFailure(ctx, budget, err)
+			result = append(result, analyticsmaterialize.SourceObservation{ID: id, SchemaFailure: failure, ObservationQueries: 1, ObservationMillis: time.Since(sourceStarted).Milliseconds()})
+			if failure == "timeout" || failure == "bounds" {
+				for _, remaining := range ids[len(result):] {
+					result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: failure})
+				}
+				break
+			}
+			continue
 		}
 		queries++
 		sourceQueries++
@@ -435,18 +451,28 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 		} else if source.Freshness != nil && source.Freshness.Basis == "field" {
 			field := source.Freshness.Field
 			if relation == "" || field == "" {
-				return nil, fmt.Errorf("source %q freshness relation is unavailable", id)
+				observation.FreshnessFailure = "unavailable"
+				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
+				result = append(result, observation)
+				continue
 			}
 			if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
-				return nil, fmt.Errorf("source observation query bound exceeded")
+				observation.FreshnessFailure = "bounds"
+				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
+				result = append(result, observation)
+				for _, remaining := range ids[len(result):] {
+					result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: "bounds"})
+				}
+				break
 			}
 			row := p.session.QueryRowContext(ctx, "SELECT MAX(\""+strings.ReplaceAll(field, "\"", "\"\"")+"\") FROM ("+relation+")")
 			var value any
 			if err := row.Scan(&value); err != nil {
-				return nil, fmt.Errorf("source %q freshness observation: %w", id, err)
-			}
-			if budget.MaxQueries > 0 && queries >= budget.MaxQueries {
-				return nil, fmt.Errorf("source observation query bound exceeded")
+				observation.FreshnessFailure = sourceObservationFailure(ctx, budget, err)
+				observation.ObservationQueries++
+				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
+				result = append(result, observation)
+				continue
 			}
 			queries++
 			sourceQueries++
@@ -458,10 +484,17 @@ func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsma
 		result[len(result)-1].ObservationRows = sourceRows
 		result[len(result)-1].ObservationMillis = time.Since(sourceStarted).Milliseconds()
 	}
-	if budget.MaxMillis > 0 && time.Since(started).Milliseconds() > budget.MaxMillis {
-		return nil, fmt.Errorf("source observation time bound exceeded")
-	}
 	return result, nil
+}
+
+func sourceObservationFailure(ctx context.Context, budget analyticsmaterialize.ObservationBudget, err error) string {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || budget.MaxMillis > 0 && ctx.Err() != nil {
+		return "timeout"
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "bound exceeded") {
+		return "bounds"
+	}
+	return "unavailable"
 }
 
 func sourceObservationTime(value any) time.Time {

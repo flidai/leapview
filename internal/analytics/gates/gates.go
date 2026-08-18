@@ -68,6 +68,8 @@ type SourceInput struct {
 	// value is preferred over running another query after that session closes.
 	FreshnessObserved  time.Time
 	FreshnessEmpty     bool
+	SchemaFailure      string
+	FreshnessFailure   string
 	ObservationQueries int
 	ObservationRows    int64
 	ObservationMillis  int64
@@ -283,6 +285,11 @@ func evaluateSource(ctx context.Context, now time.Time, state *budget, source So
 		return observed[i].Ordinal < observed[j].Ordinal
 	})
 	result.ObservedSchema = observed
+	if source.SchemaFailure != "" {
+		result.SchemaOutcome = observationFailureOutcome(source.SchemaFailure)
+		result.ObservationDigest = digest(struct{ Failure string }{source.SchemaFailure})
+		return result, gateError(result.ID+":schema", result.SchemaOutcome, failureCause(result.SchemaOutcome), nil)
+	}
 	if len(observed) == 0 {
 		result.SchemaOutcome = release.GateUnavailable
 		return result, gateError(result.ID+":schema", release.GateUnavailable, ErrGateUnavailable, nil)
@@ -308,6 +315,11 @@ func evaluateSource(ctx context.Context, now time.Time, state *budget, source So
 		}
 	}
 	result.SchemaDigest = digest(observed)
+	if source.FreshnessFailure != "" {
+		result.FreshnessOutcome = observationFailureOutcome(source.FreshnessFailure)
+		result.ObservationDigest = digest(struct{ Failure string }{source.FreshnessFailure})
+		return result, gateError(result.ID+":freshness", result.FreshnessOutcome, failureCause(result.FreshnessOutcome), nil)
+	}
 	if source.Source.Freshness != nil {
 		if source.Source.Freshness.Basis == "field" {
 			result.ObservedAt = source.FreshnessObserved.UTC()
@@ -323,6 +335,24 @@ func evaluateSource(ctx context.Context, now time.Time, state *budget, source So
 		}
 	}
 	return result, nil
+}
+
+func observationFailureOutcome(value string) release.GateOutcome {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "timeout":
+		return release.GateTimeout
+	case "bounds", "unavailable":
+		return release.GateUnavailable
+	default:
+		return release.GateUnavailable
+	}
+}
+
+func failureCause(outcome release.GateOutcome) error {
+	if outcome == release.GateTimeout {
+		return context.DeadlineExceeded
+	}
+	return ErrGateUnavailable
 }
 
 func evaluateFreshness(ctx context.Context, now time.Time, state *budget, source SourceInput) (release.GateOutcome, int64, string, error) {

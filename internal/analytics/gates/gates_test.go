@@ -194,6 +194,51 @@ func TestEvaluateEvidenceNeverSerializesSourceSecretsOrLocations(t *testing.T) {
 	}
 }
 
+func TestEvaluateSourceObservationFailuresProduceCanonicalEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failure string
+		outcome release.GateOutcome
+	}{
+		{name: "unavailable", failure: "unavailable", outcome: release.GateUnavailable},
+		{name: "timeout", failure: "timeout", outcome: release.GateTimeout},
+		{name: "bounds", failure: "bounds", outcome: release.GateUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := observedSource()
+			source.SchemaFailure = test.failure
+			evidence, err := Evaluate(context.Background(), Input{CandidateID: "candidate-1", SourceDigest: testDigest, BindingGeneration: testBinding, RuntimeVersion: "runtime-1", DuckDBVersion: "duckdb-1", Now: time.Unix(1_700_000_000, 0), Sources: []SourceInput{source}, Query: rowsQuery(nil)})
+			var evaluationErr *EvaluationError
+			if !errors.As(err, &evaluationErr) || evaluationErr.Outcome != test.outcome {
+				t.Fatalf("failure evidence err=%v outcome=%v", err, evaluationErr)
+			}
+			if evidence.Digest == "" || evidence.Outcome != test.outcome {
+				t.Fatalf("failure evidence=%#v", evidence)
+			}
+			if err := evidence.Validate(); err != nil {
+				t.Fatalf("failure evidence validation=%v", err)
+			}
+		})
+	}
+}
+
+func TestEvaluatePreflightOverflowOutcomeMatchesError(t *testing.T) {
+	input := baseInput(rowsQuery(nil))
+	input.Bounds = Bounds{MaxRows: 10, MaxQueries: 1, MaxMillis: 100}
+	input.PreflightQueries = 2
+	evidence, err := Evaluate(context.Background(), input)
+	var evaluationErr *EvaluationError
+	if !errors.As(err, &evaluationErr) || evaluationErr.Outcome != release.GateUnavailable {
+		t.Fatalf("preflight overflow error=%v evaluation=%#v", err, evaluationErr)
+	}
+	if evidence.Outcome != release.GateUnavailable || !evidence.QueriesExceeded || evidence.Digest == "" {
+		t.Fatalf("preflight overflow evidence=%#v", evidence)
+	}
+	if err := evidence.Validate(); err != nil {
+		t.Fatalf("preflight overflow evidence validation=%v", err)
+	}
+}
+
 func InputWithModel(input Input, model ModelInput) Input {
 	input.Models = []ModelInput{model}
 	return input
