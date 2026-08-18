@@ -1,11 +1,13 @@
 package compiler
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 )
 
 func canonicalFilterTestModel() *semanticmodel.Model {
@@ -168,6 +170,22 @@ func TestCompileCanonicalDistinctOptionsRejectsSelfDependency(t *testing.T) {
 	}}}
 	if _, err := CompileCanonicalDashboardFilters(doc, model); err == nil || !strings.Contains(err.Error(), "dependency \"status\" is invalid") {
 		t.Fatalf("self dependency error = %v", err)
+	}
+}
+
+func TestCompileCanonicalDistinctIncludeNullAllowsNullPredicate(t *testing.T) {
+	model := canonicalFilterTestModel()
+	includeNull := true
+	doc := document.DashboardDocument{Metadata: document.DashboardMetadata{ID: "dashboard:sales"}, Spec: document.DashboardSpec{Filters: []document.DashboardFilter{
+		{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.SingleSelectDashboardFilterControl{Type: "singleSelect", Options: &document.DashboardFilterOptions{Value: &document.DistinctDashboardFilterOptions{Type: "distinct", Dataset: "orders", IncludeNull: &includeNull}}}}},
+	}}}
+	compiled, err := CompileCanonicalDashboardFilters(doc, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operators := compiled.Definitions["status"].Predicates[0].Operators
+	if !slices.Contains(operators, dashboardfilter.OperatorIsNull) {
+		t.Fatalf("include-null operators = %#v", operators)
 	}
 }
 

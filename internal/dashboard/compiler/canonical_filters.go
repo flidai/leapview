@@ -8,6 +8,7 @@ package compiler
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -183,6 +184,16 @@ func compileCanonicalFilter(authored document.DashboardFilter, model *semanticmo
 	}
 	if err := compileCanonicalOptions(&definition, authored.Control, authored.ID, model, kind); err != nil {
 		return dashboardfilter.Definition{}, dashboardfilter.Binding{}, err
+	}
+	if definition.Options.IncludeNull {
+		// A null option is represented by the null-check predicate rather than a
+		// fabricated typed value. Permit that predicate only when the canonical
+		// option source explicitly exposes null.
+		for index := range definition.Predicates {
+			if definition.Predicates[index].Kind == dashboardfilter.ExpressionSet && !slices.Contains(definition.Predicates[index].Operators, dashboardfilter.OperatorIsNull) {
+				definition.Predicates[index].Operators = append(definition.Predicates[index].Operators, dashboardfilter.OperatorIsNull)
+			}
+		}
 	}
 	defaultExpression := dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered}
 	if authored.Default != nil {
