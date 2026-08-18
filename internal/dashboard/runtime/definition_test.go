@@ -42,6 +42,7 @@ func TestProjectDefinitionRuntimeModelCloneRetainsExecutionAndRedactsTargetState
 	revisionAt := time.Unix(123, 0).UTC()
 	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
 		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "orders.csv", Format: "csv"},
+		Format:                 "csv",
 		Options:                &projectcontracts.CSVReaderOptions{Header: &header, Delimiter: &delimiter},
 	}}
 	readerDefaults := &projectcontracts.ReaderDefaults{Csv: &projectcontracts.CSVReaderOptions{Header: &header, Delimiter: &delimiter}}
@@ -117,7 +118,7 @@ func TestProjectDefinitionRuntimeModelCloneRetainsExecutionAndRedactsTargetState
 	*source.Freshness.RevisionAt = time.Unix(999, 0).UTC()
 	*source.Freshness.WarningAfter = semanticmodel.FreshnessDurationSpec{Amount: 99, Unit: "day"}
 	*source.PathLocation.Value.(*projectcontracts.CSVPathSourceLocation).Options.Header = false
-	if *readerDefaults.Csv.Header != header || *pathLocation.Value.(*projectcontracts.CSVPathSourceLocation).Options.Header != header || *nullable != true || *model.Sources["orders"].Schema.Columns[0].Nullable != columnNullable || model.Sources["orders"].Freshness.RevisionAt.Equal(*source.Freshness.RevisionAt) || model.Sources["orders"].Freshness.WarningAfter.Amount == 99 {
+	if *readerDefaults.Csv.Header != header || *pathLocation.Value.(*projectcontracts.CSVPathSourceLocation).Options.Header != header || !nullable || *model.Sources["orders"].Schema.Columns[0].Nullable != columnNullable || model.Sources["orders"].Freshness.RevisionAt.Equal(*source.Freshness.RevisionAt) || model.Sources["orders"].Freshness.WarningAfter.Amount == 99 {
 		t.Fatal("runtime clone aliases authored nested source state")
 	}
 }
