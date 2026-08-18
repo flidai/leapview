@@ -253,7 +253,7 @@ spec: {type: managed}
 			"sources/orders_source.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders_source, name: orders_source}
-spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv, options: {header: true}}}
 `,
 			"models/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders}\n" + modelContext + `spec:
   source: orders_source

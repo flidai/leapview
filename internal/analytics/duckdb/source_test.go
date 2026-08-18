@@ -30,6 +30,10 @@ type duckdbTestExtensionAdmission struct {
 	admitted map[string]extension.AdmittedExtension
 }
 
+func testCSVEffectiveOptions() map[string]any {
+	return map[string]any{"header": true, "delimiter": ",", "quote": `"`, "escape": `"`}
+}
+
 var _ extension.Admission = duckdbTestExtensionAdmission{}
 var _ extension.Preparation = duckdbTestExtensionAdmission{}
 
@@ -157,10 +161,11 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 		DefaultConnection: "local",
 		Connections:       map[string]semanticmodel.Connection{"local": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {
-			Connection: "local",
-			Path:       "orders.csv",
-			Format:     "csv",
-			SchemaMode: "compatible",
+			Connection:       "local",
+			Path:             "orders.csv",
+			Format:           "csv",
+			EffectiveOptions: testCSVEffectiveOptions(),
+			SchemaMode:       "compatible",
 			Fields: map[string]semanticmodel.SourceField{
 				"order_id": {Description: "Raw order identifier."},
 			},
@@ -218,7 +223,8 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 			Connections:       map[string]semanticmodel.Connection{"olist": {Kind: "managed"}},
 			Sources: map[string]semanticmodel.Source{"olist_customers": {
 				Connection: "olist", Path: "customers.csv", Format: "csv",
-				SchemaMode: "compatible",
+				EffectiveOptions: testCSVEffectiveOptions(),
+				SchemaMode:       "compatible",
 				Fields: map[string]semanticmodel.SourceField{
 					"customer_id":    {Description: "Customer identifier."},
 					"customer_state": {Description: "Customer state."},
@@ -226,9 +232,10 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 			}},
 			Tables: map[string]semanticmodel.Table{"operations_customers": {
 				ModelName: "olist_customers", Sources: []string{"olist_customers"},
-				Transform:   semanticmodel.Transform{SQL: "SELECT customer_id, customer_state AS state FROM source.olist_customers"},
-				Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
-				GrainEntity: "customer",
+				Transform:           semanticmodel.Transform{SQL: "SELECT customer_id, customer_state AS state FROM source.olist_customers"},
+				SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: []string{"olist_customers"}},
+				Entities:            map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+				GrainEntity:         "customer",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"customer_id": {Datatype: semanticmodel.DataTypeString},
 					"state":       {Datatype: semanticmodel.DataTypeString},
@@ -241,7 +248,8 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 		return model
 	}
 	firstModel := newModel()
-	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+	admission := newDuckDBTestExtensionAdmission(t, "ducklake")
+	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = environment.Close() })
 	controller, err := workload.New(workload.DefaultConfig())
@@ -252,6 +260,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	t.Cleanup(func() { lease.Release() })
 	first, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": firstModel}, Database: environment,
+		ExtensionAdmission: admission,
 	})
 	require.NoError(t, err)
 	snapshotID := first.DuckLakeSnapshotID()
@@ -279,7 +288,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	// admitted lease from the workload context before DESCRIBE.
 	second, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": secondModel}, Database: environment,
-		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver, ExtensionAdmission: admission,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = second.Close() })
@@ -303,7 +312,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	require.NoError(t, err)
 	_, err = OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": badModel}, Database: environment,
-		SnapshotID: snapshotID, SkipInitialRefresh: true, QueryCache: cacheScope,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, QueryCache: cacheScope, ExtensionAdmission: admission,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "snapshot schema discovery")
@@ -440,9 +449,11 @@ func TestDiscoverSchemasIgnoresAttachedDatabaseSchemas(t *testing.T) {
 		DefaultConnection: "local",
 		Connections:       map[string]semanticmodel.Connection{"local": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {
-			Connection: "local",
-			Path:       "orders.csv",
-			Format:     "csv",
+			Connection:       "local",
+			Path:             "orders.csv",
+			Format:           "csv",
+			EffectiveOptions: testCSVEffectiveOptions(),
+			SchemaMode:       "inferred",
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
@@ -500,10 +511,11 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 		DefaultConnection: "local",
 		Connections:       map[string]semanticmodel.Connection{"local": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {
-			Connection: "local",
-			Path:       "orders.csv",
-			Format:     "csv",
-			SchemaMode: "compatible",
+			Connection:       "local",
+			Path:             "orders.csv",
+			Format:           "csv",
+			EffectiveOptions: testCSVEffectiveOptions(),
+			SchemaMode:       "compatible",
 			Fields: map[string]semanticmodel.SourceField{
 				"missing": {Description: "Missing source field."},
 			},
