@@ -1519,6 +1519,28 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if sealedCoordinator != nil && routes.deploymentModule != nil {
 		durableApproval := routes.deploymentModule.SealedApprovalVerifier()
 		sealedCoordinator.ApprovalVerifier = func(approvalCtx context.Context, binding sealedcontrol.SealBinding, publication deployment.PublicationIntent) error {
+			if binding.Bootstrap {
+				// The activation worker has already revalidated the durable
+				// one-shot bootstrap policy. Recheck the active-generation fence
+				// here because Authorize and ApprovalVerifier are separate control
+				// boundaries; if a generation appeared in between, fall through to
+				// ordinary durable approval rather than bypassing it.
+				active, activeErr := hasActiveBootstrapServingState(
+					approvalCtx,
+					runtimeHostModule,
+					servingStateRepo,
+					string(environment),
+					sealedDelivery,
+					instanceID,
+					binding.ProjectID,
+				)
+				if activeErr != nil {
+					return activeErr
+				}
+				if !active {
+					return nil
+				}
+			}
 			plan, planErr := sealedDelivery.PlanByID(approvalCtx, publication.PlanID)
 			if planErr != nil {
 				return planErr

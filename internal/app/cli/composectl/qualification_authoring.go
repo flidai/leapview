@@ -851,7 +851,7 @@ func (c *Controller) bootstrapQualificationServingGeneration(
 	return err
 }
 
-// qualificationServiceUnavailable treats generated problem responses and
+// qualificationTransientDeploymentError treats generated problem responses and
 // plain-text 503/429s from authorization, readiness, or rate-limit middleware
 // as transient while the first serving generation is still being activated.
 // These responses may bypass APIGen's problem+json envelope, so checking only
