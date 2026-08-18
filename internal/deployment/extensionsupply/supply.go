@@ -26,6 +26,9 @@ import (
 const (
 	ManifestVersion  = 1
 	MaxArtifactBytes = 256 << 20
+	// CurrentDuckDBVersion is the pinned DuckDB binding/runtime identity used
+	// by the application composition. A supply document must match it exactly.
+	CurrentDuckDBVersion = "duckdb-go/v2.10504.0"
 )
 
 // Origin is target configuration, not project authoring.  Reviewed must be
@@ -51,8 +54,22 @@ type Artifact struct {
 // Manifest is reviewed deployment input.  It is not loaded from a project
 // bundle; packaging or bounded admin preparation supplies it explicitly.
 type Manifest struct {
-	Version   int        `json:"version"`
-	Artifacts []Artifact `json:"artifacts"`
+	Version        int              `json:"version"`
+	DuckDBVersion  string           `json:"duckdbVersion"`
+	GOOS           string           `json:"goos"`
+	GOARCH         string           `json:"goarch"`
+	Platform       string           `json:"platform"`
+	SupportProfile string           `json:"supportProfile"`
+	Origins        []ManifestOrigin `json:"origins"`
+	Artifacts      []Artifact       `json:"artifacts"`
+}
+
+// ManifestOrigin is the packaged reviewed local origin. Network URLs and
+// credentials are intentionally not representable.
+type ManifestOrigin struct {
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Reviewed bool   `json:"reviewed"`
 }
 
 // SignatureVerifier can enforce a deployment's signature/provenance policy.
@@ -80,6 +97,7 @@ type Supply struct {
 	origins  map[string]Origin
 	mu       sync.Mutex
 	admitted map[string]extension.AdmittedExtension
+	locks    sync.Map // cache path -> *sync.Mutex
 }
 
 // ExtensionSupply is a descriptive alias used by deployment composition.
@@ -90,6 +108,7 @@ type ExtensionSupply = Supply
 func NewSupply(config Config) (*Supply, error) { return New(config) }
 
 var _ extension.Admission = (*Supply)(nil)
+var _ extension.Preparation = (*Supply)(nil)
 
 func New(config Config) (*Supply, error) {
 	if err := validateConfig(config); err != nil {
@@ -153,6 +172,19 @@ func validateConfig(config Config) error {
 	}
 	if config.Manifest.Version != ManifestVersion {
 		return fmt.Errorf("%w: unsupported manifest version %d", extension.ErrInvalidManifest, config.Manifest.Version)
+	}
+	for _, field := range []struct {
+		name, declared, target string
+	}{
+		{"manifest DuckDB version", config.Manifest.DuckDBVersion, config.DuckDBVersion},
+		{"manifest GOOS", config.Manifest.GOOS, config.GOOS},
+		{"manifest GOARCH", config.Manifest.GOARCH, config.GOARCH},
+		{"manifest platform", config.Manifest.Platform, config.Platform},
+		{"manifest support profile", config.Manifest.SupportProfile, config.SupportProfile},
+	} {
+		if field.declared != "" && field.declared != field.target {
+			return fmt.Errorf("%w: %s does not match configured target", extension.ErrInvalidManifest, field.name)
+		}
 	}
 	if config.VerifySignature == nil {
 		return fmt.Errorf("%w: a signature/provenance verifier is required", extension.ErrInvalidManifest)
@@ -333,6 +365,26 @@ func (s *Supply) AdmitExtension(ctx context.Context, name string) (extension.Adm
 	return admitted, nil
 }
 
+// PrepareExtensions resolves and admits the complete generated-registry
+// requirement set in deterministic order. No project text or SQL can add a
+// requirement at this boundary.
+func (s *Supply) PrepareExtensions(ctx context.Context, requirements []string) ([]extension.Evidence, error) {
+	artifacts, err := s.ResolveRequirements(requirements)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]extension.Evidence, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		admitted, admitErr := s.AdmitExtension(ctx, artifact.Identity.Name)
+		if admitErr != nil {
+			return nil, admitErr
+		}
+		values = append(values, admitted.Evidence())
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].Name < values[j].Name })
+	return values, nil
+}
+
 func (s *Supply) ensureArtifact(ctx context.Context, artifact Artifact) (string, string, error) {
 	if err := ensurePrivateCacheRoot(s.config.CacheDir); err != nil {
 		return "", "", err
@@ -341,6 +393,10 @@ func (s *Supply) ensureArtifact(ctx context.Context, artifact Artifact) (string,
 	if err != nil {
 		return "", "", err
 	}
+	lockValue, _ := s.locks.LoadOrStore(path, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
 	if exists, validErr := verifyFile(path, artifact.Identity.Digest); exists {
 		if validErr != nil {
 			return "", "", validErr
@@ -436,7 +492,16 @@ func (s *Supply) cachePath(identity extension.Identity) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: cache path: %v", extension.ErrInvalidManifest, err)
 	}
-	return filepath.Clean(absolute), nil
+	absolute = filepath.Clean(absolute)
+	root, err := filepath.Abs(s.config.CacheDir)
+	if err != nil {
+		return "", fmt.Errorf("%w: cache root: %v", extension.ErrInvalidManifest, err)
+	}
+	relative, err := filepath.Rel(filepath.Clean(root), absolute)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%w: artifact path escapes cache root", extension.ErrInvalidManifest)
+	}
+	return absolute, nil
 }
 
 func verifyFile(path, expected string) (bool, error) {
@@ -530,13 +595,19 @@ func (s *Supply) atomicAdmit(path string, bytes []byte, digest string) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		// Another concurrent writer may have admitted the same content.  Verify
-		// that race winner before treating the operation as a failure.
-		if exists, verifyErr := verifyFile(path, digest); exists && verifyErr == nil {
-			cleanup = false
-			return nil
+	// Link is a no-replace admission primitive: unlike Rename it cannot
+	// overwrite a raced target. A same-content target is accepted; a different
+	// target is an integrity failure and remains untouched.
+	if err := os.Link(tmpPath, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			if exists, verifyErr := verifyFile(path, digest); exists && verifyErr == nil {
+				return nil
+			}
+			return fmt.Errorf("%w: raced cache target is corrupt", extension.ErrExtensionIntegrity)
 		}
+		return err
+	}
+	if err := os.Remove(tmpPath); err != nil {
 		return err
 	}
 	cleanup = false
@@ -549,6 +620,33 @@ func (s *Supply) atomicAdmit(path string, bytes []byte, digest string) error {
 }
 
 func ensurePrivateCacheRoot(path string) error {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	// Validate every existing ancestor before creating descendants. MkdirAll
+	// alone would follow a symlinked parent supplied by target configuration.
+	current := string(filepath.Separator)
+	volume := filepath.VolumeName(path)
+	if volume != "" {
+		current = volume + string(filepath.Separator)
+	}
+	for _, part := range strings.Split(strings.TrimPrefix(path, current), string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if statErr == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("%w: extension cache path contains symlink", extension.ErrExtensionIntegrity)
+			}
+			continue
+		}
+		if !os.IsNotExist(statErr) {
+			return statErr
+		}
+	}
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return err
 	}
@@ -599,5 +697,9 @@ func (s *Supply) ManifestJSON() ([]byte, error) {
 		values = append(values, cloneArtifact(artifact))
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].Identity.Name < values[j].Identity.Name })
-	return json.Marshal(Manifest{Version: s.config.Manifest.Version, Artifacts: values})
+	manifest := s.config.Manifest
+	manifest.Artifacts = values
+	manifest.Origins = append([]ManifestOrigin(nil), manifest.Origins...)
+	sort.Slice(manifest.Origins, func(i, j int) bool { return manifest.Origins[i].ID < manifest.Origins[j].ID })
+	return json.Marshal(manifest)
 }

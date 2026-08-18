@@ -14,11 +14,13 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	"github.com/flidai/leapview/internal/analytics/connectors"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
@@ -27,13 +29,13 @@ import (
 )
 
 type candidateArtifactService struct {
-	states            ServingStateRepository
-	artifacts         release.ArtifactStore
-	validator         servingstatevalidate.Service
-	environment       servingstate.Environment
-	pins              ManagedDataPins
-	provenance        release.ServingStateProvenanceRepository
-	extensionEvidence func(context.Context) ([]extension.Evidence, error)
+	states               ServingStateRepository
+	artifacts            release.ArtifactStore
+	validator            servingstatevalidate.Service
+	environment          servingstate.Environment
+	pins                 ManagedDataPins
+	provenance           release.ServingStateProvenanceRepository
+	extensionPreparation extension.Preparation
 }
 
 type candidateGenerationBase struct {
@@ -156,14 +158,11 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if dataMode == release.GenerationDataRefreshSources && len(requirements) == 0 && len(managedPins) == 0 && len(authored) == 0 {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("project requires data preparation but has no refresh-capable connections"))
 	}
-	extensions, err := service.collectExtensionEvidence(ctx)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
+	extensionRequirements, requirementErr := requiredExtensionNames(activations, compiledProject.Manifest())
+	if requirementErr != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(requirementErr)
 	}
-	if expected != nil && !reflect.DeepEqual(expected.Extensions, extensions) {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized extension evidence differs from inspected evidence"))
-	}
-	extensions, err := service.collectExtensionEvidence(ctx)
+	extensions, err := service.collectExtensionEvidence(ctx, extensionRequirements)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
 	}
@@ -519,6 +518,17 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 	if dataMode == release.GenerationDataRefreshSources && len(requirements) == 0 && len(managedPins) == 0 && len(authored) == 0 {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("project requires data preparation but has no refresh-capable connections"))
 	}
+	extensionRequirements, requirementErr := requiredExtensionNames(activations, compiledProject.Manifest())
+	if requirementErr != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(requirementErr)
+	}
+	extensions, err := service.collectExtensionEvidence(ctx, extensionRequirements)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
+	}
+	if expected != nil && !reflect.DeepEqual(expected.Extensions, extensions) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized extension evidence differs from inspected evidence"))
+	}
 	if expected != nil && (expected.Generation.DataMode != dataMode || expected.Generation.DataRevision != dataRevision) {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized data mode differs from inspected plan evidence"))
 	}
@@ -613,24 +623,63 @@ func candidateRestrictions(snapshot accesssnapshot.AuthorizationSnapshot) []rele
 	return result
 }
 
-func (service *candidateArtifactService) collectExtensionEvidence(ctx context.Context) ([]extension.Evidence, error) {
-	if service == nil || service.extensionEvidence == nil {
-		return nil, nil
+func (service *candidateArtifactService) collectExtensionEvidence(ctx context.Context, requirements []string) ([]extension.Evidence, error) {
+	if service == nil || service.extensionPreparation == nil {
+		return nil, errors.New("extension preparation is unavailable")
 	}
-	values, err := service.extensionEvidence(ctx)
+	values, err := service.extensionPreparation.PrepareExtensions(ctx, requirements)
 	if err != nil {
 		return nil, err
 	}
 	values = append([]extension.Evidence(nil), values...)
 	sort.Slice(values, func(i, j int) bool { return values[i].Name < values[j].Name })
 	for i := range values {
-		if values[i].Name == "" || values[i].Identity == "" || values[i].Digest == "" || values[i].Origin == "" || values[i].Provenance == "" || values[i].Signature == "" {
+		if values[i].Name == "" || values[i].Identity == "" || values[i].DuckDBVersion == "" || values[i].ExtensionVersion == "" || values[i].GOOS == "" || values[i].GOARCH == "" || values[i].Platform == "" || values[i].SupportProfile == "" || values[i].Digest == "" || values[i].Origin == "" || values[i].Provenance == "" || values[i].Signature == "" {
 			return nil, errors.New("extension evidence is incomplete")
 		}
 		if i > 0 && values[i-1].Name == values[i].Name {
 			return nil, errors.New("duplicate extension evidence")
 		}
 	}
+	if len(values) != len(requirements) {
+		return nil, errors.New("extension preparation returned incomplete evidence")
+	}
+	required := make(map[string]struct{}, len(requirements))
+	for _, name := range requirements {
+		required[name] = struct{}{}
+	}
+	for _, value := range values {
+		if _, ok := required[value.Name]; !ok {
+			return nil, errors.New("extension preparation returned unrequested evidence")
+		}
+	}
+	return values, nil
+}
+
+func requiredExtensionNames(activations []projectartifact.ConnectionActivation, manifest projectmanifest.Project) ([]string, error) {
+	set := map[string]struct{}{"ducklake": {}}
+	for _, activation := range activations {
+		profile, ok := projectcontracts.LookupConnector(activation.ConnectorKind)
+		if !ok {
+			return nil, fmt.Errorf("connector %q is absent from generated registry", activation.ConnectorKind)
+		}
+		for _, name := range profile.ApprovedExtensions {
+			set[name] = struct{}{}
+		}
+	}
+	// Format extensions (excel/delta/etc.) are also exact generated runtime
+	// requirements. They are derived from the compiled manifest, never from
+	// authored SQL at candidate activation time.
+	for _, source := range manifest.Sources {
+		if format, ok := connectors.LookupFormat(source.Format); ok && format.RequiredExtension != "" {
+			set[format.RequiredExtension] = struct{}{}
+		}
+	}
+	values := make([]string, 0, len(set))
+	for name := range set {
+		values = append(values, name)
+	}
+	sort.Strings(values)
 	return values, nil
 }
 

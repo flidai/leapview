@@ -313,10 +313,14 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	attach := fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (%s)", sqlLiteral(layout.CatalogPath), catalogAlias, attachOptions)
 	var initializeOnce sync.Once
 	var initializeErr error
+	admissionCtx := ctx
+	if admissionCtx == nil {
+		admissionCtx = context.Background()
+	}
 	connector, err := duckdb.NewConnector(":memory:", func(execer driver.ExecerContext) error {
 		initializeOnce.Do(func() {
 			statements := []string{"SET allow_persistent_secrets = false", "SET ducklake_default_data_inlining_row_limit = 0"}
-			admitted, admissionErr := config.ExtensionAdmission.AdmitExtension(context.Background(), "ducklake")
+			admitted, admissionErr := config.ExtensionAdmission.AdmitExtension(admissionCtx, "ducklake")
 			if admissionErr != nil {
 				initializeErr = fmt.Errorf("admit ducklake extension: %w", admissionErr)
 				return

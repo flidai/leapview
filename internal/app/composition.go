@@ -427,6 +427,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err := store.BindInstanceEnvironment(ctx, string(environment)); err != nil {
 		return fail(err)
 	}
+	extensionSupply, err := loadExtensionSupply(cfg)
+	if err != nil {
+		return fail(err)
+	}
 	candidateSources, err := projectmodule.NewCandidateSourceSynchronizer(
 		filepath.Join(cfg.ArtifactDir(), "candidate-sources"),
 	)
@@ -476,8 +480,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			InfisicalUniversalClientSecret: cfg.InfisicalUniversalClientSecret,
 			InfisicalAllowedScopes:         cfg.InfisicalAllowedScopes,
 		},
-		RootDir:     cfg.DuckDBDirPath(),
-		CatalogPath: duckLakeCatalogPath, DataPath: cfg.DuckLakeDataDir(),
+		RootDir:            cfg.DuckDBDirPath(),
+		ExtensionAdmission: extensionSupply,
+		CatalogPath:        duckLakeCatalogPath, DataPath: cfg.DuckLakeDataDir(),
 		MaxConnections: workloadConfig.MaxRunning, MemoryMaxBytes: cfg.DuckDBNodeMemoryMaxBytes,
 		TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads,
 		TempDir:                   cfg.DuckDBTempDirPath(),
@@ -610,7 +615,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		Database:        store.SQLDB(),
 		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
-		ArtifactDirectory: cfg.ArtifactDir(), Environment: environment,
+		ExtensionPreparation: extensionSupply,
+		ArtifactDirectory:    cfg.ArtifactDir(), Environment: environment,
 		API: releasemodule.APIConfig{
 			CurrentPrincipal: func(r *http.Request) (releasemodule.Principal, bool) {
 				auth := accessModule.Auth()

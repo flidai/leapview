@@ -57,6 +57,9 @@ func (i Identity) Validate() error {
 	if filepath.Base(i.Name) != i.Name || i.Name == "." || i.Name == ".." || strings.ContainsAny(i.Name, `/\\`) {
 		return fmt.Errorf("%w: extension name is not a safe literal", ErrInvalidManifest)
 	}
+	if strings.ContainsAny(i.ExtensionVersion, `/\\`) || strings.ContainsAny(i.Platform, `/\\`) {
+		return fmt.Errorf("%w: extension version and platform must be safe path tokens", ErrInvalidManifest)
+	}
 	// Platform is intentionally explicit even when it can be derived from
 	// GOOS/GOARCH.  This prevents a manifest silently changing its platform
 	// naming convention without changing the pinned identity.
@@ -118,6 +121,13 @@ type AdmittedExtension struct {
 // artifact that has already been verified and atomically admitted to cache.
 type Admission interface {
 	AdmitExtension(context.Context, string) (AdmittedExtension, error)
+}
+
+// Preparation is the bounded packaging/admin seam used by candidate
+// preparation. Implementations resolve names against a reviewed exact
+// manifest and admit every requested artifact before activation.
+type Preparation interface {
+	PrepareExtensions(context.Context, []string) ([]Evidence, error)
 }
 
 // Evidence is non-secret candidate provenance for one admitted extension.

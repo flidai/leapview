@@ -2095,6 +2095,24 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_DUCKDB_EXTENSION_CACHE_DIR": {
+      "description": "Private content-addressed cache for admitted DuckDB extensions.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH": {
+      "description": "Absolute path to the target-reviewed DuckDB extension supply document.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256": {
+      "description": "Lowercase SHA-256 digest anchoring the extension supply document.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_DUCKDB_NODE_MAX_THREADS": {
       "default": "5",
       "description": "Execution-thread limit shared by all work in the process-owned DuckDB instance.",

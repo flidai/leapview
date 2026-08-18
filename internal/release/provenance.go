@@ -311,6 +311,9 @@ func normalizeExtensionEvidence(values []extension.Evidence) ([]extension.Eviden
 		if value.Name == "" || value.Identity == "" || value.Digest == "" || value.DuckDBVersion == "" || value.ExtensionVersion == "" || value.GOOS == "" || value.GOARCH == "" || value.Platform == "" || value.SupportProfile == "" || platformdigest.ValidateSHA256Identity(value.Identity) != nil || platformdigest.ValidateSHA256Identity(value.Digest) != nil {
 			return nil, provenanceInvalid(errors.New("extension evidence identity is invalid"))
 		}
+		if !extensionEvidenceReference(value.Origin, false) || !extensionEvidenceReference(value.Provenance, true) || !extensionEvidenceReference(value.Signature, true) {
+			return nil, provenanceInvalid(errors.New("extension evidence contains an unsafe reference"))
+		}
 	}
 	sort.Slice(values, func(i, j int) bool { return values[i].Name < values[j].Name })
 	for i := 1; i < len(values); i++ {
@@ -319,6 +322,27 @@ func normalizeExtensionEvidence(values []extension.Evidence) ([]extension.Eviden
 		}
 	}
 	return values, nil
+}
+
+func extensionEvidenceReference(value string, typed bool) bool {
+	if value == "" || value != strings.TrimSpace(value) || strings.Contains(value, "://") || strings.ContainsAny(value, `/\\`) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return false
+	}
+	if !typed {
+		return true
+	}
+	if strings.HasPrefix(value, "sha256:") {
+		return platformdigest.ValidateSHA256Identity(value) == nil
+	}
+	if !strings.HasPrefix(value, "sig:") && !strings.HasPrefix(value, "attest:") {
+		return false
+	}
+	for _, r := range value {
+		if !(r == ':' || r == '-' || r == '_' || r == '.' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeAuthoredConnectionEvidence(values []AuthoredConnectionEvidence) ([]AuthoredConnectionEvidence, error) {
