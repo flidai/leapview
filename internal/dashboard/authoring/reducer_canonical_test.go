@@ -122,3 +122,79 @@ func canonicalReducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
 func canonicalReducerProvenance() Provenance {
 	return Provenance{Origin: OriginUI, ActorID: "actor", ConversationID: "conversation", ToolCallID: "tool"}
 }
+
+func TestCanonicalReducerAppliesMetadataPageVisualLayoutFiltersInteractionAndFieldAssignment(t *testing.T) {
+	apply := func(t *testing.T, lifecycle DashboardLifecycle, current Revision, payload authoringPayload) (DashboardLifecycle, Revision, error) {
+		t.Helper()
+		command := Command{ID: CommandID("command-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance()}
+		return ApplyEdit(lifecycle, current, canonicalReducerCommandWithPayload(command, payload), RevisionID("rev-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1, time.Date(2026, 8, 18, 13, int(current.Number), 0, 0, time.UTC))
+	}
+	t.Run("metadata and page", func(t *testing.T) {
+		lifecycle, current := canonicalReducerFixture(t)
+		title, description, slug := "Updated", "Description", "updated"
+		lifecycle, current, err := apply(t, lifecycle, current, &MetadataPatch{Title: &title, Description: &description, Slug: &slug})
+		if err != nil || lifecycle.Title != title || current.Document.Metadata.DisplayName == nil || *current.Document.Metadata.DisplayName != title || current.Document.Metadata.Description == nil || *current.Document.Metadata.Description != description {
+			t.Fatalf("metadata edit = %#v %#v (%v)", lifecycle, current.Document.Metadata, err)
+		}
+		lifecycle, current, err = apply(t, lifecycle, current, &AddPagePayload{PageID: "details", Title: "Details"})
+		if err != nil || len(current.Document.Spec.Pages) != 2 || current.Document.Spec.Pages[1].ID != "details" {
+			t.Fatalf("page edit = %#v (%v)", current.Document.Spec.Pages, err)
+		}
+	})
+	t.Run("visual layout filters interaction and assign field", func(t *testing.T) {
+		lifecycle, current := canonicalReducerFixture(t)
+		var err error
+		lifecycle, current, err = apply(t, lifecycle, current, &AddVisualPayload{PageID: "overview", VisualID: "revenue", Type: "bar", Title: "Revenue"})
+		if err != nil || current.Document.Spec.Visuals["revenue"].Type != document.DashboardVisualTypeBar {
+			t.Fatalf("visual edit = %#v (%v)", current.Document.Spec.Visuals, err)
+		}
+		columns := int32(16)
+		lifecycle, current, err = apply(t, lifecycle, current, &SetLayoutPayload{PageID: "overview", Layout: &document.DashboardLayoutOverride{Columns: &columns}})
+		if err != nil || current.Document.Spec.Pages[0].Layout == nil || *current.Document.Spec.Pages[0].Layout.Columns != columns {
+			t.Fatalf("layout edit = %#v (%v)", current.Document.Spec.Pages[0].Layout, err)
+		}
+		lifecycle, current, err = apply(t, lifecycle, current, &SetFiltersPayload{Clear: true})
+		if err != nil || current.Document.Spec.Filters == nil || len(current.Document.Spec.Filters) != 0 {
+			t.Fatalf("filter clear = %#v (%v)", current.Document.Spec.Filters, err)
+		}
+		targets := []string{"base"}
+		interaction := &document.DashboardInteraction{Value: &document.SelectionDashboardInteraction{Type: "selection", Mode: document.DashboardSelectionModeSingle, Toggle: true, Mappings: []document.DashboardInteractionMapping{{Field: "status", Value: "label"}}, DashboardInteractionBase: document.DashboardInteractionBase{Type: "selection", Targets: &targets}}}
+		lifecycle, current, err = apply(t, lifecycle, current, &SetInteractionPayload{PageID: "overview", VisualID: "base", Interaction: interaction})
+		if err != nil || current.Document.Spec.Visuals["base"].Interactions == nil || len(*current.Document.Spec.Visuals["base"].Interactions) != 1 {
+			t.Fatalf("interaction edit = %#v (%v)", current.Document.Spec.Visuals["base"].Interactions, err)
+		}
+		lifecycle, current, err = apply(t, lifecycle, current, &AssignFieldPayload{PageID: "overview", VisualID: "base-component", FieldID: "revenue", Role: FieldRoleMetric})
+		if err != nil {
+			t.Fatalf("assign field error = %v", err)
+		}
+		query, ok := current.Document.Spec.Visuals["base"].Query.Value.(*document.AggregateDashboardQuery)
+		if !ok || len(query.Metrics) != 1 || query.Metrics[0].String == nil || *query.Metrics[0].String != "revenue" {
+			t.Fatalf("assigned field query = %#v", current.Document.Spec.Visuals["base"].Query)
+		}
+		if lifecycle.Draft.Revision != current.Token() {
+			t.Fatalf("lifecycle draft pointer = %#v, revision = %#v", lifecycle.Draft.Revision, current.Token())
+		}
+	})
+}
+
+func canonicalReducerCommandWithPayload(command Command, payload authoringPayload) Command {
+	switch value := payload.(type) {
+	case *MetadataPatch:
+		command.Metadata = value
+	case *AddPagePayload:
+		command.AddPage = value
+	case *AddVisualPayload:
+		command.AddVisual = value
+	case *AssignFieldPayload:
+		command.AssignField = value
+	case *SetLayoutPayload:
+		command.SetLayout = value
+	case *SetFiltersPayload:
+		command.SetFilters = value
+	case *SetInteractionPayload:
+		command.SetInteraction = value
+	default:
+		panic("unsupported canonical reducer test payload")
+	}
+	return command
+}
