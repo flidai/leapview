@@ -595,6 +595,27 @@ func TestRefreshConnectionResolutionUsesTargetOwnedEndpointAndCredentials(t *tes
 	}
 }
 
+func TestRefreshConnectionResolutionUsesTargetOwnedScopeForPublicConnection(t *testing.T) {
+	model := &semanticmodel.Model{
+		DefaultConnection: "files",
+		Connections: map[string]semanticmodel.Connection{
+			"files": {Kind: "s3", Access: semanticmodel.ConnectionAccessPublic},
+		},
+		Sources: map[string]semanticmodel.Source{
+			"orders": {Connection: "files", Path: "orders.csv", Format: "csv", EffectiveOptions: map[string]any{}},
+		},
+	}
+	runtime := NewSourceRuntimeWithConnectionResolver(nil, staticConnectionResolver{
+		connection: semanticmodel.Connection{Kind: "s3", Access: semanticmodel.ConnectionAccessPublic, Scope: "s3://public-target/"},
+	})
+	resolved, err := runtime.resolveCredentials(t.Context(), model)
+	require.NoError(t, err)
+	connection := resolved.Connections[resolved.DefaultConnection]
+	if connection.Scope != "s3://public-target/" || connection.Access != semanticmodel.ConnectionAccessPublic || len(connection.Auth) != 0 {
+		t.Fatalf("resolved public target connection = %#v, want target scope and no auth", connection)
+	}
+}
+
 func TestRefreshConnectionResolutionKeepsTrustedManagedDataRoot(t *testing.T) {
 	model := &semanticmodel.Model{
 		DefaultConnection: "olist",
