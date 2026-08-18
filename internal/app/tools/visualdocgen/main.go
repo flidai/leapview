@@ -926,11 +926,25 @@ func visualPresentationValues(visual dashboarddocument.DashboardVisual) map[stri
 			continue
 		}
 		name := strings.Split(typeInfo.Field(index).Tag.Get("yaml"), ",")[0]
-		if name != "" && name != "-" && name != "type" {
+		if name == "labelPolicy" {
+			// The compiler's IR calls the lowered policy labelPolicy; the
+			// authored canonical Dashboard field is labels.
+			name = "labels"
+		}
+		if name != "" && name != "-" && name != "type" && canonicalPresentationField(name) {
 			out[name] = field.Interface()
 		}
 	}
 	return out
+}
+
+func canonicalPresentationField(name string) bool {
+	switch name {
+	case "displayUnits", "legend", "labels", "stacking", "orientation", "showSymbols", "smooth", "dataZoom", "symbolSize", "labelPosition", "rowHeight", "showHeader", "striped", "note", "tone":
+		return true
+	default:
+		return false
+	}
 }
 
 func valueIsSet(value any) bool {
