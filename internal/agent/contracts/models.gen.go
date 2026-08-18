@@ -8,55 +8,55 @@ type AuthoringPublish struct {
 }
 
 type CatalogDetails struct {
-	Kind     CatalogType    `json:"kind"`
-	Metadata map[string]any `json:"metadata"`
+	Kind     CatalogType    `json:"kind" yaml:"kind"`
+	Metadata map[string]any `json:"metadata" yaml:"metadata"`
 }
 
 type CatalogGetInput struct {
-	Ref CatalogRef `json:"ref"`
+	Ref CatalogRef `json:"ref" yaml:"ref"`
 }
 
 type CatalogGetResult struct {
-	Item    CatalogItem    `json:"item"`
-	Details CatalogDetails `json:"details"`
+	Item    CatalogItem    `json:"item" yaml:"item"`
+	Details CatalogDetails `json:"details" yaml:"details"`
 }
 
 type CatalogItem struct {
-	Ref         CatalogRef `json:"ref"`
-	Name        string     `json:"name"`
-	DisplayName *string    `json:"displayName,omitempty"`
-	Description *string    `json:"description,omitempty"`
-	Domain      *string    `json:"domain,omitempty"`
-	Owner       *string    `json:"owner,omitempty"`
-	Tags        *[]string  `json:"tags,omitempty"`
+	Ref         CatalogRef `json:"ref" yaml:"ref"`
+	Name        string     `json:"name" yaml:"name"`
+	DisplayName *string    `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Description *string    `json:"description,omitempty" yaml:"description,omitempty"`
+	Domain      *string    `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Owner       *string    `json:"owner,omitempty" yaml:"owner,omitempty"`
+	Tags        *[]string  `json:"tags,omitempty" yaml:"tags,omitempty"`
 }
 
 type CatalogListInput struct {
-	Parent     *CatalogRef    `json:"parent,omitempty"`
-	ChildKinds *[]CatalogType `json:"childKinds,omitempty"`
-	Domain     *string        `json:"domain,omitempty"`
-	Cursor     *string        `json:"cursor,omitempty"`
-	Limit      *int32         `json:"limit,omitempty"`
+	Parent     *CatalogRef    `json:"parent,omitempty" yaml:"parent,omitempty"`
+	ChildKinds *[]CatalogType `json:"childKinds,omitempty" yaml:"childKinds,omitempty"`
+	Domain     *string        `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Cursor     *string        `json:"cursor,omitempty" yaml:"cursor,omitempty"`
+	Limit      *int32         `json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
 type CatalogPage struct {
-	Items      []CatalogItem `json:"items"`
-	Count      int32         `json:"count"`
-	HasMore    bool          `json:"hasMore"`
-	NextCursor *string       `json:"nextCursor,omitempty"`
+	Items      []CatalogItem `json:"items" yaml:"items"`
+	Count      int32         `json:"count" yaml:"count"`
+	HasMore    bool          `json:"hasMore" yaml:"hasMore"`
+	NextCursor *string       `json:"nextCursor,omitempty" yaml:"nextCursor,omitempty"`
 }
 
 type CatalogRef struct {
-	ID   string      `json:"id"`
-	Kind CatalogType `json:"kind"`
+	ID   string      `json:"id" yaml:"id"`
+	Kind CatalogType `json:"kind" yaml:"kind"`
 }
 
 type CatalogSearchInput struct {
-	Query  string         `json:"query"`
-	Kinds  *[]CatalogType `json:"kinds,omitempty"`
-	Domain *string        `json:"domain,omitempty"`
-	Cursor *string        `json:"cursor,omitempty"`
-	Limit  *int32         `json:"limit,omitempty"`
+	Query  string         `json:"query" yaml:"query"`
+	Kinds  *[]CatalogType `json:"kinds,omitempty" yaml:"kinds,omitempty"`
+	Domain *string        `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Cursor *string        `json:"cursor,omitempty" yaml:"cursor,omitempty"`
+	Limit  *int32         `json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
 type CatalogType string
@@ -72,426 +72,426 @@ const (
 )
 
 type DashboardAppliedFilters struct {
-	Controls          map[string]DashboardFilterControl `json:"controls"`
-	Selections        []map[string]any                  `json:"selections"`
-	SpatialSelections []map[string]any                  `json:"spatialSelections"`
+	Controls          map[string]DashboardFilterControl `json:"controls" yaml:"controls"`
+	Selections        []map[string]any                  `json:"selections" yaml:"selections"`
+	SpatialSelections []map[string]any                  `json:"spatialSelections" yaml:"spatialSelections"`
 }
 
 type DashboardAuthoringAddPageInput struct {
-	DashboardID      string                          `json:"dashboardId"`
-	DraftID          string                          `json:"draftId"`
-	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
-	PageID           *string                         `json:"pageId,omitempty"`
-	Title            *string                         `json:"title,omitempty"`
+	DashboardID      string                          `json:"dashboardId" yaml:"dashboardId"`
+	DraftID          string                          `json:"draftId" yaml:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision" yaml:"expectedRevision"`
+	PageID           *string                         `json:"pageId,omitempty" yaml:"pageId,omitempty"`
+	Title            *string                         `json:"title,omitempty" yaml:"title,omitempty"`
 }
 
 type DashboardAuthoringAddVisualInput struct {
-	DashboardID      string                          `json:"dashboardId"`
-	DraftID          string                          `json:"draftId"`
-	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
-	PageID           string                          `json:"pageId"`
-	VisualID         *string                         `json:"visualId,omitempty"`
-	ComponentID      *string                         `json:"componentId,omitempty"`
-	Type             string                          `json:"type"`
-	Title            *string                         `json:"title,omitempty"`
+	DashboardID      string                          `json:"dashboardId" yaml:"dashboardId"`
+	DraftID          string                          `json:"draftId" yaml:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision" yaml:"expectedRevision"`
+	PageID           string                          `json:"pageId" yaml:"pageId"`
+	VisualID         *string                         `json:"visualId,omitempty" yaml:"visualId,omitempty"`
+	ComponentID      *string                         `json:"componentId,omitempty" yaml:"componentId,omitempty"`
+	Type             string                          `json:"type" yaml:"type"`
+	Title            *string                         `json:"title,omitempty" yaml:"title,omitempty"`
 }
 
 type DashboardAuthoringAssignFieldInput struct {
-	DashboardID      string                          `json:"dashboardId"`
-	DraftID          string                          `json:"draftId"`
-	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
-	PageID           string                          `json:"pageId"`
-	VisualID         string                          `json:"visualId"`
-	FieldID          string                          `json:"fieldId"`
-	Role             string                          `json:"role"`
+	DashboardID      string                          `json:"dashboardId" yaml:"dashboardId"`
+	DraftID          string                          `json:"draftId" yaml:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision" yaml:"expectedRevision"`
+	PageID           string                          `json:"pageId" yaml:"pageId"`
+	VisualID         string                          `json:"visualId" yaml:"visualId"`
+	FieldID          string                          `json:"fieldId" yaml:"fieldId"`
+	Role             string                          `json:"role" yaml:"role"`
 }
 
 type DashboardAuthoringCommandInput struct {
-	DashboardID      string                          `json:"dashboardId"`
-	DraftID          string                          `json:"draftId"`
-	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
-	ContentHash      *string                         `json:"contentHash,omitempty"`
-	Publish          *AuthoringPublish               `json:"publish,omitempty"`
-	Archive          *AuthoringArchive               `json:"archive,omitempty"`
+	DashboardID      string                          `json:"dashboardId" yaml:"dashboardId"`
+	DraftID          string                          `json:"draftId" yaml:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision" yaml:"expectedRevision"`
+	ContentHash      *string                         `json:"contentHash,omitempty" yaml:"contentHash,omitempty"`
+	Publish          *AuthoringPublish               `json:"publish,omitempty" yaml:"publish,omitempty"`
+	Archive          *AuthoringArchive               `json:"archive,omitempty" yaml:"archive,omitempty"`
 }
 
 type DashboardAuthoringCreateInput struct {
-	Title           string  `json:"title"`
-	SemanticModelID string  `json:"semanticModelId"`
-	DashboardID     *string `json:"dashboardId,omitempty"`
-	Slug            *string `json:"slug,omitempty"`
+	Title           string  `json:"title" yaml:"title"`
+	SemanticModelID string  `json:"semanticModelId" yaml:"semanticModelId"`
+	DashboardID     *string `json:"dashboardId,omitempty" yaml:"dashboardId,omitempty"`
+	Slug            *string `json:"slug,omitempty" yaml:"slug,omitempty"`
 }
 
 type DashboardAuthoringDraftGetInput struct {
-	DashboardID string `json:"dashboardId"`
+	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
 }
 
 type DashboardAuthoringDraftGetResult struct {
-	Lifecycle map[string]any `json:"lifecycle"`
-	Revision  map[string]any `json:"revision"`
+	Lifecycle map[string]any `json:"lifecycle" yaml:"lifecycle"`
+	Revision  map[string]any `json:"revision" yaml:"revision"`
 }
 
 type DashboardAuthoringExportInput struct {
-	SourceKind  string `json:"sourceKind"`
-	DashboardID string `json:"dashboardId"`
+	SourceKind  string `json:"sourceKind" yaml:"sourceKind"`
+	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
 }
 
 type DashboardAuthoringExportResult struct {
-	Yaml string `json:"yaml"`
+	Yaml string `json:"yaml" yaml:"yaml"`
 }
 
 type DashboardAuthoringForkInput struct {
-	SourceKind        string  `json:"sourceKind"`
-	SourceDashboardID string  `json:"sourceDashboardId"`
-	Title             *string `json:"title,omitempty"`
-	Slug              *string `json:"slug,omitempty"`
+	SourceKind        string  `json:"sourceKind" yaml:"sourceKind"`
+	SourceDashboardID string  `json:"sourceDashboardId" yaml:"sourceDashboardId"`
+	Title             *string `json:"title,omitempty" yaml:"title,omitempty"`
+	Slug              *string `json:"slug,omitempty" yaml:"slug,omitempty"`
 }
 
 type DashboardAuthoringGetInput struct {
-	DashboardID string `json:"dashboardId"`
+	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
 }
 
 type DashboardAuthoringGetResult struct {
-	Dashboard map[string]any `json:"dashboard"`
+	Dashboard map[string]any `json:"dashboard" yaml:"dashboard"`
 }
 
 type DashboardAuthoringListInput struct {
 }
 
 type DashboardAuthoringListResult struct {
-	Items        []map[string]any `json:"items"`
-	Count        int32            `json:"count"`
-	ProjectCount int32            `json:"projectCount"`
+	Items        []map[string]any `json:"items" yaml:"items"`
+	Count        int32            `json:"count" yaml:"count"`
+	ProjectCount int32            `json:"projectCount" yaml:"projectCount"`
 }
 
 type DashboardAuthoringPreviewInput struct {
-	DashboardID      string                          `json:"dashboardId"`
-	DraftID          string                          `json:"draftId"`
-	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
-	Page             string                          `json:"page"`
-	Filters          *map[string]any                 `json:"filters,omitempty"`
+	DashboardID      string                          `json:"dashboardId" yaml:"dashboardId"`
+	DraftID          string                          `json:"draftId" yaml:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision" yaml:"expectedRevision"`
+	Page             string                          `json:"page" yaml:"page"`
+	Filters          *map[string]any                 `json:"filters,omitempty" yaml:"filters,omitempty"`
 }
 
 type DashboardAuthoringPreviewResult struct {
-	Revision         map[string]any `json:"revision"`
-	Definition       map[string]any `json:"definition"`
-	PagePatch        map[string]any `json:"pagePatch"`
-	SemanticEvidence map[string]any `json:"semanticEvidence"`
+	Revision         map[string]any `json:"revision" yaml:"revision"`
+	Definition       map[string]any `json:"definition" yaml:"definition"`
+	PagePatch        map[string]any `json:"pagePatch" yaml:"pagePatch"`
+	SemanticEvidence map[string]any `json:"semanticEvidence" yaml:"semanticEvidence"`
 }
 
 type DashboardAuthoringResult struct {
-	Revision  map[string]any `json:"revision"`
-	Lifecycle map[string]any `json:"lifecycle"`
+	Revision  map[string]any `json:"revision" yaml:"revision"`
+	Lifecycle map[string]any `json:"lifecycle" yaml:"lifecycle"`
 }
 
 type DashboardAuthoringRevisionToken struct {
-	RevisionID  string `json:"revisionId"`
-	Number      int64  `json:"number"`
-	ContentHash string `json:"contentHash"`
+	RevisionID  string `json:"revisionId" yaml:"revisionId"`
+	Number      int64  `json:"number" yaml:"number"`
+	ContentHash string `json:"contentHash" yaml:"contentHash"`
 }
 
 type DashboardAuthoringSetVisibilityInput struct {
-	DashboardID      string                          `json:"dashboardId"`
-	DraftID          string                          `json:"draftId"`
-	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision"`
-	Visibility       string                          `json:"visibility"`
+	DashboardID      string                          `json:"dashboardId" yaml:"dashboardId"`
+	DraftID          string                          `json:"draftId" yaml:"draftId"`
+	ExpectedRevision DashboardAuthoringRevisionToken `json:"expectedRevision" yaml:"expectedRevision"`
+	Visibility       string                          `json:"visibility" yaml:"visibility"`
 }
 
 type DashboardFilterControl struct {
-	Type     string    `json:"type"`
-	Operator *string   `json:"operator,omitempty"`
-	Preset   *string   `json:"preset,omitempty"`
-	From     *string   `json:"from,omitempty"`
-	To       *string   `json:"to,omitempty"`
-	Value    *string   `json:"value,omitempty"`
-	Values   *[]string `json:"values,omitempty"`
+	Type     string    `json:"type" yaml:"type"`
+	Operator *string   `json:"operator,omitempty" yaml:"operator,omitempty"`
+	Preset   *string   `json:"preset,omitempty" yaml:"preset,omitempty"`
+	From     *string   `json:"from,omitempty" yaml:"from,omitempty"`
+	To       *string   `json:"to,omitempty" yaml:"to,omitempty"`
+	Value    *string   `json:"value,omitempty" yaml:"value,omitempty"`
+	Values   *[]string `json:"values,omitempty" yaml:"values,omitempty"`
 }
 
 type DashboardVisualColumn struct {
-	ID        string          `json:"id"`
-	SourceRef *string         `json:"sourceRef,omitempty"`
-	Label     string          `json:"label"`
-	Role      string          `json:"role"`
-	DataType  string          `json:"dataType"`
-	Nullable  bool            `json:"nullable"`
-	Format    *map[string]any `json:"format,omitempty"`
-	Grain     *string         `json:"grain,omitempty"`
+	ID        string          `json:"id" yaml:"id"`
+	SourceRef *string         `json:"sourceRef,omitempty" yaml:"sourceRef,omitempty"`
+	Label     string          `json:"label" yaml:"label"`
+	Role      string          `json:"role" yaml:"role"`
+	DataType  string          `json:"dataType" yaml:"dataType"`
+	Nullable  bool            `json:"nullable" yaml:"nullable"`
+	Format    *map[string]any `json:"format,omitempty" yaml:"format,omitempty"`
+	Grain     *string         `json:"grain,omitempty" yaml:"grain,omitempty"`
 }
 
 type DashboardVisualCompleteness struct {
-	ReturnedRows     int32  `json:"returnedRows"`
-	AvailableRows    *int64 `json:"availableRows,omitempty"`
-	Cardinality      string `json:"cardinality"`
-	CardinalityCount *int64 `json:"cardinalityCount,omitempty"`
-	State            string `json:"state"`
+	ReturnedRows     int32  `json:"returnedRows" yaml:"returnedRows"`
+	AvailableRows    *int64 `json:"availableRows,omitempty" yaml:"availableRows,omitempty"`
+	Cardinality      string `json:"cardinality" yaml:"cardinality"`
+	CardinalityCount *int64 `json:"cardinalityCount,omitempty" yaml:"cardinalityCount,omitempty"`
+	State            string `json:"state" yaml:"state"`
 }
 
 type DashboardVisualDiagnostic struct {
-	Code     string  `json:"code"`
-	Severity string  `json:"severity"`
-	Message  string  `json:"message"`
-	FieldID  *string `json:"fieldId,omitempty"`
+	Code     string  `json:"code" yaml:"code"`
+	Severity string  `json:"severity" yaml:"severity"`
+	Message  string  `json:"message" yaml:"message"`
+	FieldID  *string `json:"fieldId,omitempty" yaml:"fieldId,omitempty"`
 }
 
 type DashboardVisualQueryResult struct {
-	QueryID         string                      `json:"queryId"`
-	ServingSnapshot string                      `json:"servingSnapshot"`
-	Freshness       *QueryFreshness             `json:"freshness,omitempty"`
-	VisualID        string                      `json:"visualId"`
-	Title           string                      `json:"title"`
-	Type            string                      `json:"type"`
-	Mark            *string                     `json:"mark,omitempty"`
-	DatasetID       string                      `json:"datasetId"`
-	Columns         []DashboardVisualColumn     `json:"columns"`
-	Rows            [][]any                     `json:"rows"`
-	AppliedFilters  DashboardAppliedFilters     `json:"appliedFilters"`
-	Status          DashboardVisualStatus       `json:"status"`
-	Diagnostics     []DashboardVisualDiagnostic `json:"diagnostics"`
-	Completeness    DashboardVisualCompleteness `json:"completeness"`
-	HasMore         bool                        `json:"hasMore"`
-	NextCursor      *string                     `json:"nextCursor,omitempty"`
+	QueryID         string                      `json:"queryId" yaml:"queryId"`
+	ServingSnapshot string                      `json:"servingSnapshot" yaml:"servingSnapshot"`
+	Freshness       *QueryFreshness             `json:"freshness,omitempty" yaml:"freshness,omitempty"`
+	VisualID        string                      `json:"visualId" yaml:"visualId"`
+	Title           string                      `json:"title" yaml:"title"`
+	Type            string                      `json:"type" yaml:"type"`
+	Mark            *string                     `json:"mark,omitempty" yaml:"mark,omitempty"`
+	DatasetID       string                      `json:"datasetId" yaml:"datasetId"`
+	Columns         []DashboardVisualColumn     `json:"columns" yaml:"columns"`
+	Rows            [][]any                     `json:"rows" yaml:"rows"`
+	AppliedFilters  DashboardAppliedFilters     `json:"appliedFilters" yaml:"appliedFilters"`
+	Status          DashboardVisualStatus       `json:"status" yaml:"status"`
+	Diagnostics     []DashboardVisualDiagnostic `json:"diagnostics" yaml:"diagnostics"`
+	Completeness    DashboardVisualCompleteness `json:"completeness" yaml:"completeness"`
+	HasMore         bool                        `json:"hasMore" yaml:"hasMore"`
+	NextCursor      *string                     `json:"nextCursor,omitempty" yaml:"nextCursor,omitempty"`
 }
 
 type DashboardVisualStatus struct {
-	Kind    string  `json:"kind"`
-	Message *string `json:"message,omitempty"`
+	Kind    string  `json:"kind" yaml:"kind"`
+	Message *string `json:"message,omitempty" yaml:"message,omitempty"`
 }
 
 type DocsReadInput struct {
-	ID     string `json:"id"`
-	Offset *int32 `json:"offset,omitempty"`
-	Limit  *int32 `json:"limit,omitempty"`
+	ID     string `json:"id" yaml:"id"`
+	Offset *int32 `json:"offset,omitempty" yaml:"offset,omitempty"`
+	Limit  *int32 `json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
 type DocsReadResult struct {
-	ID         string `json:"id"`
-	Path       string `json:"path"`
-	Title      string `json:"title"`
-	URL        string `json:"url"`
-	Content    string `json:"content"`
-	LineStart  int32  `json:"lineStart"`
-	LineEnd    int32  `json:"lineEnd"`
-	TotalLines int32  `json:"totalLines"`
-	NextOffset *int32 `json:"nextOffset,omitempty"`
-	Truncated  bool   `json:"truncated"`
+	ID         string `json:"id" yaml:"id"`
+	Path       string `json:"path" yaml:"path"`
+	Title      string `json:"title" yaml:"title"`
+	URL        string `json:"url" yaml:"url"`
+	Content    string `json:"content" yaml:"content"`
+	LineStart  int32  `json:"lineStart" yaml:"lineStart"`
+	LineEnd    int32  `json:"lineEnd" yaml:"lineEnd"`
+	TotalLines int32  `json:"totalLines" yaml:"totalLines"`
+	NextOffset *int32 `json:"nextOffset,omitempty" yaml:"nextOffset,omitempty"`
+	Truncated  bool   `json:"truncated" yaml:"truncated"`
 }
 
 type DocsReference struct {
-	ID      string `json:"id"`
-	Path    string `json:"path"`
-	Title   string `json:"title"`
-	Summary string `json:"summary"`
-	URL     string `json:"url"`
-	Excerpt string `json:"excerpt"`
+	ID      string `json:"id" yaml:"id"`
+	Path    string `json:"path" yaml:"path"`
+	Title   string `json:"title" yaml:"title"`
+	Summary string `json:"summary" yaml:"summary"`
+	URL     string `json:"url" yaml:"url"`
+	Excerpt string `json:"excerpt" yaml:"excerpt"`
 }
 
 type DocsSearchInput struct {
-	Query  string  `json:"query"`
-	Path   *string `json:"path,omitempty"`
-	Cursor *string `json:"cursor,omitempty"`
-	Limit  *int32  `json:"limit,omitempty"`
+	Query  string  `json:"query" yaml:"query"`
+	Path   *string `json:"path,omitempty" yaml:"path,omitempty"`
+	Cursor *string `json:"cursor,omitempty" yaml:"cursor,omitempty"`
+	Limit  *int32  `json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
 type DocsSearchResult struct {
-	Query      string          `json:"query"`
-	Path       *string         `json:"path,omitempty"`
-	Matches    []DocsReference `json:"matches"`
-	Count      int32           `json:"count"`
-	HasMore    bool            `json:"hasMore"`
-	NextCursor *string         `json:"nextCursor,omitempty"`
+	Query      string          `json:"query" yaml:"query"`
+	Path       *string         `json:"path,omitempty" yaml:"path,omitempty"`
+	Matches    []DocsReference `json:"matches" yaml:"matches"`
+	Count      int32           `json:"count" yaml:"count"`
+	HasMore    bool            `json:"hasMore" yaml:"hasMore"`
+	NextCursor *string         `json:"nextCursor,omitempty" yaml:"nextCursor,omitempty"`
 }
 
 type QueryFreshness struct {
-	LastSuccessfulRefreshAt string `json:"lastSuccessfulRefreshAt"`
-	SnapshotID              string `json:"snapshotId"`
-	ServingStateID          string `json:"servingStateId"`
-	Source                  string `json:"source"`
-	Status                  string `json:"status"`
+	LastSuccessfulRefreshAt string `json:"lastSuccessfulRefreshAt" yaml:"lastSuccessfulRefreshAt"`
+	SnapshotID              string `json:"snapshotId" yaml:"snapshotId"`
+	ServingStateID          string `json:"servingStateId" yaml:"servingStateId"`
+	Source                  string `json:"source" yaml:"source"`
+	Status                  string `json:"status" yaml:"status"`
 }
 
 type QueryVisualCalculation struct {
-	ID          string                         `json:"id"`
-	Label       *string                        `json:"label,omitempty"`
-	Template    string                         `json:"template"`
-	Source      string                         `json:"source"`
-	Axis        *string                        `json:"axis,omitempty"`
-	OrderBy     *[]QueryVisualCalculationOrder `json:"orderBy,omitempty"`
-	PartitionBy *[]string                      `json:"partitionBy,omitempty"`
-	Reset       *string                        `json:"reset,omitempty"`
-	Window      *int32                         `json:"window,omitempty"`
-	Offset      *int32                         `json:"offset,omitempty"`
-	Parent      *string                        `json:"parent,omitempty"`
-	Lookup      *QueryVisualCalculationLookup  `json:"lookup,omitempty"`
-	Hidden      *bool                          `json:"hidden,omitempty"`
-	Format      *string                        `json:"format,omitempty"`
+	ID          string                         `json:"id" yaml:"id"`
+	Label       *string                        `json:"label,omitempty" yaml:"label,omitempty"`
+	Template    string                         `json:"template" yaml:"template"`
+	Source      string                         `json:"source" yaml:"source"`
+	Axis        *string                        `json:"axis,omitempty" yaml:"axis,omitempty"`
+	OrderBy     *[]QueryVisualCalculationOrder `json:"orderBy,omitempty" yaml:"orderBy,omitempty"`
+	PartitionBy *[]string                      `json:"partitionBy,omitempty" yaml:"partitionBy,omitempty"`
+	Reset       *string                        `json:"reset,omitempty" yaml:"reset,omitempty"`
+	Window      *int32                         `json:"window,omitempty" yaml:"window,omitempty"`
+	Offset      *int32                         `json:"offset,omitempty" yaml:"offset,omitempty"`
+	Parent      *string                        `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Lookup      *QueryVisualCalculationLookup  `json:"lookup,omitempty" yaml:"lookup,omitempty"`
+	Hidden      *bool                          `json:"hidden,omitempty" yaml:"hidden,omitempty"`
+	Format      *string                        `json:"format,omitempty" yaml:"format,omitempty"`
 }
 
 type QueryVisualCalculationLookup struct {
-	Field string `json:"field"`
-	Value string `json:"value"`
+	Field string `json:"field" yaml:"field"`
+	Value string `json:"value" yaml:"value"`
 }
 
 type QueryVisualCalculationOrder struct {
-	Field     string  `json:"field"`
-	Direction *string `json:"direction,omitempty"`
+	Field     string  `json:"field" yaml:"field"`
+	Direction *string `json:"direction,omitempty" yaml:"direction,omitempty"`
 }
 
 type QueryVisualCompleteness struct {
-	ReturnedRows int32  `json:"returnedRows"`
-	Limit        int32  `json:"limit"`
-	Status       string `json:"status"`
+	ReturnedRows int32  `json:"returnedRows" yaml:"returnedRows"`
+	Limit        int32  `json:"limit" yaml:"limit"`
+	Status       string `json:"status" yaml:"status"`
 }
 
 type QueryVisualFieldRef struct {
-	Field string  `json:"field"`
-	Alias *string `json:"alias,omitempty"`
+	Field string  `json:"field" yaml:"field"`
+	Alias *string `json:"alias,omitempty" yaml:"alias,omitempty"`
 }
 
 type QueryVisualFieldUsage struct {
-	FieldID  string  `json:"fieldId"`
-	Role     string  `json:"role"`
-	Alias    *string `json:"alias,omitempty"`
-	Label    string  `json:"label"`
-	DataType *string `json:"dataType,omitempty"`
-	Unit     *string `json:"unit,omitempty"`
-	Format   *string `json:"format,omitempty"`
+	FieldID  string  `json:"fieldId" yaml:"fieldId"`
+	Role     string  `json:"role" yaml:"role"`
+	Alias    *string `json:"alias,omitempty" yaml:"alias,omitempty"`
+	Label    string  `json:"label" yaml:"label"`
+	DataType *string `json:"dataType,omitempty" yaml:"dataType,omitempty"`
+	Unit     *string `json:"unit,omitempty" yaml:"unit,omitempty"`
+	Format   *string `json:"format,omitempty" yaml:"format,omitempty"`
 }
 
 type QueryVisualFilterGroupInput struct {
-	Filters []map[string]any `json:"filters"`
+	Filters []map[string]any `json:"filters" yaml:"filters"`
 }
 
 type QueryVisualFilterInput struct {
-	Field    *string                        `json:"field,omitempty"`
-	Dataset  *string                        `json:"dataset,omitempty"`
-	Operator *string                        `json:"operator,omitempty"`
-	Values   *[]string                      `json:"values,omitempty"`
-	Groups   *[]QueryVisualFilterGroupInput `json:"groups,omitempty"`
+	Field    *string                        `json:"field,omitempty" yaml:"field,omitempty"`
+	Dataset  *string                        `json:"dataset,omitempty" yaml:"dataset,omitempty"`
+	Operator *string                        `json:"operator,omitempty" yaml:"operator,omitempty"`
+	Values   *[]string                      `json:"values,omitempty" yaml:"values,omitempty"`
+	Groups   *[]QueryVisualFilterGroupInput `json:"groups,omitempty" yaml:"groups,omitempty"`
 }
 
 type QueryVisualFilterUsage struct {
-	Operator          string    `json:"operator"`
-	FieldID           string    `json:"fieldId"`
-	ResolvedDatasetID *string   `json:"resolvedDatasetId,omitempty"`
-	Values            *[]string `json:"values,omitempty"`
-	Path              *[]int32  `json:"path,omitempty"`
+	Operator          string    `json:"operator" yaml:"operator"`
+	FieldID           string    `json:"fieldId" yaml:"fieldId"`
+	ResolvedDatasetID *string   `json:"resolvedDatasetId,omitempty" yaml:"resolvedDatasetId,omitempty"`
+	Values            *[]string `json:"values,omitempty" yaml:"values,omitempty"`
+	Path              *[]int32  `json:"path,omitempty" yaml:"path,omitempty"`
 }
 
 type QueryVisualInput struct {
-	SemanticModelID string                    `json:"semanticModelId"`
-	Dataset         string                    `json:"dataset"`
-	Title           *string                   `json:"title,omitempty"`
-	Type            QueryVisualType           `json:"type"`
-	Dimensions      *[]QueryVisualFieldRef    `json:"dimensions,omitempty"`
-	Series          *QueryVisualFieldRef      `json:"series,omitempty"`
-	Metrics         *[]QueryVisualFieldRef    `json:"metrics,omitempty"`
-	Fields          *[]QueryVisualFieldRef    `json:"fields,omitempty"`
-	Rows            *[]QueryVisualFieldRef    `json:"rows,omitempty"`
-	Columns         *[]QueryVisualTableColumn `json:"columns,omitempty"`
-	Filters         *[]QueryVisualFilterInput `json:"filters,omitempty"`
-	Sort            *[]QueryVisualSort        `json:"sort,omitempty"`
-	Limit           *int32                    `json:"limit,omitempty"`
-	Presentation    *QueryVisualPresentation  `json:"presentation,omitempty"`
-	Calculations    *[]QueryVisualCalculation `json:"calculations,omitempty"`
+	SemanticModelID string                    `json:"semanticModelId" yaml:"semanticModelId"`
+	Dataset         string                    `json:"dataset" yaml:"dataset"`
+	Title           *string                   `json:"title,omitempty" yaml:"title,omitempty"`
+	Type            QueryVisualType           `json:"type" yaml:"type"`
+	Dimensions      *[]QueryVisualFieldRef    `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
+	Series          *QueryVisualFieldRef      `json:"series,omitempty" yaml:"series,omitempty"`
+	Metrics         *[]QueryVisualFieldRef    `json:"metrics,omitempty" yaml:"metrics,omitempty"`
+	Fields          *[]QueryVisualFieldRef    `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Rows            *[]QueryVisualFieldRef    `json:"rows,omitempty" yaml:"rows,omitempty"`
+	Columns         *[]QueryVisualTableColumn `json:"columns,omitempty" yaml:"columns,omitempty"`
+	Filters         *[]QueryVisualFilterInput `json:"filters,omitempty" yaml:"filters,omitempty"`
+	Sort            *[]QueryVisualSort        `json:"sort,omitempty" yaml:"sort,omitempty"`
+	Limit           *int32                    `json:"limit,omitempty" yaml:"limit,omitempty"`
+	Presentation    *QueryVisualPresentation  `json:"presentation,omitempty" yaml:"presentation,omitempty"`
+	Calculations    *[]QueryVisualCalculation `json:"calculations,omitempty" yaml:"calculations,omitempty"`
 }
 
 type QueryVisualLabelPolicy struct {
-	Density         *string   `json:"density,omitempty"`
-	Priority        *[]string `json:"priority,omitempty"`
-	MaxCharacters   *int32    `json:"maxCharacters,omitempty"`
-	MinimumSpacing  *int32    `json:"minimumSpacing,omitempty"`
-	TooltipFallback *bool     `json:"tooltipFallback,omitempty"`
+	Density         *string   `json:"density,omitempty" yaml:"density,omitempty"`
+	Priority        *[]string `json:"priority,omitempty" yaml:"priority,omitempty"`
+	MaxCharacters   *int32    `json:"maxCharacters,omitempty" yaml:"maxCharacters,omitempty"`
+	MinimumSpacing  *int32    `json:"minimumSpacing,omitempty" yaml:"minimumSpacing,omitempty"`
+	TooltipFallback *bool     `json:"tooltipFallback,omitempty" yaml:"tooltipFallback,omitempty"`
 }
 
 type QueryVisualPresentation struct {
-	Legend        *string                 `json:"legend,omitempty"`
-	ShowLabels    *bool                   `json:"showLabels,omitempty"`
-	Labels        *QueryVisualLabelPolicy `json:"labels,omitempty"`
-	Stacked       *bool                   `json:"stacked,omitempty"`
-	Smooth        *bool                   `json:"smooth,omitempty"`
-	ShowSymbols   *bool                   `json:"showSymbols,omitempty"`
-	DataZoom      *bool                   `json:"dataZoom,omitempty"`
-	Area          *bool                   `json:"area,omitempty"`
-	Step          *bool                   `json:"step,omitempty"`
-	Orientation   *string                 `json:"orientation,omitempty"`
-	LabelPosition *string                 `json:"labelPosition,omitempty"`
-	SymbolSize    *float64                `json:"symbolSize,omitempty"`
-	HistogramBins *int32                  `json:"histogramBins,omitempty"`
-	SeriesTypes   *map[string]string      `json:"seriesTypes,omitempty"`
-	DualAxis      *bool                   `json:"dualAxis,omitempty"`
-	Rose          *bool                   `json:"rose,omitempty"`
-	CenterLabel   *string                 `json:"centerLabel,omitempty"`
-	InnerRadius   *float64                `json:"innerRadius,omitempty"`
-	OuterRadius   *float64                `json:"outerRadius,omitempty"`
-	Align         *string                 `json:"align,omitempty"`
-	Sort          *string                 `json:"sort,omitempty"`
-	InitialDepth  *int32                  `json:"initialDepth,omitempty"`
-	Basemap       *string                 `json:"basemap,omitempty"`
-	Roam          *bool                   `json:"roam,omitempty"`
-	Layout        *string                 `json:"layout,omitempty"`
-	Breadcrumb    *bool                   `json:"breadcrumb,omitempty"`
-	NodeGap       *float64                `json:"nodeGap,omitempty"`
-	Curveness     *float64                `json:"curveness,omitempty"`
-	Focus         *string                 `json:"focus,omitempty"`
-	Minimum       *float64                `json:"minimum,omitempty"`
-	Maximum       *float64                `json:"maximum,omitempty"`
-	ProgressWidth *float64                `json:"progressWidth,omitempty"`
-	Thresholds    *[]QueryVisualThreshold `json:"thresholds,omitempty"`
-	Note          *string                 `json:"note,omitempty"`
-	Tone          *string                 `json:"tone,omitempty"`
+	Legend        *string                 `json:"legend,omitempty" yaml:"legend,omitempty"`
+	ShowLabels    *bool                   `json:"showLabels,omitempty" yaml:"showLabels,omitempty"`
+	Labels        *QueryVisualLabelPolicy `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Stacked       *bool                   `json:"stacked,omitempty" yaml:"stacked,omitempty"`
+	Smooth        *bool                   `json:"smooth,omitempty" yaml:"smooth,omitempty"`
+	ShowSymbols   *bool                   `json:"showSymbols,omitempty" yaml:"showSymbols,omitempty"`
+	DataZoom      *bool                   `json:"dataZoom,omitempty" yaml:"dataZoom,omitempty"`
+	Area          *bool                   `json:"area,omitempty" yaml:"area,omitempty"`
+	Step          *bool                   `json:"step,omitempty" yaml:"step,omitempty"`
+	Orientation   *string                 `json:"orientation,omitempty" yaml:"orientation,omitempty"`
+	LabelPosition *string                 `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
+	SymbolSize    *float64                `json:"symbolSize,omitempty" yaml:"symbolSize,omitempty"`
+	HistogramBins *int32                  `json:"histogramBins,omitempty" yaml:"histogramBins,omitempty"`
+	SeriesTypes   *map[string]string      `json:"seriesTypes,omitempty" yaml:"seriesTypes,omitempty"`
+	DualAxis      *bool                   `json:"dualAxis,omitempty" yaml:"dualAxis,omitempty"`
+	Rose          *bool                   `json:"rose,omitempty" yaml:"rose,omitempty"`
+	CenterLabel   *string                 `json:"centerLabel,omitempty" yaml:"centerLabel,omitempty"`
+	InnerRadius   *float64                `json:"innerRadius,omitempty" yaml:"innerRadius,omitempty"`
+	OuterRadius   *float64                `json:"outerRadius,omitempty" yaml:"outerRadius,omitempty"`
+	Align         *string                 `json:"align,omitempty" yaml:"align,omitempty"`
+	Sort          *string                 `json:"sort,omitempty" yaml:"sort,omitempty"`
+	InitialDepth  *int32                  `json:"initialDepth,omitempty" yaml:"initialDepth,omitempty"`
+	Basemap       *string                 `json:"basemap,omitempty" yaml:"basemap,omitempty"`
+	Roam          *bool                   `json:"roam,omitempty" yaml:"roam,omitempty"`
+	Layout        *string                 `json:"layout,omitempty" yaml:"layout,omitempty"`
+	Breadcrumb    *bool                   `json:"breadcrumb,omitempty" yaml:"breadcrumb,omitempty"`
+	NodeGap       *float64                `json:"nodeGap,omitempty" yaml:"nodeGap,omitempty"`
+	Curveness     *float64                `json:"curveness,omitempty" yaml:"curveness,omitempty"`
+	Focus         *string                 `json:"focus,omitempty" yaml:"focus,omitempty"`
+	Minimum       *float64                `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64                `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	ProgressWidth *float64                `json:"progressWidth,omitempty" yaml:"progressWidth,omitempty"`
+	Thresholds    *[]QueryVisualThreshold `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
+	Note          *string                 `json:"note,omitempty" yaml:"note,omitempty"`
+	Tone          *string                 `json:"tone,omitempty" yaml:"tone,omitempty"`
 }
 
 type QueryVisualResult struct {
-	Ok               bool                        `json:"ok"`
-	QueryID          string                      `json:"queryId"`
-	ServingSnapshot  string                      `json:"servingSnapshot"`
-	Freshness        *QueryFreshness             `json:"freshness,omitempty"`
-	Type             string                      `json:"type"`
-	ID               string                      `json:"id"`
-	Title            string                      `json:"title"`
-	SemanticModelRef CatalogRef                  `json:"semanticModelRef"`
-	DatasetID        string                      `json:"datasetId"`
-	Fields           []QueryVisualFieldUsage     `json:"fields"`
-	Filters          []QueryVisualFilterUsage    `json:"filters"`
-	Completeness     QueryVisualCompleteness     `json:"completeness"`
-	Status           DashboardVisualStatus       `json:"status"`
-	Diagnostics      []DashboardVisualDiagnostic `json:"diagnostics"`
-	Summary          string                      `json:"summary"`
-	Signal           string                      `json:"signal"`
+	Ok               bool                        `json:"ok" yaml:"ok"`
+	QueryID          string                      `json:"queryId" yaml:"queryId"`
+	ServingSnapshot  string                      `json:"servingSnapshot" yaml:"servingSnapshot"`
+	Freshness        *QueryFreshness             `json:"freshness,omitempty" yaml:"freshness,omitempty"`
+	Type             string                      `json:"type" yaml:"type"`
+	ID               string                      `json:"id" yaml:"id"`
+	Title            string                      `json:"title" yaml:"title"`
+	SemanticModelRef CatalogRef                  `json:"semanticModelRef" yaml:"semanticModelRef"`
+	DatasetID        string                      `json:"datasetId" yaml:"datasetId"`
+	Fields           []QueryVisualFieldUsage     `json:"fields" yaml:"fields"`
+	Filters          []QueryVisualFilterUsage    `json:"filters" yaml:"filters"`
+	Completeness     QueryVisualCompleteness     `json:"completeness" yaml:"completeness"`
+	Status           DashboardVisualStatus       `json:"status" yaml:"status"`
+	Diagnostics      []DashboardVisualDiagnostic `json:"diagnostics" yaml:"diagnostics"`
+	Summary          string                      `json:"summary" yaml:"summary"`
+	Signal           string                      `json:"signal" yaml:"signal"`
 }
 
 type QueryVisualSort struct {
-	Field     string  `json:"field"`
-	Direction *string `json:"direction,omitempty"`
+	Field     string  `json:"field" yaml:"field"`
+	Direction *string `json:"direction,omitempty" yaml:"direction,omitempty"`
 }
 
 type QueryVisualTableColumn struct {
-	Key         string                            `json:"key"`
-	Label       string                            `json:"label"`
-	Align       *string                           `json:"align,omitempty"`
-	Role        *string                           `json:"role,omitempty"`
-	Group       *string                           `json:"group,omitempty"`
-	Metric      *string                           `json:"metric,omitempty"`
-	ColumnValue *string                           `json:"columnValue,omitempty"`
-	Width       *int32                            `json:"width,omitempty"`
-	Format      *string                           `json:"format,omitempty"`
-	Formatting  *[]QueryVisualTableFormattingRule `json:"formatting,omitempty"`
+	Key         string                            `json:"key" yaml:"key"`
+	Label       string                            `json:"label" yaml:"label"`
+	Align       *string                           `json:"align,omitempty" yaml:"align,omitempty"`
+	Role        *string                           `json:"role,omitempty" yaml:"role,omitempty"`
+	Group       *string                           `json:"group,omitempty" yaml:"group,omitempty"`
+	Metric      *string                           `json:"metric,omitempty" yaml:"metric,omitempty"`
+	ColumnValue *string                           `json:"columnValue,omitempty" yaml:"columnValue,omitempty"`
+	Width       *int32                            `json:"width,omitempty" yaml:"width,omitempty"`
+	Format      *string                           `json:"format,omitempty" yaml:"format,omitempty"`
+	Formatting  *[]QueryVisualTableFormattingRule `json:"formatting,omitempty" yaml:"formatting,omitempty"`
 }
 
 type QueryVisualTableFormattingRule struct {
-	Kind       string             `json:"kind"`
-	Values     *map[string]string `json:"values,omitempty"`
-	Min        *float64           `json:"min,omitempty"`
-	Max        *float64           `json:"max,omitempty"`
-	Color      *string            `json:"color,omitempty"`
-	Background *string            `json:"background,omitempty"`
-	LowColor   *string            `json:"lowColor,omitempty"`
-	HighColor  *string            `json:"highColor,omitempty"`
+	Kind       string             `json:"kind" yaml:"kind"`
+	Values     *map[string]string `json:"values,omitempty" yaml:"values,omitempty"`
+	Min        *float64           `json:"min,omitempty" yaml:"min,omitempty"`
+	Max        *float64           `json:"max,omitempty" yaml:"max,omitempty"`
+	Color      *string            `json:"color,omitempty" yaml:"color,omitempty"`
+	Background *string            `json:"background,omitempty" yaml:"background,omitempty"`
+	LowColor   *string            `json:"lowColor,omitempty" yaml:"lowColor,omitempty"`
+	HighColor  *string            `json:"highColor,omitempty" yaml:"highColor,omitempty"`
 }
 
 type QueryVisualThreshold struct {
-	Value float64 `json:"value"`
-	Tone  string  `json:"tone"`
+	Value float64 `json:"value" yaml:"value"`
+	Tone  string  `json:"tone" yaml:"tone"`
 }
 
 type QueryVisualType string

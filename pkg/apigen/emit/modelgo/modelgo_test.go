@@ -19,11 +19,11 @@ func TestEmit_GeneratesContractRootsAndDependencies(t *testing.T) {
 
 	require.Contains(t, content, "package contracts")
 	require.Contains(t, content, "type DashboardEnvelope struct")
-	require.Contains(t, content, "Page DashboardPageSignal `json:\"page\"`")
-	require.Contains(t, content, "Visuals map[string]DashboardVisual `json:\"visuals\"`")
+	require.Contains(t, content, "Page DashboardPageSignal `json:\"page\" yaml:\"page\"`")
+	require.Contains(t, content, "Visuals map[string]DashboardVisual `json:\"visuals\" yaml:\"visuals\"`")
 	require.Contains(t, content, "type DashboardVisual struct")
-	require.Contains(t, content, "Data map[string]any `json:\"data\"`")
-	require.Contains(t, content, "Note *string `json:\"note,omitempty\"`")
+	require.Contains(t, content, "Data map[string]any `json:\"data\" yaml:\"data\"`")
+	require.Contains(t, content, "Note *string `json:\"note,omitempty\" yaml:\"note,omitempty\"`")
 }
 
 func TestEmit_PreservesGoInitialismsInJSONFieldNames(t *testing.T) {
@@ -70,6 +70,7 @@ func TestEmit_GeneratesStrictDiscriminatedUnion(t *testing.T) {
 	require.Contains(t, content, "func (value *Visual) Base() (*VisualBase, error)")
 	require.Contains(t, content, "func (value *Visual) Shape() (string, error)")
 	require.Contains(t, content, "func (value *Visual) UnmarshalJSON")
+	require.NotContains(t, content, "UnmarshalYAML")
 	require.Contains(t, content, "decoder.DisallowUnknownFields()")
 	require.Contains(t, content, `case "chart":`)
 	require.Contains(t, content, `if _, ok := fields["points"]; !ok`)
@@ -127,6 +128,103 @@ func TestEmit_ImportedProducerAndConsumerPackagesCompile(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "signals", "models.gen.go"), generated, 0o600))
 	command := exec.Command("go", "test", "./...")
 	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func TestEmit_GeneratedModelsCompileAndRoundTripJSONAndYAML(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewSignals"},
+		Schemas: map[string]ir.Schema{
+			"Visual": {
+				Type:  "union",
+				OneOf: []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}},
+				Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{
+					"chart": "ChartVisual",
+					"text":  "TextVisual",
+				}},
+			},
+			"VisualBase": {
+				Type:       "object",
+				Properties: map[string]ir.SchemaProperty{"visualId": {Schema: ir.SchemaRef{Type: "string"}}},
+				Required:   []string{"visualId"},
+			},
+			"ChartVisual": {
+				Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"},
+				Properties: map[string]ir.SchemaProperty{
+					"shape":       {Schema: ir.SchemaRef{Type: "string", Enum: []string{"chart"}}},
+					"points":      {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "integer"}}},
+					"displayMode": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"shape", "points"},
+			},
+			"TextVisual": {
+				Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"},
+				Properties: map[string]ir.SchemaProperty{
+					"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"text"}}},
+					"title": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"shape", "title"},
+			},
+		},
+		Contracts: []ir.Contract{{Name: "visual", Schema: ir.SchemaRef{Ref: "Visual"}}},
+	}
+
+	generated, err := Emit(doc, Options{PackageName: "generated"})
+	require.NoError(t, err)
+	require.NotContains(t, string(generated), "UnmarshalYAML")
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/generated\n\ngo 1.25.8\n\nrequire go.yaml.in/yaml/v4 v4.0.0-rc.4\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models.gen.go"), generated, 0o600))
+	testSource := `package generated
+
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+
+	"go.yaml.in/yaml/v4"
+)
+
+func TestGeneratedRoundTrip(t *testing.T) {
+	displayMode := "compact"
+	original := ChartVisual{
+		VisualBase:  VisualBase{VisualID: "v-1"},
+		Shape:       "chart",
+		Points:      []int32{1, 2},
+		DisplayMode: &displayMode,
+	}
+	jsonBytes, err := json.Marshal(original)
+	if err != nil { t.Fatal(err) }
+	yamlBytes, err := yaml.Marshal(original)
+	if err != nil { t.Fatal(err) }
+	var jsonFields map[string]any
+	if err := json.Unmarshal(jsonBytes, &jsonFields); err != nil { t.Fatal(err) }
+	if _, ok := jsonFields["displayMode"]; !ok { t.Fatalf("JSON omitted camelCase key: %s", jsonBytes) }
+	if _, ok := jsonFields["displaymode"]; ok { t.Fatalf("JSON used non-camelCase key: %s", jsonBytes) }
+	var yamlFields map[string]any
+	if err := yaml.Unmarshal(yamlBytes, &yamlFields); err != nil { t.Fatal(err) }
+	if _, ok := yamlFields["displayMode"]; !ok { t.Fatalf("YAML omitted camelCase key: %s", yamlBytes) }
+	if _, ok := yamlFields["displaymode"]; ok { t.Fatalf("YAML used non-camelCase key: %s", yamlBytes) }
+	var fromJSON, fromYAML ChartVisual
+	if err := json.Unmarshal(jsonBytes, &fromJSON); err != nil { t.Fatal(err) }
+	if err := yaml.Unmarshal(yamlBytes, &fromYAML); err != nil { t.Fatal(err) }
+	if !reflect.DeepEqual(original, fromJSON) || !reflect.DeepEqual(original, fromYAML) {
+		t.Fatalf("round-trip mismatch: original=%#v json=%#v yaml=%#v", original, fromJSON, fromYAML)
+	}
+
+	var union Visual
+	if err := json.Unmarshal([]byte("{\"visualId\":\"v-1\",\"shape\":\"chart\",\"points\":[1]}"), &union); err != nil { t.Fatal(err) }
+	if _, ok := union.Value.(*ChartVisual); !ok { t.Fatalf("decoded union has type %T", union.Value) }
+	if err := json.Unmarshal([]byte("{\"visualId\":\"v-1\",\"shape\":\"other\",\"points\":[1]}"), &Visual{}); err == nil { t.Fatal("unknown discriminator accepted") }
+	if err := json.Unmarshal([]byte("{\"visualId\":\"v-1\",\"shape\":\"chart\",\"points\":[1],\"title\":\"wrong variant\"}"), &Visual{}); err == nil { t.Fatal("foreign variant field accepted") }
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models_test.go"), []byte(testSource), 0o600))
+	command := exec.Command("go", "test", "./...")
+	command.Dir = root
+	command.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 }

@@ -2,37 +2,37 @@
 package contracts
 
 type DashboardEnvelope struct {
-	Page    DashboardPageSignal        `json:"page"`
-	Filters DashboardFilters           `json:"filters"`
-	Visuals map[string]DashboardVisual `json:"visuals"`
-	Tables  map[string]DashboardTable  `json:"tables"`
+	Page    DashboardPageSignal        `json:"page" yaml:"page"`
+	Filters DashboardFilters           `json:"filters" yaml:"filters"`
+	Visuals map[string]DashboardVisual `json:"visuals" yaml:"visuals"`
+	Tables  map[string]DashboardTable  `json:"tables" yaml:"tables"`
 }
 
 type DashboardFilterControl struct {
-	Type   string    `json:"type"`
-	Value  *string   `json:"value,omitempty"`
-	Values *[]string `json:"values,omitempty"`
+	Type   string    `json:"type" yaml:"type"`
+	Value  *string   `json:"value,omitempty" yaml:"value,omitempty"`
+	Values *[]string `json:"values,omitempty" yaml:"values,omitempty"`
 }
 
 type DashboardFilters struct {
-	Controls map[string]DashboardFilterControl `json:"controls"`
+	Controls map[string]DashboardFilterControl `json:"controls" yaml:"controls"`
 }
 
 type DashboardPageSignal struct {
-	DashboardId string `json:"dashboardId"`
-	PageId      string `json:"pageId"`
-	Title       string `json:"title"`
+	DashboardID string `json:"dashboardId" yaml:"dashboardId"`
+	PageID      string `json:"pageId" yaml:"pageId"`
+	Title       string `json:"title" yaml:"title"`
 }
 
 type DashboardTable struct {
-	Id      string           `json:"id"`
-	Columns []string         `json:"columns"`
-	Rows    []map[string]any `json:"rows"`
+	ID      string           `json:"id" yaml:"id"`
+	Columns []string         `json:"columns" yaml:"columns"`
+	Rows    []map[string]any `json:"rows" yaml:"rows"`
 }
 
 type DashboardVisual struct {
-	Id    string         `json:"id"`
-	Kind  string         `json:"kind"`
-	Title string         `json:"title"`
-	Data  map[string]any `json:"data"`
+	ID    string         `json:"id" yaml:"id"`
+	Kind  string         `json:"kind" yaml:"kind"`
+	Title string         `json:"title" yaml:"title"`
+	Data  map[string]any `json:"data" yaml:"data"`
 }

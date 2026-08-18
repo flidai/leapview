@@ -9,349 +9,349 @@ import (
 
 type CartesianVisualizationPresentation struct {
 	VisualizationPresentation
-	Smooth        bool                         `json:"smooth"`
-	Stacked       bool                         `json:"stacked"`
-	ShowSymbols   bool                         `json:"showSymbols"`
-	DataZoom      bool                         `json:"dataZoom"`
-	Area          bool                         `json:"area"`
-	Step          bool                         `json:"step"`
-	Orientation   *VisualizationOrientation    `json:"orientation,omitempty"`
-	LabelPosition *VisualizationLabelPosition  `json:"labelPosition,omitempty"`
-	SymbolSize    *float64                     `json:"symbolSize,omitempty"`
-	HistogramBins *int32                       `json:"histogramBins,omitempty"`
-	ComboSeries   *[]VisualizationComboSeries  `json:"comboSeries,omitempty"`
-	Stacking      *VisualizationStackingMode   `json:"stacking,omitempty"`
-	SeriesIntent  *[]VisualizationSeriesIntent `json:"seriesIntent,omitempty"`
+	Smooth        bool                         `json:"smooth" yaml:"smooth"`
+	Stacked       bool                         `json:"stacked" yaml:"stacked"`
+	ShowSymbols   bool                         `json:"showSymbols" yaml:"showSymbols"`
+	DataZoom      bool                         `json:"dataZoom" yaml:"dataZoom"`
+	Area          bool                         `json:"area" yaml:"area"`
+	Step          bool                         `json:"step" yaml:"step"`
+	Orientation   *VisualizationOrientation    `json:"orientation,omitempty" yaml:"orientation,omitempty"`
+	LabelPosition *VisualizationLabelPosition  `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
+	SymbolSize    *float64                     `json:"symbolSize,omitempty" yaml:"symbolSize,omitempty"`
+	HistogramBins *int32                       `json:"histogramBins,omitempty" yaml:"histogramBins,omitempty"`
+	ComboSeries   *[]VisualizationComboSeries  `json:"comboSeries,omitempty" yaml:"comboSeries,omitempty"`
+	Stacking      *VisualizationStackingMode   `json:"stacking,omitempty" yaml:"stacking,omitempty"`
+	SeriesIntent  *[]VisualizationSeriesIntent `json:"seriesIntent,omitempty" yaml:"seriesIntent,omitempty"`
 }
 
 type CartesianVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind             string                             `json:"kind"`
-	Mark             VisualizationCartesianMark         `json:"mark"`
-	X                VisualizationFieldRef              `json:"x"`
-	Y                []VisualizationFieldRef            `json:"y"`
-	Series           *VisualizationFieldRef             `json:"series,omitempty"`
-	Axes             *[]VisualizationAxisConfiguration  `json:"axes,omitempty"`
-	ReferenceLines   *[]VisualizationReferenceLine      `json:"referenceLines,omitempty"`
-	ReferenceBands   *[]VisualizationReferenceBand      `json:"referenceBands,omitempty"`
-	EventAnnotations *[]VisualizationEventAnnotation    `json:"eventAnnotations,omitempty"`
-	Tooltip          *[]VisualizationFieldRef           `json:"tooltip,omitempty"`
-	Presentation     CartesianVisualizationPresentation `json:"presentation"`
+	Kind             string                             `json:"kind" yaml:"kind"`
+	Mark             VisualizationCartesianMark         `json:"mark" yaml:"mark"`
+	X                VisualizationFieldRef              `json:"x" yaml:"x"`
+	Y                []VisualizationFieldRef            `json:"y" yaml:"y"`
+	Series           *VisualizationFieldRef             `json:"series,omitempty" yaml:"series,omitempty"`
+	Axes             *[]VisualizationAxisConfiguration  `json:"axes,omitempty" yaml:"axes,omitempty"`
+	ReferenceLines   *[]VisualizationReferenceLine      `json:"referenceLines,omitempty" yaml:"referenceLines,omitempty"`
+	ReferenceBands   *[]VisualizationReferenceBand      `json:"referenceBands,omitempty" yaml:"referenceBands,omitempty"`
+	EventAnnotations *[]VisualizationEventAnnotation    `json:"eventAnnotations,omitempty" yaml:"eventAnnotations,omitempty"`
+	Tooltip          *[]VisualizationFieldRef           `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
+	Presentation     CartesianVisualizationPresentation `json:"presentation" yaml:"presentation"`
 }
 
 type CompactVisualizationFormat struct {
 	VisualizationFormatBase
-	Kind                  string `json:"kind"`
-	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty"`
+	Kind                  string `json:"kind" yaml:"kind"`
+	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
 }
 
 type CurrencyVisualizationFormat struct {
 	VisualizationFormatBase
-	Kind                  string `json:"kind"`
-	Currency              string `json:"currency"`
-	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty"`
-	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty"`
+	Kind                  string `json:"kind" yaml:"kind"`
+	Currency              string `json:"currency" yaml:"currency"`
+	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
+	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
 }
 
 type DurationVisualizationFormat struct {
 	VisualizationFormatBase
-	Kind string `json:"kind"`
-	Unit string `json:"unit"`
+	Kind string `json:"kind" yaml:"kind"`
+	Unit string `json:"unit" yaml:"unit"`
 }
 
 type FieldVisualizationConditionalRule struct {
 	VisualizationConditionalRuleBase
-	Kind         string                                   `json:"kind"`
-	Source       VisualizationFieldRef                    `json:"source"`
-	Values       map[string]VisualizationConditionalStyle `json:"values"`
-	NullStyle    VisualizationConditionalStyle            `json:"nullStyle"`
-	DefaultStyle VisualizationConditionalStyle            `json:"defaultStyle"`
+	Kind         string                                   `json:"kind" yaml:"kind"`
+	Source       VisualizationFieldRef                    `json:"source" yaml:"source"`
+	Values       map[string]VisualizationConditionalStyle `json:"values" yaml:"values"`
+	NullStyle    VisualizationConditionalStyle            `json:"nullStyle" yaml:"nullStyle"`
+	DefaultStyle VisualizationConditionalStyle            `json:"defaultStyle" yaml:"defaultStyle"`
 }
 
 type FieldVisualizationReferenceValue struct {
 	VisualizationReferenceValueBase
-	Kind    string                        `json:"kind"`
-	Field   VisualizationFieldRef         `json:"field"`
-	Reducer VisualizationReferenceReducer `json:"reducer"`
+	Kind    string                        `json:"kind" yaml:"kind"`
+	Field   VisualizationFieldRef         `json:"field" yaml:"field"`
+	Reducer VisualizationReferenceReducer `json:"reducer" yaml:"reducer"`
 }
 
 type GeographicVisualizationPresentation struct {
 	VisualizationPresentation
-	Roam         bool                         `json:"roam"`
-	Basemap      *VisualizationMapStyleAsset  `json:"basemap,omitempty"`
-	Theme        VisualizationMapTheme        `json:"theme"`
-	LabelDensity VisualizationMapLabelDensity `json:"labelDensity"`
-	Camera       VisualizationMapCamera       `json:"camera"`
-	Controls     VisualizationMapControls     `json:"controls"`
+	Roam         bool                         `json:"roam" yaml:"roam"`
+	Basemap      *VisualizationMapStyleAsset  `json:"basemap,omitempty" yaml:"basemap,omitempty"`
+	Theme        VisualizationMapTheme        `json:"theme" yaml:"theme"`
+	LabelDensity VisualizationMapLabelDensity `json:"labelDensity" yaml:"labelDensity"`
+	Camera       VisualizationMapCamera       `json:"camera" yaml:"camera"`
+	Controls     VisualizationMapControls     `json:"controls" yaml:"controls"`
 }
 
 type GeographicVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind                string                                     `json:"kind"`
-	Layers              []VisualizationGeographicLayer             `json:"layers"`
-	SpatialInteractions []VisualizationSpatialSelectionInteraction `json:"spatialInteractions"`
-	Presentation        GeographicVisualizationPresentation        `json:"presentation"`
+	Kind                string                                     `json:"kind" yaml:"kind"`
+	Layers              []VisualizationGeographicLayer             `json:"layers" yaml:"layers"`
+	SpatialInteractions []VisualizationSpatialSelectionInteraction `json:"spatialInteractions" yaml:"spatialInteractions"`
+	Presentation        GeographicVisualizationPresentation        `json:"presentation" yaml:"presentation"`
 }
 
 type GradientVisualizationConditionalRule struct {
 	VisualizationConditionalRuleBase
-	Kind      string                        `json:"kind"`
-	Minimum   float64                       `json:"minimum"`
-	Maximum   float64                       `json:"maximum"`
-	Low       VisualizationConditionalStyle `json:"low"`
-	High      VisualizationConditionalStyle `json:"high"`
-	NullStyle VisualizationConditionalStyle `json:"nullStyle"`
+	Kind      string                        `json:"kind" yaml:"kind"`
+	Minimum   float64                       `json:"minimum" yaml:"minimum"`
+	Maximum   float64                       `json:"maximum" yaml:"maximum"`
+	Low       VisualizationConditionalStyle `json:"low" yaml:"low"`
+	High      VisualizationConditionalStyle `json:"high" yaml:"high"`
+	NullStyle VisualizationConditionalStyle `json:"nullStyle" yaml:"nullStyle"`
 }
 
 type GridVisualizationPresentation struct {
-	RowHeight  int64 `json:"rowHeight"`
-	Striped    bool  `json:"striped"`
-	ShowHeader bool  `json:"showHeader"`
+	RowHeight  int64 `json:"rowHeight" yaml:"rowHeight"`
+	Striped    bool  `json:"striped" yaml:"striped"`
+	ShowHeader bool  `json:"showHeader" yaml:"showHeader"`
 }
 
 type HierarchyVisualizationPresentation struct {
 	VisualizationPresentation
-	Orientation  VisualizationOrientation      `json:"orientation"`
-	InitialDepth *int32                        `json:"initialDepth,omitempty"`
-	Roam         bool                          `json:"roam"`
-	Layout       *VisualizationHierarchyLayout `json:"layout,omitempty"`
-	Breadcrumb   *bool                         `json:"breadcrumb,omitempty"`
-	NodeGap      *float64                      `json:"nodeGap,omitempty"`
-	Curveness    *float64                      `json:"curveness,omitempty"`
-	Focus        *VisualizationGraphFocus      `json:"focus,omitempty"`
+	Orientation  VisualizationOrientation      `json:"orientation" yaml:"orientation"`
+	InitialDepth *int32                        `json:"initialDepth,omitempty" yaml:"initialDepth,omitempty"`
+	Roam         bool                          `json:"roam" yaml:"roam"`
+	Layout       *VisualizationHierarchyLayout `json:"layout,omitempty" yaml:"layout,omitempty"`
+	Breadcrumb   *bool                         `json:"breadcrumb,omitempty" yaml:"breadcrumb,omitempty"`
+	NodeGap      *float64                      `json:"nodeGap,omitempty" yaml:"nodeGap,omitempty"`
+	Curveness    *float64                      `json:"curveness,omitempty" yaml:"curveness,omitempty"`
+	Focus        *VisualizationGraphFocus      `json:"focus,omitempty" yaml:"focus,omitempty"`
 }
 
 type HierarchyVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind         string                             `json:"kind"`
-	Mark         VisualizationHierarchyMark         `json:"mark"`
-	Node         VisualizationFieldRef              `json:"node"`
-	Parent       *VisualizationFieldRef             `json:"parent,omitempty"`
-	Source       *VisualizationFieldRef             `json:"source,omitempty"`
-	Target       *VisualizationFieldRef             `json:"target,omitempty"`
-	Value        *VisualizationFieldRef             `json:"value,omitempty"`
-	Presentation HierarchyVisualizationPresentation `json:"presentation"`
+	Kind         string                             `json:"kind" yaml:"kind"`
+	Mark         VisualizationHierarchyMark         `json:"mark" yaml:"mark"`
+	Node         VisualizationFieldRef              `json:"node" yaml:"node"`
+	Parent       *VisualizationFieldRef             `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Source       *VisualizationFieldRef             `json:"source,omitempty" yaml:"source,omitempty"`
+	Target       *VisualizationFieldRef             `json:"target,omitempty" yaml:"target,omitempty"`
+	Value        *VisualizationFieldRef             `json:"value,omitempty" yaml:"value,omitempty"`
+	Presentation HierarchyVisualizationPresentation `json:"presentation" yaml:"presentation"`
 }
 
 type InlineVisualizationDataState struct {
 	VisualizationDataStateBase
-	Kind     string                       `json:"kind"`
-	Datasets []VisualizationInlineDataset `json:"datasets"`
+	Kind     string                       `json:"kind" yaml:"kind"`
+	Datasets []VisualizationInlineDataset `json:"datasets" yaml:"datasets"`
 }
 
 type KPIVisualizationPresentation struct {
-	Mode               VisualizationKPIMode               `json:"mode"`
-	Delta              VisualizationKPIDeltaMode          `json:"delta"`
-	FavorableDirection VisualizationKPIDirection          `json:"favorableDirection"`
-	MissingComparison  VisualizationKPIMissingComparison  `json:"missingComparison"`
-	Ranges             []VisualizationKPIQualitativeRange `json:"ranges"`
-	DisplayUnits       *VisualizationDisplayUnits         `json:"displayUnits,omitempty"`
-	Note               *string                            `json:"note,omitempty"`
-	Tone               *VisualizationTone                 `json:"tone,omitempty"`
-	Thresholds         *[]VisualizationThreshold          `json:"thresholds,omitempty"`
+	Mode               VisualizationKPIMode               `json:"mode" yaml:"mode"`
+	Delta              VisualizationKPIDeltaMode          `json:"delta" yaml:"delta"`
+	FavorableDirection VisualizationKPIDirection          `json:"favorableDirection" yaml:"favorableDirection"`
+	MissingComparison  VisualizationKPIMissingComparison  `json:"missingComparison" yaml:"missingComparison"`
+	Ranges             []VisualizationKPIQualitativeRange `json:"ranges" yaml:"ranges"`
+	DisplayUnits       *VisualizationDisplayUnits         `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Note               *string                            `json:"note,omitempty" yaml:"note,omitempty"`
+	Tone               *VisualizationTone                 `json:"tone,omitempty" yaml:"tone,omitempty"`
+	Thresholds         *[]VisualizationThreshold          `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
 }
 
 type KPIVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind         string                        `json:"kind"`
-	Value        VisualizationFieldRef         `json:"value"`
-	Comparison   *VisualizationKPIValueBinding `json:"comparison,omitempty"`
-	Goal         *VisualizationKPIValueBinding `json:"goal,omitempty"`
-	Trend        *VisualizationKPITrendBinding `json:"trend,omitempty"`
-	Presentation KPIVisualizationPresentation  `json:"presentation"`
+	Kind         string                        `json:"kind" yaml:"kind"`
+	Value        VisualizationFieldRef         `json:"value" yaml:"value"`
+	Comparison   *VisualizationKPIValueBinding `json:"comparison,omitempty" yaml:"comparison,omitempty"`
+	Goal         *VisualizationKPIValueBinding `json:"goal,omitempty" yaml:"goal,omitempty"`
+	Trend        *VisualizationKPITrendBinding `json:"trend,omitempty" yaml:"trend,omitempty"`
+	Presentation KPIVisualizationPresentation  `json:"presentation" yaml:"presentation"`
 }
 
 type MatrixVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind             string                                        `json:"kind"`
-	Rows             []VisualizationFieldRef                       `json:"rows"`
-	Columns          []VisualizationFieldRef                       `json:"columns"`
-	Metrics          []VisualizationFieldRef                       `json:"metrics"`
-	MetricFormatting map[string][]TableVisualizationFormattingRule `json:"metricFormatting"`
-	Presentation     GridVisualizationPresentation                 `json:"presentation"`
+	Kind             string                                        `json:"kind" yaml:"kind"`
+	Rows             []VisualizationFieldRef                       `json:"rows" yaml:"rows"`
+	Columns          []VisualizationFieldRef                       `json:"columns" yaml:"columns"`
+	Metrics          []VisualizationFieldRef                       `json:"metrics" yaml:"metrics"`
+	MetricFormatting map[string][]TableVisualizationFormattingRule `json:"metricFormatting" yaml:"metricFormatting"`
+	Presentation     GridVisualizationPresentation                 `json:"presentation" yaml:"presentation"`
 }
 
 type NumberVisualizationFormat struct {
 	VisualizationFormatBase
-	Kind                  string `json:"kind"`
-	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty"`
-	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty"`
+	Kind                  string `json:"kind" yaml:"kind"`
+	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
+	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
 }
 
 type NumberVisualizationReferenceValue struct {
 	VisualizationReferenceValueBase
-	Kind  string  `json:"kind"`
-	Value float64 `json:"value"`
+	Kind  string  `json:"kind" yaml:"kind"`
+	Value float64 `json:"value" yaml:"value"`
 }
 
 type PercentVisualizationFormat struct {
 	VisualizationFormatBase
-	Kind                  string `json:"kind"`
-	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty"`
-	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty"`
+	Kind                  string `json:"kind" yaml:"kind"`
+	MinimumFractionDigits *int32 `json:"minimumFractionDigits,omitempty" yaml:"minimumFractionDigits,omitempty"`
+	MaximumFractionDigits *int32 `json:"maximumFractionDigits,omitempty" yaml:"maximumFractionDigits,omitempty"`
 }
 
 type PivotVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind             string                                        `json:"kind"`
-	Rows             []VisualizationFieldRef                       `json:"rows"`
-	Columns          []VisualizationFieldRef                       `json:"columns"`
-	Metrics          []VisualizationFieldRef                       `json:"metrics"`
-	MetricFormatting map[string][]TableVisualizationFormattingRule `json:"metricFormatting"`
-	Presentation     GridVisualizationPresentation                 `json:"presentation"`
+	Kind             string                                        `json:"kind" yaml:"kind"`
+	Rows             []VisualizationFieldRef                       `json:"rows" yaml:"rows"`
+	Columns          []VisualizationFieldRef                       `json:"columns" yaml:"columns"`
+	Metrics          []VisualizationFieldRef                       `json:"metrics" yaml:"metrics"`
+	MetricFormatting map[string][]TableVisualizationFormattingRule `json:"metricFormatting" yaml:"metricFormatting"`
+	Presentation     GridVisualizationPresentation                 `json:"presentation" yaml:"presentation"`
 }
 
 type PointVisualizationColorScale struct {
-	Kind    VisualizationPointColorScaleKind `json:"kind"`
-	Minimum *float64                         `json:"minimum,omitempty"`
-	Maximum *float64                         `json:"maximum,omitempty"`
-	Scheme  *string                          `json:"scheme,omitempty"`
+	Kind    VisualizationPointColorScaleKind `json:"kind" yaml:"kind"`
+	Minimum *float64                         `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum *float64                         `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Scheme  *string                          `json:"scheme,omitempty" yaml:"scheme,omitempty"`
 }
 
 type PointVisualizationPresentation struct {
 	VisualizationPresentation
-	Overplot       VisualizationPointOverplotStrategy `json:"overplot"`
-	Opacity        float64                            `json:"opacity"`
-	LargeMode      VisualizationPointLargeMode        `json:"largeMode"`
-	LargeThreshold int64                              `json:"largeThreshold"`
-	Brush          []VisualizationPointBrushGesture   `json:"brush"`
+	Overplot       VisualizationPointOverplotStrategy `json:"overplot" yaml:"overplot"`
+	Opacity        float64                            `json:"opacity" yaml:"opacity"`
+	LargeMode      VisualizationPointLargeMode        `json:"largeMode" yaml:"largeMode"`
+	LargeThreshold int64                              `json:"largeThreshold" yaml:"largeThreshold"`
+	Brush          []VisualizationPointBrushGesture   `json:"brush" yaml:"brush"`
 }
 
 type PointVisualizationSizeScale struct {
-	Minimum       *float64 `json:"minimum,omitempty"`
-	Maximum       *float64 `json:"maximum,omitempty"`
-	MinimumPixels float64  `json:"minimumPixels"`
-	MaximumPixels float64  `json:"maximumPixels"`
+	Minimum       *float64 `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64 `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	MinimumPixels float64  `json:"minimumPixels" yaml:"minimumPixels"`
+	MaximumPixels float64  `json:"maximumPixels" yaml:"maximumPixels"`
 }
 
 type PointVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind             string                            `json:"kind"`
-	Identity         []VisualizationFieldRef           `json:"identity"`
-	X                VisualizationFieldRef             `json:"x"`
-	Y                VisualizationFieldRef             `json:"y"`
-	Size             *VisualizationFieldRef            `json:"size,omitempty"`
-	Color            *VisualizationFieldRef            `json:"color,omitempty"`
-	Series           *VisualizationFieldRef            `json:"series,omitempty"`
-	Label            *VisualizationFieldRef            `json:"label,omitempty"`
-	Tooltip          *[]VisualizationFieldRef          `json:"tooltip,omitempty"`
-	ColorScale       *PointVisualizationColorScale     `json:"colorScale,omitempty"`
-	SizeScale        *PointVisualizationSizeScale      `json:"sizeScale,omitempty"`
-	Axes             *[]VisualizationAxisConfiguration `json:"axes,omitempty"`
-	ReferenceLines   *[]VisualizationReferenceLine     `json:"referenceLines,omitempty"`
-	ReferenceBands   *[]VisualizationReferenceBand     `json:"referenceBands,omitempty"`
-	EventAnnotations *[]VisualizationEventAnnotation   `json:"eventAnnotations,omitempty"`
-	Presentation     PointVisualizationPresentation    `json:"presentation"`
+	Kind             string                            `json:"kind" yaml:"kind"`
+	Identity         []VisualizationFieldRef           `json:"identity" yaml:"identity"`
+	X                VisualizationFieldRef             `json:"x" yaml:"x"`
+	Y                VisualizationFieldRef             `json:"y" yaml:"y"`
+	Size             *VisualizationFieldRef            `json:"size,omitempty" yaml:"size,omitempty"`
+	Color            *VisualizationFieldRef            `json:"color,omitempty" yaml:"color,omitempty"`
+	Series           *VisualizationFieldRef            `json:"series,omitempty" yaml:"series,omitempty"`
+	Label            *VisualizationFieldRef            `json:"label,omitempty" yaml:"label,omitempty"`
+	Tooltip          *[]VisualizationFieldRef          `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
+	ColorScale       *PointVisualizationColorScale     `json:"colorScale,omitempty" yaml:"colorScale,omitempty"`
+	SizeScale        *PointVisualizationSizeScale      `json:"sizeScale,omitempty" yaml:"sizeScale,omitempty"`
+	Axes             *[]VisualizationAxisConfiguration `json:"axes,omitempty" yaml:"axes,omitempty"`
+	ReferenceLines   *[]VisualizationReferenceLine     `json:"referenceLines,omitempty" yaml:"referenceLines,omitempty"`
+	ReferenceBands   *[]VisualizationReferenceBand     `json:"referenceBands,omitempty" yaml:"referenceBands,omitempty"`
+	EventAnnotations *[]VisualizationEventAnnotation   `json:"eventAnnotations,omitempty" yaml:"eventAnnotations,omitempty"`
+	Presentation     PointVisualizationPresentation    `json:"presentation" yaml:"presentation"`
 }
 
 type PolarVisualizationPresentation struct {
 	VisualizationPresentation
-	Minimum       *float64                  `json:"minimum,omitempty"`
-	Maximum       *float64                  `json:"maximum,omitempty"`
-	Target        *float64                  `json:"target,omitempty"`
-	ShowPointer   bool                      `json:"showPointer"`
-	Area          *bool                     `json:"area,omitempty"`
-	ProgressWidth *float64                  `json:"progressWidth,omitempty"`
-	Thresholds    *[]VisualizationThreshold `json:"thresholds,omitempty"`
+	Minimum       *float64                  `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64                  `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Target        *float64                  `json:"target,omitempty" yaml:"target,omitempty"`
+	ShowPointer   bool                      `json:"showPointer" yaml:"showPointer"`
+	Area          *bool                     `json:"area,omitempty" yaml:"area,omitempty"`
+	ProgressWidth *float64                  `json:"progressWidth,omitempty" yaml:"progressWidth,omitempty"`
+	Thresholds    *[]VisualizationThreshold `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
 }
 
 type PolarVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind         string                         `json:"kind"`
-	Mark         VisualizationPolarMark         `json:"mark"`
-	Category     *VisualizationFieldRef         `json:"category,omitempty"`
-	Value        VisualizationFieldRef          `json:"value"`
-	Series       *VisualizationFieldRef         `json:"series,omitempty"`
-	Presentation PolarVisualizationPresentation `json:"presentation"`
+	Kind         string                         `json:"kind" yaml:"kind"`
+	Mark         VisualizationPolarMark         `json:"mark" yaml:"mark"`
+	Category     *VisualizationFieldRef         `json:"category,omitempty" yaml:"category,omitempty"`
+	Value        VisualizationFieldRef          `json:"value" yaml:"value"`
+	Series       *VisualizationFieldRef         `json:"series,omitempty" yaml:"series,omitempty"`
+	Presentation PolarVisualizationPresentation `json:"presentation" yaml:"presentation"`
 }
 
 type ProportionalVisualizationPresentation struct {
 	VisualizationPresentation
-	Orientation   VisualizationOrientation    `json:"orientation"`
-	Rose          bool                        `json:"rose"`
-	CenterLabel   *string                     `json:"centerLabel,omitempty"`
-	LabelPosition *VisualizationLabelPosition `json:"labelPosition,omitempty"`
-	InnerRadius   *float64                    `json:"innerRadius,omitempty"`
-	OuterRadius   *float64                    `json:"outerRadius,omitempty"`
-	Align         *string                     `json:"align,omitempty"`
-	Sort          *VisualizationSortDirection `json:"sort,omitempty"`
+	Orientation   VisualizationOrientation    `json:"orientation" yaml:"orientation"`
+	Rose          bool                        `json:"rose" yaml:"rose"`
+	CenterLabel   *string                     `json:"centerLabel,omitempty" yaml:"centerLabel,omitempty"`
+	LabelPosition *VisualizationLabelPosition `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
+	InnerRadius   *float64                    `json:"innerRadius,omitempty" yaml:"innerRadius,omitempty"`
+	OuterRadius   *float64                    `json:"outerRadius,omitempty" yaml:"outerRadius,omitempty"`
+	Align         *string                     `json:"align,omitempty" yaml:"align,omitempty"`
+	Sort          *VisualizationSortDirection `json:"sort,omitempty" yaml:"sort,omitempty"`
 }
 
 type ProportionalVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind         string                                `json:"kind"`
-	Mark         VisualizationProportionalMark         `json:"mark"`
-	Category     VisualizationFieldRef                 `json:"category"`
-	Value        VisualizationFieldRef                 `json:"value"`
-	Series       *VisualizationFieldRef                `json:"series,omitempty"`
-	Presentation ProportionalVisualizationPresentation `json:"presentation"`
+	Kind         string                                `json:"kind" yaml:"kind"`
+	Mark         VisualizationProportionalMark         `json:"mark" yaml:"mark"`
+	Category     VisualizationFieldRef                 `json:"category" yaml:"category"`
+	Value        VisualizationFieldRef                 `json:"value" yaml:"value"`
+	Series       *VisualizationFieldRef                `json:"series,omitempty" yaml:"series,omitempty"`
+	Presentation ProportionalVisualizationPresentation `json:"presentation" yaml:"presentation"`
 }
 
 type RulesVisualizationConditionalRule struct {
 	VisualizationConditionalRuleBase
-	Kind         string                              `json:"kind"`
-	Rules        []VisualizationConditionalThreshold `json:"rules"`
-	NullStyle    VisualizationConditionalStyle       `json:"nullStyle"`
-	DefaultStyle VisualizationConditionalStyle       `json:"defaultStyle"`
+	Kind         string                              `json:"kind" yaml:"kind"`
+	Rules        []VisualizationConditionalThreshold `json:"rules" yaml:"rules"`
+	NullStyle    VisualizationConditionalStyle       `json:"nullStyle" yaml:"nullStyle"`
+	DefaultStyle VisualizationConditionalStyle       `json:"defaultStyle" yaml:"defaultStyle"`
 }
 
 type SpatialTiledVisualizationDataState struct {
 	VisualizationDataStateBase
-	Kind             string                            `json:"kind"`
-	Schema           VisualizationDatasetSchema        `json:"schema"`
-	Cardinality      VisualizationCardinality          `json:"cardinality"`
-	Extent           VisualizationSpatialBounds        `json:"extent"`
-	RawDomains       []VisualizationSpatialScaleDomain `json:"rawDomains"`
-	AggregateDomains []VisualizationSpatialScaleDomain `json:"aggregateDomains"`
-	TileURL          string                            `json:"tileURL"`
-	MinimumZoom      int32                             `json:"minimumZoom"`
-	MaximumZoom      int32                             `json:"maximumZoom"`
-	RawMinimumZoom   int32                             `json:"rawMinimumZoom"`
-	FeatureCap       int64                             `json:"featureCap"`
-	MaximumTileBytes int64                             `json:"maximumTileBytes"`
+	Kind             string                            `json:"kind" yaml:"kind"`
+	Schema           VisualizationDatasetSchema        `json:"schema" yaml:"schema"`
+	Cardinality      VisualizationCardinality          `json:"cardinality" yaml:"cardinality"`
+	Extent           VisualizationSpatialBounds        `json:"extent" yaml:"extent"`
+	RawDomains       []VisualizationSpatialScaleDomain `json:"rawDomains" yaml:"rawDomains"`
+	AggregateDomains []VisualizationSpatialScaleDomain `json:"aggregateDomains" yaml:"aggregateDomains"`
+	TileURL          string                            `json:"tileURL" yaml:"tileURL"`
+	MinimumZoom      int32                             `json:"minimumZoom" yaml:"minimumZoom"`
+	MaximumZoom      int32                             `json:"maximumZoom" yaml:"maximumZoom"`
+	RawMinimumZoom   int32                             `json:"rawMinimumZoom" yaml:"rawMinimumZoom"`
+	FeatureCap       int64                             `json:"featureCap" yaml:"featureCap"`
+	MaximumTileBytes int64                             `json:"maximumTileBytes" yaml:"maximumTileBytes"`
 }
 
 type TableBackgroundScaleFormattingRule struct {
 	TableVisualizationFormattingRuleBase
-	Kind      string   `json:"kind"`
-	Minimum   *float64 `json:"minimum,omitempty"`
-	Maximum   *float64 `json:"maximum,omitempty"`
-	LowColor  *string  `json:"lowColor,omitempty"`
-	HighColor *string  `json:"highColor,omitempty"`
+	Kind      string   `json:"kind" yaml:"kind"`
+	Minimum   *float64 `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum   *float64 `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	LowColor  *string  `json:"lowColor,omitempty" yaml:"lowColor,omitempty"`
+	HighColor *string  `json:"highColor,omitempty" yaml:"highColor,omitempty"`
 }
 
 type TableBadgeFormattingRule struct {
 	TableVisualizationFormattingRuleBase
-	Kind   string            `json:"kind"`
-	Values map[string]string `json:"values"`
+	Kind   string            `json:"kind" yaml:"kind"`
+	Values map[string]string `json:"values" yaml:"values"`
 }
 
 type TableDataBarFormattingRule struct {
 	TableVisualizationFormattingRuleBase
-	Kind       string   `json:"kind"`
-	Minimum    *float64 `json:"minimum,omitempty"`
-	Maximum    *float64 `json:"maximum,omitempty"`
-	Color      string   `json:"color"`
-	Background *string  `json:"background,omitempty"`
+	Kind       string   `json:"kind" yaml:"kind"`
+	Minimum    *float64 `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum    *float64 `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Color      string   `json:"color" yaml:"color"`
+	Background *string  `json:"background,omitempty" yaml:"background,omitempty"`
 }
 
 type TableTextColorFormattingRule struct {
 	TableVisualizationFormattingRuleBase
-	Kind    string             `json:"kind"`
-	Color   string             `json:"color"`
-	Values  *map[string]string `json:"values,omitempty"`
-	Minimum *float64           `json:"minimum,omitempty"`
-	Maximum *float64           `json:"maximum,omitempty"`
+	Kind    string             `json:"kind" yaml:"kind"`
+	Color   string             `json:"color" yaml:"color"`
+	Values  *map[string]string `json:"values,omitempty" yaml:"values,omitempty"`
+	Minimum *float64           `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum *float64           `json:"maximum,omitempty" yaml:"maximum,omitempty"`
 }
 
 type TableVisualizationColumn struct {
-	Field       VisualizationFieldRef              `json:"field"`
-	Label       string                             `json:"label"`
-	Width       *int64                             `json:"width,omitempty"`
-	Group       *string                            `json:"group,omitempty"`
-	Metric      *string                            `json:"metric,omitempty"`
-	ColumnValue *string                            `json:"columnValue,omitempty"`
-	Formatting  []TableVisualizationFormattingRule `json:"formatting"`
+	Field       VisualizationFieldRef              `json:"field" yaml:"field"`
+	Label       string                             `json:"label" yaml:"label"`
+	Width       *int64                             `json:"width,omitempty" yaml:"width,omitempty"`
+	Group       *string                            `json:"group,omitempty" yaml:"group,omitempty"`
+	Metric      *string                            `json:"metric,omitempty" yaml:"metric,omitempty"`
+	ColumnValue *string                            `json:"columnValue,omitempty" yaml:"columnValue,omitempty"`
+	Formatting  []TableVisualizationFormattingRule `json:"formatting" yaml:"formatting"`
 }
 
 type TableVisualizationFormattingRuleVariant interface {
@@ -577,35 +577,35 @@ func (value *TableVisualizationFormattingRule) Base() (*TableVisualizationFormat
 }
 
 type TableVisualizationFormattingRuleBase struct {
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type TableVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind         string                        `json:"kind"`
-	Columns      []TableVisualizationColumn    `json:"columns"`
-	DefaultSort  *[]VisualizationSort          `json:"defaultSort,omitempty"`
-	Presentation GridVisualizationPresentation `json:"presentation"`
+	Kind         string                        `json:"kind" yaml:"kind"`
+	Columns      []TableVisualizationColumn    `json:"columns" yaml:"columns"`
+	DefaultSort  *[]VisualizationSort          `json:"defaultSort,omitempty" yaml:"defaultSort,omitempty"`
+	Presentation GridVisualizationPresentation `json:"presentation" yaml:"presentation"`
 }
 
 type TemporalVisualizationFormat struct {
 	VisualizationFormatBase
-	Kind      string  `json:"kind"`
-	DateStyle *string `json:"dateStyle,omitempty"`
-	TimeStyle *string `json:"timeStyle,omitempty"`
+	Kind      string  `json:"kind" yaml:"kind"`
+	DateStyle *string `json:"dateStyle,omitempty" yaml:"dateStyle,omitempty"`
+	TimeStyle *string `json:"timeStyle,omitempty" yaml:"timeStyle,omitempty"`
 }
 
 type TextVisualizationReferenceValue struct {
 	VisualizationReferenceValueBase
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Value string `json:"value" yaml:"value"`
 }
 
 type VisualizationAccessibility struct {
-	Title           string  `json:"title"`
-	Description     string  `json:"description"`
-	Summary         *string `json:"summary,omitempty"`
-	AnnounceChanges *bool   `json:"announceChanges,omitempty"`
+	Title           string  `json:"title" yaml:"title"`
+	Description     string  `json:"description" yaml:"description"`
+	Summary         *string `json:"summary,omitempty" yaml:"summary,omitempty"`
+	AnnounceChanges *bool   `json:"announceChanges,omitempty" yaml:"announceChanges,omitempty"`
 }
 
 type VisualizationAxis string
@@ -616,15 +616,15 @@ const (
 )
 
 type VisualizationAxisConfiguration struct {
-	ID           VisualizationCartesianAxis   `json:"id"`
-	Title        *string                      `json:"title,omitempty"`
-	Scale        VisualizationAxisScale       `json:"scale"`
-	Zero         VisualizationAxisZeroPolicy  `json:"zero"`
-	Minimum      *float64                     `json:"minimum,omitempty"`
-	Maximum      *float64                     `json:"maximum,omitempty"`
-	Unit         *string                      `json:"unit,omitempty"`
-	DisplayUnits *VisualizationDisplayUnits   `json:"displayUnits,omitempty"`
-	TickDensity  VisualizationAxisTickDensity `json:"tickDensity"`
+	ID           VisualizationCartesianAxis   `json:"id" yaml:"id"`
+	Title        *string                      `json:"title,omitempty" yaml:"title,omitempty"`
+	Scale        VisualizationAxisScale       `json:"scale" yaml:"scale"`
+	Zero         VisualizationAxisZeroPolicy  `json:"zero" yaml:"zero"`
+	Minimum      *float64                     `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum      *float64                     `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Unit         *string                      `json:"unit,omitempty" yaml:"unit,omitempty"`
+	DisplayUnits *VisualizationDisplayUnits   `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	TickDensity  VisualizationAxisTickDensity `json:"tickDensity" yaml:"tickDensity"`
 }
 
 type VisualizationAxisScale string
@@ -653,21 +653,21 @@ const (
 )
 
 type VisualizationCalculation struct {
-	ID          string                           `json:"id"`
-	Label       string                           `json:"label"`
-	Dataset     string                           `json:"dataset"`
-	Template    VisualizationCalculationTemplate `json:"template"`
-	Source      VisualizationFieldRef            `json:"source"`
-	Axis        VisualizationCalculationAxis     `json:"axis"`
-	OrderBy     []VisualizationCalculationOrder  `json:"orderBy"`
-	PartitionBy []VisualizationFieldRef          `json:"partitionBy"`
-	Reset       VisualizationCalculationReset    `json:"reset"`
-	Window      *int64                           `json:"window,omitempty"`
-	Offset      *int64                           `json:"offset,omitempty"`
-	Parent      *VisualizationFieldRef           `json:"parent,omitempty"`
-	Lookup      *VisualizationCalculationLookup  `json:"lookup,omitempty"`
-	Hidden      bool                             `json:"hidden"`
-	Format      *VisualizationFormat             `json:"format,omitempty"`
+	ID          string                           `json:"id" yaml:"id"`
+	Label       string                           `json:"label" yaml:"label"`
+	Dataset     string                           `json:"dataset" yaml:"dataset"`
+	Template    VisualizationCalculationTemplate `json:"template" yaml:"template"`
+	Source      VisualizationFieldRef            `json:"source" yaml:"source"`
+	Axis        VisualizationCalculationAxis     `json:"axis" yaml:"axis"`
+	OrderBy     []VisualizationCalculationOrder  `json:"orderBy" yaml:"orderBy"`
+	PartitionBy []VisualizationFieldRef          `json:"partitionBy" yaml:"partitionBy"`
+	Reset       VisualizationCalculationReset    `json:"reset" yaml:"reset"`
+	Window      *int64                           `json:"window,omitempty" yaml:"window,omitempty"`
+	Offset      *int64                           `json:"offset,omitempty" yaml:"offset,omitempty"`
+	Parent      *VisualizationFieldRef           `json:"parent,omitempty" yaml:"parent,omitempty"`
+	Lookup      *VisualizationCalculationLookup  `json:"lookup,omitempty" yaml:"lookup,omitempty"`
+	Hidden      bool                             `json:"hidden" yaml:"hidden"`
+	Format      *VisualizationFormat             `json:"format,omitempty" yaml:"format,omitempty"`
 }
 
 type VisualizationCalculationAxis string
@@ -680,13 +680,13 @@ const (
 )
 
 type VisualizationCalculationLookup struct {
-	Field VisualizationFieldRef `json:"field"`
-	Value string                `json:"value"`
+	Field VisualizationFieldRef `json:"field" yaml:"field"`
+	Value string                `json:"value" yaml:"value"`
 }
 
 type VisualizationCalculationOrder struct {
-	Field     VisualizationFieldRef      `json:"field"`
-	Direction VisualizationSortDirection `json:"direction"`
+	Field     VisualizationFieldRef      `json:"field" yaml:"field"`
+	Direction VisualizationSortDirection `json:"direction" yaml:"direction"`
 }
 
 type VisualizationCalculationReset string
@@ -712,8 +712,8 @@ const (
 )
 
 type VisualizationCardinality struct {
-	Kind  VisualizationCardinalityKind `json:"kind"`
-	Count *int64                       `json:"count,omitempty"`
+	Kind  VisualizationCardinalityKind `json:"kind" yaml:"kind"`
+	Count *int64                       `json:"count,omitempty" yaml:"count,omitempty"`
 }
 
 type VisualizationCardinalityKind string
@@ -750,14 +750,14 @@ const (
 
 type VisualizationChoroplethLayer struct {
 	VisualizationGeographicLayerBase
-	Kind     string                     `json:"kind"`
-	Geometry VisualizationGeometryAsset `json:"geometry"`
-	Join     VisualizationFieldRef      `json:"join"`
-	Value    *VisualizationFieldRef     `json:"value,omitempty"`
-	Category *VisualizationFieldRef     `json:"category,omitempty"`
-	Color    VisualizationMapColorScale `json:"color"`
-	Stroke   VisualizationMapStroke     `json:"stroke"`
-	Opacity  float64                    `json:"opacity"`
+	Kind     string                     `json:"kind" yaml:"kind"`
+	Geometry VisualizationGeometryAsset `json:"geometry" yaml:"geometry"`
+	Join     VisualizationFieldRef      `json:"join" yaml:"join"`
+	Value    *VisualizationFieldRef     `json:"value,omitempty" yaml:"value,omitempty"`
+	Category *VisualizationFieldRef     `json:"category,omitempty" yaml:"category,omitempty"`
+	Color    VisualizationMapColorScale `json:"color" yaml:"color"`
+	Stroke   VisualizationMapStroke     `json:"stroke" yaml:"stroke"`
+	Opacity  float64                    `json:"opacity" yaml:"opacity"`
 }
 
 type VisualizationColorIntent string
@@ -780,9 +780,9 @@ const (
 )
 
 type VisualizationComboSeries struct {
-	SeriesValue string                     `json:"seriesValue"`
-	Mark        VisualizationCartesianMark `json:"mark"`
-	Axis        VisualizationAxis          `json:"axis"`
+	SeriesValue string                     `json:"seriesValue" yaml:"seriesValue"`
+	Mark        VisualizationCartesianMark `json:"mark" yaml:"mark"`
+	Axis        VisualizationAxis          `json:"axis" yaml:"axis"`
 }
 
 type VisualizationComparisonOperator string
@@ -806,10 +806,10 @@ const (
 )
 
 type VisualizationConditionalFormat struct {
-	ID     string                         `json:"id"`
-	Target VisualizationConditionalTarget `json:"target"`
-	Field  VisualizationFieldRef          `json:"field"`
-	Rule   VisualizationConditionalRule   `json:"rule"`
+	ID     string                         `json:"id" yaml:"id"`
+	Target VisualizationConditionalTarget `json:"target" yaml:"target"`
+	Field  VisualizationFieldRef          `json:"field" yaml:"field"`
+	Rule   VisualizationConditionalRule   `json:"rule" yaml:"rule"`
 }
 
 type VisualizationConditionalRuleVariant interface {
@@ -1031,12 +1031,12 @@ func (value *VisualizationConditionalRule) Base() (*VisualizationConditionalRule
 }
 
 type VisualizationConditionalRuleBase struct {
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type VisualizationConditionalStyle struct {
-	Color *VisualizationColorIntent `json:"color,omitempty"`
-	Icon  *VisualizationIconIntent  `json:"icon,omitempty"`
+	Color *VisualizationColorIntent `json:"color,omitempty" yaml:"color,omitempty"`
+	Icon  *VisualizationIconIntent  `json:"icon,omitempty" yaml:"icon,omitempty"`
 }
 
 type VisualizationConditionalTarget string
@@ -1054,14 +1054,14 @@ const (
 )
 
 type VisualizationConditionalThreshold struct {
-	Operator VisualizationComparisonOperator `json:"operator"`
-	Value    float64                         `json:"value"`
-	Style    VisualizationConditionalStyle   `json:"style"`
+	Operator VisualizationComparisonOperator `json:"operator" yaml:"operator"`
+	Value    float64                         `json:"value" yaml:"value"`
+	Style    VisualizationConditionalStyle   `json:"style" yaml:"style"`
 }
 
 type VisualizationDataBudget struct {
-	MaxRows              int64                     `json:"maxRows"`
-	RequiredCompleteness VisualizationCompleteness `json:"requiredCompleteness"`
+	MaxRows              int64                     `json:"maxRows" yaml:"maxRows"`
+	RequiredCompleteness VisualizationCompleteness `json:"requiredCompleteness" yaml:"requiredCompleteness"`
 }
 
 type VisualizationDataStateVariant interface {
@@ -1334,10 +1334,10 @@ func (value *VisualizationDataState) Base() (*VisualizationDataStateBase, error)
 }
 
 type VisualizationDataStateBase struct {
-	Kind         string `json:"kind"`
-	SpecRevision string `json:"specRevision"`
-	DataRevision int64  `json:"dataRevision"`
-	Generation   int64  `json:"generation"`
+	Kind         string `json:"kind" yaml:"kind"`
+	SpecRevision string `json:"specRevision" yaml:"specRevision"`
+	DataRevision int64  `json:"dataRevision" yaml:"dataRevision"`
+	Generation   int64  `json:"generation" yaml:"generation"`
 }
 
 type VisualizationDataStateKind string
@@ -1349,13 +1349,13 @@ const (
 )
 
 type VisualizationDataStateTransport struct {
-	SchemaVersion int32                                   `json:"schemaVersion"`
-	Encoding      VisualizationDataStateTransportEncoding `json:"encoding"`
-	Kind          VisualizationDataStateKind              `json:"kind"`
-	SpecRevision  string                                  `json:"specRevision"`
-	DataRevision  int64                                   `json:"dataRevision"`
-	Generation    int64                                   `json:"generation"`
-	Payload       string                                  `json:"payload"`
+	SchemaVersion int32                                   `json:"schemaVersion" yaml:"schemaVersion"`
+	Encoding      VisualizationDataStateTransportEncoding `json:"encoding" yaml:"encoding"`
+	Kind          VisualizationDataStateKind              `json:"kind" yaml:"kind"`
+	SpecRevision  string                                  `json:"specRevision" yaml:"specRevision"`
+	DataRevision  int64                                   `json:"dataRevision" yaml:"dataRevision"`
+	Generation    int64                                   `json:"generation" yaml:"generation"`
+	Payload       string                                  `json:"payload" yaml:"payload"`
 }
 
 type VisualizationDataStateTransportEncoding string
@@ -1378,34 +1378,34 @@ const (
 )
 
 type VisualizationDatasetSchema struct {
-	ID     string               `json:"id"`
-	Fields []VisualizationField `json:"fields"`
+	ID     string               `json:"id" yaml:"id"`
+	Fields []VisualizationField `json:"fields" yaml:"fields"`
 }
 
 type VisualizationDatumRef struct {
-	Dataset      string         `json:"dataset"`
-	DataRevision int64          `json:"dataRevision"`
-	Identity     map[string]any `json:"identity"`
-	ResetVersion *int64         `json:"resetVersion,omitempty"`
-	BlockID      *string        `json:"blockID,omitempty"`
+	Dataset      string         `json:"dataset" yaml:"dataset"`
+	DataRevision int64          `json:"dataRevision" yaml:"dataRevision"`
+	Identity     map[string]any `json:"identity" yaml:"identity"`
+	ResetVersion *int64         `json:"resetVersion,omitempty" yaml:"resetVersion,omitempty"`
+	BlockID      *string        `json:"blockID,omitempty" yaml:"blockID,omitempty"`
 }
 
 type VisualizationDensityLayer struct {
 	VisualizationGeographicLayerBase
-	Kind      string                     `json:"kind"`
-	Latitude  VisualizationFieldRef      `json:"latitude"`
-	Longitude VisualizationFieldRef      `json:"longitude"`
-	Value     *VisualizationFieldRef     `json:"value,omitempty"`
-	Color     VisualizationMapColorScale `json:"color"`
-	Heat      VisualizationMapHeatStyle  `json:"heat"`
-	Opacity   float64                    `json:"opacity"`
+	Kind      string                     `json:"kind" yaml:"kind"`
+	Latitude  VisualizationFieldRef      `json:"latitude" yaml:"latitude"`
+	Longitude VisualizationFieldRef      `json:"longitude" yaml:"longitude"`
+	Value     *VisualizationFieldRef     `json:"value,omitempty" yaml:"value,omitempty"`
+	Color     VisualizationMapColorScale `json:"color" yaml:"color"`
+	Heat      VisualizationMapHeatStyle  `json:"heat" yaml:"heat"`
+	Opacity   float64                    `json:"opacity" yaml:"opacity"`
 }
 
 type VisualizationDiagnostic struct {
-	Code     string                          `json:"code"`
-	Severity VisualizationDiagnosticSeverity `json:"severity"`
-	Message  string                          `json:"message"`
-	FieldID  *string                         `json:"fieldID,omitempty"`
+	Code     string                          `json:"code" yaml:"code"`
+	Severity VisualizationDiagnosticSeverity `json:"severity" yaml:"severity"`
+	Message  string                          `json:"message" yaml:"message"`
+	FieldID  *string                         `json:"fieldID,omitempty" yaml:"fieldID,omitempty"`
 }
 
 type VisualizationDiagnosticSeverity string
@@ -1428,47 +1428,47 @@ const (
 )
 
 type VisualizationEnvelope struct {
-	SchemaVersion    int32                               `json:"schemaVersion"`
-	VisualID         string                              `json:"visualID"`
-	RendererID       string                              `json:"rendererID"`
-	SpecRevision     string                              `json:"specRevision"`
-	Spec             VisualizationSpec                   `json:"spec"`
-	DataRevision     int64                               `json:"dataRevision"`
-	DataState        VisualizationDataState              `json:"dataState"`
-	Selection        []VisualizationSelectionEntry       `json:"selection"`
-	Highlights       []VisualizationHighlightState       `json:"highlights"`
-	SpatialSelection *VisualizationSpatialSelectionState `json:"spatialSelection,omitempty"`
-	Status           VisualizationStatus                 `json:"status"`
-	Diagnostics      []VisualizationDiagnostic           `json:"diagnostics"`
+	SchemaVersion    int32                               `json:"schemaVersion" yaml:"schemaVersion"`
+	VisualID         string                              `json:"visualID" yaml:"visualID"`
+	RendererID       string                              `json:"rendererID" yaml:"rendererID"`
+	SpecRevision     string                              `json:"specRevision" yaml:"specRevision"`
+	Spec             VisualizationSpec                   `json:"spec" yaml:"spec"`
+	DataRevision     int64                               `json:"dataRevision" yaml:"dataRevision"`
+	DataState        VisualizationDataState              `json:"dataState" yaml:"dataState"`
+	Selection        []VisualizationSelectionEntry       `json:"selection" yaml:"selection"`
+	Highlights       []VisualizationHighlightState       `json:"highlights" yaml:"highlights"`
+	SpatialSelection *VisualizationSpatialSelectionState `json:"spatialSelection,omitempty" yaml:"spatialSelection,omitempty"`
+	Status           VisualizationStatus                 `json:"status" yaml:"status"`
+	Diagnostics      []VisualizationDiagnostic           `json:"diagnostics" yaml:"diagnostics"`
 }
 
 type VisualizationEventAnnotation struct {
-	ID          string                      `json:"id"`
-	Axis        VisualizationCartesianAxis  `json:"axis"`
-	Value       VisualizationReferenceValue `json:"value"`
-	Label       string                      `json:"label"`
-	Description *string                     `json:"description,omitempty"`
-	Tone        VisualizationTone           `json:"tone"`
+	ID          string                      `json:"id" yaml:"id"`
+	Axis        VisualizationCartesianAxis  `json:"axis" yaml:"axis"`
+	Value       VisualizationReferenceValue `json:"value" yaml:"value"`
+	Label       string                      `json:"label" yaml:"label"`
+	Description *string                     `json:"description,omitempty" yaml:"description,omitempty"`
+	Tone        VisualizationTone           `json:"tone" yaml:"tone"`
 }
 
 type VisualizationField struct {
-	ID         string                           `json:"id"`
-	SourceRef  *string                          `json:"sourceRef,omitempty"`
-	Role       VisualizationFieldRole           `json:"role"`
-	DataType   VisualizationDataType            `json:"dataType"`
-	Nullable   bool                             `json:"nullable"`
-	Label      string                           `json:"label"`
-	Format     *VisualizationFormat             `json:"format,omitempty"`
-	Time       *VisualizationTemporalMetadata   `json:"time,omitempty"`
-	Geographic *VisualizationGeographicMetadata `json:"geographic,omitempty"`
-	Grid       *VisualizationGridFieldMetadata  `json:"grid,omitempty"`
-	Provenance *VisualizationFieldProvenance    `json:"provenance,omitempty"`
+	ID         string                           `json:"id" yaml:"id"`
+	SourceRef  *string                          `json:"sourceRef,omitempty" yaml:"sourceRef,omitempty"`
+	Role       VisualizationFieldRole           `json:"role" yaml:"role"`
+	DataType   VisualizationDataType            `json:"dataType" yaml:"dataType"`
+	Nullable   bool                             `json:"nullable" yaml:"nullable"`
+	Label      string                           `json:"label" yaml:"label"`
+	Format     *VisualizationFormat             `json:"format,omitempty" yaml:"format,omitempty"`
+	Time       *VisualizationTemporalMetadata   `json:"time,omitempty" yaml:"time,omitempty"`
+	Geographic *VisualizationGeographicMetadata `json:"geographic,omitempty" yaml:"geographic,omitempty"`
+	Grid       *VisualizationGridFieldMetadata  `json:"grid,omitempty" yaml:"grid,omitempty"`
+	Provenance *VisualizationFieldProvenance    `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 }
 
 type VisualizationFieldProvenance struct {
-	Kind          VisualizationFieldProvenanceKind `json:"kind"`
-	SourceRefs    []string                         `json:"sourceRefs"`
-	CalculationID *string                          `json:"calculationID,omitempty"`
+	Kind          VisualizationFieldProvenanceKind `json:"kind" yaml:"kind"`
+	SourceRefs    []string                         `json:"sourceRefs" yaml:"sourceRefs"`
+	CalculationID *string                          `json:"calculationID,omitempty" yaml:"calculationID,omitempty"`
 }
 
 type VisualizationFieldProvenanceKind string
@@ -1480,8 +1480,8 @@ const (
 )
 
 type VisualizationFieldRef struct {
-	Dataset string `json:"dataset"`
-	Field   string `json:"field"`
+	Dataset string `json:"dataset" yaml:"dataset"`
+	Field   string `json:"field" yaml:"field"`
 }
 
 type VisualizationFieldRole string
@@ -1775,7 +1775,7 @@ func (value *VisualizationFormat) Base() (*VisualizationFormatBase, error) {
 }
 
 type VisualizationFormatBase struct {
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type VisualizationGeographicLayerVariant interface {
@@ -2228,29 +2228,29 @@ func (value *VisualizationGeographicLayer) Base() (*VisualizationGeographicLayer
 }
 
 type VisualizationGeographicLayerBase struct {
-	ID         string                        `json:"id"`
-	Kind       string                        `json:"kind"`
-	Label      *VisualizationFieldRef        `json:"label,omitempty"`
-	Tooltip    []VisualizationFieldRef       `json:"tooltip"`
-	Position   VisualizationMapLayerPosition `json:"position"`
-	Visibility VisualizationMapVisibility    `json:"visibility"`
+	ID         string                        `json:"id" yaml:"id"`
+	Kind       string                        `json:"kind" yaml:"kind"`
+	Label      *VisualizationFieldRef        `json:"label,omitempty" yaml:"label,omitempty"`
+	Tooltip    []VisualizationFieldRef       `json:"tooltip" yaml:"tooltip"`
+	Position   VisualizationMapLayerPosition `json:"position" yaml:"position"`
+	Visibility VisualizationMapVisibility    `json:"visibility" yaml:"visibility"`
 }
 
 type VisualizationGeographicMetadata struct {
-	IdentifierSystem string `json:"identifierSystem"`
-	GeometryAsset    string `json:"geometryAsset"`
-	JoinField        string `json:"joinField"`
-	UnmatchedPolicy  string `json:"unmatchedPolicy"`
+	IdentifierSystem string `json:"identifierSystem" yaml:"identifierSystem"`
+	GeometryAsset    string `json:"geometryAsset" yaml:"geometryAsset"`
+	JoinField        string `json:"joinField" yaml:"joinField"`
+	UnmatchedPolicy  string `json:"unmatchedPolicy" yaml:"unmatchedPolicy"`
 }
 
 type VisualizationGeometryAsset struct {
-	ID               string `json:"id"`
-	Digest           string `json:"digest"`
-	Source           string `json:"source"`
-	License          string `json:"license"`
-	Attribution      string `json:"attribution"`
-	IdentifierSystem string `json:"identifierSystem"`
-	URL              string `json:"url"`
+	ID               string `json:"id" yaml:"id"`
+	Digest           string `json:"digest" yaml:"digest"`
+	Source           string `json:"source" yaml:"source"`
+	License          string `json:"license" yaml:"license"`
+	Attribution      string `json:"attribution" yaml:"attribution"`
+	IdentifierSystem string `json:"identifierSystem" yaml:"identifierSystem"`
+	URL              string `json:"url" yaml:"url"`
 }
 
 type VisualizationGraphFocus string
@@ -2261,21 +2261,21 @@ const (
 )
 
 type VisualizationGridFieldMetadata struct {
-	Group       *string                            `json:"group,omitempty"`
-	Metric      *string                            `json:"metric,omitempty"`
-	ColumnValue *string                            `json:"columnValue,omitempty"`
-	Formatting  []TableVisualizationFormattingRule `json:"formatting"`
+	Group       *string                            `json:"group,omitempty" yaml:"group,omitempty"`
+	Metric      *string                            `json:"metric,omitempty" yaml:"metric,omitempty"`
+	ColumnValue *string                            `json:"columnValue,omitempty" yaml:"columnValue,omitempty"`
+	Formatting  []TableVisualizationFormattingRule `json:"formatting" yaml:"formatting"`
 }
 
 type VisualizationHeatLayer struct {
 	VisualizationGeographicLayerBase
-	Kind      string                     `json:"kind"`
-	Latitude  VisualizationFieldRef      `json:"latitude"`
-	Longitude VisualizationFieldRef      `json:"longitude"`
-	Value     *VisualizationFieldRef     `json:"value,omitempty"`
-	Color     VisualizationMapColorScale `json:"color"`
-	Heat      VisualizationMapHeatStyle  `json:"heat"`
-	Opacity   float64                    `json:"opacity"`
+	Kind      string                     `json:"kind" yaml:"kind"`
+	Latitude  VisualizationFieldRef      `json:"latitude" yaml:"latitude"`
+	Longitude VisualizationFieldRef      `json:"longitude" yaml:"longitude"`
+	Value     *VisualizationFieldRef     `json:"value,omitempty" yaml:"value,omitempty"`
+	Color     VisualizationMapColorScale `json:"color" yaml:"color"`
+	Heat      VisualizationMapHeatStyle  `json:"heat" yaml:"heat"`
+	Opacity   float64                    `json:"opacity" yaml:"opacity"`
 }
 
 type VisualizationHierarchyLayout string
@@ -2296,26 +2296,26 @@ const (
 )
 
 type VisualizationHighlightEntry struct {
-	Mappings []VisualizationHighlightMapping `json:"mappings"`
-	Label    string                          `json:"label"`
+	Mappings []VisualizationHighlightMapping `json:"mappings" yaml:"mappings"`
+	Label    string                          `json:"label" yaml:"label"`
 }
 
 type VisualizationHighlightMapping struct {
-	TargetFieldID   string  `json:"targetFieldID"`
-	TargetDatasetID *string `json:"targetDatasetID,omitempty"`
-	Grain           *string `json:"grain,omitempty"`
-	Value           any     `json:"value"`
-	Label           *string `json:"label,omitempty"`
+	TargetFieldID   string  `json:"targetFieldID" yaml:"targetFieldID"`
+	TargetDatasetID *string `json:"targetDatasetID,omitempty" yaml:"targetDatasetID,omitempty"`
+	Grain           *string `json:"grain,omitempty" yaml:"grain,omitempty"`
+	Value           any     `json:"value" yaml:"value"`
+	Label           *string `json:"label,omitempty" yaml:"label,omitempty"`
 }
 
 type VisualizationHighlightState struct {
-	SourceVisualID          string                                 `json:"sourceVisualID"`
-	InteractionID           string                                 `json:"interactionID"`
-	Entries                 []VisualizationHighlightEntry          `json:"entries"`
-	SpatialGeometry         *VisualizationSpatialSelectionGeometry `json:"spatialGeometry,omitempty"`
-	SpatialLatitudeFieldID  *string                                `json:"spatialLatitudeFieldID,omitempty"`
-	SpatialLongitudeFieldID *string                                `json:"spatialLongitudeFieldID,omitempty"`
-	Label                   string                                 `json:"label"`
+	SourceVisualID          string                                 `json:"sourceVisualID" yaml:"sourceVisualID"`
+	InteractionID           string                                 `json:"interactionID" yaml:"interactionID"`
+	Entries                 []VisualizationHighlightEntry          `json:"entries" yaml:"entries"`
+	SpatialGeometry         *VisualizationSpatialSelectionGeometry `json:"spatialGeometry,omitempty" yaml:"spatialGeometry,omitempty"`
+	SpatialLatitudeFieldID  *string                                `json:"spatialLatitudeFieldID,omitempty" yaml:"spatialLatitudeFieldID,omitempty"`
+	SpatialLongitudeFieldID *string                                `json:"spatialLongitudeFieldID,omitempty" yaml:"spatialLongitudeFieldID,omitempty"`
+	Label                   string                                 `json:"label" yaml:"label"`
 }
 
 type VisualizationIconIntent string
@@ -2332,22 +2332,22 @@ const (
 )
 
 type VisualizationInlineDataset struct {
-	ID           string                    `json:"id"`
-	SpecRevision string                    `json:"specRevision"`
-	DataRevision int64                     `json:"dataRevision"`
-	Generation   int64                     `json:"generation"`
-	Columns      []string                  `json:"columns"`
-	Rows         [][]any                   `json:"rows"`
-	Completeness VisualizationCompleteness `json:"completeness"`
+	ID           string                    `json:"id" yaml:"id"`
+	SpecRevision string                    `json:"specRevision" yaml:"specRevision"`
+	DataRevision int64                     `json:"dataRevision" yaml:"dataRevision"`
+	Generation   int64                     `json:"generation" yaml:"generation"`
+	Columns      []string                  `json:"columns" yaml:"columns"`
+	Rows         [][]any                   `json:"rows" yaml:"rows"`
+	Completeness VisualizationCompleteness `json:"completeness" yaml:"completeness"`
 }
 
 type VisualizationInteraction struct {
-	ID                     string                            `json:"id"`
-	Kind                   VisualizationInteractionKind      `json:"kind"`
-	Mappings               []VisualizationInteractionMapping `json:"mappings"`
-	Targets                []VisualizationInteractionTarget  `json:"targets"`
-	Mode                   VisualizationSelectionMode        `json:"mode"`
-	RequiresStableIdentity bool                              `json:"requiresStableIdentity"`
+	ID                     string                            `json:"id" yaml:"id"`
+	Kind                   VisualizationInteractionKind      `json:"kind" yaml:"kind"`
+	Mappings               []VisualizationInteractionMapping `json:"mappings" yaml:"mappings"`
+	Targets                []VisualizationInteractionTarget  `json:"targets" yaml:"targets"`
+	Mode                   VisualizationSelectionMode        `json:"mode" yaml:"mode"`
+	RequiresStableIdentity bool                              `json:"requiresStableIdentity" yaml:"requiresStableIdentity"`
 }
 
 type VisualizationInteractionEffect string
@@ -2368,16 +2368,16 @@ const (
 )
 
 type VisualizationInteractionMapping struct {
-	Source          VisualizationFieldRef  `json:"source"`
-	TargetFieldID   string                 `json:"targetFieldID"`
-	TargetDatasetID *string                `json:"targetDatasetID,omitempty"`
-	Grain           *string                `json:"grain,omitempty"`
-	Label           *VisualizationFieldRef `json:"label,omitempty"`
+	Source          VisualizationFieldRef  `json:"source" yaml:"source"`
+	TargetFieldID   string                 `json:"targetFieldID" yaml:"targetFieldID"`
+	TargetDatasetID *string                `json:"targetDatasetID,omitempty" yaml:"targetDatasetID,omitempty"`
+	Grain           *string                `json:"grain,omitempty" yaml:"grain,omitempty"`
+	Label           *VisualizationFieldRef `json:"label,omitempty" yaml:"label,omitempty"`
 }
 
 type VisualizationInteractionTarget struct {
-	VisualID string                         `json:"visualID"`
-	Effect   VisualizationInteractionEffect `json:"effect"`
+	VisualID string                         `json:"visualID" yaml:"visualID"`
+	Effect   VisualizationInteractionEffect `json:"effect" yaml:"effect"`
 }
 
 type VisualizationKPIDeltaMode string
@@ -2411,21 +2411,21 @@ const (
 )
 
 type VisualizationKPIQualitativeRange struct {
-	Minimum *float64          `json:"minimum,omitempty"`
-	Maximum *float64          `json:"maximum,omitempty"`
-	Label   string            `json:"label"`
-	Tone    VisualizationTone `json:"tone"`
+	Minimum *float64          `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum *float64          `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Label   string            `json:"label" yaml:"label"`
+	Tone    VisualizationTone `json:"tone" yaml:"tone"`
 }
 
 type VisualizationKPITrendBinding struct {
-	Category VisualizationFieldRef `json:"category"`
-	Value    VisualizationFieldRef `json:"value"`
+	Category VisualizationFieldRef `json:"category" yaml:"category"`
+	Value    VisualizationFieldRef `json:"value" yaml:"value"`
 }
 
 type VisualizationKPIValueBinding struct {
-	Field   VisualizationFieldRef         `json:"field"`
-	Reducer VisualizationReferenceReducer `json:"reducer"`
-	Label   string                        `json:"label"`
+	Field   VisualizationFieldRef         `json:"field" yaml:"field"`
+	Reducer VisualizationReferenceReducer `json:"reducer" yaml:"reducer"`
+	Label   string                        `json:"label" yaml:"label"`
 }
 
 type VisualizationLabelDensity string
@@ -2438,11 +2438,11 @@ const (
 )
 
 type VisualizationLabelPolicy struct {
-	Density         VisualizationLabelDensity    `json:"density"`
-	Priority        []VisualizationLabelPriority `json:"priority"`
-	MaxCharacters   int32                        `json:"maxCharacters"`
-	MinimumSpacing  int32                        `json:"minimumSpacing"`
-	TooltipFallback bool                         `json:"tooltipFallback"`
+	Density         VisualizationLabelDensity    `json:"density" yaml:"density"`
+	Priority        []VisualizationLabelPriority `json:"priority" yaml:"priority"`
+	MaxCharacters   int32                        `json:"maxCharacters" yaml:"maxCharacters"`
+	MinimumSpacing  int32                        `json:"minimumSpacing" yaml:"minimumSpacing"`
+	TooltipFallback bool                         `json:"tooltipFallback" yaml:"tooltipFallback"`
 }
 
 type VisualizationLabelPosition string
@@ -2473,12 +2473,12 @@ const (
 )
 
 type VisualizationMapCamera struct {
-	Mode        VisualizationMapCameraMode `json:"mode"`
-	Center      *[]float64                 `json:"center,omitempty"`
-	Zoom        *float64                   `json:"zoom,omitempty"`
-	Padding     int32                      `json:"padding"`
-	MinimumZoom float64                    `json:"minimumZoom"`
-	MaximumZoom float64                    `json:"maximumZoom"`
+	Mode        VisualizationMapCameraMode `json:"mode" yaml:"mode"`
+	Center      *[]float64                 `json:"center,omitempty" yaml:"center,omitempty"`
+	Zoom        *float64                   `json:"zoom,omitempty" yaml:"zoom,omitempty"`
+	Padding     int32                      `json:"padding" yaml:"padding"`
+	MinimumZoom float64                    `json:"minimumZoom" yaml:"minimumZoom"`
+	MaximumZoom float64                    `json:"maximumZoom" yaml:"maximumZoom"`
 }
 
 type VisualizationMapCameraMode string
@@ -2490,21 +2490,21 @@ const (
 )
 
 type VisualizationMapCluster struct {
-	Enabled       bool  `json:"enabled"`
-	Radius        int32 `json:"radius"`
-	MaximumZoom   int32 `json:"maximumZoom"`
-	MinimumPoints int32 `json:"minimumPoints"`
-	ShowCount     bool  `json:"showCount"`
+	Enabled       bool  `json:"enabled" yaml:"enabled"`
+	Radius        int32 `json:"radius" yaml:"radius"`
+	MaximumZoom   int32 `json:"maximumZoom" yaml:"maximumZoom"`
+	MinimumPoints int32 `json:"minimumPoints" yaml:"minimumPoints"`
+	ShowCount     bool  `json:"showCount" yaml:"showCount"`
 }
 
 type VisualizationMapColorScale struct {
-	Kind           VisualizationMapColorScaleKind `json:"kind"`
-	Palette        string                         `json:"palette"`
-	Reverse        bool                           `json:"reverse"`
-	DomainMinimum  *float64                       `json:"domainMinimum,omitempty"`
-	DomainMidpoint *float64                       `json:"domainMidpoint,omitempty"`
-	DomainMaximum  *float64                       `json:"domainMaximum,omitempty"`
-	NullColor      string                         `json:"nullColor"`
+	Kind           VisualizationMapColorScaleKind `json:"kind" yaml:"kind"`
+	Palette        string                         `json:"palette" yaml:"palette"`
+	Reverse        bool                           `json:"reverse" yaml:"reverse"`
+	DomainMinimum  *float64                       `json:"domainMinimum,omitempty" yaml:"domainMinimum,omitempty"`
+	DomainMidpoint *float64                       `json:"domainMidpoint,omitempty" yaml:"domainMidpoint,omitempty"`
+	DomainMaximum  *float64                       `json:"domainMaximum,omitempty" yaml:"domainMaximum,omitempty"`
+	NullColor      string                         `json:"nullColor" yaml:"nullColor"`
 }
 
 type VisualizationMapColorScaleKind string
@@ -2516,14 +2516,14 @@ const (
 )
 
 type VisualizationMapControls struct {
-	Zoom    bool `json:"zoom"`
-	Reset   bool `json:"reset"`
-	Compass bool `json:"compass"`
+	Zoom    bool `json:"zoom" yaml:"zoom"`
+	Reset   bool `json:"reset" yaml:"reset"`
+	Compass bool `json:"compass" yaml:"compass"`
 }
 
 type VisualizationMapHeatStyle struct {
-	Radius    float64 `json:"radius"`
-	Intensity float64 `json:"intensity"`
+	Radius    float64 `json:"radius" yaml:"radius"`
+	Intensity float64 `json:"intensity" yaml:"intensity"`
 }
 
 type VisualizationMapLabelDensity string
@@ -2542,38 +2542,38 @@ const (
 )
 
 type VisualizationMapLineStyle struct {
-	Width     float64 `json:"width"`
-	Curvature float64 `json:"curvature"`
+	Width     float64 `json:"width" yaml:"width"`
+	Curvature float64 `json:"curvature" yaml:"curvature"`
 }
 
 type VisualizationMapSizeScale struct {
-	MinimumRadius float64  `json:"minimumRadius"`
-	MaximumRadius float64  `json:"maximumRadius"`
-	DomainMinimum *float64 `json:"domainMinimum,omitempty"`
-	DomainMaximum *float64 `json:"domainMaximum,omitempty"`
+	MinimumRadius float64  `json:"minimumRadius" yaml:"minimumRadius"`
+	MaximumRadius float64  `json:"maximumRadius" yaml:"maximumRadius"`
+	DomainMinimum *float64 `json:"domainMinimum,omitempty" yaml:"domainMinimum,omitempty"`
+	DomainMaximum *float64 `json:"domainMaximum,omitempty" yaml:"domainMaximum,omitempty"`
 }
 
 type VisualizationMapStroke struct {
-	Color   string  `json:"color"`
-	Width   float64 `json:"width"`
-	Opacity float64 `json:"opacity"`
+	Color   string  `json:"color" yaml:"color"`
+	Width   float64 `json:"width" yaml:"width"`
+	Opacity float64 `json:"opacity" yaml:"opacity"`
 }
 
 type VisualizationMapStyleAsset struct {
-	ID            string    `json:"id"`
-	StyleURL      string    `json:"styleUrl"`
-	StyleDigest   string    `json:"styleDigest"`
-	ArchiveURL    string    `json:"archiveUrl"`
-	ArchiveDigest string    `json:"archiveDigest"`
-	GlyphsURL     string    `json:"glyphsUrl"`
-	SpriteURL     string    `json:"spriteUrl"`
-	Source        string    `json:"source"`
-	License       string    `json:"license"`
-	Attribution   string    `json:"attribution"`
-	MinimumZoom   float64   `json:"minimumZoom"`
-	MaximumZoom   float64   `json:"maximumZoom"`
-	Bounds        []float64 `json:"bounds"`
-	LabelAnchor   string    `json:"labelAnchor"`
+	ID            string    `json:"id" yaml:"id"`
+	StyleURL      string    `json:"styleUrl" yaml:"styleUrl"`
+	StyleDigest   string    `json:"styleDigest" yaml:"styleDigest"`
+	ArchiveURL    string    `json:"archiveUrl" yaml:"archiveUrl"`
+	ArchiveDigest string    `json:"archiveDigest" yaml:"archiveDigest"`
+	GlyphsURL     string    `json:"glyphsUrl" yaml:"glyphsUrl"`
+	SpriteURL     string    `json:"spriteUrl" yaml:"spriteUrl"`
+	Source        string    `json:"source" yaml:"source"`
+	License       string    `json:"license" yaml:"license"`
+	Attribution   string    `json:"attribution" yaml:"attribution"`
+	MinimumZoom   float64   `json:"minimumZoom" yaml:"minimumZoom"`
+	MaximumZoom   float64   `json:"maximumZoom" yaml:"maximumZoom"`
+	Bounds        []float64 `json:"bounds" yaml:"bounds"`
+	LabelAnchor   string    `json:"labelAnchor" yaml:"labelAnchor"`
 }
 
 type VisualizationMapTheme string
@@ -2585,15 +2585,15 @@ const (
 )
 
 type VisualizationMapVisibility struct {
-	MinimumZoom float64 `json:"minimumZoom"`
-	MaximumZoom float64 `json:"maximumZoom"`
+	MinimumZoom float64 `json:"minimumZoom" yaml:"minimumZoom"`
+	MaximumZoom float64 `json:"maximumZoom" yaml:"maximumZoom"`
 }
 
 type VisualizationMetadataBindings struct {
-	Title       *VisualizationTextBinding `json:"title,omitempty"`
-	Subtitle    *VisualizationTextBinding `json:"subtitle,omitempty"`
-	Description *VisualizationTextBinding `json:"description,omitempty"`
-	Summary     *VisualizationTextBinding `json:"summary,omitempty"`
+	Title       *VisualizationTextBinding `json:"title,omitempty" yaml:"title,omitempty"`
+	Subtitle    *VisualizationTextBinding `json:"subtitle,omitempty" yaml:"subtitle,omitempty"`
+	Description *VisualizationTextBinding `json:"description,omitempty" yaml:"description,omitempty"`
+	Summary     *VisualizationTextBinding `json:"summary,omitempty" yaml:"summary,omitempty"`
 }
 
 type VisualizationOrientation string
@@ -2605,17 +2605,17 @@ const (
 
 type VisualizationPathLayer struct {
 	VisualizationGeographicLayerBase
-	Kind      string                     `json:"kind"`
-	Latitude  VisualizationFieldRef      `json:"latitude"`
-	Longitude VisualizationFieldRef      `json:"longitude"`
-	Path      VisualizationFieldRef      `json:"path"`
-	Order     VisualizationFieldRef      `json:"order"`
-	Value     *VisualizationFieldRef     `json:"value,omitempty"`
-	Category  *VisualizationFieldRef     `json:"category,omitempty"`
-	Color     VisualizationMapColorScale `json:"color"`
-	Stroke    VisualizationMapStroke     `json:"stroke"`
-	Line      VisualizationMapLineStyle  `json:"line"`
-	Opacity   float64                    `json:"opacity"`
+	Kind      string                     `json:"kind" yaml:"kind"`
+	Latitude  VisualizationFieldRef      `json:"latitude" yaml:"latitude"`
+	Longitude VisualizationFieldRef      `json:"longitude" yaml:"longitude"`
+	Path      VisualizationFieldRef      `json:"path" yaml:"path"`
+	Order     VisualizationFieldRef      `json:"order" yaml:"order"`
+	Value     *VisualizationFieldRef     `json:"value,omitempty" yaml:"value,omitempty"`
+	Category  *VisualizationFieldRef     `json:"category,omitempty" yaml:"category,omitempty"`
+	Color     VisualizationMapColorScale `json:"color" yaml:"color"`
+	Stroke    VisualizationMapStroke     `json:"stroke" yaml:"stroke"`
+	Line      VisualizationMapLineStyle  `json:"line" yaml:"line"`
+	Opacity   float64                    `json:"opacity" yaml:"opacity"`
 }
 
 type VisualizationPointBrushGesture string
@@ -2642,16 +2642,16 @@ const (
 
 type VisualizationPointLayer struct {
 	VisualizationGeographicLayerBase
-	Kind      string                     `json:"kind"`
-	Latitude  VisualizationFieldRef      `json:"latitude"`
-	Longitude VisualizationFieldRef      `json:"longitude"`
-	Value     *VisualizationFieldRef     `json:"value,omitempty"`
-	Category  *VisualizationFieldRef     `json:"category,omitempty"`
-	Size      VisualizationMapSizeScale  `json:"size"`
-	Color     VisualizationMapColorScale `json:"color"`
-	Stroke    VisualizationMapStroke     `json:"stroke"`
-	Cluster   VisualizationMapCluster    `json:"cluster"`
-	Opacity   float64                    `json:"opacity"`
+	Kind      string                     `json:"kind" yaml:"kind"`
+	Latitude  VisualizationFieldRef      `json:"latitude" yaml:"latitude"`
+	Longitude VisualizationFieldRef      `json:"longitude" yaml:"longitude"`
+	Value     *VisualizationFieldRef     `json:"value,omitempty" yaml:"value,omitempty"`
+	Category  *VisualizationFieldRef     `json:"category,omitempty" yaml:"category,omitempty"`
+	Size      VisualizationMapSizeScale  `json:"size" yaml:"size"`
+	Color     VisualizationMapColorScale `json:"color" yaml:"color"`
+	Stroke    VisualizationMapStroke     `json:"stroke" yaml:"stroke"`
+	Cluster   VisualizationMapCluster    `json:"cluster" yaml:"cluster"`
+	Opacity   float64                    `json:"opacity" yaml:"opacity"`
 }
 
 type VisualizationPointOverplotStrategy string
@@ -2669,9 +2669,9 @@ const (
 )
 
 type VisualizationPresentation struct {
-	Legend       VisualizationLegendPosition `json:"legend"`
-	LabelPolicy  VisualizationLabelPolicy    `json:"labelPolicy"`
-	DisplayUnits *VisualizationDisplayUnits  `json:"displayUnits,omitempty"`
+	Legend       VisualizationLegendPosition `json:"legend" yaml:"legend"`
+	LabelPolicy  VisualizationLabelPolicy    `json:"labelPolicy" yaml:"labelPolicy"`
+	DisplayUnits *VisualizationDisplayUnits  `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 }
 
 type VisualizationProportionalMark string
@@ -2683,29 +2683,29 @@ const (
 )
 
 type VisualizationReferenceBand struct {
-	ID    string                      `json:"id"`
-	Axis  VisualizationCartesianAxis  `json:"axis"`
-	From  VisualizationReferenceValue `json:"from"`
-	To    VisualizationReferenceValue `json:"to"`
-	Label *string                     `json:"label,omitempty"`
-	Tone  VisualizationTone           `json:"tone"`
+	ID    string                      `json:"id" yaml:"id"`
+	Axis  VisualizationCartesianAxis  `json:"axis" yaml:"axis"`
+	From  VisualizationReferenceValue `json:"from" yaml:"from"`
+	To    VisualizationReferenceValue `json:"to" yaml:"to"`
+	Label *string                     `json:"label,omitempty" yaml:"label,omitempty"`
+	Tone  VisualizationTone           `json:"tone" yaml:"tone"`
 }
 
 type VisualizationReferenceLayer struct {
 	VisualizationGeographicLayerBase
-	Kind     string                     `json:"kind"`
-	Geometry VisualizationGeometryAsset `json:"geometry"`
-	Color    VisualizationMapColorScale `json:"color"`
-	Stroke   VisualizationMapStroke     `json:"stroke"`
-	Opacity  float64                    `json:"opacity"`
+	Kind     string                     `json:"kind" yaml:"kind"`
+	Geometry VisualizationGeometryAsset `json:"geometry" yaml:"geometry"`
+	Color    VisualizationMapColorScale `json:"color" yaml:"color"`
+	Stroke   VisualizationMapStroke     `json:"stroke" yaml:"stroke"`
+	Opacity  float64                    `json:"opacity" yaml:"opacity"`
 }
 
 type VisualizationReferenceLine struct {
-	ID    string                      `json:"id"`
-	Axis  VisualizationCartesianAxis  `json:"axis"`
-	Value VisualizationReferenceValue `json:"value"`
-	Label *string                     `json:"label,omitempty"`
-	Tone  VisualizationTone           `json:"tone"`
+	ID    string                      `json:"id" yaml:"id"`
+	Axis  VisualizationCartesianAxis  `json:"axis" yaml:"axis"`
+	Value VisualizationReferenceValue `json:"value" yaml:"value"`
+	Label *string                     `json:"label,omitempty" yaml:"label,omitempty"`
+	Tone  VisualizationTone           `json:"tone" yaml:"tone"`
 }
 
 type VisualizationReferenceReducer string
@@ -2914,12 +2914,12 @@ func (value *VisualizationReferenceValue) Base() (*VisualizationReferenceValueBa
 }
 
 type VisualizationReferenceValueBase struct {
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type VisualizationSelectionEntry struct {
-	Datum VisualizationDatumRef `json:"datum"`
-	Label *string               `json:"label,omitempty"`
+	Datum VisualizationDatumRef `json:"datum" yaml:"datum"`
+	Label *string               `json:"label,omitempty" yaml:"label,omitempty"`
 }
 
 type VisualizationSelectionMode string
@@ -2930,14 +2930,14 @@ const (
 )
 
 type VisualizationSeriesIntent struct {
-	Value string                    `json:"value"`
-	Order *int32                    `json:"order,omitempty"`
-	Color *VisualizationColorIntent `json:"color,omitempty"`
+	Value string                    `json:"value" yaml:"value"`
+	Order *int32                    `json:"order,omitempty" yaml:"order,omitempty"`
+	Color *VisualizationColorIntent `json:"color,omitempty" yaml:"color,omitempty"`
 }
 
 type VisualizationSort struct {
-	Field     VisualizationFieldRef      `json:"field"`
-	Direction VisualizationSortDirection `json:"direction"`
+	Field     VisualizationFieldRef      `json:"field" yaml:"field"`
+	Direction VisualizationSortDirection `json:"direction" yaml:"direction"`
 }
 
 type VisualizationSortDirection string
@@ -2948,60 +2948,60 @@ const (
 )
 
 type VisualizationSpatialBounds struct {
-	West  float64 `json:"west"`
-	South float64 `json:"south"`
-	East  float64 `json:"east"`
-	North float64 `json:"north"`
+	West  float64 `json:"west" yaml:"west"`
+	South float64 `json:"south" yaml:"south"`
+	East  float64 `json:"east" yaml:"east"`
+	North float64 `json:"north" yaml:"north"`
 }
 
 type VisualizationSpatialBoxSelection struct {
 	VisualizationSpatialSelectionGeometryBase
-	Kind   string                     `json:"kind"`
-	Bounds VisualizationSpatialBounds `json:"bounds"`
+	Kind   string                     `json:"kind" yaml:"kind"`
+	Bounds VisualizationSpatialBounds `json:"bounds" yaml:"bounds"`
 }
 
 type VisualizationSpatialCoordinate struct {
-	Longitude float64 `json:"longitude"`
-	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude" yaml:"longitude"`
+	Latitude  float64 `json:"latitude" yaml:"latitude"`
 }
 
 type VisualizationSpatialFieldMapping struct {
-	Source          VisualizationFieldRef `json:"source"`
-	TargetFieldID   string                `json:"targetFieldID"`
-	TargetDatasetID *string               `json:"targetDatasetID,omitempty"`
+	Source          VisualizationFieldRef `json:"source" yaml:"source"`
+	TargetFieldID   string                `json:"targetFieldID" yaml:"targetFieldID"`
+	TargetDatasetID *string               `json:"targetDatasetID,omitempty" yaml:"targetDatasetID,omitempty"`
 }
 
 type VisualizationSpatialLassoSelection struct {
 	VisualizationSpatialSelectionGeometryBase
-	Kind   string                           `json:"kind"`
-	Points []VisualizationSpatialCoordinate `json:"points"`
+	Kind   string                           `json:"kind" yaml:"kind"`
+	Points []VisualizationSpatialCoordinate `json:"points" yaml:"points"`
 }
 
 type VisualizationSpatialRadiusSelection struct {
 	VisualizationSpatialSelectionGeometryBase
-	Kind         string                         `json:"kind"`
-	Center       VisualizationSpatialCoordinate `json:"center"`
-	RadiusMeters float64                        `json:"radiusMeters"`
+	Kind         string                         `json:"kind" yaml:"kind"`
+	Center       VisualizationSpatialCoordinate `json:"center" yaml:"center"`
+	RadiusMeters float64                        `json:"radiusMeters" yaml:"radiusMeters"`
 }
 
 type VisualizationSpatialScaleDomain struct {
-	Field   string   `json:"field"`
-	Minimum *float64 `json:"minimum,omitempty"`
-	Maximum *float64 `json:"maximum,omitempty"`
-	Total   *float64 `json:"total,omitempty"`
+	Field   string   `json:"field" yaml:"field"`
+	Minimum *float64 `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum *float64 `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Total   *float64 `json:"total,omitempty" yaml:"total,omitempty"`
 }
 
 type VisualizationSpatialSelectionCommand struct {
-	VisualID            string                                 `json:"visualID"`
-	SpecRevision        string                                 `json:"specRevision"`
-	DataRevision        int64                                  `json:"dataRevision"`
-	ServingStateID      string                                 `json:"servingStateID"`
-	FilterRevision      int64                                  `json:"filterRevision"`
-	InteractionRevision int64                                  `json:"interactionRevision"`
-	InteractionID       string                                 `json:"interactionID"`
-	Action              string                                 `json:"action"`
-	Gesture             VisualizationSpatialSelectionGesture   `json:"gesture"`
-	Geometry            *VisualizationSpatialSelectionGeometry `json:"geometry,omitempty"`
+	VisualID            string                                 `json:"visualID" yaml:"visualID"`
+	SpecRevision        string                                 `json:"specRevision" yaml:"specRevision"`
+	DataRevision        int64                                  `json:"dataRevision" yaml:"dataRevision"`
+	ServingStateID      string                                 `json:"servingStateID" yaml:"servingStateID"`
+	FilterRevision      int64                                  `json:"filterRevision" yaml:"filterRevision"`
+	InteractionRevision int64                                  `json:"interactionRevision" yaml:"interactionRevision"`
+	InteractionID       string                                 `json:"interactionID" yaml:"interactionID"`
+	Action              string                                 `json:"action" yaml:"action"`
+	Gesture             VisualizationSpatialSelectionGesture   `json:"gesture" yaml:"gesture"`
+	Geometry            *VisualizationSpatialSelectionGeometry `json:"geometry,omitempty" yaml:"geometry,omitempty"`
 }
 
 type VisualizationSpatialSelectionGeometryVariant interface {
@@ -3199,7 +3199,7 @@ func (value *VisualizationSpatialSelectionGeometry) Base() (*VisualizationSpatia
 }
 
 type VisualizationSpatialSelectionGeometryBase struct {
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type VisualizationSpatialSelectionGesture string
@@ -3211,17 +3211,17 @@ const (
 )
 
 type VisualizationSpatialSelectionInteraction struct {
-	ID        string                                 `json:"id"`
-	Gestures  []VisualizationSpatialSelectionGesture `json:"gestures"`
-	Latitude  VisualizationSpatialFieldMapping       `json:"latitude"`
-	Longitude VisualizationSpatialFieldMapping       `json:"longitude"`
-	Targets   []VisualizationInteractionTarget       `json:"targets"`
+	ID        string                                 `json:"id" yaml:"id"`
+	Gestures  []VisualizationSpatialSelectionGesture `json:"gestures" yaml:"gestures"`
+	Latitude  VisualizationSpatialFieldMapping       `json:"latitude" yaml:"latitude"`
+	Longitude VisualizationSpatialFieldMapping       `json:"longitude" yaml:"longitude"`
+	Targets   []VisualizationInteractionTarget       `json:"targets" yaml:"targets"`
 }
 
 type VisualizationSpatialSelectionState struct {
-	VisualID      string                                `json:"visualID"`
-	InteractionID string                                `json:"interactionID"`
-	Geometry      VisualizationSpatialSelectionGeometry `json:"geometry"`
+	VisualID      string                                `json:"visualID" yaml:"visualID"`
+	InteractionID string                                `json:"interactionID" yaml:"interactionID"`
+	Geometry      VisualizationSpatialSelectionGeometry `json:"geometry" yaml:"geometry"`
 }
 
 type VisualizationSpecVariant interface {
@@ -3879,16 +3879,16 @@ func (value *VisualizationSpec) Base() (*VisualizationSpecBase, error) {
 }
 
 type VisualizationSpecBase struct {
-	Kind                  string                            `json:"kind"`
-	Title                 string                            `json:"title"`
-	Subtitle              *string                           `json:"subtitle,omitempty"`
-	Datasets              []VisualizationDatasetSchema      `json:"datasets"`
-	DataBudget            VisualizationDataBudget           `json:"dataBudget"`
-	Accessibility         VisualizationAccessibility        `json:"accessibility"`
-	Interactions          []VisualizationInteraction        `json:"interactions"`
-	ConditionalFormatting *[]VisualizationConditionalFormat `json:"conditionalFormatting,omitempty"`
-	MetadataBindings      *VisualizationMetadataBindings    `json:"metadataBindings,omitempty"`
-	Calculations          *[]VisualizationCalculation       `json:"calculations,omitempty"`
+	Kind                  string                            `json:"kind" yaml:"kind"`
+	Title                 string                            `json:"title" yaml:"title"`
+	Subtitle              *string                           `json:"subtitle,omitempty" yaml:"subtitle,omitempty"`
+	Datasets              []VisualizationDatasetSchema      `json:"datasets" yaml:"datasets"`
+	DataBudget            VisualizationDataBudget           `json:"dataBudget" yaml:"dataBudget"`
+	Accessibility         VisualizationAccessibility        `json:"accessibility" yaml:"accessibility"`
+	Interactions          []VisualizationInteraction        `json:"interactions" yaml:"interactions"`
+	ConditionalFormatting *[]VisualizationConditionalFormat `json:"conditionalFormatting,omitempty" yaml:"conditionalFormatting,omitempty"`
+	MetadataBindings      *VisualizationMetadataBindings    `json:"metadataBindings,omitempty" yaml:"metadataBindings,omitempty"`
+	Calculations          *[]VisualizationCalculation       `json:"calculations,omitempty" yaml:"calculations,omitempty"`
 }
 
 type VisualizationStackingMode string
@@ -3900,8 +3900,8 @@ const (
 )
 
 type VisualizationStatus struct {
-	Kind    VisualizationStatusKind `json:"kind"`
-	Message *string                 `json:"message,omitempty"`
+	Kind    VisualizationStatusKind `json:"kind" yaml:"kind"`
+	Message *string                 `json:"message,omitempty" yaml:"message,omitempty"`
 }
 
 type VisualizationStatusKind string
@@ -3923,24 +3923,24 @@ const (
 )
 
 type VisualizationTemporalMetadata struct {
-	Grain     string                       `json:"grain"`
-	Timezone  string                       `json:"timezone"`
-	Calendar  string                       `json:"calendar"`
-	WeekStart VisualizationWeekStart       `json:"weekStart"`
-	Meaning   VisualizationTemporalMeaning `json:"meaning"`
+	Grain     string                       `json:"grain" yaml:"grain"`
+	Timezone  string                       `json:"timezone" yaml:"timezone"`
+	Calendar  string                       `json:"calendar" yaml:"calendar"`
+	WeekStart VisualizationWeekStart       `json:"weekStart" yaml:"weekStart"`
+	Meaning   VisualizationTemporalMeaning `json:"meaning" yaml:"meaning"`
 }
 
 type VisualizationTextBinding struct {
-	Field    VisualizationFieldRef         `json:"field"`
-	Reducer  VisualizationReferenceReducer `json:"reducer"`
-	Prefix   string                        `json:"prefix"`
-	Suffix   string                        `json:"suffix"`
-	Fallback string                        `json:"fallback"`
+	Field    VisualizationFieldRef         `json:"field" yaml:"field"`
+	Reducer  VisualizationReferenceReducer `json:"reducer" yaml:"reducer"`
+	Prefix   string                        `json:"prefix" yaml:"prefix"`
+	Suffix   string                        `json:"suffix" yaml:"suffix"`
+	Fallback string                        `json:"fallback" yaml:"fallback"`
 }
 
 type VisualizationThreshold struct {
-	Value float64           `json:"value"`
-	Tone  VisualizationTone `json:"tone"`
+	Value float64           `json:"value" yaml:"value"`
+	Tone  VisualizationTone `json:"tone" yaml:"tone"`
 }
 
 type VisualizationTone string
@@ -3966,35 +3966,35 @@ const (
 )
 
 type VisualizationWindowBlock struct {
-	ID           string              `json:"id"`
-	Start        int64               `json:"start"`
-	Rows         [][]any             `json:"rows"`
-	RequestSeq   int64               `json:"requestSeq"`
-	ResetVersion int64               `json:"resetVersion"`
-	Sort         []VisualizationSort `json:"sort"`
+	ID           string              `json:"id" yaml:"id"`
+	Start        int64               `json:"start" yaml:"start"`
+	Rows         [][]any             `json:"rows" yaml:"rows"`
+	RequestSeq   int64               `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion int64               `json:"resetVersion" yaml:"resetVersion"`
+	Sort         []VisualizationSort `json:"sort" yaml:"sort"`
 }
 
 type VisualizationWindowRequest struct {
-	VisualID     string              `json:"visualID"`
-	SpecRevision string              `json:"specRevision"`
-	DataRevision int64               `json:"dataRevision"`
-	RequestSeq   int64               `json:"requestSeq"`
-	ResetVersion int64               `json:"resetVersion"`
-	Start        int64               `json:"start"`
-	Limit        int64               `json:"limit"`
-	Sort         []VisualizationSort `json:"sort"`
-	BlockID      string              `json:"blockID"`
+	VisualID     string              `json:"visualID" yaml:"visualID"`
+	SpecRevision string              `json:"specRevision" yaml:"specRevision"`
+	DataRevision int64               `json:"dataRevision" yaml:"dataRevision"`
+	RequestSeq   int64               `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion int64               `json:"resetVersion" yaml:"resetVersion"`
+	Start        int64               `json:"start" yaml:"start"`
+	Limit        int64               `json:"limit" yaml:"limit"`
+	Sort         []VisualizationSort `json:"sort" yaml:"sort"`
+	BlockID      string              `json:"blockID" yaml:"blockID"`
 }
 
 type WindowedVisualizationDataState struct {
 	VisualizationDataStateBase
-	Kind          string                              `json:"kind"`
-	Schema        VisualizationDatasetSchema          `json:"schema"`
-	Cardinality   VisualizationCardinality            `json:"cardinality"`
-	AvailableRows int64                               `json:"availableRows"`
-	RowCap        int64                               `json:"rowCap"`
-	ChunkSize     int64                               `json:"chunkSize"`
-	ResetVersion  int64                               `json:"resetVersion"`
-	Sort          []VisualizationSort                 `json:"sort"`
-	Blocks        map[string]VisualizationWindowBlock `json:"blocks"`
+	Kind          string                              `json:"kind" yaml:"kind"`
+	Schema        VisualizationDatasetSchema          `json:"schema" yaml:"schema"`
+	Cardinality   VisualizationCardinality            `json:"cardinality" yaml:"cardinality"`
+	AvailableRows int64                               `json:"availableRows" yaml:"availableRows"`
+	RowCap        int64                               `json:"rowCap" yaml:"rowCap"`
+	ChunkSize     int64                               `json:"chunkSize" yaml:"chunkSize"`
+	ResetVersion  int64                               `json:"resetVersion" yaml:"resetVersion"`
+	Sort          []VisualizationSort                 `json:"sort" yaml:"sort"`
+	Blocks        map[string]VisualizationWindowBlock `json:"blocks" yaml:"blocks"`
 }

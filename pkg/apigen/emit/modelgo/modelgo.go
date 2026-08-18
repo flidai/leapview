@@ -93,19 +93,20 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 		for _, propertyName := range contractutil.OrderedProperties(schema) {
 			property := schema.Properties[propertyName]
 			fieldType := gotype.Ref(property.Schema, resolveName)
+			optional := ""
 			if _, ok := required[propertyName]; !ok {
 				fieldType = "*" + fieldType
+				optional = ",omitempty"
 			}
 			b.WriteString("\t")
 			b.WriteString(fieldName(propertyName))
 			b.WriteString(" ")
 			b.WriteString(fieldType)
-			b.WriteString(" `json:\"")
-			b.WriteString(propertyName)
-			if _, ok := required[propertyName]; !ok {
-				b.WriteString(",omitempty")
-			}
-			b.WriteString("\"`\n")
+			b.WriteString(" `json:")
+			b.WriteString(quotedGoString(propertyName + optional))
+			b.WriteString(" yaml:")
+			b.WriteString(quotedGoString(propertyName + optional))
+			b.WriteString("`\n")
 		}
 		b.WriteString("}\n\n")
 	case "array":

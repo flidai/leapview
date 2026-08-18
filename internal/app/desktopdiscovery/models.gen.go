@@ -15,20 +15,20 @@ const (
 )
 
 type DesktopDiscoveryDocument struct {
-	SchemaVersion       int32                       `json:"schemaVersion"`
-	CanonicalOrigin     string                      `json:"canonicalOrigin"`
-	InstanceID          string                      `json:"instanceId"`
-	DisplayName         string                      `json:"displayName"`
-	ServerVersion       string                      `json:"serverVersion"`
-	DesktopProtocolMin  int32                       `json:"desktopProtocolMin"`
-	DesktopProtocolMax  int32                       `json:"desktopProtocolMax"`
-	AuthenticationModes []DesktopAuthenticationMode `json:"authenticationModes"`
-	Capabilities        []DesktopCapability         `json:"capabilities"`
+	SchemaVersion       int32                       `json:"schemaVersion" yaml:"schemaVersion"`
+	CanonicalOrigin     string                      `json:"canonicalOrigin" yaml:"canonicalOrigin"`
+	InstanceID          string                      `json:"instanceId" yaml:"instanceId"`
+	DisplayName         string                      `json:"displayName" yaml:"displayName"`
+	ServerVersion       string                      `json:"serverVersion" yaml:"serverVersion"`
+	DesktopProtocolMin  int32                       `json:"desktopProtocolMin" yaml:"desktopProtocolMin"`
+	DesktopProtocolMax  int32                       `json:"desktopProtocolMax" yaml:"desktopProtocolMax"`
+	AuthenticationModes []DesktopAuthenticationMode `json:"authenticationModes" yaml:"authenticationModes"`
+	Capabilities        []DesktopCapability         `json:"capabilities" yaml:"capabilities"`
 }
 
 type DesktopDiscoveryFailure struct {
-	SchemaVersion int32                       `json:"schemaVersion"`
-	Kind          DesktopDiscoveryFailureKind `json:"kind"`
+	SchemaVersion int32                       `json:"schemaVersion" yaml:"schemaVersion"`
+	Kind          DesktopDiscoveryFailureKind `json:"kind" yaml:"kind"`
 }
 
 type DesktopDiscoveryFailureKind string
