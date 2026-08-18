@@ -16,6 +16,10 @@ go run ./internal/app/tools/signalcontracts
 go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target desktop-discovery-contracts
 go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target desktop-discovery-contracts
 
+go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target data-resource-contracts
+go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target data-resource-contracts
+go run ./internal/project/contracts/generate
+
 go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target visualization-ir
 go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target visualization-ir
 

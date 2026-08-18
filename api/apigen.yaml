@@ -102,6 +102,15 @@ targets:
     go_models_out: ../internal/agent/contracts/models.gen.go
     go_models_package: contracts
     json_schema_out: ../internal/agent/contracts/gen/agent-tools.schema.json
+  - name: data-resource-contracts
+    kind: contracts
+    typespec_dir: .
+    typespec_entrypoint: data-resources/main.tsp
+    ir_out: gen/data-resources-ir.json
+    go_models_out: ../internal/project/contracts/models.gen.go
+    go_models_package: contracts
+    ts_out: ../web/generated/data-resources/index.ts
+    json_schema_out: ../internal/project/contracts/gen/data-resources.schema.json
   - name: desktop-discovery-contracts
     kind: contracts
     typespec_dir: .

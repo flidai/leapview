@@ -12,8 +12,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 )
 
@@ -69,12 +72,102 @@ func DecodeResource(kind Kind, filename string, content []byte, destination any)
 	if value.Kind() != reflect.Pointer || value.IsNil() {
 		return resourceDiagnostic(filename, nil, "schema.decode", "destination must be a non-nil pointer")
 	}
+	// Generated resource roots are selected by a compile-time type switch. This
+	// keeps the generated DTOs as the only public contract and prevents a
+	// caller from decoding one resource kind into another kind's envelope.
+	switch destination := destination.(type) {
+	case *projectcontracts.Connection:
+		if kind != KindConnection {
+			return resourceDiagnostic(filename, nil, "schema.decode", "Connection destination requires kind connection")
+		}
+		return decodeGeneratedResource(kind, filename, content, destination)
+	case *projectcontracts.Source:
+		if kind != KindSource {
+			return resourceDiagnostic(filename, nil, "schema.decode", "Source destination requires kind source")
+		}
+		return decodeGeneratedResource(kind, filename, content, destination)
+	case *projectcontracts.Model:
+		if kind != KindModel {
+			return resourceDiagnostic(filename, nil, "schema.decode", "Model destination requires kind model")
+		}
+		return decodeGeneratedResource(kind, filename, content, destination)
+	}
 	normalized, err := NormalizeResource(kind, filename, content)
 	if err != nil {
 		return err
 	}
 	if err := json.Unmarshal(normalized, destination); err != nil {
 		return resourceDiagnostic(filename, nil, "schema.decode", err.Error())
+	}
+	return nil
+}
+
+func decodeGeneratedResource(kind Kind, filename string, content []byte, destination any) error {
+	if kind != KindConnection && kind != KindSource && kind != KindModel {
+		return resourceDiagnostic(filename, nil, "schema.decode", "generated decoding is only available for Connection, Source, and Model")
+	}
+	root, err := parseResourceDocument(filename, content)
+	if err != nil {
+		return err
+	}
+	if err := checkResourceNode(filename, root); err != nil {
+		return err
+	}
+	if err := checkJSONNumbers(filename, content, root); err != nil {
+		return err
+	}
+	normalizedValue, err := normalizeResourceNode(filename, root)
+	if err != nil {
+		return err
+	}
+	normalized, err := json.Marshal(normalizedValue)
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.normalize", err.Error())
+	}
+	if err := validateGeneratedJSON(filename, root, normalized); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(normalized, destination); err != nil {
+		return resourceDiagnostic(filename, root, "schema.decode", err.Error())
+	}
+	return nil
+}
+
+var (
+	generatedSchemaOnce sync.Once
+	generatedSchema     *jsonschema.Schema
+	generatedSchemaErr  error
+)
+
+func compiledGeneratedSchema() (*jsonschema.Schema, error) {
+	generatedSchemaOnce.Do(func() {
+		var schemaDocument any
+		if err := json.Unmarshal(projectcontracts.DataResourcesSchema, &schemaDocument); err != nil {
+			generatedSchemaErr = fmt.Errorf("decode generated data-resource schema: %w", err)
+			return
+		}
+		compiler := jsonschema.NewCompiler()
+		const schemaURL = "https://leapview.dev/schemas/data-resources.schema.json"
+		if err := compiler.AddResource(schemaURL, schemaDocument); err != nil {
+			generatedSchemaErr = fmt.Errorf("register generated data-resource schema: %w", err)
+			return
+		}
+		generatedSchema, generatedSchemaErr = compiler.Compile(schemaURL)
+	})
+	return generatedSchema, generatedSchemaErr
+}
+
+func validateGeneratedJSON(filename string, root *yaml.Node, content []byte) error {
+	schema, err := compiledGeneratedSchema()
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", err.Error())
+	}
+	var value any
+	if err := json.Unmarshal(content, &value); err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", "decode normalized generated resource: "+err.Error())
+	}
+	if err := schema.Validate(value); err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", err.Error())
 	}
 	return nil
 }

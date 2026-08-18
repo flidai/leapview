@@ -182,7 +182,7 @@ tasks:
       - task: docs:generate
       - task: docs:check
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools internal/agent/contracts schemas/config schemas/desktop schemas/json)"
+        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
         test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
       - task: site:build
       - bun run test:docs-diagrams
@@ -312,6 +312,7 @@ tasks:
       - task: config:generate
       - task: api:generate
       - task: agent-contracts:generate
+      - task: data-resource-contracts:generate
       - task: ui-signals:generate
       - task: schema:generate
       - task: desktop-discovery:generate
@@ -400,6 +401,7 @@ tasks:
       - config:generate
       - api:generate
       - ui-signals:generate
+      - data-resource-contracts:generate
     method: checksum
     sources:
       - Taskfile.yml
@@ -523,7 +525,7 @@ tasks:
       - task: generated:git-check
       - task: config:check
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools internal/agent/contracts schemas/config schemas/desktop schemas/json)"
+        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
         test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
 
   generated:git-check:
@@ -613,6 +615,30 @@ tasks:
       - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target agent-tool-contracts
       - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target agent-tool-contracts
       - go run ./internal/agent/contracts/generate
+
+  data-resource-contracts:generate:
+    desc: Generate strict Connection, Source, Model DTOs and connector registry
+    deps:
+      - apigen:build
+    method: checksum
+    sources:
+      - Taskfile.yml
+      - api/apigen.yaml
+      - api/data-resources/**/*.tsp
+      - internal/project/contracts/generate/**/*.go
+      - internal/analytics/connectors/**/*.go
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/dist/src/**/*
+    generates:
+      - api/gen/data-resources-ir.json
+      - internal/project/contracts/gen/data-resources.schema.json
+      - internal/project/contracts/models.gen.go
+      - internal/project/contracts/registry.gen.go
+      - web/generated/data-resources/index.ts
+    cmds:
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target data-resource-contracts
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target data-resource-contracts
+      - go run ./internal/project/contracts/generate
 
   desktop-discovery:generate:
     desc: Generate the public desktop discovery and failure contracts
