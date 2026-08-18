@@ -89,13 +89,22 @@ func emitSchema(b *strings.Builder, name string, schema ir.Schema, resolveType f
 		b.WriteString(strings.Join(variants, " | "))
 		b.WriteString("\n\n")
 	case "object", "":
-		b.WriteString("export interface ")
-		b.WriteString(exportedName(name))
 		if schema.Base != nil {
-			b.WriteString(" extends ")
+			// TypeScript interfaces may only extend statically known object
+			// types. A generated base can itself be a union (for example the
+			// closed PathSourceLocation variants), so model inheritance is
+			// emitted as an intersection alias. Base-less models remain
+			// interfaces for declaration merging and the existing public shape.
+			b.WriteString("export type ")
+			b.WriteString(exportedName(name))
+			b.WriteString(" = ")
 			b.WriteString(resolveType(*schema.Base))
+			b.WriteString(" & {\n")
+		} else {
+			b.WriteString("export interface ")
+			b.WriteString(exportedName(name))
+			b.WriteString(" {\n")
 		}
-		b.WriteString(" {\n")
 		required := contractutil.RequiredSet(schema)
 		for _, propertyName := range contractutil.OrderedProperties(schema) {
 			property := schema.Properties[propertyName]
