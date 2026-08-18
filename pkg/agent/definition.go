@@ -134,6 +134,18 @@ func findNonPortableToolSchemaKeyword(value any, path string) (string, string, b
 		if !portableToolSchemaKeywords[key] {
 			return key, path + "." + key, true
 		}
+		if key == "oneOf" || key == "allOf" {
+			branches, ok := child.([]any)
+			if !ok || len(branches) == 0 {
+				return key, path + "." + key, true
+			}
+			for index, branch := range branches {
+				if foundKey, foundPath, found := findNonPortableToolSchemaKeyword(branch, fmt.Sprintf("%s.%s[%d]", path, key, index)); found {
+					return foundKey, foundPath, true
+				}
+			}
+			continue
+		}
 		if key == "properties" {
 			properties, _ := child.(map[string]any)
 			for _, name := range sortedSchemaKeys(properties) {
@@ -169,7 +181,11 @@ var portableToolSchemaKeywords = map[string]bool{
 	"maxLength":            true,
 	"minimum":              true,
 	"minLength":            true,
+	"oneOf":                true,
+	"allOf":                true,
 	"properties":           true,
+	"propertyNames":        true,
+	"pattern":              true,
 	"required":             true,
 	"type":                 true,
 }
