@@ -127,12 +127,12 @@ func ExpandDashboardFragments(input DashboardDocument, dashboardPath, projectRoo
 	if err != nil || filepath.IsAbs(relativeDashboard) || relativeDashboard == ".." || strings.HasPrefix(relativeDashboard, ".."+string(filepath.Separator)) {
 		return FragmentExpansion{}, fmt.Errorf("dashboard path %q resolves outside project boundary", dashboardPath)
 	}
-	if document.Spec.Includes == nil {
-		return FragmentExpansion{Document: document}, validateExpandedIDs(document)
-	}
 	state := &fragmentState{
 		visuals: make(map[string]DashboardVisual), visualOrigins: make(map[string]idOrigin), components: make(map[string][]DashboardPageComponent), componentOrigins: make(map[string][]idOrigin), localComponentOrigins: make(map[string][]idOrigin),
 		active: make(map[string]struct{}), projectRoot: root, dashboardDir: filepath.Dir(canonicalDashboard), dashboardPath: filepath.ToSlash(relativeDashboard),
+	}
+	if document.Spec.Includes == nil {
+		return FragmentExpansion{Document: document}, state.validateExpandedIDs(document)
 	}
 	includes := document.Spec.Includes
 	if err := state.expandIncludes(includes); err != nil {
