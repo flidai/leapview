@@ -72,7 +72,7 @@ spec:
     revenue:
       type: volcano
       query:
-        measures:
+        metrics:
           revenue:
   pages:
     - id: overview
@@ -80,6 +80,184 @@ spec:
       visuals: []
 `))
 	assertDiagnostic(t, err, "schema.enum", "type")
+}
+
+func TestCanonicalModelAndSemanticModelContract(t *testing.T) {
+	model := []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:sales_orders, name: sales_orders}
+aiContext:
+  instructions: Use governed order identity.
+spec:
+  source: source:orders
+  entities:
+    order: {type: primary, fields: [order_id]}
+    customer: {type: foreign, fields: [customer_id]}
+  grain: {entity: order}
+  fields:
+    order_id: {datatype: String}
+    customer_id: {datatype: String}
+    purchased_at: {datatype: DateTimeTz}
+    revenue: {datatype: Decimal}
+`)
+	if err := ValidateBytes(KindModel, "model.yaml", model); err != nil {
+		t.Fatalf("canonical Model rejected: %v", err)
+	}
+	semantic := []byte(`
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+aiContext:
+  synonyms: [sales analysis]
+spec:
+  datasets:
+    orders: {model: sales_orders, defaultTimeDimension: purchase_date}
+    customers: {model: sales_customers}
+  relationships:
+    orders_customers:
+      from: {dataset: orders, entity: customer}
+      to: {dataset: customers, entity: customer}
+  filters:
+    captured:
+      field: orders.status
+      operator: in
+      value: [captured, settled]
+  dimensions:
+    purchase_date:
+      datatype: Date
+      time: {nativeGrain: day, grains: [day, week, month], calendar: iso8601}
+      bindings: {orders: {field: orders.purchased_at}}
+  metrics:
+    order_count:
+      type: aggregate
+      dataset: orders
+      aggregation: count_distinct
+      input: {field: orders.order_id}
+      where: [captured]
+      empty: zero
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input: {field: orders.revenue}
+      unit: BRL
+      format: currency
+    average_order_value:
+      type: ratio
+      numerator: revenue
+      denominator: order_count
+      unit: BRL
+`)
+	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", semantic); err != nil {
+		t.Fatalf("canonical SemanticModel rejected: %v", err)
+	}
+}
+
+func TestCanonicalContractRejectsRemovedSemanticForms(t *testing.T) {
+	model := []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:sales_orders, name: sales_orders}
+spec:
+  primaryKey: order_id
+  fields: {order_id: {type: String}}
+`)
+	if err := ValidateBytes(KindModel, "model.yaml", model); err == nil {
+		t.Fatal("canonical Model accepted removed scalar primaryKey/type fields")
+	}
+	semantic := []byte(`
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: model:sales_orders}}
+  relationships:
+    orders_customers:
+      from: orders.customer_id
+      to: customers.customer_id
+      cardinality: many_to_one
+  filters:
+    captured: {field: orders.status, operator: in, values: [captured]}
+  measures:
+    revenue: {fact: orders, aggregation: sum, input: {field: orders.revenue}, empty: zero}
+  metrics:
+    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, expression: bad}
+`)
+	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", semantic); err == nil {
+		t.Fatal("canonical SemanticModel accepted removed/legacy semantic forms")
+	}
+}
+
+func TestCanonicalModelRejectsTopLevelSQLAlias(t *testing.T) {
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:sales_orders, name: sales_orders}
+spec:
+  sql: SELECT order_id FROM source.orders
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`))
+	if err == nil {
+		t.Fatal("Model accepted removed top-level spec.sql alias")
+	}
+	assertDiagnostic(t, err, "schema.unknown_field", "sql")
+}
+
+func TestCanonicalDatasetModelUsesAuthoringName(t *testing.T) {
+	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: model:sales_orders}}
+  metrics:
+    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}}
+`))
+	if err == nil {
+		t.Fatal("SemanticModel accepted external Model resource ID in dataset.model")
+	}
+}
+
+func TestCanonicalFilterUsesValueAndRejectsValuesAlias(t *testing.T) {
+	valid := []byte(`
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: sales_orders}}
+  filters: {captured: {field: orders.status, operator: in, value: [captured, settled]}}
+  metrics: {revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, where: [captured]}}
+`)
+	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", valid); err != nil {
+		t.Fatalf("filter value list rejected: %v", err)
+	}
+	invalid := strings.Replace(string(valid), "value: [captured, settled]", "values: [captured, settled]", 1)
+	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(invalid)); err == nil {
+		t.Fatal("SemanticModel accepted removed filter values property")
+	}
+}
+
+func TestCanonicalMetricTagsRejectIncompatibleFields(t *testing.T) {
+	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: sales_orders}}
+  metrics:
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input: {field: orders.revenue}
+      expression: forbidden
+`))
+	if err == nil {
+		t.Fatal("aggregate metric accepted derived-only expression field")
+	}
 }
 
 func TestDashboardVisualContractUnifiesChartsAndTables(t *testing.T) {
@@ -111,17 +289,17 @@ spec:
       title: Revenue
       query:
         dimensions: [orders.purchase_month]
-        measures: [revenue]
+        metrics: [revenue]
     total:
       type: kpi
       query:
-        measures: [revenue]
+        metrics: [revenue]
     orders:
       type: table
       title: Orders
       cardinality: bounded
       query:
-        table: orders
+        dataset: orders
         fields: [orders.order_id, orders.revenue]
     state_status:
       type: matrix
@@ -129,14 +307,14 @@ spec:
       query:
         rows: [customers.state]
         columns: [orders.status]
-        measures: [order_count]
+        metrics: [order_count]
     category_status:
       type: pivot
       title: Category status
       query:
         rows: [orders.category]
         columns: [orders.status]
-        measures: [order_count]
+        metrics: [order_count]
   pages:
     - id: overview
       title: Overview
@@ -176,7 +354,7 @@ spec:
       query:
         dimensions: [orders.purchase_month]
         series: {field: orders.status, alias: status}
-        measures: [revenue]
+        metrics: [revenue]
       presentation:
         axes:
           - {id: x, title: Month, tick_density: sparse}
@@ -236,7 +414,7 @@ func TestDashboardVisualContractRejectsLegacyChartTableSplit(t *testing.T) {
   visuals:
     total:
       kind: kpi
-      query: {measures: [revenue]}
+      query: {metrics: [revenue]}
 `,
 		},
 		{
@@ -272,7 +450,7 @@ spec:
     revenue:
       type: line
       title: Revenue
-      query: {dimensions: [orders.status], measures: [revenue]}
+      query: {dimensions: [orders.status], metrics: [revenue]}
   pages:
     - id: overview
       title: Overview
@@ -306,10 +484,13 @@ metadata:
   id: model:orders
   name: orders
 spec:
-  primaryKey: order_id
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
   fields:
     invalid-name:
-      label: Invalid
+      datatype: String
+    order_id:
+      datatype: String
 `))
 	assertDiagnostic(t, err, "schema.unknown_field", "invalid-name")
 }

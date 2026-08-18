@@ -61,7 +61,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/assign_dashboard_field.
     },
     "role": {
       "enum": [
-        "measure",
+        "metric",
         "dimension",
         "detail"
       ],

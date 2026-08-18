@@ -10,39 +10,39 @@ import (
 
 func executeAggregateRows(ctx context.Context, metrics queryruntime.Metrics, modelID string, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
 	result, err := metrics.ExecuteDataQuery(ctx, dataquery.Query{
-		ModelID:  modelID,
-		Kind:     dataquery.KindSemanticAggregate,
-		Target:   request.Table,
-		Fields:   queryFieldsToDataFields(request.Dimensions),
-		Measures: queryFieldsToDataFields(request.Measures),
-		Time:     dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-		Filters:  queryFiltersToDataFilters(request.Filters),
-		Sort:     querySortToDataSort(request.Sort),
-		Limit:    request.Limit,
-		Offset:   request.Offset,
+		ModelID: modelID,
+		Kind:    dataquery.KindSemanticAggregate,
+		Target:  request.Dataset,
+		Fields:  queryFieldsToDataFields(request.Dimensions),
+		Metrics: queryFieldsToDataFields(request.Metrics),
+		Time:    dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+		Filters: queryFiltersToDataFilters(request.Filters),
+		Sort:    querySortToDataSort(request.Sort),
+		Limit:   request.Limit,
+		Offset:  request.Offset,
 	})
 	return queryRowsFromDataResult(result.Rows), err
 }
 
 func executePreviewRows(ctx context.Context, metrics queryruntime.Metrics, modelID string, request reportdef.RowQuery) (reportdef.QueryRows, error) {
 	result, err := metrics.ExecuteDataQuery(ctx, dataquery.Query{
-		ModelID:  modelID,
-		Kind:     dataquery.KindSemanticRows,
-		Target:   request.Table,
-		Fields:   queryFieldsToDataFields(request.Dimensions),
-		Measures: queryFieldsToDataFields(request.Measures),
-		Filters:  queryFiltersToDataFilters(request.Filters),
-		Sort:     querySortToDataSort(request.Sort),
-		Limit:    request.Limit,
-		Offset:   request.Offset,
+		ModelID: modelID,
+		Kind:    dataquery.KindSemanticRows,
+		Target:  request.Dataset,
+		Fields:  queryFieldsToDataFields(request.Dimensions),
+		Metrics: queryFieldsToDataFields(request.Metrics),
+		Filters: queryFiltersToDataFilters(request.Filters),
+		Sort:    querySortToDataSort(request.Sort),
+		Limit:   request.Limit,
+		Offset:  request.Offset,
 	})
 	return queryRowsFromDataResult(result.Rows), err
 }
 
 func executeHistogram(ctx context.Context, metrics queryruntime.Metrics, modelID string, request reportdef.RawValueQuery, binCount int) ([]reportdef.HistogramBin, error) {
 	result, err := metrics.ExecuteDataQuery(ctx, dataquery.SemanticHistogram(
-		modelID, request.Table, queryFieldsToDataFields(request.Dimensions),
-		dataquery.Field{Field: request.Measure.Field, Alias: request.Measure.Alias}, queryFiltersToDataFilters(request.Filters), binCount,
+		modelID, request.Dataset, queryFieldsToDataFields(request.Dimensions),
+		dataquery.Field{Field: request.Metric.Field, Alias: request.Metric.Alias}, queryFiltersToDataFilters(request.Filters), binCount,
 	))
 	if err != nil {
 		return nil, err
@@ -59,8 +59,8 @@ func executeHistogram(ctx context.Context, metrics queryruntime.Metrics, modelID
 
 func executeDistribution(ctx context.Context, metrics queryruntime.Metrics, modelID string, request reportdef.RawValueQuery, sort []reportdef.QuerySort, limit int) (reportdef.QueryRows, error) {
 	result, err := metrics.ExecuteDataQuery(ctx, dataquery.SemanticDistribution(
-		modelID, request.Table, queryFieldsToDataFields(request.Dimensions),
-		dataquery.Field{Field: request.Measure.Field, Alias: request.Measure.Alias}, queryFiltersToDataFilters(request.Filters), querySortToDataSort(sort), limit,
+		modelID, request.Dataset, queryFieldsToDataFields(request.Dimensions),
+		dataquery.Field{Field: request.Metric.Field, Alias: request.Metric.Alias}, queryFiltersToDataFilters(request.Filters), querySortToDataSort(sort), limit,
 	))
 	return queryRowsFromDataResult(result.Rows), err
 }
@@ -102,7 +102,7 @@ func queryFiltersToDataFilters(filters []reportdef.QueryFilter) []dataquery.Filt
 		}
 		out = append(out, dataquery.Filter{
 			Field:    filter.Field,
-			Fact:     filter.Fact,
+			Dataset:  filter.Dataset,
 			Operator: filter.Operator,
 			Values:   append([]any{}, filter.Values...),
 			Groups:   groups,

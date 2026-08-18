@@ -5,13 +5,23 @@ metadata:
   name: sales_customers
   displayName: Customers
 spec:
-  primaryKey: customer_id
   sources:
-    - olist.customers
+  - olist.customers
   fields:
-    customer_id: {label: Customer ID}
-    state: {label: State}
+    customer_id:
+      datatype: String
+      label: Customer ID
+    state:
+      datatype: String
+      label: State
   transform:
     sql: |
       SELECT customer_id, customer_state AS state
       FROM source."olist.customers"
+  entities:
+    customer:
+      type: primary
+      fields:
+      - customer_id
+  grain:
+    entity: customer

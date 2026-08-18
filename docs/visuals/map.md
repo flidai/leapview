@@ -29,7 +29,7 @@ visuals:
     query:
       dimensions:
         state: orders.state
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: order_count
@@ -70,7 +70,7 @@ visuals:
         order_id: orders.order_id
         latitude: orders.latitude
         longitude: orders.longitude
-      measures:
+      metrics:
         revenue: null
     geo:
       theme: light
@@ -103,7 +103,7 @@ visuals:
       dimensions:
         latitude: orders.latitude
         longitude: orders.longitude
-      measures:
+      metrics:
         revenue: null
     geo:
       theme: dark
@@ -131,7 +131,7 @@ visuals:
       dimensions:
         latitude: orders.latitude
         longitude: orders.longitude
-      measures:
+      metrics:
         order_count: null
     geo:
       layers:
@@ -156,7 +156,7 @@ visuals:
     query:
       dimensions:
         state: orders.state
-      measures:
+      metrics:
         order_count: null
       limit: 27
     geo:
@@ -187,7 +187,7 @@ visuals:
         order_id: orders.order_id
         latitude: orders.latitude
         longitude: orders.longitude
-      measures:
+      metrics:
         revenue: null
       limit: 100
     geo:

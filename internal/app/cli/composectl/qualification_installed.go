@@ -412,7 +412,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	}
 	ctx = phases.Begin(rootContext, "governance", 10*time.Minute)
 
-	queryBody := `{"dimensions":[{"field":"state"}],"measures":[{"field":"order_count"},{"field":"revenue"}],"limit":10}`
+	queryBody := `{"dimensions":[{"field":"state"}],"metrics":[{"field":"order_count"},{"field":"revenue"}],"limit":10}`
 	queryOutput, err := c.qualificationContainers.Existing(containerID).Exec(
 		ctx, nil,
 		"env",

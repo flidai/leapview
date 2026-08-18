@@ -11,7 +11,7 @@ import (
 func TestSemanticBindingFiltersUsesResolvedExpressionAndCompiledConsumerTargets(t *testing.T) {
 	definition := &dashboarddefinition.Definition{
 		FilterDefinitions: map[string]dashboardfilter.Definition{
-			"amount": {Field: "orders.amount", Fact: "orders", ValueKind: dashboardfilter.ValueDecimal},
+			"amount": {Field: "orders.amount", Dataset: "orders", ValueKind: dashboardfilter.ValueDecimal},
 		},
 		FilterBindings: map[string]dashboardfilter.Binding{
 			"amount": {

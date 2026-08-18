@@ -98,7 +98,7 @@ spec:
       type: kpi
       description: Shows the filtered count of distinct orders.
       query:
-        measures:
+        metrics:
           order_count: null
       presentation:
         note: Filtered order count
@@ -108,20 +108,20 @@ spec:
       title: Revenue versus baseline
       description: Shows filtered revenue, its governed baseline, and compact trend.
       query:
-        measures:
+        metrics:
           revenue: null
       datasets:
         comparison:
-          measures:
+          metrics:
             value:
-              measure: revenue_baseline
+              metric: revenue_baseline
           limit: 1
         trend:
           dimensions:
             period: orders.purchase_month
-          measures:
+          metrics:
             value:
-              measure: revenue
+              metric: revenue
           sort:
             - field: period
               direction: asc
@@ -143,13 +143,13 @@ spec:
       title: Cost proxy versus baseline
       description: Demonstrates a positive delta that is explicitly unfavorable.
       query:
-        measures:
+        metrics:
           revenue: null
       datasets:
         comparison:
-          measures:
+          metrics:
             value:
-              measure: revenue_baseline
+              metric: revenue_baseline
           limit: 1
       kpi:
         comparison:
@@ -163,13 +163,13 @@ spec:
       title: Revenue goal
       description: Shows filtered revenue against a governed target.
       query:
-        measures:
+        metrics:
           revenue: null
       datasets:
         goal:
-          measures:
+          metrics:
             value:
-              measure: revenue_target
+              metric: revenue_target
           limit: 1
       kpi:
         mode: bullet
@@ -193,13 +193,13 @@ spec:
       title: Revenue outside the operating band
       description: Demonstrates explicit out-of-range status without hiding the actual value.
       query:
-        measures:
+        metrics:
           revenue: null
       datasets:
         goal:
-          measures:
+          metrics:
             value:
-              measure: revenue_target
+              metric: revenue_target
           limit: 1
       kpi:
         mode: progress
@@ -216,13 +216,13 @@ spec:
       title: Revenue with unavailable comparison
       description: Demonstrates a missing comparison that remains explicit.
       query:
-        measures:
+        metrics:
           revenue: null
       datasets:
         comparison:
-          measures:
+          metrics:
             value:
-              measure: missing_revenue
+              metric: missing_revenue
           limit: 1
       kpi:
         comparison:
@@ -236,7 +236,7 @@ spec:
       type: kpi
       description: Shows average order value for the current filters.
       query:
-        measures:
+        metrics:
           aov: null
       presentation:
         note: Revenue per order
@@ -245,7 +245,7 @@ spec:
       type: kpi
       description: Shows average review score for the current filters.
       query:
-        measures:
+        metrics:
           review_score: null
       presentation:
         note: Average score
@@ -259,7 +259,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: purchase_month
@@ -270,7 +270,7 @@ spec:
           toggle: true
           mappings:
             - field: orders.purchase_month
-              fact: orders
+              dataset: orders
               value: label
               label: label
           targets:
@@ -285,7 +285,7 @@ spec:
       query:
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -295,7 +295,7 @@ spec:
           toggle: true
           mappings:
             - field: orders.status
-              fact: orders
+              dataset: orders
               value: label
               label: label
           targets:
@@ -315,7 +315,7 @@ spec:
         series:
           field: orders.status
           alias: status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: purchase_month
@@ -326,7 +326,7 @@ spec:
           toggle: true
           mappings:
             - field: orders.purchase_month
-              fact: orders
+              dataset: orders
               value: label
               label: label
           targets:
@@ -341,7 +341,7 @@ spec:
       query:
         dimensions:
           category: orders.category
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: value
@@ -352,7 +352,7 @@ spec:
           toggle: true
           mappings:
             - field: orders.category
-              fact: orders
+              dataset: orders
               value: label
               label: label
           targets:
@@ -367,7 +367,7 @@ spec:
       query:
         dimensions:
           delivery_bucket: orders.delivery_bucket
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: delivery_bucket
@@ -377,7 +377,7 @@ spec:
           toggle: true
           mappings:
             - field: orders.delivery_bucket
-              fact: orders
+              dataset: orders
               value: label
               label: label
           targets:
@@ -393,7 +393,7 @@ spec:
         dimensions:
           state: customers.state
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: state
@@ -411,7 +411,7 @@ spec:
         series:
           field: orders.status
           alias: status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: state
@@ -425,7 +425,7 @@ spec:
         dimensions:
           status: orders.status
           delivery_bucket: orders.delivery_bucket
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -436,10 +436,10 @@ spec:
       description: Summarizes delivery-day distribution by speed bucket.
       type: boxplot
       query:
-        table: orders
+        dataset: orders
         dimensions:
           delivery_bucket: orders.delivery_bucket
-        measures:
+        metrics:
           delivery_days: null
         sort:
           - field: delivery_bucket
@@ -452,7 +452,7 @@ spec:
       query:
         dimensions:
           state: customers.state
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: order_count
@@ -481,7 +481,7 @@ spec:
           toggle: true
           mappings:
             - field: customers.state
-              fact: orders
+              dataset: orders
               value: state
               label: state
           targets:
@@ -496,7 +496,7 @@ spec:
       query:
         dimensions:
           state: customers.state
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: order_count
@@ -525,7 +525,7 @@ spec:
           toggle: true
           mappings:
             - field: customers.state
-              fact: orders
+              dataset: orders
               value: state
               label: state
           targets:
@@ -544,7 +544,7 @@ spec:
         dimensions:
           status: orders.status
           delivery_bucket: orders.delivery_bucket
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -562,7 +562,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue: null
           order_count: null
         sort:
@@ -576,7 +576,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: purchase_month
@@ -589,8 +589,8 @@ spec:
       presentation:
         histogram_bins: 16
       query:
-        table: orders
-        measures:
+        dataset: orders
+        metrics:
           delivery_days: null
     status_radar:
       title: Order status radar
@@ -599,7 +599,7 @@ spec:
       query:
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -615,7 +615,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -629,7 +629,7 @@ spec:
         dimensions:
           state: customers.state
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -643,7 +643,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: purchase_month
@@ -658,7 +658,7 @@ spec:
         series:
           field: orders.status
           alias: status
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: purchase_month
@@ -674,7 +674,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: purchase_month
@@ -691,7 +691,7 @@ spec:
         series:
           field: orders.status
           alias: status
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: purchase_month
@@ -707,7 +707,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: purchase_month
@@ -724,7 +724,7 @@ spec:
         series:
           field: orders.status
           alias: status
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: value
@@ -736,7 +736,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: purchase_month
@@ -753,7 +753,7 @@ spec:
         series:
           field: orders.status
           alias: status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: purchase_month
@@ -765,7 +765,7 @@ spec:
       query:
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -776,7 +776,7 @@ spec:
       query:
         dimensions:
           category: orders.category
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: value
@@ -791,7 +791,7 @@ spec:
       query:
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -805,7 +805,7 @@ spec:
       query:
         dimensions:
           category: orders.category
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: value
@@ -817,7 +817,7 @@ spec:
       query:
         dimensions:
           category: orders.category
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: value
@@ -833,7 +833,7 @@ spec:
       query:
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -845,7 +845,7 @@ spec:
         dimensions:
           order_id: orders.order_id
           status: orders.status
-        measures:
+        metrics:
           delivery_days: null
           revenue: null
         sort:
@@ -867,7 +867,7 @@ spec:
         dimensions:
           order_id: orders.order_id
           category: orders.category
-        measures:
+        metrics:
           delivery_days: null
           review_score: null
           revenue: null
@@ -897,7 +897,7 @@ spec:
           field: purchase_date
           grain: day
           alias: purchase_day
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: purchase_day
@@ -916,7 +916,7 @@ spec:
       query:
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -927,7 +927,7 @@ spec:
       query:
         dimensions:
           delivery_bucket: orders.delivery_bucket
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: delivery_bucket
@@ -942,7 +942,7 @@ spec:
       query:
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -953,7 +953,7 @@ spec:
       query:
         dimensions:
           category: orders.category
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: value
@@ -965,7 +965,7 @@ spec:
       query:
         dimensions:
           state: customers.state
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -981,7 +981,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: value
@@ -995,7 +995,7 @@ spec:
         maximum: 120000
         target: 100000
       query:
-        measures:
+        metrics:
           order_count: null
     review_gauge:
       title: Average review gauge
@@ -1005,7 +1005,7 @@ spec:
         maximum: 5
         target: 4.5
       query:
-        measures:
+        metrics:
           review_score: null
     review_gauge_thresholds:
       title: Review gauge with thresholds
@@ -1023,7 +1023,7 @@ spec:
           - value: 5
             tone: success
       query:
-        measures:
+        metrics:
           review_score: null
     category_status_heatmap:
       title: Category by order status
@@ -1032,7 +1032,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1047,7 +1047,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1060,7 +1060,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1076,7 +1076,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1089,7 +1089,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1106,7 +1106,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1119,7 +1119,7 @@ spec:
       query:
         dimensions:
           state: customers.state
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: revenue
@@ -1138,7 +1138,7 @@ spec:
       query:
         dimensions:
           state: customers.state
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: revenue
@@ -1166,7 +1166,7 @@ spec:
           state: customers.state
           latitude: customers.latitude
           longitude: customers.longitude
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: order_count
@@ -1200,7 +1200,7 @@ spec:
           toggle: true
           mappings:
             - field: customers.zip_prefix
-              fact: orders
+              dataset: orders
               value: zip_prefix
               label: city
           targets:
@@ -1212,11 +1212,11 @@ spec:
           latitude:
             source: latitude
             field: customers.latitude
-            fact: orders
+            dataset: orders
           longitude:
             source: longitude
             field: customers.longitude
-            fact: orders
+            dataset: orders
           targets:
             - state_order_map
             - customer_revenue_heat_map
@@ -1230,7 +1230,7 @@ spec:
           zip_prefix: customers.zip_prefix
           latitude: customers.latitude
           longitude: customers.longitude
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: revenue
@@ -1262,7 +1262,7 @@ spec:
           zip_prefix: customers.zip_prefix
           latitude: customers.latitude
           longitude: customers.longitude
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: order_count
@@ -1291,7 +1291,7 @@ spec:
       query:
         dimensions:
           state: customers.state
-        measures:
+        metrics:
           order_count: null
         limit: 27
       geo:
@@ -1310,16 +1310,16 @@ spec:
       description: Exercises viewport aggregation over exactly one million deterministic points while rendering at most 5,000 features.
       type: map
       query:
-        table: spatial_load_points
+        dataset: spatial_load_points
         dimensions:
           point_id: spatial_load_points.point_id
           city: spatial_load_points.city
           state: spatial_load_points.state
           latitude: spatial_load_points.latitude
           longitude: spatial_load_points.longitude
-        measures:
+        metrics:
           point_count:
-            measure: fixture_points
+            metric: fixture_points
         sort:
           - field: point_id
             direction: asc
@@ -1358,7 +1358,7 @@ spec:
           route_label: delivery_routes.route_label
           latitude: delivery_routes.latitude
           longitude: delivery_routes.longitude
-        measures:
+        metrics:
           route_revenue: null
         sort:
           - field: route_revenue
@@ -1397,7 +1397,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           delivery_days_q1: null
           delivery_days_q3: null
           delivery_days_min: null
@@ -1414,7 +1414,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue_q1: null
           revenue_q3: null
           revenue_min: null
@@ -1427,10 +1427,10 @@ spec:
       title: Review score distribution
       type: boxplot
       query:
-        table: orders
+        dataset: orders
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           review_score: null
         sort:
           - field: status
@@ -1441,27 +1441,27 @@ spec:
       presentation:
         data_zoom: true
       query:
-        table: orders
+        dataset: orders
         dimensions:
           category: orders.category
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: category
             direction: desc
         limit: 12
     review_delivery_combo:
-      title: Review and delivery by status
+      title: Revenue and delivery by status
       type: combo
       presentation:
         series_types:
-          Review: line
+          Revenue: line
           Delivery days: column
       query:
         dimensions:
           status: orders.status
-        measures:
-          review_score: null
+        metrics:
+          revenue: null
           delivery_days: null
         sort:
           - field: status
@@ -1477,7 +1477,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue: null
           order_count: null
         sort:
@@ -1490,7 +1490,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: purchase_month
@@ -1505,7 +1505,7 @@ spec:
       query:
         dimensions:
           category: orders.category
-        measures:
+        metrics:
           revenue: null
         sort:
           - field: value
@@ -1517,8 +1517,8 @@ spec:
       presentation:
         histogram_bins: 18
       query:
-        table: orders
-        measures:
+        dataset: orders
+        metrics:
           revenue: null
     review_histogram:
       title: Review score histogram
@@ -1527,8 +1527,8 @@ spec:
         histogram_bins: 10
         labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 12, minimum_spacing: 6, tooltip_fallback: true}
       query:
-        table: orders
-        measures:
+        dataset: orders
+        metrics:
           review_score: null
     delivery_radar:
       title: Delivery speed radar
@@ -1536,7 +1536,7 @@ spec:
       query:
         dimensions:
           delivery_bucket: orders.delivery_bucket
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: delivery_bucket
@@ -1549,7 +1549,7 @@ spec:
       query:
         dimensions:
           state: customers.state
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1562,7 +1562,7 @@ spec:
         dimensions:
           category: orders.category
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1580,7 +1580,7 @@ spec:
           category: orders.category
           state: customers.state
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1593,7 +1593,7 @@ spec:
         dimensions:
           state: customers.state
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1610,7 +1610,7 @@ spec:
           category: orders.category
           state: customers.state
           status: orders.status
-        measures:
+        metrics:
           order_count: null
         sort:
           - field: value
@@ -1625,7 +1625,7 @@ spec:
           toggle: true
           mappings:
             - field: orders.order_id
-              fact: orders
+              dataset: orders
               value: order_id
               label: order_id
           targets:
@@ -1685,7 +1685,7 @@ spec:
           revenue: orders.revenue
           review_score: orders.review_score
           delivery_days: orders.delivery_days
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.purchase_date
@@ -1736,7 +1736,7 @@ spec:
           state: customers.state
           revenue: orders.revenue
           review_score: orders.review_score
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.status
@@ -1784,7 +1784,7 @@ spec:
           category: orders.category
           revenue: orders.revenue
           delivery_days: orders.delivery_days
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.purchase_date
@@ -1837,7 +1837,7 @@ spec:
           category: orders.category
           revenue: orders.revenue
           delivery_days: orders.delivery_days
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.status
@@ -1918,7 +1918,7 @@ spec:
           revenue: orders.revenue
           review_score: orders.review_score
           delivery_days: orders.delivery_days
-        table: orders
+        dataset: orders
         fields:
           - orders.order_id
           - orders.status
@@ -1937,7 +1937,7 @@ spec:
           state: customers.state
         columns:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
           revenue: null
     category_status_pivot:
@@ -1952,12 +1952,12 @@ spec:
           category: orders.category
         columns:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
     state_status_matrix_formatted:
       type: matrix
       title: State/category matrix formatted
-      description: Formatted matrix combining geography, category, status, and measures.
+      description: Formatted matrix combining geography, category, status, and metrics.
       presentation:
         density: comfortable
         zebra: true
@@ -1973,15 +1973,15 @@ spec:
           format: text
         - key: order_count
           label: Orders
-          group: Measures
+          group: Metrics
           width: 120
           format: integer
         - key: revenue
           label: Revenue
-          group: Measures
+          group: Metrics
           width: 132
           format: currency
-      measure_formatting:
+      metric_formatting:
         order_count:
           - kind: data_bar
             min: 0
@@ -1999,7 +1999,7 @@ spec:
         rows:
           state: customers.state
           category: orders.category
-        measures:
+        metrics:
           order_count: null
           revenue: null
     category_status_pivot_heat:
@@ -2010,7 +2010,7 @@ spec:
         density: compact
         zebra: true
         grid: full
-      measure_formatting:
+      metric_formatting:
         order_count:
           - kind: background_scale
             min: 0
@@ -2024,7 +2024,7 @@ spec:
           category: orders.category
         columns:
           status: orders.status
-        measures:
+        metrics:
           order_count: null
   pages:
     - title: Overview
@@ -3099,7 +3099,7 @@ spec:
             row_span: 8
       id: chart-boxplot
     - title: Combo
-      description: Multi-measure combo chart variations
+      description: Multi-metric combo chart variations
       canvas:
         width: 1366
         height: 736
@@ -3207,7 +3207,7 @@ spec:
             row_span: 8
       id: chart-waterfall
     - title: Histogram
-      description: Binned measure chart variations
+      description: Binned metric chart variations
       canvas:
         width: 1366
         height: 736

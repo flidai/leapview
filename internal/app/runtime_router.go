@@ -534,7 +534,7 @@ func buildApplicationSurfaces(
 		projectDefinitionReader = projectmodule.NewActiveProjectDefinitionReader(runtimeConfig.RuntimeHost.Provider())
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, SemanticModelReader: metrics, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
+		Graph: capabilities.ProjectGraph, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
 		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)

@@ -357,10 +357,10 @@ func TestApplyInteractionPreservesTypedScalarValuesAndCanonicalIdentity(t *testi
 			Action:          "set",
 			Toggle:          true,
 			Mappings: []InteractionCommandMapping{{
-				Field: "rating_bucket",
-				Fact:  "ratings",
-				Grain: "month",
-				Value: value,
+				Field:   "rating_bucket",
+				Dataset: "ratings",
+				Grain:   "month",
+				Value:   value,
 			}},
 		})
 	}
@@ -370,7 +370,7 @@ func TestApplyInteractionPreservesTypedScalarValuesAndCanonicalIdentity(t *testi
 	}
 	for index, want := range []any{0.0, false, nil, "0"} {
 		mapping := filters.Selections[0].Entries[index].Mappings[0]
-		if mapping.Field != "rating_bucket" || mapping.Fact != "ratings" || mapping.Grain != "month" {
+		if mapping.Field != "rating_bucket" || mapping.Dataset != "ratings" || mapping.Grain != "month" {
 			t.Fatalf("mapping %d identity = %#v", index, mapping)
 		}
 		if fmt.Sprintf("%T:%v", mapping.Value, mapping.Value) != fmt.Sprintf("%T:%v", want, want) {
@@ -379,17 +379,17 @@ func TestApplyInteractionPreservesTypedScalarValuesAndCanonicalIdentity(t *testi
 	}
 }
 
-func TestApplyInteractionIdentityIncludesFactAndGrain(t *testing.T) {
+func TestApplyInteractionIdentityIncludesDatasetAndGrain(t *testing.T) {
 	filters := Filters{}
 	for _, mapping := range []InteractionCommandMapping{
-		{Field: "activity_date", Fact: "ratings", Grain: "month", Value: "2026-01-01"},
-		{Field: "activity_date", Fact: "tags", Grain: "month", Value: "2026-01-01"},
-		{Field: "activity_date", Fact: "ratings", Grain: "year", Value: "2026-01-01"},
+		{Field: "activity_date", Dataset: "ratings", Grain: "month", Value: "2026-01-01"},
+		{Field: "activity_date", Dataset: "tags", Grain: "month", Value: "2026-01-01"},
+		{Field: "activity_date", Dataset: "ratings", Grain: "year", Value: "2026-01-01"},
 	} {
 		filters = filters.ApplyInteraction(interactionCommandFixture([]InteractionCommandMapping{mapping}))
 	}
 	if got := len(filters.Selections[0].Entries); got != 3 {
-		t.Fatalf("entry count = %d, want distinct fact/grain identities: %#v", got, filters.Selections)
+		t.Fatalf("entry count = %d, want distinct dataset/grain identities: %#v", got, filters.Selections)
 	}
 }
 

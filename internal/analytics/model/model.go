@@ -73,9 +73,6 @@ func (m *Model) validate(authored bool) error {
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("model table %q has invalid name: %w", name, err)
 		}
-		if table.SQL != "" && table.Transform.SQL == "" {
-			table.Transform.SQL = table.SQL
-		}
 		if table.Source == "" && table.Transform.SQL == "" {
 			return fmt.Errorf("model table %q requires source or transform.sql", name)
 		}
@@ -97,18 +94,38 @@ func (m *Model) validate(authored bool) error {
 			return err
 		}
 		table.ModelDependencies = modelDependencies
-		if table.PrimaryKey == "" {
-			return fmt.Errorf("model table %q requires primary_key", name)
+		if table.GrainEntity == "" {
+			return fmt.Errorf("model table %q requires grain.entity", name)
 		}
-		if table.Grain == "" {
-			table.Grain = table.PrimaryKey
+		grain, ok := table.Entities[table.GrainEntity]
+		if !ok {
+			return fmt.Errorf("model table %q grain.entity %q is not declared", name, table.GrainEntity)
 		}
-		if table.Grain == "" {
-			return fmt.Errorf("model table %q requires grain", name)
+		if grain.Type != "primary" && grain.Type != "unique" {
+			return fmt.Errorf("model table %q grain.entity %q must be primary or unique", name, table.GrainEntity)
+		}
+		if len(grain.Fields) == 0 {
+			return fmt.Errorf("model table %q grain.entity %q requires fields", name, table.GrainEntity)
+		}
+		for entityName, entity := range table.Entities {
+			if err := validateSemanticIdentifier(entityName); err != nil {
+				return fmt.Errorf("model table %q entity %q is invalid: %w", name, entityName, err)
+			}
+			if len(entity.Fields) == 0 {
+				return fmt.Errorf("model table %q entity %q requires fields", name, entityName)
+			}
+			for _, field := range entity.Fields {
+				if err := validateSemanticIdentifier(field); err != nil {
+					return fmt.Errorf("model table %q entity %q field %q is invalid: %w", name, entityName, field, err)
+				}
+			}
 		}
 		for field, dimension := range table.Dimensions {
 			if err := validateSemanticIdentifier(field); err != nil {
 				return fmt.Errorf("model table %q field %q is invalid: %w", name, field, err)
+			}
+			if err := validateLogicalDataType("model table "+name+" field "+field, dimension.Datatype); err != nil {
+				return err
 			}
 			dimension.Field = name + "." + field
 			dimension.Table = name
@@ -126,14 +143,28 @@ func (m *Model) validate(authored bool) error {
 		m.Tables[name] = table
 	}
 	seenRelationships := map[string]struct{}{}
+	seenRelationshipEndpoints := map[string]string{}
 	for index, relationship := range m.Relationships {
-		if relationship.ID == "" || relationship.From == "" || relationship.To == "" {
-			return fmt.Errorf("relationship %d requires id, from, and to", index)
+		if relationship.ID == "" || (!relationshipHasEndpoint(relationship, true) || !relationshipHasEndpoint(relationship, false)) {
+			return fmt.Errorf("relationship %d requires id and structured from/to endpoints", index)
 		}
 		if _, exists := seenRelationships[relationship.ID]; exists {
 			return fmt.Errorf("duplicate relationship id %q", relationship.ID)
 		}
 		seenRelationships[relationship.ID] = struct{}{}
+		fromDataset, fromFields, fromErr := relationshipEndpoint(relationship, true)
+		toDataset, toFields, toErr := relationshipEndpoint(relationship, false)
+		if fromErr != nil || toErr != nil {
+			// validateSemanticGraph reports the endpoint-specific diagnostic after
+			// the shape checks above. Keep this pass focused on duplicate IDs and
+			// normalized endpoint tuples.
+			continue
+		}
+		endpointKey := fromDataset + "\x00" + strings.Join(fromFields, "\x00") + "\x00" + toDataset + "\x00" + strings.Join(toFields, "\x00")
+		if previous, exists := seenRelationshipEndpoints[endpointKey]; exists {
+			return fmt.Errorf("duplicate relationship definition for endpoints %q -> %q (relationships %q and %q)", fromDataset+"."+strings.Join(fromFields, ","), toDataset+"."+strings.Join(toFields, ","), previous, relationship.ID)
+		}
+		seenRelationshipEndpoints[endpointKey] = relationship.ID
 	}
 	if err := m.validateSemanticGraph(); err != nil {
 		return err
@@ -143,9 +174,6 @@ func (m *Model) validate(authored bool) error {
 
 func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]string, error) {
 	sql := strings.TrimSpace(table.Transform.SQL)
-	if sql == "" {
-		sql = strings.TrimSpace(table.SQL)
-	}
 	hasSQL := sql != ""
 	if hasSQL {
 		if table.Source != "" {
@@ -210,6 +238,14 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 			if err := validateSemanticIdentifier(name); err != nil {
 				return nil, fmt.Errorf("model table %q column %q is invalid: %w", tableName, name, err)
 			}
+			if column.Datatype == "" {
+				if dimension, ok := table.Dimensions[name]; ok {
+					column.Datatype = dimension.Datatype
+				}
+			}
+			if err := validateLogicalDataType("model table "+tableName+" column "+name, column.Datatype); err != nil {
+				return nil, err
+			}
 			if column.SourceField == "" {
 				column.SourceField = name
 			}
@@ -232,24 +268,26 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 		if name == "" {
 			return
 		}
-		columns[name] = ModelColumn{Name: name, Field: tableName + "." + name, SourceField: name}
+		column := ModelColumn{Name: name, Field: tableName + "." + name, SourceField: name}
+		if dimension, ok := table.Dimensions[name]; ok {
+			column.Datatype = dimension.Datatype
+		}
+		columns[name] = column
 	}
-	add(table.PrimaryKey)
+	for _, entity := range table.Entities {
+		for _, field := range entity.Fields {
+			add(field)
+		}
+	}
 	for field := range table.Dimensions {
 		add(field)
 	}
 	if m != nil {
-		for _, measure := range m.Measures {
-			if measure.Fact != tableName {
+		for _, metric := range m.Metrics {
+			if metric.Type != "aggregate" || metric.Dataset != tableName || metric.Input == nil {
 				continue
 			}
-			refs := []string{measure.Input.Field}
-			if measure.Input.Expression != "" {
-				if expression, err := ParseExpression(measure.Input.Expression); err == nil {
-					refs = append(refs, expression.References()...)
-				}
-			}
-			for _, ref := range refs {
+			for _, ref := range []string{metric.Input.Field} {
 				refTable, refField, ok := strings.Cut(ref, ".")
 				if ok && refTable == tableName {
 					add(refField)
@@ -270,8 +308,12 @@ func validateRequiredModelColumns(tableName string, table Table, columns map[str
 		}
 		return nil
 	}
-	if err := require(table.PrimaryKey, "primary_key"); err != nil {
-		return err
+	for entityName, entity := range table.Entities {
+		for _, field := range entity.Fields {
+			if err := require(field, "entity "+entityName); err != nil {
+				return err
+			}
+		}
 	}
 	for field := range table.Dimensions {
 		if err := require(field, "field"); err != nil {
@@ -284,9 +326,6 @@ func validateRequiredModelColumns(tableName string, table Table, columns map[str
 func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]string, error) {
 	sql := strings.TrimSpace(table.Transform.SQL)
 	if sql == "" {
-		sql = strings.TrimSpace(table.SQL)
-	}
-	if sql == "" {
 		return nil, nil
 	}
 	seen := map[string]struct{}{}
@@ -294,15 +333,55 @@ func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]st
 		if ref.Namespace != "model" {
 			continue
 		}
-		if ref.Name == tableName {
+		dependency, err := m.resolveModelDependency(ref.Name)
+		if err != nil {
+			return nil, fmt.Errorf("model table %q SQL references %w", tableName, err)
+		}
+		currentPhysical := strings.TrimSpace(table.ModelName)
+		if ref.Name == tableName || (currentPhysical != "" && dependency == currentPhysical) {
 			return nil, fmt.Errorf("model table %q cannot read itself", tableName)
 		}
-		if _, ok := m.Tables[ref.Name]; !ok {
-			return nil, fmt.Errorf("model table %q SQL references unknown model table %q", tableName, ref.Name)
-		}
-		seen[ref.Name] = struct{}{}
+		seen[dependency] = struct{}{}
 	}
 	return sortedStringSet(seen), nil
+}
+
+// resolveModelDependency resolves the physical relation name emitted by a
+// model transform. Transform SQL is authored in the global physical Model
+// namespace; semantic dataset aliases are intentionally not an alternate
+// dependency syntax. After semantic lowering, validate only against bound
+// physical ModelNames (deduplicating aliases that share one Model).
+func (m *Model) resolveModelDependency(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("unknown model table %q", name)
+	}
+	if len(m.Datasets) == 0 {
+		if _, ok := m.Tables[name]; !ok {
+			return "", fmt.Errorf("unknown model table %q", name)
+		}
+		return name, nil
+	}
+
+	physicalFound := false
+	for alias, spec := range m.Datasets {
+		if strings.TrimSpace(spec.Model) != name {
+			continue
+		}
+		table, ok := m.Tables[alias]
+		if !ok {
+			continue
+		}
+		if table.ModelName != "" && table.ModelName != name {
+			continue
+		}
+		physicalFound = true
+		break
+	}
+	if physicalFound {
+		return name, nil
+	}
+	return "", fmt.Errorf("unknown model table %q", name)
 }
 
 func (m *Model) modelSQLSourceRefs(sql string) ([]string, []string, []string) {
@@ -700,75 +779,458 @@ func sameStringSet(left []string, right []string) bool {
 }
 
 func (m *Model) validateSemanticGraph() error {
-	for _, relationship := range m.Relationships {
+	if len(m.Datasets) == 0 {
+		return fmt.Errorf("semantic model requires at least one dataset")
+	}
+	if err := m.validateExecutionDatasetsAndTables(); err != nil {
+		return err
+	}
+	if err := validateRelationshipEndpointDuplicates(m.Relationships); err != nil {
+		return err
+	}
+	relationships := append([]Relationship(nil), m.Relationships...)
+	sort.SliceStable(relationships, func(i, j int) bool {
+		if relationships[i].ID != relationships[j].ID {
+			return relationships[i].ID < relationships[j].ID
+		}
+		return relationshipEndpointDisplay(relationships[i], true)+"\x00"+relationshipEndpointDisplay(relationships[i], false) < relationshipEndpointDisplay(relationships[j], true)+"\x00"+relationshipEndpointDisplay(relationships[j], false)
+	})
+	seenRelationshipIDs := map[string]struct{}{}
+	for _, relationship := range relationships {
+		if relationship.ID == "" {
+			return fmt.Errorf("relationship requires id")
+		}
+		if err := validateSemanticIdentifier(relationship.ID); err != nil {
+			return fmt.Errorf("relationship %q id is invalid: %w", relationship.ID, err)
+		}
+		if _, exists := seenRelationshipIDs[relationship.ID]; exists {
+			return fmt.Errorf("duplicate relationship id %q", relationship.ID)
+		}
+		seenRelationshipIDs[relationship.ID] = struct{}{}
 		if relationship.Cardinality != "many_to_one" && relationship.Cardinality != "one_to_one" {
 			return fmt.Errorf(
 				"relationship %q has unsafe cardinality %q from %q to %q",
 				relationship.ID,
 				relationship.Cardinality,
-				relationship.From,
-				relationship.To,
+				relationshipEndpointDisplay(relationship, true),
+				relationshipEndpointDisplay(relationship, false),
 			)
 		}
-		fromTable, err := m.validateRelationshipEndpoint("from", relationship.From)
+		fromTable, fromFields, err := m.validateRelationshipEndpoint("from", relationship, true)
 		if err != nil {
 			return err
 		}
-		toTable, err := m.validateRelationshipEndpoint("to", relationship.To)
+		toTable, toFields, err := m.validateRelationshipEndpoint("to", relationship, false)
 		if err != nil {
 			return err
 		}
-		_, fromField, _ := splitSemanticField(relationship.From)
-		_, toField, _ := splitSemanticField(relationship.To)
+		if len(fromFields) != len(toFields) {
+			return fmt.Errorf("relationship %q endpoint tuple arity mismatch: from %d fields, to %d fields", relationship.ID, len(fromFields), len(toFields))
+		}
+		if err := validateRelationshipTuple(relationship.ID, "from", fromFields); err != nil {
+			return err
+		}
+		if err := validateRelationshipTuple(relationship.ID, "to", toFields); err != nil {
+			return err
+		}
+		for index := range fromFields {
+			left := m.Tables[fromTable].Dimensions[fromFields[index]]
+			right := m.Tables[toTable].Dimensions[toFields[index]]
+			if !relationshipTypesCompatible(left, right) {
+				return fmt.Errorf("relationship %q endpoint field %q type %q is incompatible with %q type %q", relationship.ID, fromTable+"."+fromFields[index], relationshipFieldType(left), toTable+"."+toFields[index], relationshipFieldType(right))
+			}
+		}
 		if relationship.Cardinality == "one_to_one" {
-			if err := m.requireRelationshipPrimaryKey(relationship, fromTable, fromField); err != nil {
+			if err := m.requireRelationshipPrimaryKey(relationship, fromTable, fromFields); err != nil {
 				return err
 			}
 		}
-		if err := m.requireRelationshipPrimaryKey(relationship, toTable, toField); err != nil {
+		if err := m.requireRelationshipPrimaryKey(relationship, toTable, toFields); err != nil {
 			return err
 		}
+	}
+	if err := m.validateDirectionalRelationshipCycles(); err != nil {
+		return err
 	}
 	return m.validateSemanticDefinitions()
 }
 
-func (m *Model) requireRelationshipPrimaryKey(relationship Relationship, tableName, fieldName string) error {
-	primaryKey := m.Tables[tableName].PrimaryKey
-	if fieldName == primaryKey {
+// validateExecutionDatasetsAndTables validates the lowered serving graph. A
+// semantic model's dataset aliases are the runtime table namespace; allowing
+// an extra table or an unbound dataset would let direct construction bypass
+// the authored project binding performed by the project compiler.
+func (m *Model) validateExecutionDatasetsAndTables() error {
+	datasetNames := make([]string, 0, len(m.Datasets))
+	for name := range m.Datasets {
+		datasetNames = append(datasetNames, name)
+	}
+	sort.Strings(datasetNames)
+	for _, datasetName := range datasetNames {
+		if err := validateSemanticIdentifier(datasetName); err != nil {
+			return fmt.Errorf("semantic dataset %q is invalid: %w", datasetName, err)
+		}
+		dataset := m.Datasets[datasetName]
+		if strings.TrimSpace(dataset.Model) == "" {
+			return fmt.Errorf("semantic dataset %q model is required", datasetName)
+		}
+		if err := validateModelBindingName(dataset.Model); err != nil {
+			return fmt.Errorf("semantic dataset %q model %q is invalid: %w", datasetName, dataset.Model, err)
+		}
+		if _, ok := m.Tables[datasetName]; !ok {
+			return fmt.Errorf("semantic dataset %q has no runtime table", datasetName)
+		}
+		if table := m.Tables[datasetName]; table.ModelName != "" && table.ModelName != dataset.Model {
+			return fmt.Errorf("semantic dataset %q model binding %q does not match runtime table model %q", datasetName, dataset.Model, table.ModelName)
+		}
+	}
+	tableNames := make([]string, 0, len(m.Tables))
+	for name := range m.Tables {
+		tableNames = append(tableNames, name)
+	}
+	sort.Strings(tableNames)
+	for _, tableName := range tableNames {
+		if err := validateSemanticIdentifier(tableName); err != nil {
+			return fmt.Errorf("model table %q has invalid name: %w", tableName, err)
+		}
+		if _, ok := m.Datasets[tableName]; !ok {
+			return fmt.Errorf("model table %q is not bound to a semantic dataset", tableName)
+		}
+		if err := validateExecutionTable(tableName, m.Tables[tableName]); err != nil {
+			return err
+		}
+	}
+	return validateExecutionTimeSemantics(m)
+}
+
+func validateExecutionTimeSemantics(m *Model) error {
+	names := make([]string, 0, len(m.Dimensions))
+	for name := range m.Dimensions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		dimension := m.Dimensions[name]
+		// Validate values before the closed-union shape so malformed grains
+		// retain a precise, deterministic diagnostic.
+		for _, grain := range dimension.Grains {
+			if _, ok := supportedTimeGrains[grain]; !ok {
+				return fmt.Errorf("semantic dimension %q has unsupported time grain %q", name, grain)
+			}
+		}
+		seen := map[string]struct{}{}
+		for _, grain := range dimension.Grains {
+			if _, exists := seen[grain]; exists {
+				return fmt.Errorf("semantic dimension %q declares duplicate time grain %q", name, grain)
+			}
+			seen[grain] = struct{}{}
+		}
+		if dimension.NativeGrain == "" && len(dimension.Grains) > 0 {
+			return fmt.Errorf("semantic dimension %q time semantics requires native grain when grains are declared", name)
+		}
+		if dimension.NativeGrain != "" && len(dimension.Grains) == 0 {
+			return fmt.Errorf("semantic dimension %q time semantics requires grains when native grain is declared", name)
+		}
+	}
+	return nil
+}
+
+func validateExecutionTable(tableName string, table Table) error {
+	if len(table.Entities) == 0 {
+		return fmt.Errorf("model table %q requires at least one entity", tableName)
+	}
+	if strings.TrimSpace(table.GrainEntity) == "" {
+		return fmt.Errorf("model table %q requires grain.entity", tableName)
+	}
+	grain, ok := table.Entities[table.GrainEntity]
+	if !ok {
+		return fmt.Errorf("model table %q grain.entity %q is not declared", tableName, table.GrainEntity)
+	}
+	if grain.Type != "primary" && grain.Type != "unique" {
+		return fmt.Errorf("model table %q grain.entity %q must be primary or unique", tableName, table.GrainEntity)
+	}
+	if len(grain.Fields) == 0 {
+		return fmt.Errorf("model table %q grain.entity %q requires fields", tableName, table.GrainEntity)
+	}
+	entityNames := make([]string, 0, len(table.Entities))
+	for name := range table.Entities {
+		entityNames = append(entityNames, name)
+	}
+	sort.Strings(entityNames)
+	for _, entityName := range entityNames {
+		entity := table.Entities[entityName]
+		if err := validateSemanticIdentifier(entityName); err != nil {
+			return fmt.Errorf("model table %q entity %q is invalid: %w", tableName, entityName, err)
+		}
+		switch entity.Type {
+		case "primary", "unique", "foreign", "natural":
+		default:
+			return fmt.Errorf("model table %q entity %q has unsupported type %q", tableName, entityName, entity.Type)
+		}
+		if len(entity.Fields) == 0 {
+			return fmt.Errorf("model table %q entity %q requires fields", tableName, entityName)
+		}
+		seenFields := map[string]struct{}{}
+		for _, field := range entity.Fields {
+			if err := validateSemanticIdentifier(field); err != nil {
+				return fmt.Errorf("model table %q entity %q field %q is invalid: %w", tableName, entityName, field, err)
+			}
+			if _, exists := seenFields[field]; exists {
+				return fmt.Errorf("model table %q entity %q contains duplicate field %q", tableName, entityName, field)
+			}
+			seenFields[field] = struct{}{}
+			if _, ok := table.Dimensions[field]; !ok {
+				return fmt.Errorf("model table %q entity %q field %q is not declared", tableName, entityName, field)
+			}
+		}
+	}
+	dimensionNames := make([]string, 0, len(table.Dimensions))
+	for name := range table.Dimensions {
+		dimensionNames = append(dimensionNames, name)
+	}
+	sort.Strings(dimensionNames)
+	for _, field := range dimensionNames {
+		if err := validateSemanticIdentifier(field); err != nil {
+			return fmt.Errorf("model table %q field %q is invalid: %w", tableName, field, err)
+		}
+		if err := validateLogicalDataType("model table "+tableName+" field "+field, table.Dimensions[field].Datatype); err != nil {
+			return err
+		}
+	}
+	columnNames := make([]string, 0, len(table.Columns))
+	for name := range table.Columns {
+		columnNames = append(columnNames, name)
+	}
+	sort.Strings(columnNames)
+	for _, field := range columnNames {
+		column := table.Columns[field]
+		if err := validateSemanticIdentifier(field); err != nil {
+			return fmt.Errorf("model table %q column %q is invalid: %w", tableName, field, err)
+		}
+		if err := validateLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
+			return err
+		}
+		if _, ok := table.Dimensions[field]; !ok {
+			return fmt.Errorf("model table %q column %q is not declared as a field", tableName, field)
+		}
+	}
+	// A lowered table may omit Columns when it was built directly in memory;
+	// in that case Dimensions are the executable column contract. When Columns
+	// are present, however, every semantic field and entity key must be backed
+	// by one explicitly typed column.
+	if len(table.Columns) > 0 {
+		for _, field := range dimensionNames {
+			if _, ok := table.Columns[field]; !ok {
+				return fmt.Errorf("model table %q column contract missing field %q", tableName, field)
+			}
+		}
+	}
+	return nil
+}
+
+func validateRelationshipTuple(id, role string, fields []string) error {
+	seen := map[string]struct{}{}
+	for _, field := range fields {
+		if err := validateSemanticIdentifier(field); err != nil {
+			return fmt.Errorf("relationship %q %s endpoint field %q is invalid: %w", id, role, field, err)
+		}
+		if _, exists := seen[field]; exists {
+			return fmt.Errorf("relationship %q %s endpoint contains duplicate field %q", id, role, field)
+		}
+		seen[field] = struct{}{}
+	}
+	return nil
+}
+
+func validateRelationshipEndpointDuplicates(relationships []Relationship) error {
+	ordered := append([]Relationship(nil), relationships...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
+	seen := map[string]string{}
+	for _, relationship := range ordered {
+		fromDataset, fromFields, fromErr := relationshipEndpoint(relationship, true)
+		toDataset, toFields, toErr := relationshipEndpoint(relationship, false)
+		if fromErr != nil || toErr != nil {
+			continue
+		}
+		key := fromDataset + "\x00" + strings.Join(fromFields, "\x00") + "\x00" + toDataset + "\x00" + strings.Join(toFields, "\x00")
+		if previous, exists := seen[key]; exists {
+			return fmt.Errorf("duplicate relationship definition for endpoints %q -> %q (relationships %q and %q)", fromDataset+"."+strings.Join(fromFields, ","), toDataset+"."+strings.Join(toFields, ","), previous, relationship.ID)
+		}
+		seen[key] = relationship.ID
+	}
+	return nil
+}
+
+// validateDirectionalRelationshipCycles rejects cycles in the authored
+// relationship direction (from -> to). Safe traversal deliberately has a
+// narrower rule for one-to-one reverse edges, but allowing a directional cycle
+// would make relationship ownership and deterministic path resolution
+// ambiguous. Relationships and adjacency lists are sorted so the diagnostic is
+// stable across map/slice construction order.
+func (m *Model) validateDirectionalRelationshipCycles() error {
+	type edge struct {
+		to string
+		id string
+	}
+	adjacency := map[string][]edge{}
+	vertices := map[string]struct{}{}
+	for _, relationship := range m.Relationships {
+		from, _, fromErr := relationshipEndpoint(relationship, true)
+		to, _, toErr := relationshipEndpoint(relationship, false)
+		if fromErr != nil || toErr != nil {
+			continue
+		}
+		vertices[from] = struct{}{}
+		vertices[to] = struct{}{}
+		adjacency[from] = append(adjacency[from], edge{to: to, id: relationship.ID})
+	}
+	for from := range adjacency {
+		sort.Slice(adjacency[from], func(i, j int) bool {
+			if adjacency[from][i].to != adjacency[from][j].to {
+				return adjacency[from][i].to < adjacency[from][j].to
+			}
+			return adjacency[from][i].id < adjacency[from][j].id
+		})
+	}
+	orderedVertices := make([]string, 0, len(vertices))
+	for vertex := range vertices {
+		orderedVertices = append(orderedVertices, vertex)
+	}
+	sort.Strings(orderedVertices)
+	state := map[string]uint8{}
+	stack := []string{}
+	stackIndex := map[string]int{}
+	var visit func(string) error
+	visit = func(vertex string) error {
+		state[vertex] = 1
+		stackIndex[vertex] = len(stack)
+		stack = append(stack, vertex)
+		for _, next := range adjacency[vertex] {
+			switch state[next.to] {
+			case 0:
+				if err := visit(next.to); err != nil {
+					return err
+				}
+			case 1:
+				start := stackIndex[next.to]
+				cycle := append([]string(nil), stack[start:]...)
+				cycle = append(cycle, next.to)
+				return fmt.Errorf("relationship cycle detected in directional graph: %s", strings.Join(cycle, " -> "))
+			}
+		}
+		stack = stack[:len(stack)-1]
+		delete(stackIndex, vertex)
+		state[vertex] = 2
 		return nil
 	}
+	for _, vertex := range orderedVertices {
+		if state[vertex] == 0 {
+			if err := visit(vertex); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func relationshipFieldType(field MetricDimension) string {
+	if field.Datatype != "" {
+		return string(field.Datatype)
+	}
+	return field.Type
+}
+
+func relationshipTypesCompatible(left, right MetricDimension) bool {
+	return left.Datatype != "" && right.Datatype != "" && left.Datatype == right.Datatype
+}
+
+func (m *Model) requireRelationshipPrimaryKey(relationship Relationship, tableName string, fields []string) error {
+	table := m.Tables[tableName]
+	if len(table.Entities) > 0 {
+		for _, entity := range table.Entities {
+			if entity.Type != "primary" && entity.Type != "unique" {
+				continue
+			}
+			if sameStringSet(entity.Fields, fields) {
+				return nil
+			}
+		}
+		return fmt.Errorf(
+			"relationship %q %s endpoint %q must belong to a primary or unique entity of table %q",
+			relationship.ID,
+			relationship.Cardinality,
+			tableName+"."+strings.Join(fields, ","),
+			tableName,
+		)
+	}
 	return fmt.Errorf(
-		"relationship %q %s endpoint %q must be primary key %q of table %q",
+		"relationship %q %s endpoint %q must belong to a primary or unique entity of table %q",
 		relationship.ID,
 		relationship.Cardinality,
-		tableName+"."+fieldName,
-		primaryKey,
+		tableName+"."+strings.Join(fields, ","),
 		tableName,
 	)
 }
 
-func (m *Model) validateRelationshipEndpoint(role string, endpoint string) (string, error) {
-	tableName, fieldName, err := splitSemanticField(endpoint)
+func (m *Model) validateRelationshipEndpoint(role string, relationship Relationship, from bool) (string, []string, error) {
+	tableName, fields, err := relationshipEndpoint(relationship, from)
 	if err != nil {
-		return "", fmt.Errorf("relationship %s %q: %w", role, endpoint, err)
+		return "", nil, fmt.Errorf("relationship %s %q: %w", role, relationshipEndpointDisplay(relationship, from), err)
+	}
+	if err := validateSemanticIdentifier(tableName); err != nil {
+		return "", nil, fmt.Errorf("relationship %s endpoint dataset %q is invalid: %w", role, tableName, err)
+	}
+	if _, ok := m.Datasets[tableName]; !ok {
+		return "", nil, fmt.Errorf("relationship %s %q references unknown semantic dataset %q", role, relationshipEndpointDisplay(relationship, from), tableName)
 	}
 	table, ok := m.Tables[tableName]
 	if !ok {
-		return "", fmt.Errorf("relationship %s %q references unknown table %q", role, endpoint, tableName)
+		return "", nil, fmt.Errorf("relationship %s %q references unknown table %q", role, relationshipEndpointDisplay(relationship, from), tableName)
 	}
-	if _, ok := table.Dimensions[fieldName]; !ok {
-		return "", fmt.Errorf("relationship %s %q references unknown field %q on table %q", role, endpoint, fieldName, tableName)
+	for _, fieldName := range fields {
+		if _, ok := table.Dimensions[fieldName]; !ok {
+			return "", nil, fmt.Errorf("relationship %s %q references unknown field %q on table %q", role, relationshipEndpointDisplay(relationship, from), fieldName, tableName)
+		}
 	}
-	return tableName, nil
+	return tableName, fields, nil
 }
 
-func relationshipID(relationship Relationship, index int) string {
-	from := strings.ReplaceAll(relationship.From, ".", "_")
-	to := strings.ReplaceAll(relationship.To, ".", "_")
-	if from == "" || to == "" {
-		return fmt.Sprintf("relationship_%d", index+1)
+func relationshipHasEndpoint(relationship Relationship, from bool) bool {
+	_, fields, err := relationshipEndpoint(relationship, from)
+	return err == nil && len(fields) > 0
+}
+
+func relationshipEndpoint(relationship Relationship, from bool) (string, []string, error) {
+	dataset, fields := relationship.FromDataset, relationship.FromFields
+	if !from {
+		dataset, fields = relationship.ToDataset, relationship.ToFields
 	}
-	return from + "__" + to
+	if dataset == "" || len(fields) == 0 {
+		return "", nil, fmt.Errorf("endpoint requires dataset and non-empty fields")
+	}
+	return dataset, append([]string(nil), fields...), nil
+}
+
+func relationshipEndpointDisplay(relationship Relationship, from bool) string {
+	dataset, fields, err := relationshipEndpoint(relationship, from)
+	if err == nil {
+		return dataset + "." + strings.Join(fields, ",")
+	}
+	if from {
+		dataset, fields = relationship.FromDataset, relationship.FromFields
+	} else {
+		dataset, fields = relationship.ToDataset, relationship.ToFields
+	}
+	if dataset == "" && len(fields) == 0 {
+		return "<missing>"
+	}
+	return dataset + "." + strings.Join(fields, ",")
+}
+
+// RelationshipEndpoint returns the ordered physical tuple for one side of a
+// validated relationship. Canonical composite identities remain tuples all the
+// way to the query planner; callers must not select a single field.
+func RelationshipEndpoint(relationship Relationship, from bool) (string, []string, error) {
+	return relationshipEndpoint(relationship, from)
 }
 
 func defaultString(value, fallback string) string {

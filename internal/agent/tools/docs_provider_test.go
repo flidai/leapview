@@ -83,7 +83,7 @@ func TestDocsProviderGeneratedOutputsMatchRuntimeDTOs(t *testing.T) {
 				Query: request.Query,
 				Matches: []productdocs.Reference{{
 					ID: "doc:guides/semantic-models", Path: "guides/semantic-models", Title: "Semantic models",
-					Summary: "Governed semantics.", URL: "/docs/guides/semantic-models", Excerpt: "Measures and dimensions",
+					Summary: "Governed semantics.", URL: "/docs/guides/semantic-models", Excerpt: "Metrics and dimensions",
 				}},
 				Count: 1, HasMore: true, NextCursor: "opaque",
 			}, nil

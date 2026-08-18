@@ -3,6 +3,8 @@ package query
 import (
 	"fmt"
 	"strings"
+
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
 // PlanHistogram compiles the complete histogram, including bounds, into one
@@ -15,38 +17,20 @@ func (p *Planner) PlanHistogram(request RawValueRequest, binCount int) (Plan, er
 	if err != nil {
 		return Plan{}, err
 	}
-	valueColumn := request.Measure.Alias
+	valueColumn := request.Metric.Alias
 	if valueColumn == "" {
 		valueColumn = "value"
 	}
 	if err := validatePlanAlias(valueColumn); err != nil {
 		return Plan{}, err
 	}
-	lastBucket := binCount - 1
-	sql := fmt.Sprintf(`WITH raw AS (%s),
-bounds AS (
-  SELECT MIN(%s) AS min_value, MAX(%s) AS max_value
-  FROM raw
-),
-bucketed AS (
-  SELECT CASE
-    WHEN bounds.min_value = bounds.max_value THEN 0
-    ELSE LEAST(%d, CAST(FLOOR(((raw.%s - bounds.min_value) / NULLIF(bounds.max_value - bounds.min_value, 0)) * %d) AS INTEGER))
-  END AS bucket,
-  bounds.min_value,
-  bounds.max_value
-  FROM raw CROSS JOIN bounds
-)
-SELECT bucket,
-       COUNT(*) AS count,
-       MIN(min_value) + bucket * ((MIN(max_value) - MIN(min_value)) / %d) AS start,
-       CASE WHEN MIN(min_value) = MIN(max_value) THEN MIN(max_value)
-            ELSE MIN(min_value) + (bucket + 1) * ((MIN(max_value) - MIN(min_value)) / %d)
-       END AS end
-FROM bucketed
-GROUP BY bucket
-ORDER BY bucket ASC`, raw.SQL, valueColumn, valueColumn, lastBucket, valueColumn, binCount, binCount, binCount)
-	return Plan{SQL: sql, Args: raw.Args, Columns: []string{"bucket", "count", "start", "end"}}, nil
+	valueType, err := p.analyticalValueType(request)
+	if err != nil {
+		return Plan{}, err
+	}
+	meta := spatialEnvelopeMeta(raw.IR, []string{"bucket", "count", "start", "end"}, "histogram")
+	envelope := planir.AnalyticalEnvelope{NodeMeta: meta, Operation: planir.AnalyticalEnvelopeHistogram, Input: raw.IR.Output, Value: valueColumn, ValueType: valueType, BinCount: binCount}
+	return renderAnalyticalEnvelopePlan(raw.IR, envelope, "histogram")
 }
 
 func (p *Planner) PlanDistribution(request RawValueRequest, sorts []Sort, limit int) (Plan, error) {
@@ -54,7 +38,7 @@ func (p *Planner) PlanDistribution(request RawValueRequest, sorts []Sort, limit 
 	if err != nil {
 		return Plan{}, err
 	}
-	valueColumn := request.Measure.Alias
+	valueColumn := request.Metric.Alias
 	if valueColumn == "" {
 		valueColumn = "value"
 	}
@@ -68,24 +52,46 @@ func (p *Planner) PlanDistribution(request RawValueRequest, sorts []Sort, limit 
 	if err := validatePlanAlias(groupColumn); err != nil {
 		return Plan{}, err
 	}
-	orderBy, err := distributionPlanOrderBy(sorts)
+	valueType, err := p.analyticalValueType(request)
 	if err != nil {
 		return Plan{}, err
 	}
-	sql := fmt.Sprintf(`WITH raw AS (%s)
-SELECT %s AS label,
-       MIN(%s) AS min,
-       quantile_cont(%s, 0.25) AS q1,
-       median(%s) AS median,
-       quantile_cont(%s, 0.75) AS q3,
-       MAX(%s) AS max
-FROM raw
-GROUP BY label
-ORDER BY %s`, raw.SQL, groupColumn, valueColumn, valueColumn, valueColumn, valueColumn, valueColumn, orderBy)
-	if limit > 0 {
-		sql += fmt.Sprintf("\nLIMIT %d", limit)
+	if _, err := distributionPlanOrderBy(sorts); err != nil {
+		return Plan{}, err
 	}
-	return Plan{SQL: sql, Args: raw.Args, Columns: []string{"label", "min", "q1", "median", "q3", "max"}}, nil
+	planSort := make([]planir.SortKey, 0, len(sorts))
+	for _, sortSpec := range sorts {
+		field := sortSpec.Field
+		if field == "" {
+			field = "label"
+		}
+		planSort = append(planSort, planir.SortKey{Field: field, Descending: strings.EqualFold(sortSpec.Direction, "desc")})
+	}
+	meta := spatialEnvelopeMeta(raw.IR, []string{"label", "min", "q1", "median", "q3", "max"}, "distribution")
+	envelope := planir.AnalyticalEnvelope{NodeMeta: meta, Operation: planir.AnalyticalEnvelopeDistribution, Input: raw.IR.Output, Value: valueColumn, ValueType: valueType, Group: groupColumn, Sort: planSort, Limit: limit}
+	return renderAnalyticalEnvelopePlan(raw.IR, envelope, "distribution")
+}
+
+func (p *Planner) analyticalValueType(request RawValueRequest) (string, error) {
+	view, err := p.rawValueView(request)
+	if err != nil {
+		return "", err
+	}
+	_, metric, err := view.ResolveMetricRef(request.Metric.Field)
+	if err != nil {
+		return "", err
+	}
+	physical, err := p.resolveDimension(metric.InputField)
+	if err != nil {
+		return "", err
+	}
+	typ := strings.ToLower(string(physical.Datatype))
+	switch typ {
+	case "decimal", "integer", "float":
+		return typ, nil
+	default:
+		return "", fmt.Errorf("analytical value %q has unsupported logical type %q", request.Metric.Field, typ)
+	}
 }
 
 func validatePlanAlias(value string) error {

@@ -5,18 +5,31 @@ metadata:
   name: operations_orders
   displayName: Fulfillment Orders
 spec:
-  primaryKey: order_id
   sources:
-    - olist.orders
-    - olist.reviews
+  - olist.orders
+  - olist.reviews
   fields:
-    order_id: {label: Order ID}
-    customer_id: {label: Customer ID}
-    purchase_month: {label: Purchase month}
-    status: {label: Status}
-    review_score: {label: Review score}
-    delivery_days: {label: Delivery days}
-    delivery_bucket: {label: Delivery speed}
+    order_id:
+      datatype: String
+      label: Order ID
+    customer_id:
+      datatype: String
+      label: Customer ID
+    purchase_month:
+      datatype: String
+      label: Purchase month
+    status:
+      datatype: String
+      label: Status
+    review_score:
+      datatype: Float
+      label: Review score
+    delivery_days:
+      datatype: Integer
+      label: Delivery days
+    delivery_bucket:
+      datatype: String
+      label: Delivery speed
   transform:
     sql: |
       WITH review AS (
@@ -44,3 +57,14 @@ spec:
         END AS delivery_bucket
       FROM source."olist.orders" o
       LEFT JOIN review ON review.order_id = o.order_id
+  entities:
+    order:
+      type: primary
+      fields:
+      - order_id
+    customer:
+      type: foreign
+      fields:
+      - customer_id
+  grain:
+    entity: order

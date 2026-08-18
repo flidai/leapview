@@ -164,7 +164,7 @@ type DashboardCompiledFilterDefinition struct {
 	Label         string                           `json:"label"`
 	Description   string                           `json:"description,omitempty"`
 	Field         string                           `json:"field"`
-	Fact          string                           `json:"fact,omitempty"`
+	Dataset       string                           `json:"dataset,omitempty"`
 	ValueKind     string                           `json:"valueKind"`
 	Predicates    []DashboardFilterPredicatePolicy `json:"predicates"`
 	Options       DashboardFilterOptionSource      `json:"options"`
@@ -233,40 +233,29 @@ type DashboardVisualDescribeResponse struct {
 }
 
 type SemanticModelDescriptionResponse struct {
-	ID          string                      `json:"id"`
-	Title       string                      `json:"title"`
-	Description string                      `json:"description"`
-	Dashboards  []ModelDashboardUsage       `json:"dashboards"`
-	Counts      *SemanticModelCounts        `json:"counts,omitempty"`
-	Tables      []SemanticModelTableSummary `json:"tables,omitempty"`
+	ID          string                   `json:"id"`
+	Title       string                   `json:"title"`
+	Description string                   `json:"description"`
+	Dashboards  []ModelDashboardUsage    `json:"dashboards"`
+	Counts      *SemanticModelCounts     `json:"counts,omitempty"`
+	Datasets    []SemanticDatasetSummary `json:"datasets,omitempty"`
 }
 
 type SemanticModelCounts struct {
-	Sources             int `json:"sources"`
-	ModelTables         int `json:"model_tables"`
-	Fields              int `json:"fields"`
-	Facts               int `json:"facts"`
-	ConformedDimensions int `json:"conformed_dimensions"`
-	AtomicMeasures      int `json:"atomic_measures"`
-	Metrics             int `json:"metrics"`
-	Relationships       int `json:"relationships"`
-}
-
-type SemanticModelTableSummary struct {
-	ID          string   `json:"id"`
-	Roles       []string `json:"roles"`
-	Source      string   `json:"source"`
-	Description string   `json:"description"`
-	Fields      int      `json:"fields"`
+	Datasets      int `json:"datasets"`
+	Fields        int `json:"fields"`
+	Dimensions    int `json:"dimensions"`
+	Metrics       int `json:"metrics"`
+	Filters       int `json:"filters"`
+	Relationships int `json:"relationships"`
 }
 
 type SemanticDatasetSummary struct {
-	ID           string `json:"id"`
-	Kind         string `json:"kind"`
-	Source       string `json:"source"`
-	Description  string `json:"description"`
-	FieldCount   int    `json:"fieldCount"`
-	MeasureCount int    `json:"measureCount"`
+	ID          string `json:"id"`
+	Model       string `json:"model"`
+	Description string `json:"description"`
+	FieldCount  int    `json:"fieldCount"`
+	MetricCount int    `json:"metricCount"`
 }
 
 type SemanticDatasetListResponse struct {
@@ -275,25 +264,29 @@ type SemanticDatasetListResponse struct {
 }
 
 type SemanticDatasetResponse struct {
-	ID           string   `json:"id"`
-	Kind         string   `json:"kind"`
-	Source       string   `json:"source"`
-	Sources      []string `json:"sources"`
-	Description  string   `json:"description"`
-	PrimaryKey   string   `json:"primaryKey"`
-	Grain        string   `json:"grain"`
-	FieldCount   int      `json:"fieldCount"`
-	MeasureCount int      `json:"measureCount"`
+	ID          string                           `json:"id"`
+	Model       string                           `json:"model"`
+	Description string                           `json:"description"`
+	GrainEntity string                           `json:"grainEntity,omitempty"`
+	Entities    map[string]SemanticEntitySummary `json:"entities"`
+	FieldCount  int                              `json:"fieldCount"`
+	MetricCount int                              `json:"metricCount"`
+}
+
+type SemanticEntitySummary struct {
+	Type   string   `json:"type"`
+	Fields []string `json:"fields"`
 }
 
 type SemanticFieldResponse struct {
 	ID          string   `json:"id"`
 	Kind        string   `json:"kind"`
-	Table       string   `json:"table"`
+	Dataset     string   `json:"dataset"`
 	Name        string   `json:"name"`
 	Label       string   `json:"label"`
 	Description string   `json:"description,omitempty"`
 	Type        string   `json:"type,omitempty"`
+	Datatype    string   `json:"datatype,omitempty"`
 	Unit        string   `json:"unit,omitempty"`
 	Format      string   `json:"format,omitempty"`
 	Grain       string   `json:"grain,omitempty"`
@@ -307,13 +300,13 @@ type SemanticFieldListResponse struct {
 }
 
 type SemanticRelationshipResponse struct {
-	ID          string `json:"id"`
-	FromDataset string `json:"fromDataset"`
-	FromField   string `json:"fromField"`
-	ToDataset   string `json:"toDataset"`
-	ToField     string `json:"toField"`
-	Cardinality string `json:"cardinality"`
-	Active      bool   `json:"active"`
+	ID          string   `json:"id"`
+	FromDataset string   `json:"fromDataset"`
+	FromFields  []string `json:"fromFields"`
+	ToDataset   string   `json:"toDataset"`
+	ToFields    []string `json:"toFields"`
+	Cardinality string   `json:"cardinality"`
+	Active      bool     `json:"active"`
 }
 
 type SemanticRelationshipListResponse struct {
@@ -353,7 +346,7 @@ type SemanticSort struct {
 
 type SemanticFilter struct {
 	Field    string                `json:"field,omitempty"`
-	Fact     string                `json:"fact,omitempty"`
+	Dataset  string                `json:"dataset,omitempty"`
 	Operator string                `json:"operator,omitempty"`
 	Values   []any                 `json:"values,omitempty"`
 	Groups   []SemanticFilterGroup `json:"groups,omitempty"`
@@ -365,7 +358,7 @@ type SemanticFilterGroup struct {
 
 type SemanticQueryRequest struct {
 	Dimensions []SemanticFieldRef `json:"dimensions,omitempty"`
-	Measures   []SemanticFieldRef `json:"measures,omitempty"`
+	Metrics    []SemanticFieldRef `json:"metrics,omitempty"`
 	Time       *SemanticTimeRef   `json:"time,omitempty"`
 	Filters    []SemanticFilter   `json:"filters,omitempty"`
 	Sort       []SemanticSort     `json:"sort,omitempty"`
@@ -375,7 +368,7 @@ type SemanticQueryRequest struct {
 
 type SemanticPreviewRequest struct {
 	Dimensions []SemanticFieldRef `json:"dimensions,omitempty"`
-	Measures   []SemanticFieldRef `json:"measures,omitempty"`
+	Metrics    []SemanticFieldRef `json:"metrics,omitempty"`
 	Filters    []SemanticFilter   `json:"filters,omitempty"`
 	Sort       []SemanticSort     `json:"sort,omitempty"`
 	Limit      int                `json:"limit,omitempty"`
@@ -423,7 +416,7 @@ type SemanticQueryResponse struct {
 
 type SemanticExplainResponse struct {
 	Mode                 string           `json:"mode"`
-	Facts                []string         `json:"facts"`
+	Datasets             []string         `json:"datasets"`
 	StitchDimensions     []string         `json:"stitchDimensions"`
 	PhysicalDependencies []string         `json:"physicalDependencies"`
 	RelationshipPaths    []string         `json:"relationshipPaths"`

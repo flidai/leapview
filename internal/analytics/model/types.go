@@ -1,23 +1,184 @@
 package model
 
-import "regexp"
+import (
+	"fmt"
+	"regexp"
+)
 
 var (
 	semanticIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// Resource names may carry project-level dot/hyphen qualifiers, while
+	// semantic dataset/table/member aliases use semanticIdentifierPattern.
+	modelBindingNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 )
 
+func validateModelBindingName(value string) error {
+	if !modelBindingNamePattern.MatchString(value) {
+		return fmt.Errorf("must match %s", modelBindingNamePattern.String())
+	}
+	return nil
+}
+
+// AIContext is descriptive authoring metadata. It is intentionally kept out
+// of planning and execution inputs.
+type AIContext struct {
+	Instructions string   `yaml:"instructions"`
+	Synonyms     []string `yaml:"synonyms"`
+	Examples     []string `yaml:"examples"`
+}
+
+// LogicalDataType is the portable v1 field vocabulary shared by Model and
+// SemanticModel resources.
+type LogicalDataType string
+
+const (
+	DataTypeString     LogicalDataType = "String"
+	DataTypeInteger    LogicalDataType = "Integer"
+	DataTypeDecimal    LogicalDataType = "Decimal"
+	DataTypeFloat      LogicalDataType = "Float"
+	DataTypeBoolean    LogicalDataType = "Boolean"
+	DataTypeDate       LogicalDataType = "Date"
+	DataTypeTime       LogicalDataType = "Time"
+	DataTypeDateTime   LogicalDataType = "DateTime"
+	DataTypeDateTimeTZ LogicalDataType = "DateTimeTz"
+	DataTypeOpaque     LogicalDataType = "Opaque"
+)
+
+type ModelFieldSpec struct {
+	Datatype    LogicalDataType `yaml:"datatype"`
+	Label       string          `yaml:"label"`
+	Description string          `yaml:"description"`
+	AIContext   *AIContext      `yaml:"aiContext"`
+}
+
+type ModelEntitySpec struct {
+	Type        string     `yaml:"type"`
+	Fields      []string   `yaml:"fields"`
+	Description string     `yaml:"description"`
+	AIContext   *AIContext `yaml:"aiContext"`
+}
+
+type ModelGrainSpec struct {
+	Entity string `yaml:"entity"`
+}
+
+type ModelSpec struct {
+	Source      string                     `yaml:"source"`
+	Sources     []string                   `yaml:"sources"`
+	Transform   Transform                  `yaml:"transform"`
+	Entities    map[string]ModelEntitySpec `yaml:"entities"`
+	Grain       ModelGrainSpec             `yaml:"grain"`
+	Fields      map[string]ModelFieldSpec  `yaml:"fields"`
+	Description string                     `yaml:"description"`
+}
+
+type SemanticDatasetSpec struct {
+	Model                string     `yaml:"model"`
+	DefaultTimeDimension string     `yaml:"defaultTimeDimension"`
+	DisplayName          string     `yaml:"displayName"`
+	Description          string     `yaml:"description"`
+	AIContext            *AIContext `yaml:"aiContext"`
+}
+
+type RelationshipEndpointSpec struct {
+	Dataset string   `yaml:"dataset"`
+	Entity  string   `yaml:"entity"`
+	Fields  []string `yaml:"fields"`
+}
+
+type RelationshipSpec struct {
+	From        RelationshipEndpointSpec `yaml:"from"`
+	To          RelationshipEndpointSpec `yaml:"to"`
+	Description string                   `yaml:"description"`
+	AIContext   *AIContext               `yaml:"aiContext"`
+}
+
+type TimeSemanticsSpec struct {
+	NativeGrain string   `yaml:"nativeGrain"`
+	Grains      []string `yaml:"grains"`
+	Calendar    string   `yaml:"calendar"`
+	Timezone    string   `yaml:"timezone"`
+}
+
+type SemanticDimensionSpec struct {
+	Label       string                      `yaml:"label"`
+	Description string                      `yaml:"description"`
+	AIContext   *AIContext                  `yaml:"aiContext"`
+	Datatype    LogicalDataType             `yaml:"datatype"`
+	Time        *TimeSemanticsSpec          `yaml:"time"`
+	Bindings    map[string]DimensionBinding `yaml:"bindings"`
+}
+
+type SemanticFilterSpec struct {
+	Field     string               `yaml:"field,omitempty"`
+	Operator  string               `yaml:"operator,omitempty"`
+	Value     any                  `yaml:"value,omitempty"`
+	Path      []string             `yaml:"path,omitempty"`
+	All       []SemanticFilterSpec `yaml:"all,omitempty"`
+	Any       []SemanticFilterSpec `yaml:"any,omitempty"`
+	Not       *SemanticFilterSpec  `yaml:"not,omitempty"`
+	AIContext *AIContext           `yaml:"aiContext,omitempty"`
+}
+
+type AggregateMetricSpec struct {
+	Type          string      `yaml:"type"`
+	Dataset       string      `yaml:"dataset"`
+	Aggregation   string      `yaml:"aggregation"`
+	Input         MetricInput `yaml:"input"`
+	Where         []string    `yaml:"where"`
+	Empty         string      `yaml:"empty"`
+	TimeDimension string      `yaml:"timeDimension"`
+}
+
+type DerivedMetricSpec struct {
+	Type       string `yaml:"type"`
+	Expression string `yaml:"expression"`
+}
+
+type RatioMetricSpec struct {
+	Type        string `yaml:"type"`
+	Numerator   string `yaml:"numerator"`
+	Denominator string `yaml:"denominator"`
+}
+
+type MetricCommonSpec struct {
+	Label       string     `yaml:"label"`
+	Description string     `yaml:"description"`
+	AIContext   *AIContext `yaml:"aiContext"`
+	Unit        string     `yaml:"unit"`
+	Format      string     `yaml:"format"`
+	Hidden      bool       `yaml:"hidden"`
+}
+
+type SemanticMetricSpec struct {
+	MetricCommonSpec `yaml:",inline"`
+	Type             string       `yaml:"type"`
+	Dataset          string       `yaml:"dataset"`
+	Aggregation      string       `yaml:"aggregation"`
+	Input            *MetricInput `yaml:"input"`
+	Where            []string     `yaml:"where"`
+	Empty            string       `yaml:"empty"`
+	TimeDimension    string       `yaml:"timeDimension"`
+	Expression       string       `yaml:"expression"`
+	Numerator        string       `yaml:"numerator"`
+	Denominator      string       `yaml:"denominator"`
+}
+
 type Model struct {
-	Name              string                       `yaml:"-"`
-	Title             string                       `yaml:"-"`
-	Description       string                       `yaml:"-"`
-	DefaultConnection string                       `yaml:"-"`
-	Connections       map[string]Connection        `yaml:"-"`
-	Sources           map[string]Source            `yaml:"-"`
-	Tables            map[string]Table             `yaml:"-"`
-	Relationships     []Relationship               `yaml:"-"`
-	Measures          map[string]MetricMeasure     `yaml:"-"`
-	Dimensions        map[string]SemanticDimension `yaml:"-"`
-	Metrics           map[string]Metric            `yaml:"-"`
+	Name                    string                         `yaml:"-"`
+	Title                   string                         `yaml:"-"`
+	Description             string                         `yaml:"-"`
+	AIContext               *AIContext                     `yaml:"aiContext,omitempty" json:"-"`
+	DefaultConnection       string                         `yaml:"-"`
+	Connections             map[string]Connection          `yaml:"-"`
+	Sources                 map[string]Source              `yaml:"-"`
+	Tables                  map[string]Table               `yaml:"-"`
+	Datasets                map[string]SemanticDatasetSpec `yaml:"-"`
+	StructuredRelationships map[string]RelationshipSpec    `yaml:"-"`
+	Relationships           []Relationship                 `yaml:"-"`
+	Dimensions              map[string]SemanticDimension   `yaml:"-"`
+	Filters                 map[string]SemanticFilterSpec  `yaml:"-"`
+	Metrics                 map[string]Metric              `yaml:"-"`
 }
 
 type Connection struct {
@@ -65,19 +226,46 @@ type Source struct {
 }
 
 type Table struct {
+	// ModelName is populated only on lowered semantic execution tables. It
+	// preserves the project Model binding after the runtime table is keyed by
+	// its semantic dataset alias; authored Model resources do not expose it.
+	ModelName          string                     `yaml:"-" json:"modelName,omitempty"`
 	Source             string                     `yaml:"source"`
+	AIContext          *AIContext                 `yaml:"aiContext,omitempty" json:"-"`
 	Sources            []string                   `yaml:"sources"`
 	SourceReads        map[string][]string        `yaml:"source_reads"`
-	SQL                string                     `yaml:"sql"`
 	Transform          Transform                  `yaml:"transform"`
 	Columns            map[string]ModelColumn     `yaml:"columns"`
-	PrimaryKey         string                     `yaml:"primary_key"`
-	Grain              string                     `yaml:"grain"`
+	Entities           map[string]ModelEntitySpec `yaml:"entities"`
+	GrainEntity        string                     `yaml:"grain_entity"`
 	Dimensions         map[string]MetricDimension `yaml:"fields"`
 	Description        string                     `yaml:"description"`
 	Schema             TableSchema                `yaml:"-"`
 	SourceDependencies []string                   `yaml:"-"`
 	ModelDependencies  []string                   `yaml:"-"`
+}
+
+// GrainFields returns the ordered business-identity tuple selected by the
+// canonical grain.entity declaration. It never collapses a composite key to a
+// scalar value.
+func (t Table) GrainFields() []string {
+	if t.GrainEntity != "" {
+		if entity, ok := t.Entities[t.GrainEntity]; ok {
+			return append([]string(nil), entity.Fields...)
+		}
+	}
+	return nil
+}
+
+// SingularGrainField is for consumers whose physical API is inherently
+// scalar. Composite model grains are rejected explicitly instead of silently
+// selecting their first field.
+func (t Table) SingularGrainField() (string, error) {
+	fields := t.GrainFields()
+	if len(fields) != 1 {
+		return "", fmt.Errorf("model grain requires one field, got %d", len(fields))
+	}
+	return fields[0], nil
 }
 
 type Transform struct {
@@ -93,22 +281,24 @@ type SourceField struct {
 }
 
 type ModelColumn struct {
-	Field       string `yaml:"-"`
-	Name        string `yaml:"-"`
-	SourceField string `yaml:"source_field"`
-	Description string `yaml:"description"`
-	Type        string `yaml:"type"`
+	Field       string          `yaml:"-"`
+	Name        string          `yaml:"-"`
+	SourceField string          `yaml:"source_field"`
+	Description string          `yaml:"description"`
+	Type        string          `yaml:"type"`
+	Datatype    LogicalDataType `yaml:"datatype,omitempty"`
+	AIContext   *AIContext      `yaml:"aiContext,omitempty"`
 }
 
 type MetricDimension struct {
-	Field       string `yaml:"-"`
-	Table       string `yaml:"-"`
-	Name        string `yaml:"-"`
-	Label       string `yaml:"label"`
-	Description string `yaml:"description"`
-	Type        string `yaml:"-" json:"-"`
-	Expr        string `yaml:"-" json:"-"`
-	Expression  string `yaml:"-" json:"-"`
+	Field       string          `yaml:"-"`
+	Table       string          `yaml:"-"`
+	Name        string          `yaml:"-"`
+	Label       string          `yaml:"label"`
+	Description string          `yaml:"description"`
+	Type        string          `yaml:"-" json:"-"`
+	Datatype    LogicalDataType `yaml:"datatype,omitempty" json:"datatype,omitempty"`
+	AIContext   *AIContext      `yaml:"aiContext,omitempty" json:"-"`
 }
 
 type TableSchema struct {
@@ -125,38 +315,19 @@ type ColumnSchema struct {
 	PrimaryKey   bool   `json:"primaryKey,omitempty"`
 }
 
-type MetricMeasure struct {
-	Field       string          `yaml:"-"`
-	Name        string          `yaml:"-"`
-	Fact        string          `yaml:"fact"`
-	Label       string          `yaml:"label"`
-	Description string          `yaml:"description"`
-	Aggregation string          `yaml:"aggregation"`
-	Input       MeasureInput    `yaml:"input"`
-	Filters     []MeasureFilter `yaml:"filters"`
-	Empty       string          `yaml:"empty"`
-	Unit        string          `yaml:"unit"`
-	Format      string          `yaml:"format"`
-	Hidden      bool            `yaml:"hidden"`
-}
-
-type MeasureInput struct {
-	Field      string `yaml:"field"`
-	Expression string `yaml:"expression"`
-}
-
-type MeasureFilter struct {
-	Field    string `yaml:"field"`
-	Operator string `yaml:"operator"`
-	Values   []any  `yaml:"values"`
+type MetricInput struct {
+	Field string `yaml:"field"`
 }
 
 type SemanticDimension struct {
 	Name        string                      `yaml:"-"`
 	Label       string                      `yaml:"label"`
 	Description string                      `yaml:"description"`
+	AIContext   *AIContext                  `yaml:"aiContext,omitempty" json:"-"`
 	Type        string                      `yaml:"type"`
+	Datatype    LogicalDataType             `yaml:"datatype,omitempty"`
 	Grains      []string                    `yaml:"grains"`
+	NativeGrain string                      `yaml:"native_grain,omitempty"`
 	Timezone    string                      `yaml:"timezone,omitempty"`
 	Calendar    string                      `yaml:"calendar,omitempty"`
 	WeekStart   string                      `yaml:"week_start,omitempty"`
@@ -169,19 +340,32 @@ type DimensionBinding struct {
 }
 
 type Metric struct {
-	Name        string `yaml:"-"`
-	Label       string `yaml:"label"`
-	Description string `yaml:"description"`
-	Expression  string `yaml:"expression"`
-	Unit        string `yaml:"unit"`
-	Format      string `yaml:"format"`
-	Hidden      bool   `yaml:"hidden"`
+	Name          string       `yaml:"-"`
+	Type          string       `yaml:"type"`
+	Dataset       string       `yaml:"dataset,omitempty"`
+	Aggregation   string       `yaml:"aggregation,omitempty"`
+	Input         *MetricInput `yaml:"input,omitempty"`
+	Where         []string     `yaml:"where,omitempty"`
+	Empty         string       `yaml:"empty,omitempty"`
+	TimeDimension string       `yaml:"timeDimension,omitempty"`
+	Expression    string       `yaml:"expression,omitempty"`
+	Numerator     string       `yaml:"numerator,omitempty"`
+	Denominator   string       `yaml:"denominator,omitempty"`
+	Label         string       `yaml:"label"`
+	Description   string       `yaml:"description"`
+	Unit          string       `yaml:"unit"`
+	Format        string       `yaml:"format"`
+	Hidden        bool         `yaml:"hidden"`
+	AIContext     *AIContext   `yaml:"aiContext,omitempty"`
 }
 
 type Relationship struct {
-	ID          string `yaml:"id"`
-	Description string `yaml:"description"`
-	From        string `yaml:"from"`
-	To          string `yaml:"to"`
-	Cardinality string `yaml:"cardinality"`
+	ID          string     `yaml:"id"`
+	Description string     `yaml:"description"`
+	Cardinality string     `yaml:"cardinality"`
+	FromDataset string     `yaml:"from_dataset,omitempty"`
+	FromFields  []string   `yaml:"from_fields,omitempty"`
+	ToDataset   string     `yaml:"to_dataset,omitempty"`
+	ToFields    []string   `yaml:"to_fields,omitempty"`
+	AIContext   *AIContext `yaml:"aiContext,omitempty" json:"-"`
 }

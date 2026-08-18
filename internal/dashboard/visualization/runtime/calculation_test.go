@@ -18,7 +18,7 @@ func TestApplyVisualCalculationsEvaluatesClosedTemplatesDeterministically(t *tes
 			Fields: []ir.VisualizationField{
 				{ID: "period", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Period"},
 				{ID: "parent", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Parent"},
-				{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
+				{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
 			},
 		}},
 		Calculations: calculationList(
@@ -71,7 +71,7 @@ func TestApplyVisualCalculationsSupportsDependenciesAndRejectsCycles(t *testing.
 	base := ir.VisualizationSpecBase{
 		Kind: "cartesian",
 		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
 		}}},
 		Calculations: calculationList(
 			calculation("running", ir.VisualizationCalculationTemplateRunningTotal, "value"),
@@ -94,13 +94,138 @@ func TestApplyVisualCalculationsSupportsDependenciesAndRejectsCycles(t *testing.
 	}
 }
 
+func TestApplyVisualCalculationsPromotedIntegerArithmeticPreservesExactValues(t *testing.T) {
+	t.Parallel()
+
+	base := ir.VisualizationSpecBase{
+		Kind: "cartesian",
+		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeInteger, Nullable: false, Label: "Value"},
+			{ID: "running", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Running"},
+			{ID: "difference", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Difference"},
+		}}},
+		Calculations: calculationList(
+			calculation("running", ir.VisualizationCalculationTemplateRunningTotal, "value"),
+			calculation("difference", ir.VisualizationCalculationTemplateDifference, "value"),
+		),
+	}
+	frame := Frame{Columns: []string{"value"}, Rows: [][]any{{int64(9007199254740993)}, {int64(2)}}}
+	result, _, err := ApplyVisualCalculations(base, "primary", frame, ir.VisualizationCompletenessComplete)
+	if err != nil {
+		t.Fatalf("ApplyVisualCalculations(): %v", err)
+	}
+	if got := result.Rows[1][1]; got != "9007199254740995" {
+		t.Fatalf("running[1] = %#v, want exact 9007199254740995", got)
+	}
+	if got := result.Rows[1][2]; got != "-9007199254740991" {
+		t.Fatalf("difference[1] = %#v, want exact -9007199254740991", got)
+	}
+}
+
+func TestApplyVisualCalculationsComparesExactNumericTransports(t *testing.T) {
+	t.Parallel()
+
+	base := ir.VisualizationSpecBase{
+		Kind: "cartesian",
+		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
+			{ID: "decimal_value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Decimal value"},
+			{ID: "integer_value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeInteger, Nullable: false, Label: "Integer value"},
+			{ID: "decimal_rank", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeInteger, Nullable: true, Label: "Decimal rank"},
+			{ID: "integer_rank", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeInteger, Nullable: true, Label: "Integer rank"},
+			{ID: "ordered_running", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Ordered running"},
+			{ID: "integer_lookup", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeInteger, Nullable: true, Label: "Integer lookup"},
+		}}},
+		Calculations: calculationList(
+			ir.VisualizationCalculation{
+				ID: "decimal_rank", Label: "Decimal rank", Dataset: "primary", Template: ir.VisualizationCalculationTemplateRank,
+				Source: fieldRef("decimal_value"), Axis: ir.VisualizationCalculationAxisRows,
+				OrderBy: []ir.VisualizationCalculationOrder{{Field: fieldRef("decimal_value"), Direction: ir.VisualizationSortDirectionDescending}},
+			},
+			ir.VisualizationCalculation{
+				ID: "integer_rank", Label: "Integer rank", Dataset: "primary", Template: ir.VisualizationCalculationTemplateRank,
+				Source: fieldRef("integer_value"), Axis: ir.VisualizationCalculationAxisRows,
+				OrderBy: []ir.VisualizationCalculationOrder{{Field: fieldRef("integer_value"), Direction: ir.VisualizationSortDirectionDescending}},
+			},
+			ir.VisualizationCalculation{
+				ID: "ordered_running", Label: "Ordered running", Dataset: "primary", Template: ir.VisualizationCalculationTemplateRunningTotal,
+				Source: fieldRef("decimal_value"), Axis: ir.VisualizationCalculationAxisRows,
+				OrderBy: []ir.VisualizationCalculationOrder{{Field: fieldRef("decimal_value"), Direction: ir.VisualizationSortDirectionDescending}},
+			},
+			ir.VisualizationCalculation{
+				ID: "integer_lookup", Label: "Integer lookup", Dataset: "primary", Template: ir.VisualizationCalculationTemplateLookup,
+				Source: fieldRef("integer_value"), Axis: ir.VisualizationCalculationAxisRows,
+				Lookup: &ir.VisualizationCalculationLookup{Field: fieldRef("integer_value"), Value: "9007199254740993.0"},
+			},
+		),
+	}
+	frame := Frame{
+		Columns: []string{"decimal_value", "integer_value"},
+		Rows: [][]any{
+			{"9007199254740993.125", int64(9007199254740992)},
+			{"9007199254740994.125", int64(9007199254740993)},
+			{"1", int64(2)},
+		},
+	}
+
+	result, _, err := ApplyVisualCalculations(base, "primary", frame, ir.VisualizationCompletenessComplete)
+	if err != nil {
+		t.Fatalf("ApplyVisualCalculations(): %v", err)
+	}
+	assertNumericColumn(t, result, "decimal_rank", []any{int64(2), int64(1), int64(3)})
+	assertNumericColumn(t, result, "integer_rank", []any{int64(2), int64(1), int64(3)})
+	assertStringColumn(t, result, "ordered_running", []string{"18014398509481987.250", "9007199254740994.125", "18014398509481988.250"})
+	assertAnyColumn(t, result, "integer_lookup", []any{int64(9007199254740993), int64(9007199254740993), int64(9007199254740993)})
+}
+
+func TestApplyVisualCalculationsKeepsLargeIntegerPartitionsDistinct(t *testing.T) {
+	t.Parallel()
+
+	base := ir.VisualizationSpecBase{
+		Kind: "cartesian",
+		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
+			{ID: "group", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeInteger, Nullable: false, Label: "Group"},
+			{ID: "subgroup", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeInteger, Nullable: false, Label: "Subgroup"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
+			{ID: "running_group", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Group running"},
+			{ID: "running_pair", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Pair running"},
+		}}},
+		Calculations: calculationList(
+			ir.VisualizationCalculation{
+				ID: "running_group", Label: "Group running", Dataset: "primary", Template: ir.VisualizationCalculationTemplateRunningTotal,
+				Source: fieldRef("value"), Axis: ir.VisualizationCalculationAxisRows, PartitionBy: []ir.VisualizationFieldRef{fieldRef("group")},
+			},
+			ir.VisualizationCalculation{
+				ID: "running_pair", Label: "Pair running", Dataset: "primary", Template: ir.VisualizationCalculationTemplateRunningTotal,
+				Source: fieldRef("value"), Axis: ir.VisualizationCalculationAxisRows,
+				PartitionBy: []ir.VisualizationFieldRef{fieldRef("group"), fieldRef("subgroup")},
+			},
+		),
+	}
+	frame := Frame{
+		Columns: []string{"group", "subgroup", "value"},
+		Rows: [][]any{
+			{int64(9007199254740992), int64(1), "1"},
+			{int64(9007199254740993), int64(1), "1"},
+			{int64(9007199254740992), int64(1), "2"},
+			{int64(9007199254740993), int64(2), "4"},
+		},
+	}
+
+	result, _, err := ApplyVisualCalculations(base, "primary", frame, ir.VisualizationCompletenessComplete)
+	if err != nil {
+		t.Fatalf("ApplyVisualCalculations(): %v", err)
+	}
+	assertStringColumn(t, result, "running_group", []string{"1", "1", "3", "5"})
+	assertStringColumn(t, result, "running_pair", []string{"1", "1", "3", "4"})
+}
+
 func TestApplyVisualCalculationsDoesNotMaskIncompleteFrames(t *testing.T) {
 	t.Parallel()
 
 	base := ir.VisualizationSpecBase{
 		Kind: "table",
 		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
 		}}},
 		Calculations: calculationList(calculation("share", ir.VisualizationCalculationTemplatePercentOfGrandTotal, "value")),
 	}
@@ -125,7 +250,7 @@ func TestApplyVisualCalculationsHonorsHierarchyFacetAndColumnPartitions(t *testi
 			{ID: "region", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Region"},
 			{ID: "parent", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Parent"},
 			{ID: "period", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: false, Label: "Period"},
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: false, Label: "Value"},
 		}}},
 		Calculations: calculationList(
 			ir.VisualizationCalculation{
@@ -169,7 +294,7 @@ func TestApplyVisualCalculationsKeepsNullOrderValuesLastAndNullSourcesNonPoisoni
 		Kind: "cartesian",
 		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
 			{ID: "period", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: true, Label: "Period"},
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
 		}}},
 		Calculations: calculationList(ir.VisualizationCalculation{
 			ID: "running", Label: "Running", Dataset: "primary", Template: ir.VisualizationCalculationTemplateRunningTotal,
@@ -240,12 +365,60 @@ func assertNumericColumn(t *testing.T, frame Frame, column string, want []any) {
 			}
 			continue
 		}
-		actualNumber, ok := actual.(float64)
+		actualNumber, ok := calculationNumber(actual)
 		if !ok {
 			t.Fatalf("%s[%d] = %#v (%T), want number", column, rowIndex, actual, actual)
 		}
-		if math.Abs(actualNumber-expected.(float64)) > 1e-9 {
-			t.Fatalf("%s[%d] = %v, want %v", column, rowIndex, actualNumber, expected)
+		expectedNumber, ok := calculationNumber(expected)
+		if !ok {
+			t.Fatalf("%s[%d] expected %#v (%T) is not numeric", column, rowIndex, expected, expected)
+		}
+		if math.Abs(actualNumber-expectedNumber) > 1e-9 {
+			t.Fatalf("%s[%d] = %v, want %v", column, rowIndex, actualNumber, expectedNumber)
+		}
+	}
+}
+
+func assertStringColumn(t *testing.T, frame Frame, column string, want []string) {
+	t.Helper()
+	index := -1
+	for candidate, name := range frame.Columns {
+		if name == column {
+			index = candidate
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatalf("missing column %q in %#v", column, frame.Columns)
+	}
+	if len(frame.Rows) != len(want) {
+		t.Fatalf("%s row count = %d, want %d", column, len(frame.Rows), len(want))
+	}
+	for rowIndex, expected := range want {
+		if actual := frame.Rows[rowIndex][index]; actual != expected {
+			t.Fatalf("%s[%d] = %#v, want %q", column, rowIndex, actual, expected)
+		}
+	}
+}
+
+func assertAnyColumn(t *testing.T, frame Frame, column string, want []any) {
+	t.Helper()
+	index := -1
+	for candidate, name := range frame.Columns {
+		if name == column {
+			index = candidate
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatalf("missing column %q in %#v", column, frame.Columns)
+	}
+	if len(frame.Rows) != len(want) {
+		t.Fatalf("%s row count = %d, want %d", column, len(frame.Rows), len(want))
+	}
+	for rowIndex, expected := range want {
+		if actual := frame.Rows[rowIndex][index]; actual != expected {
+			t.Fatalf("%s[%d] = %#v (%T), want %#v (%T)", column, rowIndex, actual, actual, expected, expected)
 		}
 	}
 }
@@ -261,7 +434,7 @@ func BenchmarkApplyVisualCalculationsLargeFacetedFrame(b *testing.B) {
 		Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{
 			{ID: "facet", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeInteger, Label: "Facet"},
 			{ID: "position", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeInteger, Label: "Position"},
-			{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Label: "Value"},
+			{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Label: "Value"},
 		}}},
 		Calculations: calculationList(
 			ir.VisualizationCalculation{

@@ -58,7 +58,7 @@ Configuration validation cannot prove data correctness. Before promoting a chang
 - relationship cardinality assumptions;
 - refresh duration and data-file growth.
 
-A successful SQL execution that produces zero rows or duplicates a fact grain is still an invalid business result.
+A successful SQL execution that produces zero rows or duplicates a dataset grain is still an invalid business result.
 
 ## Failure and cleanup
 

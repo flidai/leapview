@@ -251,7 +251,7 @@ func TestDashboardBuilderPreviewVisualsUseAuthoredIDsAndRuntimeMetadata(t *testi
 	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&authoring.Dashboard{
 		ID: "sales", SemanticModel: "sales",
 		Visuals: authoring.ChartVisualizations(map[string]authoring.Visual{
-			"orders": {Type: "line", Title: "Orders", Query: authoring.VisualQuery{Table: "orders", Measures: []authoring.FieldRef{{Field: "orders.revenue"}}}},
+			"orders": {Type: "line", Title: "Orders", Query: authoring.VisualQuery{Dataset: "orders", Metrics: []authoring.FieldRef{{Field: "orders.revenue"}}}},
 		}),
 	})
 	if err != nil {

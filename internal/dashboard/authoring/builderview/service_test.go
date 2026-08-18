@@ -237,7 +237,7 @@ func TestBuildBoundsGlobalCountsAndDoesNotLeakAuthoredUnion(t *testing.T) {
 	fixture.revision.Document.Visuals["orders"] = authoring.ChartVisualization(authoring.Visual{
 		Type: "bar", Title: "Revenue", Query: authoring.VisualQuery{
 			Dimensions: []authoring.FieldRef{{Field: "SUM(secret_password)", Alias: "SUM(secret_password)"}},
-			Measures:   []authoring.FieldRef{{Field: "orders.amount", Alias: "amount"}},
+			Metrics:    []authoring.FieldRef{{Field: "orders.amount", Alias: "amount"}},
 		},
 	})
 	// Rebuild the immutable revision after changing its document.
@@ -450,7 +450,7 @@ func newBuilderFixture(t *testing.T) *builderFixture {
 	runtime := &builderRuntime{model: &semanticmodel.Model{
 		Name: "sales", Title: "Sales model", Tables: map[string]semanticmodel.Table{
 			"orders": {Description: "Orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Label: "Status", Type: "string"}}},
-		}, Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Label: "Order count", Input: semanticmodel.MeasureInput{Field: "orders.id"}}},
+		}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Label: "Order count", Input: &semanticmodel.MetricInput{Field: "orders.id"}}},
 	}}
 	lease := &builderLease{runtime: runtime, servingState: "serving-1"}
 	provider := &builderProvider{lease: lease}
@@ -571,14 +571,16 @@ func cloneBuilderModel(value *semanticmodel.Model) *semanticmodel.Model {
 			copied.Tables[id] = tableCopy
 		}
 	}
-	if value.Measures != nil {
-		copied.Measures = make(map[string]semanticmodel.MetricMeasure, len(value.Measures))
-		for id, measure := range value.Measures {
-			measureCopy := measure
-			if measure.Filters != nil {
-				measureCopy.Filters = append([]semanticmodel.MeasureFilter(nil), measure.Filters...)
+	if value.Metrics != nil {
+		copied.Metrics = make(map[string]semanticmodel.Metric, len(value.Metrics))
+		for id, metric := range value.Metrics {
+			metricCopy := metric
+			metricCopy.Where = append([]string(nil), metric.Where...)
+			if metric.Input != nil {
+				inputCopy := *metric.Input
+				metricCopy.Input = &inputCopy
 			}
-			copied.Measures[id] = measureCopy
+			copied.Metrics[id] = metricCopy
 		}
 	}
 	if value.Dimensions != nil {

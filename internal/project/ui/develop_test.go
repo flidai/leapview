@@ -3,10 +3,12 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
@@ -14,33 +16,54 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
-func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph(t *testing.T) {
+func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGraph(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				PrimaryKey: "order_id",
-				Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}},
+				ModelName: "orders",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
+					"customer":   {Type: "foreign", Fields: []string{"customer_id"}},
+				},
+				GrainEntity: "order_line",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"order_id":    {Label: "Order ID"},
+					"line_number": {Label: "Line number"},
+					"customer_id": {Label: "Customer ID"},
+					"status":      {Label: "Status"},
+				},
 			},
-			"customers": {PrimaryKey: "customer_id"},
+			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count_distinct", Label: "Orders", Input: semanticmodel.MeasureInput{Field: "orders.order_id"}},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Dataset: "orders", Aggregation: "count_distinct", Label: "Orders", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "customers": {Model: "customers"},
+		},
+		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
+			"orders_customer": {From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Fields: []string{"customer_id"}}, To: semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Fields: []string{"customer_id"}}},
 		},
 		Relationships: []semanticmodel.Relationship{{
-			ID: "orders_customer", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one",
+			ID: "orders_customer", FromDataset: "orders", FromFields: []string{"customer_id"},
+			ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one",
 		}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
 	}
 	asset := projectview.DevelopAssetView{
 		ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales",
-		Payload: projectview.SemanticModelAssetPayload(model),
+		Payload: projectview.SemanticModelAssetPayload(model, compiled),
 	}
 	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
 	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
 	if len(details.Sections) != 3 {
-		t.Fatalf("detail sections = %d, want tables/measures/relationships", len(details.Sections))
+		t.Fatalf("detail sections = %d, want datasets/metrics/relationships", len(details.Sections))
 	}
-	for _, want := range []string{"Model tables (2)", "Measures (1)", "Relationships (1)"} {
+	for _, want := range []string{"Datasets (2)", "Metrics (1)", "Relationships (1)"} {
 		found := false
 		for _, section := range details.Sections {
 			if section.Title == want {
@@ -55,16 +78,41 @@ func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph
 	if details.SemanticModelGraph == nil || len(details.SemanticModelGraph.Nodes) != 2 || len(details.SemanticModelGraph.Edges) != 1 {
 		t.Fatalf("semantic graph = %#v, want two nodes and one edge", details.SemanticModelGraph)
 	}
-	measureTable := semanticMeasuresTable(project.ID, asset, []projectview.DevelopAssetView{asset}, asset.Payload)
-	if len(measureTable.Rows) != 1 {
-		t.Fatalf("measure rows = %#v, want one row", measureTable.Rows)
+	var ordersNode *uisignals.SemanticModelGraphNodeSignal
+	for index := range details.SemanticModelGraph.Nodes {
+		if details.SemanticModelGraph.Nodes[index].ID == "orders" {
+			ordersNode = &details.SemanticModelGraph.Nodes[index]
+			break
+		}
 	}
-	measureRow := measureTable.Rows[0]
-	if measureRow["table"] != "orders" || measureRow["input"] != "orders.order_id" {
-		t.Fatalf("measure row = %#v, want canonical fact and input", measureRow)
+	if ordersNode == nil || ordersNode.GrainEntity == nil || *ordersNode.GrainEntity != "order_line" {
+		t.Fatalf("orders graph node = %#v, want order_line grain", ordersNode)
 	}
-	if aggregation := measureRow["aggregation"].(recordTableBadge).Label; aggregation != "count_distinct" {
-		t.Fatalf("measure aggregation = %#v, want count_distinct", aggregation)
+	if ordersNode.Entities == nil || len(*ordersNode.Entities) != 2 {
+		t.Fatalf("orders graph entities = %#v, want primary and foreign entities", ordersNode.Entities)
+	}
+	if got := (*ordersNode.Entities)[1]; got.Name != "order_line" || got.Type != "primary" || !slices.Equal(got.Fields, []string{"order_id", "line_number"}) || got.Grain == nil || !*got.Grain {
+		t.Fatalf("orders graph grain entity = %#v, want ordered composite order_line", got)
+	}
+	grainFields := []string{}
+	for _, field := range ordersNode.Fields {
+		if field.Grain != nil && *field.Grain {
+			grainFields = append(grainFields, field.Name)
+		}
+	}
+	if !slices.Equal(grainFields, []string{"line_number", "order_id"}) {
+		t.Fatalf("orders graph grain fields = %v, want composite grain fields", grainFields)
+	}
+	metricTable := semanticMetricsTable(project.ID, asset, []projectview.DevelopAssetView{asset}, asset.Payload)
+	if len(metricTable.Rows) != 1 {
+		t.Fatalf("metric rows = %#v, want one row", metricTable.Rows)
+	}
+	metricRow := metricTable.Rows[0]
+	if metricRow["dataset"] != "orders" || metricRow["input"] != "orders.order_id" {
+		t.Fatalf("metric row = %#v, want canonical dataset and input", metricRow)
+	}
+	if aggregation := metricRow["aggregation"].(recordTableBadge).Label; aggregation != "count_distinct" {
+		t.Fatalf("metric aggregation = %#v, want count_distinct", aggregation)
 	}
 
 	bootstrap := ProjectAssetBootstrapSignalsForEnvironment(catalog.Catalog{}, project, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetRefreshState{}, AssetVersionsState{})
@@ -72,7 +120,7 @@ func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Model tables (2)", "Measures (1)", "Relationships (1)"} {
+	for _, want := range []string{"Datasets (2)", "Metrics (1)", "Relationships (1)"} {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("bootstrap JSON = %s, missing %q", encoded, want)
 		}
@@ -84,6 +132,83 @@ func TestSemanticModelDetailProjectionRendersTablesMeasuresRelationshipsAndGraph
 	dom := rendered.String()
 	if !strings.Contains(dom, "<lv-project-asset-page") || !strings.Contains(dom, "/static/semantic-model-graph.js") {
 		t.Fatalf("semantic-model detail DOM missing route root or graph asset: %s", dom)
+	}
+}
+
+func TestSemanticModelGraphProjectsCompiledEntityAndCompositeEndpoints(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {
+				ModelName: "orders",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
+					"customer":   {Type: "foreign", Fields: []string{"customer_id", "customer_region"}},
+				},
+				GrainEntity: "order_line",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"order_id": {Label: "Order ID"}, "line_number": {Label: "Line number"},
+					"customer_id": {Label: "Customer ID"}, "customer_region": {Label: "Customer region"},
+				},
+			},
+			"customers": {
+				ModelName:   "customers",
+				Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id", "customer_region"}}},
+				GrainEntity: "customer",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer_id": {Label: "Customer ID"}, "customer_region": {Label: "Customer region"},
+				},
+			},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "customers": {Model: "customers"},
+		},
+		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
+			"orders_customers": {
+				From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Entity: "customer"},
+				To:   semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Entity: "customer"},
+			},
+		},
+		Relationships: []semanticmodel.Relationship{{
+			ID: "orders_customers", FromDataset: "orders", FromFields: []string{"customer_id", "customer_region"},
+			ToDataset: "customers", ToFields: []string{"customer_id", "customer_region"}, Cardinality: "one_to_one",
+		}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := projectview.DevelopAssetView{
+		ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales",
+		Payload: projectview.SemanticModelAssetPayload(model, compiled),
+	}
+	details := projectAssetDetailsSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil)
+	if details.SemanticModelGraph == nil || len(details.SemanticModelGraph.Edges) != 1 {
+		t.Fatalf("semantic graph = %#v, want one composite edge", details.SemanticModelGraph)
+	}
+	edge := details.SemanticModelGraph.Edges[0]
+	if edge.SourceField != "customer_id, customer_region" || edge.TargetField != "customer_id, customer_region" {
+		t.Fatalf("composite edge fields = (%q, %q), want ordered physical tuple", edge.SourceField, edge.TargetField)
+	}
+	if edge.Cardinality != "one_to_one" || edge.Label != "1:1" {
+		t.Fatalf("composite edge cardinality = (%q, %q), want inferred safe marker", edge.Cardinality, edge.Label)
+	}
+	var orders *uisignals.SemanticModelGraphNodeSignal
+	for index := range details.SemanticModelGraph.Nodes {
+		if details.SemanticModelGraph.Nodes[index].ID == "orders" {
+			orders = &details.SemanticModelGraph.Nodes[index]
+			break
+		}
+	}
+	if orders == nil {
+		t.Fatal("orders graph node missing")
+	}
+	for _, field := range orders.Fields {
+		if field.Name == "customer_id" || field.Name == "customer_region" {
+			if field.Join == nil || !*field.Join {
+				t.Fatalf("orders field %q = %#v, want join handle", field.Name, field)
+			}
+		}
 	}
 }
 
@@ -122,8 +247,8 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 		Sources:            []string{"olist.geolocation"},
 		Transform:          semanticmodel.Transform{SQL: "SELECT zip_prefix FROM source.\"olist.geolocation\""},
 		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix", Description: "ZIP code prefix"}},
-		PrimaryKey:         "zip_prefix",
-		Grain:              "zip_prefix",
+		Entities:           map[string]semanticmodel.ModelEntitySpec{"zip_prefix": {Type: "primary", Fields: []string{"zip_prefix"}}},
+		GrainEntity:        "zip_prefix",
 		SourceDependencies: []string{"olist.geolocation"},
 		Schema:             semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", Ordinal: 0, PhysicalType: "VARCHAR"}}},
 	}
@@ -142,14 +267,17 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := factValue(details.Overview, "Mode"); got != "Transform" {
 		t.Fatalf("mode fact = %q, want Transform", got)
 	}
-	if len(details.Sections) != 2 || details.Sections[0].Title != "Fields (1)" || details.Sections[1].Title != "SQL" {
-		t.Fatalf("sections = %#v, want fields and SQL", details.Sections)
+	if len(details.Sections) != 3 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (1)" || details.Sections[2].Title != "SQL" {
+		t.Fatalf("sections = %#v, want entities, fields, and SQL", details.Sections)
 	}
-	if uisignals.ValueOrZero(details.Sections[1].Code) != table.Transform.SQL || uisignals.ValueOrZero(details.Sections[1].Lang) != "sql" {
-		t.Fatalf("SQL section = %#v, want compiled transform SQL", details.Sections[1])
+	if len(details.Sections[0].Table.Rows) != 1 || details.Sections[0].Table.Rows[0]["name"] != "zip_prefix" || details.Sections[0].Table.Rows[0]["grain"] != "Yes" {
+		t.Fatalf("entity rows = %#v, want grain zip_prefix entity", details.Sections[0].Table.Rows)
 	}
-	if len(details.Sections[0].Table.Rows) != 1 {
-		t.Fatalf("field rows = %#v, want one row", details.Sections[0].Table.Rows)
+	if uisignals.ValueOrZero(details.Sections[2].Code) != table.Transform.SQL || uisignals.ValueOrZero(details.Sections[2].Lang) != "sql" {
+		t.Fatalf("SQL section = %#v, want compiled transform SQL", details.Sections[2])
+	}
+	if len(details.Sections[1].Table.Rows) != 1 {
+		t.Fatalf("field rows = %#v, want one row", details.Sections[1].Table.Rows)
 	}
 }
 
@@ -221,6 +349,47 @@ func TestDevelopAssetLinksStayInResourceArea(t *testing.T) {
 	}
 	if page.DetailHref == "/projects/sales/assets/model_table:orders/details" {
 		t.Fatal("legacy project-prefixed asset link escaped into resource signal")
+	}
+}
+
+func TestModelDetailUsesNamedEntitiesAndExactGrain(t *testing.T) {
+	asset := projectview.DevelopAssetView{
+		ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders",
+		Payload: map[string]any{
+			"Entities": map[string]any{
+				"order_line": map[string]any{"Type": "primary", "Fields": []any{"order_id", "line_number"}},
+			},
+			"GrainEntity": "order_line",
+			"Dimensions": map[string]any{
+				"order_id": map[string]any{}, "line_number": map[string]any{}, "amount": map[string]any{},
+			},
+		},
+	}
+	details := projectAssetDetailsSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil)
+	overview := map[string]string{}
+	for _, fact := range details.Overview {
+		overview[fact.Label] = fact.Value
+	}
+	if overview["Grain entity"] != "order_line" || overview["Entities"] != "1" {
+		t.Fatalf("overview = %#v, want named entity and grain", overview)
+	}
+	if _, exists := overview["Primary key"]; exists {
+		t.Fatalf("overview = %#v, removed scalar primary-key contract is still exposed", overview)
+	}
+	if len(details.Sections) != 2 || details.Sections[0].Title != "Entities (1)" || details.Sections[0].Table == nil {
+		t.Fatalf("sections = %#v, want entities and fields", details.Sections)
+	}
+	entityRows := details.Sections[0].Table.Rows
+	if len(entityRows) != 1 || entityRows[0]["name"] != "order_line" || entityRows[0]["fields"] != "order_id, line_number" || entityRows[0]["grain"] != "Yes" {
+		t.Fatalf("entity rows = %#v, want ordered composite grain", entityRows)
+	}
+	fieldRows := details.Sections[1].Table.Rows
+	for _, row := range fieldRows {
+		if row["name"] == "order_id" || row["name"] == "line_number" {
+			if row["entities"] != "order_line" || row["grain"] != "Yes" {
+				t.Fatalf("grain field row = %#v, want entity membership and grain", row)
+			}
+		}
 	}
 }
 

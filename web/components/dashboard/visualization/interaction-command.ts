@@ -53,7 +53,7 @@ export function interactionCommandForRow(
     if (labelValue === undefined) return undefined
     return {
       field: mapping.targetFieldID,
-      ...(mapping.targetFactID ? { fact: mapping.targetFactID } : {}),
+      ...(mapping.targetDatasetID ? { dataset: mapping.targetDatasetID } : {}),
       ...(mapping.grain ? { grain: mapping.grain } : {}),
       value,
       label: interactionSelectionLabel(labelValue),
@@ -92,7 +92,7 @@ export function interactionOptions(envelope: VisualizationEnvelope): Interaction
 }
 
 export function commandIdentityKey(command: Pick<OptimisticInteractionCommand, 'mappings'>): string {
-  return JSON.stringify(command.mappings.map((mapping) => [mapping.field, mapping.fact ?? null, mapping.grain ?? null, mapping.value]))
+  return JSON.stringify(command.mappings.map((mapping) => [mapping.field, mapping.dataset ?? null, mapping.grain ?? null, mapping.value]))
 }
 
 export function clearInteractionCommand(envelope: VisualizationEnvelope): OptimisticInteractionCommand | undefined {

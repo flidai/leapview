@@ -255,7 +255,7 @@ mcp_smoke() {
 
   local attempts="${LEAPVIEW_DEV_MCP_ATTEMPTS:-20}"
   local interval="${LEAPVIEW_DEV_MCP_INTERVAL:-0.5}"
-  local catalog measure query_arguments
+  local catalog metric query_arguments
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     catalog="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}')" || return 1
     if jq -e '(.error == null) and (.result.isError != true) and (.result.structuredContent.count > 0)' <<<"$catalog" >/dev/null; then
@@ -270,17 +270,17 @@ mcp_smoke() {
   done
 
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    measure="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-semantic-model","method":"tools/call","params":{"name":"catalog_search","arguments":{"query":"sales","kinds":["semantic_model"],"limit":1}}}')" || return 1
+    metric="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-semantic-model","method":"tools/call","params":{"name":"catalog_search","arguments":{"query":"sales","kinds":["semantic_model"],"limit":1}}}')" || return 1
     query_arguments="$(jq -ce '
       .result.structuredContent.items[0] as $item |
-      {model: $item.ref.id, measures: [{field: "revenue"}], limit: 1}
-    ' <<<"$measure" 2>/dev/null || true)"
+      {model: $item.ref.id, metrics: [{field: "revenue"}], limit: 1}
+    ' <<<"$metric" 2>/dev/null || true)"
     if [[ -n "$query_arguments" ]]; then
       break
     fi
     if (( attempt == attempts )); then
-      echo "Development MCP smoke check could not resolve a semantic measure after ${attempts} attempts" >&2
-      printf '%s\n' "$measure" >&2
+      echo "Development MCP smoke check could not resolve a semantic metric after ${attempts} attempts" >&2
+      printf '%s\n' "$metric" >&2
       return 1
     fi
     sleep "$interval"

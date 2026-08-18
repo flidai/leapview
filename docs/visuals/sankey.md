@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic flow
 
-Map two dimensions to source and target nodes and one measure to link width, revealing how orders flow from status to delivery speed.
+Map two dimensions to source and target nodes and one metric to link width, revealing how orders flow from status to delivery speed.
 
 {{< visual id="status_delivery_flow" >}}
 
@@ -25,7 +25,7 @@ visuals:
       dimensions:
         status: orders.status
         delivery_bucket: orders.delivery_bucket
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -48,7 +48,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -74,7 +74,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value

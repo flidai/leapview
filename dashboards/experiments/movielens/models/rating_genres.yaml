@@ -3,26 +3,66 @@ kind: Model
 metadata:
   id: model:rating_genres
   name: rating_genres
-  displayName: Rating Genres Fact
-  description: Rating-by-genre bridge fact used to analyze genres without unsafe many-to-many joins.
+  displayName: Rating Genres
+  description: Rating-by-genre bridge model used to analyze genres without unsafe many-to-many joins.
 spec:
-  primaryKey: rating_genre_id
-  grain: rating_genre_id
   fields:
-    rating_genre_id: {label: Rating genre ID, description: Stable rating and genre identifier.}
-    rating_id: {label: Rating ID, description: Rating-grain identifier.}
-    user_id: {label: User ID, description: Anonymized MovieLens user identifier.}
-    movie_id: {label: Movie ID, description: MovieLens movie identifier.}
-    title: {label: Title, description: Movie title.}
-    genre: {label: Genre, description: Single genre assigned to the rated movie.}
-    rating: {label: Rating, description: Rating value on the MovieLens scale.}
-    rating_bucket: {label: Rating bucket, description: Rounded rating bucket for distribution charts.}
-    rated_at: {label: Rated at, description: Timestamp when the rating was applied.}
-    rating_date: {label: Rating date, description: Date when the rating was applied.}
-    rating_month: {label: Rating month, description: Calendar month when the rating was applied.}
-    rating_year: {label: Rating year, description: Calendar year when the rating was applied.}
-    release_year: {label: Release year, description: Movie release year.}
-    release_decade: {label: Release decade, description: Movie release decade.}
+    rating_genre_id:
+      datatype: String
+      label: Rating genre ID
+      description: Stable rating and genre identifier.
+    rating_id:
+      datatype: String
+      label: Rating ID
+      description: Rating-grain identifier.
+    user_id:
+      datatype: Integer
+      label: User ID
+      description: Anonymized MovieLens user identifier.
+    movie_id:
+      datatype: Integer
+      label: Movie ID
+      description: MovieLens movie identifier.
+    title:
+      datatype: String
+      label: Title
+      description: Movie title.
+    genre:
+      datatype: String
+      label: Genre
+      description: Single genre assigned to the rated movie.
+    rating:
+      datatype: Float
+      label: Rating
+      description: Rating value on the MovieLens scale.
+    rating_bucket:
+      datatype: String
+      label: Rating bucket
+      description: Rounded rating bucket for distribution charts.
+    rated_at:
+      datatype: DateTime
+      label: Rated at
+      description: Timestamp when the rating was applied.
+    rating_date:
+      datatype: Date
+      label: Rating date
+      description: Date when the rating was applied.
+    rating_month:
+      datatype: String
+      label: Rating month
+      description: Calendar month when the rating was applied.
+    rating_year:
+      datatype: Integer
+      label: Rating year
+      description: Calendar year when the rating was applied.
+    release_year:
+      datatype: Integer
+      label: Release year
+      description: Movie release year.
+    release_decade:
+      datatype: String
+      label: Release decade
+      description: Movie release decade.
   transform:
     sql: |
       WITH genre_rows AS (
@@ -63,3 +103,18 @@ spec:
       FROM model.ratings r
       JOIN model.movies m ON m.movie_id = r.movie_id
       JOIN genre_rows genre ON list_contains(str_split(m.genres, '|'), genre.genre)
+  entities:
+    rating_genre:
+      type: primary
+      fields:
+      - rating_genre_id
+    movie:
+      type: foreign
+      fields:
+      - movie_id
+    user:
+      type: foreign
+      fields:
+      - user_id
+  grain:
+    entity: rating_genre

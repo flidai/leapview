@@ -391,6 +391,9 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		strings.Contains(performance, "comparePerformance") {
 		t.Error("browser worker must not own performance policy decisions")
 	}
+	if strings.Contains(performance, "measures:") || !strings.Contains(performance, "metrics: [{ field: 'order_count' }, { field: 'revenue' }]") {
+		t.Error("performance governed query must use semantic metrics")
+	}
 	for _, required := range []string{"Automated step", "Human check", "Interruption recovery", "fresh-install-only", "./leapviewctl qualify installed-candidate"} {
 		if !strings.Contains(runbook, required) {
 			t.Errorf("qualification runbook missing %q", required)

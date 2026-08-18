@@ -4,18 +4,19 @@ import (
 	"fmt"
 	"strings"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	visualizationgeometry "github.com/flidai/leapview/internal/dashboard/visualization/geometry"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationmapasset "github.com/flidai/leapview/internal/dashboard/visualization/mapasset"
 )
 
-func compileGeographicVisualizationSpec(authored dashboardauthoring.Visual) (visualizationir.VisualizationSpec, error) {
+func compileGeographicVisualizationSpec(authored dashboardauthoring.Visual, model *semanticmodel.Model) (visualizationir.VisualizationSpec, error) {
 	tiled, err := geographicUsesTiledDelivery(authored)
 	if err != nil {
 		return visualizationir.VisualizationSpec{}, err
 	}
-	fields := geographicVisualizationFields(authored)
+	fields := geographicVisualizationFields(authored, model)
 	known := make(map[string]struct{}, len(fields))
 	for _, field := range fields {
 		known[field.ID] = struct{}{}
@@ -122,7 +123,7 @@ func compiledSpatialSelectionInteractions(selection dashboardauthoring.SpatialSe
 	mapping := func(value dashboardauthoring.SpatialSelectionMapping) visualizationir.VisualizationSpatialFieldMapping {
 		return visualizationir.VisualizationSpatialFieldMapping{
 			Source:        visualizationir.VisualizationFieldRef{Dataset: "primary", Field: value.Source},
-			TargetFieldID: value.Field, TargetFactID: optionalString(value.Fact),
+			TargetFieldID: value.Field, TargetDatasetID: optionalString(value.Dataset),
 		}
 	}
 	return []visualizationir.VisualizationSpatialSelectionInteraction{{
@@ -361,7 +362,7 @@ func mapLineStyle(value dashboardauthoring.VisualGeoLineStyle) visualizationir.V
 	return visualizationir.VisualizationMapLineStyle{Width: width, Curvature: value.Curvature}
 }
 
-func geographicVisualizationFields(authored dashboardauthoring.Visual) []visualizationir.VisualizationField {
+func geographicVisualizationFields(authored dashboardauthoring.Visual, model *semanticmodel.Model) []visualizationir.VisualizationField {
 	coordinateAliases := map[string]struct{}{}
 	for _, layer := range authored.Geo.Layers {
 		if layer.Latitude != "" {
@@ -375,7 +376,7 @@ func geographicVisualizationFields(authored dashboardauthoring.Visual) []visuali
 	for _, mapping := range authored.Interaction.PointSelection.Mappings {
 		identity[mapping.Value] = true
 	}
-	fields := make([]visualizationir.VisualizationField, 0, len(authored.Query.Dimensions)+len(authored.Query.Measures)+1)
+	fields := make([]visualizationir.VisualizationField, 0, len(authored.Query.Dimensions)+len(authored.Query.Metrics)+1)
 	appendField := func(field dashboardauthoring.FieldRef, role visualizationir.VisualizationFieldRole, dataType visualizationir.VisualizationDataType) {
 		if field.Field == "" {
 			return
@@ -392,20 +393,33 @@ func geographicVisualizationFields(authored dashboardauthoring.Visual) []visuali
 	}
 	for _, field := range authored.Query.Dimensions {
 		dataType := visualizationir.VisualizationDataTypeString
+		if model != nil {
+			if dimension, err := model.ResolveDimension(field.Field); err == nil {
+				dataType = compiledDimensionDataType(dimension)
+			}
+		}
 		alias := field.Alias
 		if alias == "" {
 			alias = fieldAlias(field.Field)
 		}
 		if _, ok := coordinateAliases[alias]; ok {
-			dataType = visualizationir.VisualizationDataTypeDecimal
+			if dataType != visualizationir.VisualizationDataTypeFloat {
+				dataType = visualizationir.VisualizationDataTypeDecimal
+			}
 		}
 		appendField(field, visualizationir.VisualizationFieldRoleDimension, dataType)
 	}
 	if authored.Query.Time.Field != "" {
 		appendField(dashboardauthoring.FieldRef{Field: authored.Query.Time.Field, Alias: authored.Query.Time.Alias}, visualizationir.VisualizationFieldRoleDimension, visualizationir.VisualizationDataTypeTemporal)
 	}
-	for _, field := range authored.Query.Measures {
-		appendField(field, visualizationir.VisualizationFieldRoleMeasure, visualizationir.VisualizationDataTypeDecimal)
+	for _, field := range authored.Query.Metrics {
+		dataType := visualizationir.VisualizationDataTypeDecimal
+		if model != nil {
+			if metric, err := model.ResolveMetric(field.Field); err == nil {
+				dataType = compiledMetricDataType(model, metric)
+			}
+		}
+		appendField(field, visualizationir.VisualizationFieldRoleMetric, dataType)
 	}
 	return fields
 }

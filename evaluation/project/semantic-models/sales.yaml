@@ -5,41 +5,59 @@ metadata:
   name: sales
   displayName: Governed Sales
 spec:
-  tables:
-    - orders
+  datasets:
+    orders:
+      model: orders
+      defaultTimeDimension: purchase_date
   dimensions:
     purchase_date:
-      type: date
+      datatype: Date
       bindings:
-        orders: {field: orders.purchase_date}
+        orders:
+          field: orders.purchase_date
+      time:
+        nativeGrain: day
+        grains:
+        - day
+        - week
+        - month
+        calendar: iso8601
     state:
-      type: string
+      datatype: String
       bindings:
-        orders: {field: orders.state}
+        orders:
+          field: orders.state
     category:
-      type: string
+      datatype: String
       bindings:
-        orders: {field: orders.category}
+        orders:
+          field: orders.category
     status:
-      type: string
+      datatype: String
       bindings:
-        orders: {field: orders.status}
-  measures:
-    order_count:
-      label: Orders
-      fact: orders
-      aggregation: count_distinct
-      input: {field: orders.order_id}
-      empty: zero
-    revenue:
-      label: Revenue
-      fact: orders
-      aggregation: sum
-      input: {field: orders.revenue}
-      empty: zero
-      format: currency
+        orders:
+          field: orders.status
   metrics:
+    order_count:
+      type: aggregate
+      dataset: orders
+      aggregation: count_distinct
+      input:
+        field: orders.order_id
+      empty: zero
+      label: Orders
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input:
+        field: orders.revenue
+      empty: zero
+      label: Revenue
+      format: currency
     aov:
+      type: ratio
+      numerator: revenue
+      denominator: order_count
       label: Average order value
-      expression: safe_divide(${revenue}, ${order_count})
       format: currency

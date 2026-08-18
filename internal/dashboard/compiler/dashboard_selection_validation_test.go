@@ -18,8 +18,8 @@ func TestValidateDashboardUsesSemanticSelectionResolver(t *testing.T) {
 		wantErr string
 	}{
 		{name: "conformed", mapping: dashboardauthoring.SelectionMapping{Field: "release_decade", Value: "label"}},
-		{name: "physical requires fact", mapping: dashboardauthoring.SelectionMapping{Field: "ratings.release_decade", Value: "label"}, wantErr: `physical field "ratings.release_decade" requires fact`},
-		{name: "semantic forbids fact", mapping: dashboardauthoring.SelectionMapping{Field: "release_decade", Fact: "ratings", Value: "label"}, wantErr: `semantic dimension "release_decade" must not specify fact`},
+		{name: "physical requires dataset", mapping: dashboardauthoring.SelectionMapping{Field: "ratings.release_decade", Value: "label"}, wantErr: `physical field "ratings.release_decade" requires dataset`},
+		{name: "semantic forbids dataset", mapping: dashboardauthoring.SelectionMapping{Field: "release_decade", Dataset: "ratings", Value: "label"}, wantErr: `semantic dimension "release_decade" must not specify dataset`},
 	}
 
 	for _, test := range tests {
@@ -48,7 +48,7 @@ func TestValidateDashboardRejectsPointSelectionForAggregateRadarPolygons(t *test
 			source.Type = visualType
 			source.Query.Dimensions = []dashboardauthoring.FieldRef{
 				{Field: "release_decade", Alias: "source"},
-				{Field: "release_decade", Alias: "target"},
+				{Field: "release_decade_target", Alias: "target"},
 			}
 			if visualType == "radar" {
 				source.Query.Dimensions = source.Query.Dimensions[:1]
@@ -72,7 +72,7 @@ func TestValidateDashboardAllowsSelectionFromHierarchyNodesAndNetworkLinks(t *te
 			source.Type = visualType
 			source.Query.Dimensions = []dashboardauthoring.FieldRef{
 				{Field: "release_decade", Alias: "source"},
-				{Field: "release_decade", Alias: "target"},
+				{Field: "release_decade_target", Alias: "target"},
 			}
 			dashboardDefinition.Visuals["source"] = dashboardauthoring.ChartVisualization(source)
 
@@ -115,7 +115,7 @@ func TestCompileDashboardRequiresHighlightTargetsToExposeMappedFieldsUnlessTheyA
 	}
 
 	target.Type = "kpi"
-	target.Query.Measures = target.Query.Measures[:1]
+	target.Query.Metrics = target.Query.Metrics[:1]
 	dashboardDefinition.Visuals["target"] = dashboardauthoring.ChartVisualization(target)
 	if _, err := CompileVisualizationDefinitions(dashboardDefinition, model); err != nil {
 		t.Fatalf("KPI comparison-context highlight error = %v", err)
@@ -138,26 +138,36 @@ func TestValidateDashboardResolvesNumericSpatialSelectionCoordinates(t *testing.
 
 func compilerSpatialSelectionFixture() (*dashboardauthoring.Dashboard, *semanticmodel.Model) {
 	model := &semanticmodel.Model{
-		Name: "model",
-		Tables: map[string]semanticmodel.Table{"ratings": {Dimensions: map[string]semanticmodel.MetricDimension{
-			"latitude": {Type: "number"}, "longitude": {Type: "number"}, "release_decade": {Type: "string"},
-		}}},
-		Measures: map[string]semanticmodel.MetricMeasure{"rating_count": {Fact: "ratings", Aggregation: "count", Empty: "zero"}},
+		Name:     "model",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"ratings": {Model: "ratings"}},
+		Tables: map[string]semanticmodel.Table{"ratings": {
+			ModelName:   "ratings",
+			GrainEntity: "release_decade",
+			Entities: map[string]semanticmodel.ModelEntitySpec{
+				"release_decade": {Type: "primary", Fields: []string{"release_decade"}},
+			},
+			Dimensions: map[string]semanticmodel.MetricDimension{
+				"latitude":       {Field: "ratings.latitude", Type: "number", Datatype: semanticmodel.DataTypeFloat},
+				"longitude":      {Field: "ratings.longitude", Type: "number", Datatype: semanticmodel.DataTypeFloat},
+				"release_decade": {Field: "ratings.release_decade", Type: "string", Datatype: semanticmodel.DataTypeString},
+			},
+		}},
+		Metrics: map[string]semanticmodel.Metric{"rating_count": {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "ratings.release_decade"}, Empty: "zero"}},
 	}
 	source := dashboardauthoring.Visual{
 		Title: "Source", Type: "map",
-		Query: dashboardauthoring.VisualQuery{Table: "ratings", Dimensions: []dashboardauthoring.FieldRef{
+		Query: dashboardauthoring.VisualQuery{Dataset: "ratings", Dimensions: []dashboardauthoring.FieldRef{
 			{Field: "ratings.latitude", Alias: "latitude"}, {Field: "ratings.longitude", Alias: "longitude"},
-		}, Measures: []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}}, Limit: 100},
+		}, Metrics: []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}}, Limit: 100},
 		Geo: dashboardauthoring.VisualGeo{Layers: []dashboardauthoring.VisualGeoLayer{{ID: "density", Kind: "density", Latitude: "latitude", Longitude: "longitude", Value: "value"}}},
 		Interaction: dashboardauthoring.Interaction{SpatialSelection: dashboardauthoring.SpatialSelectionInteraction{
 			Gestures:  []string{"box", "lasso", "radius"},
-			Latitude:  dashboardauthoring.SpatialSelectionMapping{Source: "latitude", Field: "ratings.latitude", Fact: "ratings"},
-			Longitude: dashboardauthoring.SpatialSelectionMapping{Source: "longitude", Field: "ratings.longitude", Fact: "ratings"},
+			Latitude:  dashboardauthoring.SpatialSelectionMapping{Source: "latitude", Field: "ratings.latitude", Dataset: "ratings"},
+			Longitude: dashboardauthoring.SpatialSelectionMapping{Source: "longitude", Field: "ratings.longitude", Dataset: "ratings"},
 			Targets:   []string{"target"},
 		}},
 	}
-	target := dashboardauthoring.Visual{Title: "Target", Type: "kpi", Query: dashboardauthoring.VisualQuery{Table: "ratings", Measures: []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}}, Limit: 1}}
+	target := dashboardauthoring.Visual{Title: "Target", Type: "kpi", Query: dashboardauthoring.VisualQuery{Dataset: "ratings", Metrics: []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}}, Limit: 1}}
 	return &dashboardauthoring.Dashboard{
 		ID: "dashboard", Title: "Dashboard", SemanticModel: "model",
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{"source": source, "target": target}),
@@ -168,26 +178,52 @@ func compilerSpatialSelectionFixture() (*dashboardauthoring.Dashboard, *semantic
 func compilerSelectionFixture(mapping dashboardauthoring.SelectionMapping) (*dashboardauthoring.Dashboard, *semanticmodel.Model) {
 	model := &semanticmodel.Model{
 		Name: "model",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"ratings": {Model: "ratings"},
+			"tags":    {Model: "tags"},
+		},
 		Tables: map[string]semanticmodel.Table{
-			"ratings": {Dimensions: map[string]semanticmodel.MetricDimension{"release_decade": {Type: "string"}}},
-			"tags":    {Dimensions: map[string]semanticmodel.MetricDimension{"release_decade": {Type: "string"}}},
+			"ratings": {
+				ModelName:   "ratings",
+				GrainEntity: "release_decade",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"release_decade": {Type: "primary", Fields: []string{"release_decade"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"release_decade": {Field: "ratings.release_decade", Type: "string", Datatype: semanticmodel.DataTypeString},
+				},
+			},
+			"tags": {
+				ModelName:   "tags",
+				GrainEntity: "release_decade",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"release_decade": {Type: "primary", Fields: []string{"release_decade"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"release_decade": {Field: "tags.release_decade", Type: "string", Datatype: semanticmodel.DataTypeString},
+				},
+			},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
-			"release_decade": {Type: "string", Bindings: map[string]semanticmodel.DimensionBinding{
+			"release_decade": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{
+				"ratings": {Field: "ratings.release_decade"},
+				"tags":    {Field: "tags.release_decade"},
+			}},
+			"release_decade_target": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{
 				"ratings": {Field: "ratings.release_decade"},
 				"tags":    {Field: "tags.release_decade"},
 			}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"rating_count": {Fact: "ratings", Aggregation: "count", Empty: "zero"},
-			"tag_count":    {Fact: "tags", Aggregation: "count", Empty: "zero"},
+		Metrics: map[string]semanticmodel.Metric{
+			"rating_count": {Type: "aggregate", Dataset: "ratings", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "ratings.release_decade"}, Empty: "zero"},
+			"tag_count":    {Type: "aggregate", Dataset: "tags", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "tags.release_decade"}, Empty: "zero"},
 		},
 	}
 	source := dashboardauthoring.Visual{
 		Title: "Source", Type: "bar",
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: mapping.Field, Alias: "label"}},
-			Measures:   []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}},
+			Metrics:    []dashboardauthoring.FieldRef{{Field: "rating_count", Alias: "value"}},
 		},
 		Interaction: dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{
 			Mappings: []dashboardauthoring.SelectionMapping{mapping}, Targets: []string{"target"},
@@ -197,7 +233,7 @@ func compilerSelectionFixture(mapping dashboardauthoring.SelectionMapping) (*das
 		Title: "Target", Type: "combo",
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: "release_decade", Alias: "label"}},
-			Measures: []dashboardauthoring.FieldRef{
+			Metrics: []dashboardauthoring.FieldRef{
 				{Field: "rating_count", Alias: "rating_count"},
 				{Field: "tag_count", Alias: "tag_count"},
 			},

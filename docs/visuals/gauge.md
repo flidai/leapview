@@ -20,7 +20,7 @@ visuals:
       maximum: 5
       target: 4.5
     query:
-      measures:
+      metrics:
         review_score: null
 ```
 
@@ -40,7 +40,7 @@ visuals:
       maximum: 120000
       target: 100000
     query:
-      measures:
+      metrics:
         order_count: null
 ```
 
@@ -68,6 +68,6 @@ visuals:
         - value: 5
           tone: success
     query:
-      measures:
+      metrics:
         review_score: null
 ```

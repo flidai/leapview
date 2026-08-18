@@ -10,7 +10,7 @@ func TestValidateGeographicVisualUsesClosedAliasBoundLayers(t *testing.T) {
 		Type: "map",
 		Query: VisualQuery{
 			Dimensions: []FieldRef{{Field: "orders.state", Alias: "state"}, {Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}},
-			Measures:   []FieldRef{{Field: "revenue", Alias: "revenue"}},
+			Metrics:    []FieldRef{{Field: "revenue", Alias: "revenue"}},
 		},
 		Geo: VisualGeo{Layers: []VisualGeoLayer{
 			{ID: "states", Kind: "choropleth", GeometryAsset: "brazil_states", Join: "state", Value: "revenue", Tooltip: []string{"state", "revenue"}, Color: VisualGeoColorScale{Kind: "sequential", Palette: "blue"}},
@@ -56,13 +56,13 @@ func TestValidateGeographicPointSelectionUsesStableQueryAliases(t *testing.T) {
 				{Field: "orders.latitude", Alias: "latitude"},
 				{Field: "orders.longitude", Alias: "longitude"},
 			},
-			Time:     QueryTime{Field: "orders.created_at", Grain: "day", Alias: "created_day"},
-			Measures: []FieldRef{{Field: "revenue", Alias: "revenue"}},
+			Time:    QueryTime{Field: "orders.created_at", Grain: "day", Alias: "created_day"},
+			Metrics: []FieldRef{{Field: "revenue", Alias: "revenue"}},
 		},
 		Geo: VisualGeo{Layers: []VisualGeoLayer{{ID: "customers", Kind: "point", Latitude: "latitude", Longitude: "longitude", Value: "revenue"}}},
 		Interaction: Interaction{PointSelection: SelectionInteraction{Mappings: []SelectionMapping{
-			{Field: "orders.customer_id", Fact: "orders", Value: "customer_id", Label: "revenue"},
-			{Field: "orders.created_at", Fact: "orders", Grain: "day", Value: "created_day"},
+			{Field: "orders.customer_id", Dataset: "orders", Value: "customer_id", Label: "revenue"},
+			{Field: "orders.created_at", Dataset: "orders", Grain: "day", Value: "created_day"},
 		}, Targets: []string{"detail"}}},
 	}
 	if err := ValidateVisualPointSelectionMappingKeys("map", base); err != nil {
@@ -75,7 +75,7 @@ func TestValidateGeographicPointSelectionUsesStableQueryAliases(t *testing.T) {
 		want   string
 	}{
 		{name: "unknown value alias", mutate: func(visual *Visual) { visual.Interaction.PointSelection.Mappings[0].Value = "missing" }, want: `references unknown value query alias "missing"`},
-		{name: "measure identity", mutate: func(visual *Visual) { visual.Interaction.PointSelection.Mappings[0].Value = "revenue" }, want: `value query alias "revenue" must reference a dimension or time field`},
+		{name: "metric identity", mutate: func(visual *Visual) { visual.Interaction.PointSelection.Mappings[0].Value = "revenue" }, want: `value query alias "revenue" must reference a dimension or time field`},
 		{name: "unknown label alias", mutate: func(visual *Visual) { visual.Interaction.PointSelection.Mappings[0].Label = "missing" }, want: `references unknown label query alias "missing"`},
 		{name: "heat only", mutate: func(visual *Visual) {
 			visual.Geo.Layers = []VisualGeoLayer{{ID: "heat", Kind: "heat", Latitude: "latitude", Longitude: "longitude", Value: "revenue"}}
@@ -108,8 +108,8 @@ func TestValidateGeographicSpatialSelectionUsesTypedCoordinateMappings(t *testin
 		Geo: VisualGeo{Layers: []VisualGeoLayer{{ID: "density", Kind: "density", Latitude: "latitude", Longitude: "longitude"}}},
 		Interaction: Interaction{SpatialSelection: SpatialSelectionInteraction{
 			Gestures:  []string{"box", "lasso", "radius"},
-			Latitude:  SpatialSelectionMapping{Source: "latitude", Field: "customers.latitude", Fact: "orders"},
-			Longitude: SpatialSelectionMapping{Source: "longitude", Field: "customers.longitude", Fact: "orders"},
+			Latitude:  SpatialSelectionMapping{Source: "latitude", Field: "customers.latitude", Dataset: "orders"},
+			Longitude: SpatialSelectionMapping{Source: "longitude", Field: "customers.longitude", Dataset: "orders"},
 			Targets:   []string{"detail"},
 		}},
 	}
@@ -126,7 +126,7 @@ func TestValidateGeographicSpatialSelectionUsesTypedCoordinateMappings(t *testin
 		{name: "duplicate gesture", mutate: func(visual *Visual) { visual.Interaction.SpatialSelection.Gestures = []string{"box", "box"} }, want: `duplicate gesture "box"`},
 		{name: "unknown source", mutate: func(visual *Visual) { visual.Interaction.SpatialSelection.Latitude.Source = "missing" }, want: `unknown stable query alias "missing"`},
 		{name: "layer mismatch", mutate: func(visual *Visual) { visual.Geo.Layers[0].Latitude = "other" }, want: "must match one coordinate layer"},
-		{name: "missing fact", mutate: func(visual *Visual) { visual.Interaction.SpatialSelection.Latitude.Fact = "" }, want: "requires fact"},
+		{name: "missing dataset", mutate: func(visual *Visual) { visual.Interaction.SpatialSelection.Latitude.Dataset = "" }, want: "requires dataset"},
 		{name: "missing targets", mutate: func(visual *Visual) { visual.Interaction.SpatialSelection.Targets = nil }, want: "requires targets"},
 	}
 	for _, tt := range tests {

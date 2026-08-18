@@ -145,20 +145,19 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	return nil
 }
 
-// resolvedTableForField returns a fact/table identity only when the governed
+// resolvedTableForField returns a dataset/table identity only when the governed
 // semantic field has one unambiguous physical owner. Semantic dimensions may
-// bind to multiple facts, so they deliberately leave the table unset and let
+// bind to multiple datasets, so they deliberately leave the table unset and let
 // the existing compiler relationship validation decide whether the authored
 // query is valid.
 func resolvedTableForField(model *semanticmodel.Model, authored authoring.AuthoringVisualization, field authoring.AssignFieldPayload) string {
-	if authored.Tabular == nil || strings.TrimSpace(authored.Tabular.Query.Table) != "" {
+	if authored.Tabular == nil || strings.TrimSpace(authored.Tabular.Query.Dataset) != "" {
 		return ""
 	}
 	switch field.Role {
-	case authoring.FieldRoleMeasure:
-		measure, err := model.ResolveMeasure(strings.TrimSpace(field.FieldID))
-		if err == nil {
-			return strings.TrimSpace(measure.Fact)
+	case authoring.FieldRoleMetric:
+		if metric, ok := model.Metrics[strings.TrimSpace(field.FieldID)]; ok {
+			return strings.TrimSpace(metric.Dataset)
 		}
 	case authoring.FieldRoleDimension, authoring.FieldRoleDetail:
 		dimension, err := model.ResolveDimension(strings.TrimSpace(field.FieldID))
@@ -175,14 +174,14 @@ func validateGovernedField(model *semanticmodel.Model, field string, role author
 		return fmt.Errorf("%w: field must be a governed semantic field identifier", authoring.ErrInvalidPayload)
 	}
 	switch role {
-	case authoring.FieldRoleMeasure:
-		if _, _, kind, err := model.ResolveField(field); err == nil && kind == "measure" {
+	case authoring.FieldRoleMetric:
+		if _, _, kind, err := model.ResolveField(field); err == nil && kind == "metric" {
 			return nil
 		}
 		if _, ok := model.Metrics[field]; ok {
 			return nil
 		}
-		return fmt.Errorf("%w: governed measure %q does not exist", authoring.ErrInvalidPayload, field)
+		return fmt.Errorf("%w: governed metric %q does not exist", authoring.ErrInvalidPayload, field)
 	case authoring.FieldRoleDimension, authoring.FieldRoleDetail:
 		if err := model.ValidateQueryDimension(field); err != nil {
 			return fmt.Errorf("%w: governed dimension %q does not exist: %v", authoring.ErrInvalidPayload, field, err)

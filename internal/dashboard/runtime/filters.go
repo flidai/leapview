@@ -45,13 +45,13 @@ func (s *FilterService) queryCompiledFilterOptions(ctx context.Context, runtime 
 		filters = append(filters, dependencyFilters...)
 	}
 	if query.Search != "" {
-		filters = append(filters, reportdef.QueryFilter{Field: query.Field, Fact: query.Fact, Operator: "contains", Values: []any{query.Search}})
+		filters = append(filters, reportdef.QueryFilter{Field: query.Field, Dataset: query.Dataset, Operator: "contains", Values: []any{query.Search}})
 	}
 	if query.After != "" {
-		filters = append(filters, reportdef.QueryFilter{Field: query.Field, Fact: query.Fact, Operator: "greater_than", Values: []any{query.After}})
+		filters = append(filters, reportdef.QueryFilter{Field: query.Field, Dataset: query.Dataset, Operator: "greater_than", Values: []any{query.After}})
 	}
 	request := reportAggregateDataQuery(report.SemanticModel, reportdef.AggregateQuery{
-		Table: tableForField(query.Field), Dimensions: []reportdef.QueryField{{Field: query.Field, Alias: "value"}},
+		Dataset: tableForField(query.Field), Dimensions: []reportdef.QueryField{{Field: query.Field, Alias: "value"}},
 		Filters: filters, Sort: []reportdef.QuerySort{{Field: "value", Direction: "asc"}}, Limit: query.Limit + 1,
 	})
 	request.Surface = dataquery.SurfaceDashboard
@@ -216,10 +216,10 @@ func resolvedSpatialSelectionEffect(selection reportmodel.ResolvedSpatialSelecti
 
 func spatialFilterFromSelection(selection reportmodel.ResolvedSpatialSelectionInteraction, geometry visualizationir.VisualizationSpatialSelectionGeometry) (reportdef.SpatialFilter, error) {
 	filter := reportdef.SpatialFilter{
-		LatitudeField: selection.Latitude.Field, LongitudeField: selection.Longitude.Field, Fact: selection.Latitude.Fact,
+		LatitudeField: selection.Latitude.Field, LongitudeField: selection.Longitude.Field, Dataset: selection.Latitude.Dataset,
 	}
-	if selection.Latitude.Fact != selection.Longitude.Fact {
-		return reportdef.SpatialFilter{}, fmt.Errorf("coordinate fields must resolve to the same fact")
+	if selection.Latitude.Dataset != selection.Longitude.Dataset {
+		return reportdef.SpatialFilter{}, fmt.Errorf("coordinate fields must resolve to the same dataset")
 	}
 	switch value := geometry.Value.(type) {
 	case *visualizationir.VisualizationSpatialBoxSelection:
@@ -257,7 +257,7 @@ func canonicalSelectionEntry(selection reportmodel.ResolvedSelectionInteraction,
 		if !dashboard.IsInteractionSelectionScalar(mapping.Value) {
 			return nil, fmt.Errorf("mapping %d value must be a JSON scalar", index)
 		}
-		identity := reportmodel.SelectionMappingIdentity{Field: mapping.Field, Fact: mapping.Fact, Grain: mapping.Grain}
+		identity := reportmodel.SelectionMappingIdentity{Field: mapping.Field, Dataset: mapping.Dataset, Grain: mapping.Grain}
 		identities[index] = identity
 		incoming[identity] = mapping
 	}
@@ -267,7 +267,7 @@ func canonicalSelectionEntry(selection reportmodel.ResolvedSelectionInteraction,
 	}
 	result := make([]dashboard.InteractionSelectionMapping, 0, len(canonical))
 	for _, mapping := range canonical {
-		identity := reportmodel.SelectionMappingIdentity{Field: mapping.Field, Fact: mapping.Fact, Grain: mapping.Grain}
+		identity := reportmodel.SelectionMappingIdentity{Field: mapping.Field, Dataset: mapping.Dataset, Grain: mapping.Grain}
 		value := incoming[identity]
 		if !dashboard.InteractionSelectionValueMatchesType(value.Value, mapping.Type, mapping.Grain) {
 			return nil, fmt.Errorf("mapping field %q value type %T does not match semantic type %q", mapping.Field, value.Value, mapping.Type)
@@ -279,10 +279,10 @@ func canonicalSelectionEntry(selection reportmodel.ResolvedSelectionInteraction,
 
 func selectionMappingFilters(mapping reportmodel.ResolvedSelectionMapping, value dashboard.InteractionSelectionValue) ([]reportdef.QueryFilter, error) {
 	if value == nil {
-		return []reportdef.QueryFilter{{Field: mapping.Field, Fact: mapping.Fact, Operator: "is_null"}}, nil
+		return []reportdef.QueryFilter{{Field: mapping.Field, Dataset: mapping.Dataset, Operator: "is_null"}}, nil
 	}
 	if mapping.Grain == "" {
-		return []reportdef.QueryFilter{{Field: mapping.Field, Fact: mapping.Fact, Operator: "equals", Values: []any{value}}}, nil
+		return []reportdef.QueryFilter{{Field: mapping.Field, Dataset: mapping.Dataset, Operator: "equals", Values: []any{value}}}, nil
 	}
 	text, ok := value.(string)
 	if !ok {
@@ -308,8 +308,8 @@ func selectionMappingFilters(mapping reportmodel.ResolvedSelectionMapping, value
 		return nil, fmt.Errorf("unsupported time grain %q", mapping.Grain)
 	}
 	return []reportdef.QueryFilter{
-		{Field: mapping.Field, Fact: mapping.Fact, Operator: "greater_than_or_equal", Values: []any{start}},
-		{Field: mapping.Field, Fact: mapping.Fact, Operator: "less_than", Values: []any{end}},
+		{Field: mapping.Field, Dataset: mapping.Dataset, Operator: "greater_than_or_equal", Values: []any{start}},
+		{Field: mapping.Field, Dataset: mapping.Dataset, Operator: "less_than", Values: []any{end}},
 	}, nil
 }
 
@@ -322,7 +322,7 @@ func isUIOnlyRowSelection(selection dashboard.InteractionSelection) bool {
 			return false
 		}
 		mapping := entry.Mappings[0]
-		if mapping.Field != dashboard.UIRowSelectionField || mapping.Fact != "" || mapping.Grain != "" {
+		if mapping.Field != dashboard.UIRowSelectionField || mapping.Dataset != "" || mapping.Grain != "" {
 			return false
 		}
 	}
@@ -335,7 +335,7 @@ func (s *FilterService) countRows(ctx context.Context, runtime *modelRuntime, re
 		return 0, err
 	}
 	total, err := runtime.data.Count(ctx, reportdef.CountQuery{
-		Table:   table,
+		Dataset: table,
 		Filters: queryFilters,
 	})
 	if err != nil {

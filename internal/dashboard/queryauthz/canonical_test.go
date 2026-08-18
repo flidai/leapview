@@ -12,7 +12,9 @@ import (
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -31,6 +33,16 @@ func (m canonicalMetrics) Catalog() catalog.Catalog {
 }
 func (m canonicalMetrics) SemanticModel(id string) (*semanticmodel.Model, bool) {
 	return m.model, m.model != nil && (id == string(m.model.Name) || id == "semantic_sales")
+}
+func (m canonicalMetrics) Planner(id string) (consumer.Planner, bool) {
+	if m.model == nil || (id != string(m.model.Name) && id != "semantic_sales") {
+		return nil, false
+	}
+	planner, err := semanticquery.NewCompiledPlanner(m.model)
+	if err != nil {
+		return nil, false
+	}
+	return planner, true
 }
 func (m canonicalMetrics) ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error) {
 	return m.result, nil
@@ -110,7 +122,27 @@ func canonicalSnapshot(t testing.TB, grants []struct {
 
 func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.AuthorizationSnapshot, recorder access.CanonicalAuditRecorder, options ...any) Metrics {
 	t.Helper()
-	underlying := canonicalMetrics{model: &semanticmodel.Model{Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Field: "orders.region", Table: "orders", Name: "region"}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"region": {Name: "region", Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.region"}}}}}}
+	underlying := canonicalMetrics{model: &semanticmodel.Model{
+		Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Tables: map[string]semanticmodel.Table{"orders": {
+			Source:      "orders",
+			ModelName:   "orders",
+			GrainEntity: "region",
+			Entities: map[string]semanticmodel.ModelEntitySpec{
+				"region": {Type: "primary", Fields: []string{"region"}},
+			},
+			Dimensions: map[string]semanticmodel.MetricDimension{
+				"region": {Field: "orders.region", Table: "orders", Name: "region", Type: "string", Datatype: semanticmodel.DataTypeString},
+			},
+		}},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"region": {Name: "region", Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.region"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.region"}, Empty: "zero"},
+		},
+	}}
 	principalID, credentialID := "alice", ""
 	stringIndex := 0
 	for _, option := range options {

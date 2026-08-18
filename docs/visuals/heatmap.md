@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic matrix
 
-Provide two dimensions for the row and column axes and one measure for cell intensity, creating a compact comparison across both categories.
+Provide two dimensions for the row and column axes and one metric for cell intensity, creating a compact comparison across both categories.
 
 {{< visual id="state_status_heatmap" >}}
 
@@ -20,7 +20,7 @@ visuals:
       dimensions:
         state: orders.state
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: state
@@ -45,7 +45,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -70,7 +70,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value

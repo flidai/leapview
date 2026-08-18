@@ -10,11 +10,11 @@ function envelope(rows: unknown[][]): VisualizationEnvelope {
       datasets: [
         { id: 'primary', fields: [
           { id: 'label', role: 'dimension', dataType: 'string', nullable: false, label: 'Month' },
-          { id: 'value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+          { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
         ] },
         { id: 'context', fields: [
           { id: 'region', role: 'dimension', dataType: 'string', nullable: true, label: 'Region' },
-          { id: 'target', role: 'measure', dataType: 'decimal', nullable: true, label: 'Target' },
+          { id: 'target', role: 'metric', dataType: 'decimal', nullable: true, label: 'Target' },
         ] },
       ],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' },

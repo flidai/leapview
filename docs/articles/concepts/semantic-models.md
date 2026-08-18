@@ -1,12 +1,12 @@
 # Semantic models
 
-A semantic model exposes business concepts independently from dashboard presentation. It selects project model tables and defines the dimensions, measures, metrics, and relationships that dashboards, CLI commands, API clients, and agent tools are allowed to query.
+A semantic model exposes business concepts independently from dashboard presentation. It binds project Models as named datasets and defines the dimensions, metrics, filters, and relationships that dashboards, CLI commands, API clients, and agent tools are allowed to query.
 
-## Tables and field references
+## Datasets and field references
 
-`spec.tables` lists the model tables participating in the model. Physical fields are addressed as `table.field`, for example `orders.purchase_date`. A semantic definition cannot make an undeclared table queryable simply by naming it.
+`spec.datasets` gives each participating Model a stable semantic name. Physical fields are addressed as `dataset.field`, for example `orders.purchase_date`. A semantic definition cannot make an undeclared dataset queryable simply by naming it.
 
-Use stable table and field IDs. Labels and descriptions can evolve, but renaming an ID breaks dashboard queries and headless clients unless it is handled as a coordinated migration.
+Use stable dataset and field IDs. Labels and descriptions can evolve, but renaming an ID breaks dashboard queries and headless clients unless it is handled as a coordinated migration.
 
 ## Dimensions
 
@@ -16,65 +16,77 @@ Good dimensions have:
 
 - a clear type and label;
 - a documented business meaning;
-- bindings that resolve to known table fields;
+- bindings that resolve to known dataset fields;
 - grains that do not imply invalid fan-out;
 - stable null and formatting expectations.
 
 Not every physical field needs a named semantic dimension. Dashboard table queries can select model-table fields directly where supported, while governed reusable groupings should be modeled explicitly.
 
-## Measures
+## Aggregate metrics
 
-Measures define aggregations over a fact table:
+Metrics define aggregations over a dataset:
 
 ```yaml
-measures:
+metrics:
   revenue:
+    type: aggregate
     label: Revenue
-    fact: orders
+    dataset: orders
     aggregation: sum
     input: {field: orders.revenue}
     empty: zero
     format: currency
 ```
 
-The fact identifies the table grain being aggregated. The aggregation and input determine how values are computed. `empty` makes empty-result behavior deliberate instead of leaving each consumer to interpret a missing value. Formatting metadata communicates presentation intent without changing the numeric result.
+The dataset identifies the population being aggregated. The aggregation and input determine how values are computed. `empty` makes empty-result behavior deliberate instead of leaving each consumer to interpret a missing value. Formatting metadata communicates presentation intent without changing the numeric result.
 
-Filtered measures should use declared semantic filters rather than embedding dashboard-specific conditions. If two teams mean different things by “revenue,” give the definitions distinct names and descriptions instead of silently changing a shared formula.
+Filtered metrics should use declared semantic filters rather than embedding dashboard-specific conditions. If two teams mean different things by “revenue,” give the definitions distinct names and descriptions instead of silently changing a shared formula.
 
-## Metrics
+## Derived and ratio metrics
 
-Metrics compose measures and other supported semantic expressions. The sample `aov` metric uses `safe_divide(${revenue}, ${order_count})` so division behavior is defined centrally. Metrics are useful for ratios and derived business values that should remain consistent across report pages and headless queries.
+Derived metrics compose other metrics and supported semantic expressions. Declare ratios explicitly with `type: ratio` and named inputs:
+
+```yaml
+metrics:
+  aov:
+    type: ratio
+    numerator: revenue
+    denominator: order_count
+    label: Average order value
+    format: currency
+```
+
+The governed evaluator applies safe division semantics (including empty or zero denominators) centrally; authors do not need to embed a `safe_divide` expression. Metrics are useful for ratios and derived business values that should remain consistent across report pages and headless queries.
 
 Keep expressions small and name their inputs clearly. If an expression requires extensive row-level cleanup, move that work into a model table first.
 
 ## Relationships
 
-Relationships connect compatible tables using explicit fields and cardinality:
+Relationships connect compatible datasets using structured endpoints:
 
 ```yaml
 relationships:
-  - id: orders_customers
-    from: orders.customer_id
-    to: customers.customer_id
-    cardinality: many_to_one
+  orders_customers:
+    from: {dataset: orders, fields: [customer_id]}
+    to: {dataset: customers, fields: [customer_id]}
 ```
 
-LeapView accepts only cardinalities that provably preserve the fact grain. For `many_to_one`, the `to` field must be the target table's declared primary key. For `one_to_one`, both fields must be their tables' declared primary keys, which makes the relationship safe in either direction. Reverse `many_to_one`, `one_to_many`, and `many_to_many` traversal is rejected because it can duplicate fact rows and corrupt measures. Primary-key declarations must still match the real data, so confirm uniqueness from data rather than naming convention.
+LeapView derives cardinality from declared entities and keys. The `to` endpoint must be a primary or unique entity (or an equivalent declared key), while the `from` side may repeat. Unsafe reverse traversal is rejected because it can duplicate dataset rows and corrupt metrics. Key declarations must still match the real data, so confirm uniqueness from data rather than naming convention.
 
-Avoid multiple plausible paths between the same facts and dimensions. Ambiguous paths should be redesigned or rejected instead of letting query order determine results.
+Avoid multiple plausible paths between the same datasets and dimensions. Ambiguous paths should be redesigned or rejected instead of letting query order determine results.
 
 ## Query consumers
 
-Dashboard visual queries map result aliases to semantic dimensions and measures. The semantic-model CLI and API expose the same governed vocabulary for discovery, preview, explain, and query operations. That shared surface is the main benefit of modeling once: interactive and headless consumers cannot quietly diverge.
+Dashboard visual queries map result aliases to semantic dimensions and metrics. The semantic-model CLI and API expose the same governed vocabulary for discovery, preview, explain, and query operations. That shared surface is the main benefit of modeling once: interactive and headless consumers cannot quietly diverge.
 
 ## Review checklist
 
 Before publishing a model, verify that:
 
-- every table exists in the project graph;
+- every dataset resolves to a project Model;
 - relationship fields have compatible types;
-- every relationship's `one` endpoint is the table's declared primary key, and those keys are unique in the data;
-- measures identify the correct fact and aggregation;
+- every relationship's `to` endpoint is a declared primary or unique key, and those keys are unique in the data;
+- metrics identify the correct dataset and aggregation;
 - empty-result and formatting behavior are intentional;
 - labels and descriptions are understandable outside the authoring team;
 - representative grouped and filtered queries return expected values.

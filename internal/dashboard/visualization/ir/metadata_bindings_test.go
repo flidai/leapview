@@ -21,11 +21,11 @@ func TestValidateSpecEnforcesDataBoundMetadata(t *testing.T) {
 				Datasets: []VisualizationDatasetSchema{
 					{ID: "primary", Fields: []VisualizationField{
 						{ID: "month", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Month"},
-						{ID: "value", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
+						{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
 					}},
 					{ID: "context", Fields: []VisualizationField{
 						{ID: "region", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Region"},
-						{ID: "target", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Target"},
+						{ID: "target", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Target"},
 					}},
 				},
 				DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},

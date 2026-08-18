@@ -65,8 +65,9 @@ func compileVisualCalculations(spec visualizationir.VisualizationSpec, authored 
 			format = inferredCalculationFormat(calculation.Template, source.Format)
 		}
 		calculationID := calculation.ID
+		dataType := compiledCalculationDataType(calculation.Template, source.DataType)
 		field := visualizationir.VisualizationField{
-			ID: calculation.ID, Role: visualizationir.VisualizationFieldRoleMeasure, DataType: visualizationir.VisualizationDataTypeDecimal,
+			ID: calculation.ID, Role: visualizationir.VisualizationFieldRoleMetric, DataType: dataType,
 			Nullable: true, Label: calculation.Label, Format: format,
 			Provenance: &visualizationir.VisualizationFieldProvenance{
 				Kind: visualizationir.VisualizationFieldProvenanceKindVisualCalculation, SourceRefs: []string{calculation.Source.Field}, CalculationID: &calculationID,
@@ -85,6 +86,30 @@ func compileVisualCalculations(spec visualizationir.VisualizationSpec, authored 
 	base.DataBudget.RequiredCompleteness = visualizationir.VisualizationCompletenessPartial
 	base.Calculations = &compiled
 	return nil
+}
+
+func compiledCalculationDataType(template visualizationir.VisualizationCalculationTemplate, source visualizationir.VisualizationDataType) visualizationir.VisualizationDataType {
+	switch template {
+	case visualizationir.VisualizationCalculationTemplateRank:
+		return visualizationir.VisualizationDataTypeInteger
+	case visualizationir.VisualizationCalculationTemplateRunningTotal,
+		visualizationir.VisualizationCalculationTemplateDifference:
+		if source == visualizationir.VisualizationDataTypeInteger || source == visualizationir.VisualizationDataTypeDecimal {
+			return visualizationir.VisualizationDataTypeDecimal
+		}
+		return source
+	case visualizationir.VisualizationCalculationTemplateMovingAverage,
+		visualizationir.VisualizationCalculationTemplatePercentageDifference,
+		visualizationir.VisualizationCalculationTemplatePercentOfParent,
+		visualizationir.VisualizationCalculationTemplatePercentOfGrandTotal,
+		visualizationir.VisualizationCalculationTemplateCumulativeContribution:
+		if source == visualizationir.VisualizationDataTypeFloat {
+			return source
+		}
+		return visualizationir.VisualizationDataTypeDecimal
+	default:
+		return source
+	}
 }
 
 func compileVisualCalculation(kind string, authored dashboardauthoring.VisualCalculation, fields map[string]visualizationir.VisualizationField, calculationIDs map[string]int) (visualizationir.VisualizationCalculation, error) {
@@ -313,9 +338,9 @@ func appendVisibleCalculationBinding(spec visualizationir.VisualizationSpec, fie
 	case *visualizationir.TableVisualizationSpec:
 		value.Columns = append(value.Columns, visualizationir.TableVisualizationColumn{Field: ref, Label: field.Label, Formatting: []visualizationir.TableVisualizationFormattingRule{}})
 	case *visualizationir.MatrixVisualizationSpec:
-		value.Measures = append(value.Measures, ref)
+		value.Metrics = append(value.Metrics, ref)
 	case *visualizationir.PivotVisualizationSpec:
-		value.Measures = append(value.Measures, ref)
+		value.Metrics = append(value.Metrics, ref)
 	}
 }
 
@@ -354,7 +379,7 @@ func markCompiledFieldProvenance(base *visualizationir.VisualizationSpecBase) {
 				continue
 			}
 			kind := visualizationir.VisualizationFieldProvenanceKindModeled
-			if field.Role == visualizationir.VisualizationFieldRoleMeasure {
+			if field.Role == visualizationir.VisualizationFieldRoleMetric {
 				kind = visualizationir.VisualizationFieldProvenanceKindAggregated
 			}
 			sources := []string{}

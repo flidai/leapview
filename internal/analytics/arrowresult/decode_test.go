@@ -6,8 +6,46 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/decimal128"
 	"github.com/apache/arrow-go/v18/arrow/memory"
 )
+
+func TestDecodeDecimalAlwaysUsesCanonicalStringTransport(t *testing.T) {
+	allocator := memory.NewCheckedAllocator(memory.DefaultAllocator)
+	defer allocator.AssertSize(t, 0)
+
+	for _, test := range []struct {
+		name  string
+		scale int32
+		value string
+	}{
+		{name: "scale zero", scale: 0, value: "9007199254740993"},
+		{name: "negative scale zero", scale: 0, value: "-7"},
+		{name: "fractional", scale: 3, value: "9007199254740993.125"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			typeInfo := &arrow.Decimal128Type{Precision: 38, Scale: test.scale}
+			builder := array.NewDecimal128Builder(allocator, typeInfo)
+			value, err := decimal128.FromString(test.value, typeInfo.Precision, typeInfo.Scale)
+			if err != nil {
+				t.Fatal(err)
+			}
+			builder.Append(value)
+			values := builder.NewDecimal128Array()
+			builder.Release()
+			defer values.Release()
+
+			decode, err := compileValueDecoder(values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := decode(0)
+			if got != test.value {
+				t.Fatalf("decoded Decimal = %#v (%T), want canonical string %q", got, got, test.value)
+			}
+		})
+	}
+}
 
 func TestDecodeRowsOwnsVariableWidthValues(t *testing.T) {
 	allocator := memory.NewCheckedAllocator(memory.DefaultAllocator)

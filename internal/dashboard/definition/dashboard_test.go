@@ -11,7 +11,7 @@ import (
 
 func TestCompiledDashboardOwnsVisualizationsWithoutAuthoringVisualMaps(t *testing.T) {
 	spec := ir.VisualizationSpec{Value: &ir.KPIVisualizationSpec{VisualizationSpecBase: ir.VisualizationSpecBase{
-		Kind: "kpi", Title: "Orders", Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Label: "Orders"}}}},
+		Kind: "kpi", Title: "Orders", Datasets: []ir.VisualizationDatasetSchema{{ID: "primary", Fields: []ir.VisualizationField{{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Label: "Orders"}}}},
 		DataBudget: ir.VisualizationDataBudget{MaxRows: 1, RequiredCompleteness: ir.VisualizationCompletenessComplete}, Accessibility: ir.VisualizationAccessibility{Title: "Orders", Description: "Orders"}, Interactions: []ir.VisualizationInteraction{},
 	}, Kind: "kpi", Value: ir.VisualizationFieldRef{Dataset: "primary", Field: "value"}, Presentation: ir.KPIVisualizationPresentation{
 		Mode:               ir.VisualizationKPIModeCompact,
@@ -20,7 +20,7 @@ func TestCompiledDashboardOwnsVisualizationsWithoutAuthoringVisualMaps(t *testin
 		MissingComparison:  ir.VisualizationKPIMissingComparisonShowUnavailable,
 		Ranges:             []ir.VisualizationKPIQualitativeRange{},
 	}}}
-	visual, err := visualizationdefinition.New("orders", spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultScalar, ModelID: "sales", DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Measures: []visualizationdefinition.FieldBinding{{FieldID: "order_count", Alias: "value"}}, Limit: 1}})
+	visual, err := visualizationdefinition.New("orders", spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultScalar, ModelID: "sales", DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Metrics: []visualizationdefinition.FieldBinding{{FieldID: "order_count", Alias: "value"}}, Limit: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestCompiledDashboardOwnsVisualizationsWithoutAuthoringVisualMaps(t *testin
 	if compiled.Visualizations["orders"].SpecRevision != visual.SpecRevision {
 		t.Fatal("compiled dashboard changed with authoring input")
 	}
-	if compiled.Visualizations["orders"].Query.Aggregate.Measures[0].FieldID != "order_count" {
+	if compiled.Visualizations["orders"].Query.Aggregate.Metrics[0].FieldID != "order_count" {
 		t.Fatalf("compiled binding = %#v", compiled.Visualizations["orders"].Query)
 	}
 }

@@ -1,6 +1,6 @@
 # Define model tables
 
-A model table transforms permitted project sources into a project-owned analytical table. The goal is not merely to make SQL run; it is to establish a stable grain and field contract that semantic measures can safely reuse.
+A model table transforms permitted project sources into a project-owned analytical table. The goal is not merely to make SQL run; it is to establish a stable grain and field contract that semantic metrics can safely reuse.
 
 ## Before you begin
 
@@ -8,7 +8,7 @@ Complete [Connect a data source](/docs/guides/build/connect-data), stage a repre
 
 Work in this order:
 
-1. Declare the grain, primary key, permitted sources, and output fields.
+1. Declare named identity entities, the selected grain entity, permitted sources, and output fields.
 2. Implement source cleanup and grain-preserving SQL.
 3. Discover and validate the model resource.
 4. Refresh it with representative data.
@@ -18,7 +18,7 @@ Work in this order:
 
 ### Start from the grain
 
-Write one sentence before writing SQL: “One row represents one order,” “one customer,” or “one rating by one user for one movie.” Choose a primary key that identifies that row and determine which source joins preserve it.
+Write one sentence before writing SQL: “One row represents one order,” “one customer,” or “one rating by one user for one movie.” Declare a primary entity (and any composite or foreign entities), select it as `grain.entity`, and determine which source joins preserve that identity.
 
 For an order-grain table, joining raw order items directly would duplicate orders. Aggregate item-level values to `order_id` first, then join the one-row-per-order result.
 
@@ -35,22 +35,29 @@ metadata:
   displayName: Sales orders
   description: One row per order with normalized purchase date and revenue.
 spec:
-  primaryKey: order_id
-  grain: order_id
+  entities:
+    order:
+      type: primary
+      fields: [order_id]
+    customer:
+      type: foreign
+      fields: [customer_id]
+  grain:
+    entity: order
   sources:
     - commerce.orders
   fields:
-    order_id: {label: Order ID, description: Stable order identifier.}
-    customer_id: {label: Customer ID}
-    purchase_date: {label: Purchase date}
-    revenue: {label: Revenue}
+    order_id: {datatype: String, label: Order ID, description: Stable order identifier.}
+    customer_id: {datatype: String, label: Customer ID}
+    purchase_date: {datatype: Date, label: Purchase date}
+    revenue: {datatype: Decimal, label: Revenue}
   transform:
     sql: |
       SELECT
         order_id,
         customer_id,
         try_cast(purchased_at AS DATE) AS purchase_date,
-        round(coalesce(try_cast(amount AS DOUBLE), 0), 2) AS revenue
+        coalesce(try_cast(amount AS DECIMAL(38, 2)), CAST(0 AS DECIMAL(38, 2))) AS revenue
       FROM source."commerce.orders"
       WHERE order_id IS NOT NULL
 ```
@@ -105,7 +112,7 @@ Use the project resource browser and refresh history to inspect the table and it
 
 ## Choose the materialization boundary
 
-Keep reusable source cleanup and expensive cross-source shaping here. Put aggregations such as total revenue and average order value in semantic measures and metrics so they remain filter-aware. A model table should only be pre-aggregated when its declared row grain is intentionally aggregated.
+Keep reusable source cleanup and expensive cross-source shaping here. Put aggregations such as total revenue and average order value in semantic metrics so they remain filter-aware. A model table should only be pre-aggregated when its declared row grain is intentionally aggregated.
 
 ## Troubleshooting
 

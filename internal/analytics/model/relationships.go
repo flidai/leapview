@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // SafeRelationshipPath resolves joins that preserve the base table's grain.
@@ -10,7 +11,7 @@ import (
 // one-to-one relationship is traversable in either direction. Model validation
 // proves every "one" endpoint with the table's declared primary key; reverse
 // many-to-one, one-to-many, and many-to-many paths are deliberately unavailable
-// because they can multiply measures.
+// because they can multiply metrics.
 func (m *Model) SafeRelationshipPath(base, target string) ([]Relationship, error) {
 	if base == target {
 		return nil, nil
@@ -26,12 +27,12 @@ func (m *Model) SafeRelationshipPath(base, target string) ([]Relationship, error
 	}
 }
 
-func (m *Model) CanReachField(fact, field string) error {
+func (m *Model) CanReachField(dataset, field string) error {
 	dimension, err := m.ResolveDimension(field)
 	if err != nil {
 		return err
 	}
-	_, err = m.SafeRelationshipPath(fact, dimension.Table)
+	_, err = m.SafeRelationshipPath(dataset, dimension.Table)
 	return err
 }
 
@@ -50,10 +51,16 @@ func (m *Model) safeEdgesFrom(table string) []relationshipEdge {
 		if edges[i].Relationship.ID != edges[j].Relationship.ID {
 			return edges[i].Relationship.ID < edges[j].Relationship.ID
 		}
-		if edges[i].Relationship.From != edges[j].Relationship.From {
-			return edges[i].Relationship.From < edges[j].Relationship.From
+		if edges[i].Relationship.FromDataset != edges[j].Relationship.FromDataset {
+			return edges[i].Relationship.FromDataset < edges[j].Relationship.FromDataset
 		}
-		return edges[i].Relationship.To < edges[j].Relationship.To
+		if strings.Join(edges[i].Relationship.FromFields, "\x00") != strings.Join(edges[j].Relationship.FromFields, "\x00") {
+			return strings.Join(edges[i].Relationship.FromFields, "\x00") < strings.Join(edges[j].Relationship.FromFields, "\x00")
+		}
+		if edges[i].Relationship.ToDataset != edges[j].Relationship.ToDataset {
+			return edges[i].Relationship.ToDataset < edges[j].Relationship.ToDataset
+		}
+		return strings.Join(edges[i].Relationship.ToFields, "\x00") < strings.Join(edges[j].Relationship.ToFields, "\x00")
 	})
 	return edges
 }
@@ -90,11 +97,11 @@ func (m *Model) safeRelationshipPaths(base, target string) [][]Relationship {
 }
 
 func semanticSafeEdgeFrom(table string, relationship Relationship) (relationshipEdge, bool) {
-	fromTable, _, err := splitSemanticField(relationship.From)
+	fromTable, _, err := relationshipEndpoint(relationship, true)
 	if err != nil {
 		return relationshipEdge{}, false
 	}
-	toTable, _, err := splitSemanticField(relationship.To)
+	toTable, _, err := relationshipEndpoint(relationship, false)
 	if err != nil {
 		return relationshipEdge{}, false
 	}

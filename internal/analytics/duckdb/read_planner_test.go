@@ -21,9 +21,9 @@ func TestPlanModelTableCompilesCSVSQLModelToInlineRelations(t *testing.T) {
 		"orders":   {"order_id", "customer_id", "status"},
 		"payments": {"order_id", "payment_value"},
 	}, semanticmodel.Table{
-		Sources:    []string{"orders", "payments"},
-		PrimaryKey: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID"}},
+		Sources:  []string{"orders", "payments"},
+		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
 		Transform: semanticmodel.Transform{SQL: `
 			SELECT o.order_id, o.customer_id, SUM(try_cast(p.payment_value AS DOUBLE)) AS revenue
 			FROM source.orders o
@@ -62,14 +62,19 @@ func TestPlanModelTableCompilesDirectSourceFromColumns(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"raw_order_id", "gross_revenue", "status"},
 	}, semanticmodel.Table{
-		Source:     "orders",
-		PrimaryKey: "order_id",
+		Source:    "orders",
+		ModelName: "orders",
+		Entities:  map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 		Columns: map[string]semanticmodel.ModelColumn{
-			"order_id": {SourceField: "raw_order_id"},
-			"revenue":  {SourceField: "gross_revenue"},
-			"status":   {},
+			"order_id": {SourceField: "raw_order_id", Datatype: semanticmodel.DataTypeString},
+			"revenue":  {SourceField: "gross_revenue", Datatype: semanticmodel.DataTypeFloat},
+			"status":   {Datatype: semanticmodel.DataTypeString},
 		},
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID"}, "status": {Label: "Status"}},
+		Dimensions: map[string]semanticmodel.MetricDimension{
+			"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
+			"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
+			"status":   {Label: "Status", Datatype: semanticmodel.DataTypeString},
+		},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 
@@ -93,10 +98,10 @@ func TestPlanModelTableCompilesCountStarToInlineRowPresence(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"order_id", "customer_id"},
 	}, semanticmodel.Table{
-		Sources:    []string{"orders"},
-		PrimaryKey: "order_count",
+		Sources:  []string{"orders"},
+		Entities: map[string]semanticmodel.ModelEntitySpec{"order_count": {Type: "primary", Fields: []string{"order_count"}}}, GrainEntity: "order_count",
 		Dimensions: map[string]semanticmodel.MetricDimension{
-			"order_count": {Label: "Order Count"},
+			"order_count": {Label: "Order Count", Datatype: semanticmodel.DataTypeInteger},
 		},
 		Transform: semanticmodel.Transform{SQL: `SELECT COUNT(*) AS order_count FROM source.orders`},
 	})
@@ -122,9 +127,9 @@ func TestPlanModelTableAliasesUnaliasedInlineSourceRefs(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"order_id"},
 	}, semanticmodel.Table{
-		Sources:    []string{"orders"},
-		PrimaryKey: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID"}},
+		Sources:  []string{"orders"},
+		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
 		Transform:  semanticmodel.Transform{SQL: `SELECT orders.order_id FROM source.orders`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, dir)
@@ -152,9 +157,9 @@ func TestPlanModelTablePreservesMixedInlineSourceAliases(t *testing.T) {
 		"orders":   {"order_id"},
 		"payments": {"order_id", "payment_value"},
 	}, semanticmodel.Table{
-		Sources:    []string{"orders", "payments"},
-		PrimaryKey: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID"}},
+		Sources:  []string{"orders", "payments"},
+		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
 		Transform:  semanticmodel.Transform{SQL: `SELECT orders.order_id, p.payment_value FROM source.orders JOIN source.payments p USING (order_id)`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
@@ -178,9 +183,9 @@ func TestPlanModelTableRejectsQualifiedSourceColumnRefs(t *testing.T) {
 	model := planningModel(map[string][]string{
 		"orders": {"order_id"},
 	}, semanticmodel.Table{
-		Sources:    []string{"orders"},
-		PrimaryKey: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID"}},
+		Sources:  []string{"orders"},
+		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
 		Transform:  semanticmodel.Transform{SQL: `SELECT source.orders.order_id FROM source.orders`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
@@ -198,9 +203,9 @@ func TestPlanModelTableFailsClosedWhenInlineExplainOmitsSourceScan(t *testing.T)
 	model := planningModel(map[string][]string{
 		"orders": {"order_id", "customer_id"},
 	}, semanticmodel.Table{
-		Sources:    []string{"orders"},
-		PrimaryKey: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID"}},
+		Sources:  []string{"orders"},
+		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
 		Transform:  semanticmodel.Transform{SQL: `SELECT * FROM source.orders WHERE 1=0`},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
@@ -219,9 +224,9 @@ func TestPlanModelTableFailsClosedForUnusedCTESourceRef(t *testing.T) {
 		"orders":   {"order_id"},
 		"payments": {"order_id"},
 	}, semanticmodel.Table{
-		Sources:    []string{"orders", "payments"},
-		PrimaryKey: "order_id",
-		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID"}},
+		Sources:  []string{"orders", "payments"},
+		Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
 		Transform: semanticmodel.Transform{SQL: `
 			WITH unused_payments AS (SELECT order_id FROM source.payments)
 			SELECT order_id FROM source.orders
@@ -279,6 +284,7 @@ func planningModel(sourceColumns map[string][]string, table semanticmodel.Table)
 		Connections: map[string]semanticmodel.Connection{"local_files": {Kind: "managed"}},
 		Sources:     sources,
 		Tables:      map[string]semanticmodel.Table{"orders": table},
-		Measures:    map[string]semanticmodel.MetricMeasure{},
+		Datasets:    map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics:     map[string]semanticmodel.Metric{},
 	}
 }

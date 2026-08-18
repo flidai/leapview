@@ -1,12 +1,12 @@
 # Bar chart
 
-Use a bar chart to compare measures across ranked categories with horizontal bars.
+Use a bar chart to compare metrics across ranked categories with horizontal bars.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Ranked categories
 
-Sort the measure descending to make the longest horizontal bar the leading category. This orientation works well for category labels of unequal length.
+Sort the metric descending to make the longest horizontal bar the leading category. This orientation works well for category labels of unequal length.
 
 {{< visual id="categories" >}}
 
@@ -19,7 +19,7 @@ visuals:
     query:
       dimensions:
         category: orders.category
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value
@@ -27,7 +27,7 @@ visuals:
       limit: 10
 ```
 
-## Alternate measure
+## Alternate metric
 
 Keep the bar contract and replace the dimension with delivery buckets to compare counts across an ordered operational grouping.
 
@@ -42,7 +42,7 @@ visuals:
     query:
       dimensions:
         delivery_bucket: orders.delivery_bucket
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: delivery_bucket
@@ -68,7 +68,7 @@ visuals:
       series:
         field: orders.status
         alias: status
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value

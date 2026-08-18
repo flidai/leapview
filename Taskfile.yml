@@ -587,8 +587,8 @@ tasks:
       - docs/api/openapi.yaml
       - docs/api/operations.json
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target leapview-v1
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target leapview-v1
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target leapview-v1
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target leapview-v1
       - go run ./internal/app/tools/apigenpatch
       - go run ./internal/app/tools/openapidocgen
 
@@ -610,8 +610,8 @@ tasks:
       - internal/agent/contracts/models.gen.go
       - internal/agent/contracts/schemas.gen.go
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target agent-tool-contracts
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target agent-tool-contracts
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target agent-tool-contracts
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target agent-tool-contracts
       - go run ./internal/agent/contracts/generate
 
   desktop-discovery:generate:
@@ -631,8 +631,8 @@ tasks:
       - internal/app/desktopdiscovery/models.gen.go
       - desktop/src/generated/desktop-discovery.ts
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target desktop-discovery-contracts
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target desktop-discovery-contracts
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target desktop-discovery-contracts
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target desktop-discovery-contracts
 
   schema:generate:
     desc: Generate JSON Schema artifacts for LeapView YAML contracts
@@ -695,8 +695,8 @@ tasks:
       - internal/project/ui/signals/models.gen.go
       - web/generated/signals/index.ts
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target ui-signals
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target ui-signals
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target ui-signals
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target ui-signals
       - go run ./internal/app/tools/signalcontracts
 
   visualization-ir:generate:
@@ -721,8 +721,8 @@ tasks:
       - web/generated/visualization/validate.ts
       - api/gen/visualization.schema.json
     cmds:
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen typespec-compile -manifest api/apigen.yaml -target visualization-ir
-      - go run github.com/Yacobolo/toolbelt/apigen/cmd/apigen all -manifest api/apigen.yaml -target visualization-ir
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target visualization-ir
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target visualization-ir
       - bun scripts/generate_visualization_validator.ts
 
   layout-contract:generate:

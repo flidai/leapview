@@ -13,7 +13,7 @@ test('cross-highlight matches governed source fields without changing the compar
     spec: {
       datasets: [{ id: 'primary', fields: [
         { id: 'status', sourceRef: 'orders.status', role: 'dimension', dataType: 'string', nullable: false, label: 'Status' },
-        { id: 'value', sourceRef: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'value', sourceRef: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] }],
     },
   } as VisualizationEnvelope

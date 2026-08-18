@@ -65,6 +65,7 @@ func NewCommand(ctx context.Context) *cobra.Command {
 	root.AddCommand(searchCommand(ctx, opts))
 	root.AddCommand(dashboardsCommand(ctx, opts))
 	root.AddCommand(semanticModelsCommand(ctx, opts))
+	root.AddCommand(semanticModelOssieCommand(ctx))
 	authentication := applicationAuthoringAuthentication{}
 	root.AddCommand(accesscli.LoginCommand(ctx, authentication, applicationTargetDiscovery{}, applicationProjectIdentity{}))
 	root.AddCommand(accesscli.LogoutCommand(ctx, authentication))

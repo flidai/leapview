@@ -145,10 +145,10 @@ func testDashboardReport() dashboardauthoring.Dashboard {
 			},
 		},
 		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"active_chart":   {Title: "Active", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: testFieldRefs("orders.status"), Measures: testFieldRefs("order_count")}},
-			"off_page_chart": {Title: "Off Page", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: testFieldRefs("orders.status"), Measures: testFieldRefs("order_count")}},
+			"active_chart":   {Title: "Active", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: testFieldRefs("orders.status"), Metrics: testFieldRefs("order_count")}},
+			"off_page_chart": {Title: "Off Page", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: testFieldRefs("orders.status"), Metrics: testFieldRefs("order_count")}},
 		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
+			"orders": {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id"}}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}}},
 		})),
 		Pages: []dashboard.Page{
 			{
@@ -191,14 +191,15 @@ func testSemanticModel() *semanticmodel.Model {
 		Name:  "test",
 		Title: "Test",
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Source: "orders", PrimaryKey: "order_id", Grain: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{
-				"order_id": {Expr: "order_id", Type: "string"},
-				"status":   {Expr: "status", Type: "string"},
-				"state":    {Expr: "state", Type: "string"},
-				"category": {Expr: "category", Type: "string"},
+			"orders": {Source: "orders", ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{
+				"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
+				"status":   {Type: "string", Datatype: semanticmodel.DataTypeString},
+				"state":    {Type: "string", Datatype: semanticmodel.DataTypeString},
+				"category": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics:  map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}},
 	}
 }
 

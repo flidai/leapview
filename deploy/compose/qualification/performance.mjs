@@ -133,7 +133,7 @@ async function runWorkload(path) {
 
     const queryBody = {
       dimensions: [{ field: 'state' }],
-      measures: [{ field: 'order_count' }, { field: 'revenue' }],
+      metrics: [{ field: 'order_count' }, { field: 'revenue' }],
       limit: 10,
     }
     const queryURL = new URL(

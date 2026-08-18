@@ -26,7 +26,7 @@ type visualPlan struct {
 	Table      string
 	Dimensions []visualizationdefinition.FieldBinding
 	Series     *visualizationdefinition.FieldBinding
-	Measures   []visualizationdefinition.FieldBinding
+	Metrics    []visualizationdefinition.FieldBinding
 	Time       *visualizationdefinition.TimeBinding
 	Sort       []visualizationdefinition.Sort
 	Limit      int
@@ -40,13 +40,13 @@ func newVisualPlan(definition visualizationdefinition.Definition) (visualPlan, e
 		if query == nil {
 			return visualPlan{}, fmt.Errorf("visualization %q has no aggregate binding", definition.ID)
 		}
-		plan.Table, plan.Dimensions, plan.Series, plan.Measures, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Measures, query.Time, query.Sort, int(query.Limit)
+		plan.Table, plan.Dimensions, plan.Series, plan.Metrics, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Metrics, query.Time, query.Sort, int(query.Limit)
 	case visualizationdefinition.QuerySpatial:
 		query := definition.Query.Spatial
 		if query == nil {
 			return visualPlan{}, fmt.Errorf("visualization %q has no spatial binding", definition.ID)
 		}
-		plan.Table, plan.Dimensions, plan.Series, plan.Measures, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Measures, query.Time, query.Sort, int(query.Limit)
+		plan.Table, plan.Dimensions, plan.Series, plan.Metrics, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Metrics, query.Time, query.Sort, int(query.Limit)
 	default:
 		return visualPlan{}, fmt.Errorf("visualization %q query kind %q is not a chart query", definition.ID, definition.Query.Kind)
 	}
@@ -151,27 +151,61 @@ func visualSorts(visual visualPlan) []reportdef.QuerySort {
 	return sorts
 }
 
-func measureLabel(name string, measure semanticmodel.MetricMeasure) string {
-	if strings.TrimSpace(measure.Label) != "" {
-		return measure.Label
+type metricMetadata struct {
+	Name        string
+	Field       string
+	Label       string
+	Description string
+	Unit        string
+	Format      string
+	Hidden      bool
+	DataType    visualizationir.VisualizationDataType
+}
+
+func metricLabel(name string, metric metricMetadata) string {
+	if strings.TrimSpace(metric.Label) != "" {
+		return metric.Label
 	}
 	return name
 }
 
-func aggregateMemberMetadata(model *semanticmodel.Model, name string) semanticmodel.MetricMeasure {
+func aggregateMemberMetadata(model *semanticmodel.Model, name string) metricMetadata {
 	if model == nil {
-		return semanticmodel.MetricMeasure{Name: name, Field: name}
+		return metricMetadata{Name: name, Field: name, DataType: visualizationir.VisualizationDataTypeDecimal}
 	}
-	if measure, err := model.ResolveMeasure(name); err == nil {
-		return measure
-	}
-	if metric, ok := model.Metrics[name]; ok {
-		return semanticmodel.MetricMeasure{
-			Name: name, Field: name, Label: metric.Label, Description: metric.Description,
-			Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden,
+	if metric, err := model.ResolveMetric(name); err == nil {
+		return metricMetadata{
+			Name: metric.Name, Field: name, Label: metric.Label, Description: metric.Description,
+			Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden, DataType: runtimeMetricDataType(model, metric),
 		}
 	}
-	return semanticmodel.MetricMeasure{Name: name, Field: name}
+	return metricMetadata{Name: name, Field: name, DataType: visualizationir.VisualizationDataTypeDecimal}
+}
+
+func runtimeMetricDataType(model *semanticmodel.Model, metric semanticmodel.Metric) visualizationir.VisualizationDataType {
+	if model == nil {
+		return visualizationir.VisualizationDataTypeDecimal
+	}
+	var dataType semanticmodel.LogicalDataType
+	var err error
+	if strings.TrimSpace(metric.Name) != "" {
+		dataType, err = model.MetricDataType(metric.Name)
+	} else {
+		dataType, err = model.MetricDataTypeFor(metric)
+	}
+	if err != nil {
+		return visualizationir.VisualizationDataTypeDecimal
+	}
+	switch dataType {
+	case semanticmodel.DataTypeInteger:
+		return visualizationir.VisualizationDataTypeInteger
+	case semanticmodel.DataTypeDecimal:
+		return visualizationir.VisualizationDataTypeDecimal
+	case semanticmodel.DataTypeFloat:
+		return visualizationir.VisualizationDataTypeFloat
+	default:
+		return visualizationir.VisualizationDataTypeString
+	}
 }
 
 func optionInt(options map[string]any, key string, fallback, minValue, maxValue int) int {
@@ -295,11 +329,11 @@ func interactionConfig(kind string, selection dashboardauthoring.SelectionIntera
 	mappings := make([]dashboard.InteractionConfigMapping, 0, len(selection.Mappings))
 	for _, mapping := range selection.Mappings {
 		mappings = append(mappings, dashboard.InteractionConfigMapping{
-			Field: mapping.Field,
-			Fact:  mapping.Fact,
-			Grain: mapping.Grain,
-			Value: mapping.Value,
-			Label: mapping.Label,
+			Field:   mapping.Field,
+			Dataset: mapping.Dataset,
+			Grain:   mapping.Grain,
+			Value:   mapping.Value,
+			Label:   mapping.Label,
 		})
 	}
 	return dashboard.InteractionConfig{
@@ -313,9 +347,9 @@ func interactionConfig(kind string, selection dashboardauthoring.SelectionIntera
 func compiledInteractionConfig(interaction visualizationir.VisualizationInteraction) dashboard.InteractionConfig {
 	mappings := make([]dashboard.InteractionConfigMapping, 0, len(interaction.Mappings))
 	for _, mapping := range interaction.Mappings {
-		fact, grain, label := "", "", ""
-		if mapping.TargetFactID != nil {
-			fact = *mapping.TargetFactID
+		dataset, grain, label := "", "", ""
+		if mapping.TargetDatasetID != nil {
+			dataset = *mapping.TargetDatasetID
 		}
 		if mapping.Grain != nil {
 			grain = *mapping.Grain
@@ -323,7 +357,7 @@ func compiledInteractionConfig(interaction visualizationir.VisualizationInteract
 		if mapping.Label != nil {
 			label = mapping.Label.Field
 		}
-		mappings = append(mappings, dashboard.InteractionConfigMapping{Field: mapping.TargetFieldID, Fact: fact, Grain: grain, Value: mapping.Source.Field, Label: label})
+		mappings = append(mappings, dashboard.InteractionConfigMapping{Field: mapping.TargetFieldID, Dataset: dataset, Grain: grain, Value: mapping.Source.Field, Label: label})
 	}
 	targets := make([]string, 0, len(interaction.Targets))
 	for _, target := range interaction.Targets {
@@ -368,7 +402,7 @@ func selectedHighlights(runtime *modelRuntime, report *dashboarddefinition.Defin
 			next := visualizationir.VisualizationHighlightEntry{Mappings: []visualizationir.VisualizationHighlightMapping{}, Label: entry.Label}
 			for _, mapping := range entry.Mappings {
 				next.Mappings = append(next.Mappings, visualizationir.VisualizationHighlightMapping{
-					TargetFieldID: mapping.Field, TargetFactID: optionalRuntimeString(mapping.Fact),
+					TargetFieldID: mapping.Field, TargetDatasetID: optionalRuntimeString(mapping.Dataset),
 					Grain: optionalRuntimeString(mapping.Grain), Value: mapping.Value, Label: optionalRuntimeString(mapping.Label),
 				})
 			}

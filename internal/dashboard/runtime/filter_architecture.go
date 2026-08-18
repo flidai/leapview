@@ -113,7 +113,7 @@ func compiledBindings(definition *dashboarddefinition.Definition) map[string]das
 }
 
 func semanticFiltersForExpression(definition dashboardfilter.Definition, expression dashboardfilter.Expression) ([]reportdef.QueryFilter, error) {
-	base := reportdef.QueryFilter{Field: definition.Field, Fact: definition.Fact}
+	base := reportdef.QueryFilter{Field: definition.Field, Dataset: definition.Dataset}
 	switch expression.Kind {
 	case "", dashboardfilter.ExpressionUnfiltered:
 		return nil, nil

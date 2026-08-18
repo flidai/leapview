@@ -20,7 +20,7 @@ func TestProjectPlanCompilerDeclaresDeterminismFromVolatileExpressions(t *testin
 	}
 	for _, expression := range []string{"SELECT id FROM source.orders", "SELECT safe_future_function(id) FROM source.orders", "SELECT now() AS observed_at", "SELECT random() AS sample", "SELECT uuid() AS key"} {
 		volatile := deterministic
-		volatile.Models = map[string]semanticmodel.Table{"orders": {SQL: expression}}
+		volatile.Models = map[string]semanticmodel.Table{"orders": {Transform: semanticmodel.Transform{SQL: expression}}}
 		if plan := planForProject(volatile); plan.Deterministic {
 			t.Fatalf("authored SQL expression %q was declared deterministic", expression)
 		}
@@ -31,7 +31,7 @@ func TestPlanProjectAgainstArtifactDetectsSQLChangeWithStableGraphIdentity(t *te
 	files := map[string]string{
 		"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {kind: managed}\n",
 		"sources/orders.yaml":        "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, format: csv, path: orders.csv}\n",
-		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {sources: [orders], sql: 'SELECT id FROM source.orders', primaryKey: id}\n",
+		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {sources: [orders], transform: {sql: 'SELECT id FROM source.orders'}, fields: {id: {datatype: Integer}}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}}\n",
 	}
 	projectPath := writeFlatProjectFixture(t, files)
 	retained, err := LoadProject(projectPath)

@@ -10,15 +10,15 @@ func TestValidateVisualAcceptsGovernedKPIComparison(t *testing.T) {
 
 	visual := Visual{
 		Type:  "kpi",
-		Query: VisualQuery{Measures: []FieldRef{{Field: "revenue", Alias: "value"}}},
+		Query: VisualQuery{Metrics: []FieldRef{{Field: "revenue", Alias: "value"}}},
 		Datasets: map[string]VisualQuery{
-			"comparison": {Measures: []FieldRef{{Field: "prior_revenue", Alias: "value"}}, Limit: 1},
-			"goal":       {Measures: []FieldRef{{Field: "revenue_goal", Alias: "value"}}, Limit: 1},
+			"comparison": {Metrics: []FieldRef{{Field: "prior_revenue", Alias: "value"}}, Limit: 1},
+			"goal":       {Metrics: []FieldRef{{Field: "revenue_goal", Alias: "value"}}, Limit: 1},
 			"trend": {
-				Time:     QueryTime{Field: "orders.month", Alias: "period", Grain: "month"},
-				Measures: []FieldRef{{Field: "revenue", Alias: "value"}},
-				Sort:     []Sort{{Field: "period", Direction: "asc"}},
-				Limit:    12,
+				Time:    QueryTime{Field: "orders.month", Alias: "period", Grain: "month"},
+				Metrics: []FieldRef{{Field: "revenue", Alias: "value"}},
+				Sort:    []Sort{{Field: "period", Direction: "asc"}},
+				Limit:   12,
 			},
 		},
 		KPI: VisualKPI{
@@ -46,7 +46,7 @@ func TestValidateVisualRejectsAmbiguousKPIComparison(t *testing.T) {
 		return Visual{
 			Type: "kpi",
 			Datasets: map[string]VisualQuery{
-				"context": {Measures: []FieldRef{{Field: "prior", Alias: "value"}}, Limit: 1},
+				"context": {Metrics: []FieldRef{{Field: "prior", Alias: "value"}}, Limit: 1},
 			},
 			KPI: VisualKPI{
 				Mode: "compact", Delta: "absolute", FavorableDirection: "increase", MissingComparison: "show_unavailable",
@@ -66,7 +66,7 @@ func TestValidateVisualRejectsAmbiguousKPIComparison(t *testing.T) {
 		{"invalid reducer", func(visual *Visual) { visual.KPI.Comparison.Reducer = "sum" }, `unsupported reducer "sum"`},
 		{"unsorted trend", func(visual *Visual) {
 			visual.Datasets["trend"] = VisualQuery{
-				Time: QueryTime{Field: "orders.month", Alias: "period", Grain: "month"}, Measures: []FieldRef{{Field: "revenue", Alias: "value"}}, Limit: 12,
+				Time: QueryTime{Field: "orders.month", Alias: "period", Grain: "month"}, Metrics: []FieldRef{{Field: "revenue", Alias: "value"}}, Limit: 12,
 			}
 			visual.KPI.Trend = &VisualKPITrendBinding{Dataset: "trend", Category: "period", Value: "value"}
 		}, "must sort by category field"},

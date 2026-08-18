@@ -5,12 +5,23 @@ metadata:
   name: revenue_bridge
   displayName: Revenue bridge
 spec:
-  primaryKey: component
-  sources: [docs.revenue_bridge]
+  sources:
+  - docs.revenue_bridge
   fields:
-    component: {label: Driver, type: string}
-    amount: {label: Revenue impact, type: number}
+    component:
+      datatype: String
+      label: Driver
+    amount:
+      datatype: Float
+      label: Revenue impact
   transform:
     sql: |
       SELECT component, CAST(amount AS DOUBLE) AS amount
       FROM source."docs.revenue_bridge"
+  entities:
+    component:
+      type: primary
+      fields:
+      - component
+  grain:
+    entity: component

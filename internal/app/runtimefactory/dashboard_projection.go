@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -14,6 +15,27 @@ import (
 
 func (r dashboardRuntimeWithGraph) Verify(ctx context.Context) error {
 	return r.Service.Verify(ctx)
+}
+
+// CompiledSemanticModel exposes the activation-owned compiled semantic model
+// through the project runtime boundary. The dashboard service owns the
+// consumer planner port, so this composition adapter performs the concrete
+// planner assertion once and fails closed for an unavailable or unexpected
+// planner implementation. Project readers can then consume only the
+// analytics-query contract without depending on dashboard internals.
+func (r dashboardRuntimeWithGraph) CompiledSemanticModel(modelID string) (*semanticquery.CompiledModel, bool) {
+	if r.Service == nil {
+		return nil, false
+	}
+	planner, ok := r.Service.Planner(modelID)
+	if !ok || planner == nil || !planner.IsCompiled() {
+		return nil, false
+	}
+	concrete, ok := planner.(*semanticquery.Planner)
+	if !ok || concrete == nil || concrete.CompiledModel() == nil {
+		return nil, false
+	}
+	return concrete.CompiledModel(), true
 }
 
 type dashboardRuntimeWithGraph struct {

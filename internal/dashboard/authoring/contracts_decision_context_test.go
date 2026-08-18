@@ -108,8 +108,8 @@ func TestValidateVisualPresentationAcceptsDeterministicSeriesIntent(t *testing.T
 	visual := Visual{
 		Type: "area",
 		Query: VisualQuery{
-			Series:   FieldRef{Field: "orders.status", Alias: "status"},
-			Measures: []FieldRef{{Field: "revenue", Alias: "revenue"}},
+			Series:  FieldRef{Field: "orders.status", Alias: "status"},
+			Metrics: []FieldRef{{Field: "revenue", Alias: "revenue"}},
 		},
 		Presentation: VisualPresentation{
 			Stacking:     "percent",
@@ -138,8 +138,8 @@ func TestValidateVisualPresentationRejectsInvalidSeriesIntent(t *testing.T) {
 		},
 		{
 			name:   "percent without series",
-			visual: Visual{Type: "area", Query: VisualQuery{Measures: []FieldRef{{Field: "revenue"}}}, Presentation: VisualPresentation{Stacking: "percent"}},
-			want:   "percent stacking requires a series or multiple measures",
+			visual: Visual{Type: "area", Query: VisualQuery{Metrics: []FieldRef{{Field: "revenue"}}}, Presentation: VisualPresentation{Stacking: "percent"}},
+			want:   "percent stacking requires a series or multiple metrics",
 		},
 		{
 			name:   "unsupported mark",

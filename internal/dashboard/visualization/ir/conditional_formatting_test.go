@@ -43,7 +43,7 @@ func TestValidateSpecEnforcesGovernedConditionalFormatting(t *testing.T) {
 			Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
 				{ID: "month", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Month"},
 				{ID: "status", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Status"},
-				{ID: "revenue", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
+				{ID: "revenue", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
 			}}},
 			DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
 			Accessibility: VisualizationAccessibility{Title: "Revenue", Description: "Revenue by month"},

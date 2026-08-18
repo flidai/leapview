@@ -63,8 +63,13 @@ sections:
       - slug: concepts/semantic-models
         title: Semantic models
         type: explanation
-        summary: Define datasets, dimensions, measures, and relationships once.
+        summary: Define datasets, dimensions, metrics, and relationships once.
         source: articles/concepts/semantic-models.md
+      - slug: concepts/ossie-interchange
+        title: Apache Ossie interchange
+        type: explanation
+        summary: Import and export semantic models through the pinned Ossie boundary.
+        source: articles/concepts/ossie-interchange.md
       - slug: concepts/dashboards
         title: Dashboards, pages, and visuals
         type: explanation
@@ -145,7 +150,7 @@ sections:
       - slug: guides/build/semantic-model
         title: Build a semantic model
         type: how-to
-        summary: Expose reusable fields, measures, and relationships.
+        summary: Expose reusable fields, metrics, and relationships.
         source: articles/build/semantic-model.md
       - slug: guides/build/dashboard
         title: Create a dashboard

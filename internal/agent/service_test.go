@@ -1206,9 +1206,9 @@ func fakeAgentAuthoringReport() dashboardauthoring.Dashboard {
 		Description:   "Sales dashboard",
 		SemanticModel: "test",
 		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders": {Title: "Orders", Type: "bar", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}}},
+			"orders": {Title: "Orders", Type: "bar", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count"}}}},
 		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"orders_table": {Title: "Orders", Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}}},
+			"orders_table": {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id"}}},
 		})),
 		Pages: []dashboard.Page{{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{{ID: "orders", Kind: "visual", Visual: "orders"}, {ID: "orders-table", Kind: "visual", Visual: "orders_table"}}}},
 	}
@@ -1223,15 +1223,16 @@ func fakeSemanticModel() *semanticmodel.Model {
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
+				Source:      "orders",
+				Entities:    map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Expr: "order_id"},
+					"order_id": {},
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count_distinct", Input: semanticmodel.MeasureInput{Field: "orders.order_id"}, Empty: "zero"},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Dataset: "orders", Aggregation: "count_distinct", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"},
 		},
 	}
 }
@@ -1286,17 +1287,17 @@ func (largeDashboardMetrics) dashboardDefinition(id string) (dashboarddefinition
 			Title:       fmt.Sprintf("Chart %02d", pageIndex),
 			Description: largeDashboardPayloadMarker + strings.Repeat("x", 4096),
 			Type:        "bar",
-			Query:       dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}},
+			Query:       dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count"}}},
 		})
 		report.Visuals[kpiID] = dashboardauthoring.ChartVisualization(dashboardauthoring.Visual{
 			Title:       fmt.Sprintf("KPI %02d", pageIndex),
 			Description: largeDashboardPayloadMarker + strings.Repeat("y", 4096),
 			Type:        "kpi",
-			Query:       dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}},
+			Query:       dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count"}}},
 		})
 		report.Visuals[tableID] = dashboardauthoring.TabularVisualization("table", dashboardauthoring.TableVisual{
 			Title: fmt.Sprintf("Table %02d", pageIndex),
-			Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id"}},
+			Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id"}},
 			Columns: []dashboard.TableColumn{{
 				Key:   largeDashboardPayloadMarker + strings.Repeat("z", 4096),
 				Label: "Large Column",

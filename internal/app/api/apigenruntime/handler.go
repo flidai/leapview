@@ -229,7 +229,7 @@ func validateSemanticBody(w http.ResponseWriter, r *http.Request) bool {
 		// inspect structurally valid bodies here.
 		return true
 	}
-	limits := map[string]int{"dimensions": 50, "measures": 50, "filters": 100, "sort": 50}
+	limits := map[string]int{"dimensions": 50, "metrics": 50, "filters": 100, "sort": 50}
 	for field, max := range limits {
 		value, present := object[field]
 		if !present || string(value) == "null" {

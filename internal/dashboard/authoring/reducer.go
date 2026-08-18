@@ -337,8 +337,8 @@ func assignField(document *Dashboard, payload AssignFieldPayload) error {
 	ref := FieldRef{Field: strings.TrimSpace(payload.FieldID), Alias: fieldAlias(payload.FieldID)}
 	if visual.Chart != nil {
 		switch payload.Role {
-		case FieldRoleMeasure:
-			visual.Chart.Query.Measures = appendUniqueFieldRef(visual.Chart.Query.Measures, ref)
+		case FieldRoleMetric:
+			visual.Chart.Query.Metrics = appendUniqueFieldRef(visual.Chart.Query.Metrics, ref)
 		case FieldRoleDimension, FieldRoleDetail:
 			visual.Chart.Query.Dimensions = appendUniqueFieldRef(visual.Chart.Query.Dimensions, ref)
 		}
@@ -347,13 +347,13 @@ func assignField(document *Dashboard, payload AssignFieldPayload) error {
 		// assigned. The application resolves this table from the active semantic
 		// model and carries it as non-transport metadata; never infer it from an
 		// unvalidated client payload here. Existing table targets remain stable so
-		// related-table dimensions can be assigned without changing the fact.
-		if strings.TrimSpace(visual.Tabular.Query.Table) == "" && strings.TrimSpace(payload.ResolvedTable) != "" {
-			visual.Tabular.Query.Table = strings.TrimSpace(payload.ResolvedTable)
+		// related-table dimensions can be assigned without changing the dataset.
+		if strings.TrimSpace(visual.Tabular.Query.Dataset) == "" && strings.TrimSpace(payload.ResolvedTable) != "" {
+			visual.Tabular.Query.Dataset = strings.TrimSpace(payload.ResolvedTable)
 		}
 		switch payload.Role {
-		case FieldRoleMeasure:
-			visual.Tabular.Query.Measures = appendUniqueFieldRef(visual.Tabular.Query.Measures, ref)
+		case FieldRoleMetric:
+			visual.Tabular.Query.Metrics = appendUniqueFieldRef(visual.Tabular.Query.Metrics, ref)
 		case FieldRoleDimension:
 			visual.Tabular.Query.Columns = appendUniqueFieldRef(visual.Tabular.Query.Columns, ref)
 		case FieldRoleDetail:

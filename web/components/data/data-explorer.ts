@@ -4,6 +4,7 @@ import { ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, Rotat
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
+  DataExploreDatasetSignal,
   DataExploreFieldSignal,
   DataExploreFilterSignal,
   DataExploreSignal,
@@ -42,7 +43,7 @@ const emptyExplorer: DataExplorerSignal = {
   selectedObject: undefined,
   preview: emptyPreview,
   explore: {
-    command: { modelId: '', datasetId: '', dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} },
+    command: { modelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} },
     models: [], datasets: [], fields: [],
     result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
   },
@@ -652,7 +653,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-accent);
     }
 
-    .measure-field code {
+    .metric-field code {
       color: var(--lv-fg-accent);
     }
 
@@ -724,7 +725,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       font: var(--lv-type-caption);
     }
 
-    .chip.measure {
+    .chip.metric {
       border-color: var(--lv-line-accent, var(--lv-line-muted));
       background: var(--lv-bg-accent-muted);
       color: var(--lv-fg-accent);
@@ -1148,7 +1149,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selectedModel = explore.models.find((model) => model.id === command.modelId) ?? explore.selectedModel
     const datasets = selectedModel?.datasets ?? explore.datasets ?? []
     const selectedDataset = datasets.find((dataset) => dataset.id === command.datasetId) ?? explore.selectedDataset
-    const queryFields = new Set([...command.dimensions, ...command.measures])
+    const queryFields = new Set([...command.dimensions, ...command.metrics])
     const visibleFields = (explore.fields ?? []).filter((field) => {
       const query = this.fieldSearch.trim().toLowerCase()
       return !query || [field.label, field.id, field.modelTable, field.description, field.type]
@@ -1156,7 +1157,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     })
     const fieldGroups = groupExploreFields(visibleFields)
     const result = explore.result
-    const hasQuery = command.dimensions.length > 0 || command.measures.length > 0 || Boolean(command.time)
+    const hasQuery = command.dimensions.length > 0 || command.metrics.length > 0 || Boolean(command.time)
     return html`
       <div class="explorer">
         <aside class="browser explore-browser" aria-label="Semantic fields">
@@ -1187,7 +1188,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               <details class="field-group" open>
                 <summary>
                   <span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
-                  <span aria-hidden="true">${lucideIcon(group.kind === 'measure' ? Code2 : Table2, { size: 14 })}</span>
+                  <span aria-hidden="true">${lucideIcon(group.kind === 'metric' ? Code2 : Table2, { size: 14 })}</span>
                   <span>${group.label}</span>
                   <em>${group.fields.length}</em>
                 </summary>
@@ -1217,8 +1218,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               <span class="query-label">Fields</span>
               <div class="selection-shelf">
                 ${command.dimensions.map((id) => this.renderQueryChip(id, 'dimension', explore.fields, command))}
-                ${command.measures.map((id) => this.renderQueryChip(id, 'measure', explore.fields, command))}
-                ${!queryFields.size ? html`<span class="empty">Choose dimensions and measures from the field picker.</span>` : nothing}
+                ${command.metrics.map((id) => this.renderQueryChip(id, 'metric', explore.fields, command))}
+                ${!queryFields.size ? html`<span class="empty">Choose dimensions and metrics from the field picker.</span>` : nothing}
               </div>
               <div class="query-actions">
                 <button type="button" class="text-button" title="Run now" @click=${() => this.emitExplore(command, true)}>${lucideIcon(Play, { size: 14 })} Run</button>
@@ -1246,7 +1247,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           ${this.filterField ? this.renderFilterEditor(command, explore.fields) : nothing}
           <div class="result-meta" aria-live="polite">
             <span><strong>${selectedModel?.title ?? 'Semantic model'}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
-            ${selectedDataset?.grain ? html`<span>Grain: ${selectedDataset.grain}</span>` : nothing}
+            ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
             ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
             ${result.error ? html`<span class="result-error">${result.error}</span>` : nothing}
             ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
@@ -1258,7 +1259,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 .visibleColumns=${this.exploreVisibleColumns}
                 @lv-data-explore-table-command=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.emitExplore({ ...command, ...event.detail })}
               ></lv-data-explore-table>`
-            : html`<p class="empty">Select at least one dimension or measure to run a governed exploration.</p>`}
+            : html`<p class="empty">Select at least one dimension or metric to run a governed exploration.</p>`}
           ${this.showSQL ? html`<section class="diagnostics" aria-label="Query details">
             <div class="diagnostic-block"><h3>Generated SQL</h3><pre>${result.sql || 'Run an exploration to inspect generated SQL.'}</pre></div>
             <div class="diagnostic-block"><h3>Query plan</h3><pre>${result.plan || 'No query plan is available.'}</pre></div>
@@ -1268,7 +1269,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     `
   }
 
-  private renderQueryChip(id: string, kind: 'dimension' | 'measure', fields: DataExploreFieldSignal[], command: DataExploreCommand) {
+  private renderQueryChip(id: string, kind: 'dimension' | 'metric', fields: DataExploreFieldSignal[], command: DataExploreCommand) {
     return html`<button type="button" class=${`chip ${kind}`} title="Remove field" @click=${() => this.removeExploreField(id, kind, command)}>
       ${fieldLabel(id, fields)} ${lucideIcon(X, { size: 12 })}
     </button>`
@@ -1309,13 +1310,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const model = explore.models.find((candidate) => candidate.id === modelId)
     const current = this.optimisticExplore ?? explore.command
     this.emitExplore({
-      ...current, modelId, datasetId: model?.datasets?.[0]?.id ?? '', dimensions: [], measures: [], filters: [], sort: [],
+      ...current, modelId, datasetId: model?.datasets?.[0]?.id ?? '', dimensions: [], metrics: [], filters: [], sort: [],
     }, true)
   }
 
   private toggleExploreField(field: DataExploreFieldSignal, command: DataExploreCommand) {
     if (field.compatible === false && !field.rebaseDatasetId) return
-    const key = field.kind === 'measure' ? 'measures' : 'dimensions'
+    const key = field.kind === 'metric' ? 'metrics' : 'dimensions'
     const values = command[key]
     const next = values.includes(field.id) ? values.filter((id) => id !== field.id) : [...values, field.id]
     this.emitExplore({ ...command, [key]: next, sort: command.sort.filter((sort) => sort.field !== field.id) })
@@ -1336,7 +1337,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const contextMatches = exploreContextMatchesObject(current, baseObject)
     const activeCommand = semanticActive && contextMatches
     const baseDimensions = (explore.fields ?? [])
-      .filter((candidate) => candidate.compatible !== false && candidate.kind !== 'measure' && candidate.modelTable === objectTableID(baseObject))
+      .filter((candidate) => candidate.compatible !== false && candidate.kind !== 'metric' && candidate.modelTable === objectTableID(baseObject))
       .map((candidate) => candidate.id)
     const fallbackDimensions = (baseObject.columns ?? []).map((column) => `${objectTableID(baseObject)}.${column.key}`)
     const command: DataExploreCommand = activeCommand ? current : {
@@ -1344,27 +1345,27 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       modelId: baseObject.modelId ?? '',
       datasetId: objectTableID(baseObject),
       dimensions: baseDimensions.length ? baseDimensions : fallbackDimensions,
-      measures: [],
+      metrics: [],
       filters: [],
       sort: [],
       columnWidths: {},
     }
-    const key = field.kind === 'measure' ? 'measures' : 'dimensions'
+    const key = field.kind === 'metric' ? 'metrics' : 'dimensions'
     const values = command[key] ?? []
-    const selectedByDefault = !activeCommand && field.kind !== 'measure' && field.modelTable === objectTableID(baseObject)
+    const selectedByDefault = !activeCommand && field.kind !== 'metric' && field.modelTable === objectTableID(baseObject)
     const selectedNow = values.includes(field.id) || selectedByDefault
     const next = selectedNow ? values.filter((id) => id !== field.id) : [...values, field.id]
     this.emitExplore({ ...command, [key]: next, sort: (command.sort ?? []).filter((sort) => sort.field !== field.id) })
   }
 
-  private removeExploreField(id: string, kind: 'dimension' | 'measure', command: DataExploreCommand) {
-    const key = kind === 'measure' ? 'measures' : 'dimensions'
+  private removeExploreField(id: string, kind: 'dimension' | 'metric', command: DataExploreCommand) {
+    const key = kind === 'metric' ? 'metrics' : 'dimensions'
     this.emitExplore({ ...command, [key]: command[key].filter((field) => field !== id), sort: command.sort.filter((sort) => sort.field !== id) })
   }
 
   private resetExplore(command: DataExploreCommand) {
     this.closeFilter()
-    this.emitExplore({ ...command, dimensions: [], measures: [], filters: [], sort: [], time: undefined, columnWidths: {} }, true)
+    this.emitExplore({ ...command, dimensions: [], metrics: [], filters: [], sort: [], time: undefined, columnWidths: {} }, true)
   }
 
   private openFilter(field: DataExploreFieldSignal) {
@@ -1404,7 +1405,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       modelId: next.modelId ?? current.modelId ?? '',
       datasetId: next.datasetId ?? current.datasetId ?? '',
       dimensions: [...(next.dimensions ?? current.dimensions ?? [])],
-      measures: [...(next.measures ?? current.measures ?? [])],
+      metrics: [...(next.metrics ?? current.metrics ?? [])],
       filters: [...(next.filters ?? current.filters ?? [])],
       sort: [...(next.sort ?? current.sort ?? [])],
       limit: next.limit || current.limit || 100,
@@ -1567,7 +1568,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         ? (explore.fields ?? []).filter((field) => field.modelTable === objectTableID(object))
         : []
       const dimensionByColumn = new Map(
-        semanticFields.filter((field) => field.kind !== 'measure').map((field) => [fieldColumnID(field), field]),
+        semanticFields.filter((field) => field.kind !== 'metric').map((field) => [fieldColumnID(field), field]),
       )
       const dimensions = (object.columns ?? []).map((column): DataExploreFieldSignal => dimensionByColumn.get(column.key) ?? {
         id: `${objectTableID(object)}.${column.key}`,
@@ -1579,9 +1580,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         compatible: true,
         selected: false,
       })
-      const measures = semanticFields.filter((field) => field.kind === 'measure')
-      const fields = [...dimensions, ...measures]
-      const queryFields = new Set([...(command.dimensions ?? []), ...(command.measures ?? [])])
+      const metrics = semanticFields.filter((field) => field.kind === 'metric')
+      const fields = [...dimensions, ...metrics]
+      const queryFields = new Set([...(command.dimensions ?? []), ...(command.metrics ?? [])])
       return html`
         <details class="object-node" data-column-match=${String(columnMatch)}>
           <summary
@@ -1600,14 +1601,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               const relationshipPath = field.relationshipPath ?? []
               const fieldSelected = compatible && semanticActive && contextMatches
                 ? queryFields.has(field.id)
-                : selected && field.kind !== 'measure'
+                : selected && field.kind !== 'metric'
               const compatibilityTitle = compatible
                 ? relationshipPath.length
                   ? `Related through ${relationshipPath.join(' → ')}`
                   : field.description || field.id
                 : field.compatibilityReason || `Not compatible with ${command.datasetId || objectTableID(object)}`
               return html`
-              <div class=${`${field.kind === 'measure' ? 'column-item measure-field' : 'column-item'}${selectable ? '' : ' is-unavailable'}${rebaseable ? ' is-rebaseable' : ''}`} title=${compatibilityTitle}>
+              <div class=${`${field.kind === 'metric' ? 'column-item metric-field' : 'column-item'}${selectable ? '' : ' is-unavailable'}${rebaseable ? ' is-rebaseable' : ''}`} title=${compatibilityTitle}>
                 <button
                   type="button"
                   class=${fieldSelected ? 'field-button is-selected' : 'field-button'}
@@ -1618,9 +1619,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   @click=${() => this.toggleUnifiedField(field, object, explore, semanticActive)}
                 >
                   <span class="field-check" aria-hidden="true">${lucideIcon(fieldSelected ? SquareCheckBig : Square, { size: 13 })}</span>
-                  <span title=${field.type ? `Field type ${field.type}` : field.kind === 'measure' ? 'Measure' : 'Field type unknown'} aria-label=${field.type ? `Field type ${field.type}` : field.kind === 'measure' ? 'Measure' : 'Field type unknown'}>${lucideIcon(field.kind === 'measure' ? Sigma : fieldTypeIcon(field.type), { size: 13 })}</span>
+                  <span title=${field.type ? `Field type ${field.type}` : field.kind === 'metric' ? 'Metric' : 'Field type unknown'} aria-label=${field.type ? `Field type ${field.type}` : field.kind === 'metric' ? 'Metric' : 'Field type unknown'}>${lucideIcon(field.kind === 'metric' ? Sigma : fieldTypeIcon(field.type), { size: 13 })}</span>
                   <span>${field.label || field.id}</span>
-                  <code>${compatible ? field.kind === 'measure' ? 'measure' : relationshipPath.length ? 'related' : field.type || '' : rebaseable ? 'changes grain' : 'unavailable'}</code>
+                  <code>${compatible ? field.kind === 'metric' ? 'metric' : relationshipPath.length ? 'related' : field.type || '' : rebaseable ? 'changes grain' : 'unavailable'}</code>
                 </button>
                 ${field.kind === 'dimension' && compatible && semanticActive && contextMatches
                   ? html`<button type="button" class="field-action" title="Filter ${field.label}" aria-label="Filter ${field.label}" @click=${() => this.openFilter(field)}>${lucideIcon(Filter, { size: 13 })}</button>`
@@ -1651,7 +1652,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selectedModel = explore.models.find((model) => model.id === command.modelId) ?? explore.selectedModel
     const datasets = selectedModel?.datasets ?? explore.datasets ?? []
     const selectedDataset = datasets.find((dataset) => dataset.id === command.datasetId) ?? explore.selectedDataset
-    const queryFields = new Set([...(command.dimensions ?? []), ...(command.measures ?? [])])
+    const queryFields = new Set([...(command.dimensions ?? []), ...(command.metrics ?? [])])
     const result = explore.result
     const hasQuery = queryFields.size > 0 || Boolean(command.time)
     return html`
@@ -1662,7 +1663,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 <span class="query-label">Fields</span>
                 <div class="selection-shelf">
                   ${(command.dimensions ?? []).map((id) => this.renderQueryChip(id, 'dimension', explore.fields, command))}
-                  ${(command.measures ?? []).map((id) => this.renderQueryChip(id, 'measure', explore.fields, command))}
+                  ${(command.metrics ?? []).map((id) => this.renderQueryChip(id, 'metric', explore.fields, command))}
                   ${!queryFields.size ? html`<span class="empty">Select fields from the expanded model tables.</span>` : nothing}
                 </div>
                 <div class="query-actions">
@@ -1690,7 +1691,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             ${this.filterField ? this.renderFilterEditor(command, explore.fields) : nothing}
             <div class="result-meta" aria-live="polite">
               <span><strong>${selectedModel?.title ?? label(command.modelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
-              ${selectedDataset?.grain ? html`<span>Grain: ${selectedDataset.grain}</span>` : nothing}
+              ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
               ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
               ${result.error ? html`<span class="result-error">${result.error}</span>` : nothing}
               ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
@@ -1714,12 +1715,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       <section class="query-view" aria-label="Query details">
         <dl class="metadata-grid">
           <div class="metadata-card"><dt>Query target</dt><dd>${label(command.modelId)} / ${label(command.datasetId)}</dd></div>
-          <div class="metadata-card"><dt>Fields</dt><dd>${command.dimensions.length + command.measures.length}</dd></div>
+          <div class="metadata-card"><dt>Fields</dt><dd>${command.dimensions.length + command.metrics.length}</dd></div>
           <div class="metadata-card"><dt>Filters</dt><dd>${command.filters.length}</dd></div>
           <div class="metadata-card"><dt>Rows returned</dt><dd>${result.rowsReturned}</dd></div>
         </dl>
         <h3 class="query-heading">${lucideIcon(Code2, { size: 17 })} Generated SQL</h3>
-        <p class="query-copy">This is the governed query generated from the selected fields, relationships, filters, and measures.</p>
+        <p class="query-copy">This is the governed query generated from the selected fields, relationships, filters, and metrics.</p>
         <pre class="query-code">${result.sql || 'Select fields to generate a query.'}</pre>
         ${result.plan ? html`<h3 class="query-heading">Query plan</h3><pre class="query-code">${result.plan}</pre>` : nothing}
         ${object.description ? html`<p class="query-copy">${object.description}</p>` : nothing}
@@ -1739,7 +1740,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       modelId: object.modelId ?? '',
       datasetId: tableID,
       dimensions: localDimensions,
-      measures: [],
+      metrics: [],
       filters: [],
       sort: [],
       requestSeq: 0,
@@ -1840,7 +1841,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
 function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
   const tableID = objectTableID(object)
-  const localFields = fields.filter((field) => field.kind !== 'measure' && field.modelTable === tableID)
+  const localFields = fields.filter((field) => field.kind !== 'metric' && field.modelTable === tableID)
   const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
   const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${tableID}.${column.key}`)
   const seen = new Set(ordered)
@@ -1905,7 +1906,7 @@ function groupObjectsByModel(objects: DataExplorerObjectSignal[], models: DataEx
 
 type ExploreFieldGroup = {
   id: string
-  kind: 'dimension' | 'measure'
+  kind: 'dimension' | 'metric'
   label: string
   fields: DataExploreFieldSignal[]
 }
@@ -1913,12 +1914,13 @@ type ExploreFieldGroup = {
 function groupExploreFields(fields: DataExploreFieldSignal[]): ExploreFieldGroup[] {
   const groups = new Map<string, ExploreFieldGroup>()
   for (const field of fields) {
-    const id = `${field.modelTable}:${field.kind}`
+    const crossDatasetMetric = field.kind === 'metric' && !field.modelTable
+    const id = crossDatasetMetric ? 'cross-dataset:metric' : `${field.modelTable}:${field.kind}`
     if (!groups.has(id)) {
       groups.set(id, {
         id,
         kind: field.kind,
-        label: `${label(field.modelTable)} · ${field.kind === 'measure' ? 'Measures' : 'Dimensions'}`,
+        label: crossDatasetMetric ? 'Multiple datasets · Metrics' : `${label(field.modelTable)} · ${field.kind === 'metric' ? 'Metrics' : 'Dimensions'}`,
         fields: [],
       })
     }
@@ -1931,6 +1933,11 @@ function fieldLabel(id: string, fields: DataExploreFieldSignal[]): string {
   return fields.find((field) => field.id === id)?.label ?? label(id)
 }
 
+function datasetGrainLabel(dataset: DataExploreDatasetSignal): string {
+  const fields = dataset.grainFields ?? []
+  return fields.length ? `${dataset.grainEntity} (${fields.join(', ')})` : dataset.grainEntity
+}
+
 function replaceDataExplorerURL(command: DataExplorerCommand) {
   if (typeof window === 'undefined') return
   const mode = command.mode === 'explore' ? 'explore' : 'browse'
@@ -1941,7 +1948,7 @@ function replaceDataExplorerURL(command: DataExplorerCommand) {
     if (command.explore?.modelId) params.set('model', command.explore.modelId)
     if (command.explore?.datasetId) params.set('dataset', command.explore.datasetId)
     for (const field of command.explore?.dimensions ?? []) params.append('dimension', field)
-    for (const measure of command.explore?.measures ?? []) params.append('measure', measure)
+    for (const metric of command.explore?.metrics ?? []) params.append('metric', metric)
     for (const filter of command.explore?.filters ?? []) params.append('filter', JSON.stringify(filter))
     for (const sort of command.explore?.sort ?? []) params.append('sort', JSON.stringify(sort))
     if (command.explore?.time) params.set('time', JSON.stringify(command.explore.time))

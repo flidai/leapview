@@ -12,12 +12,12 @@ func TestValidateVisualAcceptsFilteredContextDatasetsAndMetadataBindings(t *test
 		Type: "line",
 		Query: VisualQuery{
 			Dimensions: []FieldRef{{Field: "orders.month", Alias: "month"}},
-			Measures:   []FieldRef{{Field: "revenue", Alias: "revenue"}},
+			Metrics:    []FieldRef{{Field: "revenue", Alias: "revenue"}},
 		},
 		Datasets: map[string]VisualQuery{
 			"context": {
 				Dimensions: []FieldRef{{Field: "orders.region", Alias: "region"}},
-				Measures:   []FieldRef{{Field: "target_revenue", Alias: "target"}},
+				Metrics:    []FieldRef{{Field: "target_revenue", Alias: "target"}},
 				Limit:      1,
 			},
 		},
@@ -49,7 +49,7 @@ func TestValidateVisualRejectsUnsafeOrAmbiguousContextBindings(t *testing.T) {
 		{
 			name: "reserved dataset",
 			visual: Visual{Type: "line", Datasets: map[string]VisualQuery{
-				"primary": {Measures: []FieldRef{{Field: "target", Alias: "target"}}},
+				"primary": {Metrics: []FieldRef{{Field: "target", Alias: "target"}}},
 			}},
 			want: `dataset id "primary" is reserved`,
 		},
@@ -58,7 +58,7 @@ func TestValidateVisualRejectsUnsafeOrAmbiguousContextBindings(t *testing.T) {
 			visual: Visual{Type: "line", Datasets: map[string]VisualQuery{
 				"context": {},
 			}},
-			want: `dataset "context" requires dimensions, time, or measures`,
+			want: `dataset "context" requires dimensions, time, or metrics`,
 		},
 		{
 			name: "map data-bound metadata",

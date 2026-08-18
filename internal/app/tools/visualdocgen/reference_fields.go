@@ -12,9 +12,9 @@ var queryFieldReferences = map[string]visualdocs.FieldReference{
 		Type:        "named query mapping",
 		Description: "Declares bounded comparison, goal, trend, and decision-context queries that inherit the visual's active semantic filters.",
 	},
-	"table": {
+	"dataset": {
 		Type:        "string",
-		Description: "Selects the fact table when the semantic model cannot infer one from the referenced fields.",
+		Description: "Selects the semantic dataset when the semantic model cannot infer one from the referenced fields.",
 	},
 	"dimensions": {
 		Type:        "field mapping",
@@ -22,11 +22,11 @@ var queryFieldReferences = map[string]visualdocs.FieldReference{
 	},
 	"series": {
 		Type:        "field reference",
-		Description: "Splits one measure into named series for compatible chart shapes.",
+		Description: "Splits one metric into named series for compatible chart shapes.",
 	},
-	"measures": {
-		Type:        "measure mapping",
-		Description: "Selects the governed semantic measures consumed by the visual shape.",
+	"metrics": {
+		Type:        "metric mapping",
+		Description: "Selects the governed semantic metrics consumed by the visual shape.",
 	},
 	"time": {
 		Type:        "time reference",
@@ -34,7 +34,7 @@ var queryFieldReferences = map[string]visualdocs.FieldReference{
 	},
 	"sort": {
 		Type:        "sort list",
-		Description: "Orders query results by a returned field or measure alias.",
+		Description: "Orders query results by a returned field or metric alias.",
 	},
 	"limit": {
 		Type:          "integer",
@@ -85,7 +85,7 @@ var presentationFieldReferences = map[string]visualdocs.FieldReference{
 	"reference_bands":        field("reference band list", "none", nil, "Adds typed tolerance or target ranges using literal or governed field-reduced bounds."),
 	"reference_lines":        field("reference line list", "none", nil, "Adds typed targets or thresholds using literal or governed field-reduced values."),
 	"rose":                   booleanOption("false", "Scales pie sectors as a rose chart."),
-	"series_types":           field("mapping", "automatic", []string{"line", "bar", "column"}, "Maps combo series names or measure aliases to renderer types."),
+	"series_types":           field("mapping", "automatic", []string{"line", "bar", "column"}, "Maps combo series names or metric aliases to renderer types."),
 	"series_colors":          field("semantic color mapping", "automatic", nil, "Assigns stable semantic color intents to known series identities."),
 	"series_order":           field("string list", "query order", nil, "Declares stable priority order for known series identities."),
 	"show_labels":            booleanOption("renderer default", "Shows value labels directly on chart marks."),

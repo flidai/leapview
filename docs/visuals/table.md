@@ -23,7 +23,7 @@ visuals:
         align: right
         format: currency
     query:
-      table: orders
+      dataset: orders
       fields:
         - orders.order_id
         - orders.status

@@ -1,6 +1,7 @@
 package query
 
 import (
+	"fmt"
 	"sort"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -12,14 +13,19 @@ import (
 type Dependencies struct {
 	LogicalFields      []string
 	MetricDependencies []string
-	Facts              []string
+	Datasets           []string
 	PhysicalFields     []string
 	RelationshipPaths  []string
 }
 
-func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependencies, error) {
-	planner := NewPlanner(model)
-	resolved, err := planner.resolveAggregate(request)
+// ResolveDependencies resolves request lineage against an already activated
+// planner. Serving request paths must retain and use this planner so semantic
+// metadata is never compiled outside serving-state activation.
+func (p *Planner) ResolveDependencies(request Request) (Dependencies, error) {
+	if p == nil || p.compiled == nil {
+		return Dependencies{}, fmt.Errorf("planner is not compiled")
+	}
+	resolved, err := p.resolveAggregate(request)
 	if err != nil {
 		return Dependencies{}, err
 	}
@@ -29,39 +35,52 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 	paths := map[string]struct{}{}
 	for _, dimension := range resolved.Dimensions {
 		logical[dimension.Name] = struct{}{}
-		for _, fact := range resolved.Facts {
-			field, path, err := planner.aggregateDimensionBinding(fact, dimension)
+		for _, dataset := range resolved.Datasets {
+			field, path, err := p.aggregateDimensionBinding(dataset, dimension)
 			if err != nil {
 				return Dependencies{}, err
 			}
 			physical[field] = struct{}{}
 			if signature := relationshipPathSignature(path); signature != "" {
-				paths[fact+":"+signature] = struct{}{}
+				paths[dataset+":"+signature] = struct{}{}
 			}
 			for _, relationship := range path {
-				physical[relationship.From] = struct{}{}
-				physical[relationship.To] = struct{}{}
+				for _, field := range relationshipPhysicalFields(relationship) {
+					physical[field] = struct{}{}
+				}
 			}
 		}
 	}
-	for name, measure := range resolved.Measures {
+	for name, metric := range resolved.Aggregates {
 		logical[name] = struct{}{}
-		for _, field := range measurePhysicalFields(measure) {
+		compiled, ok := p.compiled.metric(name)
+		if !ok || compiled.Aggregate == nil {
+			return Dependencies{}, fmt.Errorf("metric %q is missing compiled aggregate lineage", name)
+		}
+		for _, field := range aggregateMetricPhysicalFields(metric) {
 			physical[field] = struct{}{}
-			resolvedField, err := model.ResolveDimension(field)
-			if err != nil {
-				return Dependencies{}, err
+		}
+		path := compiled.Aggregate.InputPath
+		if signature := relationshipPathSignature(path); signature != "" {
+			paths[metric.Dataset+":"+signature] = struct{}{}
+		}
+		for _, relationship := range path {
+			for _, field := range relationshipPhysicalFields(relationship) {
+				physical[field] = struct{}{}
 			}
-			path, err := model.SafeRelationshipPath(measure.Fact, resolvedField.Table)
-			if err != nil {
-				return Dependencies{}, err
+		}
+		for _, entry := range compiled.Lineage.Entries {
+			if entry.Role != "filter" || entry.Physical.Field == "" {
+				continue
 			}
-			if signature := relationshipPathSignature(path); signature != "" {
-				paths[measure.Fact+":"+signature] = struct{}{}
+			physical[entry.Physical.Field] = struct{}{}
+			if signature := relationshipPathSignature(entry.Path); signature != "" {
+				paths[metric.Dataset+":"+signature] = struct{}{}
 			}
-			for _, relationship := range path {
-				physical[relationship.From] = struct{}{}
-				physical[relationship.To] = struct{}{}
+			for _, relationship := range entry.Path {
+				for _, field := range relationshipPhysicalFields(relationship) {
+					physical[field] = struct{}{}
+				}
 			}
 		}
 	}
@@ -71,8 +90,8 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 			metricDependencies[ref] = struct{}{}
 		}
 	}
-	for _, fact := range resolved.Facts {
-		bindings, err := planner.factFilterFields(request.Filters, resolved, fact)
+	for _, dataset := range resolved.Datasets {
+		bindings, err := p.datasetFilterFields(request.Filters, resolved, dataset)
 		if err != nil {
 			return Dependencies{}, err
 		}
@@ -80,11 +99,12 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 			physical[binding.Field] = struct{}{}
 			path := binding.Path
 			if signature := relationshipPathSignature(path); signature != "" {
-				paths[fact+":"+signature] = struct{}{}
+				paths[dataset+":"+signature] = struct{}{}
 			}
 			for _, relationship := range path {
-				physical[relationship.From] = struct{}{}
-				physical[relationship.To] = struct{}{}
+				for _, field := range relationshipPhysicalFields(relationship) {
+					physical[field] = struct{}{}
+				}
 			}
 		}
 	}
@@ -94,10 +114,24 @@ func ResolveDependencies(model *semanticmodel.Model, request Request) (Dependenc
 	return Dependencies{
 		LogicalFields:      sortedSet(logical),
 		MetricDependencies: sortedSet(metricDependencies),
-		Facts:              append([]string{}, resolved.Facts...),
+		Datasets:           append([]string{}, resolved.Datasets...),
 		PhysicalFields:     sortedSet(physical),
 		RelationshipPaths:  sortedSet(paths),
 	}, nil
+}
+
+func relationshipPhysicalFields(relationship semanticmodel.Relationship) []string {
+	fields := []string{}
+	for _, from := range []bool{true, false} {
+		dataset, tuple, err := semanticmodel.RelationshipEndpoint(relationship, from)
+		if err != nil {
+			continue
+		}
+		for _, field := range tuple {
+			fields = append(fields, dataset+"."+field)
+		}
+	}
+	return fields
 }
 
 func sortedSet(values map[string]struct{}) []string {

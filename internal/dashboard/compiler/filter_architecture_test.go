@@ -13,18 +13,39 @@ import (
 func TestCompileDashboardFilterArchitectureResolvesBindingKeysAndComponentTargets(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
-		Tables: map[string]semanticmodel.Table{
-			"customers": {Dimensions: map[string]semanticmodel.MetricDimension{
-				"state": {Type: "string"},
-			}},
-			"orders": {},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"customers": {Model: "customers"},
+			"orders":    {Model: "orders"},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero"},
+		Tables: map[string]semanticmodel.Table{
+			"customers": {
+				ModelName:   "customers",
+				GrainEntity: "state",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"state": {Type: "primary", Fields: []string{"state"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"state": {Field: "customers.state", Type: "string", Datatype: semanticmodel.DataTypeString},
+				},
+			},
+			"orders": {
+				ModelName:   "orders",
+				GrainEntity: "order_id",
+				Entities: map[string]semanticmodel.ModelEntitySpec{
+					"order_id": {Type: "primary", Fields: []string{"order_id"}},
+				},
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"order_id": {Field: "orders.order_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+				},
+			},
+		},
+		Relationships: []semanticmodel.Relationship{{ID: "orders_customers", FromDataset: "orders", FromFields: []string{"order_id"}, ToDataset: "customers", ToFields: []string{"state"}, Cardinality: "many_to_one"}},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"},
 		},
 		Dimensions: map[string]semanticmodel.SemanticDimension{
 			"customer_state": {
-				Type: "string",
+				Type: "string", Datatype: semanticmodel.DataTypeString,
 				Bindings: map[string]semanticmodel.DimensionBinding{
 					"orders": {Field: "customers.state"},
 				},
@@ -41,7 +62,7 @@ func TestCompileDashboardFilterArchitectureResolvesBindingKeysAndComponentTarget
 			},
 		},
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "order_count"}}}},
+			"orders": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count"}}}},
 		}),
 		Pages: []dashboard.Page{{
 			ID: "overview", Title: "Overview",
@@ -85,6 +106,30 @@ func TestCompileDashboardFilterArchitectureResolvesBindingKeysAndComponentTarget
 	}
 }
 
+func TestFilterValueKindPreservesIntegerLogicalDatatype(t *testing.T) {
+	model := &semanticmodel.Model{
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{
+				"delivery_days": {Field: "orders.delivery_days", Type: "number", Datatype: semanticmodel.DataTypeInteger},
+			}},
+		},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"delivery_days": {
+				Type: "number", Datatype: semanticmodel.DataTypeInteger,
+				Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.delivery_days"}},
+			},
+		},
+	}
+	kind, err := filterValueKind(model, "delivery_days")
+	if err != nil {
+		t.Fatalf("filterValueKind() error = %v", err)
+	}
+	if kind != dashboardfilter.ValueInteger {
+		t.Fatalf("filterValueKind() = %q, want %q", kind, dashboardfilter.ValueInteger)
+	}
+}
+
 func TestValidateDashboardFilterArchitectureRejectsRouteVisibleURLCollision(t *testing.T) {
 	authored := &dashboardauthoring.Dashboard{
 		ID: "sales", Title: "Sales", SemanticModel: "sales",
@@ -93,7 +138,7 @@ func TestValidateDashboardFilterArchitectureRejectsRouteVisibleURLCollision(t *t
 			"category": {Label: "Category", Field: "orders.category", Predicates: []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionSet, Operators: []dashboardfilter.Operator{dashboardfilter.OperatorIn}}}},
 		},
 		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "missing"}}}},
+			"orders": {Type: "kpi", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "missing"}}}},
 		}),
 		Pages: []dashboard.Page{{
 			ID: "overview", Title: "Overview",

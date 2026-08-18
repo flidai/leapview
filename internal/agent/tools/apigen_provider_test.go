@@ -165,15 +165,15 @@ func TestCuratedQueryArgumentsAcceptCatalogReferenceIDs(t *testing.T) {
 	semantic := normalizeCuratedQueryArguments("query_semantic_model", json.RawMessage(`{
 		"model":"sales",
 		"dimensions":[{"field":"sales.orders.status"}],
-		"measures":[{"field":"sales.order_count"}],
-		"filters":[{"fact":"sales.orders","field":"sales.orders.state","groups":[{"filters":[{"field":"sales.orders.city"}]}]}]
+		"metrics":[{"field":"sales.order_count"}],
+		"filters":[{"dataset":"sales.orders","field":"sales.orders.state","groups":[{"filters":[{"field":"sales.orders.city"}]}]}]
 	}`))
 	var semanticInput map[string]any
 	if err := json.Unmarshal(semantic, &semanticInput); err != nil {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(semanticInput)
-	for _, want := range []string{`"field":"orders.status"`, `"field":"order_count"`, `"fact":"orders"`, `"field":"orders.city"`} {
+	for _, want := range []string{`"field":"orders.status"`, `"field":"order_count"`, `"dataset":"orders"`, `"field":"orders.city"`} {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("normalized semantic arguments missing %s: %s", want, encoded)
 		}

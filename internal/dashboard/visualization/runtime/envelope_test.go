@@ -31,7 +31,7 @@ func testCartesianDefinition(t *testing.T, id string, fields []ir.VisualizationF
 	}}
 	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{
 		Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, ModelID: "sales", DatasetID: "primary",
-		Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Measures: []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100},
+		Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Metrics: []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func testCartesianDefinition(t *testing.T, id string, fields []ir.VisualizationF
 func testCartesianFields() []ir.VisualizationField {
 	return []ir.VisualizationField{
 		{ID: "label", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: true, Label: "Label"},
-		{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
+		{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"},
 	}
 }
 
@@ -56,13 +56,13 @@ func testGridDefinition(t *testing.T, id string, table dashboard.Table) visualiz
 	for index, column := range table.Columns {
 		fields[index] = column.Key
 	}
-	authored := dashboardauthoring.TableVisual{Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style, Query: dashboardauthoring.TableQuery{Table: "table", Fields: fields}}
+	authored := dashboardauthoring.TableVisual{Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style, Query: dashboardauthoring.TableQuery{Dataset: "table", Fields: fields}}
 	if visualType != "table" {
 		authored.Query.Fields = nil
 		for _, column := range table.Columns {
 			field := dashboardauthoring.FieldRef{Field: column.Key, Alias: column.Key}
-			if column.Role == "measure" || column.Align == "right" {
-				authored.Query.Measures = append(authored.Query.Measures, field)
+			if column.Role == "metric" || column.Align == "right" {
+				authored.Query.Metrics = append(authored.Query.Metrics, field)
 			} else {
 				authored.Query.Rows = append(authored.Query.Rows, field)
 			}
@@ -77,7 +77,7 @@ func testGridDefinition(t *testing.T, id string, table dashboard.Table) visualiz
 
 func TestEnvelopeFromFrameKeepsCompiledSpecAndStreamRevision(t *testing.T) {
 	definition := testCartesianDefinition(t, "revenue", testCartesianFields(), nil)
-	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", 10.5}}}, nil, 9, 4)
+	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "10.5"}}}, nil, 9, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestFrameFromRecordsUsesCompiledDatasetOrdering(t *testing.T) {
 	fields := testCartesianFields()
 	fields[0], fields[1] = fields[1], fields[0]
 	definition := testCartesianDefinition(t, "revenue", fields, nil)
-	frame, err := FrameFromRecords(definition, []map[string]any{{"value": 10.5, "label": "Jan"}})
+	frame, err := FrameFromRecords(definition, []map[string]any{{"value": "10.5", "label": "Jan"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,17 +103,31 @@ func TestFrameFromRecordsUsesCompiledDatasetOrdering(t *testing.T) {
 	}
 }
 
+func TestNormalizeDecimalFrameUsesColumnIDs(t *testing.T) {
+	frame := Frame{Columns: []string{"value", "label"}, Rows: [][]any{{int64(42), "Jan"}}}
+	fields := []ir.VisualizationField{
+		{ID: "label", DataType: ir.VisualizationDataTypeString},
+		{ID: "value", DataType: ir.VisualizationDataTypeDecimal},
+	}
+	if err := normalizeDecimalFrame(fields, &frame); err != nil {
+		t.Fatalf("normalizeDecimalFrame: %v", err)
+	}
+	if got, want := frame.Rows[0][0], "42"; got != want {
+		t.Fatalf("normalized value = %#v, want %q", got, want)
+	}
+}
+
 func TestEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
-	fact := "orders"
+	dataset := "orders"
 	fields := testCartesianFields()
 	fields[0].Role = ir.VisualizationFieldRoleIdentity
 	interaction := ir.VisualizationInteraction{
 		ID: "point_selection", Kind: ir.VisualizationInteractionKindSelect, Mode: ir.VisualizationSelectionModeSingle, RequiresStableIdentity: true,
-		Mappings: []ir.VisualizationInteractionMapping{{Source: ir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, TargetFieldID: "orders.status", TargetFactID: &fact}},
+		Mappings: []ir.VisualizationInteractionMapping{{Source: ir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, TargetFieldID: "orders.status", TargetDatasetID: &dataset}},
 	}
 	definition := testCartesianDefinition(t, "orders", fields, []ir.VisualizationInteraction{interaction})
-	selection := []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: "orders.status", Fact: "orders", Value: "delivered"}}, Label: "Delivered"}}
-	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 42}}}, selection, 8, 3)
+	selection := []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: "orders.status", Dataset: "orders", Value: "delivered"}}, Label: "Delivered"}}
+	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", "42"}}}, selection, 8, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +139,7 @@ func TestEnvelopeFromFrameProjectsSelectionAsDatumRef(t *testing.T) {
 func TestEnvelopeFromFrameUsesColumnarTypedIR(t *testing.T) {
 	t.Parallel()
 	definition := testCartesianDefinition(t, "revenue", testCartesianFields(), nil)
-	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", 10.5}}}, nil, 4, 2)
+	envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "10.5"}}}, nil, 4, 2)
 	if err != nil {
 		t.Fatalf("EnvelopeFromFrame: %v", err)
 	}

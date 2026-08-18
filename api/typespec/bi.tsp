@@ -140,7 +140,7 @@ model DashboardCompiledFilterDefinition {
   label: string;
   description?: string;
   field: string;
-  fact?: string;
+  dataset?: string;
   valueKind: "string" | "boolean" | "integer" | "decimal" | "date" | "timestamp";
   predicates: DashboardFilterPredicatePolicy[];
   options: DashboardFilterOptionSource;
@@ -214,31 +214,20 @@ model DashboardManifestResponse {
 }
 
 model SemanticModelCounts {
-  sources: int32;
-  `model_tables`: int32;
+  datasets: int32;
   fields: int32;
-  facts: int32;
-  `conformed_dimensions`: int32;
-  `atomic_measures`: int32;
+  dimensions: int32;
   metrics: int32;
+  filters: int32;
   relationships: int32;
-}
-
-model SemanticModelTableSummary {
-  id: string;
-  roles: string[];
-  source: string;
-  description: string;
-  fields: int32;
 }
 
 model SemanticDatasetSummary {
   id: string;
-  kind: string;
-  source: string;
+  `model`: string;
   description: string;
   fieldCount: int32;
-  measureCount: int32;
+  metricCount: int32;
 }
 
 model SemanticDatasetListResponse {
@@ -248,30 +237,33 @@ model SemanticDatasetListResponse {
 
 model SemanticDatasetResponse {
   id: string;
-  kind: string;
-  source: string;
-  sources: string[];
+  `model`: string;
   description: string;
-  primaryKey: string;
-  grain: string;
+  grainEntity?: string;
+  entities: Record<SemanticEntitySummary>;
   fieldCount: int32;
-  measureCount: int32;
+  metricCount: int32;
+}
+
+model SemanticEntitySummary {
+  type: "primary" | "unique" | "foreign" | "natural";
+  fields: string[];
 }
 
 enum SemanticFieldKind {
   dimension;
-  measure;
   metric;
 }
 
 model SemanticFieldResponse {
   id: string;
   kind: SemanticFieldKind;
-  table: string;
+  dataset: string;
   name: string;
   label: string;
   description?: string;
   type?: string;
+  datatype?: string;
   unit?: string;
   format?: string;
   grain?: string;
@@ -287,9 +279,9 @@ model SemanticFieldListResponse {
 model SemanticRelationshipResponse {
   id: string;
   fromDataset: string;
-  fromField: string;
+  fromFields: string[];
   toDataset: string;
-  toField: string;
+  toFields: string[];
   cardinality: string;
   active: boolean;
 }
@@ -314,13 +306,16 @@ model SemanticSourceListResponse {
 }
 
 model SemanticFieldRef {
-  @doc("Semantic field or measure ID. Use the ID returned by catalog_list or catalog_get.")
+  @doc("Semantic field or metric ID. Use the ID returned by catalog_list or catalog_get.")
   field: string;
   @doc("Optional output column name.")
   `alias`?: string;
 }
 
 enum SemanticTimeGrain {
+  second;
+  minute;
+  hour;
   day;
   week;
   month;
@@ -369,8 +364,8 @@ enum SemanticFilterOperator {
 model SemanticFilter {
   @doc("Semantic field ID. Omit only when groups supplies nested filters.")
   field?: string;
-  @doc("Fact table used to resolve a conformed dimension when it is otherwise ambiguous.")
-  fact?: string;
+  @doc("Dataset used to resolve a conformed dimension when it is otherwise ambiguous.")
+  dataset?: string;
   @doc("Governed comparison operator. equals is used when omitted.")
   operator?: SemanticFilterOperator;
   @doc("Comparison values. is_null and is_not_null accept no values.")
@@ -383,7 +378,7 @@ model SemanticQueryRequest {
   @maxItems(50)
   dimensions?: SemanticFieldRef[];
   @maxItems(50)
-  measures?: SemanticFieldRef[];
+  metrics?: SemanticFieldRef[];
   time?: SemanticTimeRef;
   @maxItems(100)
   filters?: SemanticFilter[];
@@ -397,7 +392,7 @@ model SemanticPreviewRequest {
   @maxItems(50)
   dimensions?: SemanticFieldRef[];
   @maxItems(50)
-  measures?: SemanticFieldRef[];
+  metrics?: SemanticFieldRef[];
   @maxItems(100)
   filters?: SemanticFilter[];
   @maxItems(50)
@@ -424,21 +419,21 @@ model QueryColumn {
   type: QueryColumnType;
   @doc("Whether the governed semantic definition can produce SQL NULL.")
   nullable: boolean;
-  @doc("Governed catalog ref for the selected field, measure, or metric.")
+  @doc("Governed catalog ref for the selected field or metric.")
   fieldRef?: QueryFieldRef;
   @doc("Business-facing semantic label.")
   label?: string;
   @doc("Semantic role of the selected member.")
-  kind?: "dimension" | "measure" | "metric";
-  @doc("Business unit declared by the semantic measure or metric.")
+  kind?: "dimension" | "metric";
+  @doc("Business unit declared by the semantic metric.")
   unit?: string;
-  @doc("Formatting contract declared by the semantic measure or metric.")
+  @doc("Formatting contract declared by the semantic metric.")
   format?: string;
 }
 
 model QueryFieldRef {
   @doc("Catalog type of the semantic member.")
-  type: "field" | "measure";
+  type: "field" | "metric";
   @doc("Stable project-graph ID of the semantic member.")
   id: ResourceId;
 }
@@ -484,7 +479,7 @@ model SemanticQueryResponse {
 
 model SemanticExplainResponse {
   mode: string;
-  facts: string[];
+  datasets: string[];
   stitchDimensions: string[];
   physicalDependencies: string[];
   relationshipPaths: string[];
@@ -509,7 +504,7 @@ model SemanticModelDescriptionResponse {
   description: string;
   dashboards: ModelDashboardUsage[];
   counts?: SemanticModelCounts;
-  tables?: SemanticModelTableSummary[];
+  datasets?: SemanticDatasetSummary[];
 }
 
 @discriminator("kind")

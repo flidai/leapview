@@ -5,45 +5,66 @@ metadata:
   name: sales
   displayName: Sales Semantic Model
 spec:
-  tables:
-    - sales_orders
-    - sales_customers
+  datasets:
+    sales_orders:
+      model: sales_orders
+      defaultTimeDimension: purchase_date
+    sales_customers:
+      model: sales_customers
   relationships:
-    - id: orders_customers
-      from: sales_orders.customer_id
-      to: sales_customers.customer_id
-      cardinality: many_to_one
+    orders_customers:
+      from:
+        dataset: sales_orders
+        entity: customer
+      to:
+        dataset: sales_customers
+        entity: customer
   dimensions:
     purchase_date:
-      type: date
+      datatype: Date
       bindings:
-        sales_orders: {field: sales_orders.purchase_date}
+        sales_orders:
+          field: sales_orders.purchase_date
+      time:
+        nativeGrain: day
+        grains:
+        - day
+        - week
+        - month
+        calendar: iso8601
     state:
-      type: string
+      datatype: String
       bindings:
         sales_orders:
           field: sales_customers.state
-          path: [orders_customers]
+          path:
+          - orders_customers
     category:
-      type: string
+      datatype: String
       bindings:
-        sales_orders: {field: sales_orders.category}
-  measures:
-    order_count:
-      label: Orders
-      fact: sales_orders
-      aggregation: count_distinct
-      input: {field: sales_orders.order_id}
-      empty: zero
-    revenue:
-      label: Revenue
-      fact: sales_orders
-      aggregation: sum
-      input: {field: sales_orders.revenue}
-      empty: zero
-      format: currency
+        sales_orders:
+          field: sales_orders.category
   metrics:
+    order_count:
+      type: aggregate
+      dataset: sales_orders
+      aggregation: count_distinct
+      input:
+        field: sales_orders.order_id
+      empty: zero
+      label: Orders
+    revenue:
+      type: aggregate
+      dataset: sales_orders
+      aggregation: sum
+      input:
+        field: sales_orders.revenue
+      empty: zero
+      label: Revenue
+      format: currency
     aov:
+      type: ratio
+      numerator: revenue
+      denominator: order_count
       label: Average order value
-      expression: safe_divide(${revenue}, ${order_count})
       format: currency

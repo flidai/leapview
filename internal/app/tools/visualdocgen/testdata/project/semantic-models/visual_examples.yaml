@@ -5,172 +5,226 @@ metadata:
   name: visual_examples
   displayName: Visual documentation examples
 spec:
-  tables:
-  - orders
-  - conversion_stages
-  - revenue_bridge
-  - market_ohlc
-  - service_teams
+  datasets:
+    orders:
+      model: orders
+      defaultTimeDimension: purchase_date
+    conversion_stages:
+      model: conversion_stages
+    revenue_bridge:
+      model: revenue_bridge
+    market_ohlc:
+      model: market_ohlc
+    service_teams:
+      model: service_teams
+  filters:
+    missing_revenue_filter:
+      field: orders.status
+      operator: equals
+      value: comparison_fixture_without_rows
   dimensions:
     purchase_date:
-      type: date
-      grains: [day, week, month]
+      datatype: Date
       bindings:
-        orders: {field: orders.purchase_date}
-  measures:
+        orders:
+          field: orders.purchase_date
+      time:
+        nativeGrain: day
+        grains:
+        - day
+        - week
+        - month
+        calendar: iso8601
+  metrics:
     active_work_items:
-      label: Active work items
-      fact: service_teams
+      type: aggregate
+      dataset: service_teams
       aggregation: sum
-      input: {field: service_teams.active_work_items}
+      input:
+        field: service_teams.active_work_items
       empty: zero
+      label: Active work items
       format: integer
     conversions:
-      label: Conversions
-      fact: conversion_stages
+      type: aggregate
+      dataset: conversion_stages
       aggregation: sum
-      input: {field: conversion_stages.conversions}
+      input:
+        field: conversion_stages.conversions
       empty: zero
+      label: Conversions
       format: integer
     revenue_impact:
-      label: Revenue impact
-      fact: revenue_bridge
+      type: aggregate
+      dataset: revenue_bridge
       aggregation: sum
-      input: {field: revenue_bridge.amount}
+      input:
+        field: revenue_bridge.amount
       empty: zero
+      label: Revenue impact
       unit: USD
       format: currency
     market_open:
-      label: Open
-      fact: market_ohlc
+      type: aggregate
+      dataset: market_ohlc
       aggregation: sum
-      input: {field: market_ohlc.open}
-      empty: "null"
+      input:
+        field: market_ohlc.open
+      empty: 'null'
+      label: Open
       format: decimal
     market_close:
-      label: Close
-      fact: market_ohlc
+      type: aggregate
+      dataset: market_ohlc
       aggregation: sum
-      input: {field: market_ohlc.close}
-      empty: "null"
+      input:
+        field: market_ohlc.close
+      empty: 'null'
+      label: Close
       format: decimal
     market_low:
-      label: Low
-      fact: market_ohlc
+      type: aggregate
+      dataset: market_ohlc
       aggregation: sum
-      input: {field: market_ohlc.low}
-      empty: "null"
+      input:
+        field: market_ohlc.low
+      empty: 'null'
+      label: Low
       format: decimal
     market_high:
-      label: High
-      fact: market_ohlc
+      type: aggregate
+      dataset: market_ohlc
       aggregation: sum
-      input: {field: market_ohlc.high}
-      empty: "null"
+      input:
+        field: market_ohlc.high
+      empty: 'null'
+      label: High
       format: decimal
     order_count:
-      label: Orders
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: count_distinct
-      input: {field: orders.order_id}
+      input:
+        field: orders.order_id
       empty: zero
-      unit: orders
+      label: Orders
       format: integer
     revenue:
-      label: Revenue
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: sum
-      input: {field: orders.revenue}
+      input:
+        field: orders.revenue
       empty: zero
+      label: Revenue
       unit: USD
       format: currency
     revenue_min:
-      label: Revenue minimum
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: min
-      input: {field: orders.revenue}
-      empty: "null"
+      input:
+        field: orders.revenue
+      empty: 'null'
+      label: Revenue minimum
       unit: USD
       format: currency
     revenue_max:
-      label: Revenue maximum
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: max
-      input: {field: orders.revenue}
-      empty: "null"
+      input:
+        field: orders.revenue
+      empty: 'null'
+      label: Revenue maximum
       unit: USD
       format: currency
     missing_revenue:
-      label: Missing revenue comparison
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: sum
-      input: {field: orders.revenue}
-      filters:
-      - field: orders.status
-        operator: equals
-        values: [comparison_fixture_without_rows]
-      empty: "null"
+      input:
+        field: orders.revenue
+      where:
+      - missing_revenue_filter
+      empty: 'null'
+      label: Missing revenue comparison
       unit: USD
       format: currency
     review_score:
-      label: Review score
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: avg
-      input: {field: orders.review_score}
-      empty: "null"
+      input:
+        field: orders.review_score
+      empty: 'null'
+      label: Review score
       format: decimal
     delivery_days:
-      label: Delivery days
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: avg
-      input: {field: orders.delivery_days}
-      empty: "null"
+      input:
+        field: orders.delivery_days
+      empty: 'null'
+      label: Delivery days
       format: decimal
     delivery_days_min:
-      label: Delivery minimum
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: min
-      input: {field: orders.delivery_days}
-      empty: "null"
+      input:
+        field: orders.delivery_days
+      empty: 'null'
+      label: Delivery minimum
       format: decimal
     delivery_days_max:
-      label: Delivery maximum
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: max
-      input: {field: orders.delivery_days}
-      empty: "null"
+      input:
+        field: orders.delivery_days
+      empty: 'null'
+      label: Delivery maximum
       format: decimal
-  metrics:
     aov:
+      type: ratio
+      numerator: revenue
+      denominator: order_count
       label: Average order value
-      expression: safe_divide(${revenue}, ${order_count})
       unit: USD
       format: currency
     revenue_baseline:
+      type: derived
       label: Revenue baseline
       expression: ${revenue} * 0.9
       unit: USD
       format: currency
     revenue_target:
+      type: derived
       label: Revenue target
       expression: ${revenue} * 1.1
       unit: USD
       format: currency
     revenue_q1:
+      type: derived
       label: Revenue open
       expression: ${revenue_min}
       unit: USD
       format: currency
     revenue_q3:
+      type: derived
       label: Revenue close
       expression: ${revenue_max}
       unit: USD
       format: currency
     delivery_days_q1:
+      type: derived
       label: Delivery open
       expression: ${delivery_days_min}
       format: decimal
     delivery_days_q3:
+      type: derived
       label: Delivery close
       expression: ${delivery_days_max}
       format: decimal

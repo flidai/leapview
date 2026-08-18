@@ -19,7 +19,7 @@ func testVisualDefinition(t *testing.T, id string) visualizationdefinition.Defin
 	t.Helper()
 	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
 		ID: "test", SemanticModel: "model",
-		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{id: {Type: "bar", Title: id, Query: dashboardauthoring.VisualQuery{Table: "table", Measures: []dashboardauthoring.FieldRef{{Field: "measure"}}}}}),
+		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{id: {Type: "bar", Title: id, Query: dashboardauthoring.VisualQuery{Dataset: "table", Metrics: []dashboardauthoring.FieldRef{{Field: "metric"}}}}}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func testTableDefinition(t *testing.T, id string, table dashboard.Table) visuali
 		ID: "test", SemanticModel: "model",
 		Visuals: dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{id: {
 			Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style,
-			Query: dashboardauthoring.TableQuery{Table: "table", Fields: fields},
+			Query: dashboardauthoring.TableQuery{Dataset: "table", Fields: fields},
 		}}),
 	})
 	if err != nil {

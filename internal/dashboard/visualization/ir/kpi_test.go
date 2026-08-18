@@ -13,17 +13,17 @@ func TestValidateSpecEnforcesGovernedKPIComparisonContract(t *testing.T) {
 		Kind: "kpi", Title: "Revenue",
 		Datasets: []VisualizationDatasetSchema{
 			{ID: "primary", Fields: []VisualizationField{
-				{ID: "value", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
+				{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
 			}},
 			{ID: "comparison", Fields: []VisualizationField{
-				{ID: "value", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Previous revenue"},
+				{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Previous revenue"},
 			}},
 			{ID: "goal", Fields: []VisualizationField{
-				{ID: "value", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Target"},
+				{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Target"},
 			}},
 			{ID: "trend", Fields: []VisualizationField{
 				{ID: "period", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeDate, Label: "Month"},
-				{ID: "value", Role: VisualizationFieldRoleMeasure, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
+				{ID: "value", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeDecimal, Label: "Revenue"},
 			}},
 		},
 		DataBudget:    VisualizationDataBudget{MaxRows: 24, RequiredCompleteness: VisualizationCompletenessComplete},

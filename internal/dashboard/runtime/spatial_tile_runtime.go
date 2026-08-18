@@ -32,7 +32,7 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	query := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialMetadata,
 		ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatialMetadata,
-		Fields: fieldBindingsToDataFields(spatial.Dimensions), Measures: fieldBindingsToDataFields(spatial.Measures), Filters: reportFiltersToDataFilters(queryFilters),
+		Fields: fieldBindingsToDataFields(spatial.Dimensions), Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: reportFiltersToDataFilters(queryFilters),
 		SpatialMetadata: &dataquery.SpatialMetadata{
 			Latitude:   dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias},
 			Longitude:  dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
@@ -79,13 +79,13 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 			return visualizationir.VisualizationEnvelope{}, fmt.Errorf("spatial metadata for %q has invalid extent", visualID)
 		}
 	}
-	rawDomains := make([]visualizationir.VisualizationSpatialScaleDomain, 0, len(spatial.Measures))
-	aggregateDomains := make([]visualizationir.VisualizationSpatialScaleDomain, 0, len(spatial.Measures))
-	for _, measure := range spatial.Measures {
-		minimum, minimumOK := numericTableValue(row["__spatial_raw_min_"+measure.Alias])
-		maximum, maximumOK := numericTableValue(row["__spatial_raw_max_"+measure.Alias])
-		total, totalOK := numericTableValue(row["__spatial_total_"+measure.Alias])
-		domain := visualizationir.VisualizationSpatialScaleDomain{Field: measure.Alias}
+	rawDomains := make([]visualizationir.VisualizationSpatialScaleDomain, 0, len(spatial.Metrics))
+	aggregateDomains := make([]visualizationir.VisualizationSpatialScaleDomain, 0, len(spatial.Metrics))
+	for _, metric := range spatial.Metrics {
+		minimum, minimumOK := numericTableValue(row["__spatial_raw_min_"+metric.Alias])
+		maximum, maximumOK := numericTableValue(row["__spatial_raw_max_"+metric.Alias])
+		total, totalOK := numericTableValue(row["__spatial_total_"+metric.Alias])
+		domain := visualizationir.VisualizationSpatialScaleDomain{Field: metric.Alias}
 		if minimumOK {
 			domain.Minimum = floatPointer(minimum)
 		}
@@ -212,7 +212,7 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 		query := dataquery.Query{
 			Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTile,
 			ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatialTile,
-			Fields: fields, Measures: fieldBindingsToDataFields(spatial.Measures), Filters: reportFiltersToDataFilters(queryFilters),
+			Fields: fields, Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: reportFiltersToDataFilters(queryFilters),
 			SpatialTile: &dataquery.SpatialTile{
 				Latitude: dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias}, Longitude: dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
 				Identity: identity, Zoom: zoom, TargetZoom: targetZoom, MetatileX: metatileX, MetatileY: metatileY, MetatileSize: metatileSize,
@@ -346,7 +346,7 @@ func (s *VisualizationDataService) spatialRawMinimumZoomByByteBudget(ctx context
 		query := dataquery.Query{
 			Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTileBudget,
 			ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatialTileBudget,
-			Fields: fields, Measures: fieldBindingsToDataFields(spatial.Measures), Filters: reportFiltersToDataFilters(queryFilters),
+			Fields: fields, Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: reportFiltersToDataFilters(queryFilters),
 			SpatialTileBudget: &dataquery.SpatialTileBudget{
 				Latitude: dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias}, Longitude: dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
 				Identity: identity, Zoom: zoom, Buffer: buffer, FeatureCap: int(spatial.Tiles.FeatureCap), MaximumBytes: spatial.Tiles.MaximumBytes,
@@ -385,7 +385,7 @@ func spatialTileFieldsAndIdentity(definition visualizationdefinition.Definition)
 		fields = append(fields, dataquery.Field{Field: spatial.Series.FieldID, Alias: spatial.Series.Alias})
 	}
 	identity := make([]dataquery.Field, 0, len(definition.Query.Identity))
-	bindings := append(append([]visualizationdefinition.FieldBinding(nil), spatial.Dimensions...), spatial.Measures...)
+	bindings := append(append([]visualizationdefinition.FieldBinding(nil), spatial.Dimensions...), spatial.Metrics...)
 	for _, fieldID := range definition.Query.Identity {
 		for _, binding := range bindings {
 			if binding.FieldID == fieldID {

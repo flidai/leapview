@@ -40,7 +40,7 @@ type Query struct {
 	Kind                       Kind
 	Target                     string
 	Fields                     []Field
-	Measures                   []Field
+	Metrics                    []Field
 	// AuthorizationFields preserves the logical projection used to authorize a
 	// physical query whose result shape intentionally omits those fields (for
 	// example, an exact COUNT for a governed dashboard table). Executors and
@@ -116,7 +116,7 @@ type Time struct {
 
 type Filter struct {
 	Field    string
-	Fact     string
+	Dataset  string
 	Operator string
 	Values   []any
 	Groups   []FilterGroup
@@ -127,7 +127,7 @@ type SpatialFilter struct {
 	Kind           string
 	LatitudeField  string
 	LongitudeField string
-	Fact           string
+	Dataset        string
 	West           float64
 	South          float64
 	East           float64
@@ -315,24 +315,24 @@ func (q Query) WithMetadata(metadata Metadata) Query {
 	return q
 }
 
-func SemanticAggregate(modelID, target string, fields, measures []Field, filters []Filter, sort []Sort, offset, limit int) Query {
-	return Query{ModelID: modelID, Kind: KindSemanticAggregate, Target: target, Fields: fields, Measures: measures, Filters: filters, Sort: sort, Offset: offset, Limit: limit}
+func SemanticAggregate(modelID, target string, fields, metrics []Field, filters []Filter, sort []Sort, offset, limit int) Query {
+	return Query{ModelID: modelID, Kind: KindSemanticAggregate, Target: target, Fields: fields, Metrics: metrics, Filters: filters, Sort: sort, Offset: offset, Limit: limit}
 }
 
-func SemanticRows(modelID, target string, fields, measures []Field, filters []Filter, sort []Sort, offset, limit int, includeTotal bool) Query {
-	return Query{ModelID: modelID, Kind: KindSemanticRows, Target: target, Fields: fields, Measures: measures, Filters: filters, Sort: sort, Offset: offset, Limit: limit, IncludeTotal: includeTotal}
+func SemanticRows(modelID, target string, fields, metrics []Field, filters []Filter, sort []Sort, offset, limit int, includeTotal bool) Query {
+	return Query{ModelID: modelID, Kind: KindSemanticRows, Target: target, Fields: fields, Metrics: metrics, Filters: filters, Sort: sort, Offset: offset, Limit: limit, IncludeTotal: includeTotal}
 }
 
 func ModelTableRows(modelID, table string, columns []string, sort []Sort, offset, limit int, includeTotal bool) Query {
 	return Query{ModelID: modelID, Kind: KindModelTableRows, Target: table, Fields: fieldsFromNames(columns), Sort: sort, Offset: offset, Limit: limit, IncludeTotal: includeTotal}
 }
 
-func SemanticHistogram(modelID, target string, dimensions []Field, measure Field, filters []Filter, binCount int) Query {
-	return Query{ModelID: modelID, Kind: KindSemanticHistogram, Target: target, Fields: dimensions, Value: measure, Filters: filters, BinCount: binCount}
+func SemanticHistogram(modelID, target string, dimensions []Field, metric Field, filters []Filter, binCount int) Query {
+	return Query{ModelID: modelID, Kind: KindSemanticHistogram, Target: target, Fields: dimensions, Value: metric, Filters: filters, BinCount: binCount}
 }
 
-func SemanticDistribution(modelID, target string, dimensions []Field, measure Field, filters []Filter, sort []Sort, limit int) Query {
-	return Query{ModelID: modelID, Kind: KindSemanticDistribution, Target: target, Fields: dimensions, Value: measure, Filters: filters, Sort: sort, Limit: limit}
+func SemanticDistribution(modelID, target string, dimensions []Field, metric Field, filters []Filter, sort []Sort, limit int) Query {
+	return Query{ModelID: modelID, Kind: KindSemanticDistribution, Target: target, Fields: dimensions, Value: metric, Filters: filters, Sort: sort, Limit: limit}
 }
 
 func (q Query) Validate() error {
@@ -356,7 +356,7 @@ func (q Query) Validate() error {
 	}
 	switch q.Kind {
 	case KindSemanticAggregate, KindSemanticRows:
-		if len(q.Fields) == 0 && len(q.Measures) == 0 && q.Time.Field == "" && !(q.Kind == KindSemanticRows && q.IncludeTotal) {
+		if len(q.Fields) == 0 && len(q.Metrics) == 0 && q.Time.Field == "" && !(q.Kind == KindSemanticRows && q.IncludeTotal) {
 			return fmt.Errorf("%s query requires at least one selected field", q.Kind)
 		}
 	case KindModelTableRows:

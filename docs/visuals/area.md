@@ -1,12 +1,12 @@
 # Area chart
 
-Use an area chart to emphasize the magnitude of a measure over an ordered category.
+Use an area chart to emphasize the magnitude of a metric over an ordered category.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Basic
 
-Use an ordered dimension and one measure to fill the area between the series and its baseline. The ascending sort preserves the time sequence, and explicitly hidden labels leave the shape unobstructed.
+Use an ordered dimension and one metric to fill the area between the series and its baseline. The ascending sort preserves the time sequence, and explicitly hidden labels leave the shape unobstructed.
 
 {{< visual id="revenue" >}}
 
@@ -21,7 +21,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_month
@@ -48,7 +48,7 @@ visuals:
       series:
         field: orders.status
         alias: status
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_month
@@ -74,7 +74,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_month

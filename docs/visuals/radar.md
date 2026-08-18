@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic
 
-Use one categorical dimension to create the radar indicators and one measure to set each spoke length.
+Use one categorical dimension to create the radar indicators and one metric to set each spoke length.
 
 {{< visual id="status_radar" >}}
 
@@ -21,7 +21,7 @@ visuals:
     query:
       dimensions:
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -43,7 +43,7 @@ visuals:
     query:
       dimensions:
         delivery_bucket: orders.delivery_bucket
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: delivery_bucket
@@ -66,7 +66,7 @@ visuals:
     query:
       dimensions:
         state: orders.state
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value

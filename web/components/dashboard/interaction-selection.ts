@@ -9,7 +9,7 @@ export type InteractionSelectionValue = string | number | boolean | null
 
 export interface InteractionMappingIdentity {
   field: string
-  fact?: string
+  dataset?: string
   grain?: string
 }
 
@@ -90,7 +90,7 @@ export function visualizationSelectionEntries(
       dataset = mapping.source.dataset
       const target = {
         field: mapping.targetFieldID,
-        ...(mapping.targetFactID ? { fact: mapping.targetFactID } : {}),
+        ...(mapping.targetDatasetID ? { dataset: mapping.targetDatasetID } : {}),
         ...(mapping.grain ? { grain: mapping.grain } : {}),
       }
       const selected = entry.mappings?.find((candidate) => interactionMappingIdentityEqual(candidate, target))
@@ -125,7 +125,7 @@ export function visualizationHighlightStates(
       entries: (selection.entries ?? []).map((entry) => ({
         mappings: (entry.mappings ?? []).map((mapping) => ({
           targetFieldID: mapping.field,
-          ...(mapping.fact ? { targetFactID: mapping.fact } : {}),
+          ...(mapping.dataset ? { targetDatasetID: mapping.dataset } : {}),
           ...(mapping.grain ? { grain: mapping.grain } : {}),
           value: mapping.value,
           ...(mapping.label ? { label: mapping.label } : {}),
@@ -167,12 +167,12 @@ export function interactionMappingIdentityEqual(
   right: InteractionMappingIdentity,
 ): boolean {
   return left.field === right.field
-    && (left.fact ?? '') === (right.fact ?? '')
+    && (left.dataset ?? '') === (right.dataset ?? '')
     && (left.grain ?? '') === (right.grain ?? '')
 }
 
 export function interactionMappingKey(mapping: InteractionMappingIdentity, value: InteractionSelectionValue): string {
-  return JSON.stringify([mapping.field, mapping.fact ?? null, mapping.grain ?? null, value])
+  return JSON.stringify([mapping.field, mapping.dataset ?? null, mapping.grain ?? null, value])
 }
 
 export function interactionSelectionLabel(value: InteractionSelectionValue): string {
@@ -193,7 +193,7 @@ export function validateInteractionCommand(
     return command.interactionKind === 'row_selection'
       && command.mappings.length === 1
       && command.mappings[0]?.field === '__leapview.rowKey'
-      && !command.mappings[0]?.fact
+      && !command.mappings[0]?.dataset
       && !command.mappings[0]?.grain
       && validCommandMapping(command.mappings[0])
   }
@@ -307,7 +307,7 @@ function copyCanonicalSelection(selection: CanonicalInteractionSelection): Canon
 function validCommandMapping(mapping: InteractionSelectionMapping | undefined): boolean {
   return Boolean(mapping)
     && typeof mapping?.field === 'string'
-    && (mapping.fact === undefined || typeof mapping.fact === 'string')
+    && (mapping.dataset === undefined || typeof mapping.dataset === 'string')
     && (mapping.grain === undefined || typeof mapping.grain === 'string')
     && (mapping.label === undefined || typeof mapping.label === 'string')
     && interactionSelectionValue(mapping.value) !== undefined

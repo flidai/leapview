@@ -11,9 +11,9 @@ func reportAggregateDataQuery(modelID string, request reportdef.AggregateQuery) 
 		Operation: dataquery.OperationDashboardAggregate,
 		ModelID:   modelID,
 		Kind:      dataquery.KindSemanticAggregate,
-		Target:    request.Table,
+		Target:    request.Dataset,
 		Fields:    reportFieldsToDataFields(request.Dimensions),
-		Measures:  reportFieldsToDataFields(request.Measures),
+		Metrics:   reportFieldsToDataFields(request.Metrics),
 		Time:      dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 		Filters:   reportFiltersToDataFilters(request.Filters),
 		Sort:      reportSortToDataSort(request.Sort),
@@ -28,9 +28,9 @@ func reportRowDataQuery(modelID string, request reportdef.RowQuery, includeTotal
 		Operation:    dataquery.OperationDashboardRows,
 		ModelID:      modelID,
 		Kind:         dataquery.KindSemanticRows,
-		Target:       request.Table,
+		Target:       request.Dataset,
 		Fields:       reportFieldsToDataFields(request.Dimensions),
-		Measures:     reportFieldsToDataFields(request.Measures),
+		Metrics:      reportFieldsToDataFields(request.Metrics),
 		Filters:      reportFiltersToDataFilters(request.Filters),
 		Sort:         reportSortToDataSort(request.Sort),
 		Limit:        request.Limit,
@@ -41,9 +41,9 @@ func reportRowDataQuery(modelID string, request reportdef.RowQuery, includeTotal
 
 func countOnlyDataQuery(request dataquery.Query) dataquery.Query {
 	request.Operation = dataquery.OperationDashboardCount
-	request.AuthorizationFields = append(append([]dataquery.Field{}, request.Fields...), request.Measures...)
+	request.AuthorizationFields = append(append([]dataquery.Field{}, request.Fields...), request.Metrics...)
 	request.Fields = nil
-	request.Measures = nil
+	request.Metrics = nil
 	request.Sort = nil
 	request.Offset = 0
 	request.Limit = 0
@@ -71,7 +71,7 @@ func reportFiltersToDataFilters(filters []reportdef.QueryFilter) []dataquery.Fil
 		}
 		out = append(out, dataquery.Filter{
 			Field:    filter.Field,
-			Fact:     filter.Fact,
+			Dataset:  filter.Dataset,
 			Operator: filter.Operator,
 			Values:   append([]any{}, filter.Values...),
 			Groups:   groups,
@@ -90,7 +90,7 @@ func reportSpatialFilterToData(value *reportdef.SpatialFilter) *dataquery.Spatia
 		points[index] = dataquery.SpatialPoint{Longitude: point.Longitude, Latitude: point.Latitude}
 	}
 	return &dataquery.SpatialFilter{
-		Kind: value.Kind, LatitudeField: value.LatitudeField, LongitudeField: value.LongitudeField, Fact: value.Fact,
+		Kind: value.Kind, LatitudeField: value.LatitudeField, LongitudeField: value.LongitudeField, Dataset: value.Dataset,
 		West: value.West, South: value.South, East: value.East, North: value.North, Points: points,
 		Center: dataquery.SpatialPoint{Longitude: value.Center.Longitude, Latitude: value.Center.Latitude}, RadiusMeters: value.RadiusMeters,
 	}

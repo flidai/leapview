@@ -8,7 +8,7 @@ const source = `visuals:
     query:
       dimensions:
         - field: order_month
-      measures:
+      metrics:
         - field: revenue
     options:
       smooth: false
@@ -21,7 +21,7 @@ test('maps generated field paths to their exact YAML source lines', () => {
 })
 
 test('includes nested lines when a generated field identifies a YAML collection', () => {
-  expect(visualExampleHighlightLines(source, ['shape', 'query.dimensions', 'query.measures'])).toEqual([4, 6, 7, 8, 9])
+  expect(visualExampleHighlightLines(source, ['shape', 'query.dimensions', 'query.metrics'])).toEqual([4, 6, 7, 8, 9])
 })
 
 test('ignores unknown paths instead of highlighting a similarly named key', () => {

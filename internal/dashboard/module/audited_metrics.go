@@ -34,6 +34,20 @@ func WithQueryAudit(metrics queryruntime.Metrics, recorder queryaudit.Recorder, 
 	return auditedMetrics{Metrics: metrics, recorder: recorder, principalID: principalID}
 }
 
+// Planner preserves the activation-owned semantic planner through the query
+// audit decorator. Audit instrumentation must not hide planner availability
+// from semantic API consumers.
+func (m auditedMetrics) Planner(modelID string) (consumer.Planner, bool) {
+	provider, ok := m.Metrics.(interface {
+		Planner(string) (consumer.Planner, bool)
+	})
+	if !ok {
+		return nil, false
+	}
+	planner, available := provider.Planner(modelID)
+	return planner, available && planner != nil
+}
+
 func (m auditedMetrics) MetricsForProject(projectID projectgraph.ResourceID) (queryruntime.Metrics, bool) {
 	if err := projectID.Validate(); err != nil {
 		return nil, false
@@ -232,7 +246,7 @@ func queryShapeJSON(request dataquery.Query) string {
 		Kind          dataquery.Kind     `json:"kind"`
 		Target        string             `json:"target,omitempty"`
 		Fields        []dataquery.Field  `json:"fields,omitempty"`
-		Measures      []dataquery.Field  `json:"measures,omitempty"`
+		Metrics       []dataquery.Field  `json:"metrics,omitempty"`
 		Value         dataquery.Field    `json:"value,omitempty"`
 		Time          dataquery.Time     `json:"time,omitempty"`
 		Filters       []dataquery.Filter `json:"filters,omitempty"`
@@ -244,7 +258,7 @@ func queryShapeJSON(request dataquery.Query) string {
 	}{
 		request.ProjectID.String(), request.Surface, request.Operation, request.RequestID, request.ObjectType,
 		request.ObjectID, request.CorrelationID, request.ModelID, request.Kind, request.Target, request.Fields,
-		request.Measures, request.Value, request.Time, request.Filters, request.Sort, request.Offset, request.Limit,
+		request.Metrics, request.Value, request.Time, request.Filters, request.Sort, request.Offset, request.Limit,
 		request.BinCount, request.IncludeTotal,
 	})
 	if err != nil {

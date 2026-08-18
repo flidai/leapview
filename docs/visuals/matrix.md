@@ -1,6 +1,6 @@
 # Matrix
 
-Use a matrix for grouped rows and measures, optionally split across a column dimension.
+Use a matrix for grouped rows and metrics, optionally split across a column dimension.
 
 {{< visual id="status_matrix" >}}
 
@@ -14,7 +14,7 @@ visuals:
         category: orders.category
       columns:
         status: orders.status
-      measures:
+      metrics:
         order_count: null
         revenue: null
 ```

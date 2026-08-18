@@ -5,13 +5,26 @@ metadata:
   name: service_teams
   displayName: Service teams
 spec:
-  primaryKey: team
-  sources: [docs.service_teams]
+  sources:
+  - docs.service_teams
   fields:
-    division: {label: Division, type: string}
-    team: {label: Team, type: string}
-    active_work_items: {label: Active work items, type: number}
+    division:
+      datatype: String
+      label: Division
+    team:
+      datatype: String
+      label: Team
+    active_work_items:
+      datatype: Float
+      label: Active work items
   transform:
     sql: |
       SELECT division, team, CAST(active_work_items AS DOUBLE) AS active_work_items
       FROM source."docs.service_teams"
+  entities:
+    team:
+      type: primary
+      fields:
+      - team
+  grain:
+    entity: team

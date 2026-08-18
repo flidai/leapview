@@ -22,6 +22,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
@@ -41,6 +42,10 @@ type Metrics interface {
 	SemanticModel(modelID string) (*semanticmodel.Model, bool)
 }
 
+type consumerPlannerProvider interface {
+	Planner(modelID string) (consumer.Planner, bool)
+}
+
 type Handler struct {
 	Metrics               Metrics
 	ResolveProjectID      func(context.Context) (projectgraph.ResourceID, error)
@@ -50,6 +55,7 @@ type Handler struct {
 }
 
 var errSemanticAuthorizationUnavailable = errors.New("semantic model authorization is unavailable")
+var errSemanticModelActivationUnavailable = errors.New("active semantic model planner is unavailable")
 
 func (h Handler) authorizeSemanticModel(r *nethttp.Request, modelID string) (bool, error) {
 	if h.AuthorizeListResource == nil {
@@ -111,6 +117,10 @@ func (h Handler) GetSemanticModel(w nethttp.ResponseWriter, r *nethttp.Request) 
 	modelID := chi.URLParam(r, "model")
 	model, ok := SemanticModelProjection(metrics, modelID)
 	if !ok {
+		if semanticModelActivationUnavailable(metrics, modelID) {
+			writeJSONError(w, errSemanticModelActivationUnavailable, nethttp.StatusServiceUnavailable)
+			return
+		}
 		writeJSONError(w, fmt.Errorf("model %q not found", modelID), nethttp.StatusNotFound)
 		return
 	}
@@ -224,7 +234,7 @@ func (h Handler) QuerySemanticModel(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 	response := semanticQueryResponse(plan.Columns, rows, limit, request.Offset, queryID, snapshot, scope)
-	h.enrichSemanticQueryResponse(r, metrics, modelID, request.Dimensions, request.Measures, &request.Time, &response)
+	h.enrichSemanticQueryResponse(r, metrics, modelID, request.Dimensions, request.Metrics, &request.Time, &response)
 	writeSemanticQueryResponse(w, r, response)
 }
 
@@ -266,16 +276,21 @@ func (h Handler) ListSemanticDatasets(w nethttp.ResponseWriter, r *nethttp.Reque
 	if !ok {
 		return
 	}
-	out := make([]api.SemanticDatasetSummary, 0, len(model.Tables))
-	for _, datasetID := range sortedMapKeys(model.Tables) {
-		table := model.Tables[datasetID]
+	compiled := compiledSemanticModel(h.Metrics, chi.URLParam(r, "model"))
+	if compiled == nil {
+		writeJSONError(w, fmt.Errorf("model %q semantic dataset bindings are unavailable", chi.URLParam(r, "model")), nethttp.StatusServiceUnavailable)
+		return
+	}
+	out := make([]api.SemanticDatasetSummary, 0, len(compiled.DatasetNames()))
+	for _, datasetID := range compiled.DatasetNames() {
+		dataset, _ := compiled.Dataset(datasetID)
+		table := dataset.Table()
 		out = append(out, api.SemanticDatasetSummary{
-			ID:           datasetID,
-			Kind:         "table",
-			Source:       table.Source,
-			Description:  table.Description,
-			FieldCount:   len(table.Dimensions),
-			MeasureCount: semanticDatasetMeasureCount(model, datasetID),
+			ID:          datasetID,
+			Model:       dataset.ModelName(),
+			Description: firstSemanticNonEmpty(dataset.Description(), table.Description),
+			FieldCount:  len(table.Dimensions),
+			MetricCount: semanticDatasetMetricCount(model, datasetID),
 		})
 	}
 	modelID := chi.URLParam(r, "model")
@@ -308,7 +323,7 @@ func (h Handler) ListSemanticFields(w nethttp.ResponseWriter, r *nethttp.Request
 	if !ok {
 		return
 	}
-	fields := SemanticTableFieldsProjection(model, datasetID, table)
+	fields := SemanticDatasetFieldsProjection(model, datasetID, table)
 	items, nextCursor, ok := pageSliceForRequest(w, r, fields)
 	if !ok {
 		return
@@ -362,7 +377,7 @@ func (h Handler) QuerySemanticDataset(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	response := semanticQueryResponse(plan.Columns, rows, limit, request.Offset, queryID, snapshot, scope)
-	h.enrichSemanticQueryResponse(r, metrics, modelID, request.Dimensions, request.Measures, &request.Time, &response)
+	h.enrichSemanticQueryResponse(r, metrics, modelID, request.Dimensions, request.Metrics, &request.Time, &response)
 	writeSemanticQueryResponse(w, r, response)
 }
 
@@ -412,7 +427,7 @@ func (h Handler) PreviewSemanticDataset(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 	response := semanticQueryResponse(plan.Columns, rows, limit, request.Offset, queryID, snapshot, scope)
-	h.enrichSemanticQueryResponse(r, metrics, modelID, request.Dimensions, request.Measures, nil, &response)
+	h.enrichSemanticQueryResponse(r, metrics, modelID, request.Dimensions, request.Metrics, nil, &response)
 	writeSemanticQueryResponse(w, r, response)
 }
 
@@ -533,12 +548,21 @@ func (h Handler) semanticDatasetForRequest(w nethttp.ResponseWriter, r *nethttp.
 		return nil, semanticmodel.Table{}, "", false
 	}
 	datasetID := chi.URLParam(r, "dataset")
-	table, exists := model.Tables[datasetID]
+	metrics, metricsOK := h.biMetrics(w, r)
+	if !metricsOK {
+		return nil, semanticmodel.Table{}, "", false
+	}
+	compiled := compiledSemanticModel(metrics, chi.URLParam(r, "model"))
+	if compiled == nil {
+		writeJSONError(w, fmt.Errorf("model %q semantic dataset bindings are unavailable", chi.URLParam(r, "model")), nethttp.StatusServiceUnavailable)
+		return nil, semanticmodel.Table{}, "", false
+	}
+	dataset, exists := compiled.Dataset(datasetID)
 	if !exists {
 		writeJSONError(w, fmt.Errorf("dataset %q not found", datasetID), nethttp.StatusNotFound)
 		return nil, semanticmodel.Table{}, "", false
 	}
-	return model, table, datasetID, true
+	return model, dataset.Table(), datasetID, true
 }
 
 func semanticModelSummaryDTO(row dashboard.CatalogModel) api.SemanticModelSummary {
@@ -546,130 +570,125 @@ func semanticModelSummaryDTO(row dashboard.CatalogModel) api.SemanticModelSummar
 }
 
 func SemanticTableProjection(model *semanticmodel.Model, datasetID string, table semanticmodel.Table) api.SemanticDatasetResponse {
-	sources := append([]string{}, table.Sources...)
-	if table.Source != "" && len(sources) == 0 {
-		sources = []string{table.Source}
+	entities := make(map[string]api.SemanticEntitySummary, len(table.Entities))
+	for name, entity := range table.Entities {
+		entities[name] = api.SemanticEntitySummary{Type: entity.Type, Fields: append([]string(nil), entity.Fields...)}
 	}
-	sort.Strings(sources)
 	return api.SemanticDatasetResponse{
-		ID:           datasetID,
-		Kind:         "table",
-		Source:       table.Source,
-		Sources:      sources,
-		Description:  table.Description,
-		PrimaryKey:   table.PrimaryKey,
-		Grain:        table.Grain,
-		FieldCount:   len(table.Dimensions),
-		MeasureCount: semanticDatasetMeasureCount(model, datasetID),
+		ID:          datasetID,
+		Model:       table.ModelName,
+		Description: table.Description,
+		GrainEntity: table.GrainEntity,
+		Entities:    entities,
+		FieldCount:  len(table.Dimensions),
+		MetricCount: semanticDatasetMetricCount(model, datasetID),
 	}
 }
 
-func semanticDatasetMeasureCount(model *semanticmodel.Model, datasetID string) int {
+func semanticDatasetMetricCount(model *semanticmodel.Model, datasetID string) int {
 	if model == nil {
 		return 0
 	}
 	count := 0
-	for _, measure := range model.Measures {
-		if measure.Fact == datasetID {
+	for _, metric := range model.Metrics {
+		if metric.Dataset == datasetID {
 			count++
 		}
 	}
 	return count
 }
 
-func semanticTableRoles(model *semanticmodel.Model, tableID string) []string {
-	roles := []string{}
-	for _, measure := range model.Measures {
-		if measure.Fact == tableID {
-			roles = append(roles, "fact")
-			break
-		}
-	}
-	for _, relationship := range model.Relationships {
-		toTable := strings.SplitN(relationship.To, ".", 2)[0]
-		if toTable == tableID {
-			roles = append(roles, "dimension")
-			break
-		}
-	}
-	return roles
-}
-
-func SemanticTableFieldsProjection(model *semanticmodel.Model, datasetID string, table semanticmodel.Table) []api.SemanticFieldResponse {
-	out := make([]api.SemanticFieldResponse, 0, len(table.Dimensions)+semanticDatasetMeasureCount(model, datasetID))
+func SemanticDatasetFieldsProjection(model *semanticmodel.Model, datasetID string, table semanticmodel.Table) []api.SemanticFieldResponse {
+	out := make([]api.SemanticFieldResponse, 0, len(table.Dimensions)+semanticDatasetMetricCount(model, datasetID))
 	for _, fieldID := range sortedMapKeys(table.Dimensions) {
 		dimension := table.Dimensions[fieldID]
 		out = append(out, api.SemanticFieldResponse{
 			ID:          datasetID + "." + fieldID,
 			Kind:        "dimension",
-			Table:       datasetID,
+			Dataset:     datasetID,
 			Name:        fieldID,
 			Label:       dimension.Label,
 			Description: dimension.Description,
 			Type:        dimension.Type,
+			Datatype:    semanticDimensionDatatype(dimension),
 		})
 	}
-	for _, measureID := range sortedMapKeys(model.Measures) {
-		measure := model.Measures[measureID]
-		if measure.Fact != datasetID {
+	for _, metricID := range sortedMapKeys(model.Metrics) {
+		metric := model.Metrics[metricID]
+		if metric.Dataset != datasetID {
 			continue
 		}
-		out = append(out, semanticMeasureFieldDTO(measureID, datasetID, measureID, measure))
+		out = append(out, semanticMetricFieldDTO(model, metricID, datasetID, metricID, metric))
 	}
 	return out
 }
 
 func SemanticModelFieldsProjection(model *semanticmodel.Model) []api.SemanticFieldResponse {
-	out := make([]api.SemanticFieldResponse, 0, len(model.Dimensions)+len(model.Measures)+len(model.Metrics))
+	out := make([]api.SemanticFieldResponse, 0, len(model.Dimensions)+len(model.Metrics))
 	for _, name := range sortedMapKeys(model.Dimensions) {
 		dimension := model.Dimensions[name]
-		out = append(out, api.SemanticFieldResponse{ID: name, Kind: "dimension", Name: name, Label: dimension.Label, Description: dimension.Description, Type: dimension.Type, Grains: append([]string{}, dimension.Grains...)})
-	}
-	for _, name := range sortedMapKeys(model.Measures) {
-		measure := model.Measures[name]
-		out = append(out, semanticMeasureFieldDTO(name, measure.Fact, name, measure))
+		datatype := string(dimension.Datatype)
+		if datatype == "" {
+			datatype = dimension.Type
+		}
+		out = append(out, api.SemanticFieldResponse{ID: name, Kind: "dimension", Name: name, Label: dimension.Label, Description: dimension.Description, Type: dimension.Type, Datatype: datatype, Grains: append([]string{}, dimension.Grains...)})
 	}
 	for _, name := range sortedMapKeys(model.Metrics) {
 		metric := model.Metrics[name]
-		out = append(out, api.SemanticFieldResponse{ID: name, Kind: "metric", Name: name, Label: metric.Label, Description: metric.Description, Unit: metric.Unit, Format: metric.Format})
+		out = append(out, api.SemanticFieldResponse{ID: name, Kind: "metric", Dataset: metric.Dataset, Name: name, Label: metric.Label, Description: metric.Description, Unit: metric.Unit, Format: metric.Format, Datatype: semanticMetricDatatype(model, metric)})
 	}
 	return out
 }
 
-func semanticMeasureFieldDTO(id, datasetID, name string, measure semanticmodel.MetricMeasure) api.SemanticFieldResponse {
+func semanticMetricFieldDTO(model *semanticmodel.Model, id, datasetID, name string, metric semanticmodel.Metric) api.SemanticFieldResponse {
 	return api.SemanticFieldResponse{
 		ID:          id,
-		Kind:        "measure",
-		Table:       datasetID,
+		Kind:        "metric",
+		Dataset:     datasetID,
 		Name:        name,
-		Label:       measure.Label,
-		Description: measure.Description,
-		Unit:        measure.Unit,
-		Format:      measure.Format,
+		Label:       metric.Label,
+		Description: metric.Description,
+		Unit:        metric.Unit,
+		Format:      metric.Format,
+		Datatype:    semanticMetricDatatype(model, metric),
 	}
 }
 
+func semanticDimensionDatatype(dimension semanticmodel.MetricDimension) string {
+	if dimension.Datatype != "" {
+		return string(dimension.Datatype)
+	}
+	return semanticColumnType(dimension.Type)
+}
+
+func semanticMetricDatatype(model *semanticmodel.Model, metric semanticmodel.Metric) string {
+	if metric.Aggregation == "count" || metric.Aggregation == "count_distinct" {
+		return "integer"
+	}
+	if metric.Aggregation == "avg" {
+		return "decimal"
+	}
+	if model != nil && metric.Input != nil && metric.Input.Field != "" {
+		if dimension, err := model.ResolveDimension(metric.Input.Field); err == nil {
+			return semanticDimensionDatatype(dimension)
+		}
+	}
+	return semanticColumnType(semanticMetricTypeFromModel(model, metric))
+}
+
 func semanticRelationshipDTO(relationship semanticmodel.Relationship) (api.SemanticRelationshipResponse, error) {
-	fromDataset, fromField, err := semanticRelationshipEndpoint(relationship.From)
+	fromDataset, fromFields, err := semanticmodel.RelationshipEndpoint(relationship, true)
 	if err != nil {
 		return api.SemanticRelationshipResponse{}, fmt.Errorf("relationship %q from endpoint: %w", relationship.ID, err)
 	}
-	toDataset, toField, err := semanticRelationshipEndpoint(relationship.To)
+	toDataset, toFields, err := semanticmodel.RelationshipEndpoint(relationship, false)
 	if err != nil {
 		return api.SemanticRelationshipResponse{}, fmt.Errorf("relationship %q to endpoint: %w", relationship.ID, err)
 	}
 	return api.SemanticRelationshipResponse{
-		ID: relationship.ID, FromDataset: fromDataset, FromField: fromField,
-		ToDataset: toDataset, ToField: toField, Cardinality: relationship.Cardinality, Active: true,
+		ID: relationship.ID, FromDataset: fromDataset, FromFields: fromFields,
+		ToDataset: toDataset, ToFields: toFields, Cardinality: relationship.Cardinality, Active: true,
 	}, nil
-}
-
-func semanticRelationshipEndpoint(value string) (string, string, error) {
-	parts := strings.Split(value, ".")
-	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-		return "", "", fmt.Errorf("must be dataset.field")
-	}
-	return parts[0], parts[1], nil
 }
 
 func SemanticModelProjection(metrics Metrics, id string) (api.SemanticModelDescriptionResponse, bool) {
@@ -691,31 +710,38 @@ func SemanticModelProjection(metrics Metrics, id string) (api.SemanticModelDescr
 		Dashboards:  dashboardsForModel(metrics, id),
 	}
 	if model := semanticModelForID(metrics, id); model != nil {
+		compiled := compiledSemanticModel(metrics, id)
+		if compiled == nil {
+			return api.SemanticModelDescriptionResponse{}, false
+		}
 		fieldCount := 0
-		for _, table := range model.Tables {
-			fieldCount += len(table.Dimensions)
+		for _, datasetID := range compiled.DatasetNames() {
+			dataset, _ := compiled.Dataset(datasetID)
+			fieldCount += len(dataset.Table().Dimensions)
 		}
 		out.Counts = &api.SemanticModelCounts{
-			Sources:             len(model.Sources),
-			ModelTables:         len(model.Tables),
-			Fields:              fieldCount,
-			Facts:               len(model.FactNames()),
-			ConformedDimensions: len(model.Dimensions),
-			AtomicMeasures:      len(model.Measures),
-			Metrics:             len(model.Metrics),
-			Relationships:       len(model.Relationships),
+			Datasets:      len(compiled.DatasetNames()),
+			Fields:        fieldCount,
+			Dimensions:    len(model.Dimensions),
+			Metrics:       len(model.Metrics),
+			Filters:       len(model.Filters),
+			Relationships: len(model.Relationships),
 		}
-		tables := make([]api.SemanticModelTableSummary, 0, len(model.Tables))
-		for tableID, table := range model.Tables {
-			tables = append(tables, api.SemanticModelTableSummary{
-				ID:          tableID,
-				Roles:       semanticTableRoles(model, tableID),
-				Source:      table.Source,
-				Description: table.Description,
-				Fields:      len(table.Dimensions),
+		datasets := make([]api.SemanticDatasetSummary, 0, len(compiled.DatasetNames()))
+		for _, datasetID := range compiled.DatasetNames() {
+			dataset, _ := compiled.Dataset(datasetID)
+			table := dataset.Table()
+			description := firstSemanticNonEmpty(dataset.Description(), table.Description)
+			datasets = append(datasets, api.SemanticDatasetSummary{
+				ID:          datasetID,
+				Model:       dataset.ModelName(),
+				Description: description,
+				FieldCount:  len(table.Dimensions),
+				MetricCount: semanticDatasetMetricCount(model, datasetID),
 			})
 		}
-		out.Tables = tables
+		sort.SliceStable(datasets, func(i, j int) bool { return datasets[i].ID < datasets[j].ID })
+		out.Datasets = datasets
 	}
 	return out, true
 }
@@ -756,6 +782,49 @@ func semanticModelForID(metrics Metrics, modelID string) *semanticmodel.Model {
 	return nil
 }
 
+// compiledSemanticModel obtains the activation-owned dataset bindings. API
+// request paths require an activation planner; authoring models are not
+// compiled on demand here.
+func compiledSemanticModel(metrics Metrics, modelID string) *semanticquery.CompiledModel {
+	if planner, ok := semanticPlanner(metrics, modelID); ok {
+		return planner.CompiledModel()
+	}
+	return nil
+}
+
+func semanticModelActivationUnavailable(metrics Metrics, modelID string) bool {
+	if metrics == nil || semanticModelForID(metrics, modelID) == nil {
+		return false
+	}
+	planner, available := semanticPlanner(metrics, modelID)
+	return !available || planner == nil || planner.CompiledModel() == nil
+}
+
+func semanticPlanner(metrics any, modelID string) (*semanticquery.Planner, bool) {
+	provider, ok := metrics.(consumerPlannerProvider)
+	if !ok {
+		return nil, false
+	}
+	value, available := provider.Planner(modelID)
+	if !available {
+		return nil, false
+	}
+	planner, ok := value.(*semanticquery.Planner)
+	if !ok || planner == nil {
+		return nil, false
+	}
+	return planner, true
+}
+
+func firstSemanticNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func semanticAggregateRequest(datasetID string, input api.SemanticQueryRequest, includeExtraRow bool, cursorScope ...string) (reportdef.AggregateQuery, int, error) {
 	limit, offset, err := semanticLimitAndOffset(input.Limit, input.PageToken, cursorScope...)
 	if err != nil {
@@ -766,9 +835,9 @@ func semanticAggregateRequest(datasetID string, input api.SemanticQueryRequest, 
 		requestLimit++
 	}
 	request := reportdef.AggregateQuery{
-		Table:      datasetID,
+		Dataset:    datasetID,
 		Dimensions: semanticQueryFields(input.Dimensions),
-		Measures:   semanticQueryFields(input.Measures),
+		Metrics:    semanticQueryFields(input.Metrics),
 		Filters:    semanticFilters(input.Filters),
 		Sort:       semanticSorts(input.Sort),
 		Limit:      requestLimit,
@@ -790,9 +859,9 @@ func semanticRowRequest(datasetID string, input api.SemanticPreviewRequest, incl
 		requestLimit++
 	}
 	return reportdef.RowQuery{
-		Table:      datasetID,
+		Dataset:    datasetID,
 		Dimensions: semanticQueryFields(input.Dimensions),
-		Measures:   semanticQueryFields(input.Measures),
+		Metrics:    semanticQueryFields(input.Metrics),
 		Filters:    semanticFilters(input.Filters),
 		Sort:       semanticSorts(input.Sort),
 		Limit:      requestLimit,
@@ -824,19 +893,19 @@ func semanticQueryFields(fields []api.SemanticFieldRef) []reportdef.QueryField {
 }
 
 func semanticExplainAggregate(metrics Metrics, modelID string, request reportdef.AggregateQuery) (semanticquery.Plan, error) {
-	model := semanticModelForID(metrics, modelID)
-	if model == nil {
-		return semanticquery.Plan{}, fmt.Errorf("unknown semantic model %q", modelID)
+	compiled, ok := semanticPlanner(metrics, modelID)
+	if !ok {
+		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
 	}
-	return semanticquery.NewPlanner(model).Plan(reportdef.SemanticAggregateRequest(request))
+	return compiled.Plan(reportdef.SemanticAggregateRequest(request))
 }
 
 func semanticExplainRows(metrics Metrics, modelID string, request reportdef.RowQuery) (semanticquery.Plan, error) {
-	model := semanticModelForID(metrics, modelID)
-	if model == nil {
-		return semanticquery.Plan{}, fmt.Errorf("unknown semantic model %q", modelID)
+	compiled, ok := semanticPlanner(metrics, modelID)
+	if !ok {
+		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
 	}
-	return semanticquery.NewPlanner(model).PlanRows(reportdef.SemanticRowRequest(request))
+	return compiled.PlanRows(reportdef.SemanticRowRequest(request))
 }
 
 func semanticFilters(filters []api.SemanticFilter) []reportdef.QueryFilter {
@@ -844,7 +913,7 @@ func semanticFilters(filters []api.SemanticFilter) []reportdef.QueryFilter {
 	for _, filter := range filters {
 		out = append(out, reportdef.QueryFilter{
 			Field:    filter.Field,
-			Fact:     filter.Fact,
+			Dataset:  filter.Dataset,
 			Operator: filter.Operator,
 			Values:   append([]any{}, filter.Values...),
 			Groups:   semanticFilterGroups(filter.Groups),
@@ -979,7 +1048,7 @@ func (h Handler) enrichSemanticQueryResponse(
 	r *nethttp.Request,
 	metrics Metrics,
 	modelID string,
-	dimensions, measures []reportdef.QueryField,
+	dimensions, metricFields []reportdef.QueryField,
 	timeRef *dashboardauthoring.QueryTime,
 	response *api.SemanticQueryResponse,
 ) {
@@ -991,7 +1060,9 @@ func (h Handler) enrichSemanticQueryResponse(
 		return
 	}
 	if model := semanticModelForID(metrics, modelID); model != nil {
-		response.Columns = semanticQueryColumns(modelID, model, response.Columns, dimensions, measures, timeRef)
+		if compiled := compiledSemanticModel(metrics, modelID); compiled != nil {
+			response.Columns = semanticQueryColumnsCompiled(modelID, model, compiled, response.Columns, dimensions, metricFields, timeRef)
+		}
 	}
 	if h.QueryFreshness != nil {
 		if freshness, ok := h.QueryFreshness(r.Context(), projectID.String(), modelID, response.ServingSnapshot); ok {
@@ -1000,23 +1071,27 @@ func (h Handler) enrichSemanticQueryResponse(
 	}
 }
 
-func semanticQueryColumns(
+func semanticQueryColumnsCompiled(
 	modelID string,
 	model *semanticmodel.Model,
+	compiled *semanticquery.CompiledModel,
 	columns []api.QueryColumn,
-	dimensions, measures []reportdef.QueryField,
+	dimensions, metrics []reportdef.QueryField,
 	timeRef *dashboardauthoring.QueryTime,
 ) []api.QueryColumn {
-	semantic := make(map[string]api.QueryColumn, len(dimensions)+len(measures)+1)
+	if compiled == nil {
+		return append([]api.QueryColumn(nil), columns...)
+	}
+	semantic := make(map[string]api.QueryColumn, len(dimensions)+len(metrics)+1)
 	for _, field := range dimensions {
-		semantic[semanticOutputName(field.Field, field.Alias)] = semanticDimensionColumn(modelID, model, field)
+		semantic[semanticOutputName(field.Field, field.Alias)] = semanticDimensionColumn(modelID, model, compiled, field)
 	}
 	if timeRef != nil && timeRef.Field != "" {
 		field := reportdef.QueryField{Field: timeRef.Field, Alias: timeRef.Alias}
-		semantic[semanticOutputName(field.Field, field.Alias)] = semanticDimensionColumn(modelID, model, field)
+		semantic[semanticOutputName(field.Field, field.Alias)] = semanticDimensionColumn(modelID, model, compiled, field)
 	}
-	for _, field := range measures {
-		semantic[semanticOutputName(field.Field, field.Alias)] = semanticMeasureColumn(modelID, model, field)
+	for _, field := range metrics {
+		semantic[semanticOutputName(field.Field, field.Alias)] = semanticMetricColumn(modelID, model, compiled, field)
 	}
 	out := make([]api.QueryColumn, len(columns))
 	for index, column := range columns {
@@ -1030,58 +1105,73 @@ func semanticQueryColumns(
 	return out
 }
 
-func semanticDimensionColumn(modelID string, model *semanticmodel.Model, field reportdef.QueryField) api.QueryColumn {
-	if dimension, ok := model.Dimensions[field.Field]; ok {
-		dataType := semanticColumnType(dimension.Type)
-		return api.QueryColumn{
-			Name: semanticOutputName(field.Field, field.Alias), Type: dataType,
-			Nullable: semanticDimensionNullable(model, dimension),
-			FieldRef: &api.QueryFieldRef{Type: "field", ID: modelID + "." + field.Field},
-			Label:    semanticLabel(dimension.Label, field.Field), Kind: "dimension",
+func semanticDimensionColumn(modelID string, model *semanticmodel.Model, compiled *semanticquery.CompiledModel, field reportdef.QueryField) api.QueryColumn {
+	if compiled == nil {
+		return api.QueryColumn{Name: semanticOutputName(field.Field, field.Alias), Type: "string", Nullable: true}
+	}
+	if model != nil {
+		if dimension, ok := model.Dimensions[field.Field]; ok {
+			dataType := semanticColumnType(dimension.Type)
+			return api.QueryColumn{
+				Name: semanticOutputName(field.Field, field.Alias), Type: dataType,
+				Nullable: semanticDimensionNullable(compiled, dimension),
+				FieldRef: &api.QueryFieldRef{Type: "field", ID: modelID + "." + field.Field},
+				Label:    semanticLabel(dimension.Label, field.Field), Kind: "dimension",
+			}
 		}
 	}
-	if dimension, err := model.ResolveDimension(field.Field); err == nil {
-		dataType := semanticColumnType(dimension.Type)
-		return api.QueryColumn{
-			Name: semanticOutputName(field.Field, field.Alias), Type: dataType,
-			Nullable: physicalDimensionNullable(model.Tables[dimension.Table], dimension.Name),
-			FieldRef: &api.QueryFieldRef{Type: "field", ID: modelID + "." + field.Field},
-			Label:    semanticLabel(dimension.Label, dimension.Name), Kind: "dimension",
-		}
-	}
-	return api.QueryColumn{Name: semanticOutputName(field.Field, field.Alias), Type: "string", Nullable: true}
-}
-
-func semanticMeasureColumn(modelID string, model *semanticmodel.Model, field reportdef.QueryField) api.QueryColumn {
-	if measure, ok := model.Measures[field.Field]; ok {
-		dataType := semanticMeasureType(model, measure)
-		return api.QueryColumn{
-			Name: semanticOutputName(field.Field, field.Alias), Type: dataType,
-			Nullable: measure.Empty != "zero",
-			FieldRef: &api.QueryFieldRef{Type: "measure", ID: modelID + "." + field.Field},
-			Label:    semanticLabel(measure.Label, field.Field), Kind: "measure", Unit: measure.Unit, Format: measure.Format,
-		}
-	}
-	if metric, ok := model.Metrics[field.Field]; ok {
-		return api.QueryColumn{
-			Name: semanticOutputName(field.Field, field.Alias), Type: "decimal", Nullable: true,
-			FieldRef: &api.QueryFieldRef{Type: "measure", ID: modelID + "." + field.Field},
-			Label:    semanticLabel(metric.Label, field.Field), Kind: "metric", Unit: metric.Unit, Format: metric.Format,
+	if compiled != nil {
+		if dimension, err := compiled.ResolveDimension(field.Field); err == nil {
+			dataType := semanticColumnType(dimension.Type)
+			return api.QueryColumn{
+				Name: semanticOutputName(field.Field, field.Alias), Type: dataType,
+				Nullable: physicalDimensionNullable(compiledSemanticTable(compiled, dimension.Table), dimension.Name),
+				FieldRef: &api.QueryFieldRef{Type: "field", ID: modelID + "." + field.Field},
+				Label:    semanticLabel(dimension.Label, dimension.Name), Kind: "dimension",
+			}
 		}
 	}
 	return api.QueryColumn{Name: semanticOutputName(field.Field, field.Alias), Type: "string", Nullable: true}
 }
 
-func semanticMeasureType(model *semanticmodel.Model, measure semanticmodel.MetricMeasure) string {
-	if measure.Aggregation == "count" || measure.Aggregation == "count_distinct" {
-		return "int64"
+func semanticMetricColumn(modelID string, model *semanticmodel.Model, compiled *semanticquery.CompiledModel, field reportdef.QueryField) api.QueryColumn {
+	if model != nil {
+		if metric, ok := model.Metrics[field.Field]; ok {
+			return api.QueryColumn{
+				Name: semanticOutputName(field.Field, field.Alias), Type: semanticMetricTypeCompiled(compiled, metric), Nullable: metric.Empty != "zero",
+				FieldRef: &api.QueryFieldRef{Type: "metric", ID: modelID + "." + field.Field},
+				Label:    semanticLabel(metric.Label, field.Field), Kind: "metric", Unit: metric.Unit, Format: metric.Format,
+			}
+		}
 	}
-	if measure.Aggregation == "avg" {
+	return api.QueryColumn{Name: semanticOutputName(field.Field, field.Alias), Type: "string", Nullable: true}
+}
+
+func semanticMetricTypeCompiled(compiled *semanticquery.CompiledModel, metric semanticmodel.Metric) string {
+	if compiled == nil {
 		return "decimal"
 	}
-	if measure.Input.Field != "" {
-		if dimension, err := model.ResolveDimension(measure.Input.Field); err == nil {
+	if metric.Aggregation == "count" || metric.Aggregation == "count_distinct" {
+		return "int64"
+	}
+	if metric.Aggregation == "avg" {
+		return "decimal"
+	}
+	if metric.Input != nil && metric.Input.Field != "" {
+		if dimension, err := compiled.ResolveDimension(metric.Input.Field); err == nil {
 			return semanticColumnType(dimension.Type)
+		}
+	}
+	return "decimal"
+}
+
+func semanticMetricTypeFromModel(model *semanticmodel.Model, metric semanticmodel.Metric) string {
+	if metric.Aggregation == "count" || metric.Aggregation == "count_distinct" {
+		return "int64"
+	}
+	if metric.Input != nil && metric.Input.Field != "" && model != nil {
+		if dimension, err := model.ResolveDimension(metric.Input.Field); err == nil {
+			return dimension.Type
 		}
 	}
 	return "decimal"
@@ -1108,14 +1198,26 @@ func semanticColumnType(value string) string {
 	}
 }
 
-func semanticDimensionNullable(model *semanticmodel.Model, dimension semanticmodel.SemanticDimension) bool {
+func semanticDimensionNullable(compiled *semanticquery.CompiledModel, dimension semanticmodel.SemanticDimension) bool {
+	if compiled == nil {
+		return true
+	}
 	for _, binding := range dimension.Bindings {
-		physical, err := model.ResolveDimension(binding.Field)
-		if err != nil || physicalDimensionNullable(model.Tables[physical.Table], physical.Name) {
+		physical, err := compiled.ResolveDimension(binding.Field)
+		if err != nil || physicalDimensionNullable(compiledSemanticTable(compiled, physical.Table), physical.Name) {
 			return true
 		}
 	}
 	return len(dimension.Bindings) == 0
+}
+
+func compiledSemanticTable(compiled *semanticquery.CompiledModel, alias string) semanticmodel.Table {
+	if compiled != nil {
+		if dataset, ok := compiled.Dataset(alias); ok {
+			return dataset.Table()
+		}
+	}
+	return semanticmodel.Table{}
 }
 
 func physicalDimensionNullable(table semanticmodel.Table, field string) bool {
@@ -1171,7 +1273,7 @@ func semanticExplainResponse(mode string, plan semanticquery.Plan, warnings []st
 	}
 	return api.SemanticExplainResponse{
 		Mode:                 mode,
-		Facts:                append([]string{}, plan.Facts...),
+		Datasets:             append([]string{}, plan.Datasets...),
 		StitchDimensions:     append([]string{}, plan.StitchDimensions...),
 		PhysicalDependencies: append([]string{}, plan.PhysicalDependencies...),
 		RelationshipPaths:    append([]string{}, plan.RelationshipPaths...),
@@ -1214,16 +1316,16 @@ func executeAggregateRows(ctx context.Context, metrics Metrics, modelID string, 
 
 func aggregateDataQuery(modelID string, request reportdef.AggregateQuery) dataquery.Query {
 	return dataquery.Query{
-		ModelID:  modelID,
-		Kind:     dataquery.KindSemanticAggregate,
-		Target:   request.Table,
-		Fields:   queryFieldsToDataFields(request.Dimensions),
-		Measures: queryFieldsToDataFields(request.Measures),
-		Time:     dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-		Filters:  queryFiltersToDataFilters(request.Filters),
-		Sort:     querySortToDataSort(request.Sort),
-		Limit:    request.Limit,
-		Offset:   request.Offset,
+		ModelID: modelID,
+		Kind:    dataquery.KindSemanticAggregate,
+		Target:  request.Dataset,
+		Fields:  queryFieldsToDataFields(request.Dimensions),
+		Metrics: queryFieldsToDataFields(request.Metrics),
+		Time:    dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
+		Filters: queryFiltersToDataFilters(request.Filters),
+		Sort:    querySortToDataSort(request.Sort),
+		Limit:   request.Limit,
+		Offset:  request.Offset,
 	}
 }
 
@@ -1236,15 +1338,15 @@ func executePreviewRows(ctx context.Context, metrics Metrics, modelID string, re
 
 func previewDataQuery(modelID string, request reportdef.RowQuery) dataquery.Query {
 	return dataquery.Query{
-		ModelID:  modelID,
-		Kind:     dataquery.KindSemanticRows,
-		Target:   request.Table,
-		Fields:   queryFieldsToDataFields(request.Dimensions),
-		Measures: queryFieldsToDataFields(request.Measures),
-		Filters:  queryFiltersToDataFilters(request.Filters),
-		Sort:     querySortToDataSort(request.Sort),
-		Limit:    request.Limit,
-		Offset:   request.Offset,
+		ModelID: modelID,
+		Kind:    dataquery.KindSemanticRows,
+		Target:  request.Dataset,
+		Fields:  queryFieldsToDataFields(request.Dimensions),
+		Metrics: queryFieldsToDataFields(request.Metrics),
+		Filters: queryFiltersToDataFilters(request.Filters),
+		Sort:    querySortToDataSort(request.Sort),
+		Limit:   request.Limit,
+		Offset:  request.Offset,
 	}
 }
 
@@ -1289,7 +1391,7 @@ func queryFiltersToDataFilters(filters []reportdef.QueryFilter) []dataquery.Filt
 		}
 		out = append(out, dataquery.Filter{
 			Field:    filter.Field,
-			Fact:     filter.Fact,
+			Dataset:  filter.Dataset,
 			Operator: filter.Operator,
 			Values:   append([]any{}, filter.Values...),
 			Groups:   groups,

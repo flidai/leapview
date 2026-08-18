@@ -163,12 +163,12 @@ type KPIVisualizationSpec struct {
 
 type MatrixVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind              string                                        `json:"kind"`
-	Rows              []VisualizationFieldRef                       `json:"rows"`
-	Columns           []VisualizationFieldRef                       `json:"columns"`
-	Measures          []VisualizationFieldRef                       `json:"measures"`
-	MeasureFormatting map[string][]TableVisualizationFormattingRule `json:"measureFormatting"`
-	Presentation      GridVisualizationPresentation                 `json:"presentation"`
+	Kind             string                                        `json:"kind"`
+	Rows             []VisualizationFieldRef                       `json:"rows"`
+	Columns          []VisualizationFieldRef                       `json:"columns"`
+	Metrics          []VisualizationFieldRef                       `json:"metrics"`
+	MetricFormatting map[string][]TableVisualizationFormattingRule `json:"metricFormatting"`
+	Presentation     GridVisualizationPresentation                 `json:"presentation"`
 }
 
 type NumberVisualizationFormat struct {
@@ -193,12 +193,12 @@ type PercentVisualizationFormat struct {
 
 type PivotVisualizationSpec struct {
 	VisualizationSpecBase
-	Kind              string                                        `json:"kind"`
-	Rows              []VisualizationFieldRef                       `json:"rows"`
-	Columns           []VisualizationFieldRef                       `json:"columns"`
-	Measures          []VisualizationFieldRef                       `json:"measures"`
-	MeasureFormatting map[string][]TableVisualizationFormattingRule `json:"measureFormatting"`
-	Presentation      GridVisualizationPresentation                 `json:"presentation"`
+	Kind             string                                        `json:"kind"`
+	Rows             []VisualizationFieldRef                       `json:"rows"`
+	Columns          []VisualizationFieldRef                       `json:"columns"`
+	Metrics          []VisualizationFieldRef                       `json:"metrics"`
+	MetricFormatting map[string][]TableVisualizationFormattingRule `json:"metricFormatting"`
+	Presentation     GridVisualizationPresentation                 `json:"presentation"`
 }
 
 type PointVisualizationColorScale struct {
@@ -349,7 +349,7 @@ type TableVisualizationColumn struct {
 	Label       string                             `json:"label"`
 	Width       *int64                             `json:"width,omitempty"`
 	Group       *string                            `json:"group,omitempty"`
-	Measure     *string                            `json:"measure,omitempty"`
+	Metric      *string                            `json:"metric,omitempty"`
 	ColumnValue *string                            `json:"columnValue,omitempty"`
 	Formatting  []TableVisualizationFormattingRule `json:"formatting"`
 }
@@ -1371,6 +1371,7 @@ const (
 	VisualizationDataTypeBoolean    VisualizationDataType = "boolean"
 	VisualizationDataTypeInteger    VisualizationDataType = "integer"
 	VisualizationDataTypeDecimal    VisualizationDataType = "decimal"
+	VisualizationDataTypeFloat      VisualizationDataType = "float"
 	VisualizationDataTypeTemporal   VisualizationDataType = "temporal"
 	VisualizationDataTypeDate       VisualizationDataType = "date"
 	VisualizationDataTypeGeographic VisualizationDataType = "geographic"
@@ -1487,7 +1488,7 @@ type VisualizationFieldRole string
 
 const (
 	VisualizationFieldRoleDimension VisualizationFieldRole = "dimension"
-	VisualizationFieldRoleMeasure   VisualizationFieldRole = "measure"
+	VisualizationFieldRoleMetric    VisualizationFieldRole = "metric"
 	VisualizationFieldRoleMetadata  VisualizationFieldRole = "metadata"
 	VisualizationFieldRoleIdentity  VisualizationFieldRole = "identity"
 )
@@ -2261,7 +2262,7 @@ const (
 
 type VisualizationGridFieldMetadata struct {
 	Group       *string                            `json:"group,omitempty"`
-	Measure     *string                            `json:"measure,omitempty"`
+	Metric      *string                            `json:"metric,omitempty"`
 	ColumnValue *string                            `json:"columnValue,omitempty"`
 	Formatting  []TableVisualizationFormattingRule `json:"formatting"`
 }
@@ -2300,11 +2301,11 @@ type VisualizationHighlightEntry struct {
 }
 
 type VisualizationHighlightMapping struct {
-	TargetFieldID string  `json:"targetFieldID"`
-	TargetFactID  *string `json:"targetFactID,omitempty"`
-	Grain         *string `json:"grain,omitempty"`
-	Value         any     `json:"value"`
-	Label         *string `json:"label,omitempty"`
+	TargetFieldID   string  `json:"targetFieldID"`
+	TargetDatasetID *string `json:"targetDatasetID,omitempty"`
+	Grain           *string `json:"grain,omitempty"`
+	Value           any     `json:"value"`
+	Label           *string `json:"label,omitempty"`
 }
 
 type VisualizationHighlightState struct {
@@ -2367,11 +2368,11 @@ const (
 )
 
 type VisualizationInteractionMapping struct {
-	Source        VisualizationFieldRef  `json:"source"`
-	TargetFieldID string                 `json:"targetFieldID"`
-	TargetFactID  *string                `json:"targetFactID,omitempty"`
-	Grain         *string                `json:"grain,omitempty"`
-	Label         *VisualizationFieldRef `json:"label,omitempty"`
+	Source          VisualizationFieldRef  `json:"source"`
+	TargetFieldID   string                 `json:"targetFieldID"`
+	TargetDatasetID *string                `json:"targetDatasetID,omitempty"`
+	Grain           *string                `json:"grain,omitempty"`
+	Label           *VisualizationFieldRef `json:"label,omitempty"`
 }
 
 type VisualizationInteractionTarget struct {
@@ -2965,9 +2966,9 @@ type VisualizationSpatialCoordinate struct {
 }
 
 type VisualizationSpatialFieldMapping struct {
-	Source        VisualizationFieldRef `json:"source"`
-	TargetFieldID string                `json:"targetFieldID"`
-	TargetFactID  *string               `json:"targetFactID,omitempty"`
+	Source          VisualizationFieldRef `json:"source"`
+	TargetFieldID   string                `json:"targetFieldID"`
+	TargetDatasetID *string               `json:"targetDatasetID,omitempty"`
 }
 
 type VisualizationSpatialLassoSelection struct {
@@ -3475,11 +3476,11 @@ func (value *VisualizationSpec) UnmarshalJSON(data []byte) error {
 		if _, ok := fields["kind"]; !ok {
 			return fmt.Errorf("decode VisualizationSpec variant %q: required property kind is missing", tag.Value)
 		}
-		if _, ok := fields["measureFormatting"]; !ok {
-			return fmt.Errorf("decode VisualizationSpec variant %q: required property measureFormatting is missing", tag.Value)
+		if _, ok := fields["metricFormatting"]; !ok {
+			return fmt.Errorf("decode VisualizationSpec variant %q: required property metricFormatting is missing", tag.Value)
 		}
-		if _, ok := fields["measures"]; !ok {
-			return fmt.Errorf("decode VisualizationSpec variant %q: required property measures is missing", tag.Value)
+		if _, ok := fields["metrics"]; !ok {
+			return fmt.Errorf("decode VisualizationSpec variant %q: required property metrics is missing", tag.Value)
 		}
 		if _, ok := fields["presentation"]; !ok {
 			return fmt.Errorf("decode VisualizationSpec variant %q: required property presentation is missing", tag.Value)
@@ -3514,11 +3515,11 @@ func (value *VisualizationSpec) UnmarshalJSON(data []byte) error {
 		if _, ok := fields["kind"]; !ok {
 			return fmt.Errorf("decode VisualizationSpec variant %q: required property kind is missing", tag.Value)
 		}
-		if _, ok := fields["measureFormatting"]; !ok {
-			return fmt.Errorf("decode VisualizationSpec variant %q: required property measureFormatting is missing", tag.Value)
+		if _, ok := fields["metricFormatting"]; !ok {
+			return fmt.Errorf("decode VisualizationSpec variant %q: required property metricFormatting is missing", tag.Value)
 		}
-		if _, ok := fields["measures"]; !ok {
-			return fmt.Errorf("decode VisualizationSpec variant %q: required property measures is missing", tag.Value)
+		if _, ok := fields["metrics"]; !ok {
+			return fmt.Errorf("decode VisualizationSpec variant %q: required property metrics is missing", tag.Value)
 		}
 		if _, ok := fields["presentation"]; !ok {
 			return fmt.Errorf("decode VisualizationSpec variant %q: required property presentation is missing", tag.Value)

@@ -32,7 +32,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
             "type": "string"
           },
           "field": {
-            "description": "Semantic field or measure ID. Use the ID returned by catalog_list or catalog_get.",
+            "description": "Semantic field or metric ID. Use the ID returned by catalog_list or catalog_get.",
             "type": "string"
           }
         },
@@ -47,8 +47,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
       "items": {
         "additionalProperties": false,
         "properties": {
-          "fact": {
-            "description": "Fact table used to resolve a conformed dimension when it is otherwise ambiguous.",
+          "dataset": {
+            "description": "Dataset used to resolve a conformed dimension when it is otherwise ambiguous.",
             "type": "string"
           },
           "field": {
@@ -107,7 +107,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
       "minimum": 1,
       "type": "integer"
     },
-    "measures": {
+    "metrics": {
       "items": {
         "additionalProperties": false,
         "properties": {
@@ -116,7 +116,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
             "type": "string"
           },
           "field": {
-            "description": "Semantic field or measure ID. Use the ID returned by catalog_list or catalog_get.",
+            "description": "Semantic field or metric ID. Use the ID returned by catalog_list or catalog_get.",
             "type": "string"
           }
         },
@@ -176,6 +176,9 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
         "grain": {
           "description": "Calendar grain used to group the time field.",
           "enum": [
+            "second",
+            "minute",
+            "hour",
             "day",
             "week",
             "month",

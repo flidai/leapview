@@ -10,7 +10,7 @@ func TestValidateConditionalFormattingAcceptsClosedGovernedPolicies(t *testing.T
 
 	visual := Visual{
 		Type:  "column",
-		Query: VisualQuery{Measures: []FieldRef{{Field: "orders.revenue", Alias: "revenue"}}},
+		Query: VisualQuery{Metrics: []FieldRef{{Field: "orders.revenue", Alias: "revenue"}}},
 		Presentation: VisualPresentation{ConditionalFormatting: []VisualConditionalFormat{
 			{
 				ID: "revenue-gradient", Target: "mark_fill", Field: "value", Kind: "gradient",

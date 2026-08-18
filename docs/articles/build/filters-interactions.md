@@ -104,7 +104,7 @@ interaction:
     toggle: true
     mappings:
       - field: orders.status
-        fact: orders
+        dataset: orders
         value: status
         label: status
     targets:
@@ -123,7 +123,7 @@ comparison result intact and emphasize the compatible selected subset.
 matrix for every other visual with deterministic `none` edges, so runtime code
 never infers behavior from a missing list entry.
 
-`value` names a delivered result field. `field` and `fact` establish semantic
+`value` names a delivered result field. `field` and `dataset` establish semantic
 identity. The server rejects incomplete, unauthorized, or stale mappings before
 applying them. Targets are dashboard definition IDs, not arbitrary CSS selectors
 or browser element IDs.

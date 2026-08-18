@@ -56,7 +56,7 @@ spec:
     genre_rating_count:
       type: kpi
       query:
-        measures:
+        metrics:
           genre_rating_count:
       presentation:
         note: Rating-genre rows
@@ -64,7 +64,7 @@ spec:
     average_rating:
       type: kpi
       query:
-        measures:
+        metrics:
           average_rating:
       presentation:
         note: Mean rating
@@ -72,7 +72,7 @@ spec:
     active_users:
       type: kpi
       query:
-        measures:
+        metrics:
           active_users:
       presentation:
         note: Distinct users
@@ -80,7 +80,7 @@ spec:
     rated_movies:
       type: kpi
       query:
-        measures:
+        metrics:
           rated_movies:
       presentation:
         note: Distinct movies
@@ -91,7 +91,7 @@ spec:
       query:
         dimensions:
           genre: rating_genres.genre
-        measures:
+        metrics:
           genre_rating_count:
         sort:
           - field: value
@@ -103,7 +103,7 @@ spec:
       query:
         dimensions:
           genre: rating_genres.genre
-        measures:
+        metrics:
           average_rating:
         sort:
           - field: value
@@ -120,7 +120,7 @@ spec:
         series:
           field: rating_genres.genre
           alias: genre
-        measures:
+        metrics:
           genre_rating_count:
         sort:
           - field: rating_year
@@ -133,7 +133,7 @@ spec:
         dimensions:
           decade: rating_genres.release_decade
           genre: rating_genres.genre
-        measures:
+        metrics:
           average_rating:
         sort:
           - field: decade

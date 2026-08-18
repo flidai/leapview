@@ -16,19 +16,19 @@ import (
 )
 
 type tablePlan struct {
-	Definition        visualizationdefinition.Definition
-	Kind              string
-	Title             string
-	Table             string
-	Rows              []visualizationdefinition.FieldBinding
-	ColumnDims        []visualizationdefinition.FieldBinding
-	Measures          []visualizationdefinition.FieldBinding
-	DataColumns       []visualizationdefinition.FieldBinding
-	DefaultSort       dashboard.TableSort
-	Columns           []dashboard.TableColumn
-	MeasureFormatting map[string][]dashboard.TableFormattingRule
-	Style             dashboard.TableStyle
-	Interaction       dashboard.InteractionConfig
+	Definition       visualizationdefinition.Definition
+	Kind             string
+	Title            string
+	Table            string
+	Rows             []visualizationdefinition.FieldBinding
+	ColumnDims       []visualizationdefinition.FieldBinding
+	Metrics          []visualizationdefinition.FieldBinding
+	DataColumns      []visualizationdefinition.FieldBinding
+	DefaultSort      dashboard.TableSort
+	Columns          []dashboard.TableColumn
+	MetricFormatting map[string][]dashboard.TableFormattingRule
+	Style            dashboard.TableStyle
+	Interaction      dashboard.InteractionConfig
 }
 
 func newTablePlan(definition visualizationdefinition.Definition) (tablePlan, error) {
@@ -49,12 +49,12 @@ func newTablePlan(definition visualizationdefinition.Definition) (tablePlan, err
 		}
 	case visualizationdefinition.QueryMatrix:
 		query := definition.Query.Matrix
-		plan.Kind, plan.Table, plan.Rows, plan.ColumnDims, plan.Measures = "matrix_table", query.TableID, query.Rows, query.Columns, query.Measures
-		plan.MeasureFormatting = dashboarddefinition.MeasureFormatting(definition.Spec, query.Measures)
+		plan.Kind, plan.Table, plan.Rows, plan.ColumnDims, plan.Metrics = "matrix_table", query.TableID, query.Rows, query.Columns, query.Metrics
+		plan.MetricFormatting = dashboarddefinition.MetricFormatting(definition.Spec, query.Metrics)
 	case visualizationdefinition.QueryPivot:
 		query := definition.Query.Pivot
-		plan.Kind, plan.Table, plan.Rows, plan.ColumnDims, plan.Measures = "pivot_table", query.TableID, query.Rows, query.Columns, query.Measures
-		plan.MeasureFormatting = dashboarddefinition.MeasureFormatting(definition.Spec, query.Measures)
+		plan.Kind, plan.Table, plan.Rows, plan.ColumnDims, plan.Metrics = "pivot_table", query.TableID, query.Rows, query.Columns, query.Metrics
+		plan.MetricFormatting = dashboarddefinition.MetricFormatting(definition.Spec, query.Metrics)
 	default:
 		return tablePlan{}, fmt.Errorf("visualization %q query kind %q is not a grid query", definition.ID, definition.Query.Kind)
 	}
@@ -124,9 +124,9 @@ func (s *VisualizationDataService) matrixTableRows(ctx context.Context, runtime 
 	if len(table.ColumnDims) == 1 {
 		return s.crossTabTableRows(ctx, runtime, report, table, filters, request, false)
 	}
-	columns := make([]dashboard.TableColumn, 0, len(table.Rows)+len(table.Measures))
+	columns := make([]dashboard.TableColumn, 0, len(table.Rows)+len(table.Metrics))
 	dimensions := make([]reportdef.QueryField, 0, len(table.Rows))
-	measures := make([]reportdef.QueryField, 0, len(table.Measures))
+	metrics := make([]reportdef.QueryField, 0, len(table.Metrics))
 	for _, dimensionBinding := range table.Rows {
 		dimensionName := dimensionBinding.FieldID
 		dimension, _ := runtime.model.ResolveDimension(dimensionName)
@@ -135,13 +135,13 @@ func (s *VisualizationDataService) matrixTableRows(ctx context.Context, runtime 
 		column := dashboard.TableColumn{Key: key, Label: dimensionLabel(key, dimension), Role: "row_header", Format: "text"}
 		columns = append(columns, mergeTableColumn(column, tableColumnOverride(table, dimensionBinding.Alias)))
 	}
-	for _, measureBinding := range table.Measures {
-		measureName := measureBinding.FieldID
-		measure := aggregateMemberMetadata(runtime.model, measureName)
-		key := measureBinding.Alias
-		measures = append(measures, fieldRef(measureName, key))
-		column := dashboard.TableColumn{Key: key, Label: measureLabel(key, measure), Align: "right", Role: "measure", Measure: key, Format: tableMeasureFormat(measure), Formatting: tableMeasureFormatting(table, measureName)}
-		columns = append(columns, mergeTableColumn(column, tableColumnOverride(table, measureBinding.Alias)))
+	for _, metricBinding := range table.Metrics {
+		metricName := metricBinding.FieldID
+		metric := aggregateMemberMetadata(runtime.model, metricName)
+		key := metricBinding.Alias
+		metrics = append(metrics, fieldRef(metricName, key))
+		column := dashboard.TableColumn{Key: key, Label: metricLabel(key, metric), Align: "right", Role: "metric", Metric: key, Format: tableMetricFormat(metric), DataType: string(metric.DataType), Formatting: tableMetricFormatting(table, metricName)}
+		columns = append(columns, mergeTableColumn(column, tableColumnOverride(table, metricBinding.Alias)))
 	}
 	queryFilters, err := s.filters.semanticFilters(ctx, runtime, report, filters, "visual", request.Table)
 	if err != nil {
@@ -155,9 +155,9 @@ func (s *VisualizationDataService) matrixTableRows(ctx context.Context, runtime 
 		sorts = []reportdef.QuerySort{{Field: request.Sort.Key, Direction: request.Sort.Direction}}
 	}
 	rows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
-		Table:      table.Table,
+		Dataset:    table.Table,
 		Dimensions: dimensions,
-		Measures:   measures,
+		Metrics:    metrics,
 		Filters:    queryFilters,
 		Sort:       sorts,
 		Limit:      dashboard.TableInteractiveRowCap + 1,
@@ -202,7 +202,7 @@ func visibleCalculationTableColumns(base visualizationir.VisualizationSpecBase) 
 		}
 		field := fields[calculation.ID]
 		columns = append(columns, dashboard.TableColumn{
-			Key: calculation.ID, Label: field.Label, Align: "right", Role: "measure", Measure: calculation.ID,
+			Key: calculation.ID, Label: field.Label, Align: "right", Role: "metric", Metric: calculation.ID,
 			Format: dashboardCalculationFormat(field.Format),
 		})
 	}
@@ -243,11 +243,11 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 	columnDimensionName := table.ColumnDims[0].FieldID
 	columnDimensionAlias := table.ColumnDims[0].Alias
 	dimensions = append(dimensions, fieldRef(columnDimensionName, columnDimensionAlias))
-	measures := make([]reportdef.QueryField, 0, len(table.Measures))
-	for _, measureBinding := range table.Measures {
-		measureName := measureBinding.FieldID
-		key := measureBinding.Alias
-		measures = append(measures, fieldRef(measureName, key))
+	metrics := make([]reportdef.QueryField, 0, len(table.Metrics))
+	for _, metricBinding := range table.Metrics {
+		metricName := metricBinding.FieldID
+		key := metricBinding.Alias
+		metrics = append(metrics, fieldRef(metricName, key))
 	}
 	queryFilters, err := s.filters.semanticFilters(ctx, runtime, report, filters, "visual", request.Table)
 	if err != nil {
@@ -258,9 +258,9 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 		sorts = append(sorts, reportdef.QuerySort{Field: dimension.Alias, Direction: "asc"})
 	}
 	rawRows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
-		Table:      table.Table,
+		Dataset:    table.Table,
 		Dimensions: dimensions,
-		Measures:   measures,
+		Metrics:    metrics,
 		Filters:    queryFilters,
 		Sort:       sorts,
 		Limit:      dashboard.TableInteractiveRowCap + 1,
@@ -310,8 +310,8 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 		label := fmt.Sprint(raw[columnDimensionAlias])
 		groupLabel := label
 		if pivotMode {
-			measure := aggregateMemberMetadata(runtime.model, table.Measures[0].FieldID)
-			groupLabel = measureLabel(table.Measures[0].Alias, measure)
+			metric := aggregateMemberMetadata(runtime.model, table.Metrics[0].FieldID)
+			groupLabel = metricLabel(table.Metrics[0].Alias, metric)
 		}
 		pivotKey, exists := pivotKeys[label]
 		if !exists {
@@ -319,13 +319,13 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 			pivotKeys[label] = pivotKey
 		}
 		for _, valueField := range valueFields {
-			measureKey := valueField.key
-			columnIdentity := label + "\x00" + measureKey
+			metricKey := valueField.key
+			columnIdentity := label + "\x00" + metricKey
 			columnKey, columnExists := columnKeys[columnIdentity]
 			candidate := "pivot_" + pivotKey
 			columnLabel := label
 			if !pivotMode || len(valueFields) > 1 {
-				candidate += "__" + sanitizeTableKey(measureKey)
+				candidate += "__" + sanitizeTableKey(metricKey)
 				columnLabel = valueField.label
 			}
 			if !columnExists {
@@ -336,16 +336,17 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 					Key:         columnKey,
 					Label:       columnLabel,
 					Align:       "right",
-					Role:        "measure",
+					Role:        "metric",
 					Group:       groupLabel,
-					Measure:     measureKey,
+					Metric:      metricKey,
 					ColumnValue: label,
 					Format:      valueField.format,
+					DataType:    string(valueField.dataType),
 					Formatting:  valueField.formatting,
 				}
-				columns = append(columns, mergeTableColumn(column, tableColumnOverride(table, measureKey)))
+				columns = append(columns, mergeTableColumn(column, tableColumnOverride(table, metricKey)))
 			}
-			row[columnKey] = raw[measureKey]
+			row[columnKey] = raw[metricKey]
 		}
 	}
 	result := make([]map[string]any, 0, len(order))
@@ -361,15 +362,16 @@ type crossTabValueField struct {
 	label      string
 	format     string
 	formatting []dashboard.TableFormattingRule
+	dataType   visualizationir.VisualizationDataType
 }
 
 func crossTabValueFields(table tablePlan, base visualizationir.VisualizationSpecBase, model *semanticmodel.Model) []crossTabValueField {
-	fields := make([]crossTabValueField, 0, len(table.Measures))
-	for _, binding := range table.Measures {
-		measure := aggregateMemberMetadata(model, binding.FieldID)
+	fields := make([]crossTabValueField, 0, len(table.Metrics))
+	for _, binding := range table.Metrics {
+		metric := aggregateMemberMetadata(model, binding.FieldID)
 		fields = append(fields, crossTabValueField{
-			key: binding.Alias, label: measureLabel(binding.Alias, measure),
-			format: tableMeasureFormat(measure), formatting: tableMeasureFormatting(table, binding.FieldID),
+			key: binding.Alias, label: metricLabel(binding.Alias, metric),
+			format: tableMetricFormat(metric), dataType: metric.DataType, formatting: tableMetricFormatting(table, binding.FieldID),
 		})
 	}
 	schemaFields := map[string]visualizationir.VisualizationField{}
@@ -393,7 +395,7 @@ func crossTabValueFields(table tablePlan, base visualizationir.VisualizationSpec
 			}
 			fields = append(fields, crossTabValueField{
 				key: calculation.ID, label: label,
-				format: dashboardCalculationFormat(field.Format),
+				format: dashboardCalculationFormat(field.Format), dataType: field.DataType,
 			})
 		}
 	}
@@ -493,20 +495,20 @@ func dimensionLabel(name string, dimension semanticmodel.MetricDimension) string
 	return name
 }
 
-func tableMeasureFormat(measure semanticmodel.MetricMeasure) string {
-	switch measure.Format {
+func tableMetricFormat(metric metricMetadata) string {
+	switch metric.Format {
 	case "integer", "decimal", "currency":
-		return measure.Format
+		return metric.Format
 	default:
 		return "decimal"
 	}
 }
 
-func tableMeasureFormatting(table tablePlan, measure string) []dashboard.TableFormattingRule {
-	if len(table.MeasureFormatting[measure]) == 0 {
+func tableMetricFormatting(table tablePlan, metric string) []dashboard.TableFormattingRule {
+	if len(table.MetricFormatting[metric]) == 0 {
 		return nil
 	}
-	return append([]dashboard.TableFormattingRule{}, table.MeasureFormatting[measure]...)
+	return append([]dashboard.TableFormattingRule{}, table.MetricFormatting[metric]...)
 }
 
 func tableColumnOverride(table tablePlan, key string) dashboard.TableColumn {
@@ -573,13 +575,13 @@ func uniqueTableColumnKey(candidate string, existing map[string]string) string {
 
 func (s *VisualizationDataService) tableRowRequest(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, table tablePlan, filters dashboard.Filters, request dashboard.TableRequest, start, count int) (reportdef.RowQuery, error) {
 	dimensions := []reportdef.QueryField{}
-	measures := []reportdef.QueryField{}
+	metrics := []reportdef.QueryField{}
 	for _, column := range table.DataColumns {
 		if _, err := runtime.model.ResolveDimension(column.FieldID); err == nil {
 			dimensions = append(dimensions, fieldRef(column.FieldID, column.Alias))
 			continue
 		}
-		measures = append(measures, fieldRef(column.FieldID, column.Alias))
+		metrics = append(metrics, fieldRef(column.FieldID, column.Alias))
 	}
 	queryFilters, err := s.filters.semanticFilters(ctx, runtime, report, filters, "visual", request.Table)
 	if err != nil {
@@ -597,15 +599,16 @@ func (s *VisualizationDataService) tableRowRequest(ctx context.Context, runtime 
 	if sortKey != "order_id" && tableHasQueryAlias(table.DataColumns, "order_id") {
 		sorts = append(sorts, reportdef.QuerySort{Field: "order_id", Direction: "asc"})
 	}
-	return reportdef.RowQuery{
-		Table:      table.Table,
+	rowQuery := reportdef.RowQuery{
+		Dataset:    table.Table,
 		Dimensions: dimensions,
-		Measures:   measures,
+		Metrics:    metrics,
 		Filters:    queryFilters,
 		Sort:       sorts,
 		Limit:      count,
 		Offset:     start,
-	}, nil
+	}
+	return rowQuery, nil
 }
 
 func tableSortKey(table tablePlan, key string) string {

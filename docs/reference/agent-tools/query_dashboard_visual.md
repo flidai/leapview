@@ -157,7 +157,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_dashboard_visual.
           "role": {
             "enum": [
               "dimension",
-              "measure",
+              "metric",
               "metadata",
               "identity"
             ],

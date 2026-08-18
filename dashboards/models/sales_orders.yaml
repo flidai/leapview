@@ -6,26 +6,41 @@ metadata:
   displayName: Sales Orders
   description: Order-grain sales table with revenue, category, status, and customer.
 spec:
-  primaryKey: order_id
   sources:
-    - olist.orders
-    - olist.payments
-    - olist.order_items
-    - olist.products
-    - olist.translations
+  - olist.orders
+  - olist.payments
+  - olist.order_items
+  - olist.products
+  - olist.translations
   fields:
-    order_id: {label: Order ID}
-    customer_id: {label: Customer ID}
-    purchase_month: {label: Purchase month}
-    purchase_date: {label: Purchase date}
-    purchase_timestamp: {label: Purchase timestamp}
-    status: {label: Status}
-    category: {label: Category}
-    revenue: {label: Revenue}
+    order_id:
+      datatype: String
+      label: Order ID
+    customer_id:
+      datatype: String
+      label: Customer ID
+    purchase_month:
+      datatype: String
+      label: Purchase month
+    purchase_date:
+      datatype: Date
+      label: Purchase date
+    purchase_timestamp:
+      datatype: DateTime
+      label: Purchase timestamp
+    status:
+      datatype: String
+      label: Status
+    category:
+      datatype: String
+      label: Category
+    revenue:
+      datatype: Decimal
+      label: Revenue
   transform:
     sql: |
       WITH revenue AS (
-        SELECT order_id, SUM(try_cast(payment_value AS DOUBLE)) AS revenue
+        SELECT order_id, CAST(SUM(try_cast(payment_value AS DECIMAL(38,2))) AS DECIMAL(38,2)) AS revenue
         FROM source."olist.payments"
         GROUP BY order_id
       ),
@@ -46,7 +61,18 @@ spec:
         strftime(CAST(o.order_purchase_timestamp AS TIMESTAMP), '%Y-%m') AS purchase_month,
         o.order_status AS status,
         COALESCE(category.category, 'uncategorized') AS category,
-        round(COALESCE(revenue.revenue, 0), 2) AS revenue
+        CAST(round(COALESCE(revenue.revenue, CAST(0 AS DECIMAL(38,2))), 2) AS DECIMAL(38,2)) AS revenue
       FROM source."olist.orders" o
       LEFT JOIN revenue ON revenue.order_id = o.order_id
       LEFT JOIN category ON category.order_id = o.order_id
+  entities:
+    order:
+      type: primary
+      fields:
+      - order_id
+    customer:
+      type: foreign
+      fields:
+      - customer_id
+  grain:
+    entity: order

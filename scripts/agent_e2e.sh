@@ -217,8 +217,8 @@ elif validator == "generated_visual":
         raise SystemExit(f"{label}: generated visual has unexpected type/status: {value}")
     if not any(filter_value.get("operator") == "equals" and "delivered" in filter_value.get("values", []) for filter_value in value.get("filters", [])):
         raise SystemExit(f"{label}: generated visual did not preserve the delivered filter: {value.get('filters')}")
-    if not any(field.get("role") == "measure" and field.get("format") == "currency" for field in value.get("fields", [])):
-        raise SystemExit(f"{label}: generated visual did not preserve measure formatting: {value.get('fields')}")
+    if not any(field.get("role") == "metric" and field.get("format") == "currency" for field in value.get("fields", [])):
+        raise SystemExit(f"{label}: generated visual did not preserve metric formatting: {value.get('fields')}")
     if not value.get("queryId") or not value.get("servingSnapshot") or "completeness" not in value:
         raise SystemExit(f"{label}: generated visual lacks provenance or completeness")
 elif validator == "documentation":
@@ -254,7 +254,7 @@ run_agent_scenario \
   "semantic query" \
   "catalog_search,query_semantic_model" \
   "semantic_query" \
-  "Use catalog_search with semantic_model kind to find the Sales semantic model. Then call query_semantic_model with the returned model resource, measure sales.revenue, and limit 1. Report the returned format and freshness."
+  "Use catalog_search with semantic_model kind to find the Sales semantic model. Then call query_semantic_model with the returned model resource, metric sales.revenue, and limit 1. Report the returned format and freshness."
 
 run_agent_scenario \
   "semantic pagination" \
@@ -272,7 +272,7 @@ run_agent_scenario \
   "generated visualization" \
   "catalog_search,query_visual" \
   "generated_visual" \
-  "Use catalog_search to find the Sales semantic model. Then call query_visual with its returned model resource, dataset sales_orders, a bar chart grouped by sales_orders.status with measure sales.revenue, and a governed equals filter on sales_orders.status for delivered."
+  "Use catalog_search to find the Sales semantic model. Then call query_visual with its returned model resource, dataset sales_orders, a bar chart grouped by sales_orders.status with metric sales.revenue, and a governed equals filter on sales_orders.status for delivered."
 
 run_agent_scenario \
   "documentation" \

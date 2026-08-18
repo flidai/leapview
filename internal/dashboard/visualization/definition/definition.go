@@ -80,7 +80,7 @@ type AggregateQueryBinding struct {
 	TableID    string         `json:"tableID" yaml:"table_id"`
 	Dimensions []FieldBinding `json:"dimensions" yaml:"dimensions"`
 	Series     *FieldBinding  `json:"series,omitempty" yaml:"series,omitempty"`
-	Measures   []FieldBinding `json:"measures" yaml:"measures"`
+	Metrics    []FieldBinding `json:"metrics" yaml:"metrics"`
 	Time       *TimeBinding   `json:"time,omitempty" yaml:"time,omitempty"`
 	Sort       []Sort         `json:"sort,omitempty" yaml:"sort,omitempty"`
 	Limit      int64          `json:"limit" yaml:"limit"`
@@ -94,11 +94,11 @@ type DetailQueryBinding struct {
 }
 
 type MatrixQueryBinding struct {
-	TableID  string         `json:"tableID" yaml:"table_id"`
-	Rows     []FieldBinding `json:"rows" yaml:"rows"`
-	Columns  []FieldBinding `json:"columns" yaml:"columns"`
-	Measures []FieldBinding `json:"measures" yaml:"measures"`
-	Limit    int64          `json:"limit" yaml:"limit"`
+	TableID string         `json:"tableID" yaml:"table_id"`
+	Rows    []FieldBinding `json:"rows" yaml:"rows"`
+	Columns []FieldBinding `json:"columns" yaml:"columns"`
+	Metrics []FieldBinding `json:"metrics" yaml:"metrics"`
+	Limit   int64          `json:"limit" yaml:"limit"`
 }
 
 type PivotQueryBinding = MatrixQueryBinding
@@ -110,7 +110,7 @@ type SpatialQueryBinding struct {
 	TableID    string              `json:"tableID" yaml:"table_id"`
 	Dimensions []FieldBinding      `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
 	Series     *FieldBinding       `json:"series,omitempty" yaml:"series,omitempty"`
-	Measures   []FieldBinding      `json:"measures,omitempty" yaml:"measures,omitempty"`
+	Metrics    []FieldBinding      `json:"metrics,omitempty" yaml:"metrics,omitempty"`
 	Time       *TimeBinding        `json:"time,omitempty" yaml:"time,omitempty"`
 	Sort       []Sort              `json:"sort,omitempty" yaml:"sort,omitempty"`
 	Limit      int64               `json:"limit" yaml:"limit"`
@@ -263,7 +263,7 @@ type queryBindingView struct {
 
 func (query QueryBinding) validationView() (queryBindingView, error) {
 	var view queryBindingView
-	addAggregateFields := func(dimensions []FieldBinding, series *FieldBinding, time *TimeBinding, measures []FieldBinding) {
+	addAggregateFields := func(dimensions []FieldBinding, series *FieldBinding, time *TimeBinding, metrics []FieldBinding) {
 		view.fields = append(view.fields, dimensions...)
 		if series != nil {
 			view.fields = append(view.fields, *series)
@@ -272,7 +272,7 @@ func (query QueryBinding) validationView() (queryBindingView, error) {
 		if time != nil {
 			view.fields = append(view.fields, FieldBinding{FieldID: time.FieldID, Alias: time.Alias})
 		}
-		view.fields = append(view.fields, measures...)
+		view.fields = append(view.fields, metrics...)
 	}
 	switch query.Kind {
 	case QueryAggregate:
@@ -280,7 +280,7 @@ func (query QueryBinding) validationView() (queryBindingView, error) {
 			return queryBindingView{}, fmt.Errorf("aggregate query binding requires aggregate branch")
 		}
 		view.tableID, view.sorts, view.limit = query.Aggregate.TableID, query.Aggregate.Sort, query.Aggregate.Limit
-		addAggregateFields(query.Aggregate.Dimensions, query.Aggregate.Series, query.Aggregate.Time, query.Aggregate.Measures)
+		addAggregateFields(query.Aggregate.Dimensions, query.Aggregate.Series, query.Aggregate.Time, query.Aggregate.Metrics)
 	case QueryDetail:
 		if query.Detail == nil {
 			return queryBindingView{}, fmt.Errorf("detail query binding requires detail branch")
@@ -293,7 +293,7 @@ func (query QueryBinding) validationView() (queryBindingView, error) {
 		view.tableID, view.limit = query.Matrix.TableID, query.Matrix.Limit
 		view.fields = append(view.fields, query.Matrix.Rows...)
 		view.fields = append(view.fields, query.Matrix.Columns...)
-		view.fields = append(view.fields, query.Matrix.Measures...)
+		view.fields = append(view.fields, query.Matrix.Metrics...)
 	case QueryPivot:
 		if query.Pivot == nil {
 			return queryBindingView{}, fmt.Errorf("pivot query binding requires pivot branch")
@@ -301,13 +301,13 @@ func (query QueryBinding) validationView() (queryBindingView, error) {
 		view.tableID, view.limit = query.Pivot.TableID, query.Pivot.Limit
 		view.fields = append(view.fields, query.Pivot.Rows...)
 		view.fields = append(view.fields, query.Pivot.Columns...)
-		view.fields = append(view.fields, query.Pivot.Measures...)
+		view.fields = append(view.fields, query.Pivot.Metrics...)
 	case QuerySpatial:
 		if query.Spatial == nil {
 			return queryBindingView{}, fmt.Errorf("spatial query binding requires spatial branch")
 		}
 		view.tableID, view.sorts, view.limit, view.tiles = query.Spatial.TableID, query.Spatial.Sort, query.Spatial.Limit, query.Spatial.Tiles
-		addAggregateFields(query.Spatial.Dimensions, query.Spatial.Series, query.Spatial.Time, query.Spatial.Measures)
+		addAggregateFields(query.Spatial.Dimensions, query.Spatial.Series, query.Spatial.Time, query.Spatial.Metrics)
 	default:
 		return queryBindingView{}, fmt.Errorf("unsupported visualization query kind %q", query.Kind)
 	}

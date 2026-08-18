@@ -1,6 +1,6 @@
 # Pivot
 
-Use a pivot for a compact cross-tab with one row dimension, one column dimension, and one measure.
+Use a pivot for a compact cross-tab with one row dimension, one column dimension, and one metric.
 
 {{< visual id="category_pivot" >}}
 
@@ -14,6 +14,6 @@ visuals:
         category: orders.category
       columns:
         status: orders.status
-      measures:
+      metrics:
         order_count: null
 ```

@@ -1,0 +1,27 @@
+version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    description: Sales interchange fixture
+    ai_context:
+      instructions: Use governed revenue.
+      synonyms: [sales, orders]
+    datasets:
+      - name: orders
+        source: orders
+        primary_key: [order_id, line_no]
+        unique_keys: [[order_number]]
+        fields:
+          - name: order_id
+            expression:
+              dialects: [{dialect: ANSI_SQL, expression: order_id}]
+            datatype: String
+          - name: line_no
+            expression:
+              dialects: [{dialect: ANSI_SQL, expression: line_no}]
+            datatype: Integer
+    relationships: []
+    metrics:
+      - name: revenue
+        expression:
+          dialects: [{dialect: ANSI_SQL, expression: SUM(orders.revenue)}]
+        datatype: Decimal

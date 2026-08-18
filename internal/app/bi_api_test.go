@@ -101,7 +101,7 @@ func TestBIAPIListResponsesUseStandardEnvelope(t *testing.T) {
 		want string
 	}{
 		{path: "/api/v1/dashboards/executive-sales", want: `"detail_tools"`},
-		{path: "/api/v1/semantic-models/test", want: `"model_tables"`},
+		{path: "/api/v1/semantic-models/test", want: `"datasets"`},
 	} {
 		req := servingSnapshotRequest(t, server, newPublicAPIRequest(http.MethodGet, tc.path, nil))
 		req.Header.Set("Accept", "application/json")
@@ -236,7 +236,7 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 
 func TestSemanticAPIQueryAuditIncludesProject(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{}))
-	req := newPublicAPIRequest(http.MethodPost, "/api/v1/semantic-models/test/query", strings.NewReader(`{"dimensions":[{"field":"orders.status","alias":"status"}],"measures":[{"field":"order_count"}],"limit":1}`))
+	req := newPublicAPIRequest(http.MethodPost, "/api/v1/semantic-models/test/query", strings.NewReader(`{"dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"limit":1}`))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer dev")
 	req.Header.Set("Content-Type", "application/json")
@@ -373,19 +373,19 @@ func TestBIAPISemanticDatasetSurface(t *testing.T) {
 		{
 			method: http.MethodGet,
 			path:   "/api/v1/semantic-models/test/fields",
-			want:   []string{`"kind":"measure"`, `"name":"order_count"`},
+			want:   []string{`"kind":"metric"`, `"name":"order_count"`},
 		},
 		{
 			method: http.MethodPost,
 			path:   "/api/v1/semantic-models/test/query",
-			body:   `{"dimensions":[{"field":"orders.status","alias":"status"}],"measures":[{"field":"order_count"}],"sort":[{"field":"status","direction":"asc"}]}`,
+			body:   `{"dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"sort":[{"field":"status","direction":"asc"}]}`,
 			want:   []string{`"columns"`, `"rows"`, `"delivered"`},
 		},
 		{
 			method: http.MethodPost,
 			path:   "/api/v1/semantic-models/test/query/explain",
-			body:   `{"measures":[{"field":"order_count"}]}`,
-			want:   []string{`"mode":"single_fact"`, `"facts":["orders"]`, `"physicalDependencies"`},
+			body:   `{"metrics":[{"field":"order_count"}]}`,
+			want:   []string{`"mode":"single_dataset"`, `"datasets":["orders"]`, `"physicalDependencies"`},
 		},
 		{
 			method: http.MethodGet,
@@ -395,12 +395,12 @@ func TestBIAPISemanticDatasetSurface(t *testing.T) {
 		{
 			method: http.MethodGet,
 			path:   "/api/v1/semantic-models/test/datasets/orders",
-			want:   []string{`"primaryKey":"order_id"`, `"grain":"order_id"`},
+			want:   []string{`"grainEntity":"order_id"`, `"entities":{"order_id":{"fields":["order_id"],"type":"primary"}`},
 		},
 		{
 			method: http.MethodGet,
 			path:   "/api/v1/semantic-models/test/datasets/orders/fields?limit=4",
-			want:   []string{`"kind":"dimension"`, `"kind":"measure"`, `"order_count"`},
+			want:   []string{`"kind":"dimension"`, `"kind":"metric"`, `"order_count"`},
 		},
 		{
 			method: http.MethodPost,
@@ -483,7 +483,7 @@ func (m auditedDashboardMetrics) QueryDashboardPage(ctx context.Context, dashboa
 		Kind:      dataquery.KindSemanticAggregate,
 		Target:    "orders",
 		Fields:    []dataquery.Field{{Field: "orders.status", Alias: "status"}},
-		Measures:  []dataquery.Field{{Field: "order_count"}},
+		Metrics:   []dataquery.Field{{Field: "order_count"}},
 		Limit:     10,
 	})
 	if err != nil {

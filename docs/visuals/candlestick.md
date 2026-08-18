@@ -1,12 +1,12 @@
 # Candlestick chart
 
-Use a candlestick chart to compare open, close, low, and high measures across an ordered category.
+Use a candlestick chart to compare open, close, low, and high metrics across an ordered category.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Market OHLC
 
-Use true open, close, low, and high measures over an ordered month dimension. Each candle now represents the analytical contract directly rather than repurposing an unrelated distribution.
+Use true open, close, low, and high metrics over an ordered month dimension. Each candle now represents the analytical contract directly rather than repurposing an unrelated distribution.
 
 {{< visual id="market_candlestick" >}}
 
@@ -17,10 +17,10 @@ visuals:
     description: Shows monthly open, close, low, and high values.
     type: candlestick
     query:
-      table: market_ohlc
+      dataset: market_ohlc
       dimensions:
         month: market_ohlc.month
-      measures:
+      metrics:
         market_open: null
         market_close: null
         market_low: null
@@ -33,7 +33,7 @@ visuals:
 
 ## Revenue range
 
-Change the measure to revenue and enable `presentation.data_zoom` so dense monthly ranges remain explorable without changing the OHLC contract.
+Change the metric to revenue and enable `presentation.data_zoom` so dense monthly ranges remain explorable without changing the OHLC contract.
 
 {{< visual id="revenue_candlestick" >}}
 
@@ -47,7 +47,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue_q1: null
         revenue_q3: null
         revenue_min: null

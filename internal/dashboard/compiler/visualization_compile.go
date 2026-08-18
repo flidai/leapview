@@ -95,13 +95,16 @@ func compileAuthoringVisualization(ctx compileContext, authoring dashboardauthor
 		return visualizationdefinition.Definition{}, fmt.Errorf("visualization has no authoring variant")
 	}
 	authored := *authoring.Chart
+	if err := validateVisualizationMetricTypes(authored, ctx.model); err != nil {
+		return visualizationdefinition.Definition{}, err
+	}
 	var (
 		spec visualizationir.VisualizationSpec
 		err  error
 	)
 	switch ctx.capability.Renderer {
 	case visualizationdefinition.RendererMapLibre:
-		spec, err = compileGeographicVisualizationSpec(authored)
+		spec, err = compileGeographicVisualizationSpec(authored, ctx.model)
 	default:
 		spec, err = compileBuiltInVisualizationSpec(ctx.visualID, authored, ctx.model)
 	}
@@ -130,12 +133,12 @@ func compiledVisualTitle(authored dashboardauthoring.Visual, id string, model *s
 	if authored.Title != "" {
 		return authored.Title
 	}
-	if model != nil && len(authored.Query.Measures) > 0 {
-		measureID := authored.Query.Measures[0].Field
-		if measure, err := model.ResolveMeasure(measureID); err == nil && strings.TrimSpace(measure.Label) != "" {
-			return measure.Label
+	if model != nil && len(authored.Query.Metrics) > 0 {
+		metricID := authored.Query.Metrics[0].Field
+		if metric, err := model.ResolveMetric(metricID); err == nil && strings.TrimSpace(metric.Label) != "" {
+			return metric.Label
 		}
-		if metric, ok := model.Metrics[measureID]; ok && strings.TrimSpace(metric.Label) != "" {
+		if metric, ok := model.Metrics[metricID]; ok && strings.TrimSpace(metric.Label) != "" {
 			return metric.Label
 		}
 	}

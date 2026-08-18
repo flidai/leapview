@@ -1,12 +1,12 @@
 # Combo chart
 
-Use a combo chart when related measures need different visual encodings.
+Use a combo chart when related metrics need different visual encodings.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
-## Multiple measures
+## Multiple metrics
 
-Select multiple `query.measures` to render related values against the same category axis. The combo shape assigns each measure its own series; this reference explicitly hides direct labels so the line remains readable against the columns.
+Select multiple `query.metrics` to render related values against the same category axis. The combo shape assigns each metric its own series; this reference explicitly hides direct labels so the line remains readable against the columns.
 
 {{< visual id="revenue_orders_combo" >}}
 
@@ -25,7 +25,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
         order_count: null
       sort:
@@ -52,7 +52,7 @@ visuals:
     query:
       dimensions:
         status: orders.status
-      measures:
+      metrics:
         review_score: null
         delivery_days: null
       sort:
@@ -62,7 +62,7 @@ visuals:
 
 ## Dual axes
 
-Enable `presentation.dual_axis` when the measures use different scales, then assign line and column marks explicitly with `series_types`.
+Enable `presentation.dual_axis` when the metrics use different scales, then assign line and column marks explicitly with `series_types`.
 
 {{< visual id="revenue_orders_dual_axis_combo" >}}
 
@@ -79,7 +79,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
         order_count: null
       sort:

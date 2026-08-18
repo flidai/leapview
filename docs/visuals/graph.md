@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic network
 
-Map two dimensions to source and target nodes, then use the measure as edge weight to reveal relationships between statuses and delivery buckets.
+Map two dimensions to source and target nodes, then use the metric as edge weight to reveal relationships between statuses and delivery buckets.
 
 {{< visual id="status_delivery_graph" >}}
 
@@ -26,7 +26,7 @@ visuals:
       dimensions:
         status: orders.status
         delivery_bucket: orders.delivery_bucket
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -49,7 +49,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -76,7 +76,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value

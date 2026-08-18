@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/stretchr/testify/require"
 )
@@ -38,17 +40,19 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
-				Grain:      "order_id",
+				Source: "orders", ModelName: "sales_orders",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Label: "Order ID"},
-					"revenue":  {Label: "Revenue"},
+					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
+					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"revenue": {Fact: "orders", Aggregation: "sum", Input: semanticmodel.MeasureInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "sales_orders"},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"revenue": {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
 		},
 	}
 	if err := model.Validate(); err != nil {
@@ -66,11 +70,234 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 	if len(columns) != 2 {
 		t.Fatalf("model schema column count = %d, want 2: %#v", len(columns), columns)
 	}
-	if columns[0].Name != "order_id" || columns[0].PhysicalType == "" || !columns[0].PrimaryKey || columns[0].Nullable == nil {
-		t.Fatalf("model order_id column = %#v, want physical type and primary key marker", columns[0])
+	if columns[0].Name != "order_id" || columns[0].PhysicalType == "" || columns[0].Nullable == nil {
+		t.Fatalf("model order_id column = %#v, want physical type", columns[0])
 	}
 	if columns[1].Name != "revenue" || columns[1].PhysicalType == "" || columns[1].Nullable == nil {
 		t.Fatalf("model revenue column = %#v, want physical type", columns[1])
+	}
+}
+
+func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "customers.csv"), []byte("customer_id,customer_state\nc1,SP\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	newModel := func() *semanticmodel.Model {
+		model := &semanticmodel.Model{
+			Name:              "operations",
+			DefaultConnection: "olist",
+			Connections:       map[string]semanticmodel.Connection{"olist": {Kind: "managed"}},
+			Sources: map[string]semanticmodel.Source{"olist_customers": {
+				Connection: "olist", Path: "customers.csv", Format: "csv",
+				Fields: map[string]semanticmodel.SourceField{
+					"customer_id":    {Description: "Customer identifier."},
+					"customer_state": {Description: "Customer state."},
+				},
+			}},
+			Tables: map[string]semanticmodel.Table{"operations_customers": {
+				ModelName: "olist_customers", Sources: []string{"olist_customers"},
+				Transform:   semanticmodel.Transform{SQL: "SELECT customer_id, customer_state AS state FROM source.olist_customers"},
+				Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+				GrainEntity: "customer",
+				Dimensions: map[string]semanticmodel.MetricDimension{
+					"customer_id": {Datatype: semanticmodel.DataTypeString},
+					"state":       {Datatype: semanticmodel.DataTypeString},
+				},
+			}},
+			Datasets: map[string]semanticmodel.SemanticDatasetSpec{"operations_customers": {Model: "olist_customers"}},
+		}
+		require.NoError(t, model.ValidateAuthored())
+		bindTestManagedRoot(model, "olist", dir)
+		return model
+	}
+	firstModel := newModel()
+	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = environment.Close() })
+	controller, err := workload.New(workload.DefaultConfig())
+	require.NoError(t, err)
+	t.Cleanup(func() { controller.Close() })
+	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "alias-schema-test", EstimatedMemoryBytes: 1})
+	require.NoError(t, err)
+	t.Cleanup(func() { lease.Release() })
+	first, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
+		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": firstModel}, Database: environment,
+	})
+	require.NoError(t, err)
+	snapshotID := first.DuckLakeSnapshotID()
+	require.Positive(t, snapshotID)
+	require.NoError(t, first.Close())
+
+	configureSnapshotSource := func(model *semanticmodel.Model) {
+		// A reopened serving generation may retain no source credentials or local
+		// source files. Keep the authored source external and make any attempted
+		// connection resolution fail; snapshot activation must only inspect model.*.
+		model.Connections["olist"] = semanticmodel.Connection{Kind: "postgres"}
+		external := model.Sources["olist_customers"]
+		external.Path = "customers.csv"
+		external.Object = "customers"
+		model.Sources["olist_customers"] = external
+		model.Connections["unavailable"] = semanticmodel.Connection{Kind: "managed", Root: filepath.Join(dir, "unavailable-after-refresh")}
+		model.Sources["unavailable_local"] = semanticmodel.Source{Connection: "unavailable", Path: "missing.csv", Format: "csv"}
+	}
+	secondModel := newModel()
+	authoredSecondModel := newModel()
+	configureSnapshotSource(secondModel)
+	configureSnapshotSource(authoredSecondModel)
+	resolver := &snapshotRejectingConnectionResolver{}
+	// No database lease is held here: the snapshot opener must acquire its own
+	// admitted lease from the workload context before DESCRIBE.
+	second, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
+		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": secondModel}, Database: environment,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	if err := second.VerifySemantic(lease.Context(), "semantic-model:operations"); err != nil {
+		t.Fatalf("snapshot verification with distinct dataset/model/source aliases: %v", err)
+	}
+	planner, ok := second.Planner("semantic-model:operations")
+	require.True(t, ok)
+	require.True(t, planner.CompiledModel().MatchesModel(authoredSecondModel), "snapshot discovery changed authored planner fingerprint")
+	require.Zero(t, resolver.calls.Load(), "snapshot activation reacquired external source")
+
+	badModel := newModel()
+	badTable := badModel.Tables["operations_customers"]
+	badTable.ModelName = "missing_snapshot_table"
+	badModel.Tables["operations_customers"] = badTable
+	badModel.Datasets["operations_customers"] = semanticmodel.SemanticDatasetSpec{Model: "missing_snapshot_table"}
+	cachePool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cachePool.Close() })
+	cacheScope, err := cachePool.OpenScope(resultcache.ScopeID{RuntimeID: "snapshot-discovery-failure"})
+	require.NoError(t, err)
+	_, err = OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
+		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": badModel}, Database: environment,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, QueryCache: cacheScope,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "snapshot schema discovery")
+	// Discovery runs after planner/view construction. A failure must close the
+	// partially built ProjectRuntime, including its generation cache scope.
+	reopened, reopenErr := cachePool.OpenScope(resultcache.ScopeID{RuntimeID: "snapshot-discovery-failure"})
+	require.NoError(t, reopenErr, "post-construction discovery failure leaked cache scope")
+	reopened.Close()
+}
+
+type snapshotRejectingConnectionResolver struct {
+	calls atomic.Int32
+}
+
+func (r *snapshotRejectingConnectionResolver) Resolve(context.Context, string, semanticmodel.Connection) (semanticmodel.Connection, error) {
+	r.calls.Add(1)
+	return semanticmodel.Connection{}, fmt.Errorf("external source must not be reacquired during snapshot activation")
+}
+
+func TestPhysicalProjectModelDeduplicatesDatasetAliases(t *testing.T) {
+	table := semanticmodel.Table{
+		Source: "orders",
+		Entities: map[string]semanticmodel.ModelEntitySpec{
+			"order_id": {Type: "primary", Fields: []string{"order_id"}},
+		},
+		GrainEntity: "order_id",
+	}
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders":    func() semanticmodel.Table { table.ModelName = "sales_orders"; return table }(),
+			"purchases": func() semanticmodel.Table { table.ModelName = "sales_orders"; return table }(),
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders":    {Model: "sales_orders"},
+			"purchases": {Model: "sales_orders"},
+		},
+	}
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(physical.Tables); got != 1 {
+		t.Fatalf("physical table count = %d, want one shared Model table", got)
+	}
+	if _, ok := physical.Tables["sales_orders"]; !ok {
+		t.Fatalf("physical tables = %#v, want sales_orders", physical.Tables)
+	}
+	order, err := ProjectModelTableDependencyOrder(map[string]*semanticmodel.Model{"sales": model}, "orders")
+	if err != nil {
+		t.Fatalf("dependency order by semantic alias: %v", err)
+	}
+	if len(order) != 1 || order[0] != "sales_orders" {
+		t.Fatalf("dependency order = %#v, want sales_orders", order)
+	}
+}
+
+func TestPhysicalProjectModelPreservesCanonicalPhysicalDependencies(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders":  {ModelName: "sales_orders", Source: "orders", ModelDependencies: nil},
+			"summary": {ModelName: "sales_summary", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders":  {Model: "sales_orders"},
+			"summary": {Model: "sales_summary"},
+		},
+	}
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := physical.Tables["sales_summary"].ModelDependencies; len(got) != 1 || got[0] != "sales_orders" {
+		t.Fatalf("physical dependencies = %#v, want sales_orders", got)
+	}
+}
+
+func TestPhysicalProjectModelResolvesDistinctAliasPhysicalDependencies(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders_alias":  {ModelName: "sales_orders", Source: "orders"},
+			"summary_alias": {ModelName: "sales_summary", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders_alias":  {Model: "sales_orders"},
+			"summary_alias": {Model: "sales_summary"},
+		},
+	}
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	if err != nil {
+		t.Fatalf("physicalProjectModel() error = %v", err)
+	}
+	if got := physical.Tables["sales_summary"].ModelDependencies; len(got) != 1 || got[0] != "sales_orders" {
+		t.Fatalf("physical dependencies = %#v, want sales_orders", got)
+	}
+	order, err := ProjectModelTableDependencyOrder(map[string]*semanticmodel.Model{"sales": model}, "summary_alias")
+	if err != nil {
+		t.Fatalf("ProjectModelTableDependencyOrder() error = %v", err)
+	}
+	if want := []string{"sales_orders", "sales_summary"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("dependency order = %#v, want %#v", order, want)
+	}
+}
+
+func TestPhysicalProjectModelRejectsDatasetAliasAsPhysicalDependency(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"sales_orders":  {ModelName: "sales_summary"},
+			"orders_alias":  {ModelName: "orders_physical"},
+			"derived_alias": {ModelName: "sales_derived", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"sales_orders":  {Model: "sales_summary"},
+			"orders_alias":  {Model: "orders_physical"},
+			"derived_alias": {Model: "sales_derived"},
+		},
+	}
+	if _, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model}); err == nil || !strings.Contains(err.Error(), "unknown model dependency") {
+		t.Fatalf("physicalProjectModel() error = %v, want unknown physical dependency", err)
 	}
 }
 
@@ -91,15 +318,16 @@ func TestDiscoverSchemasIgnoresAttachedDatabaseSchemas(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
+				Source: "orders", ModelName: "orders",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Label: "Order ID"},
-					"revenue":  {Label: "Revenue"},
+					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
+					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics:  map[string]semanticmodel.Metric{},
 	}
 	if err := model.Validate(); err != nil {
 		t.Fatal(err)
@@ -153,17 +381,17 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
-				Grain:      "order_id",
+				Source: "orders", ModelName: "orders",
+				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Label: "Order ID"},
-					"revenue":  {Label: "Revenue"},
+					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
+					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"revenue": {Fact: "orders", Aggregation: "sum", Input: semanticmodel.MeasureInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics: map[string]semanticmodel.Metric{
+			"revenue": {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
 		},
 	}
 	if err := model.Validate(); err != nil {
@@ -784,11 +1012,12 @@ func TestSourceRelationResolvesSourcePlans(t *testing.T) {
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", PrimaryKey: "order_id", Grain: "order_id",
-				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Expr: "order_id"}},
+				Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"orders": {Fact: "orders", Label: "Orders", Aggregation: "count", Empty: "zero"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Metrics:  map[string]semanticmodel.Metric{"orders": {Type: "aggregate", Dataset: "orders", Label: "Orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"}},
 	}
 	if err := model.Validate(); err != nil {
 		t.Fatal(err)

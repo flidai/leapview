@@ -1000,7 +1000,7 @@ type DataExploreAgentContextSignal struct {
 	Dimensions []string                  `json:"dimensions"`
 	Filters    []DataExploreFilterSignal `json:"filters"`
 	Limit      int64                     `json:"limit"`
-	Measures   []string                  `json:"measures"`
+	Metrics    []string                  `json:"metrics"`
 	Sort       []DataExploreSortSignal   `json:"sort"`
 	Time       *DataExploreTimeSignal    `json:"time,omitempty"`
 }
@@ -1011,7 +1011,7 @@ type DataExploreCommand struct {
 	Dimensions   []string                  `json:"dimensions"`
 	Filters      []DataExploreFilterSignal `json:"filters"`
 	Limit        int64                     `json:"limit"`
-	Measures     []string                  `json:"measures"`
+	Metrics      []string                  `json:"metrics"`
 	ModelID      *string                   `json:"modelId,omitempty"`
 	RequestSeq   int64                     `json:"requestSeq"`
 	ResetVersion int64                     `json:"resetVersion"`
@@ -1020,18 +1020,20 @@ type DataExploreCommand struct {
 }
 
 type DataExploreDatasetSignal struct {
-	Description *string `json:"description,omitempty"`
-	FieldCount  int64   `json:"fieldCount"`
-	Grain       *string `json:"grain,omitempty"`
-	ID          string  `json:"id"`
-	Title       string  `json:"title"`
+	Description *string                          `json:"description,omitempty"`
+	Entities    []SemanticModelGraphEntitySignal `json:"entities"`
+	FieldCount  int64                            `json:"fieldCount"`
+	GrainEntity string                           `json:"grainEntity"`
+	GrainFields []string                         `json:"grainFields"`
+	ID          string                           `json:"id"`
+	Title       string                           `json:"title"`
 }
 
 type DataExploreFieldSignal struct {
 	Compatible          bool      `json:"compatible"`
 	CompatibilityReason *string   `json:"compatibilityReason,omitempty"`
 	Description         *string   `json:"description,omitempty"`
-	Fact                *string   `json:"fact,omitempty"`
+	Dataset             *string   `json:"dataset,omitempty"`
 	ID                  string    `json:"id"`
 	Kind                string    `json:"kind"`
 	Label               string    `json:"label"`
@@ -1043,7 +1045,7 @@ type DataExploreFieldSignal struct {
 }
 
 type DataExploreFilterSignal struct {
-	Fact     *string  `json:"fact,omitempty"`
+	Dataset  *string  `json:"dataset,omitempty"`
 	Field    string   `json:"field"`
 	Operator string   `json:"operator"`
 	Values   []string `json:"values"`
@@ -1500,28 +1502,37 @@ type SemanticModelGraphEdgeSignal struct {
 	TargetField string `json:"targetField"`
 }
 
+type SemanticModelGraphEntitySignal struct {
+	Fields []string `json:"fields"`
+	Grain  *bool    `json:"grain,omitempty"`
+	Name   string   `json:"name"`
+	Type   string   `json:"type"`
+}
+
 type SemanticModelGraphFieldSignal struct {
+	Entities      *[]string `json:"entities,omitempty"`
+	Grain         *bool     `json:"grain,omitempty"`
 	Join          *bool     `json:"join,omitempty"`
 	Label         *string   `json:"label,omitempty"`
 	Name          string    `json:"name"`
-	PrimaryKey    *bool     `json:"primaryKey,omitempty"`
 	Relationships *[]string `json:"relationships,omitempty"`
 	Type          *string   `json:"type,omitempty"`
 }
 
 type SemanticModelGraphNodeSignal struct {
-	Badges      *[]string                       `json:"badges,omitempty"`
-	Description *string                         `json:"description,omitempty"`
-	Fields      []SemanticModelGraphFieldSignal `json:"fields"`
-	ID          string                          `json:"id"`
-	PrimaryKey  *string                         `json:"primaryKey,omitempty"`
-	Title       string                          `json:"title"`
+	Badges      *[]string                         `json:"badges,omitempty"`
+	Description *string                           `json:"description,omitempty"`
+	Entities    *[]SemanticModelGraphEntitySignal `json:"entities,omitempty"`
+	Fields      []SemanticModelGraphFieldSignal   `json:"fields"`
+	GrainEntity *string                           `json:"grainEntity,omitempty"`
+	ID          string                            `json:"id"`
+	Title       string                            `json:"title"`
 }
 
 type SemanticModelGraphSignal struct {
-	Edges []SemanticModelGraphEdgeSignal `json:"edges"`
-	Facts *[]string                      `json:"facts,omitempty"`
-	Nodes []SemanticModelGraphNodeSignal `json:"nodes"`
+	Edges    []SemanticModelGraphEdgeSignal `json:"edges"`
+	Datasets *[]string                      `json:"datasets,omitempty"`
+	Nodes    []SemanticModelGraphNodeSignal `json:"nodes"`
 }
 
 type SidebarActionSignal struct {

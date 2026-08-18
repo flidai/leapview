@@ -1649,7 +1649,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       targets: interaction.targets,
       mappings: interaction.mappings.map((mapping) => ({
         field: mapping.targetFieldID,
-        ...(mapping.targetFactID ? { fact: mapping.targetFactID } : {}),
+        ...(mapping.targetDatasetID ? { dataset: mapping.targetDatasetID } : {}),
         ...(mapping.grain ? { grain: mapping.grain } : {}),
         value: mapping.source.field,
         ...(mapping.label ? { label: mapping.label.field } : {}),

@@ -56,7 +56,7 @@ type OptionContext struct {
 
 type OptionQuery struct {
 	Field        string
-	Fact         string
+	Dataset      string
 	ValueKind    ValueKind
 	Dependencies map[string]Expression
 	Search       string
@@ -142,7 +142,7 @@ func (engine *OptionEngine) Page(ctx context.Context, optionContext OptionContex
 		after = cursor.After
 	}
 	query := OptionQuery{
-		Field: optionContext.Definition.Field, Fact: optionContext.Definition.Fact,
+		Field: optionContext.Definition.Field, Dataset: optionContext.Definition.Dataset,
 		ValueKind: optionContext.Definition.ValueKind, Dependencies: dependencies,
 		Search: search, After: after, Limit: limit,
 	}

@@ -240,10 +240,10 @@ func projectDeterministic(project Project) bool {
 	// context-dependent function would otherwise silently become reusable. The
 	// compiler therefore emits positive evidence only for the narrow static
 	// subset whose execution contains no authored SQL or expressions: direct
-	// source-backed tables and field-based semantic measures. Unknown or
+	// source-backed tables and non-expression semantic metrics. Unknown or
 	// hand-built plans remain false and force a refresh.
 	for _, table := range project.Models {
-		if table.SQL != "" || table.Transform.SQL != "" || table.Source == "" {
+		if table.Transform.SQL != "" || table.Source == "" {
 			return false
 		}
 		source, ok := project.Sources[table.Source]
@@ -254,18 +254,8 @@ func projectDeterministic(project Project) bool {
 		if !ok || !connected || connection.Kind != "managed" {
 			return false
 		}
-		for _, dimension := range table.Dimensions {
-			if dimension.Expr != "" || dimension.Expression != "" {
-				return false
-			}
-		}
 	}
 	for _, semantic := range project.SemanticModels {
-		for _, measure := range semantic.Measures {
-			if measure.Input.Expression != "" {
-				return false
-			}
-		}
 		for _, metric := range semantic.Metrics {
 			if metric.Expression != "" {
 				return false

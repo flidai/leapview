@@ -1,29 +1,33 @@
 package query
 
-import semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+import (
+	"fmt"
+
+	"github.com/flidai/leapview/internal/analytics/query/planir"
+)
 
 type Field struct {
 	Field string
 	Alias string
 }
 
-type ResolvedMeasure struct {
-	Field           string
-	Name            string
-	Label           string
-	Description     string
-	Fact            string
-	Aggregation     string
-	InputField      string
-	InputExpr       string
-	InputExpression *semanticmodel.Expression
-	Filters         []MeasureFilter
-	Empty           string
-	Unit            string
-	Format          string
+type resolvedAggregateMetric struct {
+	Field         string
+	Name          string
+	Label         string
+	Description   string
+	Dataset       string
+	Aggregation   string
+	InputField    string
+	Filters       []metricFilter
+	NamedFilters  []CompiledNamedFilter
+	Empty         string
+	Unit          string
+	Format        string
+	TimeDimension string
 }
 
-type MeasureFilter struct {
+type metricFilter struct {
 	Field    string
 	Operator string
 	Values   []any
@@ -36,19 +40,23 @@ type Time struct {
 }
 
 type Filter struct {
-	Field    string
-	Fact     string
-	Operator string
-	Values   []any
-	Groups   []FilterGroup
-	Spatial  *SpatialFilter
+	Field        string
+	Dataset      string
+	Operator     string
+	Values       []any
+	Path         []string
+	Not          bool
+	RequireMatch bool
+	MatchGuard   bool
+	Groups       []FilterGroup
+	Spatial      *SpatialFilter
 }
 
 type SpatialFilter struct {
 	Kind           string
 	LatitudeField  string
 	LongitudeField string
-	Fact           string
+	Dataset        string
 	West           float64
 	South          float64
 	East           float64
@@ -78,9 +86,9 @@ type ColumnMask struct {
 }
 
 type Request struct {
-	Table       string
+	Dataset     string
 	Dimensions  []Field
-	Measures    []Field
+	Metrics     []Field
 	Time        Time
 	Filters     []Filter
 	Sort        []Sort
@@ -88,7 +96,7 @@ type Request struct {
 	Limit       int
 	Offset      int
 	// SpatialBucket replaces the selected coordinate dimensions with globally
-	// aligned Web-Mercator cell indexes before semantic measure aggregation.
+	// aligned Web-Mercator cell indexes before semantic metric aggregation.
 	// It is an internal governed planning primitive for vector tiles.
 	SpatialBucket *SpatialBucket
 }
@@ -101,8 +109,8 @@ type SpatialBucket struct {
 }
 
 type SpatialTileRequest struct {
-	Table        string
-	Measures     []Field
+	Dataset      string
+	Metrics      []Field
 	Filters      []Filter
 	ColumnMasks  []ColumnMask
 	Latitude     Field
@@ -117,9 +125,9 @@ type SpatialTileRequest struct {
 }
 
 type SpatialTileRawRequest struct {
-	Table        string
+	Dataset      string
 	Dimensions   []Field
-	Measures     []Field
+	Metrics      []Field
 	Identity     []Field
 	Filters      []Filter
 	ColumnMasks  []ColumnMask
@@ -135,9 +143,9 @@ type SpatialTileRawRequest struct {
 }
 
 type SpatialTileBudgetRequest struct {
-	Table        string
+	Dataset      string
 	Dimensions   []Field
-	Measures     []Field
+	Metrics      []Field
 	Identity     []Field
 	Filters      []Filter
 	ColumnMasks  []ColumnMask
@@ -151,8 +159,8 @@ type SpatialTileBudgetRequest struct {
 }
 
 type SpatialMetadataRequest struct {
-	Table          string
-	Measures       []Field
+	Dataset        string
+	Metrics        []Field
 	Filters        []Filter
 	ColumnMasks    []ColumnMask
 	Latitude       Field
@@ -163,9 +171,9 @@ type SpatialMetadataRequest struct {
 }
 
 type RowRequest struct {
-	Table       string
+	Dataset     string
 	Dimensions  []Field
-	Measures    []Field
+	Metrics     []Field
 	Filters     []Filter
 	Sort        []Sort
 	ColumnMasks []ColumnMask
@@ -174,9 +182,9 @@ type RowRequest struct {
 }
 
 type RawValueRequest struct {
-	Table       string
+	Dataset     string
 	Dimensions  []Field
-	Measure     Field
+	Metric      Field
 	Filters     []Filter
 	Sort        []Sort
 	ColumnMasks []ColumnMask
@@ -184,7 +192,7 @@ type RawValueRequest struct {
 }
 
 type CountRequest struct {
-	Table   string
+	Dataset string
 	Filters []Filter
 }
 
@@ -193,17 +201,31 @@ type Plan struct {
 	Args                 []any
 	Columns              []string
 	Mode                 string
-	Facts                []string
+	Datasets             []string
 	StitchDimensions     []string
 	PhysicalDependencies []string
 	RelationshipPaths    []string
 	// EffectiveOrdering is the total ordering applied to the result. Explicit
 	// caller sorts are kept first; selected output columns complete ties.
 	EffectiveOrdering []Sort
+	// IR is the validated, renderer-independent graph used by every semantic
+	// query path, including row, count, raw-value, aggregate, bundle, and
+	// spatial planning boundaries.
+	IR *planir.Graph
+}
+
+// Explain returns the deterministic typed plan explanation. SQL is included
+// only as the renderer result; callers should use this for audit/debug output
+// instead of depending on CTE naming or formatting details.
+func (p Plan) Explain() (string, error) {
+	if p.IR == nil {
+		return "", fmt.Errorf("plan has no PlanIR")
+	}
+	return p.IR.Explain()
 }
 
 // BundleRequest is one independently shaped aggregate in a shared governed
-// single-fact scan. ID is an opaque consumer key and must be unique in a
+// single-dataset scan. ID is an opaque consumer key and must be unique in a
 // bundle.
 type BundleRequest struct {
 	ID      string
@@ -218,9 +240,10 @@ type BundlePlan struct {
 }
 
 type BundleBranch struct {
-	ID      string
-	Ordinal int
-	Columns []BundleColumn
+	ID          string
+	Ordinal     int
+	Columns     []BundleColumn
+	Fingerprint string
 }
 
 type BundleColumn struct {

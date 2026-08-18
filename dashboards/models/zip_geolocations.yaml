@@ -7,30 +7,29 @@ metadata:
   description: Robust centroids derived from Olist geolocation observations after rejecting coordinates outside Brazil.
 spec:
   description: One deterministic median coordinate per five-digit Brazilian ZIP-code prefix.
-  primaryKey: zip_prefix
   sources:
   - olist.geolocation
   fields:
     zip_prefix:
+      datatype: String
       label: ZIP prefix
       description: Stable five-digit Brazilian ZIP-code prefix.
-      type: string
     city:
+      datatype: String
       label: City
       description: Deterministic city label associated with the ZIP prefix.
-      type: string
     state:
+      datatype: String
       label: State
       description: Brazilian state abbreviation associated with the ZIP prefix.
-      type: string
     latitude:
+      datatype: Float
       label: Latitude
       description: Median latitude across valid observations for the ZIP prefix.
-      type: number
     longitude:
+      datatype: Float
       label: Longitude
       description: Median longitude across valid observations for the ZIP prefix.
-      type: number
   transform:
     sql: |
       WITH normalized AS (
@@ -50,3 +49,10 @@ spec:
         median(CASE WHEN latitude BETWEEN -34 AND 6 AND longitude BETWEEN -74 AND -34 THEN longitude END) AS longitude
       FROM normalized
       GROUP BY zip_prefix
+  entities:
+    zip_prefix:
+      type: primary
+      fields:
+      - zip_prefix
+  grain:
+    entity: zip_prefix

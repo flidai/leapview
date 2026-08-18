@@ -363,18 +363,18 @@ type QueryVisualFilterGroupInput struct {
 
 type QueryVisualFilterInput struct {
 	Field    *string                        `json:"field,omitempty"`
-	Fact     *string                        `json:"fact,omitempty"`
+	Dataset  *string                        `json:"dataset,omitempty"`
 	Operator *string                        `json:"operator,omitempty"`
 	Values   *[]string                      `json:"values,omitempty"`
 	Groups   *[]QueryVisualFilterGroupInput `json:"groups,omitempty"`
 }
 
 type QueryVisualFilterUsage struct {
-	Operator       string    `json:"operator"`
-	FieldID        string    `json:"fieldId"`
-	ResolvedFactID *string   `json:"resolvedFactId,omitempty"`
-	Values         *[]string `json:"values,omitempty"`
-	Path           *[]int32  `json:"path,omitempty"`
+	Operator          string    `json:"operator"`
+	FieldID           string    `json:"fieldId"`
+	ResolvedDatasetID *string   `json:"resolvedDatasetId,omitempty"`
+	Values            *[]string `json:"values,omitempty"`
+	Path              *[]int32  `json:"path,omitempty"`
 }
 
 type QueryVisualInput struct {
@@ -384,7 +384,7 @@ type QueryVisualInput struct {
 	Type            QueryVisualType           `json:"type"`
 	Dimensions      *[]QueryVisualFieldRef    `json:"dimensions,omitempty"`
 	Series          *QueryVisualFieldRef      `json:"series,omitempty"`
-	Measures        *[]QueryVisualFieldRef    `json:"measures,omitempty"`
+	Metrics         *[]QueryVisualFieldRef    `json:"metrics,omitempty"`
 	Fields          *[]QueryVisualFieldRef    `json:"fields,omitempty"`
 	Rows            *[]QueryVisualFieldRef    `json:"rows,omitempty"`
 	Columns         *[]QueryVisualTableColumn `json:"columns,omitempty"`
@@ -471,7 +471,7 @@ type QueryVisualTableColumn struct {
 	Align       *string                           `json:"align,omitempty"`
 	Role        *string                           `json:"role,omitempty"`
 	Group       *string                           `json:"group,omitempty"`
-	Measure     *string                           `json:"measure,omitempty"`
+	Metric      *string                           `json:"metric,omitempty"`
 	ColumnValue *string                           `json:"columnValue,omitempty"`
 	Width       *int32                            `json:"width,omitempty"`
 	Format      *string                           `json:"format,omitempty"`

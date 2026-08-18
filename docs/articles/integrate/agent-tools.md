@@ -118,12 +118,12 @@ The result combines the normalized item envelope with type-specific `details`:
 - pages include their components;
 - visuals include the compiled definition, query fields, columns, and placement;
 - filters include their field, configuration, and placement;
-- semantic models separately count tables, physical fields, conformed dimensions, facts, atomic measures, metrics, and relationships; they also include relationship definitions and authorized dashboard usage;
-- semantic tables include source, grain, keys, fact/dimension roles, and counts;
+- semantic models separately count datasets, physical fields, dimensions, metrics, filters, and relationships; they also include relationship definitions and authorized dashboard usage;
+- semantic datasets include their bound Model, grain, entities, and counts;
 - model-level fields include their bindings to physical fields and relationship paths;
-- table fields include their expression, source field, key status, grain, and nullability when known;
-- atomic measures include their fact ref, aggregation, input, filters, empty-result behavior, and field dependencies;
-- derived metrics include their expression and measure dependencies.
+- dataset fields include their expression, source field, key status, grain, and nullability when known;
+- aggregate metrics include their dataset ref, aggregation, input, governed filters, empty-result behavior, and field dependencies;
+- derived metrics include their expression and metric dependencies.
 
 The result is a compact domain projection, not the raw deployed asset payload.
 
@@ -148,11 +148,11 @@ Returned locations include dashboard and page names plus a browser `href`; the r
 
 Use the capabilities returned with a catalog item to choose the next tool.
 
-- Use `query_semantic_model` with a semantic-model ref and the field and measure IDs discovered through catalog browsing. It returns governed row data and supports bounded pagination. Agent calls default to 25 rows and accept at most 50 rows per page even though the corresponding REST operation supports larger application-oriented pages.
+- Use `query_semantic_model` with a semantic-model ref and the field and metric IDs discovered through catalog browsing. It returns governed row data and supports bounded pagination. Agent calls default to 25 rows and accept at most 50 rows per page even though the corresponding REST operation supports larger application-oriented pages.
 - Use `query_dashboard_visual` with exact project and dashboard refs plus the visual location of an existing visual. It preserves the dashboard definition, filters, authorization, and data-policy boundary. The agent receives a compact analytical rowset—not the renderer envelope—with the visual title/type, semantic columns, normalized applied filters, status and diagnostics, cardinality/completeness, query provenance, and freshness. Calls return at most 50 rows per agent page; follow `nextCursor` when `hasMore` is true.
 - Use `query_visual` when no saved visual fits. Provide exact project and semantic-model refs, a dataset, visual type, semantic fields, and optional governed semantic filters. Inline data and arbitrary expressions are rejected. Built-in chat and MCP receive the same compact generated result: field and filter refs, units and formats when defined, row completeness, status and diagnostics, query provenance, freshness, and the display signal. LeapView retains the renderer-independent visualization artifact only as display content; the call does not save or mutate the dashboard.
 
-Semantic query rows are positional. Read each cell using the column at the same index. Precision-sensitive numbers remain strings, while SQL `NULL` is JSON `null` and is distinct from a genuine empty string. Column descriptors identify the governed field or measure ref, label, semantic kind, data type, nullability, unit, and format when defined; these descriptors come from the semantic model and table schema rather than values sampled from the current page.
+Semantic query rows are positional. Read each cell using the column at the same index. Precision-sensitive numbers remain strings, while SQL `NULL` is JSON `null` and is distinct from a genuine empty string. Column descriptors identify the governed field or metric ref, label, semantic kind, data type, nullability, unit, and format when defined; these descriptors come from the semantic model and table schema rather than values sampled from the current page.
 
 Each semantic result includes `queryId`, `servingSnapshot`, and `completeness.returnedRows`/`hasMore`. When a successful data version is recorded, `freshness` also includes `lastSuccessfulRefreshAt`, DuckLake snapshot ID, serving-state ID, publish-or-refresh source, and whether that version matches the queried serving snapshot. Refresh time is deliberately not called “data as of”: it does not prove the upstream event-time watermark.
 

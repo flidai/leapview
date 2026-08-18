@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic
 
-Use one categorical dimension and one measure to show each status as a share of the whole, with an explicit center annotation identifying the represented total.
+Use one categorical dimension and one metric to show each status as a share of the whole, with an explicit center annotation identifying the represented total.
 
 {{< visual id="orders" >}}
 
@@ -23,16 +23,16 @@ visuals:
     query:
       dimensions:
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
           direction: desc
 ```
 
-## Alternate measure
+## Alternate metric
 
-Replace the category and measure to compare revenue composition without changing the donut renderer or query shape.
+Replace the category and metric to compare revenue composition without changing the donut renderer or query shape.
 
 {{< visual id="category_donut" >}}
 
@@ -44,7 +44,7 @@ visuals:
     query:
       dimensions:
         category: orders.category
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: value
@@ -70,7 +70,7 @@ visuals:
     query:
       dimensions:
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value

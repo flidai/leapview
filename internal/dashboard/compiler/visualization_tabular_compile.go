@@ -29,17 +29,17 @@ func compileTabularVisualizationSpec(id, visualType string, authored dashboardau
 		role := visualizationir.VisualizationFieldRoleDimension
 		if _, ok := identityAliases[column.Key]; ok {
 			role = visualizationir.VisualizationFieldRoleIdentity
-		} else if column.Role == "measure" || column.Align == "right" {
-			role = visualizationir.VisualizationFieldRoleMeasure
+		} else if column.Role == "metric" || column.Align == "right" {
+			role = visualizationir.VisualizationFieldRoleMetric
 		}
 		fields[index] = visualizationir.VisualizationField{
 			ID: column.Key, Role: role, DataType: compiledGridDataType(column), Nullable: true,
 			Label: firstNonEmpty(column.Label, column.Key), SourceRef: optionalString(sourceByAlias[column.Key]), Format: compiledGridFormat(column),
-			Grid: &visualizationir.VisualizationGridFieldMetadata{Group: optionalString(column.Group), Measure: optionalString(column.Measure), ColumnValue: optionalString(column.ColumnValue), Formatting: compiledGridFormatting(column.Formatting)},
+			Grid: &visualizationir.VisualizationGridFieldMetadata{Group: optionalString(column.Group), Metric: optionalString(column.Metric), ColumnValue: optionalString(column.ColumnValue), Formatting: compiledGridFormatting(column.Formatting)},
 		}
 		tableColumns[index] = visualizationir.TableVisualizationColumn{
 			Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: column.Key}, Label: firstNonEmpty(column.Label, column.Key),
-			Group: optionalString(column.Group), Measure: optionalString(column.Measure), ColumnValue: optionalString(column.ColumnValue),
+			Group: optionalString(column.Group), Metric: optionalString(column.Metric), ColumnValue: optionalString(column.ColumnValue),
 			Formatting: compiledGridFormatting(column.Formatting),
 		}
 		if column.Width > 0 {
@@ -72,16 +72,16 @@ func compileTabularVisualizationSpec(id, visualType string, authored dashboardau
 		return out
 	}
 	formatting := map[string][]visualizationir.TableVisualizationFormattingRule{}
-	for field, rules := range authored.MeasureFormatting {
+	for field, rules := range authored.MetricFormatting {
 		formatting[fieldAlias(field)] = compiledGridFormatting(rules)
 	}
 	switch visualType {
 	case "matrix":
 		base.Kind = "matrix"
-		return visualizationir.VisualizationSpec{Value: &visualizationir.MatrixVisualizationSpec{VisualizationSpecBase: base, Kind: "matrix", Rows: refs(binding.Matrix.Rows), Columns: refs(binding.Matrix.Columns), Measures: refs(binding.Matrix.Measures), MeasureFormatting: formatting, Presentation: presentation}}, nil
+		return visualizationir.VisualizationSpec{Value: &visualizationir.MatrixVisualizationSpec{VisualizationSpecBase: base, Kind: "matrix", Rows: refs(binding.Matrix.Rows), Columns: refs(binding.Matrix.Columns), Metrics: refs(binding.Matrix.Metrics), MetricFormatting: formatting, Presentation: presentation}}, nil
 	case "pivot":
 		base.Kind = "pivot"
-		return visualizationir.VisualizationSpec{Value: &visualizationir.PivotVisualizationSpec{VisualizationSpecBase: base, Kind: "pivot", Rows: refs(binding.Pivot.Rows), Columns: refs(binding.Pivot.Columns), Measures: refs(binding.Pivot.Measures), MeasureFormatting: formatting, Presentation: presentation}}, nil
+		return visualizationir.VisualizationSpec{Value: &visualizationir.PivotVisualizationSpec{VisualizationSpecBase: base, Kind: "pivot", Rows: refs(binding.Pivot.Rows), Columns: refs(binding.Pivot.Columns), Metrics: refs(binding.Pivot.Metrics), MetricFormatting: formatting, Presentation: presentation}}, nil
 	default:
 		sortKey := authored.DefaultSort.Key
 		if sortKey == "" {
@@ -99,11 +99,11 @@ func queryBindingFields(binding visualizationdefinition.QueryBinding) []visualiz
 	case visualizationdefinition.QueryMatrix:
 		fields := append([]visualizationdefinition.FieldBinding(nil), binding.Matrix.Rows...)
 		fields = append(fields, binding.Matrix.Columns...)
-		return append(fields, binding.Matrix.Measures...)
+		return append(fields, binding.Matrix.Metrics...)
 	case visualizationdefinition.QueryPivot:
 		fields := append([]visualizationdefinition.FieldBinding(nil), binding.Pivot.Rows...)
 		fields = append(fields, binding.Pivot.Columns...)
-		return append(fields, binding.Pivot.Measures...)
+		return append(fields, binding.Pivot.Metrics...)
 	default:
 		return nil
 	}
