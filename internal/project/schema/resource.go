@@ -172,6 +172,8 @@ var (
 	resourceNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
 )
 
+const sourceFreshnessConstraint = `spec: {freshness?: ({warningAfter!: _} | {errorAfter!: _} | {warningAfter!: _, errorAfter!: _})}`
+
 // validateGeneratedMetadata retains the stable resource identity constraints
 // that are not represented in the generated JSON Schema yet. These checks are
 // intentionally applied after generated structural/union validation so the
@@ -247,42 +249,7 @@ func validateGeneratedJSON(kind Kind, filename string, root *yaml.Node, content 
 	if err := validateGeneratedCUE(kind, value); err != nil {
 		return resourceDiagnostic(filename, root, "schema.generated", "generated JSON Schema/CUE confirmation failed: "+err.Error())
 	}
-	if err := validateFreshnessThreshold(filename, root, kind, value); err != nil {
-		return err
-	}
 	return nil
-}
-
-// validateFreshnessThreshold is a contextual project invariant. The generated
-// TypeSpec schema owns the freshness shape; this cross-field rule requires at
-// least one threshold without mutating generated JSON Schema or DTOs.
-func validateFreshnessThreshold(filename string, root *yaml.Node, kind Kind, value any) error {
-	if kind != KindSource {
-		return nil
-	}
-	envelope, ok := value.(map[string]any)
-	if !ok {
-		return nil
-	}
-	spec, ok := envelope["spec"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	freshness, ok := spec["freshness"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	if _, warning := freshness["warningAfter"]; warning {
-		return nil
-	}
-	if _, failure := freshness["errorAfter"]; failure {
-		return nil
-	}
-	node := yamlNodeAtPath(root, []string{"spec", "freshness"})
-	if node == nil {
-		node = root
-	}
-	return &Error{Diagnostics: []Diagnostic{{File: filename, Line: node.Line, Column: node.Column, Severity: SeverityError, Code: "schema.contract", FieldPath: "spec.freshness", Message: "freshness requires warningAfter or errorAfter"}}}
 }
 
 // decodeJSONForCUE preserves integral JSON numbers as Go integers before they
@@ -347,7 +314,17 @@ func validateGeneratedCUE(kind Kind, value any) error {
 		return err
 	}
 	instance := ctx.Encode(value)
-	if err := imported.Unify(instance).Validate(cue.Final()); err != nil {
+	constraint := ctx.CompileString("{}")
+	if kind == KindSource {
+		// Freshness is the only contextual Source rule. Its structural fields
+		// come from the generated schema; this static constraint merely requires
+		// at least one threshold whenever the optional freshness block is present.
+		constraint = ctx.CompileString(sourceFreshnessConstraint)
+	}
+	if err := constraint.Err(); err != nil {
+		return err
+	}
+	if err := imported.Unify(constraint).Unify(instance).Validate(cue.Final()); err != nil {
 		return err
 	}
 	return nil

@@ -15,6 +15,7 @@ import (
 	cueerrors "cuelang.org/go/cue/errors"
 	cuejsonschema "cuelang.org/go/encoding/jsonschema"
 	cueyaml "cuelang.org/go/encoding/yaml"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"gopkg.in/yaml.v3"
 )
 
@@ -96,12 +97,11 @@ func ValidateFile(kind Kind, path string) error {
 }
 
 func ValidateBytes(kind Kind, filename string, content []byte) error {
-	// Connection and Source structure is owned by the generated TypeSpec
-	// contracts. ValidateBytes is also called directly by schema tests and
-	// callers, so route those kinds through the same generated JSON Schema
-	// boundary used by DecodeResource. Model remains on the legacy CUE path
-	// until its authoring cutover (LEA-428).
-	if kind == KindConnection || kind == KindSource {
+	// Connection, Source, and Model structure is owned by the generated
+	// TypeSpec contracts. ValidateBytes is also called directly by schema tests
+	// and callers, so route all three kinds through the same generated JSON
+	// Schema boundary used by DecodeResource.
+	if kind == KindConnection || kind == KindSource || kind == KindModel {
 		return validateGeneratedResource(kind, filename, content)
 	}
 	ctx, value, definition, err := compiledDefinition(kind)
@@ -129,6 +129,9 @@ func ValidateBytes(kind Kind, filename string, content []byte) error {
 }
 
 func JSONSchema(kind Kind) ([]byte, error) {
+	if kind == KindConnection || kind == KindSource || kind == KindModel {
+		return generatedJSONSchema(kind)
+	}
 	ctx, value, _, err := compiledDefinition(kind)
 	if err != nil {
 		return nil, err
@@ -146,6 +149,63 @@ func JSONSchema(kind Kind) ([]byte, error) {
 		return nil, err
 	}
 	hardenJSONSchema(kind, payload)
+	pretty, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(pretty, '\n'), nil
+}
+
+// generatedJSONSchema projects one resource root from the shared APIGen
+// contract document. Keeping the original $defs intact means references in
+// the closed tagged unions remain resolvable while each exported file has a
+// single, kind-specific authoring root.
+func generatedJSONSchema(kind Kind) ([]byte, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(projectcontracts.DataResourcesSchema, &payload); err != nil {
+		return nil, fmt.Errorf("decode generated data-resource schema: %w", err)
+	}
+	rootName := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model"}[kind]
+	if rootName == "" {
+		return nil, fmt.Errorf("generated schema is not available for %s", kind)
+	}
+	definitions, _ := payload["$defs"].(map[string]any)
+	root, ok := definitions[rootName].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("generated schema root %q is missing", rootName)
+	}
+	for _, key := range []string{"$ref", "anyOf", "properties", "required", "type", "unevaluatedProperties"} {
+		delete(payload, key)
+	}
+	for key, value := range root {
+		payload[key] = value
+	}
+	if properties, ok := payload["properties"].(map[string]any); ok {
+		if kindSchema, ok := properties["kind"].(map[string]any); ok {
+			if values, ok := kindSchema["enum"].([]any); ok && len(values) == 1 {
+				kindSchema["const"] = values[0]
+				delete(kindSchema, "enum")
+			}
+		}
+	}
+	// The generated document's contract list describes all three roots. A
+	// per-kind export should describe exactly one resource.
+	contracts, _ := payload["x-apigen-contracts"].([]any)
+	filtered := make([]any, 0, 1)
+	for _, item := range contracts {
+		entry, ok := item.(map[string]any)
+		if !ok || entry["name"] != rootName {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	if len(filtered) > 0 {
+		payload["x-apigen-contracts"] = filtered
+	}
+	slug := strings.ToLower(string(kind))
+	payload["$id"] = "https://leapview.dev/schemas/" + slug + ".schema.json"
+	payload["title"] = "LeapView v1 " + rootName + " resource"
+	payload["description"] = "Strict authored " + rootName + " resource contract."
 	pretty, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return nil, err
@@ -240,12 +300,6 @@ func definitionName(kind Kind) (string, error) {
 	switch kind {
 	case KindProject:
 		return "Project", nil
-	case KindConnection:
-		return "ConnectionResource", nil
-	case KindSource:
-		return "SourceResource", nil
-	case KindModel:
-		return "ModelResource", nil
 	case KindSemanticModel:
 		return "SemanticModelResource", nil
 	case KindPipeline:
@@ -479,6 +533,9 @@ func definitionCollection(definition, property string, kind collectionKind) coll
 }
 
 func hardenJSONSchema(kind Kind, payload any) {
+	if kind == KindConnection || kind == KindSource || kind == KindModel {
+		return
+	}
 	normalizeGeneratedSchema(payload)
 	root, ok := payload.(map[string]any)
 	if !ok {

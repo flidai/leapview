@@ -21,7 +21,7 @@ func pathBase(format string) projectcontracts.PathSourceLocationBase {
 func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testing.T) {
 	trueValue, falseValue := true, false
 	semicolon, pipe, quote, singleQuote, escape, backslash := ";", "|", `"`, "'", `\\`, "NA"
-	auto, jsonFormat, sheet, gzip, version, snapshot := "records", "records", "Data", "gzip", "v2", "42"
+	jsonExplicit, jsonDefault, sheet, gzip, version, snapshot := "array", "newline_delimited", "Data", "gzip", "v2", "42"
 
 	tests := []struct {
 		name     string
@@ -45,11 +45,11 @@ func TestResolveEffectivePathLocationUsesTypedPrecedenceForEveryFormat(t *testin
 		{
 			name:     "json",
 			format:   "json",
-			location: &projectcontracts.JSONPathSourceLocation{PathSourceLocationBase: pathBase("json"), Format: "json", Options: &projectcontracts.JSONReaderOptions{Format: &auto}},
-			defaults: &projectcontracts.ReaderDefaults{JSON: &projectcontracts.JSONReaderOptions{Format: &jsonFormat, MaximumDepth: &recordsDepth}},
+			location: &projectcontracts.JSONPathSourceLocation{PathSourceLocationBase: pathBase("json"), Format: "json", Options: &projectcontracts.JSONReaderOptions{Format: &jsonExplicit}},
+			defaults: &projectcontracts.ReaderDefaults{JSON: &projectcontracts.JSONReaderOptions{Format: &jsonDefault, MaximumDepth: &recordsDepth}},
 			assert: func(t *testing.T, got *projectcontracts.PathSourceLocation) {
 				v := got.Value.(*projectcontracts.JSONPathSourceLocation)
-				if *v.Options.Format != auto || *v.Options.MaximumDepth != recordsDepth {
+				if *v.Options.Format != jsonExplicit || *v.Options.MaximumDepth != recordsDepth {
 					t.Fatalf("json options = %#v", v.Options)
 				}
 			},
