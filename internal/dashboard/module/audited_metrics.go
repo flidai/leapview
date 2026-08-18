@@ -254,12 +254,14 @@ func queryShapeJSON(request dataquery.Query) string {
 		Offset        int                `json:"offset,omitempty"`
 		Limit         int                `json:"limit,omitempty"`
 		BinCount      int                `json:"binCount,omitempty"`
+		Histogram     *dataquery.HistogramOptions    `json:"histogram,omitempty"`
+		Distribution  *dataquery.DistributionOptions `json:"distribution,omitempty"`
 		IncludeTotal  bool               `json:"includeTotal,omitempty"`
 	}{
 		request.ProjectID.String(), request.Surface, request.Operation, request.RequestID, request.ObjectType,
 		request.ObjectID, request.CorrelationID, request.ModelID, request.Kind, request.Target, request.Fields,
 		request.Metrics, request.Value, request.Time, request.Filters, request.Sort, request.Offset, request.Limit,
-		request.BinCount, request.IncludeTotal,
+		request.BinCount, request.Histogram, request.Distribution, request.IncludeTotal,
 	})
 	if err != nil {
 		return "{}"

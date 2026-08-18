@@ -705,11 +705,21 @@ func (s *VisualizationDataService) binnedMeasureData(ctx context.Context, runtim
 	if err != nil {
 		return nil, err
 	}
+	query := visual.Definition.Query.Aggregate
+	if query == nil || query.Histogram == nil {
+		return nil, fmt.Errorf("visualization %q histogram binding is missing", visual.Definition.ID)
+	}
+	histogram := query.Histogram
+	options := &reportdef.HistogramOptions{NullPolicy: histogram.NullPolicy, Approximation: histogram.Approximation}
+	if histogram.Domain != nil {
+		options.Domain = &reportdef.HistogramDomain{Minimum: histogram.Domain.Minimum, Maximum: histogram.Domain.Maximum}
+	}
 	bins, err := runtime.data.Histogram(ctx, reportdef.RawValueQuery{
-		Dataset: visual.Table,
-		Metric:  queryFieldRef(visual.Metrics[0], "value"),
-		Filters: queryFilters,
-	}, visual.HistogramBins())
+		Dataset:   visual.Table,
+		Metric:    queryFieldRef(histogram.Metric, histogram.Metric.Alias),
+		Filters:   queryFilters,
+		Histogram: options,
+	}, int(histogram.Bins))
 	if err != nil {
 		return nil, err
 	}
@@ -1078,11 +1088,24 @@ func (s *VisualizationDataService) distributionData(ctx context.Context, runtime
 	if err != nil {
 		return nil, err
 	}
+	query := visual.Definition.Query.Aggregate
+	if query == nil || query.Distribution == nil {
+		return nil, fmt.Errorf("visualization %q distribution binding is missing", visual.Definition.ID)
+	}
+	distribution := query.Distribution
+	options := &reportdef.DistributionOptions{
+		Quantiles:     append([]float64(nil), distribution.Quantiles...),
+		Outliers:      distribution.Outliers,
+		Approximation: distribution.Approximation,
+	}
+	if distribution.Whiskers != nil {
+		options.Whiskers = &reportdef.DistributionWhiskers{Lower: distribution.Whiskers.Lower, Upper: distribution.Whiskers.Upper}
+	}
 	return s.queryDistributionDatums(ctx, runtime, reportdef.RawValueQuery{
-		Dataset:    visual.Table,
-		Dimensions: []reportdef.QueryField{fieldRef(visual.Dimensions[0].FieldID, "label")},
-		Metric:     queryFieldRef(visual.Metrics[0], "value"),
-		Filters:    queryFilters,
+		Dataset:      visual.Table,
+		Metric:       queryFieldRef(distribution.Metric, distribution.Metric.Alias),
+		Filters:      queryFilters,
+		Distribution: options,
 	}, distributionSorts(visual), visual.Limit)
 }
 

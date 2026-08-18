@@ -236,6 +236,8 @@ func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, er
 		Offset:                       request.Offset,
 		Limit:                        request.Limit,
 		BinCount:                     request.BinCount,
+		Histogram:                    request.Histogram,
+		Distribution:                 request.Distribution,
 		IncludeTotal:                 request.IncludeTotal,
 		SpatialTile:                  request.SpatialTile,
 		SpatialTileBudget:            request.SpatialTileBudget,
@@ -276,6 +278,8 @@ type queryResultCacheKey struct {
 	Offset                       int
 	Limit                        int
 	BinCount                     int
+	Histogram                    *dataquery.HistogramOptions
+	Distribution                 *dataquery.DistributionOptions
 	IncludeTotal                 bool
 	SpatialTile                  *dataquery.SpatialTile
 	SpatialTileBudget            *dataquery.SpatialTileBudget

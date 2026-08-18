@@ -79,10 +79,38 @@ type ModelTableQuery struct {
 }
 
 type RawValueQuery struct {
-	Dataset    string
-	Dimensions []QueryField
-	Metric     QueryField
-	Filters    []QueryFilter
+	Dataset      string
+	Dimensions   []QueryField
+	Metric       QueryField
+	Filters      []QueryFilter
+	Histogram    *HistogramOptions
+	Distribution *DistributionOptions
+}
+
+// HistogramOptions carries the explicit statistical contract from a compiled
+// visualization into the governed data service. Keeping it on the raw-value
+// request prevents runtime presentation defaults from changing query meaning.
+type HistogramOptions struct {
+	Domain        *HistogramDomain
+	NullPolicy    string
+	Approximation string
+}
+
+type HistogramDomain struct {
+	Minimum float64
+	Maximum float64
+}
+
+type DistributionOptions struct {
+	Quantiles     []float64
+	Whiskers      *DistributionWhiskers
+	Outliers      string
+	Approximation string
+}
+
+type DistributionWhiskers struct {
+	Lower float64
+	Upper float64
 }
 
 type CountQuery struct {
