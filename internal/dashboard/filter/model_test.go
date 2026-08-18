@@ -95,6 +95,30 @@ func TestTypedV1URLRoundTripUsesCanonicalExpression(t *testing.T) {
 	}
 }
 
+func TestSharedLinkCodecLifecycleSupportsDecodeAfterDeprecationButNotEncode(t *testing.T) {
+	registry := NewSharedLinkRegistry()
+	if err := registry.SetStatus(URLEncodingTypedV1, SharedLinkCodecDeprecated); err != nil {
+		t.Fatal(err)
+	}
+	expression := Expression{Kind: ExpressionSet, Operator: OperatorIn, Values: []Value{{Kind: ValueString, Value: "CA"}}}
+	encoded, err := EncodeTypedV1(expression, ValueString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Encode(URLEncodingTypedV1, expression, ValueString); err == nil {
+		t.Fatal("deprecated codec remained enabled for new links")
+	}
+	if _, err := registry.Decode(URLEncodingTypedV1, encoded, ValueString); err != nil {
+		t.Fatalf("deprecated codec no longer decodes existing links: %v", err)
+	}
+	if err := registry.SetStatus(URLEncodingTypedV1, SharedLinkCodecRetired); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Decode(URLEncodingTypedV1, encoded, ValueString); err == nil {
+		t.Fatal("retired codec decoded a shared link")
+	}
+}
+
 func TestCanonicalizeRelativePeriodRequiresCompatibleAnchor(t *testing.T) {
 	_, err := Canonicalize(Expression{
 		Kind:        ExpressionRelativePeriod,

@@ -25,8 +25,25 @@ type Definition struct {
 	FilterDefinitions map[string]dashboardfilter.Definition         `json:"filterDefinitions,omitempty"`
 	FilterBindings    map[string]dashboardfilter.Binding            `json:"filterBindings,omitempty"`
 	FilterApplication dashboardfilter.ApplicationPolicy             `json:"filterApplication,omitempty"`
+	FilterOrder       []string                                      `json:"filterOrder,omitempty"`
 	Pages             []dashboard.Page                              `json:"pages"`
 	Visualizations    map[string]visualizationdefinition.Definition `json:"visualizations"`
+}
+
+// WithCanonicalFilters attaches compiler-owned canonical filter contracts
+// while preserving their authored sequence for pane/state presentation.
+func (definition Definition) WithCanonicalFilters(compiled map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, order []string, application dashboardfilter.ApplicationPolicy) Definition {
+	definition.FilterDefinitions = make(map[string]dashboardfilter.Definition, len(compiled))
+	for key, value := range compiled {
+		definition.FilterDefinitions[key] = value
+	}
+	definition.FilterBindings = make(map[string]dashboardfilter.Binding, len(bindings))
+	for key, value := range bindings {
+		definition.FilterBindings[key] = value
+	}
+	definition.FilterOrder = append([]string(nil), order...)
+	definition.FilterApplication = application.WithDefaults()
+	return definition
 }
 
 func New(id, title, description, semanticModel string, pages []dashboard.Page, visualizations map[string]visualizationdefinition.Definition) (Definition, error) {
@@ -67,6 +84,7 @@ func (definition Definition) FilterBindingSpecs() map[string]dashboardfilter.Bin
 		specs[key] = dashboardfilter.BindingSpec{
 			ValueKind:  filterDefinition.ValueKind,
 			Default:    binding.Default,
+			Required:   binding.Required,
 			Selection:  binding.Selection,
 			Editable:   binding.Editable(),
 			Time:       filterDefinition.Time,
@@ -94,7 +112,11 @@ func (definition Definition) FilterStateFromURL(pageID string, values url.Values
 		if encoded == "" {
 			continue
 		}
-		expression, err := dashboardfilter.DecodeTypedV1(encoded, specs[key].ValueKind)
+		encoding := binding.URL.Encoding
+		if encoding == "" {
+			encoding = dashboardfilter.URLEncodingTypedV1
+		}
+		expression, err := dashboardfilter.DefaultSharedLinkRegistry().Decode(encoding, encoded, specs[key].ValueKind)
 		if err != nil {
 			return machine.State(), fmt.Errorf("URL parameter %q: %w", binding.URL.Param, err)
 		}
@@ -128,7 +150,11 @@ func (definition Definition) URLParamsFromFilterState(pageID string, state dashb
 			continue
 		}
 		filterDefinition := definition.FilterDefinitions[binding.Filter]
-		encoded, err := dashboardfilter.EncodeTypedV1(applied.Expression, filterDefinition.ValueKind)
+		encoding := binding.URL.Encoding
+		if encoding == "" {
+			encoding = dashboardfilter.URLEncodingTypedV1
+		}
+		encoded, err := dashboardfilter.DefaultSharedLinkRegistry().Encode(encoding, applied.Expression, filterDefinition.ValueKind)
 		if err != nil {
 			return nil, fmt.Errorf("encode binding %q URL: %w", binding.ID, err)
 		}

@@ -6,6 +6,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 )
 
 func TestSemanticBindingFiltersUsesResolvedExpressionAndCompiledConsumerTargets(t *testing.T) {
@@ -121,5 +122,52 @@ func TestSemanticBindingFiltersPreservesSetAndNullPredicateGrouping(t *testing.T
 	}
 	if len(filters) != 2 || filters[0].Operator != "is_not_null" || filters[1].Operator != "not_in" {
 		t.Fatalf("semantic filters = %#v", filters)
+	}
+}
+
+func TestOptionDependencyFiltersRebindToQueriedDatasetWithoutSharingStateIdentity(t *testing.T) {
+	definition := dashboardfilter.Definition{Field: "customer_state", Dataset: "customers", ValueKind: dashboardfilter.ValueString}
+	expression := dashboardfilter.Expression{Kind: dashboardfilter.ExpressionSet, Operator: dashboardfilter.OperatorIn, Values: []dashboardfilter.Value{{Kind: dashboardfilter.ValueString, Value: "CA"}}}
+	filters, err := semanticFiltersForExpressionOnDataset(definition, expression, "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 1 || filters[0].Dataset != "orders" || filters[0].Field != "customer_state" {
+		t.Fatalf("rebound dependency filter = %#v", filters)
+	}
+	if definition.Dataset != "customers" {
+		t.Fatalf("dependency definition mutated = %#v", definition)
+	}
+}
+
+func TestInteractiveDashboardFilterComposesWithSemanticNamedFilter(t *testing.T) {
+	definition := &dashboarddefinition.Definition{
+		FilterDefinitions: map[string]dashboardfilter.Definition{
+			"status": {Field: "orders.status", Dataset: "orders", ValueKind: dashboardfilter.ValueString},
+		},
+		FilterBindings: map[string]dashboardfilter.Binding{
+			"status": {Key: "dashboard:sales/report/status", Filter: "status", Scope: dashboardfilter.ScopeReport, Targets: []string{"overview/orders-card"}},
+		},
+	}
+	state := dashboardfilter.State{AppliedControls: map[string]dashboardfilter.AppliedState{
+		"dashboard:sales/report/status": {ResolvedExpression: dashboardfilter.Expression{
+			Kind: dashboardfilter.ExpressionSet, Operator: dashboardfilter.OperatorIn,
+			Values: []dashboardfilter.Value{{Kind: dashboardfilter.ValueString, Value: "paid"}},
+		}},
+	}}
+	interactive, err := semanticBindingFiltersForTarget(definition, state, "overview", "visual", "orders-card")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Semantic named filters are metric-governed predicates; they have no
+	// dashboard binding key or browser state vocabulary. Both predicates can
+	// therefore enter the same governed query without identity collision.
+	named := reportdef.QueryFilter{Field: "orders.customer_segment", Dataset: "orders", Operator: "equals", Values: []any{"enterprise"}}
+	combined := append(append([]reportdef.QueryFilter(nil), interactive...), named)
+	if len(combined) != 2 || combined[0].Field != "orders.status" || combined[1].Field != named.Field {
+		t.Fatalf("composed governed filters = %#v", combined)
+	}
+	if combined[0].Dataset != "orders" || combined[1].Dataset != "orders" {
+		t.Fatalf("composed filter datasets = %#v", combined)
 	}
 }

@@ -35,6 +35,7 @@ type RangeDraft = {
 }
 
 const unfiltered: DashboardFilterExpression = { kind: 'unfiltered' }
+const NULL_OPTION_KEY = '__lv_null_option__'
 
 export class DashboardFilterLeaf extends LitElement {
   @property({ attribute: false }) definition?: DashboardCompiledFilterDefinition
@@ -255,7 +256,7 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private renderDropdown() {
-    const selected = selectedValues(this.expression)
+    const selected = selectedOptionKeys(this.expression)
     const selectedKey = selected.values().next().value ?? ''
     return html`
       <select
@@ -267,8 +268,8 @@ export class DashboardFilterLeaf extends LitElement {
         <option value="">All</option>
         ${this.optionItems().map((option) => html`
           <option
-            value=${valueKey(option.value)}
-            ?selected=${selected.has(valueKey(option.value))}
+            value=${filterOptionKey(option)}
+            ?selected=${selected.has(filterOptionKey(option))}
             ?disabled=${!option.available && !option.selected}
           >${option.label}${option.count === undefined ? '' : ` (${option.count})`}</option>
         `)}
@@ -277,16 +278,16 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private renderCategorical(buttons: boolean) {
-    const selected = selectedValues(this.expression)
+    const selected = selectedOptionKeys(this.expression)
     const multiple = this.binding?.selectionMode !== 'single'
     if (buttons) {
       return html`<div class="buttons" role="group" aria-label=${this.definition?.label ?? 'Filter options'}>
         ${this.optionItems().map((option) => html`
           <button
             type="button"
-            aria-pressed=${String(selected.has(valueKey(option.value)))}
+            aria-pressed=${String(selected.has(filterOptionKey(option)))}
             ?disabled=${!option.available && !option.selected}
-            @click=${() => this.toggleOption(option.value, multiple)}
+            @click=${() => this.toggleOption(option, multiple)}
           >${option.label}</button>
         `)}
       </div>`
@@ -297,9 +298,9 @@ export class DashboardFilterLeaf extends LitElement {
           <input
             type=${multiple ? 'checkbox' : 'radio'}
             name=${this.binding?.key ?? 'filter'}
-            .checked=${selected.has(valueKey(option.value))}
+            .checked=${selected.has(filterOptionKey(option))}
             ?disabled=${!option.available && !option.selected}
-            @change=${() => this.toggleOption(option.value, multiple)}
+            @change=${() => this.toggleOption(option, multiple)}
           >
           <span>${option.label}${option.count === undefined ? '' : ` (${option.count})`}</span>
         </label>
@@ -384,17 +385,17 @@ export class DashboardFilterLeaf extends LitElement {
       this.commit(unfiltered)
       return
     }
-    const option = this.optionItems().find((candidate) => valueKey(candidate.value) === key)
-    if (option) this.commit(setExpression([option.value]))
+    const option = this.optionItems().find((candidate) => filterOptionKey(candidate) === key)
+    if (!option) return
+    if (option.null) {
+      this.commit({ kind: 'null_check', operator: 'is_null' })
+    } else if (option.value) {
+      this.commit(setExpression([option.value]))
+    }
   }
 
-  private toggleOption(value: DashboardFilterValue, multiple: boolean) {
-    const values = multiple ? [...selectedValueObjects(this.expression)] : []
-    const key = valueKey(value)
-    const next = values.some((item) => valueKey(item) === key)
-      ? values.filter((item) => valueKey(item) !== key)
-      : [...values, value]
-    this.commit(next.length === 0 ? unfiltered : setExpression(next))
+  private toggleOption(option: DashboardFilterOptionItem, multiple: boolean) {
+    this.commit(filterOptionToggleExpression(this.expression, option, multiple))
   }
 
   private onRangeInput = () => {
@@ -504,25 +505,30 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private optionItems(): DashboardFilterOptionItem[] {
-    const selected = selectedValues(this.expression)
+    const selected = selectedOptionKeys(this.expression)
     const base = this.options
       ? this.options.items
       : this.definition?.options.kind === 'static'
         ? this.definition.options.values.map((option) => ({
             ...option,
+            null: false,
             selected: selected.has(valueKey(option.value)),
             available: true,
           }))
         : []
     const items = base.map((option) => ({
       ...option,
-      selected: selected.has(valueKey(option.value)),
+      selected: selected.has(filterOptionKey(option)),
     }))
-    const present = new Set(items.map((option) => valueKey(option.value)))
+    const present = new Set(items.map(filterOptionKey))
+    if (this.expression.kind === 'null_check' && this.expression.operator === 'is_null' && !present.has(NULL_OPTION_KEY)) {
+      items.push({ null: true, label: '(null)', selected: true, available: false })
+    }
     for (const value of selectedValueObjects(this.expression)) {
       if (present.has(valueKey(value))) continue
       items.push({
         value,
+        null: false,
         label: String(value.value),
         selected: true,
         available: false,
@@ -849,12 +855,41 @@ function selectedValueObjects(expression: DashboardFilterExpression): DashboardF
   return []
 }
 
-function selectedValues(expression: DashboardFilterExpression): Set<string> {
-  return new Set(selectedValueObjects(expression).map(valueKey))
+function selectedOptionKeys(expression: DashboardFilterExpression): Set<string> {
+  const keys = new Set(selectedValueObjects(expression).map(valueKey))
+  if (expression.kind === 'null_check' && expression.operator === 'is_null') keys.add(NULL_OPTION_KEY)
+  return keys
 }
 
-function valueKey(value: DashboardFilterValue): string {
-  return JSON.stringify(value)
+function valueKey(value?: DashboardFilterValue): string {
+  return value === undefined ? '' : JSON.stringify(value)
+}
+
+export function filterOptionKey(option: Pick<DashboardFilterOptionItem, 'null' | 'value'>): string {
+  return option.null ? NULL_OPTION_KEY : valueKey(option.value)
+}
+
+export function filterOptionToggleExpression(
+  expression: DashboardFilterExpression,
+  option: DashboardFilterOptionItem,
+  multiple: boolean,
+): DashboardFilterExpression {
+  // Null is a predicate, not a DashboardFilterValue. Since the expression
+  // union cannot represent null alongside ordinary values, selecting null
+  // replaces the current set and selecting a value replaces null. This is
+  // deterministic for both single- and multi-select controls.
+  if (option.null) {
+    return expression.kind === 'null_check' && expression.operator === 'is_null'
+      ? unfiltered
+      : { kind: 'null_check', operator: 'is_null' }
+  }
+  if (!option.value) return expression
+  const values = multiple ? [...selectedValueObjects(expression)] : []
+  const key = valueKey(option.value)
+  const next = values.some((item) => valueKey(item) === key)
+    ? values.filter((item) => valueKey(item) !== key)
+    : [...values, option.value]
+  return next.length === 0 ? unfiltered : setExpression(next)
 }
 
 export function expressionSummary(expression: DashboardFilterExpression): string {

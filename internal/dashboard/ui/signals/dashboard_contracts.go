@@ -153,7 +153,7 @@ func DashboardFilterContractFromDefinition(definition dashboarddefinition.Defini
 		definitions[id] = DashboardCompiledFilterDefinition{
 			ID: id, Label: item.Label, Description: optionalValue(item.Description), Field: item.Field,
 			Dataset: optionalValue(item.Dataset), ValueKind: string(item.ValueKind), Predicates: predicates,
-			Options:       DashboardFilterOptionSource{Kind: optionKind, Limit: int32(item.Options.Limit), Values: staticOptions},
+			Options:       DashboardFilterOptionSource{Kind: optionKind, Limit: int32(item.Options.Limit), IncludeNull: item.Options.IncludeNull, Values: staticOptions},
 			FormatPattern: optionalValue(item.Formatting.Pattern), FormatUnit: optionalValue(item.Formatting.Unit),
 			Timezone: item.Time.Timezone, Calendar: item.Time.Calendar, WeekStart: item.Time.WeekStart,
 		}
@@ -167,7 +167,7 @@ func DashboardFilterContractFromDefinition(definition dashboarddefinition.Defini
 		urlEncoding := string(item.URL.Encoding)
 		bindings[key] = DashboardCompiledFilterBinding{
 			Key: key, ID: item.ID, Filter: item.Filter, Scope: string(item.Scope), PageID: optionalValue(item.PageID),
-			Default: DashboardFilterExpressionFromDomain(item.Default), SelectionMode: string(item.Selection.Mode),
+			Default: DashboardFilterExpressionFromDomain(item.Default), SelectionMode: string(item.Selection.Mode), Required: item.Required,
 			MaxSelectedValues: int32(item.Selection.MaxSelectedValues), ReaderEditable: item.Editable(),
 			URLParam: optionalValue(item.URL.Param), PaneVisible: item.Pane.IsVisible(), PaneOrder: int32(item.Pane.Order),
 			PaneLabel: optionalValue(item.Pane.Label), Targets: append([]string(nil), item.Targets...),

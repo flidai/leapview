@@ -14,9 +14,10 @@ const (
 )
 
 type OptionSource struct {
-	Kind   OptionSourceKind `json:"kind,omitempty" yaml:"kind,omitempty"`
-	Limit  int              `json:"limit,omitempty" yaml:"limit,omitempty"`
-	Values []Option         `json:"values,omitempty" yaml:"values,omitempty"`
+	Kind        OptionSourceKind `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Limit       int              `json:"limit,omitempty" yaml:"limit,omitempty"`
+	IncludeNull bool             `json:"includeNull,omitempty" yaml:"include_null,omitempty"`
+	Values      []Option         `json:"values,omitempty" yaml:"values,omitempty"`
 }
 
 type Option struct {
@@ -86,6 +87,7 @@ type OptionInteractions struct {
 type Binding struct {
 	Filter             string             `json:"filter" yaml:"filter"`
 	Default            Expression         `json:"default" yaml:"default"`
+	Required           bool               `json:"required,omitempty" yaml:"required,omitempty"`
 	Selection          SelectionPolicy    `json:"selection,omitempty" yaml:"selection,omitempty"`
 	ReaderEditable     *bool              `json:"readerEditable,omitempty" yaml:"reader_editable,omitempty"`
 	URL                URLPolicy          `json:"url,omitempty" yaml:"url,omitempty"`
