@@ -55,6 +55,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 				return nil, err
 			}
 			out.Stacking = &stacking
+			out.Stacked = stacking != visualizationir.VisualizationStackingModeNone
 		}
 		if variant.Orientation != nil {
 			orientation, err := lowerOrientation(*variant.Orientation)
@@ -76,13 +77,13 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if err != nil {
 			return nil, err
 		}
-		return visualizationir.ProportionalVisualizationPresentation{VisualizationPresentation: base}, nil
+		return visualizationir.ProportionalVisualizationPresentation{VisualizationPresentation: base, Orientation: visualizationir.VisualizationOrientationVertical}, nil
 	case *document.HierarchyDashboardPresentation:
 		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
 		if err != nil {
 			return nil, err
 		}
-		out := visualizationir.HierarchyVisualizationPresentation{VisualizationPresentation: base}
+		out := visualizationir.HierarchyVisualizationPresentation{VisualizationPresentation: base, Orientation: visualizationir.VisualizationOrientationVertical}
 		if variant.Orientation != nil {
 			orientation, err := lowerOrientation(*variant.Orientation)
 			if err != nil {
