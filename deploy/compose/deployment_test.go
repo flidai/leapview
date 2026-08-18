@@ -180,6 +180,10 @@ func TestFiveMinuteEvaluationContract(t *testing.T) {
 			t.Errorf("five-minute evaluation dashboard missing deterministic state option %q", required)
 		}
 	}
+	ordersModel := read(t, filepath.Join(root, "evaluation", "project", "models", "orders.yaml"))
+	if !strings.Contains(ordersModel, "try_cast(revenue AS DECIMAL(18, 2)) AS revenue") {
+		t.Fatal("five-minute evaluation revenue transform must produce the authored Decimal physical type")
+	}
 	for _, contract := range []struct {
 		name       string
 		imageRun   string

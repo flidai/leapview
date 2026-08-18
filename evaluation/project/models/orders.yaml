@@ -43,7 +43,7 @@ spec:
         state,
         category,
         status,
-        round(try_cast(revenue AS DOUBLE), 2) AS revenue
+        try_cast(revenue AS DECIMAL(18, 2)) AS revenue
       FROM source."sample.orders"
   entities:
     order:
