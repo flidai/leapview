@@ -80,6 +80,32 @@ func TestRunnerRenewsLeaseDuringLongHandler(t *testing.T) {
 	}
 }
 
+func TestRunnerUsesHandlerLeaseTimeout(t *testing.T) {
+	controller, err := workload.New(workload.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer controller.Close()
+	repository := &leaseRecordingRunnerRepository{candidate: Job{ID: "job-1", Kind: "slow", WorkloadClass: WorkloadClassControl, PrincipalID: "test", EstimatedMemoryBytes: 1}}
+	runner, err := NewRunner(RunnerConfig{
+		Repository: repository, Admission: testAdmitter(controller), LeaseTimeout: 5 * time.Millisecond,
+		Handlers: []Handler{HandlerFunc{JobKind: "slow", ExecutionLeaseTimeout: 50 * time.Millisecond, Run: func(context.Context, Job) error {
+			time.Sleep(40 * time.Millisecond)
+			return nil
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.dispatchCandidate(t.Context(), "owner", WorkloadClassControl, repository.candidate)
+	if repository.claimTimeout != 50*time.Millisecond {
+		t.Fatalf("claim timeout = %s, want 50ms", repository.claimTimeout)
+	}
+	if repository.renewTimeout != 50*time.Millisecond {
+		t.Fatalf("renew timeout = %s, want 50ms", repository.renewTimeout)
+	}
+}
+
 func TestRunnerLeavesClaimRecoverableWhenWorkerContextStops(t *testing.T) {
 	controller, err := workload.New(workload.DefaultConfig())
 	if err != nil {
@@ -236,6 +262,26 @@ type recordingRunnerRepository struct {
 	failed    string
 	cancelled string
 	problem   []byte
+}
+
+type leaseRecordingRunnerRepository struct {
+	runnerTestRepository
+	candidate    Job
+	claimTimeout time.Duration
+	renewTimeout time.Duration
+}
+
+func (r *leaseRecordingRunnerRepository) ClaimByID(_ context.Context, id, _ string, _ string, timeout time.Duration) (Job, bool, error) {
+	r.claimTimeout = timeout
+	if id != r.candidate.ID {
+		return Job{}, false, nil
+	}
+	return r.candidate, true, nil
+}
+
+func (r *leaseRecordingRunnerRepository) Renew(_ context.Context, _ string, _ Fence, timeout time.Duration) error {
+	r.renewTimeout = timeout
+	return nil
 }
 
 func (r *recordingRunnerRepository) Renew(context.Context, string, Fence, time.Duration) error {

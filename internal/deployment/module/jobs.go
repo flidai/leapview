@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
@@ -47,7 +48,7 @@ type JobConfig struct {
 }
 
 func (m *Module) JobHandlers() []jobs.Handler {
-	return []jobs.Handler{jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate}}
+	return []jobs.Handler{jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate, ExecutionLeaseTimeout: 5 * time.Minute}}
 }
 
 func (m *Module) execution(operationID string) (apigencommand.AsyncExecutionContract, error) {
@@ -194,14 +195,20 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			}
 			logger.InfoContext(ctx, "deployment activation sealed publish committed", "deployment", payload.Deployment)
 			activation := sealedActivationInput(pending, payload.Actor, request.Seal.CatalogDigest)
+			logger.InfoContext(ctx, "deployment activation sealed marker starting", "deployment", payload.Deployment)
 			activated, markErr := m.sealedActivationMarker(ctx, activation)
 			if markErr != nil {
+				logger.ErrorContext(ctx, "deployment activation sealed marker failed", "deployment", payload.Deployment, "error", markErr)
 				return markErr
 			}
+			logger.InfoContext(ctx, "deployment activation sealed marker committed", "deployment", payload.Deployment)
 			if m.sealedReconcile != nil {
+				logger.InfoContext(ctx, "deployment activation sealed reconcile starting", "deployment", payload.Deployment)
 				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
+					logger.ErrorContext(ctx, "deployment activation sealed reconcile failed", "deployment", payload.Deployment, "error", reconcileErr)
 					return reconcileErr
 				}
+				logger.InfoContext(ctx, "deployment activation sealed reconcile completed", "deployment", payload.Deployment)
 			}
 			row = mapSealedDeployment(activated)
 		}

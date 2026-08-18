@@ -44,8 +44,9 @@ type Handler interface {
 }
 
 type HandlerFunc struct {
-	JobKind string
-	Run     func(context.Context, Job) error
+	JobKind               string
+	Run                   func(context.Context, Job) error
+	ExecutionLeaseTimeout time.Duration
 }
 
 func (h HandlerFunc) Kind() string { return h.JobKind }
@@ -56,6 +57,11 @@ func (h HandlerFunc) Handle(ctx context.Context, job Job) error {
 	}
 	return h.Run(ctx, job)
 }
+
+// LeaseTimeout lets a capability declare a longer lease for handlers whose
+// durable work can legitimately outlive the generic background-job timeout.
+// A non-positive value falls back to RunnerConfig.LeaseTimeout.
+func (h HandlerFunc) LeaseTimeout() time.Duration { return h.ExecutionLeaseTimeout }
 
 type RunnerConfig struct {
 	Repository   Repository
@@ -164,19 +170,35 @@ func (r *Runner) dispatchCandidate(ctx context.Context, owner, class string, can
 		return
 	}
 	defer lease.Release()
-	job, ok, err := r.repository.ClaimByID(lease.Context(), candidate.ID, string(class), owner, r.leaseTimeout)
+	leaseTimeout := r.leaseTimeoutFor(candidate.Kind)
+	job, ok, err := r.repository.ClaimByID(lease.Context(), candidate.ID, string(class), owner, leaseTimeout)
 	if err != nil || !ok {
 		return
 	}
-	r.executeClaimed(lease.Context(), job)
+	r.executeClaimedWithTimeout(lease.Context(), job, leaseTimeout)
 }
 
 func (r *Runner) executeClaimed(parent context.Context, job Job) {
+	r.executeClaimedWithTimeout(parent, job, r.leaseTimeoutFor(job.Kind))
+}
+
+func (r *Runner) leaseTimeoutFor(kind string) time.Duration {
+	if handler, ok := r.handlers[kind]; ok {
+		if provider, ok := handler.(interface{ LeaseTimeout() time.Duration }); ok {
+			if timeout := provider.LeaseTimeout(); timeout > 0 {
+				return timeout
+			}
+		}
+	}
+	return r.leaseTimeout
+}
+
+func (r *Runner) executeClaimedWithTimeout(parent context.Context, job Job, leaseTimeout time.Duration) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		interval := r.leaseTimeout / 2
+		interval := leaseTimeout / 2
 		if interval <= 0 {
 			interval = time.Millisecond
 		}
@@ -189,7 +211,7 @@ func (r *Runner) executeClaimed(parent context.Context, job Job) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := r.repository.Renew(context.WithoutCancel(ctx), job.ID, job.Fence(), r.leaseTimeout); err != nil {
+				if err := r.repository.Renew(context.WithoutCancel(ctx), job.ID, job.Fence(), leaseTimeout); err != nil {
 					cancel()
 					return
 				}
