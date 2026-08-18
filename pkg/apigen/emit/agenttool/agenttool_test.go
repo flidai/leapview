@@ -155,6 +155,20 @@ func TestBuildEmitsUnconstrainedSchemasWithoutEmptyTypes(t *testing.T) {
 	requireNoEmptySchemaTypes(t, outputSchema)
 }
 
+func TestSchemaRefJSONPreservesPatternAndPropertyNames(t *testing.T) {
+	doc := ir.Document{Schemas: map[string]ir.Schema{"Value": {Type: "string"}}}
+	ref := ir.SchemaRef{
+		Type:                 "object",
+		Pattern:              "^[A-Z]+$",
+		PropertyNames:        &ir.SchemaRef{Type: "string", Pattern: "^[a-z_]+$"},
+		AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Ref: "Value"}},
+	}
+	got := schemaRefJSON(doc, ref, map[string]bool{})
+	require.Equal(t, "^[A-Z]+$", got["pattern"])
+	require.Equal(t, "^[a-z_]+$", got["propertyNames"].(map[string]any)["pattern"])
+	require.Equal(t, map[string]any{"type": "string"}, got["additionalProperties"])
+}
+
 func TestSchemaJSONOmitsEmptyType(t *testing.T) {
 	require.NotContains(t, schemaJSON(ir.Document{}, ir.Schema{}, map[string]bool{}), "type")
 }

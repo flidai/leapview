@@ -1,3 +1,4 @@
+import { isRecordModelType } from "@typespec/compiler";
 import { reportDiagnostic } from "./lib.js";
 const cliKey = Symbol.for("@yacobolo/apigen.cli");
 const commandKey = Symbol.for("@yacobolo/apigen.command");
@@ -20,6 +21,7 @@ const contractKey = Symbol.for("@yacobolo/apigen.contract");
 const metadataKey = Symbol.for("@yacobolo/apigen.metadata");
 const toolKey = Symbol.for("@yacobolo/apigen.tool");
 const transportErrorsKey = Symbol.for("@yacobolo/apigen.transportErrors");
+const propertyNamesKey = Symbol.for("@yacobolo/apigen.propertyNames");
 export function $cli(context, target, options) {
     context.program.stateMap(cliKey).set(target, options);
 }
@@ -167,6 +169,37 @@ export function $tool(context, target, options) {
 export function $transportErrors(context, target, schema, options) {
     context.program.stateMap(transportErrorsKey).set(target, { schema, ...options });
 }
+export function $propertyNames(context, target, key) {
+    if (context.program.stateMap(propertyNamesKey).has(target)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-property-names",
+            format: { reason: "the decorator may only be applied once" },
+            target,
+        });
+        return;
+    }
+    if (target.type.kind !== "Model" || !isRecordModelType(target.type)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-property-names",
+            format: { reason: "target must be a string-indexed map (for example, extends Record<T>)" },
+            target,
+        });
+        return;
+    }
+    let current = key;
+    while (current && current.name !== "string") {
+        current = current.baseScalar;
+    }
+    if (!current) {
+        reportDiagnostic(context.program, {
+            code: "invalid-property-names",
+            format: { reason: "key must be a scalar derived from string" },
+            target,
+        });
+        return;
+    }
+    context.program.stateMap(propertyNamesKey).set(target, key);
+}
 export const $decorators = {
     apigen: {
         cli: $cli,
@@ -194,6 +227,7 @@ export const $decorators = {
         metadata: $metadata,
         tool: $tool,
         transportErrors: $transportErrors,
+        propertyNames: $propertyNames,
     },
 };
 export function getCLI(context, target) {
@@ -284,4 +318,7 @@ export function getTool(context, target) {
 }
 export function getTransportErrors(context, target) {
     return context.program.stateMap(transportErrorsKey).get(target);
+}
+export function getPropertyNames(context, target) {
+    return context.program.stateMap(propertyNamesKey).get(target);
 }

@@ -11,6 +11,7 @@ import {
   getMinValue,
   getOverloadedOperation,
   getOverloads,
+  getPattern,
   getService,
   getSummary,
   isArrayModelType,
@@ -57,6 +58,7 @@ import {
   getMetadata,
   getNamedFailures,
   getPackages,
+  getPropertyNames,
   getResponseShape,
   getSensitivity,
   getTool,
@@ -284,8 +286,10 @@ interface SchemaRef {
   maximum?: number;
   min_length?: number;
   max_length?: number;
+  pattern?: string;
   items?: SchemaRef;
   additional_properties?: { any?: boolean; schema?: SchemaRef };
+  property_names?: SchemaRef;
 }
 
 class IRBuilder {
@@ -311,6 +315,12 @@ class IRBuilder {
         return { type: "array", items: this.schemaRef(type.indexer.value, `${context} items`) };
       }
       if (isRecordModelType(type)) {
+        return {
+          type: "object",
+          additional_properties: { schema: this.schemaRef(type.indexer.value, `${context} value`) },
+        };
+      }
+      if (type.indexer && !isArrayModelType(type)) {
         return {
           type: "object",
           additional_properties: { schema: this.schemaRef(type.indexer.value, `${context} value`) },
@@ -600,8 +610,13 @@ class IRBuilder {
   }
 
   private schemaProperty(property: ModelProperty): SchemaProperty {
+    const schema = withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`));
+    const propertyNames = getPropertyNames({ program: this.program }, property);
+    if (propertyNames) {
+      schema.property_names = this.schemaRef(propertyNames, `${property.name} key`);
+    }
     const schemaProperty: SchemaProperty = {
-      schema: withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`)),
+      schema,
     };
     const doc = getDoc(this.program, property);
     if (doc) {
@@ -2157,12 +2172,14 @@ function withSchemaConstraints(program: Program, target: Type, schema: SchemaRef
   const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
   const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
   const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
+  const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
   return prune({
     ...schema,
     minimum,
     maximum,
     min_length: minLength,
     max_length: maxLength,
+    pattern,
   }) as SchemaRef;
 }
 
@@ -2179,7 +2196,7 @@ function schemaConstraintCandidates(target: Type): Type[] {
   return candidates;
 }
 
-function firstSchemaConstraint(candidates: Type[], read: (candidate: Type) => number | undefined): number | undefined {
+function firstSchemaConstraint<T>(candidates: Type[], read: (candidate: Type) => T | undefined): T | undefined {
   for (const candidate of candidates) {
     const value = read(candidate);
     if (value !== undefined) {

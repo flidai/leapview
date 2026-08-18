@@ -46,6 +46,35 @@ func TestEmit_PreservesContractAndPropertyMetadata(t *testing.T) {
 	require.Contains(t, string(b), `"#/$defs/DashboardEnvelope"`)
 }
 
+func TestEmit_PreservesPatternAndPropertyNames(t *testing.T) {
+	doc := ir.Document{
+		Info:      ir.Info{Title: "Constrained", Version: "1"},
+		Contracts: []ir.Contract{{Name: "payload", Schema: ir.SchemaRef{Ref: "Payload"}}},
+		Schemas: map[string]ir.Schema{
+			"Payload": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"values": {Schema: ir.SchemaRef{
+						Type:                 "object",
+						AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Type: "string"}},
+						PropertyNames:        &ir.SchemaRef{Type: "string", Pattern: "^[a-z_]+$"},
+						Pattern:              "^[A-Z]+$",
+					}},
+				},
+			},
+		},
+	}
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	decoded := decodedObject(t, b)
+	defs := decoded["$defs"].(map[string]any)
+	payload := defs["Payload"].(map[string]any)
+	refSibling := payload["properties"].(map[string]any)["values"].(map[string]any)
+	require.Equal(t, "^[A-Z]+$", refSibling["pattern"])
+	require.Equal(t, "^[a-z_]+$", refSibling["propertyNames"].(map[string]any)["pattern"])
+	require.Equal(t, map[string]any{"type": "string"}, refSibling["additionalProperties"])
+}
+
 func TestEmit_PreservesDiscriminatedComposition(t *testing.T) {
 	doc := ir.Document{
 		Info: ir.Info{Title: "Visuals", Version: "1"},

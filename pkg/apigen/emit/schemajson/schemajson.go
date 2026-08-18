@@ -22,6 +22,7 @@ func schemaRef(doc ir.Document, ref ir.SchemaRef, active map[string]bool) map[st
 		active[name] = true
 		out := schemaValue(doc, schema, active)
 		delete(active, name)
+		applySchemaRefConstraints(doc, out, ref, active)
 		return out
 	}
 	out := map[string]any{}
@@ -46,6 +47,9 @@ func schemaRef(doc ir.Document, ref ir.SchemaRef, active map[string]bool) map[st
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
 	}
+	if ref.Pattern != "" {
+		out["pattern"] = ref.Pattern
+	}
 	if ref.Items != nil {
 		out["items"] = schemaRef(doc, *ref.Items, active)
 	}
@@ -56,7 +60,50 @@ func schemaRef(doc ir.Document, ref ir.SchemaRef, active map[string]bool) map[st
 			out["additionalProperties"] = ref.AdditionalProperties.Any
 		}
 	}
+	if ref.PropertyNames != nil {
+		out["propertyNames"] = schemaRef(doc, *ref.PropertyNames, active)
+	}
 	return out
+}
+
+func applySchemaRefConstraints(doc ir.Document, out map[string]any, ref ir.SchemaRef, active map[string]bool) {
+	if ref.Type != "" {
+		out["type"] = ref.Type
+	}
+	if ref.Format != "" {
+		out["format"] = ref.Format
+	}
+	if len(ref.Enum) > 0 {
+		out["enum"] = append([]string(nil), ref.Enum...)
+	}
+	if ref.Minimum != nil {
+		out["minimum"] = *ref.Minimum
+	}
+	if ref.Maximum != nil {
+		out["maximum"] = *ref.Maximum
+	}
+	if ref.MinLength != nil {
+		out["minLength"] = *ref.MinLength
+	}
+	if ref.MaxLength != nil {
+		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.Pattern != "" {
+		out["pattern"] = ref.Pattern
+	}
+	if ref.Items != nil {
+		out["items"] = schemaRef(doc, *ref.Items, active)
+	}
+	if ref.AdditionalProperties != nil {
+		if ref.AdditionalProperties.Schema != nil {
+			out["additionalProperties"] = schemaRef(doc, *ref.AdditionalProperties.Schema, active)
+		} else {
+			out["additionalProperties"] = ref.AdditionalProperties.Any
+		}
+	}
+	if ref.PropertyNames != nil {
+		out["propertyNames"] = schemaRef(doc, *ref.PropertyNames, active)
+	}
 }
 
 func schemaValue(doc ir.Document, schema ir.Schema, active map[string]bool) map[string]any {

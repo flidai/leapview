@@ -341,8 +341,10 @@ type SchemaRef struct {
 	Maximum              *float64              `json:"maximum,omitempty"`
 	MinLength            *int                  `json:"min_length,omitempty"`
 	MaxLength            *int                  `json:"max_length,omitempty"`
+	Pattern              string                `json:"pattern,omitempty"`
 	Items                *SchemaRef            `json:"items,omitempty"`
 	AdditionalProperties *AdditionalProperties `json:"additional_properties,omitempty"`
+	PropertyNames        *SchemaRef            `json:"property_names,omitempty"`
 }
 
 // AdditionalProperties captures OpenAPI object-map semantics for inline schema refs.

@@ -74,6 +74,12 @@ export const $lib = createTypeSpecLibrary({
                 default: paramMessage `Invalid operation kind: ${"reason"}.`,
             },
         },
+        "invalid-property-names": {
+            severity: "error",
+            messages: {
+                default: paramMessage `Invalid @apigen.propertyNames usage: ${"reason"}.`,
+            },
+        },
         "unnamed-schema": {
             severity: "error",
             messages: {

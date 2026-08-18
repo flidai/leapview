@@ -1,4 +1,4 @@
-import type { DecoratorContext, Enum, Interface, Model, ModelProperty, Namespace, Operation } from "@typespec/compiler";
+import { isRecordModelType, type DecoratorContext, type Enum, type Interface, type Model, type ModelProperty, type Namespace, type Operation, type Scalar } from "@typespec/compiler";
 
 import { reportDiagnostic } from "./lib.js";
 
@@ -178,6 +178,7 @@ const contractKey = Symbol.for("@yacobolo/apigen.contract");
 const metadataKey = Symbol.for("@yacobolo/apigen.metadata");
 const toolKey = Symbol.for("@yacobolo/apigen.tool");
 const transportErrorsKey = Symbol.for("@yacobolo/apigen.transportErrors");
+const propertyNamesKey = Symbol.for("@yacobolo/apigen.propertyNames");
 
 export function $cli(context: DecoratorContext, target: Operation, options: CLIOptions) {
   context.program.stateMap(cliKey).set(target, options);
@@ -402,6 +403,38 @@ export function $transportErrors(
   context.program.stateMap(transportErrorsKey).set(target, { schema, ...options });
 }
 
+export function $propertyNames(context: DecoratorContext, target: ModelProperty, key: Scalar) {
+  if (context.program.stateMap(propertyNamesKey).has(target)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-property-names",
+      format: { reason: "the decorator may only be applied once" },
+      target,
+    });
+    return;
+  }
+  if (target.type.kind !== "Model" || !isRecordModelType(target.type)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-property-names",
+      format: { reason: "target must be a string-indexed map (for example, extends Record<T>)" },
+      target,
+    });
+    return;
+  }
+  let current: Scalar | undefined = key;
+  while (current && current.name !== "string") {
+    current = current.baseScalar;
+  }
+  if (!current) {
+    reportDiagnostic(context.program, {
+      code: "invalid-property-names",
+      format: { reason: "key must be a scalar derived from string" },
+      target,
+    });
+    return;
+  }
+  context.program.stateMap(propertyNamesKey).set(target, key);
+}
+
 export const $decorators = {
   apigen: {
     cli: $cli,
@@ -429,6 +462,7 @@ export const $decorators = {
     metadata: $metadata,
     tool: $tool,
     transportErrors: $transportErrors,
+    propertyNames: $propertyNames,
   },
 };
 
@@ -567,4 +601,11 @@ export function getTransportErrors(
   return context.program.stateMap(transportErrorsKey).get(target) as
     | TransportErrorsDefinition
     | undefined;
+}
+
+export function getPropertyNames(
+  context: { program: DecoratorContext["program"] },
+  target: ModelProperty,
+) {
+  return context.program.stateMap(propertyNamesKey).get(target) as Scalar | undefined;
 }
