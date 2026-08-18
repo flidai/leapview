@@ -80,7 +80,7 @@ func TestNativeOssieNativeRoundTripPreservesPortableAndLeapViewSemantics(t *test
 		"orders": {
 			Description: "Orders",
 			GrainEntity: "order_line",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"order_line": {Type: "primary", Fields: []string{"order_id", "line_no"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}, "order_number": {Type: "unique", Fields: []string{"order_number"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"order_line": {Type: "primary", Fields: []string{"order_id", "line_no"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}, "order_number": {Type: "unique", Fields: []string{"order_number"}}},
 			Columns:     map[string]semanticmodel.ModelColumn{"order_id": {SourceField: "order_id", Datatype: semanticmodel.DataTypeString}, "line_no": {SourceField: "line_no", Datatype: semanticmodel.DataTypeInteger}, "customer_id": {SourceField: "customer_id", Datatype: semanticmodel.DataTypeString}, "order_number": {SourceField: "order_number", Datatype: semanticmodel.DataTypeString}, "revenue": {SourceField: "revenue", Datatype: semanticmodel.DataTypeDecimal}, "payment_status": {SourceField: "payment_status", Datatype: semanticmodel.DataTypeString}, "purchase_date": {SourceField: "purchase_date", Datatype: semanticmodel.DataTypeDate}, "event_time": {SourceField: "event_time", Datatype: semanticmodel.DataTypeDateTimeTZ}},
 			Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id":       {Type: "string", Datatype: semanticmodel.DataTypeString},
@@ -96,7 +96,7 @@ func TestNativeOssieNativeRoundTripPreservesPortableAndLeapViewSemantics(t *test
 		"customers": {
 			Description: "Customers",
 			GrainEntity: "customer",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
 			Columns:     map[string]semanticmodel.ModelColumn{"customer_id": {SourceField: "customer_id", Datatype: semanticmodel.DataTypeString}, "state": {SourceField: "state", Datatype: semanticmodel.DataTypeString}},
 			Dimensions: map[string]semanticmodel.MetricDimension{
 				"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
@@ -400,7 +400,7 @@ semantic_model:
 	got, err := Import(doc, map[string]semanticmodel.Table{
 		"orders": {
 			GrainEntity: "order",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"order":    {Type: "primary", Fields: []string{"order_id"}},
 				"customer": {Type: "foreign", Fields: []string{"customer_id"}},
 			},
@@ -413,7 +413,7 @@ semantic_model:
 		},
 		"customers": {
 			GrainEntity: "customer",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
 			Columns:     map[string]semanticmodel.ModelColumn{"customer_id": {Datatype: semanticmodel.DataTypeString}},
 			Dimensions:  map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
@@ -430,13 +430,13 @@ func TestImportRejectsUnsafeRelationshipsAndMetricPopulation(t *testing.T) {
 	models := map[string]semanticmodel.Table{
 		"orders": {
 			GrainEntity: "order",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}},
 			Columns:     map[string]semanticmodel.ModelColumn{"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}},
 			Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
 		"customers": {
 			GrainEntity: "customer",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
 			Columns:     map[string]semanticmodel.ModelColumn{"customer_id": {Datatype: semanticmodel.DataTypeString}, "state": {Datatype: semanticmodel.DataTypeString}},
 			Dimensions:  map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
@@ -492,19 +492,19 @@ func TestImportRejectsAmbiguousImplicitBindingPath(t *testing.T) {
 	models := map[string]semanticmodel.Table{
 		"orders": {
 			GrainEntity: "order",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}, "region": {Type: "foreign", Fields: []string{"region_id"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}, "region": {Type: "foreign", Fields: []string{"region_id"}}},
 			Columns:     map[string]semanticmodel.ModelColumn{"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}, "region_id": {Datatype: semanticmodel.DataTypeString}},
 			Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "region_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
 		"regions": {
 			GrainEntity: "region",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"region": {Type: "primary", Fields: []string{"region_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"region": {Type: "primary", Fields: []string{"region_id"}}, "customer": {Type: "foreign", Fields: []string{"customer_id"}}},
 			Columns:     map[string]semanticmodel.ModelColumn{"region_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString}},
 			Dimensions:  map[string]semanticmodel.MetricDimension{"region_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},
 		"customers": {
 			GrainEntity: "customer",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
 			Columns:     map[string]semanticmodel.ModelColumn{"customer_id": {Datatype: semanticmodel.DataTypeString}, "state": {Datatype: semanticmodel.DataTypeString}},
 			Dimensions:  map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 		},

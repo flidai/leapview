@@ -523,7 +523,7 @@ func Import(data []byte, projectModels map[string]semanticmodel.Table) (*semanti
 
 // applyDatasetFields carries Ossie's portable field annotations onto the
 // copied canonical table. It never creates a source or transformation. Scalar
-// computed expressions are rejected because ModelFieldSpec must own those
+// computed expressions are rejected because FieldDefinition must own those
 // executable transformations in the project resource.
 func applyDatasetFields(table *semanticmodel.Table, dataset Dataset) error {
 	if len(dataset.PrimaryKey) > 0 {
@@ -1074,15 +1074,8 @@ func copyModelColumns(values map[string]semanticmodel.ModelColumn) map[string]se
 func cloneImportedTable(table semanticmodel.Table) semanticmodel.Table {
 	clone := table
 	clone.AIContext = cloneAIContext(table.AIContext)
-	clone.Sources = append([]string(nil), table.Sources...)
 	clone.SourceDependencies = append([]string(nil), table.SourceDependencies...)
 	clone.ModelDependencies = append([]string(nil), table.ModelDependencies...)
-	if table.SourceReads != nil {
-		clone.SourceReads = make(map[string][]string, len(table.SourceReads))
-		for name, reads := range table.SourceReads {
-			clone.SourceReads[name] = append([]string(nil), reads...)
-		}
-	}
 	clone.Columns = copyModelColumns(table.Columns)
 	for name, column := range clone.Columns {
 		column.AIContext = cloneAIContext(column.AIContext)
@@ -1093,7 +1086,7 @@ func cloneImportedTable(table semanticmodel.Table) semanticmodel.Table {
 		dimension.AIContext = cloneAIContext(dimension.AIContext)
 		clone.Dimensions[name] = dimension
 	}
-	clone.Entities = make(map[string]semanticmodel.ModelEntitySpec, len(table.Entities))
+	clone.Entities = make(map[string]semanticmodel.EntityDefinition, len(table.Entities))
 	for name, entity := range table.Entities {
 		entity.Fields = append([]string(nil), entity.Fields...)
 		entity.AIContext = cloneAIContext(entity.AIContext)

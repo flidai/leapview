@@ -24,7 +24,7 @@ func deriveModelSQLDependencies(model *semanticmodel.Model) error {
 	sort.Strings(names)
 	for _, tableName := range names {
 		table := model.Tables[tableName]
-		sqlText := strings.TrimSpace(table.Transform.SQL)
+		sqlText := strings.TrimSpace(table.Execution.SQL)
 		if sqlText == "" {
 			continue
 		}

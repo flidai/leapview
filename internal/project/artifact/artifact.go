@@ -203,7 +203,7 @@ func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.Pro
 		}
 	}
 	for id, model := range project.Models {
-		for _, reference := range uniqueManifestReferences(model.Source, model.Sources, model.SourceDependencies) {
+		for _, reference := range uniqueManifestReferences(model.Execution.Source, model.SourceDependencies, nil) {
 			if err := requireManifestReference(resources, edges, "model", id, "source", reference, projectgraph.KindSource); err != nil {
 				return err
 			}

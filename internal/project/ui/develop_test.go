@@ -22,7 +22,7 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				ModelName: "orders",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
 					"customer":   {Type: "foreign", Fields: []string{"customer_id"}},
 				},
@@ -34,7 +34,7 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 					"status":      {Label: "Status"},
 				},
 			},
-			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
+			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Dataset: "orders", Aggregation: "count_distinct", Label: "Orders", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
@@ -141,7 +141,7 @@ func TestSemanticModelGraphProjectsCompiledEntityAndCompositeEndpoints(t *testin
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				ModelName: "orders",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
+				Entities: map[string]semanticmodel.EntityDefinition{
 					"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
 					"customer":   {Type: "foreign", Fields: []string{"customer_id", "customer_region"}},
 				},
@@ -153,7 +153,7 @@ func TestSemanticModelGraphProjectsCompiledEntityAndCompositeEndpoints(t *testin
 			},
 			"customers": {
 				ModelName:   "customers",
-				Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id", "customer_region"}}},
+				Entities:    map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id", "customer_region"}}},
 				GrainEntity: "customer",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"customer_id": {Label: "Customer ID"}, "customer_region": {Label: "Customer region"},
@@ -244,10 +244,9 @@ func TestModelAndSemanticDataTabsStayOnAssetRoutes(t *testing.T) {
 
 func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	table := semanticmodel.Table{
-		Sources:            []string{"olist.geolocation"},
-		Transform:          semanticmodel.Transform{SQL: "SELECT zip_prefix FROM source.\"olist.geolocation\""},
+		Execution:          semanticmodel.ExecutionDefinition{SQL: "SELECT zip_prefix FROM source.\"olist.geolocation\""},
 		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix", Description: "ZIP code prefix"}},
-		Entities:           map[string]semanticmodel.ModelEntitySpec{"zip_prefix": {Type: "primary", Fields: []string{"zip_prefix"}}},
+		Entities:           map[string]semanticmodel.EntityDefinition{"zip_prefix": {Type: "primary", Fields: []string{"zip_prefix"}}},
 		GrainEntity:        "zip_prefix",
 		SourceDependencies: []string{"olist.geolocation"},
 		Schema:             semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", Ordinal: 0, PhysicalType: "VARCHAR"}}},
@@ -264,8 +263,8 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := factValue(details.Overview, "Input sources"); got != "1" {
 		t.Fatalf("input sources fact = %q, want 1", got)
 	}
-	if got := factValue(details.Overview, "Mode"); got != "Transform" {
-		t.Fatalf("mode fact = %q, want Transform", got)
+	if got := factValue(details.Overview, "Mode"); got != "Definition" {
+		t.Fatalf("mode fact = %q, want Definition", got)
 	}
 	if len(details.Sections) != 3 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (1)" || details.Sections[2].Title != "SQL" {
 		t.Fatalf("sections = %#v, want entities, fields, and SQL", details.Sections)
@@ -273,7 +272,7 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if len(details.Sections[0].Table.Rows) != 1 || details.Sections[0].Table.Rows[0]["name"] != "zip_prefix" || details.Sections[0].Table.Rows[0]["grain"] != "Yes" {
 		t.Fatalf("entity rows = %#v, want grain zip_prefix entity", details.Sections[0].Table.Rows)
 	}
-	if uisignals.ValueOrZero(details.Sections[2].Code) != table.Transform.SQL || uisignals.ValueOrZero(details.Sections[2].Lang) != "sql" {
+	if uisignals.ValueOrZero(details.Sections[2].Code) != table.Execution.SQL || uisignals.ValueOrZero(details.Sections[2].Lang) != "sql" {
 		t.Fatalf("SQL section = %#v, want compiled transform SQL", details.Sections[2])
 	}
 	if len(details.Sections[1].Table.Rows) != 1 {

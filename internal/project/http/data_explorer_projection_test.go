@@ -15,7 +15,7 @@ func TestExplorerDatasetsProjectsCompositeAndUniqueGrains(t *testing.T) {
 	model := &semanticmodel.Model{Name: "inventory", Tables: map[string]semanticmodel.Table{
 		"order_lines": {
 			ModelName: "order_lines",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"order_line":   {Type: "primary", Fields: []string{"order_id", "line_number"}},
 				"customer_ref": {Type: "unique", Fields: []string{"customer_id", "region_code"}},
 			},
@@ -23,7 +23,7 @@ func TestExplorerDatasetsProjectsCompositeAndUniqueGrains(t *testing.T) {
 		},
 		"customer_snapshots": {
 			ModelName: "customer_snapshots",
-			Entities: map[string]semanticmodel.ModelEntitySpec{
+			Entities: map[string]semanticmodel.EntityDefinition{
 				"external_key": {Type: "unique", Fields: []string{"tenant_id", "customer_id"}},
 			},
 			GrainEntity: "external_key",
@@ -71,7 +71,7 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				ModelName: "orders",
-				Entities:  map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Description: "Orders table",
+				Entities:  map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Description: "Orders table",
 				Columns: map[string]semanticmodel.ModelColumn{
 					"order_id": {Name: "order_id", Type: "integer"},
 					"status":   {Name: "status", Type: "string", Description: "Order status"},

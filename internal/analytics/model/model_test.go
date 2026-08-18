@@ -115,28 +115,26 @@ func TestManagedSourceRejectsAbsoluteAndTraversalPaths(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsAuthoredSourceReads(t *testing.T) {
+func TestValidateUsesExecutionDefinitionForSQL(t *testing.T) {
 	model := &Model{
 		Name:        "test",
 		Connections: map[string]Connection{"files": {Kind: "managed"}},
 		Sources: map[string]Source{
 			"orders": {Connection: "files", Path: "orders.csv", Format: "csv"},
 		},
+		Datasets: map[string]SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]Table{
 			"orders": {
-				Sources:     []string{"orders"},
-				SourceReads: map[string][]string{"orders": {"order_id"}},
-				Entities:    map[string]ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+				Entities:    map[string]EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
 				GrainEntity: "order_id",
-				Dimensions:  map[string]MetricDimension{"order_id": {Label: "Order ID"}},
-				Transform:   Transform{SQL: "SELECT order_id FROM source.orders"},
+				Dimensions:  map[string]MetricDimension{"order_id": {Label: "Order ID", Datatype: DataTypeString}},
+				Execution:   ExecutionDefinition{SQL: "SELECT order_id FROM source.orders"},
 			},
 		},
 	}
 
-	err := model.Validate()
-	if err == nil || !strings.Contains(err.Error(), "source_reads is no longer supported") {
-		t.Fatalf("Validate() error = %v, want source_reads rejection", err)
+	if err := model.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 
@@ -424,7 +422,7 @@ func directSemanticValidationModel() *Model {
 	return &Model{
 		Name: "sales",
 		Tables: map[string]Table{
-			"orders": {Entities: map[string]ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]MetricDimension{
+			"orders": {Entities: map[string]EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]MetricDimension{
 				"order_id": {Type: "string", Datatype: DataTypeString},
 				"amount":   {Type: "number", Datatype: DataTypeDecimal},
 				"status":   {Type: "string", Datatype: DataTypeString},
@@ -530,7 +528,7 @@ func semanticDefinitionTestModel() *Model {
 
 func TestCanonicalGrainPreservesOrderedCompositeIdentity(t *testing.T) {
 	table := Table{
-		Entities: map[string]ModelEntitySpec{
+		Entities: map[string]EntityDefinition{
 			"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}},
 		},
 		GrainEntity: "order_line",

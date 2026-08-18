@@ -100,12 +100,12 @@ func TestCompositeRelationshipValidatesArityTypesAndUniqueTuple(t *testing.T) {
 	model := relationshipMatrixModel()
 	orders := model.Tables["orders"]
 	orders.Dimensions["line_number"] = MetricDimension{Type: "number", Datatype: DataTypeInteger}
-	orders.Entities = map[string]ModelEntitySpec{"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}}}
+	orders.Entities = map[string]EntityDefinition{"order_line": {Type: "primary", Fields: []string{"order_id", "line_number"}}}
 	orders.GrainEntity = "order_line"
 	model.Tables["orders"] = orders
 	customers := model.Tables["customers"]
 	customers.Dimensions["line_number"] = MetricDimension{Type: "number", Datatype: DataTypeInteger}
-	customers.Entities = map[string]ModelEntitySpec{"customer_line": {Type: "unique", Fields: []string{"customer_id", "line_number"}}}
+	customers.Entities = map[string]EntityDefinition{"customer_line": {Type: "unique", Fields: []string{"customer_id", "line_number"}}}
 	customers.GrainEntity = "customer_line"
 	model.Tables["customers"] = customers
 	model.Relationships = []Relationship{{
@@ -132,7 +132,7 @@ func TestCompositeRelationshipValidatesArityTypesAndUniqueTuple(t *testing.T) {
 	model.Tables["customers"] = customers
 	customerTable = model.Tables["customers"]
 	customerTable.Dimensions["line_number"] = MetricDimension{Type: "number", Datatype: DataTypeInteger}
-	customerTable.Entities = map[string]ModelEntitySpec{"customer": {Type: "unique", Fields: []string{"customer_id"}}}
+	customerTable.Entities = map[string]EntityDefinition{"customer": {Type: "unique", Fields: []string{"customer_id"}}}
 	customerTable.GrainEntity = "customer"
 	model.Tables["customers"] = customerTable
 	if err := model.validateSemanticGraph(); err == nil || !strings.Contains(err.Error(), "primary or unique entity") {
@@ -161,29 +161,29 @@ func relationshipMatrixModel() *Model {
 		Name: "fanout_matrix",
 		Tables: map[string]Table{
 			"orders": {
-				Entities: map[string]ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Entities: map[string]EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]MetricDimension{
 					"order_id": {Type: "string", Datatype: DataTypeString}, "customer_id": {Type: "string", Datatype: DataTypeString}, "region": {Type: "string", Datatype: DataTypeString},
 				},
 			},
 			"customers": {
-				Entities: map[string]ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
+				Entities: map[string]EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]MetricDimension{
 					"customer_id": {Type: "string", Datatype: DataTypeString}, "region": {Type: "string", Datatype: DataTypeString},
 				},
 			},
 			"profiles": {
-				Entities: map[string]ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
+				Entities: map[string]EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]MetricDimension{
 					"customer_id": {Type: "string", Datatype: DataTypeString}, "tier": {Type: "string", Datatype: DataTypeString},
 				},
 			},
 			"accounts": {
-				Entities: map[string]ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
+				Entities: map[string]EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id",
 				Dimensions: map[string]MetricDimension{"customer_id": {Type: "string", Datatype: DataTypeString}},
 			},
 			"tags": {
-				Entities: map[string]ModelEntitySpec{"tag_id": {Type: "primary", Fields: []string{"tag_id"}}}, GrainEntity: "tag_id",
+				Entities: map[string]EntityDefinition{"tag_id": {Type: "primary", Fields: []string{"tag_id"}}}, GrainEntity: "tag_id",
 				Dimensions: map[string]MetricDimension{
 					"tag_id": {Type: "string", Datatype: DataTypeString}, "order_id": {Type: "string", Datatype: DataTypeString},
 				},

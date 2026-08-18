@@ -18,40 +18,6 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
-func projectModelTable(spec projectModelTableSpec) semanticmodel.Table {
-	table := semanticmodel.Table{
-		Source:      spec.Source,
-		Sources:     append([]string{}, spec.Sources...),
-		SourceReads: copyStringSliceMap(spec.SourceReads),
-		Transform:   spec.Transform,
-		Entities:    spec.Entities,
-		GrainEntity: spec.Grain.Entity,
-		Dimensions:  map[string]semanticmodel.MetricDimension{},
-		Description: spec.Description,
-	}
-	for name, field := range spec.Fields {
-		table.Dimensions[name] = semanticmodel.MetricDimension{
-			Label:       field.Label,
-			Description: field.Description,
-			Type:        canonicalDimensionTypeName(string(field.Datatype)),
-			Datatype:    field.Datatype,
-			AIContext:   field.AIContext,
-		}
-		if field.Datatype != "" {
-			if table.Columns == nil {
-				table.Columns = map[string]semanticmodel.ModelColumn{}
-			}
-			column := table.Columns[name]
-			column.Type = canonicalDimensionTypeName(string(field.Datatype))
-			column.Datatype = field.Datatype
-			column.Description = firstNonEmpty(column.Description, field.Description)
-			column.AIContext = field.AIContext
-			table.Columns[name] = column
-		}
-	}
-	return table
-}
-
 func projectDashboardPages(pages []projectDashboardPage) []dashboard.Page {
 	out := make([]dashboard.Page, 0, len(pages))
 	for _, page := range pages {
@@ -183,8 +149,7 @@ func projectManifest(project Project) (manifest.Project, error) {
 		if id == "" {
 			return manifest.Project{}, fmt.Errorf("model %q has no stable id", name)
 		}
-		value.Source = canonicalRef(project, "source", value.Source)
-		value.Sources = canonicalRefs(project, "source", value.Sources)
+		value.Execution.Source = canonicalRef(project, "source", value.Execution.Source)
 		value.SourceDependencies = canonicalRefs(project, "source", value.SourceDependencies)
 		value.ModelDependencies = canonicalRefs(project, "model", value.ModelDependencies)
 		result.Models[id] = value
@@ -197,8 +162,8 @@ func projectManifest(project Project) (manifest.Project, error) {
 		}
 		runtimeTables := copyTables(project.Models)
 		for tableName, table := range runtimeTables {
-			table.Source = authoredNameByID(table.Source, project.SourceIDs)
-			table.Sources = authoredNamesByID(table.Sources, project.SourceIDs)
+			table.Execution.Source = authoredNameByID(table.Execution.Source, project.SourceIDs)
+			table.SourceDependencies = authoredNamesByID(table.SourceDependencies, project.SourceIDs)
 			runtimeTables[tableName] = table
 		}
 		sourceAliases, _, err := sourceAliasesForProject(project)
@@ -413,15 +378,15 @@ func accessObjectKind(kind string) string {
 func translatedTablesForRuntime(in map[string]semanticmodel.Table, sourceAliases map[string]string) map[string]semanticmodel.Table {
 	out := make(map[string]semanticmodel.Table, len(in))
 	for name, table := range in {
-		if alias, ok := sourceAliases[table.Source]; ok {
-			table.Source = alias
+		if alias, ok := sourceAliases[table.Execution.Source]; ok {
+			table.Execution.Source = alias
 		}
-		for index, source := range table.Sources {
+		for index, source := range table.SourceDependencies {
 			if alias, ok := sourceAliases[source]; ok {
-				table.Sources[index] = alias
+				table.SourceDependencies[index] = alias
 			}
 		}
-		table.Transform.SQL = rewriteSourceSQLForRuntime(table.Transform.SQL, sourceAliases)
+		table.Execution.SQL = rewriteSourceSQLForRuntime(table.Execution.SQL, sourceAliases)
 		out[name] = table
 	}
 	return out
@@ -683,8 +648,6 @@ func copyTables(in map[string]semanticmodel.Table) map[string]semanticmodel.Tabl
 	out := make(map[string]semanticmodel.Table, len(in))
 	for key, value := range in {
 		value.AIContext = copyAIContext(value.AIContext)
-		value.Sources = append([]string(nil), value.Sources...)
-		value.SourceReads = copyStringSliceMap(value.SourceReads)
 		value.SourceDependencies = append([]string(nil), value.SourceDependencies...)
 		value.ModelDependencies = append([]string(nil), value.ModelDependencies...)
 		value.Columns = copyModelColumns(value.Columns)
@@ -697,7 +660,7 @@ func copyTables(in map[string]semanticmodel.Table) map[string]semanticmodel.Tabl
 			dimension.AIContext = copyAIContext(dimension.AIContext)
 			value.Dimensions[name] = dimension
 		}
-		entities := make(map[string]semanticmodel.ModelEntitySpec, len(value.Entities))
+		entities := make(map[string]semanticmodel.EntityDefinition, len(value.Entities))
 		for name, entity := range value.Entities {
 			entity.Fields = append([]string(nil), entity.Fields...)
 			entity.AIContext = copyAIContext(entity.AIContext)

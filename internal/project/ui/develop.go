@@ -2232,8 +2232,8 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 	sources := modelTableSourceNames(asset.Payload)
 	mode := "Unspecified"
 	if modelTableSQL(asset.Payload) != "" {
-		mode = "Transform"
-	} else if metaString(asset.Payload, "Source", "source") != "" {
+		mode = "Definition"
+	} else if modelTableSourceNames(asset.Payload) != nil {
 		mode = "Direct source"
 	}
 	entities := metaMap(asset.Payload, "Entities", "entities")
@@ -2279,7 +2279,8 @@ func sourceDetailModel(model *assetDetailModel, asset projectview.DevelopAssetVi
 }
 
 func modelTableSourceNames(meta map[string]any) []string {
-	if source := metaString(meta, "Source", "source"); source != "" {
+	definition := metaMap(meta, "Definition", "definition")
+	if source := metaString(definition, "Source", "source"); source != "" {
 		return []string{source}
 	}
 	for _, value := range []any{
@@ -2296,7 +2297,7 @@ func modelTableSourceNames(meta map[string]any) []string {
 }
 
 func modelTableSQL(meta map[string]any) string {
-	return metaString(metaMap(meta, "Transform", "transform"), "SQL", "sql")
+	return metaString(metaMap(meta, "Definition", "definition"), "SQL", "sql")
 }
 
 func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[string]any, assets []projectview.DevelopAssetView) recordTable {

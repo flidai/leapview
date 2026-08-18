@@ -186,7 +186,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {order: {type: primary, fields: [order_id]}}, grain: {entity: order}, fields: {order_id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {order: {type: primary, fields: [order_id]}}, grain: {entity: order}, fields: {order_id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -256,7 +256,7 @@ metadata: {id: source:orders_source, name: orders_source}
 spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv, options: {header: true}}}
 `,
 			"models/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders}\n" + modelContext + `spec:
-  source: orders_source
+  definition: {type: direct, source: orders_source}
   entities:
     order_line: {type: primary, fields: [order_id, line_number]}
   grain: {entity: order_line}
@@ -270,7 +270,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 kind: Model
 metadata: {id: model:customers, name: customers}
 spec:
-  source: orders_source
+  definition: {type: direct, source: orders_source}
   entities:
     customer_line: {type: primary, fields: [order_id, line_number]}
   grain: {entity: customer_line}
@@ -583,8 +583,8 @@ func TestCompilerPersistsSQLAnalysisEvidenceAndDependencies(t *testing.T) {
 			"daily":  {Model: "daily"},
 		},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
-			"daily":  {Sources: []string{"orders"}, Transform: semanticmodel.Transform{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.ModelEntitySpec{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
+			"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, Entities: map[string]semanticmodel.EntityDefinition{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
+			"daily":  {Execution: semanticmodel.ExecutionDefinition{SQL: "-- source.orders\nWITH q AS (SELECT * FROM source.orders) SELECT * FROM q JOIN model.orders ON q.id = model.orders.id"}, Entities: map[string]semanticmodel.EntityDefinition{"id": {Type: "primary", Fields: []string{"id"}}}, GrainEntity: "id", Dimensions: map[string]semanticmodel.MetricDimension{"id": {Datatype: semanticmodel.DataTypeString, Type: "string"}}},
 		},
 	}
 	if err := deriveModelSQLDependencies(model); err != nil {
@@ -608,16 +608,15 @@ func TestCompilerPersistsSQLAnalysisEvidenceAndDependencies(t *testing.T) {
 func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T) {
 	modelTable := func(source string) semanticmodel.Table {
 		return semanticmodel.Table{
-			Source:      source,
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}},
+			Execution:   semanticmodel.ExecutionDefinition{Source: source},
+			Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
 			GrainEntity: "order",
 			Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
 		}
 	}
 	base := modelTable("orders")
 	derived := modelTable("")
-	derived.Sources = []string{"orders"}
-	derived.Transform.SQL = "SELECT base.order_id FROM model.base_model AS base JOIN source.orders AS raw ON raw.order_id = base.order_id"
+	derived.Execution.SQL = "SELECT base.order_id FROM model.base_model AS base JOIN source.orders AS raw ON raw.order_id = base.order_id"
 	project := Project{
 		ID: "project:test", Name: "test",
 		Connections:   map[string]semanticmodel.Connection{"warehouse": {Kind: "managed"}},
@@ -648,7 +647,7 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 		invalid.Models[name] = table
 	}
 	derived = invalid.Models["derived_model"]
-	derived.Transform.SQL = strings.Replace(derived.Transform.SQL, "model.base_model", "model.base_alias", 1)
+	derived.Execution.SQL = strings.Replace(derived.Execution.SQL, "model.base_model", "model.base_alias", 1)
 	invalid.Models["derived_model"] = derived
 	if _, err := projectManifest(invalid); err == nil || !strings.Contains(err.Error(), `unknown model table "base_alias"`) {
 		t.Fatalf("dataset alias in transform dependency error = %v, want unknown physical model", err)
@@ -671,8 +670,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
-  sources: [orders]
-  transform: {sql: SELECT order_id FROM source.orders}
+  definition: {type: sql, sql: SELECT order_id FROM source.orders}
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
   fields: {order_id: {datatype: String}}
@@ -681,7 +679,8 @@ spec:
 kind: Model
 metadata: {id: model:order_labels, name: order_labels}
 spec:
-  transform:
+  definition:
+    type: sql
     sql: SELECT order_id FROM model.orders_model
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
@@ -736,7 +735,7 @@ spec:
   fields: {order_id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "spec.sql: field not allowed") {
+	if _, err := LoadProject(projectPath); err == nil || !strings.Contains(err.Error(), "missing property 'definition'") {
 		t.Fatalf("LoadProject() accepted removed top-level Model sql alias: %v", err)
 	}
 }
@@ -756,7 +755,7 @@ spec: {connection: warehouse, location: {type: path, path: foo-bar.csv, format: 
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders}
-spec: {source: foo-bar, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: foo-bar}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	project, err := LoadProject(projectPath)
@@ -767,7 +766,7 @@ spec: {source: foo-bar, entities: {id: {type: primary, fields: [id]}}, grain: {e
 	if !ok || resource.Kind != projectgraph.KindSource || resource.Name != "foo-bar" {
 		t.Fatalf("source graph resource = %#v, present=%v; want source:foo-bar/foo-bar", resource, ok)
 	}
-	if got := project.Manifest.Models["model:orders"].Source; got != "source:foo-bar" {
+	if got := project.Manifest.Models["model:orders"].Execution.Source; got != "source:foo-bar" {
 		t.Fatalf("manifest model source = %q, want stable source ID", got)
 	}
 }
@@ -792,7 +791,7 @@ spec: {connection: warehouse, location: {type: path, path: foo_bar.csv, format: 
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders}
-spec: {source: foo-bar, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: foo-bar}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	_, err := LoadProject(projectPath)
@@ -879,7 +878,7 @@ spec:
 kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
-  source: orders
+  definition: {type: direct, source: orders}
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
   fields: {order_id: {datatype: String}}
@@ -1002,7 +1001,7 @@ spec:
 `)
 	write("connections/c.yaml", "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:id, name: warehouse}\nspec: {type: managed}\n")
 	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n")
-	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {source: source:id, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n")
+	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {definition: {type: direct, source: source:id}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n")
 	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {datasets: {orders: {model: orders_model}}, metrics: {count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}\n")
 	graph, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
 	if err != nil {
@@ -1029,7 +1028,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
-  source: orders
+  definition: {type: direct, source: orders}
   entities: {id: {type: primary, fields: [id]}}
   grain: {entity: id}
   fields: {id: {datatype: String}}
@@ -1103,7 +1102,7 @@ spec: {type: managed}
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: resource:duplicate, name: orders}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 	})
 	_, err := LoadProject(projectPath)
@@ -1131,7 +1130,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1164,7 +1163,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1310,7 +1309,7 @@ spec:
 		t.Fatalf("LoadProject() error = %v, want generated schema rejection", err)
 	}
 	diagnostics := configschema.Diagnostics(err)
-	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" || diagnostics[0].FieldPath != "spec" {
+	if len(diagnostics) == 0 || diagnostics[0].ResourceID != "connection:warehouse" || !strings.HasPrefix(diagnostics[0].FieldPath, "spec") {
 		t.Fatalf("diagnostics = %#v, want connection resource and spec", diagnostics)
 	}
 }
@@ -1331,8 +1330,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 kind: Model
 metadata: {id: model:orders, name: orders_model}
 spec:
-  sources: [orders]
-  transform: {sql: 'SELECT * FROM raw.orders'}
+  definition: {type: sql, sql: 'SELECT * FROM raw.orders'}
   entities: {id: {type: primary, fields: [id]}}
   grain: {entity: id}
   fields: {id: {datatype: String}}
@@ -1370,7 +1368,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1467,7 +1465,7 @@ spec: {connection: warehouse, location: {type: path, path: customers.csv, format
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.customers'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
 		project, err := LoadProject(writeFlatProjectFixture(t, files))
 		if err != nil {
@@ -1486,12 +1484,12 @@ spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.customers'}, en
 		files["models/orders.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {sources: [orders], transform: {sql: 'SELECT * FROM source.orders JOIN model.customers_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.orders JOIN model.customers_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
 		files["models/customers.yaml"] = `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:customers, name: customers_model}
-spec: {sources: [customers], transform: {sql: 'SELECT * FROM source.customers JOIN model.orders_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.customers JOIN model.orders_model USING (id)'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `
 		_, err := LoadProject(writeFlatProjectFixture(t, files))
 		if err == nil || !strings.Contains(err.Error(), "cycle") {
@@ -1516,7 +1514,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
@@ -1571,7 +1569,7 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
 metadata: {id: model:orders, name: orders_model}
-spec: {source: orders, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel

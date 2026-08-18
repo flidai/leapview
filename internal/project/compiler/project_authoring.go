@@ -59,21 +59,6 @@ type dashboardPublicationEmbeddingSpec struct {
 	AllowedOrigins []string `yaml:"allowedOrigins"`
 }
 
-type sourceSpec struct {
-	Format      string                        `yaml:"format"`
-	Description string                        `yaml:"description"`
-	Path        string                        `yaml:"path"`
-	Connection  string                        `yaml:"connection"`
-	Object      string                        `yaml:"object"`
-	Options     map[string]any                `yaml:"options"`
-	Fields      map[string]projectSourceField `yaml:"fields"`
-}
-
-type projectSourceField struct {
-	Type        string `yaml:"type"`
-	Description string `yaml:"description"`
-}
-
 type projectSemanticModelSpec struct {
 	Datasets      map[string]semanticmodel.SemanticDatasetSpec   `yaml:"datasets"`
 	Relationships map[string]semanticmodel.RelationshipSpec      `yaml:"relationships"`
@@ -91,17 +76,6 @@ type dashboardSpec struct {
 	FilterApplication dashboardfilter.ApplicationPolicy                    `yaml:"filter_application"`
 	Visuals           map[string]dashboardauthoring.AuthoringVisualization `yaml:"visuals"`
 	Pages             []projectDashboardPage                               `yaml:"pages"`
-}
-
-type projectModelTableSpec struct {
-	Source      string                                   `yaml:"source"`
-	Sources     []string                                 `yaml:"sources"`
-	SourceReads map[string][]string                      `yaml:"sourceReads"`
-	Transform   semanticmodel.Transform                  `yaml:"transform"`
-	Entities    map[string]semanticmodel.ModelEntitySpec `yaml:"entities"`
-	Grain       semanticmodel.ModelGrainSpec             `yaml:"grain"`
-	Fields      map[string]semanticmodel.ModelFieldSpec  `yaml:"fields"`
-	Description string                                   `yaml:"description"`
 }
 
 type projectDashboardPage struct {
