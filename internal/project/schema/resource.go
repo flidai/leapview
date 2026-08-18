@@ -141,8 +141,24 @@ func checkResourceNode(filename string, root *yaml.Node) error {
 				return resourceDiagnostic(filename, node, "schema.number", err.Error())
 			}
 		}
+		// yaml.v3 resolves out-of-range plain floating-point literals such as
+		// 1e400 to !!str instead of !!float. Treat those literals as numbers
+		// here so they cannot silently change type during normalization. Quoted
+		// values intentionally remain strings, even when they look numeric.
+		if node.Kind == yaml.ScalarNode && node.Tag == "!!str" && node.Style == 0 && yamlFloatOverflow(node.Value) {
+			return resourceDiagnostic(filename, node, "schema.number", fmt.Sprintf("float value %q cannot be represented as a finite number", node.Value))
+		}
 		return nil
 	})
+}
+
+func yamlFloatOverflow(value string) bool {
+	canonical := strings.ReplaceAll(strings.TrimSpace(value), "_", "")
+	if canonical == "" {
+		return false
+	}
+	parsed, err := strconv.ParseFloat(canonical, 64)
+	return errors.Is(err, strconv.ErrRange) && math.IsInf(parsed, 0)
 }
 
 // YAML's resolver intentionally treats a few JSON spellings (for example

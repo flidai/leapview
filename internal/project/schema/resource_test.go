@@ -114,6 +114,12 @@ func TestNormalizeResourceRejectsAmbiguousYAML(t *testing.T) {
 			message: "underflows",
 		},
 		{
+			name:    "overflowing float",
+			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  options: {ratio: 1e400}", 1),
+			code:    "schema.number",
+			message: "cannot be represented",
+		},
+		{
 			name:    "timestamp",
 			doc:     strings.Replace(testConnectionYAML, "  kind: managed", "  kind: managed\n  options: {when: 2024-01-01}", 1),
 			code:    "schema.tag",
