@@ -215,6 +215,9 @@ func projectManifest(project Project) (manifest.Project, error) {
 		if err := applySemanticModelSpec(model, authoredSpec); err != nil {
 			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
 		}
+		if err := deriveModelSQLDependencies(model); err != nil {
+			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
+		}
 		if err := model.ValidateAuthored(); err != nil {
 			return manifest.Project{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
 		}

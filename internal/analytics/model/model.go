@@ -179,9 +179,8 @@ func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]s
 		if table.Source != "" {
 			return nil, fmt.Errorf("model table %q uses transform.sql and must declare sources instead of source", tableName)
 		}
-		if err := validateModelSQLQuery(tableName, sql); err != nil {
-			return nil, err
-		}
+		// SQL lineage is populated by the compiler-owned DuckDB AST analyzer.
+		return append([]string(nil), table.SourceDependencies...), nil
 	} else if table.Source == "" {
 		return nil, fmt.Errorf("model table %q requires source or transform.sql", tableName)
 	}
@@ -205,29 +204,11 @@ func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]s
 			return nil, err
 		}
 	}
-	inferred, rawRefs, unqualifiedRefs := m.modelSQLSourceRefs(sql)
-	if len(rawRefs) > 0 {
-		return nil, fmt.Errorf("model table %q model SQL must reference sources through source.<name>; raw.<name> is internal", tableName)
-	}
-	if len(unqualifiedRefs) > 0 {
-		return nil, fmt.Errorf("model table %q SQL must reference sources through source.<name>; found unqualified relation %q", tableName, unqualifiedRefs[0])
-	}
-	for _, source := range inferred {
-		if _, ok := m.Sources[source]; !ok {
-			return nil, fmt.Errorf("model table %q SQL references unknown source %q", tableName, source)
-		}
-	}
 	result := make([]string, 0, len(seen))
 	for source := range seen {
 		result = append(result, source)
 	}
 	sort.Strings(result)
-	if hasSQL && !sameStringSet(result, inferred) {
-		if len(result) == 0 && len(inferred) > 0 {
-			return nil, fmt.Errorf("model table %q uses transform.sql and requires sources", tableName)
-		}
-		return nil, fmt.Errorf("model table %q SQL source references %v do not match declared sources %v", tableName, inferred, result)
-	}
 	return result, nil
 }
 
@@ -328,22 +309,7 @@ func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]st
 	if sql == "" {
 		return nil, nil
 	}
-	seen := map[string]struct{}{}
-	for _, ref := range scanSQLRelationRefs(sql) {
-		if ref.Namespace != "model" {
-			continue
-		}
-		dependency, err := m.resolveModelDependency(ref.Name)
-		if err != nil {
-			return nil, fmt.Errorf("model table %q SQL references %w", tableName, err)
-		}
-		currentPhysical := strings.TrimSpace(table.ModelName)
-		if ref.Name == tableName || (currentPhysical != "" && dependency == currentPhysical) {
-			return nil, fmt.Errorf("model table %q cannot read itself", tableName)
-		}
-		seen[dependency] = struct{}{}
-	}
-	return sortedStringSet(seen), nil
+	return append([]string(nil), table.ModelDependencies...), nil
 }
 
 // resolveModelDependency resolves the physical relation name emitted by a
@@ -408,7 +374,7 @@ func (m *Model) modelSQLSourceRefs(sql string) ([]string, []string, []string) {
 }
 
 func (m *Model) SQLSourceRefs(sql string) ([]string, []string, []string) {
-	return m.modelSQLSourceRefs(sql)
+	return nil, nil, nil
 }
 
 func validateModelSQLQuery(tableName string, sql string) error {

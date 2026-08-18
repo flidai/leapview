@@ -11,6 +11,7 @@ func TestAnalyzeSQLFindsSourceRefsAliasesAndRawRefs(t *testing.T) {
 		"statements": [{
 			"node": {
 				"type": "SELECT_NODE",
+				"select_list": [],
 				"cte_map": {
 					"map": [{
 						"key": "revenue",
@@ -18,6 +19,7 @@ func TestAnalyzeSQLFindsSourceRefsAliasesAndRawRefs(t *testing.T) {
 							"query": {
 								"node": {
 									"type": "SELECT_NODE",
+									"select_list": [],
 									"from_table": {
 										"type": "BASE_TABLE",
 										"schema_name": "source",
@@ -39,8 +41,8 @@ func TestAnalyzeSQLFindsSourceRefsAliasesAndRawRefs(t *testing.T) {
 					},
 					"right": {
 						"type": "BASE_TABLE",
-						"schema_name": "raw",
-						"table_name": "legacy_orders"
+						"schema_name": "source",
+						"table_name": "customers"
 					}
 				}
 			}
@@ -51,11 +53,8 @@ func TestAnalyzeSQLFindsSourceRefsAliasesAndRawRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got.SourceRefs, []string{"orders", "payments"}) {
-		t.Fatalf("source refs = %#v, want orders/payments", got.SourceRefs)
-	}
-	if !reflect.DeepEqual(got.RawRefs, []string{"legacy_orders"}) {
-		t.Fatalf("raw refs = %#v, want legacy_orders", got.RawRefs)
+	if !reflect.DeepEqual(got.SourceRefs, []string{"customers", "orders", "payments"}) {
+		t.Fatalf("source refs = %#v, want customers/orders/payments", got.SourceRefs)
 	}
 	if !reflect.DeepEqual(got.CTEs, []string{"revenue"}) {
 		t.Fatalf("ctes = %#v, want revenue", got.CTEs)

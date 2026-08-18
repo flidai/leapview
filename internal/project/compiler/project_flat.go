@@ -401,6 +401,12 @@ func validateFlatProject(project Project) error {
 			runtimeDatasets[name] = semanticmodel.SemanticDatasetSpec{Model: name}
 		}
 		validatedModel := &semanticmodel.Model{Name: project.Name, Connections: copyConnections(project.Connections), Sources: aliasedSources, Datasets: runtimeDatasets, Tables: runtimeTables}
+		if err := deriveModelSQLDependencies(validatedModel); err != nil {
+			for name := range project.Models {
+				return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec", "Model %q SQL validation: %v", name, err)
+			}
+			return err
+		}
 		if err := validatedModel.ValidateAuthored(); err != nil {
 			for name := range project.Models {
 				return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec", "Model %q validation: %v", name, err)
@@ -433,9 +439,12 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	for name, model := range project.Models {
-		refs := append([]string{}, model.Sources...)
-		if model.Source != "" {
-			refs = append(refs, model.Source)
+		refs := append([]string{}, model.SourceDependencies...)
+		if len(refs) == 0 {
+			refs = append(refs, model.Sources...)
+			if model.Source != "" {
+				refs = append(refs, model.Source)
+			}
 		}
 		// A transform may derive solely from upstream model tables. ValidateAuthored
 		// already resolved those physical dependencies before this project-level
@@ -708,9 +717,12 @@ func compileProjectGraph(project Project) (projectgraph.ProjectGraph, error) {
 	}
 	for name, model := range project.Models {
 		from, _ := resolver.resolve(project.ModelIDs[name], projectgraph.KindModel)
-		refs := append([]string{}, model.Sources...)
-		if model.Source != "" {
-			refs = append(refs, model.Source)
+		refs := append([]string{}, model.SourceDependencies...)
+		if len(refs) == 0 {
+			refs = append(refs, model.Sources...)
+			if model.Source != "" {
+				refs = append(refs, model.Source)
+			}
 		}
 		for _, ref := range refs {
 			to, err := resolver.resolve(ref, projectgraph.KindSource)
