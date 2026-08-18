@@ -286,6 +286,9 @@ func collectSchemaRefNames(schema ir.SchemaRef, names map[string]struct{}) {
 	if schema.Items != nil {
 		collectSchemaRefNames(*schema.Items, names)
 	}
+	if schema.PropertyNames != nil {
+		collectSchemaRefNames(*schema.PropertyNames, names)
+	}
 	if schema.AdditionalProperties != nil && schema.AdditionalProperties.Schema != nil {
 		collectSchemaRefNames(*schema.AdditionalProperties.Schema, names)
 	}

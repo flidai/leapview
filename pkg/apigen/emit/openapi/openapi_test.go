@@ -99,6 +99,20 @@ func TestEmitYAML(t *testing.T) {
 	require.Contains(t, string(b), "example:")
 }
 
+func TestEmitYAML_PreservesPatternAndPropertyNames(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		Info:          ir.Info{Title: "Constrained", Version: "1"},
+		Schemas:       map[string]ir.Schema{},
+		Endpoints:     []ir.Endpoint{{Method: "get", Path: "/values", OperationID: "values", Responses: []ir.Response{{StatusCode: 200, Description: "ok", Contents: []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Type: "object", Pattern: "^[A-Z]+$", PropertyNames: &ir.SchemaRef{Type: "string", Pattern: "^[a-z_]+$"}, AdditionalProperties: &ir.AdditionalProperties{Schema: &ir.SchemaRef{Type: "string"}}}}}}}}},
+	}
+	b, err := EmitYAML(doc, Options{})
+	require.NoError(t, err)
+	require.Contains(t, string(b), "propertyNames:")
+	require.Contains(t, string(b), "pattern: ^[a-z_]+$")
+	require.Contains(t, string(b), "pattern: ^[A-Z]+$")
+}
+
 func TestEmitYAMLIncludesTypedToolMetadata(t *testing.T) {
 	doc := ir.Document{
 		SchemaVersion: ir.CurrentSchemaVersion,

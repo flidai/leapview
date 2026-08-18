@@ -139,6 +139,86 @@ describe("APIGen TypeSpec emitter", () => {
     expect(doc.endpoints[1].request_body.contents[0].schema).toEqual({ ref: "WidgetStatus" });
   });
 
+  it("emits inherited scalar patterns and constrained map names", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Constrained API" })
+      namespace ConstrainedAPI;
+
+      @pattern("^[A-Z][A-Z0-9_]*$")
+      scalar UpperIdentifier extends string;
+
+      @pattern("^[a-z_][a-z0-9_]*$")
+      scalar PropertyName extends string;
+
+      model Payload {
+        id: UpperIdentifier;
+        @apigen.propertyNames(PropertyName)
+        properties: Record<string>;
+      }
+
+      @route("/payload")
+      @post
+      op create(@body body: Payload): Payload;
+    `);
+
+    expect(doc.schemas.Payload.properties.id.schema).toEqual({
+      type: "string",
+      pattern: "^[A-Z][A-Z0-9_]*$",
+    });
+    expect(doc.schemas.Payload.properties.properties.schema).toEqual({
+      type: "object",
+      additional_properties: { schema: { type: "string" } },
+      property_names: {
+      type: "string",
+      pattern: "^[a-z_][a-z0-9_]*$",
+      },
+    });
+  });
+
+  it("rejects property-name decoration on non-map or non-string keys", async () => {
+    await expectCompileFails(`
+      using Http;
+
+      @service(#{ title: "Invalid property names" })
+      namespace InvalidPropertyNames;
+
+      @pattern("^[a-z_][a-z0-9_]*$")
+      scalar PropertyName extends string;
+      scalar NumericKey extends int32;
+
+      model Payload {
+        @apigen.propertyNames(PropertyName)
+        value: string;
+        @apigen.propertyNames(NumericKey)
+        values: Record<string>;
+      }
+
+      @route("/payload") @post
+      op create(@body body: Payload): Payload;
+    `, "Invalid @apigen.propertyNames usage");
+  });
+
+  it("rejects repeated property-name decoration", async () => {
+    await expectCompileFails(`
+      using Http;
+
+      @service(#{ title: "Repeated property names" })
+      namespace RepeatedPropertyNames;
+
+      scalar PropertyName extends string;
+      model Payload {
+        @apigen.propertyNames(PropertyName)
+        @apigen.propertyNames(PropertyName)
+        values: Record<string>;
+      }
+
+      @route("/payload") @post
+      op create(@body body: Payload): Payload;
+    `, "the decorator may only be applied once");
+  });
+
   it("emits a normalized command contract through interface route and tag metadata", async () => {
     const doc = await compileSource(`
       using Http;

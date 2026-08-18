@@ -1325,6 +1325,11 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 			return err
 		}
 	}
+	if schemaRef.PropertyNames != nil {
+		if err := validateSchemaRefExists(doc, *schemaRef.PropertyNames, context+" property_names"); err != nil {
+			return err
+		}
+	}
 	for idx, value := range schemaRef.Enum {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s enum[%d] is required", context, idx)

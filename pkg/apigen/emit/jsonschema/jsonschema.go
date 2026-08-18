@@ -154,7 +154,7 @@ func schemaPropertyObject(property ir.SchemaProperty) map[string]any {
 }
 
 func schemaRefObject(ref ir.SchemaRef) map[string]any {
-	if ref.Ref != "" && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil {
+	if ref.Ref != "" && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil && ref.Pattern == "" && ref.PropertyNames == nil {
 		if name, ok := ir.NormalizedSchemaRefName(ref); ok {
 			return map[string]any{"$ref": "#/$defs/" + name}
 		}
@@ -186,6 +186,9 @@ func schemaRefObject(ref ir.SchemaRef) map[string]any {
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
 	}
+	if ref.Pattern != "" {
+		out["pattern"] = ref.Pattern
+	}
 	if ref.Items != nil {
 		out["items"] = schemaRefObject(*ref.Items)
 	}
@@ -195,6 +198,9 @@ func schemaRefObject(ref ir.SchemaRef) map[string]any {
 		} else if ref.AdditionalProperties.Schema != nil {
 			out["additionalProperties"] = schemaRefObject(*ref.AdditionalProperties.Schema)
 		}
+	}
+	if ref.PropertyNames != nil {
+		out["propertyNames"] = schemaRefObject(*ref.PropertyNames)
 	}
 	return out
 }

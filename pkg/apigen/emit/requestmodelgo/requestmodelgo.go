@@ -404,6 +404,9 @@ func collectSchemaRefDependency(ref ir.SchemaRef, seen map[string]struct{}) {
 	if ref.Items != nil {
 		collectSchemaRefDependency(*ref.Items, seen)
 	}
+	if ref.PropertyNames != nil {
+		collectSchemaRefDependency(*ref.PropertyNames, seen)
+	}
 	if ref.AdditionalProperties != nil && ref.AdditionalProperties.Schema != nil {
 		collectSchemaRefDependency(*ref.AdditionalProperties.Schema, seen)
 	}

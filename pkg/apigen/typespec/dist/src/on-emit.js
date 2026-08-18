@@ -1,7 +1,7 @@
-import { emitFile, getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxLength, getMaxValue, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
+import { emitFile, getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxLength, getMaxValue, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getPattern, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
 import { getAllHttpServices, getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo } from "@typespec/openapi";
-import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getNamedFailures, getPackages, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
+import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getNamedFailures, getPackages, getPropertyNames, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
 class IRBuilder {
     program;
@@ -28,6 +28,12 @@ class IRBuilder {
                 return { type: "array", items: this.schemaRef(type.indexer.value, `${context} items`) };
             }
             if (isRecordModelType(type)) {
+                return {
+                    type: "object",
+                    additional_properties: { schema: this.schemaRef(type.indexer.value, `${context} value`) },
+                };
+            }
+            if (type.indexer && !isArrayModelType(type)) {
                 return {
                     type: "object",
                     additional_properties: { schema: this.schemaRef(type.indexer.value, `${context} value`) },
@@ -302,8 +308,13 @@ class IRBuilder {
         return schema;
     }
     schemaProperty(property) {
+        const schema = withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`));
+        const propertyNames = getPropertyNames({ program: this.program }, property);
+        if (propertyNames) {
+            schema.property_names = this.schemaRef(propertyNames, `${property.name} key`);
+        }
         const schemaProperty = {
-            schema: withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`)),
+            schema,
         };
         const doc = getDoc(this.program, property);
         if (doc) {
@@ -1617,12 +1628,14 @@ function withSchemaConstraints(program, target, schema) {
     const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
     const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
     const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
+    const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
     return prune({
         ...schema,
         minimum,
         maximum,
         min_length: minLength,
         max_length: maxLength,
+        pattern,
     });
 }
 function schemaConstraintCandidates(target) {
