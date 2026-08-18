@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
 	"github.com/creachadair/jrpc2/handler"
@@ -61,6 +62,25 @@ func TestInstalledQualificationAcceptsExplicitReleaseBundle(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "--bundle") {
 		t.Fatalf("installed-candidate help = %s", output.String())
+	}
+}
+
+func TestQualificationServiceUnavailableRecognizesStructuredAndPlainErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "structured problem", err: &apigenclient.ProblemError{Response: apigenclient.Response{StatusCode: http.StatusServiceUnavailable}, Problem: apigenclient.ProblemDetails{Status: http.StatusServiceUnavailable}}, want: true},
+		{name: "plain middleware response", err: errors.New("GET https://localhost/api/v1/deployments/deployment_1: Service Unavailable"), want: true},
+		{name: "other transport error", err: errors.New("GET https://localhost/api/v1/deployments/deployment_1: connection reset"), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := qualificationServiceUnavailable(test.err); got != test.want {
+				t.Fatalf("qualificationServiceUnavailable() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
