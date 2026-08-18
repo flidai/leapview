@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/mail"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -224,6 +225,59 @@ func (service *Service) RepairDeliveryRoot(ctx context.Context, request Delivery
 		}
 	}
 	return nil
+}
+
+// AuditDeliveryRoots enumerates and verifies every durable root for one
+// physical pool. The audit is read-only: unlike repair it must not acquire
+// the destructive offline lock or mutate control rows.
+func (service *Service) AuditDeliveryRoots(ctx context.Context, request DeliveryAuditRequest, out io.Writer) error {
+	if service == nil || service.deps.DeliveryRepair == nil {
+		return fmt.Errorf("delivery audit is unavailable")
+	}
+	auditor, ok := service.deps.DeliveryRepair.(DeliveryReachabilityAuditor)
+	if !ok {
+		return fmt.Errorf("delivery audit is unavailable")
+	}
+	if strings.TrimSpace(request.PhysicalPoolID) == "" {
+		return fmt.Errorf("delivery audit requires a physical-pool identity")
+	}
+	result, err := auditor.AuditDeliveryRoots(ctx, request)
+	if err != nil {
+		return fmt.Errorf("delivery audit: %w", err)
+	}
+	if result.PhysicalPoolID != request.PhysicalPoolID {
+		return fmt.Errorf("delivery audit: result belongs to physical pool %q, not %q", result.PhysicalPoolID, request.PhysicalPoolID)
+	}
+	if out == nil {
+		return nil
+	}
+	sort.Slice(result.Roots, func(i, j int) bool {
+		left, right := result.Roots[i].Root, result.Roots[j].Root
+		if left.Kind == right.Kind {
+			return left.SourceID < right.SourceID
+		}
+		return left.Kind < right.Kind
+	})
+	if _, err := fmt.Fprintf(out, "mode: audit\npool_id: %s\nroot_revision: %d\nroot_count: %d\n", result.PhysicalPoolID, result.RootRevision, len(result.Roots)); err != nil {
+		return err
+	}
+	for _, item := range result.Roots {
+		root := item.Root
+		if _, err := fmt.Fprintf(out, "root: %s/%s\nstatus: %s\ncatalog_digest: %s\nobject_key: %s\ncreated_at: %s\n", root.Kind, root.SourceID, root.Status, root.CatalogDigest, root.ObjectKey, root.CreatedAt.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "candidate_id: %s\ngeneration_id: %s\nlease_id: %s\nexpires_at: %s\ndata_files: %d\ndelete_files: %d\nverification: passed\n", root.CandidateID, root.GenerationID, root.LeaseID, formatAuditTime(root.ExpiresAt), item.DataFiles, item.DeleteFiles); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func formatAuditTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339Nano)
 }
 
 func writePoolBootstrapResult(out io.Writer, result PhysicalPoolBootstrapResult) error {

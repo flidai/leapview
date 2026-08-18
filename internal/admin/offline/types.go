@@ -90,6 +90,26 @@ type DeliveryRepairRequest struct {
 	Apply  bool
 }
 
+// DeliveryAuditRequest identifies one admitted physical pool whose durable
+// delivery roots should be enumerated and checked without mutation. The audit
+// is intentionally separate from repair: it never acquires the destructive
+// offline lock and never exposes object-store deletion capabilities.
+type DeliveryAuditRequest struct {
+	PhysicalPoolID string
+}
+
+type DeliveryAuditResult struct {
+	PhysicalPoolID string
+	RootRevision   int64
+	Roots          []DeliveryRootAuditResult
+}
+
+type DeliveryRootAuditResult struct {
+	Root        deployment.DeliveryRoot
+	DataFiles   int
+	DeleteFiles int
+}
+
 // InitialCredentials are the one-time credentials returned by instance
 // initialization.
 type InitialCredentials struct {
@@ -165,6 +185,12 @@ type PhysicalPoolBootstrap interface {
 
 type DeliveryRepair interface {
 	RepairDeliveryRoot(context.Context, DeliveryRepairRequest, io.Writer) error
+}
+
+// DeliveryReachabilityAuditor performs a read-only exact-root and immutable
+// closure audit for one physical pool.
+type DeliveryReachabilityAuditor interface {
+	AuditDeliveryRoots(context.Context, DeliveryAuditRequest) (DeliveryAuditResult, error)
 }
 
 // PhysicalPoolEvidenceValidator is supplied by the DuckLake adapter so the

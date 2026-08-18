@@ -53,6 +53,10 @@ func (operations *fakeOperations) RepairDeliveryRoot(context.Context, adminoffli
 	operations.called = "delivery-repair"
 	return nil
 }
+func (operations *fakeOperations) AuditDeliveryRoots(context.Context, adminoffline.DeliveryAuditRequest, io.Writer) error {
+	operations.called = "delivery-audit"
+	return nil
+}
 
 func TestCommandOwnsMaintenanceFlags(t *testing.T) {
 	operations := &fakeOperations{}
@@ -88,5 +92,17 @@ func TestCommandRoutesBoundedDeliveryRepair(t *testing.T) {
 	}
 	if operations.called != "delivery-repair" {
 		t.Fatalf("called = %q", operations.called)
+	}
+}
+
+func TestCommandRoutesReadOnlyDeliveryAudit(t *testing.T) {
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{"delivery", "audit", "--pool-id", "pool"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.called != "delivery-audit" {
+		t.Fatalf("operations called = %q", operations.called)
 	}
 }

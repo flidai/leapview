@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -22,6 +23,8 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/deployment/gcstore"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
 	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
@@ -61,7 +64,8 @@ func TestSharedPoolConformanceMinIOLane(t *testing.T) {
 
 	objectPrefix := strings.NewReplacer("/", "-", " ", "-").Replace(strings.ToLower(t.Name()))
 	sharedData := "s3://" + strings.Trim(bucket, "/") + "/leapview-conformance/" + objectPrefix
-	contract := fixturePoolContractFor(t, "s3", sharedData)
+	contract := minioConformancePoolContract(t, sharedData)
+	objectPrefixPath := strings.TrimPrefix(sharedData, "s3://"+bucket+"/")
 	config := func(root, catalog string) Config {
 		return Config{
 			RootDir: root, CatalogPath: catalog, DataPath: sharedData,
@@ -73,11 +77,32 @@ func TestSharedPoolConformanceMinIOLane(t *testing.T) {
 	baseCatalog := filepath.Join(baseRoot, "catalog.duckdb")
 	base, err := Open(ctx, config(baseRoot, baseCatalog))
 	if extensionUnavailable(err) {
+		if minioConformanceGateRequired() {
+			t.Fatalf("ducklake extension unavailable in required MinIO conformance gate: %v", err)
+		}
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
+	var duckdbRuntime, ducklakeExtension string
+	if err := base.db.QueryRowContext(ctx, "SELECT version()").Scan(&duckdbRuntime); err != nil {
+		_ = base.Close()
+		t.Fatalf("query DuckDB runtime version: %v", err)
+	}
+	if err := base.db.QueryRowContext(ctx, "SELECT coalesce(max(extension_version), 'unknown') FROM duckdb_extensions() WHERE extension_name = 'ducklake'").Scan(&ducklakeExtension); err != nil {
+		_ = base.Close()
+		t.Fatalf("query DuckLake extension version: %v", err)
+	}
+	if duckdbRuntime != "v1.5.4" {
+		_ = base.Close()
+		t.Fatalf("DuckDB runtime=%q, want v1.5.4", duckdbRuntime)
+	}
+	if ducklakeExtension != "d318a545" {
+		_ = base.Close()
+		t.Fatalf("DuckLake extension=%q, want d318a545", ducklakeExtension)
+	}
+	t.Logf("MinIO conformance runtime: duckdb=%q ducklake=%q minio_image=%q", duckdbRuntime, ducklakeExtension, conformanceMinIOImage)
 	if _, err := base.Commit(ctx, "minio-base", nil, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS model;
 CREATE TABLE model.orders(id BIGINT, value VARCHAR);
@@ -273,7 +298,6 @@ INSERT INTO model.metrics SELECT range, 'base' FROM range(1, 1001);`)
 	if !orphanFound {
 		t.Fatal("MinIO orphan was not classified")
 	}
-	objectPrefixPath := strings.TrimPrefix(sharedData, "s3://"+bucket+"/")
 	orphanKey := objectPrefixPath + "/minio-orphan.parquet"
 	if _, err := client.PutObject(ctx, &awss3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(orphanKey), Body: bytes.NewReader(nil)}); err != nil {
 		t.Fatal(err)
@@ -401,6 +425,187 @@ INSERT INTO model.metrics SELECT range, 'base' FROM range(1, 1001);`)
 	if err := (SharedPoolConformance{Compatibility: compatibility, Checks: checks}).ValidateEvidence(evidence); err != nil {
 		t.Fatal(err)
 	}
+	// The initial contract is provisional: the runtime needs an admitted tuple
+	// before it can execute the checks. Namespace deletion authority must bind
+	// the final digest produced by those nine observed checks, not the
+	// provisional placeholder observations.
+	artifactEvidence := persistMinIOConformanceEvidence(t, evidence)
+	finalContract := minioConformancePoolContractFromEvidence(t, sharedData, artifactEvidence)
+	if finalContract.Pool.ID != contract.Pool.ID {
+		t.Fatalf("MinIO conformance pool identity changed between provisional and observed evidence: provisional=%q final=%q", contract.Pool.ID, finalContract.Pool.ID)
+	}
+	if finalContract.Admission.EvidenceDigest != evidence.Digest {
+		t.Fatalf("MinIO conformance admission digest=%q, want observed evidence digest %q", finalContract.Admission.EvidenceDigest, evidence.Digest)
+	}
+	exerciseMinIOGCStoreConformance(t, ctx, client, bucket, objectPrefixPath, finalContract)
+}
+
+func minioConformancePoolContract(t *testing.T, dataPath string) *PoolContract {
+	t.Helper()
+	tuple := physicalpool.Compatibility{
+		DuckDBRuntime: "duckdb:v1.5.4", DuckLakeExtension: "ducklake:d318a545", CatalogFormat: "ducklake:v1",
+		StorageImplementation: "s3", ObjectNamingContract: "uuidv7:v1",
+	}
+	checks := make([]physicalpool.EvidenceCheck, 0, len(SharedPoolConformanceChecks))
+	for _, name := range SharedPoolConformanceChecks {
+		checks = append(checks, physicalpool.EvidenceCheck{ID: name, Passed: true, ObservationDigest: digestBytesForTest([]byte("minio-conformance:" + name))})
+	}
+	evidence, err := physicalpool.NewEvidence(physicalpool.EvidenceInput{Compatibility: tuple, ConformanceVersion: SharedPoolConformanceVersion, Checks: checks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return minioConformancePoolContractFromEvidence(t, dataPath, evidence)
+}
+
+func minioConformancePoolContractFromEvidence(t *testing.T, dataPath string, evidence physicalpool.Evidence) *PoolContract {
+	t.Helper()
+	tuple := evidence.Compatibility
+	storageLocation, storageNamespace := fixtureStorageIdentity(t, dataPath)
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
+		StorageLocation: storageLocation, StorageNamespace: storageNamespace, Region: "us-east-1",
+		IsolationBoundary: "minio-conformance", RetentionAuthority: "minio-conformance", Compatibility: tuple,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admission, err := pool.Admit(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err = pool.ApplyAdmission(admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &PoolContract{Pool: pool, Tuple: tuple, Admission: admission, Evidence: evidence}
+}
+
+func persistMinIOConformanceEvidence(t *testing.T, evidence physicalpool.Evidence) physicalpool.Evidence {
+	t.Helper()
+	encoded, err := MarshalSharedPoolEvidence(evidence)
+	if err != nil {
+		t.Fatalf("marshal MinIO conformance evidence: %v", err)
+		return physicalpool.Evidence{}
+	}
+	decoded, err := physicalpool.UnmarshalEvidenceArtifact(encoded)
+	if err != nil {
+		t.Fatalf("validate MinIO conformance evidence artifact: %v", err)
+		return physicalpool.Evidence{}
+	}
+	if decoded.Digest != evidence.Digest {
+		t.Fatalf("MinIO conformance evidence digest changed during validation: got %q want %q", decoded.Digest, evidence.Digest)
+		return physicalpool.Evidence{}
+	}
+	path := strings.TrimSpace(os.Getenv("LEAPVIEW_CONFORMANCE_EVIDENCE_OUT"))
+	if path == "" {
+		if minioConformanceGateRequired() {
+			t.Fatal("LEAPVIEW_CONFORMANCE_EVIDENCE_OUT is required in the MinIO conformance gate")
+			return physicalpool.Evidence{}
+		}
+		return decoded
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create MinIO conformance evidence directory: %v", err)
+		return physicalpool.Evidence{}
+	}
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatalf("write MinIO conformance evidence: %v", err)
+		return physicalpool.Evidence{}
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatalf("stat MinIO conformance evidence: %v", err)
+		return physicalpool.Evidence{}
+	} else if info.Size() == 0 {
+		t.Fatal("MinIO conformance evidence is empty")
+		return physicalpool.Evidence{}
+	}
+	t.Logf("MinIO conformance evidence: path=%q digest=%q bytes=%d", path, evidence.Digest, len(encoded))
+	return decoded
+}
+
+func exerciseMinIOGCStoreConformance(t *testing.T, ctx context.Context, client *awss3.Client, bucket, prefix string, contract *PoolContract) {
+	t.Helper()
+	store, err := gcstore.NewS3(client, bucket, prefix)
+	if err != nil {
+		t.Fatalf("construct MinIO gcstore: %v", err)
+	}
+	claim := physicalpool.OwnershipClaim{
+		PoolID:              contract.Pool.ID,
+		CompatibilityDigest: contract.Admission.CompatibilityDigest,
+		EvidenceDigest:      contract.Admission.EvidenceDigest,
+		OwnerID:             "instance-minio-conformance",
+	}
+	if err := store.AcquireNamespaceOwnership(ctx, claim); err != nil {
+		t.Fatalf("MinIO gcstore namespace ownership marker: %v", err)
+	}
+	markerKey := prefix + "/.leapview-pool-owner.json"
+	markerHead, err := client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(markerKey)})
+	if err != nil {
+		t.Fatalf("read MinIO gcstore namespace ownership marker: %v", err)
+	}
+	if got := markerHead.Metadata["leapview-evidence-digest"]; got != contract.Evidence.Digest {
+		t.Fatalf("MinIO gcstore marker evidence digest=%q, want final observed digest %q", got, contract.Evidence.Digest)
+	}
+	markerObject, err := client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(markerKey)})
+	if err != nil {
+		t.Fatalf("read MinIO gcstore namespace ownership marker body: %v", err)
+	}
+	var marker struct {
+		EvidenceDigest string `json:"evidence_digest"`
+	}
+	decodeErr := json.NewDecoder(markerObject.Body).Decode(&marker)
+	closeErr := markerObject.Body.Close()
+	if decodeErr != nil {
+		t.Fatalf("decode MinIO gcstore namespace ownership marker: %v", decodeErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close MinIO gcstore namespace ownership marker: %v", closeErr)
+	}
+	if marker.EvidenceDigest != contract.Evidence.Digest {
+		t.Fatalf("MinIO gcstore marker body evidence digest=%q, want final observed digest %q", marker.EvidenceDigest, contract.Evidence.Digest)
+	}
+	if err := store.VerifyNamespaceOwnership(ctx, claim); err != nil {
+		t.Fatalf("MinIO gcstore namespace ownership verification: %v", err)
+	}
+	conflict := claim
+	conflict.OwnerID = "instance-minio-clone"
+	if err := store.VerifyNamespaceOwnership(ctx, conflict); !errors.Is(err, physicalpool.ErrOwnershipConflict) {
+		t.Fatalf("MinIO gcstore accepted a conflicting namespace owner: %v", err)
+	}
+
+	token, err := store.AcquireNamespaceDeletionLease(ctx, "instance-minio-conformance", time.Minute)
+	if err != nil {
+		t.Fatalf("MinIO gcstore deletion lease acquisition: %v", err)
+	}
+	if err := store.VerifyNamespaceDeletionLease(ctx, "instance-minio-conformance", token); err != nil {
+		t.Fatalf("MinIO gcstore deletion lease verification: %v", err)
+	}
+	if _, err := store.AcquireNamespaceDeletionLease(ctx, "instance-minio-clone", time.Minute); !errors.Is(err, physicalpool.ErrDeletionLeaseConflict) {
+		t.Fatalf("MinIO gcstore allowed a concurrent deletion lease: %v", err)
+	}
+	if err := store.VerifyNamespaceDeletionLease(ctx, "instance-minio-conformance", "wrong-token"); !errors.Is(err, physicalpool.ErrDeletionLeaseConflict) {
+		t.Fatalf("MinIO gcstore accepted a forged deletion lease token: %v", err)
+	}
+	if err := store.ReleaseNamespaceDeletionLease(ctx, "instance-minio-conformance", token); err != nil {
+		t.Fatalf("MinIO gcstore deletion lease release: %v", err)
+	}
+	if err := store.VerifyNamespaceDeletionLease(ctx, "instance-minio-conformance", token); !errors.Is(err, physicalpool.ErrDeletionLeaseConflict) {
+		t.Fatalf("MinIO gcstore retained a released deletion lease: %v", err)
+	}
+	reacquired, err := store.AcquireNamespaceDeletionLease(ctx, "instance-minio-clone", time.Minute)
+	if err != nil {
+		t.Fatalf("MinIO gcstore did not release namespace deletion lease: %v", err)
+	}
+	if err := store.VerifyNamespaceDeletionLease(ctx, "instance-minio-clone", reacquired); err != nil {
+		t.Fatalf("MinIO gcstore re-acquired deletion lease verification: %v", err)
+	}
+	if err := store.ReleaseNamespaceDeletionLease(ctx, "instance-minio-clone", reacquired); err != nil {
+		t.Fatalf("MinIO gcstore re-acquired deletion lease release: %v", err)
+	}
+	t.Logf("MinIO gcstore conformance: namespace_owner=%q marker_verified=true conflicting_owner_rejected=true deletion_lease_verified=true forged_token_rejected=true release_verified=true", claim.OwnerID)
+}
+
+func minioConformanceGateRequired() bool {
+	return strings.TrimSpace(os.Getenv("LEAPVIEW_MINIO_CONFORMANCE_REQUIRED")) != ""
 }
 
 func minioSecretEndpoint(raw string) (string, bool, error) {

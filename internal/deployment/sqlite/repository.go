@@ -21,6 +21,10 @@ type Repository struct {
 	queries               *deploydb.Queries
 	hooks                 ActivationHooks
 	candidateBaseReadHook func()
+	// quarantineBeforeMutation is a deterministic race-test seam. Production
+	// leaves it nil; tests use it to commit a competing root change after the
+	// fenced read snapshot and before the first mutation statement.
+	quarantineBeforeMutation func()
 	// catalogSealNow is injectable for durable seal transition tests and for
 	// callers which need one deterministic completion timestamp. It is kept on
 	// the shared repository so all plan-delivery adapters use the same clock.

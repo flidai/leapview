@@ -47,6 +47,7 @@ type Operations interface {
 	Backup(context.Context, adminoffline.BackupRequest, io.Writer) error
 	Restore(context.Context, adminoffline.RestoreRequest, io.Reader, io.Writer) error
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
+	AuditDeliveryRoots(context.Context, adminoffline.DeliveryAuditRequest, io.Writer) error
 	RepairDeliveryRoot(context.Context, adminoffline.DeliveryRepairRequest, io.Writer) error
 }
 
@@ -114,9 +115,30 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 
 	parent.AddCommand(initialize, storage, maintenance, backup, restore)
 	delivery := deliveryPoolCommand(ctx, operations)
+	delivery.AddCommand(deliveryAuditCommand(ctx, operations))
 	delivery.AddCommand(deliveryRepairCommand(ctx, operations))
 	parent.AddCommand(delivery)
 	return parent
+}
+
+func deliveryAuditCommand(ctx context.Context, operations Operations) *cobra.Command {
+	var poolID string
+	audit := &cobra.Command{
+		Use:   "audit",
+		Short: "Verify every durable delivery root and immutable closure",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if operations == nil {
+				return fmt.Errorf("Admin CLI operations are required")
+			}
+			if poolID == "" {
+				return fmt.Errorf("--pool-id is required")
+			}
+			return operations.AuditDeliveryRoots(ctx, adminoffline.DeliveryAuditRequest{PhysicalPoolID: poolID}, command.OutOrStdout())
+		},
+	}
+	audit.Flags().StringVar(&poolID, "pool-id", "", "durable physical-pool identity")
+	return audit
 }
 
 func deliveryRepairCommand(ctx context.Context, operations Operations) *cobra.Command {

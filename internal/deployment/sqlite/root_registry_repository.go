@@ -396,35 +396,9 @@ func (r *Repository) EnumerateRootsWithGrace(ctx context.Context, poolID string,
 	if err != nil {
 		return RootSet{}, err
 	}
-	rows, err := deploydb.New(tx).EnumerateDeliveryRootsExpanded(ctx, deploydb.EnumerateDeliveryRootsExpandedParams{PhysicalPoolID: poolID, PhysicalPoolID_2: poolID, PhysicalPoolID_3: poolID, PhysicalPoolID_4: poolID, Julianday: deliveryTime(now), PhysicalPoolID_5: poolID, PhysicalPoolID_6: poolID, Julianday_2: deliveryTime(now), PhysicalPoolID_7: poolID, Julianday_3: deliveryTime(now), PhysicalPoolID_8: poolID, Julianday_4: deliveryTime(leaseCutoff), Julianday_5: deliveryTime(now)})
+	roots, err := enumerateRootsTx(ctx, tx, poolID, now, leaseCutoff)
 	if err != nil {
 		return RootSet{}, err
-	}
-	seen := make(map[string]struct{})
-	var roots []DeliveryRoot
-	for _, row := range rows {
-		root := DeliveryRoot{PhysicalPoolID: row.PhysicalPoolID, Kind: row.RootKind, SourceID: row.SourceID, CandidateID: row.CandidateID, GenerationID: row.GenerationID, LeaseID: row.LeaseID, CatalogDigest: row.CatalogDigest, ObjectKey: row.ObjectKey, Status: row.Status}
-		root.CreatedAt, err = parseDeliveryTime(row.CreatedAt)
-		if err != nil {
-			return RootSet{}, err
-		}
-		var expires sql.NullString
-		switch value := row.ExpiresAt.(type) {
-		case string:
-			expires = sql.NullString{String: value, Valid: value != ""}
-		case []byte:
-			expires = sql.NullString{String: string(value), Valid: len(value) != 0}
-		}
-		root.ExpiresAt, err = parseNullableDeliveryTime(expires)
-		if err != nil {
-			return RootSet{}, err
-		}
-		key := root.Kind + "\x00" + root.SourceID
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		roots = append(roots, root)
 	}
 	stableRevision, err := deploydb.New(tx).GetDeliveryRootRevision(ctx, poolID)
 	if err != nil {
@@ -443,6 +417,49 @@ func (r *Repository) EnumerateRootsWithGrace(ctx context.Context, poolID string,
 		return RootSet{}, err
 	}
 	return RootSet{PhysicalPoolID: poolID, Revision: revision, Roots: roots}, nil
+}
+
+// enumerateRootsTx resolves the complete durable root projection against the
+// caller's transaction snapshot. Keeping this helper transaction-scoped lets
+// mutation paths compare the exact root set and revision before promoting a
+// read snapshot to a writer.
+func enumerateRootsTx(ctx context.Context, tx *sql.Tx, poolID string, now time.Time, leaseCutoff time.Time) ([]DeliveryRoot, error) {
+	rows, err := deploydb.New(tx).EnumerateDeliveryRootsExpanded(ctx, deploydb.EnumerateDeliveryRootsExpandedParams{
+		PhysicalPoolID: poolID, PhysicalPoolID_2: poolID, PhysicalPoolID_3: poolID, PhysicalPoolID_4: poolID,
+		Julianday: deliveryTime(now), PhysicalPoolID_5: poolID, PhysicalPoolID_6: poolID,
+		Julianday_2: deliveryTime(now), PhysicalPoolID_7: poolID, Julianday_3: deliveryTime(now),
+		PhysicalPoolID_8: poolID, Julianday_4: deliveryTime(leaseCutoff), Julianday_5: deliveryTime(now),
+	})
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	var roots []DeliveryRoot
+	for _, row := range rows {
+		root := DeliveryRoot{PhysicalPoolID: row.PhysicalPoolID, Kind: row.RootKind, SourceID: row.SourceID, CandidateID: row.CandidateID, GenerationID: row.GenerationID, LeaseID: row.LeaseID, CatalogDigest: row.CatalogDigest, ObjectKey: row.ObjectKey, Status: row.Status}
+		root.CreatedAt, err = parseDeliveryTime(row.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		var expires sql.NullString
+		switch value := row.ExpiresAt.(type) {
+		case string:
+			expires = sql.NullString{String: value, Valid: value != ""}
+		case []byte:
+			expires = sql.NullString{String: string(value), Valid: len(value) != 0}
+		}
+		root.ExpiresAt, err = parseNullableDeliveryTime(expires)
+		if err != nil {
+			return nil, err
+		}
+		key := root.Kind + "\x00" + root.SourceID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		roots = append(roots, root)
+	}
+	return roots, nil
 }
 
 // DeliveryRootCompatibilityDigest resolves the admitted compatibility tuple

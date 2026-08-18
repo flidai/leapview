@@ -62,6 +62,14 @@ func (Operations) RepairDeliveryRoot(ctx context.Context, request adminoffline.D
 	return service.RepairDeliveryRoot(ctx, request, out)
 }
 
+func (Operations) AuditDeliveryRoots(ctx context.Context, request adminoffline.DeliveryAuditRequest, out io.Writer) error {
+	service, err := newService()
+	if err != nil {
+		return err
+	}
+	return service.AuditDeliveryRoots(ctx, request, out)
+}
+
 func (Operations) Backup(ctx context.Context, request adminoffline.BackupRequest, out io.Writer) error {
 	service, err := newService()
 	if err != nil {

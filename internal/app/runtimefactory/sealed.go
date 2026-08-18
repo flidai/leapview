@@ -130,6 +130,9 @@ func NewSQLiteSealedFactory(config ProductionSealedFactoryConfig) (runtimehost.R
 			Projects: config.ProjectRuntimeFactory(environment), MaxRows: config.DashboardMaxRows, MaxBytes: config.DashboardMaxBytes,
 		})(ctx, input)
 	}
+	credentialBootstrap := func(_ context.Context, contract *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
+		return gcadapter.NewPoolCredentialBootstrap(contract, config.PoolS3)
+	}
 	objectsForRoot := func(ctx context.Context, root SealedServingRoot) (sealedcatalog.ObjectStore, error) {
 		admission, err := pools.LoadAdmissionContract(ctx, root.PhysicalPoolID, root.Compatibility)
 		if err != nil {
@@ -142,7 +145,7 @@ func NewSQLiteSealedFactory(config ProductionSealedFactoryConfig) (runtimehost.R
 		}
 		return gcCatalogObjectStore{store: store}, nil
 	}
-	return newSealedFactory(base, resolve, LocalCatalogObjectStore{Root: config.CatalogObjectRoot}, objectsForRoot, leases, authorize, authorizeServing, buildRuntime), nil
+	return newSealedFactory(base, resolve, LocalCatalogObjectStore{Root: config.CatalogObjectRoot}, objectsForRoot, credentialBootstrap, leases, authorize, authorizeServing, buildRuntime), nil
 }
 
 func validateSealedAuthorizationEvidence(artifact sealedcatalog.Artifact, lease catalogartifact.LeaseInput) error {
@@ -154,27 +157,28 @@ func validateSealedAuthorizationEvidence(artifact sealedcatalog.Artifact, lease 
 }
 
 type sealedServingFactory struct {
-	base             servingStateRuntimeFactory
-	resolve          SealedRootResolver
-	objects          sealedcatalog.ObjectStore
-	objectsForRoot   func(context.Context, SealedServingRoot) (sealedcatalog.ObjectStore, error)
-	leases           catalogartifact.LeaseRepository
-	authorize        sealedcatalog.Authorization
-	authorizeServing func(context.Context, runtimehost.RuntimeInput, sealedcatalog.Artifact, catalogartifact.LeaseInput) error
-	buildRuntime     SealedDashboardRuntimeBuilder
-	holder           string
-	now              func() time.Time
+	base                servingStateRuntimeFactory
+	resolve             SealedRootResolver
+	objects             sealedcatalog.ObjectStore
+	objectsForRoot      func(context.Context, SealedServingRoot) (sealedcatalog.ObjectStore, error)
+	credentialBootstrap func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error)
+	leases              catalogartifact.LeaseRepository
+	authorize           sealedcatalog.Authorization
+	authorizeServing    func(context.Context, runtimehost.RuntimeInput, sealedcatalog.Artifact, catalogartifact.LeaseInput) error
+	buildRuntime        SealedDashboardRuntimeBuilder
+	holder              string
+	now                 func() time.Time
 }
 
 // NewSealedFactory wraps the normal project-artifact loader with the sealed
 // catalog attach path. It is safe for tests to use an in-memory ObjectStore;
 // production composition supplies a target-owned read-only object adapter.
 func NewSealedFactory(base FactoryConfig, resolve SealedRootResolver, objects sealedcatalog.ObjectStore, leases catalogartifact.LeaseRepository, authorize sealedcatalog.Authorization, buildRuntime SealedDashboardRuntimeBuilder) runtimehost.RuntimeFactory {
-	return newSealedFactory(base, resolve, objects, nil, leases, authorize, nil, buildRuntime)
+	return newSealedFactory(base, resolve, objects, nil, nil, leases, authorize, nil, buildRuntime)
 }
 
-func newSealedFactory(base FactoryConfig, resolve SealedRootResolver, objects sealedcatalog.ObjectStore, objectsForRoot func(context.Context, SealedServingRoot) (sealedcatalog.ObjectStore, error), leases catalogartifact.LeaseRepository, authorize sealedcatalog.Authorization, authorizeServing func(context.Context, runtimehost.RuntimeInput, sealedcatalog.Artifact, catalogartifact.LeaseInput) error, buildRuntime SealedDashboardRuntimeBuilder) runtimehost.RuntimeFactory {
-	return sealedServingFactory{base: servingStateRuntimeFactory{duckDBDir: base.DuckDBDir, runtimeDir: base.RuntimeDir, dashboardRuntime: base.DashboardRuntime}, resolve: resolve, objects: objects, objectsForRoot: objectsForRoot, leases: leases, authorize: authorize, authorizeServing: authorizeServing, buildRuntime: buildRuntime, holder: firstNonEmpty(base.SealedLeaseHolder, "runtimehost"), now: time.Now}
+func newSealedFactory(base FactoryConfig, resolve SealedRootResolver, objects sealedcatalog.ObjectStore, objectsForRoot func(context.Context, SealedServingRoot) (sealedcatalog.ObjectStore, error), credentialBootstrap func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error), leases catalogartifact.LeaseRepository, authorize sealedcatalog.Authorization, authorizeServing func(context.Context, runtimehost.RuntimeInput, sealedcatalog.Artifact, catalogartifact.LeaseInput) error, buildRuntime SealedDashboardRuntimeBuilder) runtimehost.RuntimeFactory {
+	return sealedServingFactory{base: servingStateRuntimeFactory{duckDBDir: base.DuckDBDir, runtimeDir: base.RuntimeDir, dashboardRuntime: base.DashboardRuntime}, resolve: resolve, objects: objects, objectsForRoot: objectsForRoot, credentialBootstrap: credentialBootstrap, leases: leases, authorize: authorize, authorizeServing: authorizeServing, buildRuntime: buildRuntime, holder: firstNonEmpty(base.SealedLeaseHolder, "runtimehost"), now: time.Now}
 }
 
 func (f sealedServingFactory) Prepare(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
@@ -225,9 +229,16 @@ func (f sealedServingFactory) PrepareSealed(ctx context.Context, input runtimeho
 			return nil, err
 		}
 	}
+	var credentialBootstrap ducklake.CredentialBootstrap
+	if f.credentialBootstrap != nil {
+		credentialBootstrap, err = f.credentialBootstrap(ctx, root.PoolContract)
+		if err != nil {
+			return nil, err
+		}
+	}
 	reader, err := sealedcatalog.Open(ctx, sealedcatalog.Request{
 		Artifact: sealedcatalog.Artifact{ObjectKey: root.CatalogObjectKey, SealID: root.SealID, CatalogDigest: root.CatalogDigest, SizeBytes: root.CatalogObjectSize, ClosureDigest: root.ClosureDigest, QualificationDigest: root.QualificationDigest, PhysicalPoolID: root.PhysicalPoolID, Compatibility: root.Compatibility, PoolContract: root.PoolContract},
-		Store:    objects, Leases: f.leases, Lease: leaseInput, Authorize: authorize,
+		Store:    objects, Leases: f.leases, Lease: leaseInput, Authorize: authorize, CredentialBootstrap: credentialBootstrap,
 		OnLeaseRenewalFailure: input.OnLeaseRenewalFailure,
 		StagingRoot:           filepath.Join(f.base.runtimeDir, "sealed-catalogs"),
 	})

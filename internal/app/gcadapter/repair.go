@@ -47,11 +47,12 @@ func (r *RepairTool) now() time.Time {
 	return time.Now().UTC()
 }
 
-// VerifyAndMutate performs all read-only checks before mutation. A root that
-// is absent or differs from the durable SQLite row is rejected, even if an
-// object with matching bytes exists. Unknown/ambiguous inspection never
-// reaches mutate, leaving the existing root intact for later repair.
-func (r *RepairTool) VerifyAndMutate(ctx context.Context, root deployment.DeliveryRoot, mutate func(context.Context, deployment.DeliveryRoot) error) error {
+// VerifyAndMutateAtRevision proves the exact SQLite root, immutable artifact
+// bytes, and DuckLake file closure before permitting one bounded mutation. It
+// hands the durable root revision observed before inspection to the callback;
+// repository adapters must compare-and-swap that revision in the same
+// transaction as their mutation. Unknown inspection never reaches mutate.
+func (r *RepairTool) VerifyAndMutateAtRevision(ctx context.Context, root deployment.DeliveryRoot, mutate func(context.Context, deployment.DeliveryRoot, int64) error) error {
 	if r == nil || r.Roots == nil || r.Inspector == nil || mutate == nil {
 		return fmt.Errorf("%w: roots, inspector and mutation are required", ErrRepairUnavailable)
 	}
@@ -72,7 +73,7 @@ func (r *RepairTool) VerifyAndMutate(ctx context.Context, root deployment.Delive
 	if reach.CatalogKey != root.ObjectKey || reach.CatalogDigest != root.CatalogDigest {
 		return fmt.Errorf("%w: inspector returned a different artifact identity", ErrRepairUnavailable)
 	}
-	return mutate(ctx, root)
+	return mutate(ctx, root, roots.Revision)
 }
 
 func containsRepairRoot(roots []deployment.DeliveryRoot, want deployment.DeliveryRoot) bool {

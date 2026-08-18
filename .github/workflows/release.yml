@@ -427,10 +427,134 @@ jobs:
             ${{ runner.temp }}/installed-candidate-evidence/*.log
             ${{ runner.temp }}/installed-candidate-evidence/browser-failure.png
 
+  minio-conformance:
+    name: MinIO object-backed conformance
+    needs: identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Verify Docker container prerequisites
+        run: |
+          docker version
+          docker info
+
+      - name: Run object-backed conformance tests
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/minio-conformance"
+          rm -f .tmp/minio-conformance/shared-pool-evidence.json
+          task test:go:minio-conformance 2>&1 | tee "$RUNNER_TEMP/minio-conformance/test.log"
+          evidence=.tmp/minio-conformance/shared-pool-evidence.json
+          test -s "$evidence"
+          jq -e '
+            .schema_version == 1 and
+            .evidence.conformance_version == "lea-406/v1" and
+            .evidence.compatibility == {
+              "duckdb_runtime": "duckdb:v1.5.4",
+              "ducklake_extension": "ducklake:d318a545",
+              "catalog_format": "ducklake:v1",
+              "storage_implementation": "s3",
+              "object_naming_contract": "uuidv7:v1"
+            } and
+            (.evidence.digest | test("^sha256:[0-9a-f]{64}$")) and
+            ([.evidence.checks[] |
+              select(.passed == true and (.observation_digest | test("^sha256:[0-9a-f]{64}$"))) |
+              .id] | sort) == [
+                "aborted_write_isolation",
+                "cross_catalog_orphan_classification",
+                "different_table_private_clone_isolation",
+                "new_file_key_disjointness",
+                "normalization_file_union_completeness",
+                "safe_close",
+                "same_table_private_clone_isolation",
+                "sealed_catalog_read",
+                "unchanged_file_reference_reuse"
+              ]
+          ' "$evidence" >/dev/null
+          cp "$evidence" "$RUNNER_TEMP/minio-conformance/shared-pool-evidence.json"
+          sha256sum "$RUNNER_TEMP/minio-conformance/shared-pool-evidence.json" > "$RUNNER_TEMP/minio-conformance/shared-pool-evidence.json.sha256"
+
+      - name: Record conformance runtime evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/minio-conformance"
+          {
+            printf 'source_revision=%s\n' "$(git rev-parse HEAD)"
+            printf 'build_tags=duckdb_arrow ducklake_minio\n'
+            printf 'candidate_test=TestCandidateCatalogMinIOSealedBaseRetainsUnchangedRefs\n'
+            printf 'shared_pool_test=TestSharedPoolConformanceMinIOLane\n'
+            printf 'minio_image=%s\n' "$(awk -F'\"' '/^[[:space:]]*conformanceMinIOImage[[:space:]]*=/{print $2; exit}' internal/analytics/ducklake/minio_conformance_test.go)"
+            go version
+            go env GOFLAGS GOOS GOARCH
+            go list -m github.com/duckdb/duckdb-go/v2
+            go list -m github.com/duckdb/duckdb-go-bindings
+            if test -s "$RUNNER_TEMP/minio-conformance/shared-pool-evidence.json.sha256"; then
+              printf 'evidence_sha256=%s\n' "$(cut -d' ' -f1 "$RUNNER_TEMP/minio-conformance/shared-pool-evidence.json.sha256")"
+            fi
+            docker version
+            docker info
+          } > "$RUNNER_TEMP/minio-conformance/runtime.txt" 2>&1
+
+      - name: Upload MinIO conformance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: minio-conformance-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/minio-conformance/test.log
+            ${{ runner.temp }}/minio-conformance/runtime.txt
+            ${{ runner.temp }}/minio-conformance/shared-pool-evidence.json
+            ${{ runner.temp }}/minio-conformance/shared-pool-evidence.json.sha256
+
+  plan-gc-conformance:
+    name: Plan-to-GC lifecycle conformance
+    needs: identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Run plan-to-GC lifecycle conformance
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/plan-gc-conformance"
+          task test:go:plan-gc-conformance 2>&1 | tee "$RUNNER_TEMP/plan-gc-conformance/test.log"
+
+      - name: Upload plan-to-GC conformance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plan-gc-conformance-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: error
+          path: ${{ runner.temp }}/plan-gc-conformance/test.log
+
   publish:
     name: Publish qualified release
     if: github.event_name == 'push'
-    needs: [image, qualify]
+    needs: [image, qualify, minio-conformance, plan-gc-conformance]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

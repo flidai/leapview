@@ -264,6 +264,11 @@ sections:
         type: how-to
         summary: Bootstrap an admitted physical pool and operate immutable target-bound delivery.
         source: articles/operate/plan-build-publish.md
+      - slug: guides/operate/delivery-recovery
+        title: Delivery reachability audit and bounded repair
+        type: how-to
+        summary: Audit immutable delivery roots offline and apply a fail-closed quarantine repair.
+        source: articles/operate/delivery-recovery.md
       - slug: guides/operate/troubleshooting
         title: Operational troubleshooting
         type: how-to

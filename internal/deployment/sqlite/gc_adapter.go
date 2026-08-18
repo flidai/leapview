@@ -56,15 +56,65 @@ func (r *Repository) QuarantineRootWithActor(ctx context.Context, root deploymen
 	return r.quarantineRoot(ctx, root, reason, actor, now)
 }
 
-func (r *Repository) quarantineRoot(ctx context.Context, root deployment.DeliveryRoot, reason, actor string, now time.Time) error {
+// QuarantineRootWithActorAtRevision is the repair-only compare-and-swap
+// variant. The expected root revision and complete root identity are checked
+// inside the same SQLite transaction that performs the quarantine projection.
+// A concurrent lifecycle change therefore either fails the comparison or
+// invalidates this transaction's read snapshot before any mutation commits.
+func (r *Repository) QuarantineRootWithActorAtRevision(ctx context.Context, root deployment.DeliveryRoot, expectedRevision int64, reason, actor string, now time.Time) error {
+	if actor == "" {
+		return fmt.Errorf("quarantine actor is required")
+	}
+	if expectedRevision < 0 {
+		return fmt.Errorf("quarantine root revision must not be negative")
+	}
+	return fencingBusyConflict(r.quarantineRoot(ctx, root, reason, actor, now, expectedRevision))
+}
+
+func (r *Repository) quarantineRoot(ctx context.Context, root deployment.DeliveryRoot, reason, actor string, now time.Time, expectedRevision ...int64) error {
 	if reason == "" || now.IsZero() || now.Location() != time.UTC {
 		return fmt.Errorf("quarantine reason and UTC time are required")
+	}
+	if len(expectedRevision) > 1 {
+		return fmt.Errorf("quarantine root revision specified more than once")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	fenced := len(expectedRevision) == 1
+	fenceRestored := false
+	defer func() {
+		if fenced && !fenceRestored {
+			restoreFencingTx(ctx, tx)
+		}
+		_ = tx.Rollback()
+	}()
+	if fenced {
+		// Keep the timeout short for a stale read snapshot. Waiting for the
+		// platform's ordinary five-second timeout would make the repair race
+		// nondeterministic while still unable to commit safely.
+		if err := configureFencingTx(ctx, tx); err != nil {
+			return err
+		}
+		revision, err := deploydb.New(tx).GetDeliveryRootRevision(ctx, root.PhysicalPoolID)
+		if err != nil {
+			return err
+		}
+		if revision != expectedRevision[0] {
+			return fmt.Errorf("%w: delivery root revision changed from %d to %d", deployment.ErrDeliveryConflict, expectedRevision[0], revision)
+		}
+		roots, err := enumerateRootsTx(ctx, tx, root.PhysicalPoolID, now, now)
+		if err != nil {
+			return err
+		}
+		if !sameDeliveryRoot(roots, root) {
+			return fmt.Errorf("%w: delivery root identity changed during repair", deployment.ErrDeliveryConflict)
+		}
+		if r.quarantineBeforeMutation != nil {
+			r.quarantineBeforeMutation()
+		}
+	}
 	code := reason
 	if len(code) > 512 {
 		code = code[:512]
@@ -109,8 +159,21 @@ func (r *Repository) quarantineRoot(ctx context.Context, root deployment.Deliver
 	if err := appendRootQuarantineEventTx(ctx, tx, root, quarantineID, code, actor, now); err != nil {
 		return err
 	}
+	if fenced {
+		restoreFencingTx(ctx, tx)
+		fenceRestored = true
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func sameDeliveryRoot(roots []deployment.DeliveryRoot, want deployment.DeliveryRoot) bool {
+	for _, root := range roots {
+		if root.PhysicalPoolID == want.PhysicalPoolID && root.Kind == want.Kind && root.SourceID == want.SourceID && root.CandidateID == want.CandidateID && root.GenerationID == want.GenerationID && root.LeaseID == want.LeaseID && root.CatalogDigest == want.CatalogDigest && root.ObjectKey == want.ObjectKey && root.Status == want.Status && root.CreatedAt.Equal(want.CreatedAt) && root.ExpiresAt.Equal(want.ExpiresAt) {
+			return true
+		}
+	}
+	return false
 }

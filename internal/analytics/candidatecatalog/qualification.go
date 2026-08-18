@@ -284,15 +284,20 @@ type PreviewCatalog struct {
 
 // OpenReadOnlyCatalog attaches an uploaded catalog without exposing any
 // mutation capability. It is used by seal verification after remote upload.
-func OpenReadOnlyCatalog(ctx context.Context, rootDir, catalogPath string, contract *ducklake.PoolContract) (*PreviewCatalog, error) {
+// Object-backed pools require the target-owned per-connector bootstrap so
+// DuckDB cannot resolve ambient process credentials.
+func OpenReadOnlyCatalog(ctx context.Context, rootDir, catalogPath string, contract *ducklake.PoolContract, bootstrap ducklake.CredentialBootstrap) (*PreviewCatalog, error) {
 	if contract == nil || contract.Validate() != nil || strings.TrimSpace(catalogPath) == "" {
 		return nil, ErrQualifiedCatalogRequired
+	}
+	if strings.EqualFold(strings.TrimSpace(contract.Tuple.StorageImplementation), "s3") && bootstrap == nil {
+		return nil, fmt.Errorf("target-owned S3 credential bootstrap is required for read-only catalog verification")
 	}
 	dataPath, err := contract.Pool.DataPath()
 	if err != nil {
 		return nil, err
 	}
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: rootDir, CatalogPath: catalogPath, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ReadOnly: true})
+	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: rootDir, CatalogPath: catalogPath, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ReadOnly: true, CredentialBootstrap: bootstrap})
 	if err != nil {
 		return nil, err
 	}

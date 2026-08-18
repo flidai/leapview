@@ -26,6 +26,7 @@ Promote the same reviewed project commit and managed revision identities through
 
 - Use [Health and observability](/docs/guides/operate/observability) for readiness, metrics, logs, refresh activity, query events, and synthetic verification.
 - Use [Backup and restore](/docs/guides/operate/backup-restore) for consistent instance recovery.
+- Use [Delivery reachability audit and bounded repair](/docs/guides/operate/delivery-recovery) when an immutable delivery root needs offline verification or quarantine.
 - Use [Operational troubleshooting](/docs/guides/operate/troubleshooting) to locate failures across infrastructure, active data, semantic modeling, and dashboard behavior.
 - Use [Storage and recovery](/docs/guides/data/storage-recovery) for local and object-storage analytical boundaries.
 

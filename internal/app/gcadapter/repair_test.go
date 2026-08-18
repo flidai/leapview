@@ -43,14 +43,37 @@ func TestRepairToolVerifiesSQLiteArtifactAndClosureBeforeMutation(t *testing.T) 
 		t.Fatal(err)
 	}
 	mutated := false
-	if err := tool.VerifyAndMutate(t.Context(), root, func(context.Context, deployment.DeliveryRoot) error {
+	if err := tool.VerifyAndMutateAtRevision(t.Context(), root, func(_ context.Context, _ deployment.DeliveryRoot, revision int64) error {
 		mutated = true
+		if revision != 4 {
+			t.Fatalf("mutation revision = %d, want 4", revision)
+		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if !mutated || inspector.calls != 1 {
 		t.Fatalf("mutation=%v inspector calls=%d", mutated, inspector.calls)
+	}
+}
+
+func TestRepairToolPassesDurableRootRevisionToMutation(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	root := repairRoot(now)
+	inspector := &repairInspector{reach: gc.CatalogReachability{CatalogKey: root.ObjectKey, CatalogDigest: root.CatalogDigest}}
+	tool, err := NewRepairTool(repairRootReader{set: deployment.RootSet{PhysicalPoolID: root.PhysicalPoolID, Revision: 9, Roots: []deployment.DeliveryRoot{root}}}, inspector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotRevision int64
+	if err := tool.VerifyAndMutateAtRevision(t.Context(), root, func(_ context.Context, _ deployment.DeliveryRoot, revision int64) error {
+		gotRevision = revision
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotRevision != 9 {
+		t.Fatalf("mutation revision = %d, want 9", gotRevision)
 	}
 }
 
@@ -63,7 +86,7 @@ func TestRepairToolDeniesMutationOnRootOrArtifactDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	mutated := false
-	if err := tool.VerifyAndMutate(t.Context(), root, func(context.Context, deployment.DeliveryRoot) error {
+	if err := tool.VerifyAndMutateAtRevision(t.Context(), root, func(context.Context, deployment.DeliveryRoot, int64) error {
 		mutated = true
 		return nil
 	}); err == nil || mutated {
@@ -72,7 +95,7 @@ func TestRepairToolDeniesMutationOnRootOrArtifactDrift(t *testing.T) {
 	inspector.err = nil
 	drifted := root
 	drifted.CatalogDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	if err := tool.VerifyAndMutate(t.Context(), drifted, func(context.Context, deployment.DeliveryRoot) error {
+	if err := tool.VerifyAndMutateAtRevision(t.Context(), drifted, func(context.Context, deployment.DeliveryRoot, int64) error {
 		mutated = true
 		return nil
 	}); !errors.Is(err, ErrRepairRootDrift) || mutated {

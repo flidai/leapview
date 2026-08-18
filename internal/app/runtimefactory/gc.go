@@ -71,6 +71,10 @@ func RunSQLiteProductionGC(ctx context.Context, config ProductionGCRunConfig) er
 			if err != nil {
 				return err
 			}
+			credentialBootstrap, err := gcadapter.NewPoolCredentialBootstrap(contract, config.PoolS3)
+			if err != nil {
+				return err
+			}
 			if stores == nil {
 				stores = store
 				var ok bool
@@ -89,7 +93,7 @@ func RunSQLiteProductionGC(ctx context.Context, config ProductionGCRunConfig) er
 				EvidenceDigest:      admission.Admission.EvidenceDigest,
 				OwnerID:             config.OwnerID,
 			})
-			inspectors[compatibilityDigest] = gcadapter.Inspector{Store: store, PoolContract: contract, StagingRoot: config.StagingRoot}
+			inspectors[compatibilityDigest] = gcadapter.Inspector{Store: store, PoolContract: contract, StagingRoot: config.StagingRoot, CredentialBootstrap: credentialBootstrap}
 		}
 		inspector := compatibilityInspector{db: config.Database, poolID: poolID, inspectors: inspectors}
 		runner, err := gcadapter.NewProductionRunner(delivery, stores, inspector, gc.Config{

@@ -819,6 +819,35 @@ tasks:
     cmds:
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
 
+  test:go:minio-conformance:
+    desc: Run the object-backed candidate-catalog, shared-pool, and GC namespace MinIO conformance tests
+    env:
+      LEAPVIEW_MINIO_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_CONFORMANCE_EVIDENCE_OUT: "{{.ROOT_DIR}}/.tmp/minio-conformance/shared-pool-evidence.json"
+    cmds:
+      - rm -f "{{.ROOT_DIR}}/.tmp/minio-conformance/shared-pool-evidence.json"
+      - go test -tags 'duckdb_arrow ducklake_minio' -count=1 -run '^TestCandidateCatalogMinIOSealedBaseRetainsUnchangedRefs$' -v ./internal/analytics/candidatecatalog
+      - go test -tags 'duckdb_arrow ducklake_minio' -count=1 -run '^TestSharedPoolConformanceMinIOLane$' -v ./internal/analytics/ducklake
+
+  test:go:plan-gc-conformance:
+    desc: Run the maintained plan-to-GC lifecycle, failure, crash, concurrency, race, and provenance matrix
+    cmds:
+      # The deployment subtree owns the maintained plan/build/seal/publication,
+      # restart, crash, fencing, lease/retirement, and GC race matrix. Keep
+      # this package-wide so adding a reviewed failure boundary cannot silently
+      # leave the release gate running a stale selective subset.
+      - go test ./internal/deployment/... -count=1 -v
+      # Candidate catalog isolation and destination promotion are part of the
+      # same plan-to-GC contract, but live in their owning packages.
+      - go test -tags duckdb_arrow ./internal/analytics/candidatecatalog -count=1 -v
+      - go test ./internal/app/runtimefactory -count=1 -v
+      # Recovery is part of the lifecycle: audit stays query-only and repair
+      # revalidates the exact root revision atomically before mutation.
+      - go test ./internal/admin/offline ./internal/admin/cli ./internal/app/adminoffline ./internal/app/gcadapter ./internal/platform/architecture -count=1 -v
+      # Protected targets must prove that source ownership and retained
+      # attestations are enforced, rather than trusting client provenance text.
+      - go test ./internal/project/module -run '^(TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads|TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart)$' -count=1 -v
+
   ci:lane:go:
     desc: Run the bounded Go unit and integration lane
     cmds:
@@ -880,6 +909,8 @@ tasks:
       - go test -race ./pkg/... ./internal/access ./internal/runtimehost
       - task: qa:ui-framework
       - task: deploy:check
+      - task: test:go:minio-conformance
+      - task: test:go:plan-gc-conformance
 
   ci:nightly:
     desc: Run exhaustive scheduled validation, including dependency security scans

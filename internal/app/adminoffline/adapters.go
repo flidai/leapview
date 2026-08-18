@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
@@ -26,6 +27,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/locking"
 	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
+	_ "modernc.org/sqlite"
 )
 
 type lockHandle struct {
@@ -74,42 +76,162 @@ func (repair deliveryRepair) RepairDeliveryRoot(ctx context.Context, request adm
 	if root.PhysicalPoolID == "" || root.Kind == "" || root.SourceID == "" {
 		return fmt.Errorf("delivery repair root identity is incomplete")
 	}
-	store, err := platform.Open(ctx, repair.dbPath)
+	readOnlyDB, err := openDeliveryAuditDB(ctx, repair.dbPath)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-	delivery := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
-	compatibilityDigest, err := delivery.DeliveryRootCompatibilityDigest(ctx, root)
+	defer readOnlyDB.Close()
+	delivery := deploymentsqlite.NewRepositoryWithHooks(readOnlyDB, deploymentsqlite.ActivationHooks{})
+	pools := physicalpoolsqlite.NewRepository(readOnlyDB)
+	inspector, err := repair.inspectorForRoot(ctx, delivery, pools, root)
 	if err != nil {
 		return err
 	}
-	pools := physicalpoolsqlite.NewRepository(store.SQLDB())
-	admission, err := pools.LoadAdmissionContractByCompatibilityDigest(ctx, physicalpool.PoolID(root.PhysicalPoolID), compatibilityDigest)
-	if err != nil {
-		return fmt.Errorf("load admitted physical pool: %w", err)
-	}
-	contract := &analyticsducklake.PoolContract{Pool: admission.Pool, Tuple: admission.Pool.Compatibility, Admission: admission.Admission, Evidence: admission.Evidence}
-	poolStore, err := gcadapter.NewPoolStore(ctx, contract, repair.s3)
+	runner, err := gcadapter.NewProductionRunner(delivery, inspector.Store, inspector, gc.Config{PhysicalPoolID: root.PhysicalPoolID, HolderID: "repair"})
 	if err != nil {
 		return err
 	}
-	inspector := gcadapter.Inspector{Store: poolStore, PoolContract: contract, StagingRoot: repair.stagingRoot}
-	runner, err := gcadapter.NewProductionRunner(delivery, poolStore, inspector, gc.Config{PhysicalPoolID: root.PhysicalPoolID, HolderID: "repair"})
-	if err != nil {
-		return err
-	}
-	err = runner.Repair(ctx, root, func(ctx context.Context, verified deployment.DeliveryRoot) error {
+	err = runner.RepairAtRevision(ctx, root, func(ctx context.Context, verified deployment.DeliveryRoot, rootRevision int64) error {
 		if !request.Apply {
 			return nil
 		}
+		if err := readOnlyDB.Close(); err != nil {
+			return err
+		}
+		store, err := platform.Open(ctx, repair.dbPath)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		mutableDelivery := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
 		const reason = "operator_repair_quarantine"
-		if err := delivery.QuarantineRootWithActor(ctx, verified, reason, "offline-admin", time.Now().UTC()); err != nil {
+		if err := mutableDelivery.QuarantineRootWithActorAtRevision(ctx, verified, rootRevision, reason, "offline-admin", time.Now().UTC()); err != nil {
 			return err
 		}
 		return nil
 	})
 	return err
+}
+
+func openDeliveryAuditDB(ctx context.Context, path string) (*sql.DB, error) {
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	db, err := sql.Open("sqlite", path+separator+"mode=ro&_pragma=foreign_keys(1)&_pragma=query_only(1)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(0)
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("open read-only delivery control database: %w", err)
+	}
+	return db, nil
+}
+
+// AuditDeliveryRoots enumerates the exact durable roots for one physical pool
+// and verifies each immutable catalog plus its read-only DuckLake closure. It
+// deliberately does not acquire the offline lock or construct any mutation
+// callback; a failed check returns before emitting a successful audit result.
+func (repair deliveryRepair) AuditDeliveryRoots(ctx context.Context, request adminoffline.DeliveryAuditRequest) (adminoffline.DeliveryAuditResult, error) {
+	if request.PhysicalPoolID == "" {
+		return adminoffline.DeliveryAuditResult{}, fmt.Errorf("delivery audit requires a physical-pool identity")
+	}
+	readOnlyDB, err := openDeliveryAuditDB(ctx, repair.dbPath)
+	if err != nil {
+		return adminoffline.DeliveryAuditResult{}, err
+	}
+	defer readOnlyDB.Close()
+	delivery := deploymentsqlite.NewRepositoryWithHooks(readOnlyDB, deploymentsqlite.ActivationHooks{})
+	pools := physicalpoolsqlite.NewRepository(readOnlyDB)
+	now := time.Now().UTC()
+	set, err := delivery.EnumerateRoots(ctx, request.PhysicalPoolID, now)
+	if err != nil {
+		return adminoffline.DeliveryAuditResult{}, fmt.Errorf("enumerate durable roots: %w", err)
+	}
+	if set.PhysicalPoolID != request.PhysicalPoolID {
+		return adminoffline.DeliveryAuditResult{}, fmt.Errorf("enumerated roots belong to physical pool %q, not %q", set.PhysicalPoolID, request.PhysicalPoolID)
+	}
+	evidenceRows := make([]adminoffline.DeliveryRootAuditResult, 0, len(set.Roots))
+	seen := make(map[string]struct{}, len(set.Roots))
+	for _, root := range set.Roots {
+		if root.PhysicalPoolID != request.PhysicalPoolID || root.Kind == "" || root.SourceID == "" || root.CatalogDigest == "" || root.ObjectKey == "" || root.Status == "" || root.CreatedAt.IsZero() || root.CreatedAt.Location() != time.UTC {
+			return adminoffline.DeliveryAuditResult{}, fmt.Errorf("root identity is incomplete or non-UTC for %s/%s", root.Kind, root.SourceID)
+		}
+		key := root.Kind + "\x00" + root.SourceID
+		if _, ok := seen[key]; ok {
+			return adminoffline.DeliveryAuditResult{}, fmt.Errorf("ambiguous durable root %s/%s", root.Kind, root.SourceID)
+		}
+		seen[key] = struct{}{}
+		inspector, inspectErr := repair.inspectorForRoot(ctx, delivery, pools, root)
+		if inspectErr != nil {
+			return adminoffline.DeliveryAuditResult{}, fmt.Errorf("verify root %s/%s: %w", root.Kind, root.SourceID, inspectErr)
+		}
+		reach, inspectErr := inspector.Inspect(ctx, root)
+		if inspectErr != nil {
+			return adminoffline.DeliveryAuditResult{}, fmt.Errorf("verify root %s/%s: %w", root.Kind, root.SourceID, inspectErr)
+		}
+		if reach.CatalogKey != root.ObjectKey || reach.CatalogDigest != root.CatalogDigest {
+			return adminoffline.DeliveryAuditResult{}, fmt.Errorf("verify root %s/%s: inspector returned a different artifact identity", root.Kind, root.SourceID)
+		}
+		evidenceRows = append(evidenceRows, adminoffline.DeliveryRootAuditResult{Root: root, DataFiles: len(reach.DataFiles), DeleteFiles: len(reach.DeleteFiles)})
+	}
+	finalSet, err := delivery.EnumerateRoots(ctx, request.PhysicalPoolID, time.Now().UTC())
+	if err != nil {
+		return adminoffline.DeliveryAuditResult{}, fmt.Errorf("re-enumerate durable roots: %w", err)
+	}
+	if finalSet.Revision != set.Revision || !sameDeliveryRootSet(set.Roots, finalSet.Roots) {
+		return adminoffline.DeliveryAuditResult{}, fmt.Errorf("durable roots changed during verification")
+	}
+	return adminoffline.DeliveryAuditResult{PhysicalPoolID: request.PhysicalPoolID, RootRevision: set.Revision, Roots: evidenceRows}, nil
+}
+
+func sameDeliveryRootSet(left, right []deployment.DeliveryRoot) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	identity := func(root deployment.DeliveryRoot) string {
+		return strings.Join([]string{
+			root.PhysicalPoolID, root.Kind, root.SourceID, root.CandidateID,
+			root.GenerationID, root.LeaseID, root.CatalogDigest, root.ObjectKey,
+			root.Status, root.CreatedAt.Format(time.RFC3339Nano), root.ExpiresAt.Format(time.RFC3339Nano),
+		}, "\x00")
+	}
+	seen := make(map[string]int, len(left))
+	for _, root := range left {
+		seen[identity(root)]++
+	}
+	for _, root := range right {
+		key := identity(root)
+		if seen[key] == 0 {
+			return false
+		}
+		seen[key]--
+	}
+	return true
+}
+
+func (repair deliveryRepair) inspectorForRoot(ctx context.Context, delivery *deploymentsqlite.Repository, pools *physicalpoolsqlite.Repository, root deployment.DeliveryRoot) (gcadapter.Inspector, error) {
+	compatibilityDigest, err := delivery.DeliveryRootCompatibilityDigest(ctx, root)
+	if err != nil {
+		return gcadapter.Inspector{}, err
+	}
+	admission, err := pools.LoadAdmissionContractByCompatibilityDigest(ctx, physicalpool.PoolID(root.PhysicalPoolID), compatibilityDigest)
+	if err != nil {
+		return gcadapter.Inspector{}, fmt.Errorf("load admitted physical pool: %w", err)
+	}
+	contract := &analyticsducklake.PoolContract{Pool: admission.Pool, Tuple: admission.Pool.Compatibility, Admission: admission.Admission, Evidence: admission.Evidence}
+	credentialBootstrap, err := gcadapter.NewPoolCredentialBootstrap(contract, repair.s3)
+	if err != nil {
+		return gcadapter.Inspector{}, err
+	}
+	poolStore, err := gcadapter.NewPoolStore(ctx, contract, repair.s3)
+	if err != nil {
+		return gcadapter.Inspector{}, err
+	}
+	return gcadapter.Inspector{Store: poolStore, PoolContract: contract, StagingRoot: repair.stagingRoot, CredentialBootstrap: credentialBootstrap}, nil
 }
 
 func (physicalPoolBootstrap) ValidateEvidence(evidence physicalpool.Evidence) error {

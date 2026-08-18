@@ -134,14 +134,22 @@ type fakeArchive struct {
 }
 
 type fakeDeliveryRepair struct {
-	calls   int
-	request DeliveryRepairRequest
+	calls      int
+	request    DeliveryRepairRequest
+	auditCalls int
+	audit      DeliveryAuditRequest
 }
 
 func (repair *fakeDeliveryRepair) RepairDeliveryRoot(_ context.Context, request DeliveryRepairRequest, _ io.Writer) error {
 	repair.calls++
 	repair.request = request
 	return nil
+}
+
+func (repair *fakeDeliveryRepair) AuditDeliveryRoots(_ context.Context, request DeliveryAuditRequest) (DeliveryAuditResult, error) {
+	repair.auditCalls++
+	repair.audit = request
+	return DeliveryAuditResult{PhysicalPoolID: request.PhysicalPoolID}, nil
 }
 
 func (archive *fakeArchive) BackupDatabase(_ context.Context, options BackupOptions) error {
@@ -289,6 +297,21 @@ func TestDeliveryRepairLocksOnlyForApplyAndPassesBoundedAction(t *testing.T) {
 	request.Action = "delete_object"
 	if err := service.RepairDeliveryRoot(context.Background(), request, io.Discard); err == nil {
 		t.Fatal("unbounded repair action unexpectedly accepted")
+	}
+}
+
+func TestDeliveryAuditIsReadOnlyAndRequiresPool(t *testing.T) {
+	locker := &fakeLocker{}
+	repair := &fakeDeliveryRepair{}
+	service := New(Config{}, Dependencies{Locker: locker, DeliveryRepair: repair})
+	if err := service.AuditDeliveryRoots(context.Background(), DeliveryAuditRequest{PhysicalPoolID: "pool"}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if repair.auditCalls != 1 || repair.audit.PhysicalPoolID != "pool" || locker.acquired != 0 {
+		t.Fatalf("audit calls=%d pool=%q locks=%d", repair.auditCalls, repair.audit.PhysicalPoolID, locker.acquired)
+	}
+	if err := service.AuditDeliveryRoots(context.Background(), DeliveryAuditRequest{}, io.Discard); err == nil {
+		t.Fatal("audit without pool unexpectedly accepted")
 	}
 }
 

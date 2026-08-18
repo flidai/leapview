@@ -44,12 +44,14 @@ func NewPoolStore(ctx context.Context, contract *ducklake.PoolContract, config S
 		if err != nil || parsed.Host == "" || parsed.Scheme != "s3" {
 			return nil, fmt.Errorf("physical-pool S3 location is invalid")
 		}
-		loadOptions := []func(*awsconfig.LoadOptions) error{}
+		if strings.TrimSpace(config.AccessKeyID) == "" || strings.TrimSpace(config.SecretAccessKey) == "" {
+			return nil, fmt.Errorf("target-owned S3 access and secret keys are required for physical-pool object store")
+		}
+		loadOptions := []func(*awsconfig.LoadOptions) error{
+			awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(config.AccessKeyID, config.SecretAccessKey, config.SessionToken)),
+		}
 		if strings.TrimSpace(config.Region) != "" {
 			loadOptions = append(loadOptions, awsconfig.WithRegion(strings.TrimSpace(config.Region)))
-		}
-		if config.AccessKeyID != "" {
-			loadOptions = append(loadOptions, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(config.AccessKeyID, config.SecretAccessKey, config.SessionToken)))
 		}
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOptions...)
 		if err != nil {

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,95 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
 )
+
+func TestQuarantineRootAtRevisionRejectsRootDriftBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "repair-fence.db")
+	store1, err := platform.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store1.Close()
+	store2, err := platform.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+	pool := repoDeliveryDigest('a')
+	insertDeliveryPool(t, store1, pool)
+	repo1 := NewRepositoryWithHooks(store1.SQLDB(), ActivationHooks{})
+	repo2 := NewRepositoryWithHooks(store2.SQLDB(), ActivationHooks{})
+	now := time.Date(2026, 8, 18, 1, 0, 0, 0, time.UTC)
+	root := deployment.DeliveryRoot{PhysicalPoolID: pool, Kind: "retained", SourceID: "repair-fence-root", CatalogDigest: repoDeliveryDigest('b'), ObjectKey: "catalogs/repair-fence.ducklake", Status: "active", CreatedAt: now}
+	if _, err := repo1.RegisterRoot(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	set, err := repo1.EnumerateRoots(ctx, pool, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.Roots) != 1 {
+		t.Fatalf("enumerated roots = %d, want one", len(set.Roots))
+	}
+	if _, err := repo2.RetireRoot(ctx, pool, root.Kind, root.SourceID, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	err = repo1.QuarantineRootWithActorAtRevision(ctx, root, set.Revision, "operator_repair_quarantine", "offline-admin", now.Add(3*time.Minute))
+	if !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("stale repair error = %v, want delivery conflict", err)
+	}
+	var quarantined int
+	if err := store1.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM delivery_root_registry WHERE physical_pool_id=? AND root_kind='quarantined'`, pool).Scan(&quarantined); err != nil {
+		t.Fatal(err)
+	}
+	if quarantined != 0 {
+		t.Fatalf("stale repair created %d quarantine roots", quarantined)
+	}
+}
+
+func TestQuarantineRootAtRevisionRejectsConcurrentChangeAfterFenceRead(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "repair-fence-after-read.db")
+	store1, err := platform.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store1.Close()
+	store2, err := platform.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+	pool := repoDeliveryDigest('c')
+	insertDeliveryPool(t, store1, pool)
+	repo1 := NewRepositoryWithHooks(store1.SQLDB(), ActivationHooks{})
+	repo2 := NewRepositoryWithHooks(store2.SQLDB(), ActivationHooks{})
+	now := time.Date(2026, 8, 18, 2, 0, 0, 0, time.UTC)
+	root := deployment.DeliveryRoot{PhysicalPoolID: pool, Kind: "retained", SourceID: "repair-fence-after-read", CatalogDigest: repoDeliveryDigest('d'), ObjectKey: "catalogs/repair-fence-after-read.ducklake", Status: "active", CreatedAt: now}
+	if _, err := repo1.RegisterRoot(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	set, err := repo1.EnumerateRoots(ctx, pool, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo1.quarantineBeforeMutation = func() {
+		if _, err := repo2.RetireRoot(ctx, pool, root.Kind, root.SourceID, now.Add(2*time.Minute)); err != nil {
+			t.Errorf("concurrent root drift: %v", err)
+		}
+	}
+	err = repo1.QuarantineRootWithActorAtRevision(ctx, root, set.Revision, "operator_repair_quarantine", "offline-admin", now.Add(3*time.Minute))
+	if !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("concurrent repair error = %v, want delivery conflict", err)
+	}
+	var quarantined int
+	if err := store1.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM delivery_root_registry WHERE physical_pool_id=? AND root_kind='quarantined'`, pool).Scan(&quarantined); err != nil {
+		t.Fatal(err)
+	}
+	if quarantined != 0 {
+		t.Fatalf("concurrent repair created %d quarantine roots", quarantined)
+	}
+}
 
 func TestQuarantineRootReactivatesRetiredHold(t *testing.T) {
 	ctx := context.Background()

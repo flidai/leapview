@@ -1,8 +1,8 @@
 # Project delivery conformance specification
 
-Status: draft
+Status: accepted
 
-Last updated: 2026-08-17
+Last updated: 2026-08-18
 
 Owners: LeapView maintainers
 
@@ -50,7 +50,7 @@ was not run.
 
 | Surface | Required evidence | Local gate | Remote/MinIO gate | Fail-closed condition |
 | --- | --- | --- | --- | --- |
-| **SP — shared physical pool** | Versioned compatibility tuple, all nine named checks, per-check observation digests, canonical evidence digest, explicit create/admit record, stable namespace owner marker and per-run deletion lease | `internal/analytics/ducklake/shared_pool_safety_test.go`, `conformance_artifact_test.go`, `physicalpool/sqlite` restart/atomic tests, `deployment/gcstore` marker/lease tests | `ducklake_minio && duckdb_arrow` conformance lane; artifact is emitted only after the complete run | Missing/unknown check, tuple mismatch, stale digest, unadmitted pool, truncated marker, lease conflict, or cross-instance namespace without one owner |
+| **SP — shared physical pool** | Versioned compatibility tuple, all nine named checks, per-check observation digests, canonical evidence digest, explicit create/admit record, stable namespace owner marker and per-run deletion lease | `internal/analytics/ducklake/shared_pool_safety_test.go`, `conformance_artifact_test.go`, `physicalpool/sqlite` restart/atomic tests, `deployment/gcstore` marker/lease tests | `task test:go:minio-conformance`; the release workflow requires the pinned runtime/extension tuple and uploads the validated evidence JSON, checksum, exact image/runtime versions, and test log | Missing/unknown check, tuple mismatch, unavailable extension, stale digest, missing evidence artifact, unadmitted pool, truncated marker, lease conflict, or cross-instance namespace without one owner |
 | **SE — sealed serving** | Candidate/seal/generation share catalog, artifact, pool, compatibility, and serving-state identities; read-only attach and lease evidence | `internal/app/runtimefactory/sealed_test.go`; `internal/platform/architecture/delivery_conformance_test.go:TestLEA414ProductionUsesSealedCanonicalPath`; serving identity migration tests | Remote object read and credential bootstrap in the MinIO qualification lane | Preparing/unverified/legacy-identity row, mutable artifact, failed lease/auth, or mixed legacy serving path |
 | **AO — append-only operations** | Plan/build/qualification/approval/publish/activate/retire/rollback/lease/GC events with actor, object, request/result digests, outcome and UTC time | `internal/deployment/sqlite/events_repository_test.go` and repository CAS/crash tests | Run against the target's durable database during release qualification | Event update/delete, conflicting replay, missing event after a committed transition, secret-bearing details, or indeterminate publication without reconciliation |
 
@@ -59,7 +59,8 @@ native cleanup/checkpoint calls outside guarded DuckLake adapters, SQLite file
 membership/reference-count manifests, mutable sealed artifact fields, and
 legacy serving construction. The migration gate applies every migration to a
 fresh database and exercises rollback-trigger protections. The operator gate
-requires the offline `admin delivery pool bootstrap` dry-run before `--apply`.
+requires the offline `admin delivery pool bootstrap` dry-run before `--apply`,
+and requires `admin delivery audit` before a bounded `admin delivery repair`.
 
 ### Maintained requirement coverage
 
@@ -119,8 +120,8 @@ change; a lane that was not run is recorded as unsupported.
 | PI-10 | Provenance/approval/owner/secret rotation can reuse equivalent execution. | `internal/deployment/plan_delivery_contracts_test.go:TestDeliveryGovernanceAndCredentialRotationPreserveExecutionReuseIdentity`; `internal/app/runtimefactory/delivery_plan_test.go:TestCandidatePlanReuseDecisionUsesExactActiveIdentity` | [validate/deploy](../../docs/guides/cli/validate-deploy.md) |
 | PI-11 | Undeclared nondeterminism disables reuse. | `internal/deployment/plan_delivery_contracts_test.go:TestDeliveryReusePolicyDisablesUndeclaredNondeterminism`; production decision integration is exercised by `internal/app/runtimefactory/delivery_plan_test.go:TestCandidateRunnerRebuildsWhenReuseDecisionMismatches` and `internal/app/runtimefactory/delivery_plan_test.go:TestCandidateRunnerMissingReuseDecisionRebuilds` | [validate/deploy](../../docs/guides/cli/validate-deploy.md) |
 | PI-12 | No SQLite file-membership manifest; DuckLake catalog is physical authority. | `internal/platform/architecture/delivery_conformance_test.go:TestPlanDeliveryPhysicalAuthorityGuards` | [upgrades](../../docs/articles/operate/upgrades.md) |
-| PI-13 | Catalog/pool objects and credentials stay target-authorized. | `internal/analytics/ducklake/shared_pool_safety_test.go:TestCredentialBootstrapRunsForEveryPooledConnector` | [upgrades](../../docs/articles/operate/upgrades.md) |
-| PI-14 | Runtime upgrades require the complete shared-pool conformance lane. | `go test -tags 'duckdb_arrow ducklake_minio' -count=1 -run '^TestSharedPoolConformanceMinIOLane$' -v ./internal/analytics/ducklake` (PASS, 2026-08-17; pinned MinIO image). Rerun this lane whenever the DuckDB/DuckLake/MinIO tuple changes. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
+| PI-13 | Catalog/pool objects and credentials stay target-authorized. | `internal/analytics/ducklake/shared_pool_safety_test.go:TestCredentialBootstrapRunsForEveryPooledConnector`; `internal/app/gcadapter/credentials_test.go:TestNewPoolStoreS3RequiresTargetKeys`; `internal/app/runtimefactory/delivery_credentials_test.go:TestNewCatalogObjectStoreS3RequiresTargetKeysBeforeAWSConfig`; `internal/app/runtimefactory/delivery_credentials_test.go:TestBuildRequestFactoryS3RequiresCredentialBootstrapBeforeBuild`; `internal/app/runtimefactory/delivery_credentials_test.go:TestReadOnlyCatalogVerifierS3RequiresCredentialBootstrapBeforeRemoteOpen` | [upgrades](../../docs/articles/operate/upgrades.md) |
+| PI-14 | Runtime upgrades require the complete shared-pool conformance lane. | `task test:go:minio-conformance`; `.github/workflows/release.yml:minio-conformance` fails on an unavailable extension or tuple drift and retains the complete evidence artifact, checksum, exact DuckDB/DuckLake versions, pinned MinIO digest, and logs. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | PR-01 | Build attempt binds plan/input/base/pool/writer lease before work. | `internal/deployment/plan_delivery_contracts_test.go:TestDeliveryBuildSealAndCandidateTransitionsAreChecked`; `internal/deployment/sqlite/fencing_repository_test.go:TestCreateWriterLeaseAndAttemptAllocatesEpochAndBindsIdentity` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | PR-02 | Pre-seal crash leaves no candidate and retries exact base. | `internal/deployment/lifecycle_test.go:TestDeliveryLifecycleClosesPhasedCatalogOnEveryPreSealFailure` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | PR-03 | Snapshot normalization and inlining postconditions are verified. | `internal/analytics/candidatecatalog/qualification_test.go:TestNormalizeClearsInheritedInliningAndFlushesRowsAndDeletes` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
@@ -164,7 +165,12 @@ change; a lane that was not run is recorded as unsupported.
 | AO-02 | Runtime lineage is lossless where supported; LeapView ledger remains authority. | Reviewed operational check (2026-08-17): no OpenLineage adapter or outbound lineage integration is present in this checkout; the append-only LeapView delivery event ledger remains the authoritative runtime lineage surface. | [upgrades](../../docs/articles/operate/upgrades.md) |
 | AO-03 | UX exposes impact, qualification, eligibility and decisions. | `internal/app/cli/delivery_cli_test.go:TestDeliveryPlanResultPreservesReviewEvidence`; `internal/project/cli/command_test.go:TestDeliveryPlanTextOutputIncludesReviewEvidence`; `internal/deployment/module/delivery_api_test.go:TestDeliveryPlanPreviewExposesImmutableReviewEvidence`; browser/agent have no separate delivery mutation surface. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | AO-04 | Inspection exposes immutable source/execution/provenance/governance/target/candidate/seal/publication evidence. | `internal/deployment/module/delivery_api_test.go:TestDeliveryPlanPreviewExposesImmutableReviewEvidence`; `internal/deployment/module/delivery_api_test.go:TestDeliveryCandidateStatusRedactsObjectAuthorityAndInputs`; `internal/app/cli/publish_test.go:TestProjectPublishOperationsEmitVersionedAcceptedJSON`. | [upgrades](../../docs/articles/operate/upgrades.md) |
-| AO-05 | Repair tools verify SQLite, artifact bytes/digests and closure before mutation. | `internal/app/gcadapter/repair_test.go:TestRepairToolVerifiesSQLiteArtifactAndClosureBeforeMutation`; `internal/app/gcadapter/repair_test.go:TestRepairToolDeniesMutationOnRootOrArtifactDrift`; `internal/deployment/sqlite/gc_adapter_test.go:TestQuarantineRootCommitsOperatorAuditWithProjection`; `internal/admin/offline/service_test.go:TestDeliveryRepairLocksOnlyForApplyAndPassesBoundedAction`; `internal/admin/cli/command_test.go:TestCommandRoutesBoundedDeliveryRepair` | [upgrades](../../docs/articles/operate/upgrades.md) |
+| AO-05 | Audit and repair verify SQLite, artifact bytes/digests and closure before mutation. | `internal/app/adminoffline/adapters_test.go:TestOpenDeliveryAuditDBIsQueryOnly`; `internal/app/adminoffline/adapters_test.go:TestSameDeliveryRootSetDetectsIdentityDrift`; `internal/app/gcadapter/repair_test.go:TestRepairToolVerifiesSQLiteArtifactAndClosureBeforeMutation`; `internal/app/gcadapter/repair_test.go:TestRepairToolDeniesMutationOnRootOrArtifactDrift`; `internal/deployment/sqlite/gc_adapter_test.go:TestQuarantineRootAtRevisionRejectsRootDriftBeforeMutation`; `internal/deployment/sqlite/gc_adapter_test.go:TestQuarantineRootAtRevisionRejectsConcurrentChangeAfterFenceRead`; `internal/deployment/sqlite/gc_adapter_test.go:TestQuarantineRootCommitsOperatorAuditWithProjection`; `internal/admin/offline/service_test.go:TestDeliveryAuditIsReadOnlyAndRequiresPool`; `internal/admin/offline/service_test.go:TestDeliveryRepairLocksOnlyForApplyAndPassesBoundedAction`; `internal/admin/cli/command_test.go:TestCommandRoutesReadOnlyDeliveryAudit`; `internal/admin/cli/command_test.go:TestCommandRoutesBoundedDeliveryRepair` | [delivery recovery](../../docs/articles/operate/delivery-recovery.md) |
+| E2E-01 | Local evaluation, private/PR, and protected-production policies use one plan-to-GC lifecycle; only policy, input, and approval configuration differ. | `internal/deployment/sqlite/conformance_plan_gc_test.go:TestPlanToGCLifecycleConformance`; protected provenance is enforced by `internal/deployment/module/canonical_delivery_test.go:TestResolveLegacyCandidatePlanRejectsAttestationDrift` and `internal/project/module/candidate_sources_test.go:TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads`; release gate `task test:go:plan-gc-conformance`. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
+| E2E-02 | Composition and focused failure suites cover concurrent same-base candidates, build/seal crash recovery, ambiguous upload, and lost publication acknowledgement. | `internal/deployment/sqlite/conformance_plan_gc_test.go:TestPlanToGCLifecycleConformance`; `internal/analytics/candidatecatalog/catalog_test.go:TestConcurrentBuildsFromOneBaseAreDistinct`; `internal/deployment/lifecycle_test.go:TestDeliveryLifecycleClosesPhasedCatalogOnEveryPreSealFailure`; `internal/deployment/lifecycle_test.go:TestDeliveryLifecycleReconcilesDurablePhasesAfterRestart`; `internal/deployment/sqlite/publication_recovery_test.go:TestPublicationActivationLostAcknowledgementConvergesCommitted`; MinIO lane candidate/shared-pool tests. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
+| E2E-03 | Long readers, root/GC revision races, lease/retirement fencing, exact rollback, and outside-window rejection are maintained together. | `internal/deployment/sqlite/conformance_plan_gc_test.go:TestPlanToGCLifecycleConformance`; `internal/deployment/sqlite/fencing_repository_test.go:TestQueryLeaseAndCandidateRetirementRaceHasOneWinner`; `internal/deployment/gc/collector_test.go:TestCollectorRevalidatesBeforeBatch`. | [delivery recovery](../../docs/articles/operate/delivery-recovery.md) |
+| E2E-04 | Pinned, bounded, and observed modes run through the same lifecycle; destination promotion requalifies instead of copying candidate identity. | `internal/deployment/sqlite/conformance_plan_gc_test.go:TestPlanToGCLifecycleConformance`; `internal/deployment/dp_conformance_test.go:TestDestinationBuildRunsQualificationAfterDevelopmentEvidence`; `internal/app/runtimefactory/dp_conformance_test.go:TestPromotionReplansPortableArtifactForEachDestinationTarget`. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
+| E2E-05 | CLI/API vocabulary, release gates, and offline runbooks expose the same immutable plan/candidate/generation/catalog contract. | `internal/app/cli/command_surface_test.go:TestDeliveryAuditDocumentsReadOnlyEffect`; `internal/deployment/module/delivery_api_test.go:TestDeliveryPlanPreviewExposesImmutableReviewEvidence`; `internal/platform/architecture/delivery_conformance_test.go:TestPlanDeliveryPhysicalAuthorityGuards`; release jobs `minio-conformance` and `plan-gc-conformance`. | [delivery recovery](../../docs/articles/operate/delivery-recovery.md) |
 
 ## Target revision and planning
 
@@ -437,24 +443,26 @@ change; a lane that was not run is recorded as unsupported.
 - **AO-04:** Inspection and audit surfaces expose immutable source, execution,
   provenance, governance, target revision, plan, candidate, catalog seal,
   publication, and generation evidence.
-- **AO-05:** Operational repair tools verify SQLite state against DuckLake
-  catalog digests, immutable object bytes, and actual file closure before
-  changing protected state.
+- **AO-05:** Operational audit and repair tools verify SQLite state against
+  DuckLake catalog digests, immutable object bytes, and actual file closure
+  before reporting success or changing protected state.
 
 ## End-to-end suites
 
-Maintained end-to-end suites must exercise the same transitions for:
-
-- a local evaluation target;
-- an automated private-development or pull-request target; and
-- a protected target requiring approval and trusted provenance.
-
-Policy differences must be configuration rather than alternate lifecycle code
-paths. Suites must include concurrent plan and publication changes, same-base
-candidate builds, every build-and-seal crash boundary, lost upload
-acknowledgements, root-versus-GC and lease-versus-retirement races, long queries
-through publication and GC, rollback within and outside retention, cross-target
-requalification, and pinned, bounded, and observed data inputs.
-
-Generated CLI and API contracts, public workflow documentation, maintained CI
-examples, and operational runbooks must agree with the implemented lifecycle.
+- **E2E-01:** Maintained composition and focused provenance suites exercise the
+  same transitions for a local evaluation target, an automated
+  private-development or pull-request target, and a protected target requiring
+  approval and trusted provenance. Policy differences are configuration rather
+  than alternate lifecycle code.
+- **E2E-02:** The composition suite and its maintained focused failure suites
+  cover concurrent plan and publication changes, same-base candidate builds,
+  every build-and-seal crash boundary, lost upload acknowledgements, and lost
+  publication acknowledgements.
+- **E2E-03:** Maintained suites cover root-versus-GC and
+  lease-versus-retirement races, long queries through publication and GC, and
+  rollback within and outside retention.
+- **E2E-04:** Maintained suites cover cross-target requalification and pinned,
+  bounded, and observed data inputs through the same lifecycle contracts.
+- **E2E-05:** Generated CLI and API contracts, public workflow documentation,
+  maintained CI examples, release evidence, and operational runbooks agree
+  with the implemented lifecycle.

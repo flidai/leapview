@@ -45,12 +45,14 @@ func NewCatalogObjectStore(ctx context.Context, contract *ducklake.PoolContract,
 		if err != nil || parsed.Scheme != "s3" || parsed.Host == "" {
 			return nil, fmt.Errorf("physical-pool S3 location is invalid")
 		}
-		options := []func(*awsconfig.LoadOptions) error{}
+		if strings.TrimSpace(config.AccessKeyID) == "" || strings.TrimSpace(config.SecretAccessKey) == "" {
+			return nil, fmt.Errorf("target-owned S3 access and secret keys are required for catalog object store")
+		}
+		options := []func(*awsconfig.LoadOptions) error{
+			awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(config.AccessKeyID, config.SecretAccessKey, config.SessionToken)),
+		}
 		if config.Region != "" {
 			options = append(options, awsconfig.WithRegion(config.Region))
-		}
-		if config.AccessKeyID != "" {
-			options = append(options, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(config.AccessKeyID, config.SecretAccessKey, config.SessionToken)))
 		}
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, options...)
 		if err != nil {
@@ -180,6 +182,9 @@ func BuildRequestFactory(config CandidateCatalogRunnerConfig) func(context.Conte
 		}
 		if config.PoolContract == nil || config.PoolContract.Validate() != nil || config.Materialize == nil || config.Connections == nil || config.ObjectStore == nil || config.SealRepository == nil || config.RemoteVerifier == nil || config.VerifyLease == nil || input.Plan == nil {
 			return deployment.DeliveryBuildRequest{}, fmt.Errorf("candidate delivery physical-pool admission and materialization adapters are required")
+		}
+		if strings.EqualFold(strings.TrimSpace(config.PoolContract.Tuple.StorageImplementation), "s3") && config.CredentialBootstrap == nil {
+			return deployment.DeliveryBuildRequest{}, fmt.Errorf("target-owned S3 credential bootstrap is required for candidate build")
 		}
 		runner := &candidateCatalogRunner{config: config, input: input, artifacts: artifacts}
 		request := config.RequestTemplate
@@ -495,9 +500,10 @@ func (r *candidateCatalogRunner) Qualify(ctx context.Context, buildInput deploym
 // runtime read adapter performs the stronger DuckLake closure checks. It still
 // proves exact bytes are readable before durable ready completion.
 type ReadOnlyCatalogVerifier struct {
-	PoolContract *ducklake.PoolContract
-	StagingRoot  string
-	ObjectStore  catalogseal.ObjectStore
+	PoolContract        *ducklake.PoolContract
+	StagingRoot         string
+	ObjectStore         catalogseal.ObjectStore
+	CredentialBootstrap ducklake.CredentialBootstrap
 }
 
 func (v ReadOnlyCatalogVerifier) Verify(ctx context.Context, verification catalogseal.RemoteVerification) error {
@@ -507,6 +513,9 @@ func (v ReadOnlyCatalogVerifier) Verify(ctx context.Context, verification catalo
 func (v ReadOnlyCatalogVerifier) verify(ctx context.Context, verification catalogseal.RemoteVerification) error {
 	if v.PoolContract == nil || v.PoolContract.Validate() != nil {
 		return fmt.Errorf("remote verifier requires admitted pool contract")
+	}
+	if strings.EqualFold(strings.TrimSpace(v.PoolContract.Tuple.StorageImplementation), "s3") && v.CredentialBootstrap == nil {
+		return fmt.Errorf("remote verifier requires target-owned S3 credential bootstrap")
 	}
 	object, err := verification.Open(ctx)
 	if err != nil {
@@ -561,7 +570,7 @@ func (v ReadOnlyCatalogVerifier) verify(ctx context.Context, verification catalo
 	if err != nil {
 		return err
 	}
-	preview, err := candidatecatalog.OpenReadOnlyCatalog(ctx, root, path, v.PoolContract)
+	preview, err := candidatecatalog.OpenReadOnlyCatalog(ctx, root, path, v.PoolContract, v.CredentialBootstrap)
 	if err != nil {
 		return err
 	}

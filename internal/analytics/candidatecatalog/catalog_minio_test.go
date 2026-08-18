@@ -61,6 +61,9 @@ func TestCandidateCatalogMinIOSealedBaseRetainsUnchangedRefs(t *testing.T) {
 	baseRoot := t.TempDir()
 	base, err := ducklake.Open(ctx, ducklake.Config{RootDir: baseRoot, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, CredentialBootstrap: bootstrap})
 	if extensionUnavailableCandidate(err) {
+		if minioConformanceGateRequired() {
+			t.Fatalf("ducklake extension unavailable in required MinIO conformance gate: %v", err)
+		}
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
 	if err != nil {
@@ -144,7 +147,7 @@ func (s candidateMinIOObjectStore) Open(ctx context.Context, key string) (io.Rea
 
 func candidateMinIOPoolContract(t *testing.T, bucket, prefix string) *ducklake.PoolContract {
 	t.Helper()
-	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:test", DuckLakeExtension: "ducklake:test", CatalogFormat: "ducklake:v1", StorageImplementation: "s3", ObjectNamingContract: "uuidv7:v1"}
+	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:v1.5.4", DuckLakeExtension: "ducklake:d318a545", CatalogFormat: "ducklake:v1", StorageImplementation: "s3", ObjectNamingContract: "uuidv7:v1"}
 	identity := physicalpool.PoolIdentity{StorageLocation: "s3://" + bucket, StorageNamespace: prefix, Region: "us-east-1", IsolationBoundary: "candidate-minio", RetentionAuthority: "candidate-minio", Compatibility: tuple}
 	pool, err := physicalpool.NewPhysicalPool(identity)
 	if err != nil {
@@ -256,4 +259,8 @@ func extensionUnavailableCandidate(err error) bool {
 	}
 	text := strings.ToLower(err.Error())
 	return strings.Contains(text, "extension") && (strings.Contains(text, "not found") || strings.Contains(text, "failed to download") || strings.Contains(text, "failed to install") || strings.Contains(text, "not be loaded"))
+}
+
+func minioConformanceGateRequired() bool {
+	return strings.TrimSpace(os.Getenv("LEAPVIEW_MINIO_CONFORMANCE_REQUIRED")) != ""
 }

@@ -48,12 +48,13 @@ func (r *Runner) Run(ctx context.Context) (gc.Result, error) {
 	return r.Collector.Run(ctx)
 }
 
-// Repair verifies the exact durable root and immutable physical closure
-// before invoking the supplied control-plane mutation. The mutation callback
-// is intentionally the only operation exposed after verification.
-func (r *Runner) Repair(ctx context.Context, root deployment.DeliveryRoot, mutate func(context.Context, deployment.DeliveryRoot) error) error {
+// RepairAtRevision is the fenced production repair entrypoint. The callback
+// receives the exact durable root revision observed before physical
+// verification and must pass it to a repository-level compare-and-swap
+// mutation.
+func (r *Runner) RepairAtRevision(ctx context.Context, root deployment.DeliveryRoot, mutate func(context.Context, deployment.DeliveryRoot, int64) error) error {
 	if r == nil || r.RepairTool == nil {
 		return ErrRepairUnavailable
 	}
-	return r.RepairTool.VerifyAndMutate(ctx, root, mutate)
+	return r.RepairTool.VerifyAndMutateAtRevision(ctx, root, mutate)
 }

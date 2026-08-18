@@ -794,6 +794,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), LeaseHolder: instanceID,
 			ProjectRuntimeFactory: analyticsModule.ProjectRuntimeFactoryForEnvironment,
 			DashboardMaxRows:      cfg.QueryResultMaxRows, DashboardMaxBytes: cfg.QueryResultMaxBytes,
+			PoolS3: gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle},
 			Authorize: func(ctx context.Context, evidence appruntimefactory.SealedAuthorizationInput) error {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -949,6 +950,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 		var poolContract *ducklake.PoolContract
 		var poolStore catalogseal.ObjectStore
+		var poolCredentialBootstrap ducklake.CredentialBootstrap
 		var poolErr error
 		deliveryPhysicalPoolID := strings.TrimSpace(cfg.DeliveryPhysicalPoolID)
 		deliveryCompatibilityDigest := strings.TrimSpace(cfg.DeliveryPhysicalPoolCompatibilityDigest)
@@ -1006,7 +1008,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				poolErr = fmt.Errorf("load configured delivery physical-pool admission: %w", err)
 			} else {
 				poolContract = &ducklake.PoolContract{Pool: admission.Pool, Tuple: admission.Pool.Compatibility, Admission: admission.Admission, Evidence: admission.Evidence}
-				poolStore, poolErr = appruntimefactory.NewCatalogObjectStore(ctx, poolContract, gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle})
+				poolS3 := gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle}
+				poolStore, poolErr = appruntimefactory.NewCatalogObjectStore(ctx, poolContract, poolS3)
+				if poolErr == nil {
+					poolCredentialBootstrap, poolErr = gcadapter.NewPoolCredentialBootstrap(poolContract, poolS3)
+				}
 			}
 		}
 		// A production process may still serve the administration surface on a
@@ -1142,7 +1148,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		if poolErr == nil && poolContract != nil {
 			verifyLease = appruntimefactory.SQLiteWriterLeaseVerifier(deliveryRepository)
 		}
-		buildFactory := appruntimefactory.BuildRequestFactory(appruntimefactory.CandidateCatalogRunnerConfig{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, Base: baseResolver, Materialize: materialize, Connections: candidateConnectionLeaser{leaser: candidateBindings, module: analyticsModule}, QualificationFactory: appruntimefactory.QualificationRequestForCandidate, ObjectStore: poolStore, SealRepository: deliveryRepository, RemoteVerifier: appruntimefactory.ReadOnlyCatalogVerifier{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ObjectStore: poolStore}, VerifyLease: verifyLease})
+		buildFactory := appruntimefactory.BuildRequestFactory(appruntimefactory.CandidateCatalogRunnerConfig{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, CredentialBootstrap: poolCredentialBootstrap, Base: baseResolver, Materialize: materialize, Connections: candidateConnectionLeaser{leaser: candidateBindings, module: analyticsModule}, QualificationFactory: appruntimefactory.QualificationRequestForCandidate, ObjectStore: poolStore, SealRepository: deliveryRepository, RemoteVerifier: appruntimefactory.ReadOnlyCatalogVerifier{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ObjectStore: poolStore, CredentialBootstrap: poolCredentialBootstrap}, VerifyLease: verifyLease})
 		planCandidate := func(planCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet) (deployment.DeliveryPlan, error) {
 			var reuse *deployment.DeliveryReuseInput
 			if input.Candidate.Scope.BaseGenerationID != "" {

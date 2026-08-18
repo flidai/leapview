@@ -119,6 +119,26 @@ func TestDeliveryRepairDocumentsConditionalDestructiveEffect(t *testing.T) {
 	}
 }
 
+func TestDeliveryAuditDocumentsReadOnlyEffect(t *testing.T) {
+	command := NewCommand(context.Background())
+	found, _, err := command.Find([]string{"admin", "delivery", "audit"})
+	if err != nil {
+		t.Fatalf("find delivery audit: %v", err)
+	}
+	if got := found.Annotations[documentationEffectAnnotation]; got != "read" {
+		t.Fatalf("audit effect = %q, want read", got)
+	}
+	if got := found.Annotations[documentationConfirmationAnnotation]; got != "never" {
+		t.Fatalf("audit confirmation = %q, want never", got)
+	}
+	if found.Flags().Lookup("pool-id") == nil {
+		t.Fatal("audit command missing --pool-id")
+	}
+	if found.Flags().Lookup("apply") != nil {
+		t.Fatal("audit command unexpectedly exposes --apply")
+	}
+}
+
 func TestVersionReportsDevelopmentIdentityAsJSON(t *testing.T) {
 	command := NewCommand(context.Background())
 	var output strings.Builder

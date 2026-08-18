@@ -340,7 +340,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
 
-	for _, required := range []string{"cp -R deploy/compose/qualification", "./leapviewctl qualify installed-candidate", "gh release create", "needs: [image, qualify]"} {
+	for _, required := range []string{"cp -R deploy/compose/qualification", "./leapviewctl qualify installed-candidate", "gh release create", "needs: [image, qualify, minio-conformance, plan-gc-conformance]"} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)
 		}
