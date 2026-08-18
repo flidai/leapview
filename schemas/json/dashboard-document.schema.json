@@ -1,0 +1,2478 @@
+{
+  "$defs": {
+    "AggregateDashboardQuery": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardQueryBase"
+        }
+      ],
+      "properties": {
+        "dimensions": {
+          "items": {
+            "$ref": "#/$defs/DashboardDimensionSelection"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/DashboardMetricSelection"
+          },
+          "type": "array"
+        },
+        "sort": {
+          "items": {
+            "$ref": "#/$defs/DashboardSort"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "aggregate"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "dimensions",
+        "metrics",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "BooleanDashboardFilterValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterValueBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "boolean"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "CartesianDashboardPresentation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPresentationBase"
+        }
+      ],
+      "properties": {
+        "dataZoom": {
+          "type": "boolean"
+        },
+        "displayUnits": {
+          "$ref": "#/$defs/VisualizationDisplayUnits"
+        },
+        "labelPosition": {
+          "$ref": "#/$defs/DashboardLabelPosition"
+        },
+        "labels": {
+          "$ref": "#/$defs/DashboardLabelPolicy"
+        },
+        "legend": {
+          "$ref": "#/$defs/DashboardLegendPosition"
+        },
+        "orientation": {
+          "$ref": "#/$defs/DashboardOrientation"
+        },
+        "showSymbols": {
+          "type": "boolean"
+        },
+        "smooth": {
+          "type": "boolean"
+        },
+        "stacking": {
+          "$ref": "#/$defs/DashboardStackingMode"
+        },
+        "symbolSize": {
+          "format": "double",
+          "type": "number"
+        },
+        "type": {
+          "enum": [
+            "cartesian"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ComparisonDashboardFilterExpression": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterExpressionBase"
+        }
+      ],
+      "properties": {
+        "operator": {
+          "$ref": "#/$defs/DashboardFilterOperator"
+        },
+        "type": {
+          "enum": [
+            "comparison"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/DashboardFilterValue"
+        }
+      },
+      "required": [
+        "operator",
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardAccessibility": {
+      "properties": {
+        "announceChanges": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardApiVersion": {
+      "description": "The only resource version accepted by the canonical dashboard document.",
+      "enum": [
+        "leapview.dev/v1"
+      ],
+      "type": "string"
+    },
+    "DashboardAppearance": {
+      "properties": {
+        "color": {
+          "$ref": "#/$defs/DashboardAppearanceColor"
+        },
+        "icon": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardAppearanceColor": {
+      "enum": [
+        "slate",
+        "gray",
+        "red",
+        "orange",
+        "amber",
+        "yellow",
+        "lime",
+        "green",
+        "emerald",
+        "teal",
+        "cyan",
+        "sky",
+        "blue",
+        "indigo",
+        "violet",
+        "purple",
+        "fuchsia",
+        "pink",
+        "rose"
+      ],
+      "type": "string"
+    },
+    "DashboardCalculation": {
+      "properties": {
+        "axis": {
+          "$ref": "#/$defs/VisualizationCalculationAxis"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "lookup": {
+          "$ref": "#/$defs/DashboardCalculationLookup"
+        },
+        "offset": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "orderBy": {
+          "items": {
+            "$ref": "#/$defs/DashboardSort"
+          },
+          "type": "array"
+        },
+        "parent": {
+          "type": "string"
+        },
+        "partitionBy": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reset": {
+          "$ref": "#/$defs/VisualizationCalculationReset"
+        },
+        "source": {
+          "type": "string"
+        },
+        "template": {
+          "$ref": "#/$defs/VisualizationCalculationTemplate"
+        },
+        "window": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "template"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardCalculationLookup": {
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardDataBudget": {
+      "properties": {
+        "maxRows": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "requiredCompleteness": {
+          "$ref": "#/$defs/VisualizationCompleteness"
+        }
+      },
+      "required": [
+        "maxRows"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardDimensionReference": {
+      "description": "A semantic dimension reference. Physical dataset fields are not accepted.",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "dimension": {
+          "type": "string"
+        },
+        "grain": {
+          "$ref": "#/$defs/DashboardTimeGrain"
+        }
+      },
+      "required": [
+        "dimension"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardDimensionSelection": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/DashboardDimensionReference"
+        }
+      ]
+    },
+    "DashboardDistributionOutlierPolicy": {
+      "enum": [
+        "omit",
+        "include"
+      ],
+      "type": "string"
+    },
+    "DashboardDistributionWhiskers": {
+      "properties": {
+        "lower": {
+          "format": "double",
+          "type": "number"
+        },
+        "upper": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lower",
+        "upper"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardDocument": {
+      "description": "The complete canonical Dashboard resource document.",
+      "properties": {
+        "apiVersion": {
+          "$ref": "#/$defs/DashboardApiVersion"
+        },
+        "kind": {
+          "$ref": "#/$defs/DashboardResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/DashboardMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/DashboardSpec"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardFilter": {
+      "properties": {
+        "control": {
+          "$ref": "#/$defs/DashboardFilterControl"
+        },
+        "default": {
+          "$ref": "#/$defs/DashboardFilterExpression"
+        },
+        "description": {
+          "type": "string"
+        },
+        "dimension": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "operators": {
+          "items": {
+            "$ref": "#/$defs/DashboardFilterOperator"
+          },
+          "type": "array"
+        },
+        "readerEditable": {
+          "type": "boolean"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "targets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "urlParameter": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "control",
+        "dimension",
+        "id",
+        "label"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardFilterBound": {
+      "properties": {
+        "inclusive": {
+          "type": "boolean"
+        },
+        "value": {
+          "$ref": "#/$defs/DashboardFilterValue"
+        }
+      },
+      "required": [
+        "inclusive",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardFilterControl": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SingleSelectDashboardFilterControl"
+        },
+        {
+          "$ref": "#/$defs/MultiSelectDashboardFilterControl"
+        },
+        {
+          "$ref": "#/$defs/TextDashboardFilterControl"
+        },
+        {
+          "$ref": "#/$defs/NumericRangeDashboardFilterControl"
+        },
+        {
+          "$ref": "#/$defs/DateRangeDashboardFilterControl"
+        },
+        {
+          "$ref": "#/$defs/RelativePeriodDashboardFilterControl"
+        }
+      ]
+    },
+    "DashboardFilterControlBase": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DashboardFilterExpression": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UnfilteredDashboardFilterExpression"
+        },
+        {
+          "$ref": "#/$defs/NullCheckDashboardFilterExpression"
+        },
+        {
+          "$ref": "#/$defs/SetDashboardFilterExpression"
+        },
+        {
+          "$ref": "#/$defs/ComparisonDashboardFilterExpression"
+        },
+        {
+          "$ref": "#/$defs/RangeDashboardFilterExpression"
+        },
+        {
+          "$ref": "#/$defs/RelativePeriodDashboardFilterExpression"
+        }
+      ]
+    },
+    "DashboardFilterExpressionBase": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DashboardFilterOperator": {
+      "enum": [
+        "isNull",
+        "isNotNull",
+        "in",
+        "notIn",
+        "equals",
+        "notEquals",
+        "contains",
+        "notContains",
+        "startsWith",
+        "endsWith",
+        "greaterThan",
+        "greaterThanOrEqual",
+        "lessThan",
+        "lessThanOrEqual"
+      ],
+      "type": "string"
+    },
+    "DashboardFilterOption": {
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/DashboardFilterValue"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardFilterOptions": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DistinctDashboardFilterOptions"
+        },
+        {
+          "$ref": "#/$defs/StaticDashboardFilterOptions"
+        }
+      ]
+    },
+    "DashboardFilterOptionsBase": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DashboardFilterValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/StringDashboardFilterValue"
+        },
+        {
+          "$ref": "#/$defs/BooleanDashboardFilterValue"
+        },
+        {
+          "$ref": "#/$defs/IntegerDashboardFilterValue"
+        },
+        {
+          "$ref": "#/$defs/DecimalDashboardFilterValue"
+        },
+        {
+          "$ref": "#/$defs/DateDashboardFilterValue"
+        },
+        {
+          "$ref": "#/$defs/TimestampDashboardFilterValue"
+        }
+      ]
+    },
+    "DashboardFilterValueBase": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DashboardHistogramApproximation": {
+      "enum": [
+        "exact",
+        "approximate"
+      ],
+      "type": "string"
+    },
+    "DashboardHistogramDomain": {
+      "properties": {
+        "maximum": {
+          "format": "double",
+          "type": "number"
+        },
+        "minimum": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardHistogramNullPolicy": {
+      "enum": [
+        "omit",
+        "include"
+      ],
+      "type": "string"
+    },
+    "DashboardIncludes": {
+      "description": "Typed local fragment collections. Includes are resolved before validation.",
+      "properties": {
+        "components": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "filters": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "visuals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardInteraction": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SelectionDashboardInteraction"
+        },
+        {
+          "$ref": "#/$defs/SpatialSelectionDashboardInteraction"
+        }
+      ]
+    },
+    "DashboardInteractionBase": {
+      "properties": {
+        "targets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DashboardInteractionMapping": {
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "grain": {
+          "$ref": "#/$defs/DashboardTimeGrain"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardLabelDensity": {
+      "enum": [
+        "hidden",
+        "automatic",
+        "dense",
+        "always"
+      ],
+      "type": "string"
+    },
+    "DashboardLabelPolicy": {
+      "properties": {
+        "density": {
+          "$ref": "#/$defs/DashboardLabelDensity"
+        },
+        "maxCharacters": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "minimumSpacing": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "priority": {
+          "items": {
+            "$ref": "#/$defs/DashboardLabelPriority"
+          },
+          "type": "array"
+        },
+        "tooltipFallback": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "density"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardLabelPosition": {
+      "enum": [
+        "automatic",
+        "inside",
+        "outside",
+        "top"
+      ],
+      "type": "string"
+    },
+    "DashboardLabelPriority": {
+      "enum": [
+        "selected",
+        "anomaly",
+        "threshold"
+      ],
+      "type": "string"
+    },
+    "DashboardLayoutDefaults": {
+      "properties": {
+        "columns": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "gap": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "padding": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "rowHeight": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "columns",
+        "gap",
+        "padding",
+        "rowHeight"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardLayoutOverride": {
+      "properties": {
+        "columns": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "gap": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "padding": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "rowHeight": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardLegendPosition": {
+      "enum": [
+        "none",
+        "top",
+        "right",
+        "bottom",
+        "left"
+      ],
+      "type": "string"
+    },
+    "DashboardMetadata": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "documentation": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardMetadataBindings": {
+      "properties": {
+        "description": {
+          "$ref": "#/$defs/DashboardTextBinding"
+        },
+        "subtitle": {
+          "$ref": "#/$defs/DashboardTextBinding"
+        },
+        "summary": {
+          "$ref": "#/$defs/DashboardTextBinding"
+        },
+        "title": {
+          "$ref": "#/$defs/DashboardTextBinding"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardMetricReference": {
+      "description": "A semantic metric reference. Metric expressions are never part of this type.",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "metric": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "metric"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardMetricSelection": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/DashboardMetricReference"
+        }
+      ]
+    },
+    "DashboardOrientation": {
+      "enum": [
+        "horizontal",
+        "vertical"
+      ],
+      "type": "string"
+    },
+    "DashboardPage": {
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/DashboardPageComponent"
+          },
+          "type": "array"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "layout": {
+          "$ref": "#/$defs/DashboardLayoutOverride"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "components",
+        "id",
+        "title"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardPageComponent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/VisualDashboardPageComponent"
+        },
+        {
+          "$ref": "#/$defs/FilterDashboardPageComponent"
+        },
+        {
+          "$ref": "#/$defs/HeaderDashboardPageComponent"
+        }
+      ]
+    },
+    "DashboardPageComponentBase": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/$defs/DashboardPlacement"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "placement",
+        "type"
+      ],
+      "type": "object"
+    },
+    "DashboardPivotTotals": {
+      "properties": {
+        "columns": {
+          "type": "boolean"
+        },
+        "grand": {
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardPivotWindow": {
+      "properties": {
+        "limit": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "offset": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "limit"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardPlacement": {
+      "properties": {
+        "column": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "columnSpan": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "row": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "rowSpan": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "column",
+        "columnSpan",
+        "row",
+        "rowSpan"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardPresentation": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CartesianDashboardPresentation"
+        },
+        {
+          "$ref": "#/$defs/ProportionalDashboardPresentation"
+        },
+        {
+          "$ref": "#/$defs/HierarchyDashboardPresentation"
+        },
+        {
+          "$ref": "#/$defs/PolarDashboardPresentation"
+        },
+        {
+          "$ref": "#/$defs/GeographicDashboardPresentation"
+        },
+        {
+          "$ref": "#/$defs/TableDashboardPresentation"
+        },
+        {
+          "$ref": "#/$defs/KPIDashboardPresentation"
+        }
+      ]
+    },
+    "DashboardPresentationBase": {
+      "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DashboardQuery": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/AggregateDashboardQuery"
+        },
+        {
+          "$ref": "#/$defs/RecordsDashboardQuery"
+        },
+        {
+          "$ref": "#/$defs/PivotDashboardQuery"
+        },
+        {
+          "$ref": "#/$defs/HistogramDashboardQuery"
+        },
+        {
+          "$ref": "#/$defs/DistributionDashboardQuery"
+        }
+      ]
+    },
+    "DashboardQueryBase": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DashboardRecordFieldReference": {
+      "description": "A physical field reference is only valid for a records query root dataset.",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardRecordFieldSelection": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/DashboardRecordFieldReference"
+        }
+      ]
+    },
+    "DashboardRelativeAnchor": {
+      "enum": [
+        "currentTime",
+        "firstAvailable",
+        "lastAvailable",
+        "fixed"
+      ],
+      "type": "string"
+    },
+    "DashboardRelativeDirection": {
+      "enum": [
+        "previous",
+        "current",
+        "next"
+      ],
+      "type": "string"
+    },
+    "DashboardRelativeUnit": {
+      "enum": [
+        "minute",
+        "hour",
+        "day",
+        "week",
+        "month",
+        "quarter",
+        "year"
+      ],
+      "type": "string"
+    },
+    "DashboardResourceKind": {
+      "description": "Common resource kind for a dashboard document.",
+      "enum": [
+        "Dashboard"
+      ],
+      "type": "string"
+    },
+    "DashboardSelectionMode": {
+      "enum": [
+        "single",
+        "multiple"
+      ],
+      "type": "string"
+    },
+    "DashboardSort": {
+      "properties": {
+        "direction": {
+          "$ref": "#/$defs/DashboardSortDirection"
+        },
+        "field": {
+          "description": "A compiled result-frame field name, never a source member or expression.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "direction",
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardSortDirection": {
+      "enum": [
+        "asc",
+        "desc"
+      ],
+      "type": "string"
+    },
+    "DashboardSpatialGesture": {
+      "enum": [
+        "box",
+        "lasso",
+        "radius"
+      ],
+      "type": "string"
+    },
+    "DashboardSpatialMapping": {
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "source"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardSpec": {
+      "properties": {
+        "appearance": {
+          "$ref": "#/$defs/DashboardAppearance"
+        },
+        "filters": {
+          "items": {
+            "$ref": "#/$defs/DashboardFilter"
+          },
+          "type": "array"
+        },
+        "includes": {
+          "$ref": "#/$defs/DashboardIncludes"
+        },
+        "layout": {
+          "$ref": "#/$defs/DashboardLayoutDefaults"
+        },
+        "pages": {
+          "items": {
+            "$ref": "#/$defs/DashboardPage"
+          },
+          "type": "array"
+        },
+        "semanticModel": {
+          "type": "string"
+        },
+        "visuals": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DashboardVisual"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "filters",
+        "pages",
+        "semanticModel",
+        "visuals"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardStackingMode": {
+      "enum": [
+        "none",
+        "normal",
+        "percent"
+      ],
+      "type": "string"
+    },
+    "DashboardTextBinding": {
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "reducer": {
+          "$ref": "#/$defs/VisualizationReferenceReducer"
+        },
+        "suffix": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardTimeGrain": {
+      "enum": [
+        "second",
+        "minute",
+        "hour",
+        "day",
+        "week",
+        "month",
+        "quarter",
+        "year"
+      ],
+      "type": "string"
+    },
+    "DashboardVisual": {
+      "properties": {
+        "accessibility": {
+          "$ref": "#/$defs/DashboardAccessibility"
+        },
+        "calculations": {
+          "items": {
+            "$ref": "#/$defs/DashboardCalculation"
+          },
+          "type": "array"
+        },
+        "dataBudget": {
+          "$ref": "#/$defs/DashboardDataBudget"
+        },
+        "datasets": {
+          "additionalProperties": {
+            "$ref": "#/$defs/DashboardQuery"
+          },
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "interactions": {
+          "items": {
+            "$ref": "#/$defs/DashboardInteraction"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "$ref": "#/$defs/DashboardMetadataBindings"
+        },
+        "presentation": {
+          "$ref": "#/$defs/DashboardPresentation"
+        },
+        "query": {
+          "$ref": "#/$defs/DashboardQuery"
+        },
+        "subtitle": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/DashboardVisualType"
+        }
+      },
+      "required": [
+        "presentation",
+        "query",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardVisualType": {
+      "enum": [
+        "line",
+        "area",
+        "bar",
+        "column",
+        "pie",
+        "donut",
+        "scatter",
+        "funnel",
+        "treemap",
+        "gauge",
+        "heatmap",
+        "sankey",
+        "graph",
+        "map",
+        "candlestick",
+        "boxplot",
+        "combo",
+        "waterfall",
+        "histogram",
+        "radar",
+        "tree",
+        "sunburst",
+        "kpi",
+        "table",
+        "matrix",
+        "pivot"
+      ],
+      "type": "string"
+    },
+    "DateDashboardFilterValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterValueBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "date"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "format": "date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DateRangeDashboardFilterControl": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterControlBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "dateRange"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DecimalDashboardFilterValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterValueBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "decimal"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "description": "Canonical decimal representation.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DistinctDashboardFilterOptions": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterOptionsBase"
+        }
+      ],
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "dependsOn": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "includeNull": {
+          "type": "boolean"
+        },
+        "limit": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "distinct"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DistributionDashboardQuery": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardQueryBase"
+        }
+      ],
+      "properties": {
+        "approximation": {
+          "$ref": "#/$defs/DashboardHistogramApproximation"
+        },
+        "field": {
+          "$ref": "#/$defs/DashboardMetricSelection"
+        },
+        "outliers": {
+          "$ref": "#/$defs/DashboardDistributionOutlierPolicy"
+        },
+        "quantiles": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "distribution"
+          ],
+          "type": "string"
+        },
+        "whiskers": {
+          "$ref": "#/$defs/DashboardDistributionWhiskers"
+        }
+      },
+      "required": [
+        "approximation",
+        "field",
+        "outliers",
+        "quantiles",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "FilterDashboardPageComponent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPageComponentBase"
+        }
+      ],
+      "properties": {
+        "filter": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "filter"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "filter",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "GeographicDashboardPresentation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPresentationBase"
+        }
+      ],
+      "properties": {
+        "labels": {
+          "$ref": "#/$defs/DashboardLabelPolicy"
+        },
+        "type": {
+          "enum": [
+            "geographic"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "HeaderDashboardPageComponent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPageComponentBase"
+        }
+      ],
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "header"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "HierarchyDashboardPresentation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPresentationBase"
+        }
+      ],
+      "properties": {
+        "labels": {
+          "$ref": "#/$defs/DashboardLabelPolicy"
+        },
+        "legend": {
+          "$ref": "#/$defs/DashboardLegendPosition"
+        },
+        "orientation": {
+          "$ref": "#/$defs/DashboardOrientation"
+        },
+        "type": {
+          "enum": [
+            "hierarchy"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "HistogramDashboardQuery": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardQueryBase"
+        }
+      ],
+      "properties": {
+        "approximation": {
+          "$ref": "#/$defs/DashboardHistogramApproximation"
+        },
+        "bins": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "domain": {
+          "$ref": "#/$defs/DashboardHistogramDomain"
+        },
+        "field": {
+          "$ref": "#/$defs/DashboardMetricSelection"
+        },
+        "nullPolicy": {
+          "$ref": "#/$defs/DashboardHistogramNullPolicy"
+        },
+        "type": {
+          "enum": [
+            "histogram"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "approximation",
+        "bins",
+        "field",
+        "nullPolicy",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "IntegerDashboardFilterValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterValueBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "integer"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "description": "Precision-safe integer representation.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "KPIDashboardPresentation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPresentationBase"
+        }
+      ],
+      "properties": {
+        "displayUnits": {
+          "$ref": "#/$defs/VisualizationDisplayUnits"
+        },
+        "note": {
+          "type": "string"
+        },
+        "tone": {
+          "$ref": "#/$defs/VisualizationTone"
+        },
+        "type": {
+          "enum": [
+            "kpi"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "MultiSelectDashboardFilterControl": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterControlBase"
+        }
+      ],
+      "properties": {
+        "maxSelectedValues": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "options": {
+          "$ref": "#/$defs/DashboardFilterOptions"
+        },
+        "type": {
+          "enum": [
+            "multiSelect"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "NullCheckDashboardFilterExpression": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterExpressionBase"
+        }
+      ],
+      "properties": {
+        "operator": {
+          "$ref": "#/$defs/DashboardFilterOperator"
+        },
+        "type": {
+          "enum": [
+            "nullCheck"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "operator",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "NumericRangeDashboardFilterControl": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterControlBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "numericRange"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PivotDashboardQuery": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardQueryBase"
+        }
+      ],
+      "properties": {
+        "columns": {
+          "items": {
+            "$ref": "#/$defs/DashboardDimensionSelection"
+          },
+          "type": "array"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/DashboardMetricSelection"
+          },
+          "type": "array"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/DashboardDimensionSelection"
+          },
+          "type": "array"
+        },
+        "sort": {
+          "items": {
+            "$ref": "#/$defs/DashboardSort"
+          },
+          "type": "array"
+        },
+        "totals": {
+          "$ref": "#/$defs/DashboardPivotTotals"
+        },
+        "type": {
+          "enum": [
+            "pivot"
+          ],
+          "type": "string"
+        },
+        "window": {
+          "$ref": "#/$defs/DashboardPivotWindow"
+        }
+      },
+      "required": [
+        "columns",
+        "metrics",
+        "rows",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PolarDashboardPresentation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPresentationBase"
+        }
+      ],
+      "properties": {
+        "displayUnits": {
+          "$ref": "#/$defs/VisualizationDisplayUnits"
+        },
+        "labels": {
+          "$ref": "#/$defs/DashboardLabelPolicy"
+        },
+        "legend": {
+          "$ref": "#/$defs/DashboardLegendPosition"
+        },
+        "type": {
+          "enum": [
+            "polar"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ProportionalDashboardPresentation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPresentationBase"
+        }
+      ],
+      "properties": {
+        "displayUnits": {
+          "$ref": "#/$defs/VisualizationDisplayUnits"
+        },
+        "labels": {
+          "$ref": "#/$defs/DashboardLabelPolicy"
+        },
+        "legend": {
+          "$ref": "#/$defs/DashboardLegendPosition"
+        },
+        "type": {
+          "enum": [
+            "proportional"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "RangeDashboardFilterExpression": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterExpressionBase"
+        }
+      ],
+      "properties": {
+        "lower": {
+          "$ref": "#/$defs/DashboardFilterBound"
+        },
+        "type": {
+          "enum": [
+            "range"
+          ],
+          "type": "string"
+        },
+        "upper": {
+          "$ref": "#/$defs/DashboardFilterBound"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "RecordsDashboardQuery": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardQueryBase"
+        }
+      ],
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/DashboardRecordFieldSelection"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "sort": {
+          "items": {
+            "$ref": "#/$defs/DashboardSort"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "records"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "dataset",
+        "fields",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "RelativePeriodDashboardFilterControl": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterControlBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "relativePeriod"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "RelativePeriodDashboardFilterExpression": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterExpressionBase"
+        }
+      ],
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/DashboardRelativeAnchor"
+        },
+        "anchorValue": {
+          "$ref": "#/$defs/DashboardFilterValue"
+        },
+        "count": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "direction": {
+          "$ref": "#/$defs/DashboardRelativeDirection"
+        },
+        "includeCurrent": {
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "relativePeriod"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "$ref": "#/$defs/DashboardRelativeUnit"
+        }
+      },
+      "required": [
+        "anchor",
+        "count",
+        "direction",
+        "includeCurrent",
+        "type",
+        "unit"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SelectionDashboardInteraction": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardInteractionBase"
+        }
+      ],
+      "properties": {
+        "highlightTargets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mappings": {
+          "items": {
+            "$ref": "#/$defs/DashboardInteractionMapping"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "$ref": "#/$defs/DashboardSelectionMode"
+        },
+        "noneTargets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "toggle": {
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "selection"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mappings",
+        "mode",
+        "toggle",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SetDashboardFilterExpression": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterExpressionBase"
+        }
+      ],
+      "properties": {
+        "operator": {
+          "$ref": "#/$defs/DashboardFilterOperator"
+        },
+        "type": {
+          "enum": [
+            "set"
+          ],
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "$ref": "#/$defs/DashboardFilterValue"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "operator",
+        "type",
+        "values"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SingleSelectDashboardFilterControl": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterControlBase"
+        }
+      ],
+      "properties": {
+        "options": {
+          "$ref": "#/$defs/DashboardFilterOptions"
+        },
+        "type": {
+          "enum": [
+            "singleSelect"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SpatialSelectionDashboardInteraction": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardInteractionBase"
+        }
+      ],
+      "properties": {
+        "gestures": {
+          "items": {
+            "$ref": "#/$defs/DashboardSpatialGesture"
+          },
+          "type": "array"
+        },
+        "highlightTargets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "latitude": {
+          "$ref": "#/$defs/DashboardSpatialMapping"
+        },
+        "longitude": {
+          "$ref": "#/$defs/DashboardSpatialMapping"
+        },
+        "noneTargets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "spatialSelection"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "gestures",
+        "latitude",
+        "longitude",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "StaticDashboardFilterOptions": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterOptionsBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "static"
+          ],
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "$ref": "#/$defs/DashboardFilterOption"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "values"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "StringDashboardFilterValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterValueBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "string"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "TableDashboardPresentation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPresentationBase"
+        }
+      ],
+      "properties": {
+        "rowHeight": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "showHeader": {
+          "type": "boolean"
+        },
+        "striped": {
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "table"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "rowHeight",
+        "showHeader",
+        "striped",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "TextDashboardFilterControl": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterControlBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "text"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "TimestampDashboardFilterValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterValueBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "timestamp"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "UnfilteredDashboardFilterExpression": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardFilterExpressionBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "unfiltered"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "VisualDashboardPageComponent": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardPageComponentBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "visual"
+          ],
+          "type": "string"
+        },
+        "visual": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "visual"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "VisualizationCalculationAxis": {
+      "enum": [
+        "rows",
+        "columns",
+        "hierarchy",
+        "facets"
+      ],
+      "type": "string"
+    },
+    "VisualizationCalculationReset": {
+      "enum": [
+        "none",
+        "highest_parent",
+        "lowest_parent"
+      ],
+      "type": "string"
+    },
+    "VisualizationCalculationTemplate": {
+      "enum": [
+        "running_total",
+        "moving_average",
+        "difference",
+        "percentage_difference",
+        "percent_of_parent",
+        "percent_of_grand_total",
+        "rank",
+        "cumulative_contribution",
+        "lookup"
+      ],
+      "type": "string"
+    },
+    "VisualizationCompleteness": {
+      "enum": [
+        "complete",
+        "truncated",
+        "partial",
+        "empty"
+      ],
+      "type": "string"
+    },
+    "VisualizationDisplayUnits": {
+      "enum": [
+        "auto",
+        "none",
+        "thousands",
+        "millions",
+        "billions",
+        "trillions"
+      ],
+      "type": "string"
+    },
+    "VisualizationReferenceReducer": {
+      "enum": [
+        "first",
+        "last",
+        "minimum",
+        "maximum",
+        "mean",
+        "median"
+      ],
+      "type": "string"
+    },
+    "VisualizationTone": {
+      "enum": [
+        "neutral",
+        "ink",
+        "success",
+        "warning",
+        "danger"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/DashboardDocument"
+    }
+  ],
+  "description": "The canonical renderer-independent Dashboard resource document.",
+  "title": "LeapView Dashboard Document",
+  "x-apigen-contracts": [
+    {
+      "description": "The complete canonical Dashboard resource document.",
+      "kind": "dashboard-document",
+      "name": "DashboardDocument",
+      "schema": {
+        "$ref": "#/$defs/DashboardDocument"
+      },
+      "tags": [
+        "dashboard",
+        "authoring",
+        "resource"
+      ]
+    }
+  ]
+}

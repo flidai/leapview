@@ -535,6 +535,21 @@ class IRBuilder {
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
       };
     }
+    // A compact authored reference may intentionally be either a JSON scalar
+    // (for example an unaliased metric name) or a closed object carrying the
+    // additional reference fields. This is still a structural union: it has
+    // no discriminator because the scalar branch has no object properties.
+    // Keep the variants explicit in the IR so JSON Schema and TypeScript
+    // projections retain the exact authored shape. Go's model projection emits
+    // a strict scalar/object wrapper; contextual visual/query compatibility
+    // remains compiler-owned.
+    if (scalarVariants.some((variant) => isJSONScalarType(variant.type))) {
+      return {
+        type: "union",
+        namespace: namespaceName(type.namespace),
+        one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
+      };
+    }
     const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
     this.program.reportDiagnostics(diagnostics);
     if (!union || !type.name) {

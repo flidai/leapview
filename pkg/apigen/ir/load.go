@@ -1120,15 +1120,27 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 		}
 		if schema.Discriminator == nil {
 			seenVariants := make(map[string]struct{}, len(schema.OneOf))
+			hasScalarVariant := false
 			for idx, variant := range schema.OneOf {
-				if !isScalarUnionVariant(variant) {
+				if isScalarUnionVariant(variant) {
+					hasScalarVariant = true
+				} else if variant.Ref == "" {
 					return fmt.Errorf("schema %q union one_of[%d] must be an inline scalar when discriminator is omitted", name, idx)
 				}
-				key := fmt.Sprintf("%s:%s:%v", variant.Type, variant.Format, variant.Enum)
+				key := variant.Ref
+				if key == "" {
+					key = fmt.Sprintf("%s:%s:%v", variant.Type, variant.Format, variant.Enum)
+				}
 				if _, exists := seenVariants[key]; exists {
-					return fmt.Errorf("schema %q union has duplicate scalar one_of variant %q", name, variant.Type)
+					return fmt.Errorf("schema %q union has duplicate one_of variant %q", name, key)
 				}
 				seenVariants[key] = struct{}{}
+			}
+			// Pure object unions must carry a discriminator. A mixed scalar/object
+			// union is allowed for compact authored references where the scalar
+			// branch is the unaliased form and the object branch carries aliases.
+			if !hasScalarVariant {
+				return fmt.Errorf("schema %q union one_of[0] must be an inline scalar when discriminator is omitted", name)
 			}
 			return nil
 		}

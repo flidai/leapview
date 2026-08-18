@@ -103,3 +103,43 @@ spec:
 		t.Errorf("example mismatch:\nwant:\n%s\ngot:\n%s", want, example)
 	}
 }
+
+func TestGenerateAcceptsAPIGenSealedContractRoot(t *testing.T) {
+	root := t.TempDir()
+	schemaDir := filepath.Join(root, "schemas")
+	exampleDir := filepath.Join(root, "examples")
+	outDir := filepath.Join(root, "docs")
+	if err := os.MkdirAll(schemaDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(exampleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{
+  "$defs": {
+    "DashboardDocument": {
+      "properties": {"kind": {"enum": ["Dashboard"]}, "spec": {"type": "object", "properties": {"semanticModel": {"type": "string"}}, "required": ["semanticModel"]}},
+      "required": ["kind", "spec"],
+      "type": "object"
+    }
+  },
+  "anyOf": [{"$ref": "#/$defs/DashboardDocument"}],
+  "x-apigen-contracts": [{"kind": "dashboard-document", "schema": {"$ref": "#/$defs/DashboardDocument"}}]
+}`
+	if err := os.WriteFile(filepath.Join(schemaDir, "dashboard-document.schema.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(exampleDir, "dashboard.yaml"), []byte("kind: Dashboard\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := generate(schemaDir, exampleDir, outDir); err != nil {
+		t.Fatalf("generate APIGen schema reference: %v", err)
+	}
+	article, err := os.ReadFile(filepath.Join(outDir, "dashboard-document.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(article), "# Dashboard configuration") || !strings.Contains(string(article), "kind: Dashboard") {
+		t.Fatalf("APIGen schema article missing dashboard root:\n%s", article)
+	}
+}

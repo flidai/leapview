@@ -316,6 +316,7 @@ tasks:
       - task: schema:generate
       - task: desktop-discovery:generate
       - task: visualization-ir:generate
+      - task: dashboard-contracts:generate
       - task: layout-contract:generate
       - task: map-style:generate
       - task: lucide-icons:generate
@@ -724,6 +725,29 @@ tasks:
       - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target visualization-ir
       - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target visualization-ir
       - bun scripts/generate_visualization_validator.ts
+
+  dashboard-contracts:generate:
+    desc: Generate the canonical Dashboard authoring document contract
+    deps:
+      - node:deps
+      - apigen:build
+      - visualization-ir:generate
+    sources:
+      - Taskfile.yml
+      - api/apigen.yaml
+      - api/dashboard/**/*.tsp
+      - api/visualization/**/*.tsp
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/src/**/*.ts
+      - pkg/apigen/typespec/dist/src/**/*
+    generates:
+      - api/gen/dashboard-ir.json
+      - internal/dashboard/document/models.gen.go
+      - web/generated/dashboard/index.ts
+      - schemas/json/dashboard-document.schema.json
+    cmds:
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target dashboard-contracts
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target dashboard-contracts
 
   layout-contract:generate:
     desc: Generate the browser responsive-widget layout contract

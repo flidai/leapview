@@ -76,7 +76,11 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	switch schema.Type {
 	case "union":
 		if schema.Discriminator == nil {
-			b.WriteString("type " + typeName + " = any\n\n")
+			if hasScalarObjectUnion(schema) {
+				gounion.EmitScalarObject(b, doc, name, schema, resolveName)
+			} else {
+				b.WriteString("type " + typeName + " = any\n\n")
+			}
 		} else {
 			gounion.Emit(b, doc, name, schema, resolveName)
 		}
@@ -159,11 +163,30 @@ func emitImports(b *strings.Builder, values map[string]string) {
 
 func hasUnion(doc ir.Document, names []string) bool {
 	for _, name := range names {
-		if doc.Schemas[name].Type == "union" && doc.Schemas[name].Discriminator != nil {
+		if doc.Schemas[name].Type == "union" && (doc.Schemas[name].Discriminator != nil || hasScalarObjectUnion(doc.Schemas[name])) {
 			return true
 		}
 	}
 	return false
+}
+
+func hasScalarObjectUnion(schema ir.Schema) bool {
+	if schema.Type != "union" || schema.Discriminator != nil {
+		return false
+	}
+	hasScalar := false
+	hasObject := false
+	for _, variant := range schema.OneOf {
+		if variant.Ref != "" {
+			hasObject = true
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(variant.Type)) {
+		case "boolean", "integer", "number", "string", "null":
+			hasScalar = true
+		}
+	}
+	return hasScalar && hasObject
 }
 
 func schemaRefGoType(ref ir.SchemaRef) string {

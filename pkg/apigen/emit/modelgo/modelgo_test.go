@@ -37,7 +37,7 @@ func TestEmit_PreservesGoInitialismsInJSONFieldNames(t *testing.T) {
 		},
 		Contracts: []ir.Contract{{Name: "Envelope", Schema: ir.SchemaRef{Ref: "Envelope"}}},
 	}
-	b, err := Emit(doc, Options{})
+		b, err := Emit(doc, Options{})
 	require.NoError(t, err)
 	require.Contains(t, string(b), "DashboardID string")
 	require.Contains(t, string(b), "URLParams string")
@@ -75,6 +75,26 @@ func TestEmit_GeneratesStrictDiscriminatedUnion(t *testing.T) {
 	require.Contains(t, content, `case "chart":`)
 	require.Contains(t, content, `if _, ok := fields["points"]; !ok`)
 	require.Contains(t, content, `required property points is missing`)
+}
+
+func TestEmit_GeneratesStrictScalarObjectUnion(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Dashboard"},
+		Schemas: map[string]ir.Schema{
+			"Selection": {Type: "union", OneOf: []ir.SchemaRef{{Type: "string"}, {Ref: "Reference"}}},
+			"Reference": {Type: "object", Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"name"}},
+		},
+		Contracts: []ir.Contract{{Name: "selection", Schema: ir.SchemaRef{Ref: "Selection"}}},
+	}
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type Selection struct {")
+	require.Contains(t, content, "String *string")
+	require.Contains(t, content, "Reference *Reference")
+	require.Contains(t, content, "func (value Selection) MarshalJSON()")
+	require.Contains(t, content, "expected a string or object")
+	require.NotContains(t, content, "type Selection = any")
 }
 
 func TestEmit_ReferencesImportedContractNamespaceWithoutRegeneratingIt(t *testing.T) {

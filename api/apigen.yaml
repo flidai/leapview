@@ -94,6 +94,20 @@ targets:
     go_models_package: ir
     ts_out: ../web/generated/visualization/index.ts
     json_schema_out: gen/visualization.schema.json
+  - name: dashboard-contracts
+    kind: contracts
+    typespec_dir: .
+    typespec_entrypoint: dashboard/main.tsp
+    ir_out: gen/dashboard-ir.json
+    go_models_out: ../internal/dashboard/document/models.gen.go
+    go_models_package: document
+    ts_out: ../web/generated/dashboard/index.ts
+    json_schema_out: ../schemas/json/dashboard-document.schema.json
+    contract_imports:
+      LeapViewVisualization:
+        go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
+        go_alias: visualizationir
+        typescript_module: ../visualization
   - name: agent-tool-contracts
     kind: contracts
     typespec_dir: ../internal/agent/contracts

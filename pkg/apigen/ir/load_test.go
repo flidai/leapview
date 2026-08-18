@@ -1235,6 +1235,20 @@ func TestValidate_AcceptsScalarUnionWithoutDiscriminator(t *testing.T) {
 	require.NoError(t, Validate(doc))
 }
 
+func TestValidate_AcceptsMixedScalarObjectUnionForCompactReferences(t *testing.T) {
+	doc := Document{
+		SchemaVersion: CurrentSchemaVersion,
+		API:           API{BasePath: "/"},
+		Info:          Info{Title: "Contracts", Version: "1.0.0"},
+		Schemas: map[string]Schema{
+			"Selection": {Type: "union", OneOf: []SchemaRef{{Type: "string"}, {Ref: "Reference"}}},
+			"Reference": {Type: "object", Properties: map[string]SchemaProperty{"name": {Schema: SchemaRef{Type: "string"}}}, Required: []string{"name"}},
+		},
+		Contracts: []Contract{{Name: "selection", Schema: SchemaRef{Ref: "Selection"}}},
+	}
+	require.NoError(t, Validate(doc))
+}
+
 func TestValidate_RejectsObjectUnionWithoutDiscriminator(t *testing.T) {
 	doc := Document{
 		SchemaVersion: CurrentSchemaVersion,
