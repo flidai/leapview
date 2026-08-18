@@ -64,8 +64,12 @@ spec:
 	if !ok {
 		t.Fatalf("source location variant = %T, want path variant", source.Spec.Location.Value)
 	}
-	if pathLocation.Options == nil || pathLocation.Options.Header == nil || !*pathLocation.Options.Header {
-		t.Fatalf("source path options = %#v, want csv header=true", pathLocation.Options)
+	csvLocation, ok := pathLocation.PathSourceLocation.Value.(*contracts.CSVPathSourceLocation)
+	if !ok {
+		t.Fatalf("path format variant = %T, want CSVPathSourceLocation", pathLocation.PathSourceLocation.Value)
+	}
+	if csvLocation.Options == nil || csvLocation.Options.Header == nil || !*csvLocation.Options.Header {
+		t.Fatalf("source path options = %#v, want csv header=true", csvLocation.Options)
 	}
 	encodedSource, err := json.Marshal(source)
 	if err != nil {

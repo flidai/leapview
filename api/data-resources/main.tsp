@@ -15,6 +15,7 @@ enum PublicAccess {
   public: "public";
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "csv", extensions: #[".csv", ".csv.gz"], scanKind: "table_function", scanFunction: "read_csv", defaults: #{ header: false, delimiter: ",", quote: "\"", escape: "\"" } } })
 model CSVReaderOptions {
   header?: boolean;
   delimiter?: string;
@@ -23,43 +24,52 @@ model CSVReaderOptions {
   nullString?: string;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "json", extensions: #[".json", ".jsonl", ".ndjson"], scanKind: "table_function", scanFunction: "read_json", defaults: #{ format: "auto" } } })
 model JSONReaderOptions {
   format?: "auto" | "array" | "newline_delimited";
   maximumDepth?: int32;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "parquet", extensions: #[".parquet"], scanKind: "table_function", scanFunction: "read_parquet", defaults: #{ hivePartitioning: false, unionByName: false } } })
 model ParquetReaderOptions {
   hivePartitioning?: boolean;
   unionByName?: boolean;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "excel", extensions: #[".xlsx"], scanKind: "table_function", scanFunction: "read_xlsx", requiredExtension: "excel", defaults: #{ header: true } } })
 model ExcelReaderOptions {
   sheet?: string;
   header?: boolean;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "text", extensions: #[".txt"], scanKind: "table_function", scanFunction: "read_text", defaults: #{ delimiter: "\t", quote: "\"", header: false } } })
 model TextReaderOptions {
   delimiter?: string;
   quote?: string;
   header?: boolean;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "blob", extensions: #[".blob"], scanKind: "table_function", scanFunction: "read_blob", defaults: #{ compression: "auto" } } })
 model BlobReaderOptions {
   compression?: "auto" | "none" | "gzip" | "zstd";
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", defaults: #{} } })
 model VortexReaderOptions {
   version?: string;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "delta", extensions: #[], scanKind: "table_function", scanFunction: "delta_scan", requiredExtension: "delta", tableLike: true, defaults: #{} } })
 model DeltaReaderOptions {
   version?: string;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "iceberg", extensions: #[], scanKind: "table_function", scanFunction: "iceberg_scan", requiredExtension: "iceberg", tableLike: true, defaults: #{} } })
 model IcebergReaderOptions {
   snapshot?: string;
 }
 
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "lance", extensions: #[".lance"], scanKind: "replacement", requiredExtension: "lance", sourceSecretType: "lance", tableLike: true, allowsOptions: false, defaults: #{} } })
 model LanceReaderOptions {
   version?: string;
 }
@@ -296,32 +306,70 @@ union SourceFreshness {
   revision: RevisionFreshness,
 }
 
-// Path location retains the ADR's scalar format plus sibling options surface.
-// Generator validation seals the known option keys to the selected format.
-model SourcePathOptions {
-  header?: boolean;
-  delimiter?: string;
-  quote?: string;
-  escape?: string;
-  nullString?: string;
-  format?: "auto" | "array" | "newline_delimited";
-  maximumDepth?: int32;
-  hivePartitioning?: boolean;
-  unionByName?: boolean;
-  sheet?: string;
-  compression?: "auto" | "none" | "gzip" | "zstd";
-  version?: string;
-  snapshot?: string;
-}
-
+// Path location is a closed union over reader formats. Each variant carries
+// only the options accepted by that reader; a cross-format options bag is not
+// part of the authoring contract. The outer location discriminator is modeled
+// through inheritance so the scalar ADR shape (format plus sibling options)
+// remains intact.
+@discriminator("format")
 model PathSourceLocation {
   type: "path";
   path: string;
-  format: "csv" | "json" | "parquet" | "excel" | "text" | "blob" | "vortex" | "delta" | "iceberg" | "lance";
-  options?: SourcePathOptions;
+  format: string;
+}
+
+model CSVPathSourceLocation extends PathSourceLocation {
+  format: "csv";
+  options?: CSVReaderOptions;
+}
+
+model JSONPathSourceLocation extends PathSourceLocation {
+  format: "json";
+  options?: JSONReaderOptions;
+}
+
+model ParquetPathSourceLocation extends PathSourceLocation {
+  format: "parquet";
+  options?: ParquetReaderOptions;
+}
+
+model ExcelPathSourceLocation extends PathSourceLocation {
+  format: "excel";
+  options?: ExcelReaderOptions;
+}
+
+model TextPathSourceLocation extends PathSourceLocation {
+  format: "text";
+  options?: TextReaderOptions;
+}
+
+model BlobPathSourceLocation extends PathSourceLocation {
+  format: "blob";
+  options?: BlobReaderOptions;
+}
+
+model VortexPathSourceLocation extends PathSourceLocation {
+  format: "vortex";
+  options?: VortexReaderOptions;
+}
+
+model DeltaPathSourceLocation extends PathSourceLocation {
+  format: "delta";
+  options?: DeltaReaderOptions;
+}
+
+model IcebergPathSourceLocation extends PathSourceLocation {
+  format: "iceberg";
+  options?: IcebergReaderOptions;
+}
+
+model LancePathSourceLocation extends PathSourceLocation {
+  format: "lance";
+  options?: LanceReaderOptions;
 }
 
 model RelationSourceLocation {
+  type: "relation";
   catalog?: string;
   schema?: string;
   name: string;

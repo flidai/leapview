@@ -92,6 +92,29 @@
         "supportStatus": "stable"
       }
     },
+    "BlobPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "blob"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/BlobReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "BlobReaderOptions": {
       "properties": {
         "compression": {
@@ -104,6 +127,40 @@
           "type": "string"
         }
       },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "compression": "auto"
+        },
+        "extensions": [
+          ".blob"
+        ],
+        "name": "blob",
+        "scanFunction": "read_blob",
+        "scanKind": "table_function"
+      }
+    },
+    "CSVPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "csv"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/CSVReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -126,7 +183,22 @@
         }
       },
       "type": "object",
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "delimiter": ",",
+          "escape": "\"",
+          "header": false,
+          "quote": "\""
+        },
+        "extensions": [
+          ".csv",
+          ".csv.gz"
+        ],
+        "name": "csv",
+        "scanFunction": "read_csv",
+        "scanKind": "table_function"
+      }
     },
     "CompatibleSourceSchema": {
       "properties": {
@@ -227,6 +299,29 @@
       ],
       "type": "object"
     },
+    "DeltaPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "delta"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/DeltaReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "DeltaReaderOptions": {
       "properties": {
         "version": {
@@ -234,7 +329,16 @@
         }
       },
       "type": "object",
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {},
+        "extensions": [],
+        "name": "delta",
+        "requiredExtension": "delta",
+        "scanFunction": "delta_scan",
+        "scanKind": "table_function",
+        "tableLike": true
+      }
     },
     "DirectModelDefinition": {
       "allOf": [
@@ -293,6 +397,29 @@
         "supportStatus": "stable"
       }
     },
+    "ExcelPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "excel"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/ExcelReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "ExcelReaderOptions": {
       "properties": {
         "header": {
@@ -303,7 +430,19 @@
         }
       },
       "type": "object",
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "header": true
+        },
+        "extensions": [
+          ".xlsx"
+        ],
+        "name": "excel",
+        "requiredExtension": "excel",
+        "scanFunction": "read_xlsx",
+        "scanKind": "table_function"
+      }
     },
     "FieldFreshness": {
       "anyOf": [
@@ -442,6 +581,29 @@
         "supportStatus": "stable"
       }
     },
+    "IcebergPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "iceberg"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/IcebergReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "IcebergReaderOptions": {
       "properties": {
         "snapshot": {
@@ -449,7 +611,16 @@
         }
       },
       "type": "object",
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {},
+        "extensions": [],
+        "name": "iceberg",
+        "requiredExtension": "iceberg",
+        "scanFunction": "iceberg_scan",
+        "scanKind": "table_function",
+        "tableLike": true
+      }
     },
     "InferredSourceSchema": {
       "properties": {
@@ -464,6 +635,29 @@
         "mode"
       ],
       "type": "object"
+    },
+    "JSONPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "json"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/JSONReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "JSONReaderOptions": {
       "properties": {
@@ -481,6 +675,42 @@
         }
       },
       "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "format": "auto"
+        },
+        "extensions": [
+          ".json",
+          ".jsonl",
+          ".ndjson"
+        ],
+        "name": "json",
+        "scanFunction": "read_json",
+        "scanKind": "table_function"
+      }
+    },
+    "LancePathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "lance"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/LanceReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
       "unevaluatedProperties": false
     },
     "LanceReaderOptions": {
@@ -490,7 +720,19 @@
         }
       },
       "type": "object",
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "allowsOptions": false,
+        "defaults": {},
+        "extensions": [
+          ".lance"
+        ],
+        "name": "lance",
+        "requiredExtension": "lance",
+        "scanKind": "replacement",
+        "sourceSecretType": "lance",
+        "tableLike": true
+      }
     },
     "ManagedConnection": {
       "allOf": [
@@ -872,6 +1114,29 @@
       ],
       "type": "object"
     },
+    "ParquetPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "parquet"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/ParquetReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "ParquetReaderOptions": {
       "properties": {
         "hivePartitioning": {
@@ -882,301 +1147,75 @@
         }
       },
       "type": "object",
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "hivePartitioning": false,
+          "unionByName": false
+        },
+        "extensions": [
+          ".parquet"
+        ],
+        "name": "parquet",
+        "scanFunction": "read_parquet",
+        "scanKind": "table_function"
+      }
     },
     "PathSourceLocation": {
       "oneOf": [
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "csv"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/CSVReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/CSVPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "json"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/JSONReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/JSONPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "parquet"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/ParquetReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/ParquetPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "excel"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/ExcelReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/ExcelPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "text"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/TextReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/TextPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "blob"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/BlobReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/BlobPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "vortex"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/VortexReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/VortexPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "delta"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/DeltaReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/DeltaPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "iceberg"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/IcebergReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/IcebergPathSourceLocation"
         },
         {
-          "properties": {
-            "format": {
-              "enum": [
-                "lance"
-              ],
-              "type": "string"
-            },
-            "options": {
-              "$ref": "#/$defs/LanceReaderOptions"
-            },
-            "path": {
-              "type": "string"
-            },
-            "type": {
-              "enum": [
-                "path"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "format",
-            "path",
-            "type"
-          ],
-          "type": "object",
-          "unevaluatedProperties": false
+          "$ref": "#/$defs/LancePathSourceLocation"
         }
       ]
+    },
+    "PathSourceLocationBase": {
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "path"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "path",
+        "type"
+      ],
+      "type": "object"
     },
     "PostgresConnection": {
       "allOf": [
@@ -1338,10 +1377,17 @@
         },
         "schema": {
           "type": "string"
+        },
+        "type": {
+          "enum": [
+            "relation"
+          ],
+          "type": "string"
         }
       },
       "required": [
-        "name"
+        "name",
+        "type"
       ],
       "type": "object"
     },
@@ -1720,63 +1766,6 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "SourcePathOptions": {
-      "properties": {
-        "compression": {
-          "enum": [
-            "auto",
-            "none",
-            "gzip",
-            "zstd"
-          ],
-          "type": "string"
-        },
-        "delimiter": {
-          "type": "string"
-        },
-        "escape": {
-          "type": "string"
-        },
-        "format": {
-          "enum": [
-            "auto",
-            "array",
-            "newline_delimited"
-          ],
-          "type": "string"
-        },
-        "header": {
-          "type": "boolean"
-        },
-        "hivePartitioning": {
-          "type": "boolean"
-        },
-        "maximumDepth": {
-          "format": "int32",
-          "type": "integer"
-        },
-        "nullString": {
-          "type": "string"
-        },
-        "quote": {
-          "type": "string"
-        },
-        "sheet": {
-          "type": "string"
-        },
-        "snapshot": {
-          "type": "string"
-        },
-        "unionByName": {
-          "type": "boolean"
-        },
-        "version": {
-          "type": "string"
-        }
-      },
-      "type": "object",
-      "unevaluatedProperties": false
-    },
     "SourceSchema": {
       "oneOf": [
         {
@@ -1923,6 +1912,29 @@
       ],
       "type": "object"
     },
+    "TextPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "text"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/TextReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "TextReaderOptions": {
       "properties": {
         "delimiter": {
@@ -1936,7 +1948,20 @@
         }
       },
       "type": "object",
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "delimiter": "\t",
+          "header": false,
+          "quote": "\""
+        },
+        "extensions": [
+          ".txt"
+        ],
+        "name": "text",
+        "scanFunction": "read_text",
+        "scanKind": "table_function"
+      }
     },
     "UniqueModelCheck": {
       "properties": {
@@ -1966,6 +1991,29 @@
       ],
       "type": "object"
     },
+    "VortexPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "vortex"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/VortexReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "VortexReaderOptions": {
       "properties": {
         "version": {
@@ -1973,7 +2021,17 @@
         }
       },
       "type": "object",
-      "unevaluatedProperties": false
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {},
+        "extensions": [
+          ".vortex"
+        ],
+        "name": "vortex",
+        "requiredExtension": "vortex",
+        "scanFunction": "read_vortex",
+        "scanKind": "table_function"
+      }
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

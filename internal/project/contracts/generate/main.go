@@ -21,8 +21,15 @@ type document struct {
 }
 
 type schema struct {
-	Extensions map[string]json.RawMessage `json:"extensions"`
-	Properties map[string]property        `json:"properties"`
+	Extensions    map[string]json.RawMessage `json:"extensions"`
+	Properties    map[string]property        `json:"properties"`
+	OneOf         []schemaRef                `json:"one_of"`
+	Discriminator *discriminator             `json:"discriminator"`
+}
+
+type discriminator struct {
+	PropertyName string            `json:"property_name"`
+	Mapping      map[string]string `json:"mapping"`
 }
 
 type property struct {
@@ -75,20 +82,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "derive path format options:", err)
 		os.Exit(1)
 	}
-	if err := patchPathSourceSchema(schemaOut, pairs); err != nil {
-		fmt.Fprintln(os.Stderr, "patch data-resource schema:", err)
-		os.Exit(1)
-	}
 	if err := patchFreshnessSchema(schemaOut); err != nil {
 		fmt.Fprintln(os.Stderr, "patch freshness schema:", err)
 		os.Exit(1)
 	}
 	if err := writePathOptionsGo(goOut, pairs); err != nil {
 		fmt.Fprintln(os.Stderr, "generate path option validation:", err)
-		os.Exit(1)
-	}
-	if err := patchPathOptionsTS(tsOut, pairs); err != nil {
-		fmt.Fprintln(os.Stderr, "generate TypeScript path options:", err)
 		os.Exit(1)
 	}
 	if err := patchFreshnessTS(tsOut); err != nil {
@@ -185,8 +184,16 @@ func writeRegistry(output string, profiles []profile) error {
 }
 
 type pathFormatOption struct {
-	Format string
-	Model  string
+	Format            string
+	Model             string
+	Extensions        []string
+	ScanKind          string
+	ScanFunction      string
+	RequiredExtension string
+	SourceSecretType  string
+	TableLike         bool
+	AllowsOptions     bool
+	Defaults          map[string]any
 }
 
 func derivePathFormatOptions(doc document) ([]pathFormatOption, error) {
@@ -194,17 +201,34 @@ func derivePathFormatOptions(doc document) ([]pathFormatOption, error) {
 	if !ok {
 		return nil, errors.New("APIGen IR has no PathSourceLocation schema")
 	}
-	formatProperty, ok := pathSchema.Properties["format"]
-	if !ok || len(formatProperty.Schema.Enum) == 0 {
-		return nil, errors.New("PathSourceLocation.format has no enum")
+	if pathSchema.Discriminator == nil || pathSchema.Discriminator.PropertyName != "format" {
+		return nil, errors.New("PathSourceLocation is not discriminated by format")
+	}
+	if len(pathSchema.OneOf) == 0 {
+		return nil, errors.New("PathSourceLocation has no format variants")
 	}
 	defaults, ok := doc.Schemas["ReaderDefaults"]
 	if !ok {
 		return nil, errors.New("APIGen IR has no ReaderDefaults schema")
 	}
-	formats := make(map[string]struct{}, len(formatProperty.Schema.Enum))
-	pairs := make([]pathFormatOption, 0, len(formatProperty.Schema.Enum))
-	for _, format := range formatProperty.Schema.Enum {
+	formats := make(map[string]struct{}, len(pathSchema.OneOf))
+	pairs := make([]pathFormatOption, 0, len(pathSchema.OneOf))
+	for _, variant := range pathSchema.OneOf {
+		if variant.Ref == "" {
+			return nil, errors.New("PathSourceLocation format variant has no model reference")
+		}
+		variantSchema, ok := doc.Schemas[variant.Ref]
+		if !ok {
+			return nil, fmt.Errorf("PathSourceLocation format variant %q is missing from APIGen IR", variant.Ref)
+		}
+		formatProperty, ok := variantSchema.Properties["format"]
+		if !ok || len(formatProperty.Schema.Enum) != 1 {
+			return nil, fmt.Errorf("PathSourceLocation format variant %q has no single literal format", variant.Ref)
+		}
+		format := formatProperty.Schema.Enum[0]
+		if target, ok := pathSchema.Discriminator.Mapping[format]; !ok || target != variant.Ref {
+			return nil, fmt.Errorf("PathSourceLocation format %q discriminator mapping does not target %q", format, variant.Ref)
+		}
 		if _, duplicate := formats[format]; duplicate {
 			return nil, fmt.Errorf("PathSourceLocation.format declares duplicate %q", format)
 		}
@@ -213,7 +237,36 @@ func derivePathFormatOptions(doc document) ([]pathFormatOption, error) {
 		if !ok || property.Schema.Ref == "" {
 			return nil, fmt.Errorf("ReaderDefaults has no typed option model for path format %q", format)
 		}
-		pairs = append(pairs, pathFormatOption{Format: format, Model: property.Schema.Ref})
+		profileSchema, ok := doc.Schemas[property.Schema.Ref]
+		if !ok {
+			return nil, fmt.Errorf("format %q option model %q is missing from APIGen IR", format, property.Schema.Ref)
+		}
+		rawProfile, ok := profileSchema.Extensions["x-leapview-format"]
+		if !ok {
+			return nil, fmt.Errorf("format %q option model %q is missing x-leapview-format metadata", format, property.Schema.Ref)
+		}
+		var profile struct {
+			Name              string         `json:"name"`
+			Extensions        []string       `json:"extensions"`
+			ScanKind          string         `json:"scanKind"`
+			ScanFunction      string         `json:"scanFunction"`
+			RequiredExtension string         `json:"requiredExtension"`
+			SourceSecretType  string         `json:"sourceSecretType"`
+			TableLike         bool           `json:"tableLike"`
+			AllowsOptions     *bool          `json:"allowsOptions"`
+			Defaults          map[string]any `json:"defaults"`
+		}
+		if err := json.Unmarshal(rawProfile, &profile); err != nil {
+			return nil, fmt.Errorf("decode format %q metadata: %w", format, err)
+		}
+		if profile.Name != format || profile.ScanKind == "" || profile.Defaults == nil {
+			return nil, fmt.Errorf("format %q metadata is incomplete", format)
+		}
+		allowsOptions := true
+		if profile.AllowsOptions != nil {
+			allowsOptions = *profile.AllowsOptions
+		}
+		pairs = append(pairs, pathFormatOption{Format: format, Model: property.Schema.Ref, Extensions: profile.Extensions, ScanKind: profile.ScanKind, ScanFunction: profile.ScanFunction, RequiredExtension: profile.RequiredExtension, SourceSecretType: profile.SourceSecretType, TableLike: profile.TableLike, AllowsOptions: allowsOptions, Defaults: profile.Defaults})
 	}
 	for name, property := range defaults.Properties {
 		if _, ok := formats[name]; !ok {
@@ -224,55 +277,6 @@ func derivePathFormatOptions(doc document) ([]pathFormatOption, error) {
 		}
 	}
 	return pairs, nil
-}
-
-// patchPathSourceSchema composes the scalar ADR format with its typed sibling
-// options. TypeSpec/APIGen can express each piece and the generated DTO, but
-// cannot currently express this correlated sibling union without adding a
-// discriminator inside options. Keep the authored surface (`format: csv` and
-// `options: {header: true}`) and seal the correlation in the generated JSON
-// Schema consumed by DecodeResource.
-func patchPathSourceSchema(path string, pairs []pathFormatOption) error {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var document map[string]any
-	if err := json.Unmarshal(raw, &document); err != nil {
-		return fmt.Errorf("decode generated schema: %w", err)
-	}
-	defs, ok := document["$defs"].(map[string]any)
-	if !ok {
-		return errors.New("generated schema has no $defs object")
-	}
-	if _, ok := defs["PathSourceLocation"]; !ok {
-		return errors.New("generated schema has no PathSourceLocation definition")
-	}
-	branches := make([]any, 0, len(pairs))
-	for _, pair := range pairs {
-		branches = append(branches, pathSourceSchemaBranch(pair.Format, pair.Model))
-	}
-	defs["PathSourceLocation"] = map[string]any{"oneOf": branches}
-	encoded, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode generated schema: %w", err)
-	}
-	encoded = append(encoded, '\n')
-	return os.WriteFile(path, encoded, 0o644)
-}
-
-func pathSourceSchemaBranch(format, options string) map[string]any {
-	return map[string]any{
-		"properties": map[string]any{
-			"format":  map[string]any{"enum": []any{format}, "type": "string"},
-			"options": map[string]any{"$ref": "#/$defs/" + options},
-			"path":    map[string]any{"type": "string"},
-			"type":    map[string]any{"enum": []any{"path"}, "type": "string"},
-		},
-		"required":              []any{"format", "path", "type"},
-		"type":                  "object",
-		"unevaluatedProperties": false,
-	}
 }
 
 func patchFreshnessSchema(path string) error {
@@ -309,118 +313,61 @@ func writePathOptionsGo(path string, pairs []pathFormatOption) error {
 	var b strings.Builder
 	b.WriteString("// Code generated by internal/project/contracts/generate. DO NOT EDIT.\n")
 	b.WriteString("package contracts\n\n")
-	b.WriteString("import (\n\t\"bytes\"\n\t\"encoding/json\"\n\t\"fmt\"\n)\n\n")
-	b.WriteString("func validatePathSourceOptions(format string, options *SourcePathOptions) error {\n")
-	b.WriteString("\tif options == nil { return nil }\n")
-	b.WriteString("\tdata, err := json.Marshal(options)\n\tif err != nil { return err }\n")
-	b.WriteString("\tswitch format {\n")
+	b.WriteString("// DefaultPathSourceOptions returns the generated, versioned defaults\n")
+	b.WriteString("// for a supported path format. Runtime code must use this registry\n")
+	b.WriteString("// instead of maintaining a parallel format list.\n")
+	b.WriteString("func DefaultPathSourceOptions(format string) (any, bool) {\n\tswitch format {\n")
 	for _, pair := range pairs {
 		b.WriteString("\tcase ")
 		b.WriteString(strconv.Quote(pair.Format))
-		b.WriteString(":\n\t\tvar typed ")
-		b.WriteString(pair.Model)
-		b.WriteString("\n\t\treturn decodePathSourceOptions(data, &typed)\n")
+		b.WriteString(":\n\t\treturn map[string]any")
+		encodedDefaults, _ := json.Marshal(pair.Defaults)
+		b.Write(encodedDefaults)
+		b.WriteString(", true\n")
 	}
-	b.WriteString("\tdefault:\n\t\treturn fmt.Errorf(\"unsupported path source format %q\", format)\n\t}\n}\n\n")
-	b.WriteString("func decodePathSourceOptions(data []byte, destination any) error {\n")
-	b.WriteString("\tdecoder := json.NewDecoder(bytes.NewReader(data))\n\tdecoder.DisallowUnknownFields()\n\treturn decoder.Decode(destination)\n}\n\n")
-	b.WriteString("func (value *SourceLocationPathVariant) UnmarshalJSON(data []byte) error {\n")
-	b.WriteString("\tif value == nil { return fmt.Errorf(\"cannot unmarshal SourceLocationPathVariant into nil receiver\") }\n")
-	b.WriteString("\ttype plain SourceLocationPathVariant\n\tvar decoded plain\n")
-	b.WriteString("\tif err := decodePathSourceOptions(data, &decoded); err != nil { return err }\n")
-	b.WriteString("\tif decoded.Type != \"path\" { return fmt.Errorf(\"SourceLocation path variant type must be path\") }\n")
-	b.WriteString("\tif err := validatePathSourceOptions(decoded.Format, decoded.Options); err != nil { return err }\n")
-	b.WriteString("\t*value = SourceLocationPathVariant(decoded)\n\treturn nil\n}\n\n")
-	b.WriteString("func (value SourceLocationPathVariant) MarshalJSON() ([]byte, error) {\n")
-	b.WriteString("\tif value.Type != \"path\" { return nil, fmt.Errorf(\"SourceLocation path variant type must be path\") }\n")
-	b.WriteString("\tif err := validatePathSourceOptions(value.Format, value.Options); err != nil { return nil, err }\n")
-	b.WriteString("\ttype plain SourceLocationPathVariant\n\treturn json.Marshal(plain(value))\n}\n")
-	b.WriteString("\nfunc validateFreshnessThresholds(warningAfter, errorAfter *FreshnessDuration) error {\n")
-	b.WriteString("\tif warningAfter == nil && errorAfter == nil { return fmt.Errorf(\"freshness requires warningAfter or errorAfter\") }\n\treturn nil\n}\n\n")
-	b.WriteString("func (value *SourceFreshnessFieldVariant) UnmarshalJSON(data []byte) error {\n")
-	b.WriteString("\tif value == nil { return fmt.Errorf(\"cannot unmarshal SourceFreshnessFieldVariant into nil receiver\") }\n")
-	b.WriteString("\ttype plain SourceFreshnessFieldVariant\n\tvar decoded plain\n\tif err := decodePathSourceOptions(data, &decoded); err != nil { return err }\n")
-	b.WriteString("\tif decoded.Basis != \"field\" { return fmt.Errorf(\"SourceFreshness field variant basis must be field\") }\n")
-	b.WriteString("\tif err := validateFreshnessThresholds(decoded.WarningAfter, decoded.ErrorAfter); err != nil { return err }\n")
-	b.WriteString("\t*value = SourceFreshnessFieldVariant(decoded)\n\treturn nil\n}\n\n")
-	b.WriteString("func (value SourceFreshnessFieldVariant) MarshalJSON() ([]byte, error) {\n")
-	b.WriteString("\tif err := validateFreshnessThresholds(value.WarningAfter, value.ErrorAfter); err != nil { return nil, err }\n\ttype plain SourceFreshnessFieldVariant\n\treturn json.Marshal(plain(value))\n}\n\n")
-	b.WriteString("func (value *SourceFreshnessRevisionVariant) UnmarshalJSON(data []byte) error {\n")
-	b.WriteString("\tif value == nil { return fmt.Errorf(\"cannot unmarshal SourceFreshnessRevisionVariant into nil receiver\") }\n")
-	b.WriteString("\ttype plain SourceFreshnessRevisionVariant\n\tvar decoded plain\n\tif err := decodePathSourceOptions(data, &decoded); err != nil { return err }\n")
-	b.WriteString("\tif decoded.Basis != \"revision\" { return fmt.Errorf(\"SourceFreshness revision variant basis must be revision\") }\n")
-	b.WriteString("\tif err := validateFreshnessThresholds(decoded.WarningAfter, decoded.ErrorAfter); err != nil { return err }\n")
-	b.WriteString("\t*value = SourceFreshnessRevisionVariant(decoded)\n\treturn nil\n}\n\n")
-	b.WriteString("func (value SourceFreshnessRevisionVariant) MarshalJSON() ([]byte, error) {\n")
-	b.WriteString("\tif err := validateFreshnessThresholds(value.WarningAfter, value.ErrorAfter); err != nil { return nil, err }\n\ttype plain SourceFreshnessRevisionVariant\n\treturn json.Marshal(plain(value))\n}\n")
-	formatted, err := format.Source([]byte(b.String()))
-	if err != nil {
-		return fmt.Errorf("format generated path option validation: %w", err)
-	}
-	return os.WriteFile(path, formatted, 0o644)
-}
-
-func patchPathOptionsTS(path string, pairs []pathFormatOption) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	text := string(content)
-	start := strings.Index(text, "export interface PathSourceLocation {")
-	if start < 0 {
-		if strings.Contains(text, "export type PathSourceLocation = ") {
-			for _, pair := range pairs {
-				if !strings.Contains(text, "export interface "+pathFormatTypeName(pair.Format)+"PathSourceLocation {") {
-					return fmt.Errorf("generated TypeScript path format %q projection is missing", pair.Format)
-				}
-			}
-			return nil
-		}
-		return errors.New("generated TypeScript has no PathSourceLocation interface")
-	}
-	end := strings.Index(text[start:], "\n}\n")
-	if end < 0 {
-		return errors.New("generated TypeScript PathSourceLocation interface is malformed")
-	}
-	end = start + end + len("\n}\n")
-	var replacement strings.Builder
-	replacement.WriteString("export type PathSourceLocation = ")
+	b.WriteString("\tdefault:\n\t\treturn nil, false\n\t}\n}\n\n")
+	b.WriteString("// PathFormatNames is generated from PathSourceLocation.format.\n")
+	b.WriteString("var PathFormatNames = []string{")
 	for i, pair := range pairs {
 		if i > 0 {
-			replacement.WriteString(" | ")
+			b.WriteString(", ")
 		}
-		replacement.WriteString(pathFormatTypeName(pair.Format))
-		replacement.WriteString("PathSourceLocation")
+		b.WriteString(strconv.Quote(pair.Format))
 	}
-	replacement.WriteString("\n\n")
+	b.WriteString("}\n\n")
+	b.WriteString("// FormatProfile is generated from x-leapview-format metadata.\n")
+	b.WriteString("type FormatProfile struct { Name string; Extensions []string; ScanKind string; ScanFunction string; RequiredExtension string; SourceSecretType string; TableLike bool; AllowsOptions bool }\n\n")
+	b.WriteString("var FormatRegistry = []FormatProfile{\n")
 	for _, pair := range pairs {
-		replacement.WriteString("export interface ")
-		replacement.WriteString(pathFormatTypeName(pair.Format))
-		replacement.WriteString("PathSourceLocation {\n  type: 'path'\n  path: string\n  format: '")
-		replacement.WriteString(pair.Format)
-		replacement.WriteString("'\n  options?: ")
-		replacement.WriteString(pair.Model)
-		replacement.WriteString("\n}\n\n")
+		b.WriteString("{Name: ")
+		b.WriteString(strconv.Quote(pair.Format))
+		b.WriteString(", Extensions: []string{")
+		for i, extension := range pair.Extensions {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(strconv.Quote(extension))
+		}
+		b.WriteString("}, ScanKind: ")
+		b.WriteString(strconv.Quote(pair.ScanKind))
+		b.WriteString(", ScanFunction: ")
+		b.WriteString(strconv.Quote(pair.ScanFunction))
+		b.WriteString(", RequiredExtension: ")
+		b.WriteString(strconv.Quote(pair.RequiredExtension))
+		b.WriteString(", SourceSecretType: ")
+		b.WriteString(strconv.Quote(pair.SourceSecretType))
+		b.WriteString(", TableLike: ")
+		b.WriteString(strconv.FormatBool(pair.TableLike))
+		b.WriteString(", AllowsOptions: ")
+		b.WriteString(strconv.FormatBool(pair.AllowsOptions))
+		b.WriteString("},\n")
 	}
-	text = text[:start] + replacement.String() + text[end:]
-	start = strings.Index(text, "export interface SourceLocationPathVariant extends PathSourceLocation {")
-	if start < 0 {
-		return errors.New("generated TypeScript has no SourceLocationPathVariant interface")
+	b.WriteString("}\n\n")
+	formatted, err := format.Source([]byte(b.String()))
+	if err != nil {
+		return fmt.Errorf("format generated path option registry: %w", err)
 	}
-	end = strings.Index(text[start:], "\n}\n")
-	if end < 0 {
-		return errors.New("generated TypeScript SourceLocationPathVariant interface is malformed")
-	}
-	end = start + end + len("\n}\n")
-	text = text[:start] + "export type SourceLocationPathVariant = PathSourceLocation\n\n" + text[end:]
-	return os.WriteFile(path, []byte(text), 0o644)
-}
-
-func pathFormatTypeName(format string) string {
-	if format == "csv" || format == "json" {
-		return strings.ToUpper(format)
-	}
-	return strings.ToUpper(format[:1]) + format[1:]
+	return os.WriteFile(path, formatted, 0o644)
 }
 
 func patchFreshnessTS(path string) error {

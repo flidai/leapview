@@ -27,8 +27,20 @@ type AzureBlobConnection struct {
 	Defaults *ReaderDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
 }
 
+type BlobPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string             `json:"format" yaml:"format"`
+	Options *BlobReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
 type BlobReaderOptions struct {
 	Compression *string `json:"compression,omitempty" yaml:"compression,omitempty"`
+}
+
+type CSVPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string            `json:"format" yaml:"format"`
+	Options *CSVReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
 }
 
 type CSVReaderOptions struct {
@@ -485,6 +497,12 @@ type ConnectionSpecBase struct {
 	Type string `json:"type" yaml:"type"`
 }
 
+type DeltaPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string              `json:"format" yaml:"format"`
+	Options *DeltaReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
 type DeltaReaderOptions struct {
 	Version *string `json:"version,omitempty" yaml:"version,omitempty"`
 }
@@ -498,6 +516,12 @@ type DirectModelDefinition struct {
 type DuckLakeConnection struct {
 	ConnectionSpecBase
 	Type string `json:"type" yaml:"type"`
+}
+
+type ExcelPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string              `json:"format" yaml:"format"`
+	Options *ExcelReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
 }
 
 type ExcelReaderOptions struct {
@@ -531,6 +555,12 @@ type HTTPConnection struct {
 	Defaults *ReaderDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
 }
 
+type IcebergPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string                `json:"format" yaml:"format"`
+	Options *IcebergReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
 type IcebergReaderOptions struct {
 	Snapshot *string `json:"snapshot,omitempty" yaml:"snapshot,omitempty"`
 }
@@ -539,9 +569,21 @@ type InferredSourceSchema struct {
 	Mode string `json:"mode" yaml:"mode"`
 }
 
+type JSONPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string             `json:"format" yaml:"format"`
+	Options *JSONReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
 type JSONReaderOptions struct {
 	Format       *string `json:"format,omitempty" yaml:"format,omitempty"`
 	MaximumDepth *int32  `json:"maximumDepth,omitempty" yaml:"maximumDepth,omitempty"`
+}
+
+type LancePathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string              `json:"format" yaml:"format"`
+	Options *LanceReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
 }
 
 type LanceReaderOptions struct {
@@ -1011,16 +1053,480 @@ type NonNullModelCheck struct {
 	Severity *string `json:"severity,omitempty" yaml:"severity,omitempty"`
 }
 
+type ParquetPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string                `json:"format" yaml:"format"`
+	Options *ParquetReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
 type ParquetReaderOptions struct {
 	HivePartitioning *bool `json:"hivePartitioning,omitempty" yaml:"hivePartitioning,omitempty"`
 	UnionByName      *bool `json:"unionByName,omitempty" yaml:"unionByName,omitempty"`
 }
 
+type PathSourceLocationVariant interface {
+	isPathSourceLocationVariant()
+}
+
 type PathSourceLocation struct {
-	Type    string             `json:"type" yaml:"type"`
-	Path    string             `json:"path" yaml:"path"`
-	Format  string             `json:"format" yaml:"format"`
-	Options *SourcePathOptions `json:"options,omitempty" yaml:"options,omitempty"`
+	Value PathSourceLocationVariant
+}
+
+func (*BlobPathSourceLocation) isPathSourceLocationVariant()    {}
+func (*CSVPathSourceLocation) isPathSourceLocationVariant()     {}
+func (*DeltaPathSourceLocation) isPathSourceLocationVariant()   {}
+func (*ExcelPathSourceLocation) isPathSourceLocationVariant()   {}
+func (*IcebergPathSourceLocation) isPathSourceLocationVariant() {}
+func (*JSONPathSourceLocation) isPathSourceLocationVariant()    {}
+func (*LancePathSourceLocation) isPathSourceLocationVariant()   {}
+func (*ParquetPathSourceLocation) isPathSourceLocationVariant() {}
+func (*TextPathSourceLocation) isPathSourceLocationVariant()    {}
+func (*VortexPathSourceLocation) isPathSourceLocationVariant()  {}
+
+func (value PathSourceLocation) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *BlobPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *CSVPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DeltaPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *ExcelPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *IcebergPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *JSONPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *LancePathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *ParquetPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *TextPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *VortexPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("PathSourceLocation variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported PathSourceLocation variant %T", variant)
+	}
+}
+
+func (value *PathSourceLocation) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal PathSourceLocation into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode PathSourceLocation object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"format"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode PathSourceLocation discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("PathSourceLocation discriminator format is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "blob":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant BlobPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "csv":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant CSVPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "delta":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant DeltaPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "excel":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant ExcelPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "iceberg":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant IcebergPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "json":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant JSONPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "lance":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant LancePathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "parquet":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant ParquetPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "text":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant TextPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "vortex":
+		if _, ok := fields["format"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property format is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property path is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode PathSourceLocation variant %q: required property type is missing", tag.Value)
+		}
+		var variant VortexPathSourceLocation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode PathSourceLocation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown PathSourceLocation discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type PathSourceLocationVisitor interface {
+	VisitBlobPathSourceLocation(*BlobPathSourceLocation) error
+	VisitCSVPathSourceLocation(*CSVPathSourceLocation) error
+	VisitDeltaPathSourceLocation(*DeltaPathSourceLocation) error
+	VisitExcelPathSourceLocation(*ExcelPathSourceLocation) error
+	VisitIcebergPathSourceLocation(*IcebergPathSourceLocation) error
+	VisitJSONPathSourceLocation(*JSONPathSourceLocation) error
+	VisitLancePathSourceLocation(*LancePathSourceLocation) error
+	VisitParquetPathSourceLocation(*ParquetPathSourceLocation) error
+	VisitTextPathSourceLocation(*TextPathSourceLocation) error
+	VisitVortexPathSourceLocation(*VortexPathSourceLocation) error
+}
+
+func (value *PathSourceLocation) Visit(visitor PathSourceLocationVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil PathSourceLocation")
+	}
+	if visitor == nil {
+		return fmt.Errorf("PathSourceLocation visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *BlobPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitBlobPathSourceLocation(variant)
+	case *CSVPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitCSVPathSourceLocation(variant)
+	case *DeltaPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitDeltaPathSourceLocation(variant)
+	case *ExcelPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitExcelPathSourceLocation(variant)
+	case *IcebergPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitIcebergPathSourceLocation(variant)
+	case *JSONPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitJSONPathSourceLocation(variant)
+	case *LancePathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitLancePathSourceLocation(variant)
+	case *ParquetPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitParquetPathSourceLocation(variant)
+	case *TextPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitTextPathSourceLocation(variant)
+	case *VortexPathSourceLocation:
+		if variant == nil {
+			return fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return visitor.VisitVortexPathSourceLocation(variant)
+	case nil:
+		return fmt.Errorf("PathSourceLocation variant is required")
+	default:
+		return fmt.Errorf("unsupported PathSourceLocation variant %T", variant)
+	}
+}
+
+func (value *PathSourceLocation) Format() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil PathSourceLocation")
+	}
+	switch variant := value.Value.(type) {
+	case *BlobPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "blob", nil
+	case *CSVPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "csv", nil
+	case *DeltaPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "delta", nil
+	case *ExcelPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "excel", nil
+	case *IcebergPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "iceberg", nil
+	case *JSONPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "json", nil
+	case *LancePathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "lance", nil
+	case *ParquetPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "parquet", nil
+	case *TextPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "text", nil
+	case *VortexPathSourceLocation:
+		if variant == nil {
+			return "", fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return "vortex", nil
+	case nil:
+		return "", fmt.Errorf("PathSourceLocation variant is required")
+	default:
+		return "", fmt.Errorf("unsupported PathSourceLocation variant %T", variant)
+	}
+}
+
+func (value *PathSourceLocation) Base() (*PathSourceLocationBase, error) {
+	if value == nil {
+		return nil, fmt.Errorf("cannot inspect nil PathSourceLocation")
+	}
+	switch variant := value.Value.(type) {
+	case *BlobPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *CSVPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *DeltaPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *ExcelPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *IcebergPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *JSONPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *LancePathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *ParquetPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *TextPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case *VortexPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("PathSourceLocation variant is nil")
+		}
+		return &variant.PathSourceLocationBase, nil
+	case nil:
+		return nil, fmt.Errorf("PathSourceLocation variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported PathSourceLocation variant %T", variant)
+	}
+}
+
+type PathSourceLocationBase struct {
+	Type   string `json:"type" yaml:"type"`
+	Path   string `json:"path" yaml:"path"`
+	Format string `json:"format" yaml:"format"`
 }
 
 type PostgresConnection struct {
@@ -1060,6 +1566,7 @@ type ReaderDefaults struct {
 }
 
 type RelationSourceLocation struct {
+	Type    string  `json:"type" yaml:"type"`
 	Catalog *string `json:"catalog,omitempty" yaml:"catalog,omitempty"`
 	Schema  *string `json:"schema,omitempty" yaml:"schema,omitempty"`
 	Name    string  `json:"name" yaml:"name"`
@@ -1328,12 +1835,6 @@ func (value *SourceLocation) UnmarshalJSON(data []byte) error {
 	}
 	switch tag.Value {
 	case "path":
-		if _, ok := fields["format"]; !ok {
-			return fmt.Errorf("decode SourceLocation variant %q: required property format is missing", tag.Value)
-		}
-		if _, ok := fields["path"]; !ok {
-			return fmt.Errorf("decode SourceLocation variant %q: required property path is missing", tag.Value)
-		}
 		if _, ok := fields["type"]; !ok {
 			return fmt.Errorf("decode SourceLocation variant %q: required property type is missing", tag.Value)
 		}
@@ -1420,22 +1921,6 @@ type SourceLocationPathVariant struct {
 type SourceLocationRelationVariant struct {
 	RelationSourceLocation
 	Type string `json:"type" yaml:"type"`
-}
-
-type SourcePathOptions struct {
-	Header           *bool   `json:"header,omitempty" yaml:"header,omitempty"`
-	Delimiter        *string `json:"delimiter,omitempty" yaml:"delimiter,omitempty"`
-	Quote            *string `json:"quote,omitempty" yaml:"quote,omitempty"`
-	Escape           *string `json:"escape,omitempty" yaml:"escape,omitempty"`
-	NullString       *string `json:"nullString,omitempty" yaml:"nullString,omitempty"`
-	Format           *string `json:"format,omitempty" yaml:"format,omitempty"`
-	MaximumDepth     *int32  `json:"maximumDepth,omitempty" yaml:"maximumDepth,omitempty"`
-	HivePartitioning *bool   `json:"hivePartitioning,omitempty" yaml:"hivePartitioning,omitempty"`
-	UnionByName      *bool   `json:"unionByName,omitempty" yaml:"unionByName,omitempty"`
-	Sheet            *string `json:"sheet,omitempty" yaml:"sheet,omitempty"`
-	Compression      *string `json:"compression,omitempty" yaml:"compression,omitempty"`
-	Version          *string `json:"version,omitempty" yaml:"version,omitempty"`
-	Snapshot         *string `json:"snapshot,omitempty" yaml:"snapshot,omitempty"`
 }
 
 type SourceSchemaVariant interface {
@@ -1632,6 +2117,12 @@ type StrictSourceSchema struct {
 	Fields map[string]SourceSchemaField `json:"fields" yaml:"fields"`
 }
 
+type TextPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string             `json:"format" yaml:"format"`
+	Options *TextReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
+}
+
 type TextReaderOptions struct {
 	Delimiter *string `json:"delimiter,omitempty" yaml:"delimiter,omitempty"`
 	Quote     *string `json:"quote,omitempty" yaml:"quote,omitempty"`
@@ -1642,6 +2133,12 @@ type UniqueModelCheck struct {
 	Type     string   `json:"type" yaml:"type"`
 	Fields   []string `json:"fields" yaml:"fields"`
 	Severity *string  `json:"severity,omitempty" yaml:"severity,omitempty"`
+}
+
+type VortexPathSourceLocation struct {
+	PathSourceLocationBase
+	Format  string               `json:"format" yaml:"format"`
+	Options *VortexReaderOptions `json:"options,omitempty" yaml:"options,omitempty"`
 }
 
 type VortexReaderOptions struct {

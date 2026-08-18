@@ -1,7 +1,6 @@
 {
   "$defs": {
-    "#AIContext": {
-      "additionalProperties": false,
+    "AIContext": {
       "properties": {
         "examples": {
           "items": {
@@ -19,31 +18,1407 @@
           "type": "array"
         }
       },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "AcceptedValuesModelCheck": {
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "accepted_values"
+          ],
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "type",
+        "values"
+      ],
       "type": "object"
     },
-    "#APIVersion": {
-      "const": "leapview.dev/v1"
+    "AzureBlobConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/PublicAccess"
+        },
+        "defaults": {
+          "$ref": "#/$defs/ReaderDefaults"
+        },
+        "type": {
+          "enum": [
+            "azure_blob"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "azure_blob",
+        "approvedExtensions": [
+          "azure"
+        ],
+        "key": "azure_blob",
+        "locationCapabilities": [
+          "path"
+        ],
+        "secretType": "azure",
+        "supportStatus": "stable"
+      }
     },
-    "#Identifier": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-      "type": "string"
+    "BlobPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "blob"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/BlobReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
-    "#LogicalDataType": {
-      "enum": [
-        "String",
-        "Integer",
-        "Decimal",
-        "Float",
-        "Boolean",
-        "Date",
-        "Time",
-        "DateTime",
-        "DateTimeTz",
-        "Opaque"
+    "BlobReaderOptions": {
+      "properties": {
+        "compression": {
+          "enum": [
+            "auto",
+            "none",
+            "gzip",
+            "zstd"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "compression": "auto"
+        },
+        "extensions": [
+          ".blob"
+        ],
+        "name": "blob",
+        "scanFunction": "read_blob",
+        "scanKind": "table_function"
+      }
+    },
+    "CSVPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "csv"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/CSVReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "CSVReaderOptions": {
+      "properties": {
+        "delimiter": {
+          "type": "string"
+        },
+        "escape": {
+          "type": "string"
+        },
+        "header": {
+          "type": "boolean"
+        },
+        "nullString": {
+          "type": "string"
+        },
+        "quote": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "delimiter": ",",
+          "escape": "\"",
+          "header": false,
+          "quote": "\""
+        },
+        "extensions": [
+          ".csv",
+          ".csv.gz"
+        ],
+        "name": "csv",
+        "scanFunction": "read_csv",
+        "scanKind": "table_function"
+      }
+    },
+    "CompatibleSourceSchema": {
+      "properties": {
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SourceSchemaField"
+          },
+          "type": "object"
+        },
+        "mode": {
+          "enum": [
+            "compatible"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "Connection": {
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "leapview.dev/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "Connection"
+          ],
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ConnectionSpec"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ConnectionSpec": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ManagedConnection"
+        },
+        {
+          "$ref": "#/$defs/S3Connection"
+        },
+        {
+          "$ref": "#/$defs/R2Connection"
+        },
+        {
+          "$ref": "#/$defs/GCSConnection"
+        },
+        {
+          "$ref": "#/$defs/HTTPConnection"
+        },
+        {
+          "$ref": "#/$defs/AzureBlobConnection"
+        },
+        {
+          "$ref": "#/$defs/PostgresConnection"
+        },
+        {
+          "$ref": "#/$defs/MySQLConnection"
+        },
+        {
+          "$ref": "#/$defs/SQLiteConnection"
+        },
+        {
+          "$ref": "#/$defs/DuckLakeConnection"
+        },
+        {
+          "$ref": "#/$defs/QuackConnection"
+        }
       ]
     },
-    "#Metadata": {
-      "additionalProperties": false,
+    "ConnectionSpecBase": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "DeltaPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "delta"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/DeltaReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DeltaReaderOptions": {
+      "properties": {
+        "version": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {},
+        "extensions": [],
+        "name": "delta",
+        "requiredExtension": "delta",
+        "scanFunction": "delta_scan",
+        "scanKind": "table_function",
+        "tableLike": true
+      }
+    },
+    "DirectModelDefinition": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ModelDefinitionBase"
+        }
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "direct"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DuckLakeConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "ducklake"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "ducklake",
+        "approvedExtensions": [
+          "ducklake"
+        ],
+        "key": "ducklake",
+        "locationCapabilities": [
+          "relation"
+        ],
+        "secretType": "ducklake",
+        "supportStatus": "stable"
+      }
+    },
+    "ExcelPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "excel"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/ExcelReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ExcelReaderOptions": {
+      "properties": {
+        "header": {
+          "type": "boolean"
+        },
+        "sheet": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "header": true
+        },
+        "extensions": [
+          ".xlsx"
+        ],
+        "name": "excel",
+        "requiredExtension": "excel",
+        "scanFunction": "read_xlsx",
+        "scanKind": "table_function"
+      }
+    },
+    "FieldFreshness": {
+      "anyOf": [
+        {
+          "required": [
+            "warningAfter"
+          ]
+        },
+        {
+          "required": [
+            "errorAfter"
+          ]
+        }
+      ],
+      "properties": {
+        "basis": {
+          "enum": [
+            "field"
+          ],
+          "type": "string"
+        },
+        "errorAfter": {
+          "$ref": "#/$defs/FreshnessDuration"
+        },
+        "field": {
+          "type": "string"
+        },
+        "warningAfter": {
+          "$ref": "#/$defs/FreshnessDuration"
+        }
+      },
+      "required": [
+        "basis",
+        "field"
+      ],
+      "type": "object"
+    },
+    "FreshnessDuration": {
+      "properties": {
+        "amount": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "unit": {
+          "enum": [
+            "second",
+            "minute",
+            "hour",
+            "day"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "amount",
+        "unit"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "GCSConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/PublicAccess"
+        },
+        "defaults": {
+          "$ref": "#/$defs/ReaderDefaults"
+        },
+        "type": {
+          "enum": [
+            "gcs"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "gcs",
+        "approvedExtensions": [
+          "httpfs"
+        ],
+        "key": "gcs",
+        "locationCapabilities": [
+          "path"
+        ],
+        "secretType": "gcs",
+        "supportStatus": "stable"
+      }
+    },
+    "HTTPConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/PublicAccess"
+        },
+        "defaults": {
+          "$ref": "#/$defs/ReaderDefaults"
+        },
+        "type": {
+          "enum": [
+            "http"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "authored",
+        "adapterKey": "http",
+        "approvedExtensions": [
+          "httpfs"
+        ],
+        "key": "http",
+        "locationCapabilities": [
+          "path"
+        ],
+        "secretType": "http",
+        "supportStatus": "stable"
+      }
+    },
+    "IcebergPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "iceberg"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/IcebergReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "IcebergReaderOptions": {
+      "properties": {
+        "snapshot": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {},
+        "extensions": [],
+        "name": "iceberg",
+        "requiredExtension": "iceberg",
+        "scanFunction": "iceberg_scan",
+        "scanKind": "table_function",
+        "tableLike": true
+      }
+    },
+    "InferredSourceSchema": {
+      "properties": {
+        "mode": {
+          "enum": [
+            "inferred"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "JSONPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "json"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/JSONReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "JSONReaderOptions": {
+      "properties": {
+        "format": {
+          "enum": [
+            "auto",
+            "array",
+            "newline_delimited"
+          ],
+          "type": "string"
+        },
+        "maximumDepth": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "format": "auto"
+        },
+        "extensions": [
+          ".json",
+          ".jsonl",
+          ".ndjson"
+        ],
+        "name": "json",
+        "scanFunction": "read_json",
+        "scanKind": "table_function"
+      }
+    },
+    "LancePathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "lance"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/LanceReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "LanceReaderOptions": {
+      "properties": {
+        "version": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "allowsOptions": false,
+        "defaults": {},
+        "extensions": [
+          ".lance"
+        ],
+        "name": "lance",
+        "requiredExtension": "lance",
+        "scanKind": "replacement",
+        "sourceSecretType": "lance",
+        "tableLike": true
+      }
+    },
+    "ManagedConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/PublicAccess"
+        },
+        "defaults": {
+          "$ref": "#/$defs/ReaderDefaults"
+        },
+        "type": {
+          "enum": [
+            "managed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "managed",
+        "adapterKey": "managed",
+        "approvedExtensions": [],
+        "key": "managed",
+        "locationCapabilities": [
+          "path"
+        ],
+        "secretType": "none",
+        "supportStatus": "stable"
+      }
+    },
+    "Model": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "apiVersion": {
+          "enum": [
+            "leapview.dev/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "const": "Model",
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ModelSpec"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelCheck": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ModelCheckNonNullVariant"
+        },
+        {
+          "$ref": "#/$defs/ModelCheckUniqueVariant"
+        },
+        {
+          "$ref": "#/$defs/ModelCheckAcceptedValuesVariant"
+        },
+        {
+          "$ref": "#/$defs/ModelCheckRelationshipVariant"
+        },
+        {
+          "$ref": "#/$defs/ModelCheckRowCountVariant"
+        }
+      ]
+    },
+    "ModelCheckAcceptedValuesVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/AcceptedValuesModelCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "accepted_values"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelCheckNonNullVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/NonNullModelCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "non_null"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelCheckRelationshipVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RelationshipModelCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "relationship"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelCheckRowCountVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RowCountModelCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "row_count"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelCheckUniqueVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/UniqueModelCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "unique"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelDefinition": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DirectModelDefinition"
+        },
+        {
+          "$ref": "#/$defs/SQLModelDefinition"
+        }
+      ]
+    },
+    "ModelDefinitionBase": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ModelEntity": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "description": {
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "primary",
+            "unique",
+            "foreign",
+            "natural"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelField": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "datatype"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelGrain": {
+      "properties": {
+        "entity": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ModelSpec": {
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/ModelCheck"
+          },
+          "type": "array"
+        },
+        "definition": {
+          "$ref": "#/$defs/ModelDefinition"
+        },
+        "entities": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ModelEntity"
+          },
+          "type": "object"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ModelField"
+          },
+          "type": "object"
+        },
+        "grain": {
+          "$ref": "#/$defs/ModelGrain"
+        }
+      },
+      "required": [
+        "definition",
+        "entities",
+        "fields",
+        "grain"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "MySQLConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "mysql"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "mysql",
+        "approvedExtensions": [
+          "mysql"
+        ],
+        "key": "mysql",
+        "locationCapabilities": [
+          "relation"
+        ],
+        "secretType": "mysql",
+        "supportStatus": "stable"
+      }
+    },
+    "NonNullModelCheck": {
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "non_null"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ParquetPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "parquet"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/ParquetReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ParquetReaderOptions": {
+      "properties": {
+        "hivePartitioning": {
+          "type": "boolean"
+        },
+        "unionByName": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "hivePartitioning": false,
+          "unionByName": false
+        },
+        "extensions": [
+          ".parquet"
+        ],
+        "name": "parquet",
+        "scanFunction": "read_parquet",
+        "scanKind": "table_function"
+      }
+    },
+    "PathSourceLocation": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CSVPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/JSONPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/ParquetPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/ExcelPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/TextPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/BlobPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/VortexPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/DeltaPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/IcebergPathSourceLocation"
+        },
+        {
+          "$ref": "#/$defs/LancePathSourceLocation"
+        }
+      ]
+    },
+    "PathSourceLocationBase": {
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "path"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "path",
+        "type"
+      ],
+      "type": "object"
+    },
+    "PostgresConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "postgres"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "postgres",
+        "approvedExtensions": [
+          "postgres"
+        ],
+        "key": "postgres",
+        "locationCapabilities": [
+          "relation"
+        ],
+        "secretType": "postgres",
+        "supportStatus": "stable"
+      }
+    },
+    "PublicAccess": {
+      "description": "Portable access is intentionally tiny. Endpoints, credentials, secret\nproviders, and resolved authentication are target-owned bindings.",
+      "enum": [
+        "public"
+      ],
+      "type": "string"
+    },
+    "QuackConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "quack"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "quack",
+        "approvedExtensions": [
+          "httpfs",
+          "quack"
+        ],
+        "key": "quack",
+        "locationCapabilities": [
+          "relation"
+        ],
+        "secretType": "quack",
+        "supportStatus": "experimental"
+      }
+    },
+    "R2Connection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/PublicAccess"
+        },
+        "defaults": {
+          "$ref": "#/$defs/ReaderDefaults"
+        },
+        "type": {
+          "enum": [
+            "r2"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "r2",
+        "approvedExtensions": [
+          "httpfs"
+        ],
+        "key": "r2",
+        "locationCapabilities": [
+          "path"
+        ],
+        "secretType": "r2",
+        "supportStatus": "stable"
+      }
+    },
+    "ReaderDefaults": {
+      "description": "Connection defaults are closed by reader format; arbitrary option maps are not public.",
+      "properties": {
+        "blob": {
+          "$ref": "#/$defs/BlobReaderOptions"
+        },
+        "csv": {
+          "$ref": "#/$defs/CSVReaderOptions"
+        },
+        "delta": {
+          "$ref": "#/$defs/DeltaReaderOptions"
+        },
+        "excel": {
+          "$ref": "#/$defs/ExcelReaderOptions"
+        },
+        "iceberg": {
+          "$ref": "#/$defs/IcebergReaderOptions"
+        },
+        "json": {
+          "$ref": "#/$defs/JSONReaderOptions"
+        },
+        "lance": {
+          "$ref": "#/$defs/LanceReaderOptions"
+        },
+        "parquet": {
+          "$ref": "#/$defs/ParquetReaderOptions"
+        },
+        "text": {
+          "$ref": "#/$defs/TextReaderOptions"
+        },
+        "vortex": {
+          "$ref": "#/$defs/VortexReaderOptions"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "RelationSourceLocation": {
+      "properties": {
+        "catalog": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "relation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "RelationshipModelCheck": {
+      "properties": {
+        "field": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "relationship"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "to",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ResourceMetadata": {
       "properties": {
         "description": {
           "type": "string"
@@ -58,16 +1433,16 @@
           "type": "string"
         },
         "id": {
-          "$ref": "#/$defs/%23ResourceID"
+          "type": "string"
         },
         "name": {
-          "$ref": "#/$defs/%23ResourceName"
+          "type": "string"
         },
         "owner": {
           "type": "string"
         },
         "provenance": {
-          "$ref": "#/$defs/%23Provenance"
+          "$ref": "#/$defs/ResourceProvenance"
         },
         "tags": {
           "items": {
@@ -80,129 +1455,10 @@
         "id",
         "name"
       ],
-      "type": "object"
+      "type": "object",
+      "unevaluatedProperties": false
     },
-    "#Model": {
-      "additionalProperties": false,
-      "properties": {
-        "description": {
-          "type": "string"
-        },
-        "entities": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "$ref": "#/$defs/%23ModelEntity"
-            }
-          },
-          "type": "object"
-        },
-        "fields": {
-          "additionalProperties": false,
-          "patternProperties": {
-            "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "$ref": "#/$defs/%23ModelField"
-            }
-          },
-          "type": "object"
-        },
-        "grain": {
-          "additionalProperties": false,
-          "properties": {
-            "entity": {
-              "$ref": "#/$defs/%23Identifier"
-            }
-          },
-          "required": [
-            "entity"
-          ],
-          "type": "object"
-        },
-        "source": {
-          "$ref": "#/$defs/%23ResourceID"
-        },
-        "sources": {
-          "items": {
-            "$ref": "#/$defs/%23ResourceID"
-          },
-          "type": "array"
-        },
-        "transform": {
-          "additionalProperties": false,
-          "properties": {
-            "sql": {
-              "type": "string"
-            }
-          },
-          "type": "object"
-        }
-      },
-      "required": [
-        "entities",
-        "fields",
-        "grain"
-      ],
-      "type": "object"
-    },
-    "#ModelEntity": {
-      "additionalProperties": false,
-      "properties": {
-        "aiContext": {
-          "$ref": "#/$defs/%23AIContext"
-        },
-        "description": {
-          "type": "string"
-        },
-        "fields": {
-          "items": {
-            "$ref": "#/$defs/%23Identifier"
-          },
-          "minItems": 1,
-          "prefixItems": [
-            {
-              "$ref": "#/$defs/%23Identifier"
-            }
-          ],
-          "type": "array"
-        },
-        "type": {
-          "enum": [
-            "primary",
-            "unique",
-            "foreign",
-            "natural"
-          ]
-        }
-      },
-      "required": [
-        "fields",
-        "type"
-      ],
-      "type": "object"
-    },
-    "#ModelField": {
-      "additionalProperties": false,
-      "properties": {
-        "aiContext": {
-          "$ref": "#/$defs/%23AIContext"
-        },
-        "datatype": {
-          "$ref": "#/$defs/%23LogicalDataType"
-        },
-        "description": {
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "datatype"
-      ],
-      "type": "object"
-    },
-    "#Provenance": {
-      "additionalProperties": false,
+    "ResourceProvenance": {
       "properties": {
         "origin": {
           "type": "string"
@@ -214,34 +1470,590 @@
           "type": "string"
         }
       },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "RevisionFreshness": {
+      "anyOf": [
+        {
+          "required": [
+            "warningAfter"
+          ]
+        },
+        {
+          "required": [
+            "errorAfter"
+          ]
+        }
+      ],
+      "properties": {
+        "basis": {
+          "enum": [
+            "revision"
+          ],
+          "type": "string"
+        },
+        "errorAfter": {
+          "$ref": "#/$defs/FreshnessDuration"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "warningAfter": {
+          "$ref": "#/$defs/FreshnessDuration"
+        }
+      },
+      "required": [
+        "basis",
+        "revision"
+      ],
       "type": "object"
     },
-    "#ResourceID": {
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
-      "type": "string"
+    "RowCountModelCheck": {
+      "properties": {
+        "maximum": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "minimum": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "row_count"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
     },
-    "#ResourceName": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
-      "type": "string"
+    "S3Connection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/PublicAccess"
+        },
+        "defaults": {
+          "$ref": "#/$defs/ReaderDefaults"
+        },
+        "type": {
+          "enum": [
+            "s3"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "s3",
+        "approvedExtensions": [
+          "httpfs"
+        ],
+        "key": "s3",
+        "locationCapabilities": [
+          "path"
+        ],
+        "secretType": "s3",
+        "supportStatus": "stable"
+      }
+    },
+    "SQLModelDefinition": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ModelDefinitionBase"
+        }
+      ],
+      "properties": {
+        "sql": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "sql"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "sql",
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SQLiteConnection": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConnectionSpecBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "sqlite"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-connector": {
+        "activationMode": "target_binding",
+        "adapterKey": "sqlite",
+        "approvedExtensions": [
+          "sqlite"
+        ],
+        "key": "sqlite",
+        "locationCapabilities": [
+          "relation"
+        ],
+        "secretType": "sqlite",
+        "supportStatus": "stable"
+      }
+    },
+    "Source": {
+      "properties": {
+        "apiVersion": {
+          "enum": [
+            "leapview.dev/v1"
+          ],
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "Source"
+          ],
+          "type": "string"
+        },
+        "metadata": {
+          "$ref": "#/$defs/ResourceMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/SourceSpec"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceFreshness": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SourceFreshnessFieldVariant"
+        },
+        {
+          "$ref": "#/$defs/SourceFreshnessRevisionVariant"
+        }
+      ]
+    },
+    "SourceFreshnessFieldVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/FieldFreshness"
+        }
+      ],
+      "properties": {
+        "basis": {
+          "enum": [
+            "field"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceFreshnessRevisionVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RevisionFreshness"
+        }
+      ],
+      "properties": {
+        "basis": {
+          "enum": [
+            "revision"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceLocation": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SourceLocationPathVariant"
+        },
+        {
+          "$ref": "#/$defs/SourceLocationRelationVariant"
+        }
+      ]
+    },
+    "SourceLocationPathVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocation"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "path"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceLocationRelationVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RelationSourceLocation"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "relation"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceSchema": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SourceSchemaInferredVariant"
+        },
+        {
+          "$ref": "#/$defs/SourceSchemaCompatibleVariant"
+        },
+        {
+          "$ref": "#/$defs/SourceSchemaStrictVariant"
+        }
+      ]
+    },
+    "SourceSchemaCompatibleVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/CompatibleSourceSchema"
+        }
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "compatible"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceSchemaField": {
+      "properties": {
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "nullable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "datatype"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceSchemaInferredVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/InferredSourceSchema"
+        }
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "inferred"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceSchemaStrictVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/StrictSourceSchema"
+        }
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "strict"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SourceSpec": {
+      "properties": {
+        "connection": {
+          "type": "string"
+        },
+        "freshness": {
+          "$ref": "#/$defs/SourceFreshness"
+        },
+        "location": {
+          "$ref": "#/$defs/SourceLocation"
+        },
+        "schema": {
+          "$ref": "#/$defs/SourceSchema"
+        }
+      },
+      "required": [
+        "connection",
+        "location"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "StrictSourceSchema": {
+      "properties": {
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SourceSchemaField"
+          },
+          "type": "object"
+        },
+        "mode": {
+          "enum": [
+            "strict"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields",
+        "mode"
+      ],
+      "type": "object"
+    },
+    "TextPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "text"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/TextReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "TextReaderOptions": {
+      "properties": {
+        "delimiter": {
+          "type": "string"
+        },
+        "header": {
+          "type": "boolean"
+        },
+        "quote": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {
+          "delimiter": "\t",
+          "header": false,
+          "quote": "\""
+        },
+        "extensions": [
+          ".txt"
+        ],
+        "name": "text",
+        "scanFunction": "read_text",
+        "scanKind": "table_function"
+      }
+    },
+    "UniqueModelCheck": {
+      "properties": {
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "unique"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "fields",
+        "type"
+      ],
+      "type": "object"
+    },
+    "VortexPathSourceLocation": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/PathSourceLocationBase"
+        }
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "vortex"
+          ],
+          "type": "string"
+        },
+        "options": {
+          "$ref": "#/$defs/VortexReaderOptions"
+        }
+      },
+      "required": [
+        "format"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "VortexReaderOptions": {
+      "properties": {
+        "version": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false,
+      "x-leapview-format": {
+        "defaults": {},
+        "extensions": [
+          ".vortex"
+        ],
+        "name": "vortex",
+        "requiredExtension": "vortex",
+        "scanFunction": "read_vortex",
+        "scanKind": "table_function"
+      }
     }
   },
+  "$id": "https://leapview.dev/schemas/model.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
+  "description": "Strict authored Model resource contract.",
   "properties": {
     "aiContext": {
-      "$ref": "#/$defs/%23AIContext"
+      "$ref": "#/$defs/AIContext"
     },
     "apiVersion": {
-      "$ref": "#/$defs/%23APIVersion"
+      "enum": [
+        "leapview.dev/v1"
+      ],
+      "type": "string"
     },
     "kind": {
-      "const": "Model"
+      "const": "Model",
+      "type": "string"
     },
     "metadata": {
-      "$ref": "#/$defs/%23Metadata"
+      "$ref": "#/$defs/ResourceMetadata"
     },
     "spec": {
-      "$ref": "#/$defs/%23Model"
+      "$ref": "#/$defs/ModelSpec"
     }
   },
   "required": [
@@ -250,5 +2062,20 @@
     "metadata",
     "spec"
   ],
-  "type": "object"
+  "title": "LeapView v1 Model resource",
+  "type": "object",
+  "unevaluatedProperties": false,
+  "x-apigen-contracts": [
+    {
+      "kind": "resource",
+      "name": "Model",
+      "schema": {
+        "$ref": "#/$defs/Model"
+      },
+      "tags": [
+        "model",
+        "data-resource"
+      ]
+    }
+  ]
 }
