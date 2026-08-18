@@ -102,6 +102,26 @@ func TestDeliveryPoolBootstrapDocumentsWriteEffectAndExplicitConfirmation(t *tes
 	}
 }
 
+func TestQualificationLocalPoolBootstrapIsHiddenAndRequiresConfirmation(t *testing.T) {
+	command := NewCommand(context.Background())
+	found, _, err := command.Find([]string{"admin", "delivery", "pool", "qualify"})
+	if err != nil {
+		t.Fatalf("find qualification pool bootstrap: %v", err)
+	}
+	if !found.Hidden {
+		t.Fatal("qualification-only local pool bootstrap must stay hidden")
+	}
+	if got := found.Annotations[documentationEffectAnnotation]; got != "write" {
+		t.Fatalf("bootstrap effect = %q, want write", got)
+	}
+	if got := found.Annotations[documentationConfirmationAnnotation]; got != "required" {
+		t.Fatalf("bootstrap confirmation = %q, want required", got)
+	}
+	if found.Flags().Lookup("apply") == nil {
+		t.Fatal("qualification pool bootstrap missing --apply")
+	}
+}
+
 func TestDeliveryRepairDocumentsConditionalDestructiveEffect(t *testing.T) {
 	command := NewCommand(context.Background())
 	found, _, err := command.Find([]string{"admin", "delivery", "repair"})

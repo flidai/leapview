@@ -82,6 +82,58 @@ func TestResolveClaimedProjectIDRequiresDurableClaim(t *testing.T) {
 	}
 }
 
+func TestResolveDeliveryStartupProjectIDReadsLiveClaim(t *testing.T) {
+	readClaim := func(context.Context) (projectgraph.ResourceID, bool, error) {
+		return "finance", true, nil
+	}
+	if got, err := resolveDeliveryStartupProjectID(t.Context(), "", readClaim); err != nil || got != "finance" {
+		t.Fatalf("resolveDeliveryStartupProjectID() = %q, %v, want finance", got, err)
+	}
+}
+
+func TestResolveDeliveryStartupProjectIDRetainsInitialScopeWithoutClaim(t *testing.T) {
+	readClaim := func(context.Context) (projectgraph.ResourceID, bool, error) {
+		return "", false, nil
+	}
+	if got, err := resolveDeliveryStartupProjectID(t.Context(), "finance", readClaim); err != nil || got != "finance" {
+		t.Fatalf("resolveDeliveryStartupProjectID() = %q, %v, want finance", got, err)
+	}
+}
+
+func TestResolveDeliveryStartupProjectIDFailsClosed(t *testing.T) {
+	readErr := errors.New("claim unavailable")
+	tests := []struct {
+		name      string
+		initial   projectgraph.ResourceID
+		readClaim func(context.Context) (projectgraph.ResourceID, bool, error)
+		wantErr   string
+	}{
+		{
+			name:    "claim changed",
+			initial: "finance",
+			readClaim: func(context.Context) (projectgraph.ResourceID, bool, error) {
+				return "marketing", true, nil
+			},
+			wantErr: "project claim changed",
+		},
+		{
+			name: "reader error",
+			readClaim: func(context.Context) (projectgraph.ResourceID, bool, error) {
+				return "", false, readErr
+			},
+			wantErr: readErr.Error(),
+		},
+		{name: "missing reader", wantErr: "project claim reader is required"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := resolveDeliveryStartupProjectID(t.Context(), test.initial, test.readClaim); err == nil || !containsError(err, test.wantErr) {
+				t.Fatalf("resolveDeliveryStartupProjectID() error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestBindClaimedProjectEnforcesConfiguredEnvironment(t *testing.T) {
 	binder := &projectClaimBinderStub{}
 	bind := bindClaimedProject(binder, "prod")

@@ -82,7 +82,10 @@ func (c *Controller) qualifyProductionImageRuntime(
 	if err := waitQualificationHTTP(ctx, client, baseURL+"/healthz", http.StatusOK); err != nil {
 		return result, qualificationContainerOperationError(ctx, c.qualificationContainers.Existing(container), "wait for production image health", err)
 	}
-	if err := expectQualificationHTTP(ctx, client, baseURL+"/readyz", "", http.StatusOK, ""); err != nil {
+	if err := expectQualificationHTTP(ctx, client, baseURL+"/readyz", "", http.StatusServiceUnavailable, "missing_physical_pool_admission"); err != nil {
+		return result, err
+	}
+	if err := expectQualificationHTTP(ctx, client, baseURL+"/readyz", "", http.StatusServiceUnavailable, "target_revision_missing"); err != nil {
 		return result, err
 	}
 	if err := expectQualificationHTTP(ctx, client, baseURL+"/metrics", "", http.StatusUnauthorized, ""); err != nil {
@@ -91,7 +94,7 @@ func (c *Controller) qualifyProductionImageRuntime(
 	if err := expectQualificationHTTP(ctx, client, baseURL+"/metrics", metricsToken, http.StatusOK, qualificationMetricsHelp); err != nil {
 		return result, err
 	}
-	if err := c.waitQualificationContainerValue(ctx, container, "{{.State.Health.Status}}", "healthy", 2*time.Minute); err != nil {
+	if err := c.waitQualificationContainerValue(ctx, container, "{{.State.Health.Status}}", "unhealthy", 2*time.Minute); err != nil {
 		return result, err
 	}
 	return result, nil

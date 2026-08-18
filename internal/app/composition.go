@@ -954,7 +954,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		var poolErr error
 		deliveryPhysicalPoolID := strings.TrimSpace(cfg.DeliveryPhysicalPoolID)
 		deliveryCompatibilityDigest := strings.TrimSpace(cfg.DeliveryPhysicalPoolCompatibilityDigest)
-		if !production && deliveryPhysicalPoolID == "" {
+		// The disposable loopback-only evaluation profile deliberately uses the
+		// production serving runtime, but it retains the development contract of
+		// owning and qualifying an isolated local pool. Ordinary production
+		// targets must still use reviewed offline admission evidence.
+		if allowsLocalEvaluationRuntime(production, cfg.EvaluationMode) && deliveryPhysicalPoolID == "" {
 			tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:" + identity.Version + ":" + identity.Revision, DuckLakeExtension: "ducklake:managed", CatalogFormat: "ducklake-catalog:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
 			deliveryStorageLocation, storageLocationErr := filepath.Abs(cfg.DuckLakeDataDir())
 			if storageLocationErr != nil {
@@ -1021,10 +1025,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		// callback reads durable state each time; configuration never synthesizes
 		// an admission or serving pointer.
 		deliveryStartupCheck = func(ctx context.Context) error {
+			startupProjectID, err := resolveDeliveryStartupProjectID(ctx, projectID, readClaim)
+			if err != nil {
+				return fmt.Errorf("delivery startup project claim: %w", err)
+			}
 			state := deployment.DeliveryStartupState{
 				Production:               production,
 				TargetID:                 instanceID,
-				ProjectID:                projectID.String(),
+				ProjectID:                startupProjectID.String(),
 				Environment:              string(environment),
 				ConfiguredPhysicalPoolID: deliveryPhysicalPoolID,
 				PhysicalPoolExists:       poolContract != nil,
@@ -1039,14 +1047,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			target, targetErr := deliveryRepository.DeliveryTargetRevision(ctx, instanceID)
 			if targetErr == nil {
 				state.TargetRevisionExists = true
-				if target.ProjectID != projectID.String() || target.Environment != string(environment) {
+				if target.ProjectID != startupProjectID.String() || target.Environment != string(environment) {
 					return fmt.Errorf("delivery startup target scope changed")
 				}
 			} else if !errors.Is(targetErr, sql.ErrNoRows) && !errors.Is(targetErr, deployment.ErrNotFound) {
 				return fmt.Errorf("delivery startup target revision: %w", targetErr)
 			}
 			if targetErr == nil && strings.TrimSpace(target.ActiveGenerationID) != "" {
-				active, err := deliveryRepository.ActiveDeliveryGenerationForTarget(ctx, instanceID, projectID.String(), string(environment))
+				active, err := deliveryRepository.ActiveDeliveryGenerationForTarget(ctx, instanceID, startupProjectID.String(), string(environment))
 				if err == nil {
 					state.ActiveServingGeneration = true
 					state.ActiveServingStateIdentity = active.ServingStateID
@@ -1454,7 +1462,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				InstanceID:        instanceID,
 				DisplayName:       "LeapView",
 				ServerVersion:     assets.Version(),
-				AllowLoopbackHTTP: !production,
+				AllowLoopbackHTTP: allowsLocalEvaluationRuntime(production, cfg.EvaluationMode),
 			},
 			RateLimits:      rateLimits,
 			SecurityHeaders: apihttpmiddleware.SecurityHeaders(production && cfg.HSTSEnabled(cookieSecure)),
@@ -1484,6 +1492,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	return handler, lifecycle, cleanup.Close, nil
 }
 
+func allowsLocalEvaluationRuntime(production, evaluation bool) bool {
+	return !production || evaluation
+}
+
 func protectedPublishingTarget(production, evaluation bool) bool {
 	return production && !evaluation
 }
@@ -1505,6 +1517,23 @@ func readClaimedProject(repository deploymentmodule.ProjectClaimReader, environm
 		}
 		return claim.ProjectID, true, nil
 	}
+}
+
+func resolveDeliveryStartupProjectID(ctx context.Context, initial projectgraph.ResourceID, readClaim func(context.Context) (projectgraph.ResourceID, bool, error)) (projectgraph.ResourceID, error) {
+	if readClaim == nil {
+		return "", errors.New("project claim reader is required")
+	}
+	claimed, found, err := readClaim(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return initial, nil
+	}
+	if initial != "" && claimed != initial {
+		return "", fmt.Errorf("project claim changed from %q to %q", initial, claimed)
+	}
+	return claimed, nil
 }
 
 type claimedProjectBinder interface {

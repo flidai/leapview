@@ -335,9 +335,11 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
 	workflow := read(t, filepath.Join(root, ".github", "workflows", "installed-candidate.yml"))
 	installed := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_installed.go"))
+	imageQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image.go"))
 	recovery := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_recovery.go"))
 	performance := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance.mjs"))
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
+	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
 
 	for _, required := range []string{"cp -R deploy/compose/qualification", "./leapviewctl qualify installed-candidate", "gh release create", "needs: [image, qualify, minio-conformance, plan-gc-conformance]"} {
@@ -357,6 +359,26 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	for _, required := range []string{"func (c *Controller) QualifyInstalledCandidate", "runQualificationAuthoring", "runQualificationRecovery", "qualification-report.json", "runtime-identity.json", "performance-report.json", "recovery-report.json", "verifyQualificationLegacyPolicy", "restoreQualificationBackup"} {
 		if !strings.Contains(installed, required) {
 			t.Errorf("typed installed-candidate controller missing %q", required)
+		}
+	}
+	for _, required := range []string{"bootstrapQualificationLocalPhysicalPool", `"pool", "qualify"`, "startQualificationBootstrap", "waitQualificationBootstrapLiveness", `"up", "-d", "--no-deps", "caddy"`, "waitQualificationReadiness"} {
+		if !strings.Contains(installed, required) {
+			t.Errorf("installed qualification missing sealed-delivery bootstrap contract %q", required)
+		}
+	}
+	for _, required := range []string{"bootstrapQualificationLocalPhysicalPool", "startQualificationBootstrap", "waitQualificationReadiness"} {
+		if !strings.Contains(imageQualification, required) {
+			t.Errorf("production-image qualification missing sealed-delivery bootstrap contract %q", required)
+		}
+	}
+	restoreStart := strings.LastIndex(installed, "restoreController.Start(ctx)")
+	restoreApply := strings.LastIndex(installed, "restoreController.Restore(")
+	if restoreStart < 0 || restoreApply < 0 || restoreStart < restoreApply {
+		t.Error("isolated restore must apply admitted pool and target state before readiness-gated start")
+	}
+	for _, required := range []string{"missing_physical_pool_admission", "target_revision_missing", `"unhealthy"`} {
+		if !strings.Contains(runtimeQualification, required) {
+			t.Errorf("bare production-image smoke missing fail-closed startup assertion %q", required)
 		}
 	}
 	for _, required := range []string{"ManagedUpload", "ReleaseFinalization", "DeploymentActivation", "RefreshRecovery", "QueryStreamReconnect", "BackupInterruption", "RestorePreflight", "BoundedDisk", "waitForQualificationEvents", "/events?limit=100"} {
