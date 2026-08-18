@@ -427,7 +427,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err := store.BindInstanceEnvironment(ctx, string(environment)); err != nil {
 		return fail(err)
 	}
-	extensionSupply, err := loadExtensionSupply(cfg)
+	extensionSupply, err := loadExtensionSupply(ctx, cfg)
 	if err != nil {
 		return fail(err)
 	}
@@ -785,7 +785,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			return appruntimefactory.RunSQLiteProductionGC(gcCtx, appruntimefactory.ProductionGCRunConfig{
 				Database: store.SQLDB(), TargetID: instanceID, ProjectID: projectID.String(), Environment: string(environment), OwnerID: instanceID, HolderID: instanceID,
 				StagingRoot:   filepath.Join(cfg.RuntimeDir(), "gc"),
-				PoolS3:        gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle},
+				PoolS3:        gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
 				LeaseDuration: 15 * time.Minute, BuildGrace: time.Hour, OrphanGrace: time.Hour, ReaderGrace: 30 * time.Minute,
 			})
 		}, cfg.ManagedDataGCInterval, slog.Default(), nil)
@@ -800,7 +800,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), LeaseHolder: instanceID,
 			ProjectRuntimeFactory: analyticsModule.ProjectRuntimeFactoryForEnvironment,
 			DashboardMaxRows:      cfg.QueryResultMaxRows, DashboardMaxBytes: cfg.QueryResultMaxBytes,
-			PoolS3: gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle},
+			PoolS3: gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
 			Authorize: func(ctx context.Context, evidence appruntimefactory.SealedAuthorizationInput) error {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -1014,7 +1014,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				poolErr = fmt.Errorf("load configured delivery physical-pool admission: %w", err)
 			} else {
 				poolContract = &ducklake.PoolContract{Pool: admission.Pool, Tuple: admission.Pool.Compatibility, Admission: admission.Admission, Evidence: admission.Evidence}
-				poolS3 := gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle}
+				poolS3 := gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply}
 				poolStore, poolErr = appruntimefactory.NewCatalogObjectStore(ctx, poolContract, poolS3)
 				if poolErr == nil {
 					poolCredentialBootstrap, poolErr = gcadapter.NewPoolCredentialBootstrap(poolContract, poolS3)

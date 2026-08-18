@@ -286,7 +286,7 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	}
 	migrated := false
 	if !config.ReadOnly {
-		migrated, err = migrateLegacySQLiteCatalog(ctx, layout.CatalogPath)
+		migrated, err = migrateLegacySQLiteCatalog(ctx, layout.CatalogPath, config.ExtensionAdmission)
 		if err != nil {
 			return nil, err
 		}

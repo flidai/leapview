@@ -28,7 +28,7 @@ const (
 	MaxArtifactBytes = 256 << 20
 	// CurrentDuckDBVersion is the pinned DuckDB binding/runtime identity used
 	// by the application composition. A supply document must match it exactly.
-	CurrentDuckDBVersion = "duckdb-go/v2.10504.0"
+	CurrentDuckDBVersion = "v1.5.4"
 )
 
 // Origin is target configuration, not project authoring.  Reviewed must be
@@ -182,7 +182,7 @@ func validateConfig(config Config) error {
 		{"manifest platform", config.Manifest.Platform, config.Platform},
 		{"manifest support profile", config.Manifest.SupportProfile, config.SupportProfile},
 	} {
-		if field.declared != "" && field.declared != field.target {
+		if field.declared == "" || field.declared != field.target {
 			return fmt.Errorf("%w: %s does not match configured target", extension.ErrInvalidManifest, field.name)
 		}
 	}
@@ -515,14 +515,19 @@ func verifyFile(path, expected string) (bool, error) {
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
 		return true, fmt.Errorf("%w: cache artifact permissions", extension.ErrExtensionIntegrity)
 	}
+	if info.Size() > MaxArtifactBytes {
+		return true, fmt.Errorf("%w: cache artifact exceeds size limit", extension.ErrExtensionIntegrity)
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return true, fmt.Errorf("%w: open cache artifact", extension.ErrExtensionIntegrity)
 	}
 	defer file.Close()
 	hash := sha256.New()
-	if _, err := io.Copy(hash, io.LimitReader(file, MaxArtifactBytes+1)); err != nil {
+	if n, err := io.Copy(hash, io.LimitReader(file, MaxArtifactBytes+1)); err != nil {
 		return true, fmt.Errorf("%w: hash cache artifact", extension.ErrExtensionIntegrity)
+	} else if n > MaxArtifactBytes {
+		return true, fmt.Errorf("%w: cache artifact exceeds size limit", extension.ErrExtensionIntegrity)
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != strings.TrimPrefix(expected, "sha256:") {
 		return true, fmt.Errorf("%w: cache artifact digest mismatch", extension.ErrExtensionIntegrity)

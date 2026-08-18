@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	"github.com/flidai/leapview/internal/extension"
@@ -25,7 +27,7 @@ const maxExtensionSupplyDocumentBytes = 1 << 20
 // target-owned extension supply. The document digest is checked before JSON
 // decoding, and the resulting admission/preparation object is shared by the
 // analytics and release modules.
-func loadExtensionSupply(cfg config.Config) (*extensionsupply.Supply, error) {
+func loadExtensionSupply(ctx context.Context, cfg config.Config) (*extensionsupply.Supply, error) {
 	path, err := absoluteSupplyPath(cfg.DuckDBExtensionSupplyPath)
 	if err != nil {
 		return nil, err
@@ -50,7 +52,11 @@ func loadExtensionSupply(cfg config.Config) (*extensionsupply.Supply, error) {
 		}
 		return nil, fmt.Errorf("duckdb extension supply document has trailing data: %w", err)
 	}
-	if err := validateSupplyManifest(manifest); err != nil {
+	duckDBVersion, duckDBPlatform, err := runtimeTarget(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSupplyManifest(manifest, duckDBVersion, duckDBPlatform); err != nil {
 		return nil, err
 	}
 
@@ -96,10 +102,10 @@ func loadExtensionSupply(cfg config.Config) (*extensionsupply.Supply, error) {
 		}
 	}
 	return extensionsupply.New(extensionsupply.Config{
-		DuckDBVersion:  extensionsupply.CurrentDuckDBVersion,
+		DuckDBVersion:  duckDBVersion,
 		GOOS:           runtime.GOOS,
 		GOARCH:         runtime.GOARCH,
-		Platform:       runtime.GOOS + "-" + runtime.GOARCH,
+		Platform:       duckDBPlatform,
 		SupportProfile: manifest.SupportProfile,
 		CacheDir:       cacheDir,
 		Manifest:       manifest,
@@ -177,11 +183,11 @@ func verifySupplyDigest(payload []byte, raw string) error {
 	return nil
 }
 
-func validateSupplyManifest(manifest extensionsupply.Manifest) error {
+func validateSupplyManifest(manifest extensionsupply.Manifest, duckDBVersion, duckDBPlatform string) error {
 	if manifest.Version != extensionsupply.ManifestVersion {
 		return fmt.Errorf("%w: unsupported duckdb extension supply manifest version %d", extension.ErrInvalidManifest, manifest.Version)
 	}
-	if manifest.DuckDBVersion != extensionsupply.CurrentDuckDBVersion || manifest.GOOS != runtime.GOOS || manifest.GOARCH != runtime.GOARCH || manifest.Platform != runtime.GOOS+"-"+runtime.GOARCH {
+	if duckDBVersion == "" || duckDBPlatform == "" || manifest.DuckDBVersion != duckDBVersion || manifest.GOOS != runtime.GOOS || manifest.GOARCH != runtime.GOARCH || manifest.Platform != duckDBPlatform {
 		return fmt.Errorf("%w: duckdb extension supply target does not match this runtime", extension.ErrInvalidManifest)
 	}
 	if strings.TrimSpace(manifest.SupportProfile) == "" || manifest.SupportProfile != strings.TrimSpace(manifest.SupportProfile) {
@@ -196,6 +202,30 @@ func validateSupplyManifest(manifest extensionsupply.Manifest) error {
 		}
 	}
 	return nil
+}
+
+func runtimeTarget(ctx context.Context) (string, string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		return "", "", fmt.Errorf("%w: open DuckDB runtime probe", extension.ErrExtensionConfiguration)
+	}
+	defer db.Close()
+	var version, platform string
+	if err := db.QueryRowContext(ctx, "SELECT version()").Scan(&version); err != nil {
+		return "", "", fmt.Errorf("%w: read DuckDB runtime version", extension.ErrExtensionConfiguration)
+	}
+	if err := db.QueryRowContext(ctx, "PRAGMA platform").Scan(&platform); err != nil {
+		return "", "", fmt.Errorf("%w: read DuckDB runtime platform", extension.ErrExtensionConfiguration)
+	}
+	version = strings.TrimSpace(version)
+	platform = strings.TrimSpace(platform)
+	if version != extensionsupply.CurrentDuckDBVersion {
+		return "", "", fmt.Errorf("%w: DuckDB runtime %q does not match pinned extension ABI %q", extension.ErrExtensionConfiguration, version, extensionsupply.CurrentDuckDBVersion)
+	}
+	return version, platform, nil
 }
 
 func absoluteOriginPath(raw string) (string, error) {

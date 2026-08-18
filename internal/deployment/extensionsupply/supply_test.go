@@ -4,15 +4,38 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/flidai/leapview/internal/extension"
 )
+
+func TestCurrentDuckDBVersionMatchesRuntime(t *testing.T) {
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version string
+	if err := db.QueryRow("SELECT version()").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != CurrentDuckDBVersion {
+		t.Fatalf("CurrentDuckDBVersion = %q, runtime SELECT version() = %q", CurrentDuckDBVersion, version)
+	}
+	var platform string
+	if err := db.QueryRow("PRAGMA platform").Scan(&platform); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("DuckDB PRAGMA platform = %q", platform)
+}
 
 func TestSupplyAdmitsVerifiedArtifactAndOfflineLookup(t *testing.T) {
 	content := []byte("pinned extension bytes")
@@ -36,6 +59,8 @@ func TestSupplyAdmitsVerifiedArtifactAndOfflineLookup(t *testing.T) {
 	// A second supply with no fetch adapter can deterministically use the
 	// content-addressed cache while offline.
 	config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: supply.config.CacheDir, Offline: true, Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}}, VerifySignature: verifyOK}
+	config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
+	config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
 	offline, err := New(config)
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +98,8 @@ func TestSupplyRejectsAdversarialManifestAndBytes(t *testing.T) {
 			config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: filepath.Join(t.TempDir(), "extensions"), Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{testArtifact("httpfs", digest, "linux-amd64")}}, Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
 				return io.NopCloser(bytes.NewReader(content)), nil
 			}}}, VerifySignature: verifyOK}
+			config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
+			config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
 			test.mutate(&config)
 			supply, err := New(config)
 			if err != nil {
@@ -93,10 +120,37 @@ func TestSupplyDoesNotLeakConfiguredOriginSecrets(t *testing.T) {
 	secret := "access_key=do-not-leak"
 	content := []byte("bytes")
 	config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: filepath.Join(t.TempDir(), "extensions"), Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{testArtifact("httpfs", digestFor(content), "linux-amd64")}}, Origins: []Origin{{ID: "vendor", URL: "https://reviewed.invalid", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) { return nil, errors.New(secret) }}}, VerifySignature: verifyOK}
+	config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
+	config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
 	supply := newSupply(t, config)
 	_, err := supply.AdmitExtension(context.Background(), "httpfs")
 	if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "reviewed.invalid") {
 		t.Fatalf("error leaked origin details: %v", err)
+	}
+}
+
+func TestSupplyRejectsOversizedCachedArtifact(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "extensions")
+	content := []byte("unused")
+	artifact := testArtifact("httpfs", digestFor(content), "linux-amd64")
+	supply := newSupply(t, Config{CacheDir: root, Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}}, Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(content)), nil
+	}}}, VerifySignature: verifyOK})
+	path, err := supply.cachePath(artifact.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, MaxArtifactBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := supply.AdmitExtension(context.Background(), artifact.Identity.Name); !errors.Is(err, extension.ErrExtensionIntegrity) {
+		t.Fatalf("AdmitExtension() error = %v, want oversized cache integrity error", err)
 	}
 }
 
@@ -120,6 +174,8 @@ func newSupply(t *testing.T, config Config) *Supply {
 	if config.CacheDir == "" {
 		config.CacheDir = filepath.Join(t.TempDir(), "extensions")
 	}
+	config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
+	config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
 	supply, err := New(config)
 	if err != nil {
 		t.Fatal(err)

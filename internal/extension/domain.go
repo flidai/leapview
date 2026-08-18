@@ -63,10 +63,19 @@ func (i Identity) Validate() error {
 	// Platform is intentionally explicit even when it can be derived from
 	// GOOS/GOARCH.  This prevents a manifest silently changing its platform
 	// naming convention without changing the pinned identity.
-	if !strings.Contains(i.Platform, i.GOOS) || !strings.Contains(i.Platform, i.GOARCH) {
+	if !platformBindsTarget(i.Platform, i.GOOS, i.GOARCH) {
 		return fmt.Errorf("%w: platform %q does not bind GOOS/GOARCH %s/%s", ErrInvalidManifest, i.Platform, i.GOOS, i.GOARCH)
 	}
 	return nil
+}
+
+func platformBindsTarget(platform, goos, goarch string) bool {
+	if strings.Contains(platform, goos) && strings.Contains(platform, goarch) {
+		return true
+	}
+	aliases := map[string]string{"darwin": "osx"}
+	alias, ok := aliases[goos]
+	return ok && strings.Contains(platform, alias) && strings.Contains(platform, goarch)
 }
 
 // Canonical returns a stable, content-addressed identity that binds every

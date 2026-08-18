@@ -2102,13 +2102,13 @@
       "x-scope": "serve"
     },
     "LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH": {
-      "description": "Absolute path to the target-reviewed DuckDB extension supply document.",
+      "description": "Required absolute path to the target-reviewed packaged DuckDB extension supply document.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
     "LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256": {
-      "description": "Lowercase SHA-256 digest anchoring the extension supply document.",
+      "description": "Required lowercase SHA-256 digest anchoring the complete extension supply document.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

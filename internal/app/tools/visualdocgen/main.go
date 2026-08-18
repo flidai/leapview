@@ -70,7 +70,7 @@ func (a visualDocExtensionAdmission) AdmitExtension(ctx context.Context, name st
 	}
 	digest := sha256.Sum256(bytes)
 	return extension.AdmittedExtension{
-		Name: name, Identity: "visual-doc-fixture/ducklake", Version: "fixture",
+		Name: name, Identity: "visual-doc-fixture/" + name, Version: "fixture",
 		Platform: runtime.GOOS + "-" + runtime.GOARCH, Digest: "sha256:" + hex.EncodeToString(digest[:]), Path: path,
 	}, nil
 }
