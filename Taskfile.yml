@@ -837,6 +837,8 @@ tasks:
     deps:
       - db:generate
       - api:generate
+      - config:generate
+      - ui-signals:generate
     cmds:
       # The deployment subtree owns the maintained plan/build/seal/publication,
       # restart, crash, fencing, lease/retirement, and GC race matrix. Keep
