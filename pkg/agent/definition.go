@@ -140,9 +140,23 @@ func findNonPortableToolSchemaKeyword(value any, path string) (string, string, b
 				return key, path + "." + key, true
 			}
 			for index, branch := range branches {
+				if _, ok := branch.(map[string]any); !ok {
+					return key, fmt.Sprintf("%s.%s[%d]", path, key, index), true
+				}
 				if foundKey, foundPath, found := findNonPortableToolSchemaKeyword(branch, fmt.Sprintf("%s.%s[%d]", path, key, index)); found {
 					return foundKey, foundPath, true
 				}
+			}
+			continue
+		}
+		if key == "propertyNames" {
+			if _, ok := child.(map[string]any); !ok {
+				return key, path + "." + key, true
+			}
+		}
+		if key == "pattern" {
+			if _, ok := child.(string); !ok {
+				return key, path + "." + key, true
 			}
 			continue
 		}

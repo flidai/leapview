@@ -203,6 +203,21 @@ func TestToolSchemasRequireProviderPortableSubset(t *testing.T) {
 			want:   "oneOf",
 		},
 		{
+			name:   "scalar oneOf branch",
+			schema: json.RawMessage(`{"type":"object","properties":{"id":{"oneOf":[true]}}}`),
+			want:   "oneOf[0]",
+		},
+		{
+			name:   "scalar propertyNames",
+			schema: json.RawMessage(`{"type":"object","properties":{"labels":{"type":"object","propertyNames":true}}}`),
+			want:   "propertyNames",
+		},
+		{
+			name:   "non-string pattern",
+			schema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","pattern":true}}}`),
+			want:   "pattern",
+		},
+		{
 			name:   "patternProperties",
 			schema: json.RawMessage(`{"type":"object","patternProperties":{"^x-":{"type":"string"}}}`),
 			want:   "patternProperties",
