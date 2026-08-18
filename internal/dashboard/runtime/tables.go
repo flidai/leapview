@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -271,23 +272,18 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 			sorts = append(sorts, reportdef.QuerySort{Field: dimension.Alias, Direction: "asc"})
 		}
 	}
-	queryLimit := int(table.Limit)
-	if queryLimit <= 0 {
-		queryLimit = dashboard.TableInteractiveRowCap
-	}
-	if table.Offset > 0 {
-		queryLimit += int(table.Offset)
-	}
-	if queryLimit < dashboard.TableInteractiveRowCap+1 {
-		queryLimit = dashboard.TableInteractiveRowCap + 1
-	}
+	// Pivot windows apply to grouped row identities, not the aggregate cell
+	// stream. Fetch one bounded page from the governed aggregate and apply the
+	// explicit offset/limit after grouping; never inflate a requested logical
+	// limit to the interactive cap.
+	queryLimit := dashboard.TableInteractiveRowCap + 1
 	rawRows, err := runtime.data.Query(ctx, reportdef.AggregateQuery{
 		Dataset:    table.Table,
 		Dimensions: dimensions,
 		Metrics:    metrics,
 		Filters:    queryFilters,
 		Sort:       sorts,
-		Offset:     int(table.Offset),
+		Offset:     0,
 		Limit:      queryLimit,
 	})
 	if err != nil {
@@ -317,11 +313,11 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 	resultByKey := map[string]map[string]any{}
 	order := []string{}
 	for _, raw := range normalizedRows {
-		rowKeyParts := make([]string, 0, len(table.Rows))
+		rowKeyParts := make([]any, 0, len(table.Rows))
 		for _, dimension := range table.Rows {
-			rowKeyParts = append(rowKeyParts, fmt.Sprint(raw[dimension.Alias]))
+			rowKeyParts = append(rowKeyParts, raw[dimension.Alias])
 		}
-		resultKey := strings.Join(rowKeyParts, "\x00")
+		resultKey := typedTupleIdentity(rowKeyParts)
 		row, exists := resultByKey[resultKey]
 		if !exists {
 			row = map[string]any{}
@@ -332,15 +328,19 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 			resultByKey[resultKey] = row
 			order = append(order, resultKey)
 		}
+		columnValues := make([]any, 0, len(table.ColumnDims))
 		columnLabels := make([]string, 0, len(table.ColumnDims))
 		for _, columnDimension := range table.ColumnDims {
-			columnLabels = append(columnLabels, fmt.Sprint(raw[columnDimension.Alias]))
+			value := raw[columnDimension.Alias]
+			columnValues = append(columnValues, value)
+			columnLabels = append(columnLabels, fmt.Sprint(value))
 		}
 		label := strings.Join(columnLabels, " / ")
-		pivotKey, exists := pivotKeys[label]
+		pivotIdentity := typedTupleIdentity(columnValues)
+		pivotKey, exists := pivotKeys[pivotIdentity]
 		if !exists {
 			pivotKey = sanitizeTableKey(label)
-			pivotKeys[label] = pivotKey
+			pivotKeys[pivotIdentity] = pivotKey
 		}
 		for _, valueField := range valueFields {
 			metricKey := valueField.key
@@ -385,8 +385,32 @@ func (s *VisualizationDataService) crossTabTableRows(ctx context.Context, runtim
 	if table.Totals != nil && (table.Totals.Rows || table.Totals.Columns || table.Totals.Grand) {
 		columns, result = addPivotTotals(columns, result, table, valueFields)
 	}
+	result = applyPivotWindow(result, table.Offset, table.Limit)
 	sortAggregateTableRows(result, request.Sort)
 	return columns, result, calculationIncomplete, nil
+}
+
+func typedTupleIdentity(values []any) string {
+	// Values are already rendered for display, so include each element's byte
+	// length and JSON representation. Length-prefixing makes identities
+	// collision-free even when labels contain the visual separator.
+	encoded, _ := json.Marshal(values)
+	return fmt.Sprintf("%d:%s", len(encoded), encoded)
+}
+
+func applyPivotWindow(rows []map[string]any, offset, limit int64) []map[string]any {
+	if offset < 0 {
+		return nil
+	}
+	start := int(offset)
+	if start >= len(rows) {
+		return []map[string]any{}
+	}
+	end := len(rows)
+	if limit > 0 && int64(start)+limit < int64(end) {
+		end = start + int(limit)
+	}
+	return rows[start:end]
 }
 
 // addPivotTotals materializes the explicit pivot totals contract from the
@@ -398,6 +422,7 @@ func addPivotTotals(columns []dashboard.TableColumn, rows []map[string]any, tabl
 		return columns, rows
 	}
 	metricColumns := make(map[string][]dashboard.TableColumn)
+	baseRows := append([]map[string]any(nil), rows...)
 	for _, column := range columns {
 		if column.Role == "metric" && column.ColumnValue != "" {
 			metricColumns[column.Metric] = append(metricColumns[column.Metric], column)
@@ -425,8 +450,9 @@ func addPivotTotals(columns []dashboard.TableColumn, rows []map[string]any, tabl
 			}
 		}
 	}
-	if table.Totals.Columns || table.Totals.Grand {
-		totalRow := map[string]any{}
+	var totalRow map[string]any
+	if table.Totals.Columns {
+		totalRow = map[string]any{}
 		for _, dimension := range table.Rows {
 			totalRow[dimension.Alias] = "Total"
 		}
@@ -441,6 +467,39 @@ func addPivotTotals(columns []dashboard.TableColumn, rows []map[string]any, tabl
 			totalRow[column.Key] = total
 		}
 		rows = append(rows, totalRow)
+	}
+	if table.Totals.Grand {
+		// Grand is its own total cell. It is not an alias for column totals:
+		// with no Columns policy it still produces one explicit total row.
+		if totalRow == nil {
+			totalRow = map[string]any{}
+			for _, dimension := range table.Rows {
+				totalRow[dimension.Alias] = "Total"
+			}
+		}
+		for _, value := range values {
+			key := "pivot_grand"
+			label := "Grand total"
+			if len(values) > 1 {
+				key += "__" + sanitizeTableKey(value.key)
+				label += " " + value.label
+			}
+			columns = append(columns, dashboard.TableColumn{Key: key, Label: label, Align: "right", Role: "metric", Group: "Grand total", Metric: value.key, ColumnValue: "Grand total", Format: value.format, DataType: string(value.dataType), Formatting: value.formatting})
+			var grand any
+			for _, column := range metricColumns[value.key] {
+				for _, row := range baseRows {
+					grand = addTableValues(grand, row[column.Key])
+				}
+			}
+			totalRow[key] = grand
+		}
+		if table.Totals.Columns {
+			// Replace the previously appended column-total row with the same
+			// row enriched by grand-total cells.
+			rows[len(rows)-1] = totalRow
+		} else {
+			rows = append(rows, totalRow)
+		}
 	}
 	return columns, rows
 }

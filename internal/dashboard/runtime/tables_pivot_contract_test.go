@@ -36,7 +36,31 @@ func TestAddPivotTotalsPreservesMultipleColumnAndMetricCells(t *testing.T) {
 	if rows[2]["pivot_east__revenue"] != 14.0 || rows[2]["pivot_west__orders"] != 8.0 {
 		t.Fatalf("column totals = %#v", rows[2])
 	}
-	if len(columns) != 7 {
-		t.Fatalf("pivot columns = %d, want 7", len(columns))
+	if len(columns) != 9 {
+		t.Fatalf("pivot columns = %d, want 9", len(columns))
+	}
+}
+
+func TestPivotWindowAppliesAfterGroupingWithoutInteractiveInflation(t *testing.T) {
+	rows := []map[string]any{{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "d"}}
+	window := applyPivotWindow(rows, 1, 2)
+	if len(window) != 2 || window[0]["id"] != "b" || window[1]["id"] != "c" {
+		t.Fatalf("pivot window = %#v", window)
+	}
+	if got := applyPivotWindow(rows, 9, 1); len(got) != 0 {
+		t.Fatalf("out-of-range pivot window = %#v", got)
+	}
+}
+
+func TestGrandPivotTotalIsNotImplicitColumnTotal(t *testing.T) {
+	values := []crossTabValueField{{key: "revenue", label: "Revenue", format: "decimal"}}
+	columns := []dashboard.TableColumn{{Key: "pivot_east", Role: "metric", Metric: "revenue", ColumnValue: "East"}}
+	rows := []map[string]any{{"pivot_east": 3.0}, {"pivot_east": 4.0}}
+	columns, rows = addPivotTotals(columns, rows, tablePlan{Totals: &visualizationdefinition.PivotTotals{Grand: true}}, values)
+	if len(rows) != 3 || rows[2]["pivot_grand"] != 7.0 {
+		t.Fatalf("grand-only total rows = %#v", rows)
+	}
+	if len(columns) != 2 || columns[1].Key != "pivot_grand" {
+		t.Fatalf("grand-only total columns = %#v", columns)
 	}
 }
