@@ -28,3 +28,58 @@ visuals:
     presentation:
       type: cartesian
 ```
+
+## Stacked series
+
+Use a second ordered dimension for status and `presentation.stacking: normal` to show both the monthly total and each status contribution.
+
+{{< visual id="orders_by_month_status" >}}
+
+```yaml visual-example=orders_by_month_status
+visuals:
+  orders_by_month_status:
+    title: Orders by month and status
+    description: Compares monthly order volume split by status.
+    type: column
+    presentation:
+      type: cartesian
+      stacking: normal
+    query:
+      type: aggregate
+      dimensions:
+      - purchase_month
+      - status
+      metrics:
+      - order_count
+      sort:
+      - field: purchase_month
+        direction: asc
+      limit: 40
+```
+
+## Grouped series
+
+Keep the series unstacked to place statuses side by side, and use `presentation.legend` to position the series key below the plot.
+
+{{< visual id="orders_by_month_status_grouped" >}}
+
+```yaml visual-example=orders_by_month_status_grouped
+visuals:
+  orders_by_month_status_grouped:
+    title: Orders by month and status grouped
+    type: column
+    presentation:
+      type: cartesian
+      legend: bottom
+    query:
+      type: aggregate
+      dimensions:
+      - purchase_month
+      - status
+      metrics:
+      - order_count
+      sort:
+      - field: purchase_month
+        direction: asc
+      limit: 60
+```

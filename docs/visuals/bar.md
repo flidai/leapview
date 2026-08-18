@@ -30,6 +30,33 @@ visuals:
       type: cartesian
 ```
 
+## Stacked series
+
+Use a second ordered dimension for status and `presentation.stacking: normal` to combine each status segment into one category total while preserving its composition.
+
+{{< visual id="categories_by_status_bar" >}}
+
+```yaml visual-example=categories_by_status_bar
+visuals:
+  categories_by_status_bar:
+    title: Category revenue by status
+    type: bar
+    presentation:
+      type: cartesian
+      stacking: normal
+    query:
+      type: aggregate
+      dimensions:
+      - category
+      - status
+      metrics:
+      - revenue
+      sort:
+      - field: revenue
+        direction: desc
+      limit: 60
+```
+
 ## Alternate metric
 
 Keep the bar contract and replace the dimension with delivery buckets to compare counts across an ordered operational grouping.

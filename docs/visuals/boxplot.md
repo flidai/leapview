@@ -6,7 +6,8 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Delivery distribution
 
-Select a numeric field and explicit quantiles so LeapView can derive the quartiles, median, whiskers, and outliers.
+Select a numeric field, a semantic grouping dimension, and explicit quantiles
+so LeapView can derive comparable quartiles, medians, whiskers, and outliers.
 
 {{< visual id="delivery_distribution" >}}
 
@@ -19,6 +20,7 @@ visuals:
     query:
       type: distribution
       field: delivery_days
+      group: delivery_bucket
       quantiles:
       - 0.25
       - 0.5
@@ -46,6 +48,7 @@ visuals:
     query:
       type: distribution
       field: review_score
+      group: status
       quantiles:
       - 0.25
       - 0.5
@@ -76,6 +79,7 @@ visuals:
     query:
       type: distribution
       field: revenue
+      group: category
       quantiles:
       - 0.25
       - 0.5
@@ -85,4 +89,5 @@ visuals:
       whiskers:
         lower: 0.05
         upper: 0.95
+      limit: 12
 ```

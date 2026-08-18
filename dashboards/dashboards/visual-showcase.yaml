@@ -22,8 +22,17 @@ spec:
       type: dateRange
     description: Filters dashboard content by the calendar purchase date.
     urlParameter: period
-    targets: [total_orders]
     operators: []
+    targets:
+    - total_orders
+    - revenue_kpi
+    - aov_kpi
+    - review_kpi
+    - revenue
+    - orders
+    - delivery
+    - categories
+    - orders_table
   - id: purchase_time
     label: Relative purchase period
     dimension: purchase_timestamp
@@ -31,28 +40,64 @@ spec:
       type: relativePeriod
     description: Filters dashboard content using a timestamp-relative period.
     operators: []
-    targets: [total_orders]
+    targets:
+    - total_orders
+    - revenue_kpi
+    - aov_kpi
+    - review_kpi
+    - revenue
+    - orders
+    - delivery
+    - categories
+    - orders_table
   - id: state
     label: State
     dimension: state
     control:
       type: multiSelect
+      maxSelectedValues: 50
+      options:
+        type: distinct
+        dataset: orders
+        limit: 50
     description: Filters dashboard content by customer state.
     operators:
     - in
     - notIn
     urlParameter: state
-    targets: [total_orders]
+    targets:
+    - total_orders
+    - revenue_kpi
+    - aov_kpi
+    - review_kpi
+    - revenue
+    - orders
+    - delivery
+    - categories
+    - orders_table
   - id: order_status
     label: Order status
     dimension: order_status
     control:
       type: singleSelect
+      options:
+        type: distinct
+        dataset: orders
+        limit: 20
     description: Filters dashboard content by one or more lifecycle states.
     operators:
     - in
     - notIn
-    targets: [total_orders]
+    targets:
+    - total_orders
+    - revenue_kpi
+    - aov_kpi
+    - review_kpi
+    - revenue
+    - orders
+    - delivery
+    - categories
+    - orders_table
   - id: category_text
     label: Category text
     dimension: category
@@ -63,19 +108,45 @@ spec:
     - contains
     - equals
     - startsWith
+    - endsWith
     - notContains
     - notEquals
-    targets: [total_orders]
+    targets:
+    - total_orders
+    - revenue_kpi
+    - aov_kpi
+    - review_kpi
+    - revenue
+    - orders
+    - delivery
+    - categories
+    - orders_table
   - id: delivered
     label: Delivery state
     dimension: delivered
     control:
       type: singleSelect
+      options:
+        type: static
+        values:
+        - value: {type: boolean, value: true}
+          label: Delivered
+        - value: {type: boolean, value: false}
+          label: Not delivered
     description: Filters dashboard content by the typed delivered boolean.
     operators:
     - in
     - notIn
-    targets: [total_orders]
+    targets:
+    - total_orders
+    - revenue_kpi
+    - aov_kpi
+    - review_kpi
+    - revenue
+    - orders
+    - delivery
+    - categories
+    - orders_table
   - id: delivery_days
     label: Delivery days
     dimension: delivery_days
@@ -83,7 +154,16 @@ spec:
       type: numericRange
     description: Filters dashboard content by an integer delivery-day range.
     operators: []
-    targets: [total_orders]
+    targets:
+    - total_orders
+    - revenue_kpi
+    - aov_kpi
+    - review_kpi
+    - revenue
+    - orders
+    - delivery
+    - categories
+    - orders_table
   - id: revenue_amount
     label: Order revenue
     dimension: revenue_amount
@@ -91,7 +171,16 @@ spec:
       type: numericRange
     description: Filters dashboard content by a decimal order-revenue range.
     operators: []
-    targets: [total_orders]
+    targets:
+    - total_orders
+    - revenue_kpi
+    - aov_kpi
+    - review_kpi
+    - revenue
+    - orders
+    - delivery
+    - categories
+    - orders_table
   visuals:
     total_orders:
       type: kpi
@@ -114,8 +203,38 @@ spec:
         - revenue
       title: Revenue versus baseline
       description: Shows filtered revenue, its governed baseline, and compact trend.
+      datasets:
+        comparison:
+          type: aggregate
+          dimensions: []
+          metrics:
+          - revenue_baseline
+          limit: 1
+        trend:
+          type: aggregate
+          dimensions:
+          - purchase_month
+          metrics:
+          - revenue
+          sort:
+          - field: purchase_month
+            direction: asc
+          limit: 12
       presentation:
         type: kpi
+        mode: compact
+        comparison:
+          dataset: comparison
+          field: revenue_baseline
+          reducer: first
+          label: Baseline
+        trend:
+          dataset: trend
+          category: purchase_month
+          value: revenue
+        delta: relative
+        favorableDirection: increase
+        missingComparison: show_unavailable
     revenue_kpi_unfavorable:
       type: kpi
       query:
@@ -125,8 +244,22 @@ spec:
         - revenue
       title: Cost proxy versus baseline
       description: Demonstrates a positive delta that is explicitly unfavorable.
+      datasets:
+        comparison:
+          type: aggregate
+          dimensions: []
+          metrics:
+          - revenue_baseline
+          limit: 1
       presentation:
         type: kpi
+        comparison:
+          dataset: comparison
+          field: revenue_baseline
+          reducer: first
+          label: Baseline
+        delta: relative
+        favorableDirection: decrease
     revenue_kpi_bullet:
       type: kpi
       query:
@@ -136,8 +269,32 @@ spec:
         - revenue
       title: Revenue goal
       description: Shows filtered revenue against a governed target.
+      datasets:
+        goal:
+          type: aggregate
+          dimensions: []
+          metrics:
+          - revenue_target
+          limit: 1
       presentation:
         type: kpi
+        mode: bullet
+        goal:
+          dataset: goal
+          field: revenue_target
+          reducer: first
+          label: Target
+        ranges:
+        - maximum: 1000000
+          label: Behind
+          tone: danger
+        - minimum: 1000000
+          maximum: 20000000
+          label: On track
+          tone: success
+        - minimum: 20000000
+          label: Ahead
+          tone: ink
     revenue_kpi_out_of_range:
       type: kpi
       query:
@@ -148,8 +305,25 @@ spec:
       title: Revenue outside the operating band
       description: Demonstrates explicit out-of-range status without hiding the actual
         value.
+      datasets:
+        goal:
+          type: aggregate
+          dimensions: []
+          metrics:
+          - revenue_target
+          limit: 1
       presentation:
         type: kpi
+        mode: progress
+        goal:
+          dataset: goal
+          field: revenue_target
+          reducer: first
+          label: Target
+        ranges:
+        - maximum: 100
+          label: Operating band
+          tone: neutral
     revenue_kpi_missing_comparison:
       type: kpi
       query:
@@ -159,8 +333,23 @@ spec:
         - revenue
       title: Revenue with unavailable comparison
       description: Demonstrates a missing comparison that remains explicit.
+      datasets:
+        comparison:
+          type: aggregate
+          dimensions: []
+          metrics:
+          - missing_revenue
+          limit: 1
       presentation:
         type: kpi
+        comparison:
+          dataset: comparison
+          field: missing_revenue
+          reducer: first
+          label: Prior period
+        delta: absolute
+        favorableDirection: neutral
+        missingComparison: show_unavailable
     aov_kpi:
       type: kpi
       query:
@@ -201,6 +390,25 @@ spec:
       description: Tracks monthly revenue over the selected period.
       presentation:
         type: cartesian
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: purchase_month
+          value: purchase_month
+          label: purchase_month
+        targets:
+        - orders
+        - categories
+        - delivery
+        - orders_table
     orders:
       type: donut
       query:
@@ -216,12 +424,26 @@ spec:
       description: Breaks down orders by lifecycle status.
       presentation:
         type: proportional
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: order_status
+          value: order_status
+          label: order_status
+        targets:
+        - revenue
+        - categories
+        - delivery
+        - orders_table
     orders_by_month_status:
       type: column
       query:
         type: aggregate
         dimensions:
         - purchase_month
+        - order_status
         metrics:
         - order_count
         sort:
@@ -232,6 +454,20 @@ spec:
       description: Compares monthly order volume split by status.
       presentation:
         type: cartesian
+        stacking: normal
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: purchase_month
+          value: purchase_month
+          label: purchase_month
+        targets:
+        - orders
+        - categories
+        - delivery
+        - orders_table
     categories:
       type: bar
       query:
@@ -248,6 +484,19 @@ spec:
       description: Ranks product categories by revenue.
       presentation:
         type: cartesian
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: category
+          value: category
+          label: category
+        targets:
+        - revenue
+        - orders
+        - delivery
+        - orders_table
     delivery:
       type: bar
       query:
@@ -263,29 +512,39 @@ spec:
       description: Compares order volume across delivery-speed buckets.
       presentation:
         type: cartesian
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: delivery_bucket
+          value: delivery_bucket
+          label: delivery_bucket
+        targets:
+        - revenue
+        - orders
+        - categories
+        - orders_table
     state_status_heatmap:
-      type: pivot
+      type: heatmap
       query:
-        type: pivot
-        rows:
+        type: aggregate
+        dimensions:
         - state
-        columns:
         - order_status
         metrics:
         - order_count
       title: State by order status
       description: Shows order status concentration by customer state.
       presentation:
-        type: table
-        rowHeight: 28
-        showHeader: true
-        striped: false
+        type: cartesian
     state_status_column:
       type: column
       query:
         type: aggregate
         dimensions:
         - state
+        - order_status
         metrics:
         - order_count
         sort:
@@ -319,6 +578,7 @@ spec:
       query:
         type: distribution
         field: delivery_days
+        group: delivery_bucket
         quantiles:
         - 0.25
         - 0.5
@@ -334,8 +594,7 @@ spec:
       query:
         type: aggregate
         dimensions:
-        - latitude
-        - longitude
+        - state
         metrics:
         - order_count
         sort:
@@ -346,13 +605,41 @@ spec:
       description: Maps order count by customer state.
       presentation:
         type: geographic
+        theme: auto
+        labelDensity: normal
+        controls:
+          zoom: true
+          reset: true
+          compass: true
+        layers:
+        - id: states
+          kind: choropleth
+          geometryAsset: brazil_states
+          join: state
+          value: order_count
+          tooltip: [state, order_count]
+          color:
+            kind: sequential
+            palette: teal
+            nullColor: "#d8dee4"
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: state
+          value: state
+          label: state
+        targets:
+        - customer_point_map
+        - customer_revenue_heat_map
+        - customer_density_map
     interaction_state_order_map:
       type: map
       query:
         type: aggregate
         dimensions:
-        - latitude
-        - longitude
+        - state
         metrics:
         - order_count
         sort:
@@ -364,6 +651,39 @@ spec:
         edges.
       presentation:
         type: geographic
+        theme: light
+        labelDensity: normal
+        controls:
+          zoom: true
+          reset: true
+          compass: true
+        layers:
+        - id: states
+          kind: choropleth
+          geometryAsset: brazil_states
+          join: state
+          value: order_count
+          tooltip: [state, order_count]
+          color:
+            kind: sequential
+            palette: teal
+            nullColor: "#d8dee4"
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: state
+          value: state
+          label: state
+        targets:
+        - orders_table
+        highlightTargets:
+        - state_status_column
+        - customer_point_map
+        - total_orders
+        noneTargets:
+        - orders
     status_delivery_graph:
       type: graph
       query:
@@ -398,6 +718,19 @@ spec:
       description: Compares monthly revenue and order volume together.
       presentation:
         type: cartesian
+        series:
+        - field: revenue
+          mark: line
+          axis: primary
+        - field: order_count
+          mark: column
+          axis: secondary
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
     revenue_waterfall:
       type: waterfall
       query:
@@ -419,7 +752,7 @@ spec:
       query:
         type: histogram
         field: delivery_days
-        bins: 10
+        bins: 16
         nullPolicy: omit
         approximation: exact
       title: Delivery days histogram
@@ -442,6 +775,7 @@ spec:
       description: Compares order status counts on a radar chart.
       presentation:
         type: polar
+        area: true
     category_status_sunburst:
       type: sunburst
       query:
@@ -459,11 +793,18 @@ spec:
       description: Shows category and status hierarchy by order count.
       presentation:
         type: hierarchy
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 12
+          minimumSpacing: 6
+          tooltipFallback: true
     state_status_tree:
       type: tree
       query:
         type: aggregate
         dimensions:
+        - state
         - order_status
         metrics:
         - order_count
@@ -490,12 +831,19 @@ spec:
       title: Revenue line by month
       presentation:
         type: cartesian
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
     revenue_line_status:
       type: line
       query:
         type: aggregate
         dimensions:
         - purchase_month
+        - order_status
         metrics:
         - revenue
         sort:
@@ -520,12 +868,16 @@ spec:
       title: Stepped revenue line
       presentation:
         type: cartesian
+        step: true
+        showSymbols: false
+        dataZoom: true
     revenue_area_status:
       type: area
       query:
         type: aggregate
         dimensions:
         - purchase_month
+        - order_status
         metrics:
         - revenue
         sort:
@@ -535,6 +887,7 @@ spec:
       title: Stacked revenue area
       presentation:
         type: cartesian
+        stacking: normal
     revenue_area_smooth:
       type: area
       query:
@@ -550,12 +903,16 @@ spec:
       title: Smooth revenue area
       presentation:
         type: cartesian
+        smooth: true
+        showSymbols: false
+        dataZoom: true
     categories_by_status_bar:
       type: bar
       query:
         type: aggregate
         dimensions:
         - category
+        - order_status
         metrics:
         - revenue
         sort:
@@ -565,6 +922,7 @@ spec:
       title: Category revenue by status
       presentation:
         type: cartesian
+        stacking: normal
     orders_by_month_column:
       type: column
       query:
@@ -586,6 +944,7 @@ spec:
         type: aggregate
         dimensions:
         - purchase_month
+        - order_status
         metrics:
         - order_count
         sort:
@@ -595,6 +954,7 @@ spec:
       title: Orders by month and status grouped
       presentation:
         type: cartesian
+        legend: bottom
     status_pie:
       type: pie
       query:
@@ -638,6 +998,13 @@ spec:
       title: Orders by status rose pie
       presentation:
         type: proportional
+        rose: true
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 24
+          minimumSpacing: 6
+          tooltipFallback: true
     category_pie_inside:
       type: pie
       query:
@@ -653,6 +1020,13 @@ spec:
       title: Compact category pie
       presentation:
         type: proportional
+        labelPosition: inside
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 18
+          minimumSpacing: 6
+          tooltipFallback: true
     category_donut:
       type: donut
       query:
@@ -682,6 +1056,9 @@ spec:
       title: Orders donut with center label
       presentation:
         type: proportional
+        centerLabel: Orders
+        innerRadius: 0.54
+        outerRadius: 0.76
     delivery_scatter:
       type: scatter
       query:
@@ -698,7 +1075,19 @@ spec:
         limit: 500
       title: Delivery time vs order revenue
       presentation:
-        type: cartesian
+        type: point
+        identity: [order_id]
+        x: delivery_days
+        y: revenue
+        color: order_status
+        tooltip: [order_id, order_status, delivery_days, revenue]
+        colorScale:
+          kind: categorical
+        overplot:
+          strategy: opacity
+          opacity: 0.58
+          largeMode: automatic
+          largeThreshold: 2000
     delivery_scatter_status:
       type: scatter
       query:
@@ -708,6 +1097,7 @@ spec:
         - category
         metrics:
         - delivery_days
+        - review_score
         - revenue
         sort:
         - field: order_id
@@ -715,23 +1105,53 @@ spec:
         limit: 500
       title: Review, revenue, and delivery bubble chart
       presentation:
-        type: cartesian
+        type: point
+        identity: [order_id]
+        x: review_score
+        y: revenue
+        size: delivery_days
+        color: category
+        tooltip: [order_id, category, review_score, revenue, delivery_days]
+        colorScale:
+          kind: categorical
+        sizeScale:
+          minimumPixels: 7
+          maximumPixels: 34
+        overplot:
+          strategy: opacity
+          opacity: 0.52
     delivery_scatter_labeled:
       type: scatter
       query:
         type: aggregate
         dimensions:
         - order_id
+        - dimension: purchase_date
+          grain: day
+          alias: purchase_day
         metrics:
         - revenue
-        - delivery_days
         sort:
-        - field: order_id
+        - field: purchase_day
           direction: asc
         limit: 30
       title: Labeled revenue by purchase time
       presentation:
-        type: cartesian
+        type: point
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 16
+          minimumSpacing: 6
+          tooltipFallback: true
+        identity: [order_id]
+        x: purchase_day
+        y: revenue
+        label: order_id
+        tooltip: [order_id, purchase_day, revenue]
+        overplot:
+          strategy: show_all
+          largeMode: never
     status_funnel:
       type: funnel
       query:
@@ -774,6 +1194,14 @@ spec:
       title: Left aligned status funnel
       presentation:
         type: proportional
+        align: left
+        sort: ascending
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 20
+          minimumSpacing: 6
+          tooltipFallback: true
     category_treemap:
       type: treemap
       query:
@@ -820,6 +1248,8 @@ spec:
       title: Navigable category and status treemap
       presentation:
         type: hierarchy
+        roam: true
+        breadcrumb: true
     total_orders_gauge:
       type: gauge
       query:
@@ -830,6 +1260,9 @@ spec:
       title: Total orders gauge
       presentation:
         type: polar
+        minimum: 0
+        maximum: 120000
+        target: 100000
     review_gauge:
       type: gauge
       query:
@@ -840,6 +1273,9 @@ spec:
       title: Average review gauge
       presentation:
         type: polar
+        minimum: 0
+        maximum: 5
+        target: 4.5
     review_gauge_thresholds:
       type: gauge
       query:
@@ -850,38 +1286,47 @@ spec:
       title: Review gauge with thresholds
       presentation:
         type: polar
+        minimum: 0
+        maximum: 5
+        target: 4.5
+        progressWidth: 16
+        thresholds:
+        - value: 3
+          tone: danger
+        - value: 4
+          tone: warning
+        - value: 5
+          tone: success
     category_status_heatmap:
-      type: pivot
+      type: heatmap
       query:
-        type: pivot
-        rows:
+        type: aggregate
+        dimensions:
         - category
-        columns:
         - order_status
         metrics:
         - order_count
       title: Category by order status
       presentation:
-        type: table
-        rowHeight: 28
-        showHeader: true
-        striped: false
+        type: cartesian
     category_status_heatmap_labels:
-      type: pivot
+      type: heatmap
       query:
-        type: pivot
-        rows:
+        type: aggregate
+        dimensions:
         - category
-        columns:
         - order_status
         metrics:
         - order_count
       title: Labeled category status heatmap
       presentation:
-        type: table
-        rowHeight: 28
-        showHeader: true
-        striped: false
+        type: cartesian
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 12
+          minimumSpacing: 4
+          tooltipFallback: true
     category_status_flow:
       type: sankey
       query:
@@ -914,6 +1359,8 @@ spec:
       title: Spacious category to status flow
       presentation:
         type: hierarchy
+        nodeGap: 18
+        curveness: 0.32
     category_status_graph:
       type: graph
       query:
@@ -946,13 +1393,15 @@ spec:
       title: Circular category and status network
       presentation:
         type: hierarchy
+        layout: circular
+        curveness: 0.28
+        focus: adjacency
     state_revenue_map:
       type: map
       query:
         type: aggregate
         dimensions:
-        - latitude
-        - longitude
+        - state
         metrics:
         - revenue
         sort:
@@ -962,13 +1411,18 @@ spec:
       title: Revenue by state
       presentation:
         type: geographic
+        layers:
+        - id: states
+          kind: choropleth
+          geometryAsset: brazil_states
+          join: state
+          value: revenue
     state_revenue_map_labeled:
       type: map
       query:
         type: aggregate
         dimensions:
-        - latitude
-        - longitude
+        - state
         metrics:
         - revenue
         sort:
@@ -978,11 +1432,24 @@ spec:
       title: Labeled revenue map
       presentation:
         type: geographic
+        controls:
+          zoom: true
+          reset: true
+          compass: true
+        layers:
+        - id: states
+          kind: choropleth
+          geometryAsset: brazil_states
+          join: state
+          value: revenue
     customer_point_map:
       type: map
       query:
         type: aggregate
         dimensions:
+        - zip_prefix
+        - city
+        - state
         - latitude
         - longitude
         metrics:
@@ -990,17 +1457,63 @@ spec:
         sort:
         - field: order_count
           direction: desc
-        - field: longitude
+        - field: zip_prefix
           direction: asc
       title: Orders by ZIP area
       description: Clusters real Olist ZIP-prefix centroids sized by order volume.
       presentation:
         type: geographic
+        controls:
+          zoom: true
+          reset: true
+          compass: true
+        layers:
+        - id: customers
+          kind: point
+          latitude: latitude
+          longitude: longitude
+          value: order_count
+          label: city
+          tooltip: [zip_prefix, city, state, order_count]
+          size:
+            minimumRadius: 5
+            maximumRadius: 28
+          cluster:
+            enabled: true
+            radius: 48
+            maximumZoom: 5
+            minimumPoints: 2
+            showCount: true
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: zip_prefix
+          value: zip_prefix
+          label: city
+        targets:
+        - state_order_map
+        - customer_revenue_heat_map
+        - customer_density_map
+      - type: spatialSelection
+        gestures: [box, lasso, radius]
+        latitude:
+          source: latitude
+          field: latitude
+        longitude:
+          source: longitude
+          field: longitude
+        targets:
+        - state_order_map
+        - customer_revenue_heat_map
+        - customer_density_map
     customer_revenue_heat_map:
       type: map
       query:
         type: aggregate
         dimensions:
+        - zip_prefix
         - latitude
         - longitude
         metrics:
@@ -1008,17 +1521,33 @@ spec:
         sort:
         - field: revenue
           direction: desc
-        - field: longitude
+        - field: zip_prefix
           direction: asc
       title: Revenue concentration
       description: Renders revenue-weighted heat across real Olist ZIP-prefix centroids.
       presentation:
         type: geographic
+        theme: dark
+        controls:
+          zoom: true
+          reset: true
+          compass: true
+        layers:
+        - id: revenue
+          kind: heat
+          latitude: latitude
+          longitude: longitude
+          value: revenue
+          tooltip: [zip_prefix, revenue]
+          heat:
+            radius: 28
+            intensity: 1.15
     customer_density_map:
       type: map
       query:
         type: aggregate
         dimensions:
+        - zip_prefix
         - latitude
         - longitude
         metrics:
@@ -1026,19 +1555,32 @@ spec:
         sort:
         - field: order_count
           direction: desc
-        - field: longitude
+        - field: zip_prefix
           direction: asc
       title: Customer density
       description: Renders order density across real Olist ZIP-prefix centroids.
       presentation:
         type: geographic
+        controls:
+          zoom: true
+          reset: true
+          compass: true
+        layers:
+        - id: customers
+          kind: density
+          latitude: latitude
+          longitude: longitude
+          value: order_count
+          tooltip: [zip_prefix, order_count]
+          heat:
+            radius: 22
+            intensity: 1.35
     state_reference_map:
       type: map
       query:
         type: aggregate
         dimensions:
-        - latitude
-        - longitude
+        - state
         metrics:
         - order_count
         limit: 27
@@ -1046,28 +1588,67 @@ spec:
       description: Renders an immutable reference polygon asset without a data join.
       presentation:
         type: geographic
+        basemap: blank
+        layers:
+        - id: state_boundaries
+          kind: reference
+          geometryAsset: brazil_states
+          stroke:
+            color: "#57606a"
+            width: 1.5
+            opacity: 1
+          opacity: 0.12
     million_point_map:
       type: map
       query:
         type: aggregate
         dimensions:
+        - point_id
+        - city
+        - state
         - latitude
         - longitude
         metrics:
         - fixture_points
         sort:
-        - field: latitude
+        - field: point_id
           direction: asc
       title: One million governed locations
       description: Exercises viewport aggregation over exactly one million deterministic
         points while rendering at most 5,000 features.
       presentation:
         type: geographic
+        controls:
+          zoom: true
+          reset: true
+          compass: true
+        camera:
+          mode: fit_data
+          padding: 36
+          minimumZoom: 2
+          maximumZoom: 14
+        layers:
+        - id: fixture
+          kind: point
+          latitude: latitude
+          longitude: longitude
+          value: fixture_points
+          label: city
+          tooltip: [city, state, fixture_points]
+          size:
+            minimumRadius: 3
+            maximumRadius: 16
+          color:
+            kind: sequential
+            palette: blue
     customer_path_map:
       type: map
       query:
         type: aggregate
         dimensions:
+        - route_id
+        - point_order
+        - route_label
         - latitude
         - longitude
         metrics:
@@ -1075,9 +1656,9 @@ spec:
         sort:
         - field: route_revenue
           direction: desc
-        - field: latitude
+        - field: route_id
           direction: asc
-        - field: longitude
+        - field: point_order
           direction: asc
         limit: 200
       title: Highest-value delivery routes
@@ -1085,6 +1666,28 @@ spec:
         real Olist deliveries.
       presentation:
         type: geographic
+        controls:
+          zoom: true
+          reset: true
+          compass: true
+        layers:
+        - id: delivery_routes
+          kind: path
+          latitude: latitude
+          longitude: longitude
+          path: route_id
+          order: point_order
+          value: route_revenue
+          label: route_label
+          tooltip: [route_label, route_revenue]
+          stroke:
+            color: "#0969da"
+            width: 3
+            opacity: 0.9
+          line:
+            width: 3
+            curvature: 0
+          opacity: 0.9
     delivery_candlestick:
       type: candlestick
       query:
@@ -1121,11 +1724,13 @@ spec:
       title: Revenue OHLC by month
       presentation:
         type: cartesian
+        dataZoom: true
     review_distribution:
       type: boxplot
       query:
         type: distribution
         field: review_score
+        group: order_status
         quantiles:
         - 0.25
         - 0.5
@@ -1140,15 +1745,18 @@ spec:
       query:
         type: distribution
         field: revenue
+        group: category
         quantiles:
         - 0.25
         - 0.5
         - 0.75
         outliers: include
         approximation: exact
+        limit: 12
       title: Revenue distribution
       presentation:
         type: cartesian
+        dataZoom: true
     review_delivery_combo:
       type: combo
       query:
@@ -1164,6 +1772,13 @@ spec:
       title: Revenue and delivery by status
       presentation:
         type: cartesian
+        series:
+        - field: revenue
+          mark: line
+          axis: primary
+        - field: delivery_days
+          mark: column
+          axis: primary
     revenue_orders_dual_axis_combo:
       type: combo
       query:
@@ -1180,6 +1795,13 @@ spec:
       title: Revenue and orders dual-axis combo
       presentation:
         type: cartesian
+        series:
+        - field: revenue
+          mark: column
+          axis: primary
+        - field: order_count
+          mark: line
+          axis: secondary
     orders_waterfall:
       type: waterfall
       query:
@@ -1210,12 +1832,19 @@ spec:
       title: Labeled revenue waterfall
       presentation:
         type: cartesian
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 18
+          minimumSpacing: 6
+          tooltipFallback: true
+        dataZoom: true
     revenue_histogram:
       type: histogram
       query:
         type: histogram
         field: revenue
-        bins: 10
+        bins: 18
         nullPolicy: omit
         approximation: exact
       title: Revenue histogram
@@ -1232,6 +1861,12 @@ spec:
       title: Review score histogram
       presentation:
         type: cartesian
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 12
+          minimumSpacing: 6
+          tooltipFallback: true
     delivery_radar:
       type: radar
       query:
@@ -1261,6 +1896,7 @@ spec:
       title: State order radar
       presentation:
         type: polar
+        area: false
     category_status_tree:
       type: tree
       query:
@@ -1283,6 +1919,8 @@ spec:
         type: aggregate
         dimensions:
         - category
+        - state
+        - order_status
         metrics:
         - order_count
         sort:
@@ -1292,11 +1930,20 @@ spec:
       title: Category, state, and status tree
       presentation:
         type: hierarchy
+        orientation: vertical
+        initialDepth: 2
+        labels:
+          density: automatic
+          priority: [selected, anomaly, threshold]
+          maxCharacters: 16
+          minimumSpacing: 6
+          tooltipFallback: true
     state_status_sunburst:
       type: sunburst
       query:
         type: aggregate
         dimensions:
+        - state
         - order_status
         metrics:
         - order_count
@@ -1314,6 +1961,7 @@ spec:
         dimensions:
         - category
         - state
+        - order_status
         metrics:
         - order_count
         sort:
@@ -1323,6 +1971,8 @@ spec:
       title: Category, state, and status sunburst
       presentation:
         type: hierarchy
+        initialDepth: 2
+        roam: true
     orders_table:
       type: table
       query:
@@ -1336,14 +1986,33 @@ spec:
         - revenue
         - review_score
         - delivery_days
+        sort:
+        - field: purchase_date
+          direction: desc
       title: Orders
-      description: Detailed order records with status, geography, revenue, review,
+      description: Detailed order records with status, category, revenue, review,
         and delivery columns.
       presentation:
         type: table
         rowHeight: 32
         showHeader: true
         striped: false
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: false
+        mappings:
+        - field: order_id
+          value: order_id
+          label: order_id
+        targets:
+        - total_orders
+        - revenue_kpi
+        - review_kpi
+        - revenue
+        - orders
+        - delivery
+        - categories
     orders_compact:
       type: table
       query:
@@ -1354,6 +2023,9 @@ spec:
         - status
         - revenue
         - review_score
+        sort:
+        - field: revenue
+          direction: desc
       title: Orders compact
       description: Compact order table for dense scanning.
       presentation:
@@ -1372,13 +2044,16 @@ spec:
         - category
         - revenue
         - delivery_days
+        sort:
+        - field: purchase_date
+          direction: desc
       title: Orders spacious
       description: Spacious order table focused on date, category, revenue, and delivery.
       presentation:
         type: table
         rowHeight: 32
         showHeader: true
-        striped: false
+        striped: true
     orders_full_grid:
       type: table
       query:
@@ -1390,13 +2065,16 @@ spec:
         - category
         - revenue
         - delivery_days
+        sort:
+        - field: revenue
+          direction: desc
       title: Orders full grid
       description: Full-grid order table with visible row and column borders.
       presentation:
         type: table
         rowHeight: 32
         showHeader: true
-        striped: false
+        striped: true
     orders_conditional:
       type: table
       query:
@@ -1408,15 +2086,66 @@ spec:
         - revenue
         - review_score
         - delivery_days
+        sort:
+        - field: revenue
+          direction: desc
       title: Orders conditional formatting
       description: Order table demonstrating badges, data bars, and threshold formatting.
       presentation:
         type: table
         rowHeight: 32
         showHeader: true
-        striped: false
+        striped: true
+        conditionalFormatting:
+        - id: status-color
+          target: cell_foreground
+          field: status
+          rule:
+            kind: field
+            source: status
+            values:
+              delivered: {color: success, icon: circle}
+              shipped: {color: accent, icon: arrow_up}
+              unavailable: {color: warning, icon: warning}
+              canceled: {color: danger, icon: warning}
+            nullStyle: {color: neutral}
+            defaultStyle: {color: ink, icon: square}
+        - id: revenue-gradient
+          target: cell_background
+          field: revenue
+          rule:
+            kind: gradient
+            minimum: 0
+            maximum: 500
+            low: {color: neutral}
+            high: {color: accent}
+            nullStyle: {color: neutral}
+        - id: review-thresholds
+          target: cell_foreground
+          field: review_score
+          rule:
+            kind: rules
+            rules:
+            - operator: greater_or_equal
+              value: 4
+              style: {color: success, icon: arrow_up}
+            - operator: less_than
+              value: 3
+              style: {color: danger, icon: arrow_down}
+            nullStyle: {color: neutral}
+            defaultStyle: {color: warning, icon: diamond}
+        - id: delivery-gradient
+          target: cell_background
+          field: delivery_days
+          rule:
+            kind: gradient
+            minimum: 0
+            maximum: 30
+            low: {color: neutral}
+            high: {color: danger}
+            nullStyle: {color: neutral}
     state_status_matrix:
-      type: pivot
+      type: matrix
       query:
         type: pivot
         rows:
@@ -1426,6 +2155,9 @@ spec:
         metrics:
         - order_count
         - revenue
+        sort:
+        - field: state
+          direction: asc
       title: State status matrix
       description: Matrix of orders and revenue by customer state and order status.
       presentation:
@@ -1443,6 +2175,9 @@ spec:
         - order_status
         metrics:
         - order_count
+        sort:
+        - field: category
+          direction: asc
       title: Category status pivot
       description: Pivot of order count by product category and order status.
       presentation:
@@ -1451,7 +2186,7 @@ spec:
         showHeader: true
         striped: false
     state_status_matrix_formatted:
-      type: pivot
+      type: matrix
       query:
         type: pivot
         rows:
@@ -1462,13 +2197,16 @@ spec:
         metrics:
         - order_count
         - revenue
+        sort:
+        - field: state
+          direction: asc
       title: State/category matrix formatted
       description: Formatted matrix combining geography, category, status, and metrics.
       presentation:
         type: table
         rowHeight: 32
         showHeader: true
-        striped: false
+        striped: true
     category_status_pivot_heat:
       type: pivot
       query:
@@ -1479,13 +2217,16 @@ spec:
         - order_status
         metrics:
         - order_count
+        sort:
+        - field: category
+          direction: asc
       title: Category status pivot heat
       description: Heat-formatted pivot of category and status performance.
       presentation:
         type: table
         rowHeight: 32
         showHeader: true
-        striped: false
+        striped: true
   pages:
   - id: overview
     title: Overview

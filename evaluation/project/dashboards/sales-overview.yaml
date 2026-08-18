@@ -16,6 +16,17 @@ spec:
     dimension: state
     control:
       type: multiSelect
+      options:
+        type: static
+        values:
+        - value: {type: string, value: SP}
+          label: SP
+        - value: {type: string, value: RJ}
+          label: RJ
+        - value: {type: string, value: MG}
+          label: MG
+        - value: {type: string, value: PR}
+          label: PR
     operators:
     - in
     - notIn

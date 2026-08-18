@@ -17,6 +17,9 @@ visuals:
     type: gauge
     presentation:
       type: polar
+      minimum: 0
+      maximum: 5
+      target: 4.5
     query:
       type: aggregate
       dimensions: []
@@ -37,9 +40,44 @@ visuals:
     type: gauge
     presentation:
       type: polar
+      minimum: 0
+      maximum: 120000
+      target: 100000
     query:
       type: aggregate
       dimensions: []
       metrics:
       - order_count
+```
+
+## Threshold bands
+
+Add ordered `thresholds` to give score ranges semantic tones;
+`progressWidth` controls the arc weight.
+
+{{< visual id="review_gauge_thresholds" >}}
+
+```yaml visual-example=review_gauge_thresholds
+visuals:
+  review_gauge_thresholds:
+    title: Review gauge with thresholds
+    type: gauge
+    presentation:
+      type: polar
+      minimum: 0
+      maximum: 5
+      target: 4.5
+      progressWidth: 16
+      thresholds:
+      - value: 3
+        tone: danger
+      - value: 4
+        tone: warning
+      - value: 5
+        tone: success
+    query:
+      type: aggregate
+      dimensions: []
+      metrics:
+      - review_score
 ```

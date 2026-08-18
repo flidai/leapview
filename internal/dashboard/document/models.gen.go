@@ -32,10 +32,12 @@ type CartesianDashboardPresentation struct {
 	Orientation   *DashboardOrientation                      `json:"orientation,omitempty" yaml:"orientation,omitempty"`
 	ShowSymbols   *bool                                      `json:"showSymbols,omitempty" yaml:"showSymbols,omitempty"`
 	Smooth        *bool                                      `json:"smooth,omitempty" yaml:"smooth,omitempty"`
+	Step          *bool                                      `json:"step,omitempty" yaml:"step,omitempty"`
 	DataZoom      *bool                                      `json:"dataZoom,omitempty" yaml:"dataZoom,omitempty"`
 	SymbolSize    *float64                                   `json:"symbolSize,omitempty" yaml:"symbolSize,omitempty"`
 	LabelPosition *DashboardLabelPosition                    `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
 	DisplayUnits  *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Series        *[]DashboardComboSeries                    `json:"series,omitempty" yaml:"series,omitempty"`
 }
 
 type ComparisonDashboardFilterExpression struct {
@@ -108,9 +110,294 @@ type DashboardCalculationLookup struct {
 	Value string `json:"value" yaml:"value"`
 }
 
+type DashboardChoroplethGeographicLayer struct {
+	DashboardGeographicLayerBase
+	Kind          string                  `json:"kind" yaml:"kind"`
+	GeometryAsset string                  `json:"geometryAsset" yaml:"geometryAsset"`
+	Join          string                  `json:"join" yaml:"join"`
+	Value         *string                 `json:"value,omitempty" yaml:"value,omitempty"`
+	Category      *string                 `json:"category,omitempty" yaml:"category,omitempty"`
+	Color         *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
+	Stroke        *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
+	Opacity       *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
+}
+
+type DashboardComboSeries struct {
+	Field string                   `json:"field" yaml:"field"`
+	Mark  DashboardComboSeriesMark `json:"mark" yaml:"mark"`
+	Axis  DashboardComboSeriesAxis `json:"axis" yaml:"axis"`
+}
+
+type DashboardComboSeriesAxis string
+
+const (
+	DashboardComboSeriesAxisPrimary   DashboardComboSeriesAxis = "primary"
+	DashboardComboSeriesAxisSecondary DashboardComboSeriesAxis = "secondary"
+)
+
+type DashboardComboSeriesMark string
+
+const (
+	DashboardComboSeriesMarkLine   DashboardComboSeriesMark = "line"
+	DashboardComboSeriesMarkArea   DashboardComboSeriesMark = "area"
+	DashboardComboSeriesMarkBar    DashboardComboSeriesMark = "bar"
+	DashboardComboSeriesMarkColumn DashboardComboSeriesMark = "column"
+)
+
+type DashboardConditionalFormat struct {
+	ID     string                                         `json:"id" yaml:"id"`
+	Target visualizationir.VisualizationConditionalTarget `json:"target" yaml:"target"`
+	Field  string                                         `json:"field" yaml:"field"`
+	Rule   DashboardConditionalRule                       `json:"rule" yaml:"rule"`
+}
+
+type DashboardConditionalRuleVariant interface {
+	isDashboardConditionalRuleVariant()
+}
+
+type DashboardConditionalRule struct {
+	Value DashboardConditionalRuleVariant
+}
+
+func (*DashboardFieldConditionalRule) isDashboardConditionalRuleVariant()    {}
+func (*DashboardGradientConditionalRule) isDashboardConditionalRuleVariant() {}
+func (*DashboardRulesConditionalRule) isDashboardConditionalRuleVariant()    {}
+
+func (value DashboardConditionalRule) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *DashboardFieldConditionalRule:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DashboardGradientConditionalRule:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DashboardRulesConditionalRule:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("DashboardConditionalRule variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported DashboardConditionalRule variant %T", variant)
+	}
+}
+
+func (value *DashboardConditionalRule) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal DashboardConditionalRule into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode DashboardConditionalRule object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"kind"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode DashboardConditionalRule discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("DashboardConditionalRule discriminator kind is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "field":
+		if _, ok := fields["defaultStyle"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property defaultStyle is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["nullStyle"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property nullStyle is missing", tag.Value)
+		}
+		if _, ok := fields["source"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property source is missing", tag.Value)
+		}
+		if _, ok := fields["values"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property values is missing", tag.Value)
+		}
+		var variant DashboardFieldConditionalRule
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "gradient":
+		if _, ok := fields["high"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property high is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["low"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property low is missing", tag.Value)
+		}
+		if _, ok := fields["maximum"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property maximum is missing", tag.Value)
+		}
+		if _, ok := fields["minimum"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property minimum is missing", tag.Value)
+		}
+		if _, ok := fields["nullStyle"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property nullStyle is missing", tag.Value)
+		}
+		var variant DashboardGradientConditionalRule
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "rules":
+		if _, ok := fields["defaultStyle"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property defaultStyle is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["nullStyle"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property nullStyle is missing", tag.Value)
+		}
+		if _, ok := fields["rules"]; !ok {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: required property rules is missing", tag.Value)
+		}
+		var variant DashboardRulesConditionalRule
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardConditionalRule variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown DashboardConditionalRule discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type DashboardConditionalRuleVisitor interface {
+	VisitDashboardFieldConditionalRule(*DashboardFieldConditionalRule) error
+	VisitDashboardGradientConditionalRule(*DashboardGradientConditionalRule) error
+	VisitDashboardRulesConditionalRule(*DashboardRulesConditionalRule) error
+}
+
+func (value *DashboardConditionalRule) Visit(visitor DashboardConditionalRuleVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil DashboardConditionalRule")
+	}
+	if visitor == nil {
+		return fmt.Errorf("DashboardConditionalRule visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *DashboardFieldConditionalRule:
+		if variant == nil {
+			return fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return visitor.VisitDashboardFieldConditionalRule(variant)
+	case *DashboardGradientConditionalRule:
+		if variant == nil {
+			return fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return visitor.VisitDashboardGradientConditionalRule(variant)
+	case *DashboardRulesConditionalRule:
+		if variant == nil {
+			return fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return visitor.VisitDashboardRulesConditionalRule(variant)
+	case nil:
+		return fmt.Errorf("DashboardConditionalRule variant is required")
+	default:
+		return fmt.Errorf("unsupported DashboardConditionalRule variant %T", variant)
+	}
+}
+
+func (value *DashboardConditionalRule) Kind() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil DashboardConditionalRule")
+	}
+	switch variant := value.Value.(type) {
+	case *DashboardFieldConditionalRule:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return "field", nil
+	case *DashboardGradientConditionalRule:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return "gradient", nil
+	case *DashboardRulesConditionalRule:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return "rules", nil
+	case nil:
+		return "", fmt.Errorf("DashboardConditionalRule variant is required")
+	default:
+		return "", fmt.Errorf("unsupported DashboardConditionalRule variant %T", variant)
+	}
+}
+
+func (value *DashboardConditionalRule) Base() (*DashboardConditionalRuleBase, error) {
+	if value == nil {
+		return nil, fmt.Errorf("cannot inspect nil DashboardConditionalRule")
+	}
+	switch variant := value.Value.(type) {
+	case *DashboardFieldConditionalRule:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return &variant.DashboardConditionalRuleBase, nil
+	case *DashboardGradientConditionalRule:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return &variant.DashboardConditionalRuleBase, nil
+	case *DashboardRulesConditionalRule:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardConditionalRule variant is nil")
+		}
+		return &variant.DashboardConditionalRuleBase, nil
+	case nil:
+		return nil, fmt.Errorf("DashboardConditionalRule variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported DashboardConditionalRule variant %T", variant)
+	}
+}
+
+type DashboardConditionalRuleBase struct {
+	Kind string `json:"kind" yaml:"kind"`
+}
+
+type DashboardConditionalStyle struct {
+	Color *visualizationir.VisualizationColorIntent `json:"color,omitempty" yaml:"color,omitempty"`
+	Icon  *visualizationir.VisualizationIconIntent  `json:"icon,omitempty" yaml:"icon,omitempty"`
+}
+
+type DashboardConditionalThreshold struct {
+	Operator visualizationir.VisualizationComparisonOperator `json:"operator" yaml:"operator"`
+	Value    float64                                         `json:"value" yaml:"value"`
+	Style    DashboardConditionalStyle                       `json:"style" yaml:"style"`
+}
+
 type DashboardDataBudget struct {
 	MaxRows              int32                                      `json:"maxRows" yaml:"maxRows"`
 	RequiredCompleteness *visualizationir.VisualizationCompleteness `json:"requiredCompleteness,omitempty" yaml:"requiredCompleteness,omitempty"`
+}
+
+type DashboardDensityGeographicLayer struct {
+	DashboardGeographicLayerBase
+	Kind      string                  `json:"kind" yaml:"kind"`
+	Latitude  string                  `json:"latitude" yaml:"latitude"`
+	Longitude string                  `json:"longitude" yaml:"longitude"`
+	Value     *string                 `json:"value,omitempty" yaml:"value,omitempty"`
+	Color     *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
+	Heat      *DashboardMapHeatStyle  `json:"heat,omitempty" yaml:"heat,omitempty"`
+	Opacity   *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
 }
 
 type DashboardDimensionReference struct {
@@ -202,6 +489,15 @@ type DashboardDocument struct {
 	Kind       DashboardResourceKind `json:"kind" yaml:"kind"`
 	Metadata   DashboardMetadata     `json:"metadata" yaml:"metadata"`
 	Spec       DashboardSpec         `json:"spec" yaml:"spec"`
+}
+
+type DashboardFieldConditionalRule struct {
+	DashboardConditionalRuleBase
+	Kind         string                               `json:"kind" yaml:"kind"`
+	Source       string                               `json:"source" yaml:"source"`
+	Values       map[string]DashboardConditionalStyle `json:"values" yaml:"values"`
+	NullStyle    DashboardConditionalStyle            `json:"nullStyle" yaml:"nullStyle"`
+	DefaultStyle DashboardConditionalStyle            `json:"defaultStyle" yaml:"defaultStyle"`
 }
 
 type DashboardFilter struct {
@@ -1293,6 +1589,373 @@ type DashboardFilterValueBase struct {
 	Type string `json:"type" yaml:"type"`
 }
 
+type DashboardGeographicLayerVariant interface {
+	isDashboardGeographicLayerVariant()
+}
+
+type DashboardGeographicLayer struct {
+	Value DashboardGeographicLayerVariant
+}
+
+func (*DashboardChoroplethGeographicLayer) isDashboardGeographicLayerVariant() {}
+func (*DashboardDensityGeographicLayer) isDashboardGeographicLayerVariant()    {}
+func (*DashboardHeatGeographicLayer) isDashboardGeographicLayerVariant()       {}
+func (*DashboardPathGeographicLayer) isDashboardGeographicLayerVariant()       {}
+func (*DashboardPointGeographicLayer) isDashboardGeographicLayerVariant()      {}
+func (*DashboardReferenceGeographicLayer) isDashboardGeographicLayerVariant()  {}
+
+func (value DashboardGeographicLayer) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *DashboardChoroplethGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DashboardDensityGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DashboardHeatGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DashboardPathGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DashboardPointGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DashboardReferenceGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("DashboardGeographicLayer variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported DashboardGeographicLayer variant %T", variant)
+	}
+}
+
+func (value *DashboardGeographicLayer) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal DashboardGeographicLayer into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode DashboardGeographicLayer object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"kind"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode DashboardGeographicLayer discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("DashboardGeographicLayer discriminator kind is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "choropleth":
+		if _, ok := fields["geometryAsset"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property geometryAsset is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["join"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property join is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property kind is missing", tag.Value)
+		}
+		var variant DashboardChoroplethGeographicLayer
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "density":
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["latitude"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property latitude is missing", tag.Value)
+		}
+		if _, ok := fields["longitude"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property longitude is missing", tag.Value)
+		}
+		var variant DashboardDensityGeographicLayer
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "heat":
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["latitude"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property latitude is missing", tag.Value)
+		}
+		if _, ok := fields["longitude"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property longitude is missing", tag.Value)
+		}
+		var variant DashboardHeatGeographicLayer
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "path":
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["latitude"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property latitude is missing", tag.Value)
+		}
+		if _, ok := fields["longitude"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property longitude is missing", tag.Value)
+		}
+		if _, ok := fields["order"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property order is missing", tag.Value)
+		}
+		if _, ok := fields["path"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property path is missing", tag.Value)
+		}
+		var variant DashboardPathGeographicLayer
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "point":
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["latitude"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property latitude is missing", tag.Value)
+		}
+		if _, ok := fields["longitude"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property longitude is missing", tag.Value)
+		}
+		var variant DashboardPointGeographicLayer
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "reference":
+		if _, ok := fields["geometryAsset"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property geometryAsset is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: required property kind is missing", tag.Value)
+		}
+		var variant DashboardReferenceGeographicLayer
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardGeographicLayer variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown DashboardGeographicLayer discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type DashboardGeographicLayerVisitor interface {
+	VisitDashboardChoroplethGeographicLayer(*DashboardChoroplethGeographicLayer) error
+	VisitDashboardDensityGeographicLayer(*DashboardDensityGeographicLayer) error
+	VisitDashboardHeatGeographicLayer(*DashboardHeatGeographicLayer) error
+	VisitDashboardPathGeographicLayer(*DashboardPathGeographicLayer) error
+	VisitDashboardPointGeographicLayer(*DashboardPointGeographicLayer) error
+	VisitDashboardReferenceGeographicLayer(*DashboardReferenceGeographicLayer) error
+}
+
+func (value *DashboardGeographicLayer) Visit(visitor DashboardGeographicLayerVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil DashboardGeographicLayer")
+	}
+	if visitor == nil {
+		return fmt.Errorf("DashboardGeographicLayer visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *DashboardChoroplethGeographicLayer:
+		if variant == nil {
+			return fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return visitor.VisitDashboardChoroplethGeographicLayer(variant)
+	case *DashboardDensityGeographicLayer:
+		if variant == nil {
+			return fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return visitor.VisitDashboardDensityGeographicLayer(variant)
+	case *DashboardHeatGeographicLayer:
+		if variant == nil {
+			return fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return visitor.VisitDashboardHeatGeographicLayer(variant)
+	case *DashboardPathGeographicLayer:
+		if variant == nil {
+			return fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return visitor.VisitDashboardPathGeographicLayer(variant)
+	case *DashboardPointGeographicLayer:
+		if variant == nil {
+			return fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return visitor.VisitDashboardPointGeographicLayer(variant)
+	case *DashboardReferenceGeographicLayer:
+		if variant == nil {
+			return fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return visitor.VisitDashboardReferenceGeographicLayer(variant)
+	case nil:
+		return fmt.Errorf("DashboardGeographicLayer variant is required")
+	default:
+		return fmt.Errorf("unsupported DashboardGeographicLayer variant %T", variant)
+	}
+}
+
+func (value *DashboardGeographicLayer) Kind() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil DashboardGeographicLayer")
+	}
+	switch variant := value.Value.(type) {
+	case *DashboardChoroplethGeographicLayer:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return "choropleth", nil
+	case *DashboardDensityGeographicLayer:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return "density", nil
+	case *DashboardHeatGeographicLayer:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return "heat", nil
+	case *DashboardPathGeographicLayer:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return "path", nil
+	case *DashboardPointGeographicLayer:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return "point", nil
+	case *DashboardReferenceGeographicLayer:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return "reference", nil
+	case nil:
+		return "", fmt.Errorf("DashboardGeographicLayer variant is required")
+	default:
+		return "", fmt.Errorf("unsupported DashboardGeographicLayer variant %T", variant)
+	}
+}
+
+func (value *DashboardGeographicLayer) Base() (*DashboardGeographicLayerBase, error) {
+	if value == nil {
+		return nil, fmt.Errorf("cannot inspect nil DashboardGeographicLayer")
+	}
+	switch variant := value.Value.(type) {
+	case *DashboardChoroplethGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return &variant.DashboardGeographicLayerBase, nil
+	case *DashboardDensityGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return &variant.DashboardGeographicLayerBase, nil
+	case *DashboardHeatGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return &variant.DashboardGeographicLayerBase, nil
+	case *DashboardPathGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return &variant.DashboardGeographicLayerBase, nil
+	case *DashboardPointGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return &variant.DashboardGeographicLayerBase, nil
+	case *DashboardReferenceGeographicLayer:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardGeographicLayer variant is nil")
+		}
+		return &variant.DashboardGeographicLayerBase, nil
+	case nil:
+		return nil, fmt.Errorf("DashboardGeographicLayer variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported DashboardGeographicLayer variant %T", variant)
+	}
+}
+
+type DashboardGeographicLayerBase struct {
+	DashboardGeographicLayerOptions
+	Kind string `json:"kind" yaml:"kind"`
+}
+
+type DashboardGeographicLayerOptions struct {
+	ID          string                                         `json:"id" yaml:"id"`
+	Label       *string                                        `json:"label,omitempty" yaml:"label,omitempty"`
+	Tooltip     *[]string                                      `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
+	Position    *visualizationir.VisualizationMapLayerPosition `json:"position,omitempty" yaml:"position,omitempty"`
+	MinimumZoom *float64                                       `json:"minimumZoom,omitempty" yaml:"minimumZoom,omitempty"`
+	MaximumZoom *float64                                       `json:"maximumZoom,omitempty" yaml:"maximumZoom,omitempty"`
+}
+
+type DashboardGradientConditionalRule struct {
+	DashboardConditionalRuleBase
+	Kind      string                    `json:"kind" yaml:"kind"`
+	Minimum   float64                   `json:"minimum" yaml:"minimum"`
+	Maximum   float64                   `json:"maximum" yaml:"maximum"`
+	Low       DashboardConditionalStyle `json:"low" yaml:"low"`
+	High      DashboardConditionalStyle `json:"high" yaml:"high"`
+	NullStyle DashboardConditionalStyle `json:"nullStyle" yaml:"nullStyle"`
+}
+
+type DashboardHeatGeographicLayer struct {
+	DashboardGeographicLayerBase
+	Kind      string                  `json:"kind" yaml:"kind"`
+	Latitude  string                  `json:"latitude" yaml:"latitude"`
+	Longitude string                  `json:"longitude" yaml:"longitude"`
+	Value     *string                 `json:"value,omitempty" yaml:"value,omitempty"`
+	Color     *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
+	Heat      *DashboardMapHeatStyle  `json:"heat,omitempty" yaml:"heat,omitempty"`
+	Opacity   *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
+}
+
 type DashboardHistogramApproximation string
 
 const (
@@ -1501,6 +2164,19 @@ type DashboardInteractionMapping struct {
 	Label   *string             `json:"label,omitempty" yaml:"label,omitempty"`
 }
 
+type DashboardKPITrendBinding struct {
+	Dataset  string `json:"dataset" yaml:"dataset"`
+	Category string `json:"category" yaml:"category"`
+	Value    string `json:"value" yaml:"value"`
+}
+
+type DashboardKPIValueBinding struct {
+	Dataset string                                         `json:"dataset" yaml:"dataset"`
+	Field   string                                         `json:"field" yaml:"field"`
+	Reducer *visualizationir.VisualizationReferenceReducer `json:"reducer,omitempty" yaml:"reducer,omitempty"`
+	Label   string                                         `json:"label" yaml:"label"`
+}
+
 type DashboardLabelDensity string
 
 const (
@@ -1558,6 +2234,62 @@ const (
 	DashboardLegendPositionBottom DashboardLegendPosition = "bottom"
 	DashboardLegendPositionLeft   DashboardLegendPosition = "left"
 )
+
+type DashboardMapCamera struct {
+	Mode        *visualizationir.VisualizationMapCameraMode `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Center      *[]float64                                  `json:"center,omitempty" yaml:"center,omitempty"`
+	Zoom        *float64                                    `json:"zoom,omitempty" yaml:"zoom,omitempty"`
+	Padding     *int32                                      `json:"padding,omitempty" yaml:"padding,omitempty"`
+	MinimumZoom *float64                                    `json:"minimumZoom,omitempty" yaml:"minimumZoom,omitempty"`
+	MaximumZoom *float64                                    `json:"maximumZoom,omitempty" yaml:"maximumZoom,omitempty"`
+}
+
+type DashboardMapCluster struct {
+	Enabled       *bool  `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Radius        *int32 `json:"radius,omitempty" yaml:"radius,omitempty"`
+	MaximumZoom   *int32 `json:"maximumZoom,omitempty" yaml:"maximumZoom,omitempty"`
+	MinimumPoints *int32 `json:"minimumPoints,omitempty" yaml:"minimumPoints,omitempty"`
+	ShowCount     *bool  `json:"showCount,omitempty" yaml:"showCount,omitempty"`
+}
+
+type DashboardMapColorScale struct {
+	Kind           *visualizationir.VisualizationMapColorScaleKind `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Palette        *string                                         `json:"palette,omitempty" yaml:"palette,omitempty"`
+	Reverse        *bool                                           `json:"reverse,omitempty" yaml:"reverse,omitempty"`
+	DomainMinimum  *float64                                        `json:"domainMinimum,omitempty" yaml:"domainMinimum,omitempty"`
+	DomainMidpoint *float64                                        `json:"domainMidpoint,omitempty" yaml:"domainMidpoint,omitempty"`
+	DomainMaximum  *float64                                        `json:"domainMaximum,omitempty" yaml:"domainMaximum,omitempty"`
+	NullColor      *string                                         `json:"nullColor,omitempty" yaml:"nullColor,omitempty"`
+}
+
+type DashboardMapControls struct {
+	Zoom    *bool `json:"zoom,omitempty" yaml:"zoom,omitempty"`
+	Reset   *bool `json:"reset,omitempty" yaml:"reset,omitempty"`
+	Compass *bool `json:"compass,omitempty" yaml:"compass,omitempty"`
+}
+
+type DashboardMapHeatStyle struct {
+	Radius    *float64 `json:"radius,omitempty" yaml:"radius,omitempty"`
+	Intensity *float64 `json:"intensity,omitempty" yaml:"intensity,omitempty"`
+}
+
+type DashboardMapLineStyle struct {
+	Width     *float64 `json:"width,omitempty" yaml:"width,omitempty"`
+	Curvature *float64 `json:"curvature,omitempty" yaml:"curvature,omitempty"`
+}
+
+type DashboardMapSizeScale struct {
+	MinimumRadius *float64 `json:"minimumRadius,omitempty" yaml:"minimumRadius,omitempty"`
+	MaximumRadius *float64 `json:"maximumRadius,omitempty" yaml:"maximumRadius,omitempty"`
+	DomainMinimum *float64 `json:"domainMinimum,omitempty" yaml:"domainMinimum,omitempty"`
+	DomainMaximum *float64 `json:"domainMaximum,omitempty" yaml:"domainMaximum,omitempty"`
+}
+
+type DashboardMapStroke struct {
+	Color   *string  `json:"color,omitempty" yaml:"color,omitempty"`
+	Width   *float64 `json:"width,omitempty" yaml:"width,omitempty"`
+	Opacity *float64 `json:"opacity,omitempty" yaml:"opacity,omitempty"`
+}
 
 type DashboardMetadata struct {
 	ID            string    `json:"id" yaml:"id"`
@@ -1875,6 +2607,21 @@ type DashboardPageComponentBase struct {
 	Placement DashboardPlacement `json:"placement" yaml:"placement"`
 }
 
+type DashboardPathGeographicLayer struct {
+	DashboardGeographicLayerBase
+	Kind      string                  `json:"kind" yaml:"kind"`
+	Latitude  string                  `json:"latitude" yaml:"latitude"`
+	Longitude string                  `json:"longitude" yaml:"longitude"`
+	Path      string                  `json:"path" yaml:"path"`
+	Order     string                  `json:"order" yaml:"order"`
+	Value     *string                 `json:"value,omitempty" yaml:"value,omitempty"`
+	Category  *string                 `json:"category,omitempty" yaml:"category,omitempty"`
+	Color     *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
+	Stroke    *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
+	Line      *DashboardMapLineStyle  `json:"line,omitempty" yaml:"line,omitempty"`
+	Opacity   *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
+}
+
 type DashboardPivotTotals struct {
 	Rows    *bool `json:"rows,omitempty" yaml:"rows,omitempty"`
 	Columns *bool `json:"columns,omitempty" yaml:"columns,omitempty"`
@@ -1893,6 +2640,20 @@ type DashboardPlacement struct {
 	RowSpan    int32 `json:"rowSpan" yaml:"rowSpan"`
 }
 
+type DashboardPointGeographicLayer struct {
+	DashboardGeographicLayerBase
+	Kind      string                  `json:"kind" yaml:"kind"`
+	Latitude  string                  `json:"latitude" yaml:"latitude"`
+	Longitude string                  `json:"longitude" yaml:"longitude"`
+	Value     *string                 `json:"value,omitempty" yaml:"value,omitempty"`
+	Category  *string                 `json:"category,omitempty" yaml:"category,omitempty"`
+	Size      *DashboardMapSizeScale  `json:"size,omitempty" yaml:"size,omitempty"`
+	Color     *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
+	Stroke    *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
+	Cluster   *DashboardMapCluster    `json:"cluster,omitempty" yaml:"cluster,omitempty"`
+	Opacity   *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
+}
+
 type DashboardPresentationVariant interface {
 	isDashboardPresentationVariant()
 }
@@ -1905,6 +2666,7 @@ func (*CartesianDashboardPresentation) isDashboardPresentationVariant()    {}
 func (*GeographicDashboardPresentation) isDashboardPresentationVariant()   {}
 func (*HierarchyDashboardPresentation) isDashboardPresentationVariant()    {}
 func (*KPIDashboardPresentation) isDashboardPresentationVariant()          {}
+func (*PointDashboardPresentation) isDashboardPresentationVariant()        {}
 func (*PolarDashboardPresentation) isDashboardPresentationVariant()        {}
 func (*ProportionalDashboardPresentation) isDashboardPresentationVariant() {}
 func (*TableDashboardPresentation) isDashboardPresentationVariant()        {}
@@ -1927,6 +2689,11 @@ func (value DashboardPresentation) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(variant)
 	case *KPIDashboardPresentation:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardPresentation variant is nil")
+		}
+		return json.Marshal(variant)
+	case *PointDashboardPresentation:
 		if variant == nil {
 			return nil, fmt.Errorf("DashboardPresentation variant is nil")
 		}
@@ -2012,6 +2779,24 @@ func (value *DashboardPresentation) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("decode DashboardPresentation variant %q: %w", tag.Value, err)
 		}
 		value.Value = &variant
+	case "point":
+		if _, ok := fields["identity"]; !ok {
+			return fmt.Errorf("decode DashboardPresentation variant %q: required property identity is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode DashboardPresentation variant %q: required property type is missing", tag.Value)
+		}
+		if _, ok := fields["x"]; !ok {
+			return fmt.Errorf("decode DashboardPresentation variant %q: required property x is missing", tag.Value)
+		}
+		if _, ok := fields["y"]; !ok {
+			return fmt.Errorf("decode DashboardPresentation variant %q: required property y is missing", tag.Value)
+		}
+		var variant PointDashboardPresentation
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardPresentation variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
 	case "polar":
 		if _, ok := fields["type"]; !ok {
 			return fmt.Errorf("decode DashboardPresentation variant %q: required property type is missing", tag.Value)
@@ -2059,6 +2844,7 @@ type DashboardPresentationVisitor interface {
 	VisitGeographicDashboardPresentation(*GeographicDashboardPresentation) error
 	VisitHierarchyDashboardPresentation(*HierarchyDashboardPresentation) error
 	VisitKPIDashboardPresentation(*KPIDashboardPresentation) error
+	VisitPointDashboardPresentation(*PointDashboardPresentation) error
 	VisitPolarDashboardPresentation(*PolarDashboardPresentation) error
 	VisitProportionalDashboardPresentation(*ProportionalDashboardPresentation) error
 	VisitTableDashboardPresentation(*TableDashboardPresentation) error
@@ -2092,6 +2878,11 @@ func (value *DashboardPresentation) Visit(visitor DashboardPresentationVisitor) 
 			return fmt.Errorf("DashboardPresentation variant is nil")
 		}
 		return visitor.VisitKPIDashboardPresentation(variant)
+	case *PointDashboardPresentation:
+		if variant == nil {
+			return fmt.Errorf("DashboardPresentation variant is nil")
+		}
+		return visitor.VisitPointDashboardPresentation(variant)
 	case *PolarDashboardPresentation:
 		if variant == nil {
 			return fmt.Errorf("DashboardPresentation variant is nil")
@@ -2139,6 +2930,11 @@ func (value *DashboardPresentation) Type() (string, error) {
 			return "", fmt.Errorf("DashboardPresentation variant is nil")
 		}
 		return "kpi", nil
+	case *PointDashboardPresentation:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardPresentation variant is nil")
+		}
+		return "point", nil
 	case *PolarDashboardPresentation:
 		if variant == nil {
 			return "", fmt.Errorf("DashboardPresentation variant is nil")
@@ -2186,6 +2982,11 @@ func (value *DashboardPresentation) Base() (*DashboardPresentationBase, error) {
 			return nil, fmt.Errorf("DashboardPresentation variant is nil")
 		}
 		return &variant.DashboardPresentationBase, nil
+	case *PointDashboardPresentation:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardPresentation variant is nil")
+		}
+		return &variant.DashboardPresentationBase, nil
 	case *PolarDashboardPresentation:
 		if variant == nil {
 			return nil, fmt.Errorf("DashboardPresentation variant is nil")
@@ -2209,8 +3010,17 @@ func (value *DashboardPresentation) Base() (*DashboardPresentationBase, error) {
 }
 
 type DashboardPresentationBase struct {
-	Type string `json:"type" yaml:"type"`
+	Type                  string                        `json:"type" yaml:"type"`
+	ConditionalFormatting *[]DashboardConditionalFormat `json:"conditionalFormatting,omitempty" yaml:"conditionalFormatting,omitempty"`
 }
+
+type DashboardProportionalAlignment string
+
+const (
+	DashboardProportionalAlignmentLeft   DashboardProportionalAlignment = "left"
+	DashboardProportionalAlignmentCenter DashboardProportionalAlignment = "center"
+	DashboardProportionalAlignmentRight  DashboardProportionalAlignment = "right"
+)
 
 type DashboardQueryVariant interface {
 	isDashboardQueryVariant()
@@ -2576,6 +3386,15 @@ func (value *DashboardRecordFieldSelection) UnmarshalJSON(data []byte) error {
 	}
 }
 
+type DashboardReferenceGeographicLayer struct {
+	DashboardGeographicLayerBase
+	Kind          string                  `json:"kind" yaml:"kind"`
+	GeometryAsset string                  `json:"geometryAsset" yaml:"geometryAsset"`
+	Color         *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
+	Stroke        *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
+	Opacity       *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
+}
+
 type DashboardRelativeAnchor string
 
 const (
@@ -2610,6 +3429,14 @@ type DashboardResourceKind string
 const (
 	DashboardResourceKindDashboard DashboardResourceKind = "Dashboard"
 )
+
+type DashboardRulesConditionalRule struct {
+	DashboardConditionalRuleBase
+	Kind         string                          `json:"kind" yaml:"kind"`
+	Rules        []DashboardConditionalThreshold `json:"rules" yaml:"rules"`
+	NullStyle    DashboardConditionalStyle       `json:"nullStyle" yaml:"nullStyle"`
+	DefaultStyle DashboardConditionalStyle       `json:"defaultStyle" yaml:"defaultStyle"`
+}
 
 type DashboardSelectionMode string
 
@@ -2760,10 +3587,12 @@ type DistributionDashboardQuery struct {
 	DashboardQueryBase
 	Type          string                             `json:"type" yaml:"type"`
 	Field         DashboardMetricSelection           `json:"field" yaml:"field"`
+	Group         *DashboardDimensionSelection       `json:"group,omitempty" yaml:"group,omitempty"`
 	Quantiles     []float64                          `json:"quantiles" yaml:"quantiles"`
 	Whiskers      *DashboardDistributionWhiskers     `json:"whiskers,omitempty" yaml:"whiskers,omitempty"`
 	Outliers      DashboardDistributionOutlierPolicy `json:"outliers" yaml:"outliers"`
 	Approximation DashboardHistogramApproximation    `json:"approximation" yaml:"approximation"`
+	Limit         *int32                             `json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
 type FilterDashboardPageComponent struct {
@@ -2774,8 +3603,15 @@ type FilterDashboardPageComponent struct {
 
 type GeographicDashboardPresentation struct {
 	DashboardPresentationBase
-	Type   string                `json:"type" yaml:"type"`
-	Labels *DashboardLabelPolicy `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Type         string                                        `json:"type" yaml:"type"`
+	Labels       *DashboardLabelPolicy                         `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Theme        *visualizationir.VisualizationMapTheme        `json:"theme,omitempty" yaml:"theme,omitempty"`
+	Basemap      *string                                       `json:"basemap,omitempty" yaml:"basemap,omitempty"`
+	LabelDensity *visualizationir.VisualizationMapLabelDensity `json:"labelDensity,omitempty" yaml:"labelDensity,omitempty"`
+	Camera       *DashboardMapCamera                           `json:"camera,omitempty" yaml:"camera,omitempty"`
+	Controls     *DashboardMapControls                         `json:"controls,omitempty" yaml:"controls,omitempty"`
+	Roam         *bool                                         `json:"roam,omitempty" yaml:"roam,omitempty"`
+	Layers       *[]DashboardGeographicLayer                   `json:"layers,omitempty" yaml:"layers,omitempty"`
 }
 
 type HeaderDashboardPageComponent struct {
@@ -2787,10 +3623,17 @@ type HeaderDashboardPageComponent struct {
 
 type HierarchyDashboardPresentation struct {
 	DashboardPresentationBase
-	Type        string                   `json:"type" yaml:"type"`
-	Legend      *DashboardLegendPosition `json:"legend,omitempty" yaml:"legend,omitempty"`
-	Labels      *DashboardLabelPolicy    `json:"labels,omitempty" yaml:"labels,omitempty"`
-	Orientation *DashboardOrientation    `json:"orientation,omitempty" yaml:"orientation,omitempty"`
+	Type         string                                        `json:"type" yaml:"type"`
+	Legend       *DashboardLegendPosition                      `json:"legend,omitempty" yaml:"legend,omitempty"`
+	Labels       *DashboardLabelPolicy                         `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Orientation  *DashboardOrientation                         `json:"orientation,omitempty" yaml:"orientation,omitempty"`
+	InitialDepth *int32                                        `json:"initialDepth,omitempty" yaml:"initialDepth,omitempty"`
+	Roam         *bool                                         `json:"roam,omitempty" yaml:"roam,omitempty"`
+	Layout       *visualizationir.VisualizationHierarchyLayout `json:"layout,omitempty" yaml:"layout,omitempty"`
+	Breadcrumb   *bool                                         `json:"breadcrumb,omitempty" yaml:"breadcrumb,omitempty"`
+	NodeGap      *float64                                      `json:"nodeGap,omitempty" yaml:"nodeGap,omitempty"`
+	Curveness    *float64                                      `json:"curveness,omitempty" yaml:"curveness,omitempty"`
+	Focus        *visualizationir.VisualizationGraphFocus      `json:"focus,omitempty" yaml:"focus,omitempty"`
 }
 
 type HistogramDashboardQuery struct {
@@ -2811,10 +3654,19 @@ type IntegerDashboardFilterValue struct {
 
 type KPIDashboardPresentation struct {
 	DashboardPresentationBase
-	Type         string                                     `json:"type" yaml:"type"`
-	DisplayUnits *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
-	Note         *string                                    `json:"note,omitempty" yaml:"note,omitempty"`
-	Tone         *visualizationir.VisualizationTone         `json:"tone,omitempty" yaml:"tone,omitempty"`
+	Type               string                                              `json:"type" yaml:"type"`
+	Mode               *visualizationir.VisualizationKPIMode               `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Delta              *visualizationir.VisualizationKPIDeltaMode          `json:"delta,omitempty" yaml:"delta,omitempty"`
+	FavorableDirection *visualizationir.VisualizationKPIDirection          `json:"favorableDirection,omitempty" yaml:"favorableDirection,omitempty"`
+	MissingComparison  *visualizationir.VisualizationKPIMissingComparison  `json:"missingComparison,omitempty" yaml:"missingComparison,omitempty"`
+	Ranges             *[]visualizationir.VisualizationKPIQualitativeRange `json:"ranges,omitempty" yaml:"ranges,omitempty"`
+	Thresholds         *[]visualizationir.VisualizationThreshold           `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
+	Comparison         *DashboardKPIValueBinding                           `json:"comparison,omitempty" yaml:"comparison,omitempty"`
+	Goal               *DashboardKPIValueBinding                           `json:"goal,omitempty" yaml:"goal,omitempty"`
+	Trend              *DashboardKPITrendBinding                           `json:"trend,omitempty" yaml:"trend,omitempty"`
+	DisplayUnits       *visualizationir.VisualizationDisplayUnits          `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Note               *string                                             `json:"note,omitempty" yaml:"note,omitempty"`
+	Tone               *visualizationir.VisualizationTone                  `json:"tone,omitempty" yaml:"tone,omitempty"`
 }
 
 type MultiSelectDashboardFilterControl struct {
@@ -2846,20 +3698,75 @@ type PivotDashboardQuery struct {
 	Window  *DashboardPivotWindow         `json:"window,omitempty" yaml:"window,omitempty"`
 }
 
+type PointDashboardColorScale struct {
+	Kind    visualizationir.VisualizationPointColorScaleKind `json:"kind" yaml:"kind"`
+	Minimum *float64                                         `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum *float64                                         `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Scheme  *string                                          `json:"scheme,omitempty" yaml:"scheme,omitempty"`
+}
+
+type PointDashboardOverplot struct {
+	Strategy       visualizationir.VisualizationPointOverplotStrategy `json:"strategy" yaml:"strategy"`
+	Opacity        *float64                                           `json:"opacity,omitempty" yaml:"opacity,omitempty"`
+	LargeMode      *visualizationir.VisualizationPointLargeMode       `json:"largeMode,omitempty" yaml:"largeMode,omitempty"`
+	LargeThreshold *int64                                             `json:"largeThreshold,omitempty" yaml:"largeThreshold,omitempty"`
+}
+
+type PointDashboardPresentation struct {
+	DashboardPresentationBase
+	Type       string                                            `json:"type" yaml:"type"`
+	Legend     *DashboardLegendPosition                          `json:"legend,omitempty" yaml:"legend,omitempty"`
+	Labels     *DashboardLabelPolicy                             `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Identity   []string                                          `json:"identity" yaml:"identity"`
+	X          string                                            `json:"x" yaml:"x"`
+	Y          string                                            `json:"y" yaml:"y"`
+	Size       *string                                           `json:"size,omitempty" yaml:"size,omitempty"`
+	Color      *string                                           `json:"color,omitempty" yaml:"color,omitempty"`
+	Series     *string                                           `json:"series,omitempty" yaml:"series,omitempty"`
+	Label      *string                                           `json:"label,omitempty" yaml:"label,omitempty"`
+	Tooltip    *[]string                                         `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
+	ColorScale *PointDashboardColorScale                         `json:"colorScale,omitempty" yaml:"colorScale,omitempty"`
+	SizeScale  *PointDashboardSizeScale                          `json:"sizeScale,omitempty" yaml:"sizeScale,omitempty"`
+	Overplot   *PointDashboardOverplot                           `json:"overplot,omitempty" yaml:"overplot,omitempty"`
+	Brush      *[]visualizationir.VisualizationPointBrushGesture `json:"brush,omitempty" yaml:"brush,omitempty"`
+}
+
+type PointDashboardSizeScale struct {
+	Minimum       *float64 `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64 `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	MinimumPixels float64  `json:"minimumPixels" yaml:"minimumPixels"`
+	MaximumPixels float64  `json:"maximumPixels" yaml:"maximumPixels"`
+}
+
 type PolarDashboardPresentation struct {
 	DashboardPresentationBase
-	Type         string                                     `json:"type" yaml:"type"`
-	Legend       *DashboardLegendPosition                   `json:"legend,omitempty" yaml:"legend,omitempty"`
-	Labels       *DashboardLabelPolicy                      `json:"labels,omitempty" yaml:"labels,omitempty"`
-	DisplayUnits *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Type          string                                     `json:"type" yaml:"type"`
+	Legend        *DashboardLegendPosition                   `json:"legend,omitempty" yaml:"legend,omitempty"`
+	Labels        *DashboardLabelPolicy                      `json:"labels,omitempty" yaml:"labels,omitempty"`
+	DisplayUnits  *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Minimum       *float64                                   `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64                                   `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Target        *float64                                   `json:"target,omitempty" yaml:"target,omitempty"`
+	ShowPointer   *bool                                      `json:"showPointer,omitempty" yaml:"showPointer,omitempty"`
+	Area          *bool                                      `json:"area,omitempty" yaml:"area,omitempty"`
+	ProgressWidth *float64                                   `json:"progressWidth,omitempty" yaml:"progressWidth,omitempty"`
+	Thresholds    *[]visualizationir.VisualizationThreshold  `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
 }
 
 type ProportionalDashboardPresentation struct {
 	DashboardPresentationBase
-	Type         string                                     `json:"type" yaml:"type"`
-	Legend       *DashboardLegendPosition                   `json:"legend,omitempty" yaml:"legend,omitempty"`
-	Labels       *DashboardLabelPolicy                      `json:"labels,omitempty" yaml:"labels,omitempty"`
-	DisplayUnits *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Type          string                                      `json:"type" yaml:"type"`
+	Legend        *DashboardLegendPosition                    `json:"legend,omitempty" yaml:"legend,omitempty"`
+	Labels        *DashboardLabelPolicy                       `json:"labels,omitempty" yaml:"labels,omitempty"`
+	DisplayUnits  *visualizationir.VisualizationDisplayUnits  `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Orientation   *DashboardOrientation                       `json:"orientation,omitempty" yaml:"orientation,omitempty"`
+	Rose          *bool                                       `json:"rose,omitempty" yaml:"rose,omitempty"`
+	CenterLabel   *string                                     `json:"centerLabel,omitempty" yaml:"centerLabel,omitempty"`
+	LabelPosition *DashboardLabelPosition                     `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
+	InnerRadius   *float64                                    `json:"innerRadius,omitempty" yaml:"innerRadius,omitempty"`
+	OuterRadius   *float64                                    `json:"outerRadius,omitempty" yaml:"outerRadius,omitempty"`
+	Align         *DashboardProportionalAlignment             `json:"align,omitempty" yaml:"align,omitempty"`
+	Sort          *visualizationir.VisualizationSortDirection `json:"sort,omitempty" yaml:"sort,omitempty"`
 }
 
 type RangeDashboardFilterExpression struct {

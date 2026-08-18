@@ -248,8 +248,10 @@ func ValidateCanonicalDashboardCompatibility(spec document.DashboardSpec) error 
 
 func canonicalPresentationType(visualType document.DashboardVisualType) string {
 	switch visualType {
-	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn, document.DashboardVisualTypeScatter, document.DashboardVisualTypeCandlestick, document.DashboardVisualTypeBoxplot, document.DashboardVisualTypeCombo, document.DashboardVisualTypeHeatmap, document.DashboardVisualTypeWaterfall, document.DashboardVisualTypeHistogram:
+	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn, document.DashboardVisualTypeCandlestick, document.DashboardVisualTypeBoxplot, document.DashboardVisualTypeCombo, document.DashboardVisualTypeHeatmap, document.DashboardVisualTypeWaterfall, document.DashboardVisualTypeHistogram:
 		return "cartesian"
+	case document.DashboardVisualTypeScatter:
+		return "point"
 	case document.DashboardVisualTypePie, document.DashboardVisualTypeDonut, document.DashboardVisualTypeFunnel:
 		return "proportional"
 	case document.DashboardVisualTypeTreemap, document.DashboardVisualTypeSankey, document.DashboardVisualTypeGraph, document.DashboardVisualTypeTree, document.DashboardVisualTypeSunburst:

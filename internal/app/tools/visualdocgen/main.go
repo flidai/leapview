@@ -746,7 +746,7 @@ func buildVisualDocumentReference(examples []visualExample, compiledVisualizatio
 		if !ok {
 			return visualDocumentReference{}, fmt.Errorf("compiled visual %q is missing", examples[0].ID)
 		}
-		return visualDocumentReference{
+		reference := visualDocumentReference{
 			Kind: visualKindFromRenderer(compiled.RendererID), Renderer: compiled.RendererID, Shapes: []string{string(compiled.Query.ResultShape)},
 			QueryFields: []string{"dataset", "fields", "rows", "columns", "metrics"},
 			Fields: []visualdocs.FieldReference{
@@ -755,8 +755,28 @@ func buildVisualDocumentReference(examples []visualExample, compiledVisualizatio
 				{Path: "cardinality", Type: "string", AllowedValues: []string{"bounded", "exact"}, Description: "Controls whether the visual resolves an exact row count."},
 			},
 			Accessibility: "Tabular visuals expose semantic headers and virtualized rows while preserving keyboard navigation.",
-			Examples:      map[string]visualExampleReference{examples[0].ID: {KeyFields: []string{"type", "query", "columns"}}},
-		}, nil
+			Examples:      make(map[string]visualExampleReference, len(examples)),
+		}
+		presentation := map[string]struct{}{}
+		var previous *dashboarddocument.DashboardVisual
+		for index := range examples {
+			for key := range visualPresentationValues(examples[index].Visual) {
+				presentation[key] = struct{}{}
+			}
+			keyFields := visualKeyFields(previous, examples[index].Visual)
+			if len(keyFields) == 0 {
+				keyFields = []string{"type", "query"}
+			}
+			reference.Examples[examples[index].ID] = visualExampleReference{KeyFields: keyFields}
+			previous = &examples[index].Visual
+		}
+		reference.Presentation = sortedSet(presentation)
+		presentationFields, err := visualFieldReferences(nil, reference.Presentation, string(examples[0].Visual.Type))
+		if err != nil {
+			return visualDocumentReference{}, err
+		}
+		reference.Fields = append(reference.Fields, presentationFields...)
+		return reference, nil
 	}
 	kinds := map[string]struct{}{}
 	renderers := map[string]struct{}{}
@@ -1026,6 +1046,9 @@ func visualPresentationValues(visual dashboarddocument.DashboardVisual) map[stri
 	}
 	typeInfo := value.Type()
 	out := make(map[string]any)
+	if base, err := visual.Presentation.Base(); err == nil && base.ConditionalFormatting != nil {
+		out["conditionalFormatting"] = base.ConditionalFormatting
+	}
 	for index := 0; index < value.NumField(); index++ {
 		field := value.Field(index)
 		if field.IsZero() {
@@ -1046,7 +1069,7 @@ func visualPresentationValues(visual dashboarddocument.DashboardVisual) map[stri
 
 func canonicalPresentationField(name string) bool {
 	switch name {
-	case "displayUnits", "legend", "labels", "stacking", "orientation", "showSymbols", "smooth", "dataZoom", "symbolSize", "labelPosition", "rowHeight", "showHeader", "striped", "note", "tone":
+	case "displayUnits", "legend", "labels", "stacking", "orientation", "rose", "centerLabel", "innerRadius", "outerRadius", "align", "sort", "initialDepth", "roam", "layout", "breadcrumb", "nodeGap", "curveness", "focus", "showSymbols", "smooth", "step", "dataZoom", "symbolSize", "labelPosition", "identity", "x", "y", "size", "color", "series", "label", "tooltip", "colorScale", "sizeScale", "overplot", "minimum", "maximum", "target", "showPointer", "area", "progressWidth", "rowHeight", "showHeader", "striped", "conditionalFormatting", "note", "tone", "mode", "delta", "favorableDirection", "missingComparison", "ranges", "thresholds", "comparison", "goal", "trend", "theme", "basemap", "labelDensity", "camera", "controls", "layers":
 		return true
 	default:
 		return false

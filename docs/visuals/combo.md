@@ -18,6 +18,13 @@ visuals:
     type: combo
     presentation:
       type: cartesian
+      series:
+      - field: revenue
+        mark: line
+        axis: primary
+      - field: order_count
+        mark: column
+        axis: secondary
       labels:
         density: hidden
         priority: []
@@ -39,7 +46,8 @@ visuals:
 
 ## Per-series renderers
 
-Use `presentation.series_types` to render review score as a line and delivery days as columns while retaining one shared status axis.
+Use typed `presentation.series` entries to render review score as a line and
+delivery days as columns while retaining one shared status axis.
 
 {{< visual id="review_delivery_combo" >}}
 
@@ -50,6 +58,13 @@ visuals:
     type: combo
     presentation:
       type: cartesian
+      series:
+      - field: review_score
+        mark: line
+        axis: primary
+      - field: delivery_days
+        mark: column
+        axis: primary
     query:
       type: aggregate
       dimensions:
@@ -64,7 +79,8 @@ visuals:
 
 ## Dual axes
 
-Enable `presentation.dual_axis` when the metrics use different scales, then assign line and column marks explicitly with `series_types`.
+Assign a series to the secondary axis when metrics use different scales, and
+declare each line or column mark explicitly.
 
 {{< visual id="revenue_orders_dual_axis_combo" >}}
 
@@ -75,6 +91,13 @@ visuals:
     type: combo
     presentation:
       type: cartesian
+      series:
+      - field: revenue
+        mark: column
+        axis: primary
+      - field: order_count
+        mark: line
+        axis: secondary
     query:
       type: aggregate
       dimensions:

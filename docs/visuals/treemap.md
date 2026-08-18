@@ -67,6 +67,8 @@ visuals:
     type: treemap
     presentation:
       type: hierarchy
+      roam: true
+      breadcrumb: true
     query:
       type: aggregate
       dimensions:

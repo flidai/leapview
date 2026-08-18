@@ -202,8 +202,10 @@ func TestLowerDashboardQueryLowersHistogramStatisticalContract(t *testing.T) {
 }
 
 func TestLowerDashboardQueryLowersDistributionAndPreservesStatisticalOperands(t *testing.T) {
+	limit := int32(12)
 	query := document.DashboardQuery{Value: &document.DistributionDashboardQuery{
 		Type: "distribution", Field: document.DashboardMetricSelection{Reference: &document.DashboardMetricReference{Metric: "revenue", Alias: stringPtr("amount")}},
+		Group: &document.DashboardDimensionSelection{String: stringPtr("state")}, Limit: &limit,
 		Quantiles: []float64{0.1, 0.5, 0.9}, Whiskers: &document.DashboardDistributionWhiskers{Lower: 0.05, Upper: 0.95}, Outliers: document.DashboardDistributionOutlierPolicyOmit, Approximation: document.DashboardHistogramApproximationApproximate,
 	}}
 	lowered, err := LowerDashboardQuery(query, dashboardQueryTestModel(), "sales")
@@ -213,6 +215,12 @@ func TestLowerDashboardQueryLowersDistributionAndPreservesStatisticalOperands(t 
 	binding := lowered.Binding.Aggregate.Distribution
 	if binding == nil || binding.Metric.Alias != "amount" || binding.Approximation != "approximate" || binding.Outliers != "omit" || len(binding.Quantiles) != 3 || binding.Whiskers == nil || binding.Whiskers.Lower != 0.05 {
 		t.Fatalf("distribution binding = %#v", binding)
+	}
+	if got := lowerBindingFields(lowered.Binding.Aggregate.Dimensions); got != "state" || lowered.Binding.Aggregate.Limit != int64(limit) {
+		t.Fatalf("distribution group/limit = %q / %d", got, lowered.Binding.Aggregate.Limit)
+	}
+	if len(lowered.Request.Dimensions) != 1 || lowered.Request.Dimensions[0].Alias != "state" || lowered.Request.Limit != int(limit) || lowered.RawRequest == nil || len(lowered.RawRequest.Dimensions) != 1 {
+		t.Fatalf("distribution semantic request = %#v / raw %#v", lowered.Request, lowered.RawRequest)
 	}
 	if got := lowerResultNames(lowered); got != "label,min,q0,q1,q2,max" {
 		t.Fatalf("distribution result frame = %q", got)

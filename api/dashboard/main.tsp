@@ -268,10 +268,12 @@ enum DashboardDistributionOutlierPolicy {
 model DistributionDashboardQuery extends DashboardQuery {
   type: "distribution";
   field: DashboardMetricSelection;
+  group?: DashboardDimensionSelection;
   quantiles: float64[];
   whiskers?: DashboardDistributionWhiskers;
   outliers: DashboardDistributionOutlierPolicy;
   approximation: DashboardHistogramApproximation;
+  limit?: int32;
 }
 
 enum DashboardFilterOperator {
@@ -539,10 +541,82 @@ enum DashboardOrientation {
   vertical: "vertical",
 }
 
+/** Marks supported by a governed multi-measure combo series. */
+enum DashboardComboSeriesMark {
+  line: "line",
+  area: "area",
+  bar: "bar",
+  column: "column",
+}
+
+/** Axis assignment for one governed combo measure. */
+enum DashboardComboSeriesAxis {
+  primary: "primary",
+  secondary: "secondary",
+}
+
+/** One result-frame measure and its governed combo rendering policy. */
+model DashboardComboSeries {
+  field: DashboardResultField;
+  mark: DashboardComboSeriesMark;
+  axis: DashboardComboSeriesAxis;
+}
+
+/** A renderer-neutral color or icon intent applied by a conditional rule. */
+model DashboardConditionalStyle {
+  color?: LeapViewVisualization.VisualizationColorIntent;
+  icon?: LeapViewVisualization.VisualizationIconIntent;
+}
+
+/** One ordered numeric comparison in a rules-based conditional format. */
+model DashboardConditionalThreshold {
+  operator: LeapViewVisualization.VisualizationComparisonOperator;
+  value: float64;
+  style: DashboardConditionalStyle;
+}
+
+@discriminator("kind")
+model DashboardConditionalRule {
+  kind: string;
+}
+
+model DashboardGradientConditionalRule extends DashboardConditionalRule {
+  kind: "gradient";
+  minimum: float64;
+  maximum: float64;
+  low: DashboardConditionalStyle;
+  high: DashboardConditionalStyle;
+  nullStyle: DashboardConditionalStyle;
+}
+
+model DashboardRulesConditionalRule extends DashboardConditionalRule {
+  kind: "rules";
+  rules: DashboardConditionalThreshold[];
+  nullStyle: DashboardConditionalStyle;
+  defaultStyle: DashboardConditionalStyle;
+}
+
+model DashboardFieldConditionalRule extends DashboardConditionalRule {
+  kind: "field";
+  source: DashboardResultField;
+  values: Record<DashboardConditionalStyle>;
+  nullStyle: DashboardConditionalStyle;
+  defaultStyle: DashboardConditionalStyle;
+}
+
+/** A closed, governed conditional-format binding over compiled result names. */
+model DashboardConditionalFormat {
+  id: DashboardObjectIdentifier;
+  target: LeapViewVisualization.VisualizationConditionalTarget;
+  field: DashboardResultField;
+  rule: DashboardConditionalRule;
+}
+
 /** Renderer-neutral presentation policies; renderer options are intentionally absent. */
 @discriminator("type")
 model DashboardPresentation {
   type: string;
+  conditionalFormatting?: DashboardConditionalFormat[];
 }
 
 model CartesianDashboardPresentation extends DashboardPresentation {
@@ -553,10 +627,57 @@ model CartesianDashboardPresentation extends DashboardPresentation {
   orientation?: DashboardOrientation;
   showSymbols?: boolean;
   smooth?: boolean;
+  /** Render line segments as discrete steps between categories. */
+  step?: boolean;
   dataZoom?: boolean;
   symbolSize?: float64;
   labelPosition?: DashboardLabelPosition;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
+  /** Explicit per-measure marks and axis assignments for combo visuals. */
+  series?: DashboardComboSeries[];
+}
+
+/** A governed result-frame binding used by a point/scatter visual. */
+model PointDashboardColorScale {
+  kind: LeapViewVisualization.VisualizationPointColorScaleKind;
+  minimum?: float64;
+  maximum?: float64;
+  scheme?: string;
+}
+
+/** Pixel and optional domain bounds for a governed point size binding. */
+model PointDashboardSizeScale {
+  minimum?: float64;
+  maximum?: float64;
+  minimumPixels: float64;
+  maximumPixels: float64;
+}
+
+/** Overplotting policy for a point/scatter visual. */
+model PointDashboardOverplot {
+  strategy: LeapViewVisualization.VisualizationPointOverplotStrategy;
+  opacity?: float64;
+  largeMode?: LeapViewVisualization.VisualizationPointLargeMode;
+  largeThreshold?: int64;
+}
+
+/** Strict point/scatter presentation and its governed result-frame channels. */
+model PointDashboardPresentation extends DashboardPresentation {
+  type: "point";
+  legend?: DashboardLegendPosition;
+  labels?: DashboardLabelPolicy;
+  identity: DashboardResultField[];
+  x: DashboardResultField;
+  y: DashboardResultField;
+  size?: DashboardResultField;
+  color?: DashboardResultField;
+  series?: DashboardResultField;
+  label?: DashboardResultField;
+  tooltip?: DashboardResultField[];
+  colorScale?: PointDashboardColorScale;
+  sizeScale?: PointDashboardSizeScale;
+  overplot?: PointDashboardOverplot;
+  brush?: LeapViewVisualization.VisualizationPointBrushGesture[];
 }
 
 model ProportionalDashboardPresentation extends DashboardPresentation {
@@ -564,6 +685,20 @@ model ProportionalDashboardPresentation extends DashboardPresentation {
   legend?: DashboardLegendPosition;
   labels?: DashboardLabelPolicy;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
+  orientation?: DashboardOrientation;
+  rose?: boolean;
+  centerLabel?: string;
+  labelPosition?: DashboardLabelPosition;
+  innerRadius?: float64;
+  outerRadius?: float64;
+  align?: DashboardProportionalAlignment;
+  sort?: LeapViewVisualization.VisualizationSortDirection;
+}
+
+enum DashboardProportionalAlignment {
+  left: "left",
+  center: "center",
+  right: "right",
 }
 
 model HierarchyDashboardPresentation extends DashboardPresentation {
@@ -571,6 +706,13 @@ model HierarchyDashboardPresentation extends DashboardPresentation {
   legend?: DashboardLegendPosition;
   labels?: DashboardLabelPolicy;
   orientation?: DashboardOrientation;
+  initialDepth?: int32;
+  roam?: boolean;
+  layout?: LeapViewVisualization.VisualizationHierarchyLayout;
+  breadcrumb?: boolean;
+  nodeGap?: float64;
+  curveness?: float64;
+  focus?: LeapViewVisualization.VisualizationGraphFocus;
 }
 
 model PolarDashboardPresentation extends DashboardPresentation {
@@ -578,11 +720,170 @@ model PolarDashboardPresentation extends DashboardPresentation {
   legend?: DashboardLegendPosition;
   labels?: DashboardLabelPolicy;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
+  minimum?: float64;
+  maximum?: float64;
+  target?: float64;
+  showPointer?: boolean;
+  area?: boolean;
+  progressWidth?: float64;
+  thresholds?: LeapViewVisualization.VisualizationThreshold[];
 }
 
 model GeographicDashboardPresentation extends DashboardPresentation {
   type: "geographic";
   labels?: DashboardLabelPolicy;
+  theme?: LeapViewVisualization.VisualizationMapTheme;
+  basemap?: string;
+  labelDensity?: LeapViewVisualization.VisualizationMapLabelDensity;
+  camera?: DashboardMapCamera;
+  controls?: DashboardMapControls;
+  roam?: boolean;
+  layers?: DashboardGeographicLayer[];
+}
+
+model DashboardMapCamera {
+  mode?: LeapViewVisualization.VisualizationMapCameraMode;
+  center?: float64[];
+  zoom?: float64;
+  padding?: int32;
+  minimumZoom?: float64;
+  maximumZoom?: float64;
+}
+
+model DashboardMapControls {
+  zoom?: boolean;
+  reset?: boolean;
+  compass?: boolean;
+}
+
+enum DashboardGeographicLayerKind {
+  point: "point",
+  choropleth: "choropleth",
+  heat: "heat",
+  density: "density",
+  reference: "reference",
+  path: "path",
+}
+
+model DashboardMapColorScale {
+  kind?: LeapViewVisualization.VisualizationMapColorScaleKind;
+  palette?: string;
+  reverse?: boolean;
+  domainMinimum?: float64;
+  domainMidpoint?: float64;
+  domainMaximum?: float64;
+  nullColor?: string;
+}
+
+model DashboardMapSizeScale {
+  minimumRadius?: float64;
+  maximumRadius?: float64;
+  domainMinimum?: float64;
+  domainMaximum?: float64;
+}
+
+model DashboardMapStroke {
+  color?: string;
+  width?: float64;
+  opacity?: float64;
+}
+
+model DashboardMapHeatStyle {
+  radius?: float64;
+  intensity?: float64;
+}
+
+model DashboardMapLineStyle {
+  width?: float64;
+  curvature?: float64;
+}
+
+model DashboardMapCluster {
+  enabled?: boolean;
+  radius?: int32;
+  maximumZoom?: int32;
+  minimumPoints?: int32;
+  showCount?: boolean;
+}
+
+model DashboardGeographicLayerOptions {
+  id: DashboardObjectIdentifier;
+  label?: DashboardResultField;
+  tooltip?: DashboardResultField[];
+  position?: LeapViewVisualization.VisualizationMapLayerPosition;
+  minimumZoom?: float64;
+  maximumZoom?: float64;
+}
+
+@discriminator("kind")
+model DashboardGeographicLayer extends DashboardGeographicLayerOptions {
+  kind: string;
+}
+
+model DashboardPointGeographicLayer extends DashboardGeographicLayer {
+  kind: "point";
+  latitude: DashboardResultField;
+  longitude: DashboardResultField;
+  value?: DashboardResultField;
+  category?: DashboardResultField;
+  size?: DashboardMapSizeScale;
+  color?: DashboardMapColorScale;
+  stroke?: DashboardMapStroke;
+  cluster?: DashboardMapCluster;
+  opacity?: float64;
+}
+
+model DashboardChoroplethGeographicLayer extends DashboardGeographicLayer {
+  kind: "choropleth";
+  geometryAsset: string;
+  join: DashboardResultField;
+  value?: DashboardResultField;
+  category?: DashboardResultField;
+  color?: DashboardMapColorScale;
+  stroke?: DashboardMapStroke;
+  opacity?: float64;
+}
+
+model DashboardReferenceGeographicLayer extends DashboardGeographicLayer {
+  kind: "reference";
+  geometryAsset: string;
+  color?: DashboardMapColorScale;
+  stroke?: DashboardMapStroke;
+  opacity?: float64;
+}
+
+model DashboardHeatGeographicLayer extends DashboardGeographicLayer {
+  kind: "heat";
+  latitude: DashboardResultField;
+  longitude: DashboardResultField;
+  value?: DashboardResultField;
+  color?: DashboardMapColorScale;
+  heat?: DashboardMapHeatStyle;
+  opacity?: float64;
+}
+
+model DashboardDensityGeographicLayer extends DashboardGeographicLayer {
+  kind: "density";
+  latitude: DashboardResultField;
+  longitude: DashboardResultField;
+  value?: DashboardResultField;
+  color?: DashboardMapColorScale;
+  heat?: DashboardMapHeatStyle;
+  opacity?: float64;
+}
+
+model DashboardPathGeographicLayer extends DashboardGeographicLayer {
+  kind: "path";
+  latitude: DashboardResultField;
+  longitude: DashboardResultField;
+  path: DashboardResultField;
+  order: DashboardResultField;
+  value?: DashboardResultField;
+  category?: DashboardResultField;
+  color?: DashboardMapColorScale;
+  stroke?: DashboardMapStroke;
+  line?: DashboardMapLineStyle;
+  opacity?: float64;
 }
 
 model TableDashboardPresentation extends DashboardPresentation {
@@ -594,9 +895,33 @@ model TableDashboardPresentation extends DashboardPresentation {
 
 model KPIDashboardPresentation extends DashboardPresentation {
   type: "kpi";
+  mode?: LeapViewVisualization.VisualizationKPIMode;
+  delta?: LeapViewVisualization.VisualizationKPIDeltaMode;
+  favorableDirection?: LeapViewVisualization.VisualizationKPIDirection;
+  missingComparison?: LeapViewVisualization.VisualizationKPIMissingComparison;
+  ranges?: LeapViewVisualization.VisualizationKPIQualitativeRange[];
+  thresholds?: LeapViewVisualization.VisualizationThreshold[];
+  comparison?: DashboardKPIValueBinding;
+  goal?: DashboardKPIValueBinding;
+  trend?: DashboardKPITrendBinding;
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   note?: string;
   tone?: LeapViewVisualization.VisualizationTone;
+}
+
+/** A governed numeric result used for a KPI comparison or goal. */
+model DashboardKPIValueBinding {
+  dataset: DashboardObjectIdentifier;
+  field: DashboardResultField;
+  reducer?: LeapViewVisualization.VisualizationReferenceReducer;
+  label: string;
+}
+
+/** A governed result frame used for a KPI sparkline trend. */
+model DashboardKPITrendBinding {
+  dataset: DashboardObjectIdentifier;
+  category: DashboardResultField;
+  value: DashboardResultField;
 }
 
 enum DashboardLabelPosition {

@@ -75,6 +75,8 @@ visuals:
     type: funnel
     presentation:
       type: proportional
+      align: left
+      sort: ascending
       labels:
         density: automatic
         priority:

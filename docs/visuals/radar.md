@@ -18,6 +18,7 @@ visuals:
     type: radar
     presentation:
       type: polar
+      area: true
     query:
       type: aggregate
       dimensions:
@@ -67,6 +68,7 @@ visuals:
     type: radar
     presentation:
       type: polar
+      area: false
     query:
       type: aggregate
       dimensions:

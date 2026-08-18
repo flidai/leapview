@@ -97,6 +97,8 @@ spec:
           path:
           - delivery_routes_orders
           - orders_customers
+        spatial_load_points:
+          field: spatial_load_points.state
     zip_prefix:
       datatype: String
       bindings:

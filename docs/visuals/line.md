@@ -35,9 +35,68 @@ visuals:
       limit: 30
 ```
 
-## Long-range line
+## Multiple series
 
-Hide point symbols for a quieter trace and enable `dataZoom` for long ranges.
+Use two ordered `query.dimensions` fields to split the metric into one line per status. The first dimension supplies the category axis and the second supplies the series identity.
+
+{{< visual id="revenue_line_status" >}}
+
+```yaml visual-example=revenue_line_status
+visuals:
+  revenue_line_status:
+    title: Revenue line by status
+    type: line
+    presentation:
+      type: cartesian
+    query:
+      type: aggregate
+      dimensions:
+      - purchase_month
+      - status
+      metrics:
+      - revenue
+      sort:
+      - field: purchase_month
+        direction: asc
+      limit: 60
+```
+
+## Visual calculation
+
+Add a running-total calculation to the same result frame. Calculation references use compiled result aliases, so the ordering field is the category dimension returned by the query.
+
+{{< visual id="revenue_line_running" >}}
+
+```yaml visual-example=revenue_line_running
+visuals:
+  revenue_line_running:
+    title: Revenue and running total
+    type: line
+    calculations:
+    - id: running_revenue
+      label: Running revenue
+      template: running_total
+      source: revenue
+      orderBy:
+      - field: purchase_month
+        direction: asc
+    presentation:
+      type: cartesian
+    query:
+      type: aggregate
+      dimensions:
+      - purchase_month
+      metrics:
+      - revenue
+      sort:
+      - field: purchase_month
+        direction: asc
+      limit: 30
+```
+
+## Stepped line
+
+Set `presentation.step: true` for discrete changes between periods, hide point symbols for a quieter trace, and enable `dataZoom` for long ranges.
 
 {{< visual id="revenue_line_step" >}}
 
@@ -48,8 +107,61 @@ visuals:
     type: line
     presentation:
       type: cartesian
+      step: true
       showSymbols: false
       dataZoom: true
+    query:
+      type: aggregate
+      dimensions:
+      - purchase_month
+      metrics:
+      - revenue
+      sort:
+      - field: purchase_month
+        direction: asc
+      limit: 30
+```
+
+## Governed decision context
+
+Use a named context dataset when a title or description must be recomputed from the same active semantic filters as the chart. Context queries are compiled with the visual and delivered in the typed visualization envelope.
+
+{{< visual id="revenue_line_context" >}}
+
+```yaml visual-example=revenue_line_context
+visuals:
+  revenue_line_context:
+    title: Revenue trend
+    subtitle: Current filtered scope
+    type: line
+    datasets:
+      context:
+        type: aggregate
+        dimensions:
+        - status
+        metrics:
+        - metric: revenue
+          alias: target
+        sort:
+        - field: status
+          direction: asc
+        limit: 1
+    metadata:
+      title:
+        dataset: context
+        field: status
+        reducer: first
+        prefix: "Revenue — "
+        fallback: Revenue trend
+      description:
+        dataset: context
+        field: target
+        reducer: mean
+        prefix: "Current target is "
+        suffix: " USD."
+        fallback: Current target is unavailable.
+    presentation:
+      type: cartesian
     query:
       type: aggregate
       dimensions:

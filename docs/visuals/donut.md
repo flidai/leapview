@@ -29,6 +29,33 @@ visuals:
         direction: desc
 ```
 
+## Center label
+
+Set `presentation.centerLabel` to state the total represented by the ring, and adjust the typed inner and outer radii to control the ring diameters.
+
+{{< visual id="orders_donut_center" >}}
+
+```yaml visual-example=orders_donut_center
+visuals:
+  orders_donut_center:
+    title: Orders donut with center label
+    type: donut
+    presentation:
+      type: proportional
+      centerLabel: Orders
+      innerRadius: 0.54
+      outerRadius: 0.76
+    query:
+      type: aggregate
+      dimensions:
+      - status
+      metrics:
+      - order_count
+      sort:
+      - field: order_count
+        direction: desc
+```
+
 ## Alternate metric
 
 Replace the category and metric to compare revenue composition without changing the donut renderer or query shape.

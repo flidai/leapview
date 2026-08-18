@@ -79,6 +79,9 @@ visuals:
     type: graph
     presentation:
       type: hierarchy
+      layout: circular
+      curveness: 0.28
+      focus: adjacency
     query:
       type: aggregate
       dimensions:

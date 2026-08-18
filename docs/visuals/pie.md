@@ -30,7 +30,7 @@ visuals:
 
 ## Rose sectors
 
-Set `presentation.rose_type: radius` to encode values through sector radius as well as angle, and show labels so the less familiar form remains readable.
+Set `presentation.rose: true` to encode values through sector radius as well as angle, and show labels so the less familiar form remains readable.
 
 {{< visual id="status_pie_rose" >}}
 
@@ -41,6 +41,7 @@ visuals:
     type: pie
     presentation:
       type: proportional
+      rose: true
       labels:
         density: automatic
         priority:
@@ -74,6 +75,7 @@ visuals:
     type: pie
     presentation:
       type: proportional
+      labelPosition: inside
       labels:
         density: automatic
         priority:

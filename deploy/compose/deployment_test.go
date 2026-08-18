@@ -170,11 +170,11 @@ func TestFiveMinuteEvaluationContract(t *testing.T) {
 	}
 	dashboard := read(t, filepath.Join(root, "evaluation", "project", "dashboards", "sales-overview.yaml"))
 	for _, required := range []string{
-		"kind: static",
-		"value: {kind: string, value: SP}",
-		"value: {kind: string, value: RJ}",
-		"value: {kind: string, value: MG}",
-		"value: {kind: string, value: PR}",
+		"type: static",
+		"value: {type: string, value: SP}",
+		"value: {type: string, value: RJ}",
+		"value: {type: string, value: MG}",
+		"value: {type: string, value: PR}",
 	} {
 		if !strings.Contains(dashboard, required) {
 			t.Errorf("five-minute evaluation dashboard missing deterministic state option %q", required)

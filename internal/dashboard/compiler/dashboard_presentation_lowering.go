@@ -6,6 +6,7 @@ package compiler
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -29,6 +30,9 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 	}
 	switch variant := value.Value.(type) {
 	case *document.CartesianDashboardPresentation:
+		if variant.Series != nil && visualType != document.DashboardVisualTypeCombo {
+			return nil, fmt.Errorf("presentation.series is only supported for combo visuals")
+		}
 		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
 		if err != nil {
 			return nil, err
@@ -42,6 +46,9 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		if variant.DataZoom != nil {
 			out.DataZoom = *variant.DataZoom
+		}
+		if variant.Step != nil {
+			out.Step = *variant.Step
 		}
 		if variant.SymbolSize != nil {
 			if *variant.SymbolSize <= 0 {
@@ -71,13 +78,101 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			}
 			out.LabelPosition = &position
 		}
+		if variant.Series != nil {
+			series, err := lowerCanonicalComboSeries(*variant.Series)
+			if err != nil {
+				return nil, err
+			}
+			out.ComboSeries = &series
+		}
+		return out, nil
+	case *document.PointDashboardPresentation:
+		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
+		if err != nil {
+			return nil, err
+		}
+		out := visualizationir.PointVisualizationPresentation{
+			VisualizationPresentation: base,
+			Overplot:                  visualizationir.VisualizationPointOverplotStrategyOpacity,
+			Opacity:                   0.7,
+			LargeMode:                 visualizationir.VisualizationPointLargeModeAutomatic,
+			LargeThreshold:            10000,
+			Brush:                     []visualizationir.VisualizationPointBrushGesture{},
+		}
+		if variant.Overplot != nil {
+			overplot := variant.Overplot
+			switch overplot.Strategy {
+			case visualizationir.VisualizationPointOverplotStrategyShowAll, visualizationir.VisualizationPointOverplotStrategyOpacity:
+			default:
+				return nil, fmt.Errorf("unsupported point overplot strategy %q", overplot.Strategy)
+			}
+			out.Overplot = overplot.Strategy
+			if overplot.Opacity != nil {
+				if *overplot.Opacity <= 0 || *overplot.Opacity > 1 {
+					return nil, fmt.Errorf("point overplot opacity must be greater than 0 and at most 1")
+				}
+				out.Opacity = *overplot.Opacity
+			}
+			if overplot.LargeMode != nil {
+				switch *overplot.LargeMode {
+				case visualizationir.VisualizationPointLargeModeAutomatic, visualizationir.VisualizationPointLargeModeAlways, visualizationir.VisualizationPointLargeModeNever:
+				default:
+					return nil, fmt.Errorf("unsupported point largeMode %q", *overplot.LargeMode)
+				}
+				out.LargeMode = *overplot.LargeMode
+			}
+			if overplot.LargeThreshold != nil {
+				if *overplot.LargeThreshold <= 0 {
+					return nil, fmt.Errorf("point overplot largeThreshold must be greater than 0")
+				}
+				out.LargeThreshold = *overplot.LargeThreshold
+			}
+		}
+		if variant.Brush != nil {
+			out.Brush = append([]visualizationir.VisualizationPointBrushGesture(nil), (*variant.Brush)...)
+		}
 		return out, nil
 	case *document.ProportionalDashboardPresentation:
 		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
 		if err != nil {
 			return nil, err
 		}
-		return visualizationir.ProportionalVisualizationPresentation{VisualizationPresentation: base, Orientation: visualizationir.VisualizationOrientationVertical}, nil
+		out := visualizationir.ProportionalVisualizationPresentation{VisualizationPresentation: base, Orientation: visualizationir.VisualizationOrientationVertical}
+		if variant.Orientation != nil {
+			orientation, orientationErr := lowerOrientation(*variant.Orientation)
+			if orientationErr != nil {
+				return nil, orientationErr
+			}
+			out.Orientation = orientation
+		}
+		if variant.Rose != nil {
+			out.Rose = *variant.Rose
+		}
+		out.CenterLabel = variant.CenterLabel
+		if variant.LabelPosition != nil {
+			position, positionErr := lowerLabelPosition(*variant.LabelPosition)
+			if positionErr != nil {
+				return nil, positionErr
+			}
+			out.LabelPosition = &position
+		}
+		out.InnerRadius = variant.InnerRadius
+		out.OuterRadius = variant.OuterRadius
+		if out.InnerRadius != nil && (*out.InnerRadius < 0 || *out.InnerRadius > 1) {
+			return nil, fmt.Errorf("proportional innerRadius must be between zero and one")
+		}
+		if out.OuterRadius != nil && (*out.OuterRadius <= 0 || *out.OuterRadius > 1) {
+			return nil, fmt.Errorf("proportional outerRadius must be greater than zero and at most one")
+		}
+		if out.InnerRadius != nil && out.OuterRadius != nil && *out.InnerRadius >= *out.OuterRadius {
+			return nil, fmt.Errorf("proportional innerRadius must be less than outerRadius")
+		}
+		if variant.Align != nil {
+			align := string(*variant.Align)
+			out.Align = &align
+		}
+		out.Sort = variant.Sort
+		return out, nil
 	case *document.HierarchyDashboardPresentation:
 		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
 		if err != nil {
@@ -91,13 +186,50 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			}
 			out.Orientation = orientation
 		}
+		out.InitialDepth = variant.InitialDepth
+		if variant.Roam != nil {
+			out.Roam = *variant.Roam
+		}
+		out.Layout = variant.Layout
+		out.Breadcrumb = variant.Breadcrumb
+		out.NodeGap = variant.NodeGap
+		out.Curveness = variant.Curveness
+		out.Focus = variant.Focus
+		if out.InitialDepth != nil && *out.InitialDepth < 0 {
+			return nil, fmt.Errorf("hierarchy initialDepth must not be negative")
+		}
+		if out.NodeGap != nil && *out.NodeGap < 0 {
+			return nil, fmt.Errorf("hierarchy nodeGap must not be negative")
+		}
+		if out.Curveness != nil && (*out.Curveness < 0 || *out.Curveness > 1) {
+			return nil, fmt.Errorf("hierarchy curveness must be between zero and one")
+		}
 		return out, nil
 	case *document.PolarDashboardPresentation:
 		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
 		if err != nil {
 			return nil, err
 		}
-		return visualizationir.PolarVisualizationPresentation{VisualizationPresentation: base, ShowPointer: true}, nil
+		out := visualizationir.PolarVisualizationPresentation{
+			VisualizationPresentation: base,
+			Minimum:                   variant.Minimum,
+			Maximum:                   variant.Maximum,
+			Target:                    variant.Target,
+			ShowPointer:               true,
+			Area:                      variant.Area,
+			ProgressWidth:             variant.ProgressWidth,
+			Thresholds:                variant.Thresholds,
+		}
+		if variant.ShowPointer != nil {
+			out.ShowPointer = *variant.ShowPointer
+		}
+		if out.Minimum != nil && out.Maximum != nil && *out.Minimum >= *out.Maximum {
+			return nil, fmt.Errorf("polar minimum must be less than maximum")
+		}
+		if out.ProgressWidth != nil && *out.ProgressWidth <= 0 {
+			return nil, fmt.Errorf("polar progressWidth must be greater than zero")
+		}
+		return out, nil
 	case *document.GeographicDashboardPresentation:
 		base, err := lowerBasePresentation(nil, variant.Labels, nil)
 		if err != nil {
@@ -110,20 +242,85 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 				return nil, err
 			}
 		}
-		return visualizationir.GeographicVisualizationPresentation{
+		out := visualizationir.GeographicVisualizationPresentation{
 			VisualizationPresentation: base,
 			Roam:                      true, Theme: visualizationir.VisualizationMapThemeAuto,
 			LabelDensity: visualizationir.VisualizationMapLabelDensityNormal,
 			Camera:       visualizationir.VisualizationMapCamera{Mode: visualizationir.VisualizationMapCameraModeFitData, Padding: 32, MaximumZoom: 14},
 			Controls:     visualizationir.VisualizationMapControls{Zoom: true, Reset: true, Compass: true},
-		}, nil
+		}
+		if variant.Roam != nil {
+			out.Roam = *variant.Roam
+		}
+		if variant.Theme != nil {
+			out.Theme = *variant.Theme
+		}
+		if variant.LabelDensity != nil {
+			out.LabelDensity = *variant.LabelDensity
+		}
+		if variant.Camera != nil {
+			camera := variant.Camera
+			if camera.Mode != nil {
+				out.Camera.Mode = *camera.Mode
+			}
+			out.Camera.Center, out.Camera.Zoom = camera.Center, camera.Zoom
+			if camera.Padding != nil {
+				out.Camera.Padding = *camera.Padding
+			}
+			if camera.MinimumZoom != nil {
+				out.Camera.MinimumZoom = *camera.MinimumZoom
+			}
+			if camera.MaximumZoom != nil {
+				out.Camera.MaximumZoom = *camera.MaximumZoom
+			}
+		}
+		if variant.Controls != nil {
+			if variant.Controls.Zoom != nil {
+				out.Controls.Zoom = *variant.Controls.Zoom
+			}
+			if variant.Controls.Reset != nil {
+				out.Controls.Reset = *variant.Controls.Reset
+			}
+			if variant.Controls.Compass != nil {
+				out.Controls.Compass = *variant.Controls.Compass
+			}
+		}
+		return out, nil
 	case *document.TableDashboardPresentation:
 		if variant.RowHeight <= 0 {
 			return nil, fmt.Errorf("table rowHeight must be greater than zero")
 		}
 		return visualizationir.GridVisualizationPresentation{RowHeight: int64(variant.RowHeight), ShowHeader: variant.ShowHeader, Striped: variant.Striped}, nil
 	case *document.KPIDashboardPresentation:
-		return visualizationir.KPIVisualizationPresentation{Mode: visualizationir.VisualizationKPIModeCompact, Delta: visualizationir.VisualizationKPIDeltaModeAbsolute, FavorableDirection: visualizationir.VisualizationKPIDirectionNeutral, MissingComparison: visualizationir.VisualizationKPIMissingComparisonShowUnavailable, Ranges: []visualizationir.VisualizationKPIQualitativeRange{}, DisplayUnits: variant.DisplayUnits, Note: variant.Note, Tone: variant.Tone}, nil
+		out := visualizationir.KPIVisualizationPresentation{
+			Mode:               visualizationir.VisualizationKPIModeCompact,
+			Delta:              visualizationir.VisualizationKPIDeltaModeAbsolute,
+			FavorableDirection: visualizationir.VisualizationKPIDirectionNeutral,
+			MissingComparison:  visualizationir.VisualizationKPIMissingComparisonShowUnavailable,
+			Ranges:             []visualizationir.VisualizationKPIQualitativeRange{},
+			DisplayUnits:       variant.DisplayUnits,
+			Note:               variant.Note,
+			Tone:               variant.Tone,
+		}
+		if variant.Mode != nil {
+			out.Mode = *variant.Mode
+		}
+		if variant.Delta != nil {
+			out.Delta = *variant.Delta
+		}
+		if variant.FavorableDirection != nil {
+			out.FavorableDirection = *variant.FavorableDirection
+		}
+		if variant.MissingComparison != nil {
+			out.MissingComparison = *variant.MissingComparison
+		}
+		if variant.Ranges != nil {
+			out.Ranges = append([]visualizationir.VisualizationKPIQualitativeRange(nil), (*variant.Ranges)...)
+		}
+		if variant.Thresholds != nil {
+			out.Thresholds = variant.Thresholds
+		}
+		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported Dashboard presentation variant %T", value.Value)
 	}
@@ -143,7 +340,110 @@ func LowerCanonicalDashboardPresentationForQuery(value document.DashboardPresent
 	if !canonicalQueryCompatible(visualType, query.Type) {
 		return nil, fmt.Errorf("visual type %q is incompatible with %s query", visualType, query.Type)
 	}
-	return LowerCanonicalDashboardPresentation(value, visualType)
+	lowered, err := LowerCanonicalDashboardPresentation(value, visualType)
+	if err != nil {
+		return nil, err
+	}
+	if visualType == document.DashboardVisualTypeCombo {
+		if err := validateCanonicalComboSeries(value, query); err != nil {
+			return nil, err
+		}
+	}
+	return lowered, nil
+}
+
+// lowerCanonicalComboSeries maps the closed Dashboard combo policy into the
+// existing renderer-neutral IR contract. The IR's SeriesValue is the
+// canonical compiled result-field name for multi-measure combo series.
+func lowerCanonicalComboSeries(values []document.DashboardComboSeries) ([]visualizationir.VisualizationComboSeries, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("combo presentation.series must contain at least one entry")
+	}
+	result := make([]visualizationir.VisualizationComboSeries, len(values))
+	seen := make(map[string]int, len(values))
+	for index, value := range values {
+		field := strings.TrimSpace(string(value.Field))
+		if field == "" {
+			return nil, fmt.Errorf("combo presentation.series[%d].field is required", index)
+		}
+		if previous, ok := seen[field]; ok {
+			return nil, fmt.Errorf("combo presentation.series[%d].field %q duplicates series[%d]", index, field, previous)
+		}
+		seen[field] = index
+		mark, err := lowerComboSeriesMark(value.Mark)
+		if err != nil {
+			return nil, fmt.Errorf("combo presentation.series[%d]: %w", index, err)
+		}
+		axis, err := lowerComboSeriesAxis(value.Axis)
+		if err != nil {
+			return nil, fmt.Errorf("combo presentation.series[%d]: %w", index, err)
+		}
+		result[index] = visualizationir.VisualizationComboSeries{SeriesValue: field, Mark: mark, Axis: axis}
+	}
+	return result, nil
+}
+
+func lowerComboSeriesMark(value document.DashboardComboSeriesMark) (visualizationir.VisualizationCartesianMark, error) {
+	switch string(value) {
+	case "line":
+		return visualizationir.VisualizationCartesianMarkLine, nil
+	case "area":
+		return visualizationir.VisualizationCartesianMarkArea, nil
+	case "bar":
+		return visualizationir.VisualizationCartesianMarkBar, nil
+	case "column":
+		return visualizationir.VisualizationCartesianMarkColumn, nil
+	default:
+		return "", fmt.Errorf("unsupported mark %q; combo series support line, area, bar, and column", value)
+	}
+}
+
+func lowerComboSeriesAxis(value document.DashboardComboSeriesAxis) (visualizationir.VisualizationAxis, error) {
+	switch string(value) {
+	case "primary":
+		return visualizationir.VisualizationAxisPrimary, nil
+	case "secondary":
+		return visualizationir.VisualizationAxisSecondary, nil
+	default:
+		return "", fmt.Errorf("unsupported axis %q; combo series support primary and secondary", value)
+	}
+}
+
+func validateCanonicalComboSeries(value document.DashboardPresentation, query LoweredDashboardQuery) error {
+	variant, ok := value.Value.(*document.CartesianDashboardPresentation)
+	if !ok || variant == nil || variant.Series == nil {
+		return nil
+	}
+	if query.Binding.Aggregate == nil {
+		return fmt.Errorf("combo presentation.series requires an aggregate query")
+	}
+	if query.Binding.Aggregate.Series != nil {
+		return fmt.Errorf("combo presentation.series is only applicable to multi-measure aggregate queries")
+	}
+	metrics := make(map[string]struct{}, len(query.Binding.Aggregate.Metrics))
+	for _, metric := range query.Binding.Aggregate.Metrics {
+		metrics[metric.Alias] = struct{}{}
+	}
+	configured := make(map[string]struct{}, len(*variant.Series))
+	for index, series := range *variant.Series {
+		field := strings.TrimSpace(string(series.Field))
+		if err := query.ValidateResultReference(field); err != nil {
+			return fmt.Errorf("combo presentation.series[%d].field: %w", index, err)
+		}
+		if _, ok := metrics[field]; !ok {
+			return fmt.Errorf("combo presentation.series[%d].field %q must reference a compiled metric result", index, field)
+		}
+		configured[field] = struct{}{}
+	}
+	if len(*variant.Series) != len(metrics) {
+		return fmt.Errorf("combo presentation.series must configure every compiled metric exactly once (got %d entries for %d metrics)", len(*variant.Series), len(metrics))
+	}
+	for metric := range metrics {
+		if _, ok := configured[metric]; !ok {
+			return fmt.Errorf("combo presentation.series is missing compiled metric %q", metric)
+		}
+	}
+	return nil
 }
 
 func lowerBasePresentation(legend *document.DashboardLegendPosition, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits) (visualizationir.VisualizationPresentation, error) {

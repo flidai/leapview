@@ -174,7 +174,7 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	if got, want := lineReference.Kind, "chart"; got != want {
 		t.Fatalf("line reference kind = %q, want %q", got, want)
 	}
-	if got, want := strings.Join(lineReference.Shapes, ","), "category_value"; got != want {
+	if got, want := strings.Join(lineReference.Shapes, ","), "category_series_value,category_value"; got != want {
 		t.Fatalf("line reference shapes = %q, want %q", got, want)
 	}
 	if got := strings.Join(lineReference.Examples["revenue_line_step"].KeyFields, ","); !strings.Contains(got, "presentation.dataZoom") || strings.Contains(got, "query.series") {
@@ -202,6 +202,22 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	if got := artifact.References["visuals/map"].Accessibility; !strings.Contains(got, "coordinate fields") {
 		t.Fatalf("map accessibility guidance = %q", got)
 	}
+	scatterReference := artifact.References["visuals/scatter"]
+	if got, want := strings.Join(scatterReference.Shapes, ","), "points"; got != want {
+		t.Fatalf("scatter reference shapes = %q, want %q", got, want)
+	}
+	scatterFields := make(map[string]visualdocs.FieldReference, len(scatterReference.Fields))
+	for _, field := range scatterReference.Fields {
+		scatterFields[field.Path] = field
+	}
+	for _, path := range []string{"presentation.identity", "presentation.x", "presentation.y", "presentation.color", "presentation.size", "presentation.colorScale", "presentation.sizeScale", "presentation.overplot"} {
+		if _, ok := scatterFields[path]; !ok {
+			t.Fatalf("scatter reference missing %s", path)
+		}
+	}
+	if got := strings.Join(scatterReference.Examples["delivery_scatter"].KeyFields, ","); !strings.Contains(got, "presentation.overplot") {
+		t.Fatalf("scatter key fields = %q", got)
+	}
 	if got := artifact.References["visuals/kpi"].Accessibility; !strings.Contains(got, "current, comparison, target, and status") {
 		t.Fatalf("KPI accessibility guidance = %q", got)
 	}
@@ -228,7 +244,7 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 			}
 		}
 	}
-	if got, want := count, 56; got != want {
+	if got, want := count, 83; got != want {
 		t.Fatalf("examples = %d, want %d", got, want)
 	}
 	if got, want := len(artifact.Showcase), 26; got != want {
@@ -248,23 +264,57 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	if !ok || len(histogramState.Datasets) != 1 || len(histogramState.Datasets[0].Rows) == 0 || histogramState.Datasets[0].Rows[0][0] != "2-3.81" {
 		t.Fatalf("histogram bins do not preserve numeric query order: %#v", artifact.Documents["visuals/histogram"][0].DataState.Value)
 	}
+	tableConditional, ok := artifact.Documents["visuals/table"][1].Spec.Value.(*visualizationir.TableVisualizationSpec)
+	if !ok || tableConditional.ConditionalFormatting == nil || len(*tableConditional.ConditionalFormatting) != 2 {
+		t.Fatalf("conditional table spec = %#v", artifact.Documents["visuals/table"][1].Spec.Value)
+	}
 	kpis := artifact.Documents["visuals/kpi"]
-	if got, want := len(kpis), 1; got != want {
+	if got, want := len(kpis), 9; got != want {
 		t.Fatalf("KPI examples = %d, want %d", got, want)
 	}
-	kpiPayload := kpis[0]
-	kpi, ok := kpiPayload.Spec.Value.(*visualizationir.KPIVisualizationSpec)
-	if !ok || kpi.Value.Field != "order_count" {
-		t.Fatalf("current KPI spec = %#v", kpiPayload.Spec.Value)
+	kpiByID := make(map[string]visualdocs.Payload, len(kpis))
+	for _, payload := range kpis {
+		kpiByID[payload.VisualID] = payload
+	}
+	favorablePayload := kpiByID["revenue_kpi_favorable"]
+	favorable, ok := favorablePayload.Spec.Value.(*visualizationir.KPIVisualizationSpec)
+	if !ok || favorable.Comparison == nil || favorable.Trend == nil ||
+		favorable.Presentation.FavorableDirection != visualizationir.VisualizationKPIDirectionIncrease {
+		t.Fatalf("favorable KPI spec = %#v", favorablePayload.Spec.Value)
+	}
+	favorableState, ok := favorablePayload.DataState.Value.(*visualizationir.InlineVisualizationDataState)
+	if !ok || len(favorableState.Datasets) != 3 || len(favorableState.Datasets[2].Rows) != 12 {
+		t.Fatalf("favorable KPI datasets = %#v", favorablePayload.DataState.Value)
+	}
+	bulletPayload := kpiByID["revenue_kpi_bullet"]
+	bullet, ok := bulletPayload.Spec.Value.(*visualizationir.KPIVisualizationSpec)
+	if !ok || bullet.Goal == nil || bullet.Presentation.Mode != visualizationir.VisualizationKPIModeBullet {
+		t.Fatalf("bullet KPI spec = %#v", bulletPayload.Spec.Value)
+	}
+	missingPayload := kpiByID["revenue_kpi_missing_comparison"]
+	missingState, ok := missingPayload.DataState.Value.(*visualizationir.InlineVisualizationDataState)
+	if !ok || len(missingState.Datasets) != 2 || len(missingState.Datasets[1].Rows) != 1 ||
+		missingState.Datasets[1].Rows[0][0] != nil {
+		t.Fatalf("missing comparison KPI datasets = %#v", missingPayload.DataState.Value)
 	}
 	line := artifact.Documents["visuals/line"]
-	if len(line) != 2 {
-		t.Fatalf("line examples = %d, want 2", len(line))
+	seriesSpec, ok := line[1].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if !ok || seriesSpec.Series == nil {
+		t.Fatalf("series line spec = %#v", line[1].Spec.Value)
 	}
-	for _, payload := range line {
-		if _, ok := payload.Spec.Value.(*visualizationir.CartesianVisualizationSpec); !ok {
-			t.Fatalf("line spec = %#v", payload.Spec.Value)
-		}
+	calculationSpec, ok := line[2].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if !ok || calculationSpec.Calculations == nil || len(*calculationSpec.Calculations) != 1 ||
+		(*calculationSpec.Calculations)[0].Template != visualizationir.VisualizationCalculationTemplateRunningTotal {
+		t.Fatalf("visual calculation was not compiled: %#v", line[2].Spec.Value)
+	}
+	stepSpec, ok := line[3].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	if !ok || !stepSpec.Presentation.Step {
+		t.Fatalf("stepped line presentation was not compiled: %#v", line[3].Spec.Value)
+	}
+	contextSpec, ok := line[4].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
+	contextState, inline := line[4].DataState.Value.(*visualizationir.InlineVisualizationDataState)
+	if !ok || !inline || len(contextSpec.Datasets) != 2 || len(contextState.Datasets) != 2 || contextSpec.MetadataBindings == nil || contextSpec.MetadataBindings.Title == nil || contextSpec.MetadataBindings.Description == nil {
+		t.Fatalf("context line spec/state = %#v / %#v", line[4].Spec.Value, line[4].DataState.Value)
 	}
 	first, err := json.Marshal(artifact)
 	if err != nil {
@@ -306,16 +356,16 @@ func assertCuratedShowcaseExamples(t *testing.T, artifact visualExamplesArtifact
 		return state.Datasets[0].Rows
 	}
 
-	kpiPayload := first("kpi", "total_orders")
+	kpiPayload := first("kpi", "revenue_kpi_favorable")
 	kpi, ok := kpiPayload.Spec.Value.(*visualizationir.KPIVisualizationSpec)
-	if !ok || kpi.Value.Field != "order_count" {
-		t.Fatalf("showcase KPI must provide a governed current value: %#v", kpiPayload.Spec.Value)
+	if !ok || kpi.Comparison == nil || kpi.Trend == nil {
+		t.Fatalf("showcase KPI must provide comparison and trend context: %#v", kpiPayload.Spec.Value)
 	}
 
 	gaugePayload := first("gauge", "review_gauge")
 	gauge, ok := gaugePayload.Spec.Value.(*visualizationir.PolarVisualizationSpec)
-	if !ok || gauge.Value.Field != "review_score" {
-		t.Fatalf("showcase gauge must bind the documented review metric: %#v", gaugePayload.Spec.Value)
+	if !ok || gauge.Presentation.Maximum == nil || *gauge.Presentation.Maximum != 5 || gauge.Presentation.Target == nil {
+		t.Fatalf("showcase gauge must use a bounded, decision-relevant scale: %#v", gaugePayload.Spec.Value)
 	}
 
 	funnelRows := rows(first("funnel", "checkout_funnel"))

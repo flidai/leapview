@@ -7,6 +7,7 @@ package compiler
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -14,7 +15,9 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	"github.com/flidai/leapview/internal/dashboard/visualization/geometry"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	"github.com/flidai/leapview/internal/dashboard/visualization/mapasset"
 )
 
 // DocumentResult is the immutable result of compiling one generated
@@ -68,6 +71,9 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 		if err != nil {
 			return DocumentResult{}, fmt.Errorf("visual %q query: %w", visualID, err)
 		}
+		if err := lowerCanonicalVisualSeries(&query, visual.Type); err != nil {
+			return DocumentResult{}, fmt.Errorf("visual %q query: %w", visualID, err)
+		}
 		presentation, err := LowerCanonicalDashboardPresentationForQuery(visual.Presentation, visual.Type, query)
 		if err != nil {
 			return DocumentResult{}, fmt.Errorf("visual %q presentation: %w", visualID, err)
@@ -82,7 +88,11 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 			return DocumentResult{}, fmt.Errorf("visual %q interactions: %w", visualID, err)
 		}
 		if visual.Type == document.DashboardVisualTypeMap {
-			query.Binding = canonicalSpatialBinding(query.Binding)
+			geographic, _ := visual.Presentation.Value.(*document.GeographicDashboardPresentation)
+			query.Binding, err = canonicalSpatialBinding(query.Binding, geographic, visual.Query)
+			if err != nil {
+				return DocumentResult{}, fmt.Errorf("visual %q geographic delivery: %w", visualID, err)
+			}
 		}
 		adjustCanonicalResultShape(&query.Binding, visual.Type)
 		secondary := make(map[string]visualizationdefinition.QueryBinding)
@@ -110,6 +120,9 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 		spec, err := canonicalVisualizationSpec(visualID, visual, query, presentation, secondarySchemas, model)
 		if err != nil {
 			return DocumentResult{}, fmt.Errorf("visual %q: %w", visualID, err)
+		}
+		if err := appendCanonicalCalculationOutputs(&spec); err != nil {
+			return DocumentResult{}, fmt.Errorf("visual %q calculations: %w", visualID, err)
 		}
 		if err := visualizationir.ValidateSpec(spec); err != nil {
 			return DocumentResult{}, fmt.Errorf("visual %q IR: %w", visualID, err)
@@ -143,6 +156,33 @@ func CompileDocument(doc document.DashboardDocument, models map[string]*semantic
 		return DocumentResult{}, err
 	}
 	return DocumentResult{Normalized: doc, Definition: compiled}, nil
+}
+
+// lowerCanonicalVisualSeries derives a category-series binding from the
+// ordered aggregate dimensions. The canonical Dashboard query has no
+// renderer-specific `series` property: the first dimension is the category
+// axis and the optional second dimension is the authored series field.
+func lowerCanonicalVisualSeries(query *LoweredDashboardQuery, visualType document.DashboardVisualType) error {
+	if query == nil || query.Binding.Aggregate == nil {
+		return nil
+	}
+	switch visualType {
+	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar, document.DashboardVisualTypeColumn:
+	default:
+		return nil
+	}
+	dimensions := query.Binding.Aggregate.Dimensions
+	if len(dimensions) <= 1 {
+		return nil
+	}
+	if len(dimensions) != 2 {
+		return fmt.Errorf("%s supports at most one category-series dimension", visualType)
+	}
+	series := dimensions[1]
+	query.Binding.Aggregate.Dimensions = append([]visualizationdefinition.FieldBinding(nil), dimensions[:1]...)
+	query.Binding.Aggregate.Series = &series
+	query.Binding.ResultShape = visualizationdefinition.ResultCategorySeriesValue
+	return nil
 }
 
 func adjustCanonicalResultShape(binding *visualizationdefinition.QueryBinding, visualType document.DashboardVisualType) {
@@ -266,6 +306,9 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 	description := valueOrString(visual.Description, title)
 	datasets := append([]visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: canonicalResultFields(query, model)}}, secondarySchemas...)
 	base := visualizationir.VisualizationSpecBase{Title: title, Datasets: datasets, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 1000, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete}, Accessibility: visualizationir.VisualizationAccessibility{Title: title, Description: description}, Interactions: []visualizationir.VisualizationInteraction{}}
+	if query.Binding.Spatial != nil && query.Binding.Spatial.Tiles != nil {
+		base.DataBudget.MaxRows = 0
+	}
 	if visual.Subtitle != nil {
 		base.Subtitle = visual.Subtitle
 	}
@@ -298,6 +341,10 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 	if conversionErr != nil {
 		return visualizationir.VisualizationSpec{}, fmt.Errorf("calculations: %w", conversionErr)
 	}
+	base.ConditionalFormatting, conversionErr = canonicalConditionalFormatting(visual.Presentation, query)
+	if conversionErr != nil {
+		return visualizationir.VisualizationSpec{}, fmt.Errorf("conditional formatting: %w", conversionErr)
+	}
 	base.Interactions, conversionErr = canonicalInteractions(visual.Interactions, query)
 	if conversionErr != nil {
 		return visualizationir.VisualizationSpec{}, fmt.Errorf("interactions: %w", conversionErr)
@@ -315,22 +362,6 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		return canonicalBindingRef(query, true, index)
 	}
 	dimensions, metrics := canonicalQueryOperandRefs(query)
-	if visual.Type == document.DashboardVisualTypeScatter {
-		identityNames := make(map[string]struct{}, len(dimensions))
-		for _, dimension := range dimensions {
-			identityNames[dimension.Field] = struct{}{}
-		}
-		for datasetIndex := range base.Datasets {
-			if base.Datasets[datasetIndex].ID != "primary" {
-				continue
-			}
-			for fieldIndex := range base.Datasets[datasetIndex].Fields {
-				if _, ok := identityNames[base.Datasets[datasetIndex].Fields[fieldIndex].ID]; ok {
-					base.Datasets[datasetIndex].Fields[fieldIndex].Role = visualizationir.VisualizationFieldRoleIdentity
-				}
-			}
-		}
-	}
 	requireOperands := func(kind string, dimensionsN, metricsN int, allowMoreDimensions, allowMoreMetrics bool) error {
 		if len(dimensions) < dimensionsN || len(metrics) < metricsN {
 			return fmt.Errorf("%s requires at least %d dimension(s) and %d metric(s), got %d and %d", kind, dimensionsN, metricsN, len(dimensions), len(metrics))
@@ -428,7 +459,23 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			return visualizationir.VisualizationSpec{}, err
 		}
 		base.Kind = "kpi"
-		return visualizationir.VisualizationSpec{Value: &visualizationir.KPIVisualizationSpec{VisualizationSpecBase: base, Kind: "kpi", Value: metricRef(0), Presentation: p}}, nil
+		kpi := &visualizationir.KPIVisualizationSpec{VisualizationSpecBase: base, Kind: "kpi", Value: metricRef(0), Presentation: p}
+		if variant, ok := visual.Presentation.Value.(*document.KPIDashboardPresentation); ok {
+			var bindingErr error
+			kpi.Comparison, bindingErr = canonicalKPIValueBinding(variant.Comparison, query, secondarySchemas)
+			if bindingErr != nil {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("KPI comparison: %w", bindingErr)
+			}
+			kpi.Goal, bindingErr = canonicalKPIValueBinding(variant.Goal, query, secondarySchemas)
+			if bindingErr != nil {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("KPI goal: %w", bindingErr)
+			}
+			kpi.Trend, bindingErr = canonicalKPITrendBinding(variant.Trend, query, secondarySchemas)
+			if bindingErr != nil {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("KPI trend: %w", bindingErr)
+			}
+		}
+		return visualizationir.VisualizationSpec{Value: kpi}, nil
 	case document.DashboardVisualTypePie, document.DashboardVisualTypeDonut, document.DashboardVisualTypeFunnel:
 		p, ok := presentation.(visualizationir.ProportionalVisualizationPresentation)
 		if !ok {
@@ -444,8 +491,8 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		if !ok {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("hierarchy presentation lowering returned %T", presentation)
 		}
-		if len(dimensions) < 1 || len(dimensions) > 2 || len(metrics) != 1 {
-			return visualizationir.VisualizationSpec{}, fmt.Errorf("hierarchy requires one or two dimensions and exactly one metric, got %d and %d", len(dimensions), len(metrics))
+		if len(dimensions) < 1 || len(metrics) != 1 {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("hierarchy requires at least one dimension and exactly one metric, got %d and %d", len(dimensions), len(metrics))
 		}
 		if (visual.Type == document.DashboardVisualTypeGraph || visual.Type == document.DashboardVisualTypeSankey) && len(dimensions) != 2 {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("%s requires exactly two dimensions and one metric", visual.Type)
@@ -475,26 +522,128 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		}
 		return visualizationir.VisualizationSpec{Value: &visualizationir.PolarVisualizationSpec{VisualizationSpecBase: base, Kind: "polar", Mark: visualizationir.VisualizationPolarMark(typ), Category: category, Value: metricRef(0), Presentation: p}}, nil
 	case document.DashboardVisualTypeScatter:
-		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
+		p, ok := presentation.(visualizationir.PointVisualizationPresentation)
 		if !ok {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation lowering returned %T", presentation)
 		}
-		pointPresentation, err := canonicalPointPresentation(p)
+		variant, ok := visual.Presentation.Value.(*document.PointDashboardPresentation)
+		if !ok || variant == nil {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter point presentation variant is required")
+		}
+		if len(variant.Identity) == 0 {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter requires at least one identity field")
+		}
+		if variant.X == "" || variant.Y == "" {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter requires x and y result fields")
+		}
+		pointRef := func(name, channel string) (visualizationir.VisualizationFieldRef, error) {
+			if name == "" {
+				return visualizationir.VisualizationFieldRef{}, fmt.Errorf("scatter %s result field is required", channel)
+			}
+			return canonicalResultRef(query, "primary", name)
+		}
+		identity := make([]visualizationir.VisualizationFieldRef, 0, len(variant.Identity))
+		for index, name := range variant.Identity {
+			ref, refErr := pointRef(name, fmt.Sprintf("identity[%d]", index))
+			if refErr != nil {
+				return visualizationir.VisualizationSpec{}, refErr
+			}
+			identity = append(identity, ref)
+		}
+		x, err := pointRef(variant.X, "x")
 		if err != nil {
 			return visualizationir.VisualizationSpec{}, err
 		}
-		if len(dimensions) == 0 || len(metrics) != 2 {
-			return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter requires at least one identity dimension and exactly two metric operands, got %d and %d", len(dimensions), len(metrics))
+		y, err := pointRef(variant.Y, "y")
+		if err != nil {
+			return visualizationir.VisualizationSpec{}, err
+		}
+		for datasetIndex := range base.Datasets {
+			if base.Datasets[datasetIndex].ID != "primary" {
+				continue
+			}
+			for fieldIndex := range base.Datasets[datasetIndex].Fields {
+				for _, identityRef := range identity {
+					if base.Datasets[datasetIndex].Fields[fieldIndex].ID == identityRef.Field {
+						base.Datasets[datasetIndex].Fields[fieldIndex].Role = visualizationir.VisualizationFieldRoleIdentity
+					}
+				}
+			}
+		}
+		point := &visualizationir.PointVisualizationSpec{VisualizationSpecBase: base, Kind: "point", Identity: identity, X: x, Y: y, Presentation: p}
+		if variant.Size != nil {
+			value, refErr := pointRef(*variant.Size, "size")
+			if refErr != nil {
+				return visualizationir.VisualizationSpec{}, refErr
+			}
+			point.Size = &value
+		}
+		if variant.Color != nil {
+			value, refErr := pointRef(*variant.Color, "color")
+			if refErr != nil {
+				return visualizationir.VisualizationSpec{}, refErr
+			}
+			point.Color = &value
+		}
+		if variant.Series != nil {
+			value, refErr := pointRef(*variant.Series, "series")
+			if refErr != nil {
+				return visualizationir.VisualizationSpec{}, refErr
+			}
+			point.Series = &value
+		}
+		if variant.Label != nil {
+			value, refErr := pointRef(*variant.Label, "label")
+			if refErr != nil {
+				return visualizationir.VisualizationSpec{}, refErr
+			}
+			point.Label = &value
+		}
+		if variant.Tooltip != nil {
+			tooltip := make([]visualizationir.VisualizationFieldRef, 0, len(*variant.Tooltip))
+			for index, name := range *variant.Tooltip {
+				value, refErr := pointRef(name, fmt.Sprintf("tooltip[%d]", index))
+				if refErr != nil {
+					return visualizationir.VisualizationSpec{}, refErr
+				}
+				tooltip = append(tooltip, value)
+			}
+			point.Tooltip = &tooltip
+		}
+		if variant.ColorScale != nil {
+			if variant.Color == nil {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter colorScale requires color")
+			}
+			if variant.ColorScale.Minimum != nil && variant.ColorScale.Maximum != nil && *variant.ColorScale.Minimum >= *variant.ColorScale.Maximum {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter colorScale minimum must be less than maximum")
+			}
+			point.ColorScale = &visualizationir.PointVisualizationColorScale{Kind: variant.ColorScale.Kind, Minimum: variant.ColorScale.Minimum, Maximum: variant.ColorScale.Maximum, Scheme: variant.ColorScale.Scheme}
+		}
+		if variant.SizeScale != nil {
+			if variant.Size == nil {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale requires size")
+			}
+			if variant.SizeScale.MinimumPixels <= 0 || variant.SizeScale.MaximumPixels <= 0 || variant.SizeScale.MinimumPixels > variant.SizeScale.MaximumPixels {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale pixel bounds are invalid")
+			}
+			if variant.SizeScale.Minimum != nil && variant.SizeScale.Maximum != nil && *variant.SizeScale.Minimum >= *variant.SizeScale.Maximum {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale minimum must be less than maximum")
+			}
+			point.SizeScale = &visualizationir.PointVisualizationSizeScale{Minimum: variant.SizeScale.Minimum, Maximum: variant.SizeScale.Maximum, MinimumPixels: variant.SizeScale.MinimumPixels, MaximumPixels: variant.SizeScale.MaximumPixels}
 		}
 		base.Kind = "point"
-		return visualizationir.VisualizationSpec{Value: &visualizationir.PointVisualizationSpec{VisualizationSpecBase: base, Kind: "point", Identity: dimensions, X: metrics[0], Y: metrics[1], Presentation: pointPresentation}}, nil
+		point.VisualizationSpecBase = base
+		return visualizationir.VisualizationSpec{Value: point}, nil
 	case document.DashboardVisualTypeMap:
 		p, ok := presentation.(visualizationir.GeographicVisualizationPresentation)
 		if !ok {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("geographic presentation lowering returned %T", presentation)
 		}
-		if len(dimensions) != 2 {
-			return visualizationir.VisualizationSpec{}, fmt.Errorf("map visual requires exactly two dimensions for latitude and longitude, got %d", len(dimensions))
+		variant, _ := visual.Presentation.Value.(*document.GeographicDashboardPresentation)
+		if variant == nil || variant.Layers == nil || len(*variant.Layers) == 0 {
+			if len(dimensions) != 2 {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("map visual requires exactly two dimensions for latitude and longitude, got %d", len(dimensions))
+			}
 		}
 		if len(metrics) > 1 {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("map visual supports at most one metric, got %d", len(metrics))
@@ -504,10 +653,28 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		if spatialErr != nil {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("spatial interactions: %w", spatialErr)
 		}
-		lat, lon := dimensions[0], dimensions[1]
-		layerBase := visualizationir.VisualizationGeographicLayerBase{ID: "points", Kind: "point", Tooltip: []visualizationir.VisualizationFieldRef{}, Position: visualizationir.VisualizationMapLayerPositionBelowLabels, Visibility: visualizationir.VisualizationMapVisibility{MinimumZoom: 0, MaximumZoom: 24}}
-		layer := visualizationir.VisualizationPointLayer{VisualizationGeographicLayerBase: layerBase, Kind: "point", Latitude: lat, Longitude: lon, Size: visualizationir.VisualizationMapSizeScale{MinimumRadius: 2, MaximumRadius: 12}, Color: visualizationir.VisualizationMapColorScale{Kind: visualizationir.VisualizationMapColorScaleKindSequential, Palette: "default"}, Stroke: visualizationir.VisualizationMapStroke{Color: "#ffffff", Width: 1, Opacity: .8}, Cluster: visualizationir.VisualizationMapCluster{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 2}, Opacity: .8}
-		return visualizationir.VisualizationSpec{Value: &visualizationir.GeographicVisualizationSpec{VisualizationSpecBase: base, Kind: "geographic", Layers: []visualizationir.VisualizationGeographicLayer{{Value: &layer}}, SpatialInteractions: spatialInteractions, Presentation: p}}, nil
+		layers, layerErr := canonicalGeographicLayers(variant, query)
+		if layerErr != nil {
+			return visualizationir.VisualizationSpec{}, layerErr
+		}
+		if len(layers) == 0 {
+			lat, lon := dimensions[0], dimensions[1]
+			layerBase := visualizationir.VisualizationGeographicLayerBase{ID: "points", Kind: "point", Tooltip: []visualizationir.VisualizationFieldRef{}, Position: visualizationir.VisualizationMapLayerPositionBelowLabels, Visibility: visualizationir.VisualizationMapVisibility{MinimumZoom: 0, MaximumZoom: 24}}
+			layer := visualizationir.VisualizationPointLayer{VisualizationGeographicLayerBase: layerBase, Kind: "point", Latitude: lat, Longitude: lon, Size: visualizationir.VisualizationMapSizeScale{MinimumRadius: 2, MaximumRadius: 12}, Color: visualizationir.VisualizationMapColorScale{Kind: visualizationir.VisualizationMapColorScaleKindSequential, Palette: "default"}, Stroke: visualizationir.VisualizationMapStroke{Color: "#ffffff", Width: 1, Opacity: .8}, Cluster: visualizationir.VisualizationMapCluster{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 2}, Opacity: .8}
+			layers = []visualizationir.VisualizationGeographicLayer{{Value: &layer}}
+		}
+		basemap := "streets"
+		if variant != nil && variant.Basemap != nil {
+			basemap = *variant.Basemap
+		}
+		if basemap != "" && basemap != "blank" {
+			asset, resolveErr := mapasset.Resolve(basemap)
+			if resolveErr != nil {
+				return visualizationir.VisualizationSpec{}, resolveErr
+			}
+			p.Basemap = &asset
+		}
+		return visualizationir.VisualizationSpec{Value: &visualizationir.GeographicVisualizationSpec{VisualizationSpecBase: base, Kind: "geographic", Layers: layers, SpatialInteractions: spatialInteractions, Presentation: p}}, nil
 	case document.DashboardVisualTypeHistogram, document.DashboardVisualTypeBoxplot:
 		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
 		if !ok {
@@ -572,30 +739,628 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		} else {
 			x = metrics[0]
 		}
-		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: mark, X: x, Y: metrics, Presentation: p}}, nil
+		var series *visualizationir.VisualizationFieldRef
+		if query.Binding.Aggregate != nil && query.Binding.Aggregate.Series != nil {
+			seriesRef := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: query.Binding.Aggregate.Series.Alias}
+			series = &seriesRef
+		}
+		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: mark, X: x, Y: metrics, Series: series, Presentation: p}}, nil
 	}
 }
 
-func canonicalSpatialBinding(binding visualizationdefinition.QueryBinding) visualizationdefinition.QueryBinding {
+func canonicalConditionalFormatting(presentation document.DashboardPresentation, query LoweredDashboardQuery) (*[]visualizationir.VisualizationConditionalFormat, error) {
+	if presentation.Value == nil {
+		return nil, nil
+	}
+	base, err := presentation.Base()
+	if err != nil {
+		return nil, err
+	}
+	if base.ConditionalFormatting == nil {
+		return nil, nil
+	}
+	result := make([]visualizationir.VisualizationConditionalFormat, 0, len(*base.ConditionalFormatting))
+	for index, authored := range *base.ConditionalFormatting {
+		field, err := canonicalResultRef(query, "primary", authored.Field)
+		if err != nil {
+			return nil, fmt.Errorf("entry %d field: %w", index, err)
+		}
+		compiled := visualizationir.VisualizationConditionalFormat{ID: authored.ID, Target: authored.Target, Field: field}
+		switch rule := authored.Rule.Value.(type) {
+		case *document.DashboardGradientConditionalRule:
+			if rule == nil {
+				return nil, fmt.Errorf("entry %d gradient rule is nil", index)
+			}
+			if !finiteDashboardFloat(rule.Minimum) || !finiteDashboardFloat(rule.Maximum) || rule.Minimum >= rule.Maximum {
+				return nil, fmt.Errorf("entry %d gradient minimum must be finite and less than maximum", index)
+			}
+			compiled.Rule.Value = &visualizationir.GradientVisualizationConditionalRule{
+				VisualizationConditionalRuleBase: visualizationir.VisualizationConditionalRuleBase{Kind: "gradient"},
+				Kind:                             "gradient", Minimum: rule.Minimum, Maximum: rule.Maximum,
+				Low: canonicalConditionalStyle(rule.Low), High: canonicalConditionalStyle(rule.High), NullStyle: canonicalConditionalStyle(rule.NullStyle),
+			}
+		case *document.DashboardRulesConditionalRule:
+			if rule == nil {
+				return nil, fmt.Errorf("entry %d rules rule is nil", index)
+			}
+			thresholds := make([]visualizationir.VisualizationConditionalThreshold, len(rule.Rules))
+			for thresholdIndex, threshold := range rule.Rules {
+				if !finiteDashboardFloat(threshold.Value) {
+					return nil, fmt.Errorf("entry %d rule %d value must be finite", index, thresholdIndex)
+				}
+				thresholds[thresholdIndex] = visualizationir.VisualizationConditionalThreshold{Operator: threshold.Operator, Value: threshold.Value, Style: canonicalConditionalStyle(threshold.Style)}
+			}
+			compiled.Rule.Value = &visualizationir.RulesVisualizationConditionalRule{
+				VisualizationConditionalRuleBase: visualizationir.VisualizationConditionalRuleBase{Kind: "rules"},
+				Kind:                             "rules", Rules: thresholds, NullStyle: canonicalConditionalStyle(rule.NullStyle), DefaultStyle: canonicalConditionalStyle(rule.DefaultStyle),
+			}
+		case *document.DashboardFieldConditionalRule:
+			if rule == nil {
+				return nil, fmt.Errorf("entry %d field rule is nil", index)
+			}
+			source, err := canonicalResultRef(query, "primary", rule.Source)
+			if err != nil {
+				return nil, fmt.Errorf("entry %d source: %w", index, err)
+			}
+			values := make(map[string]visualizationir.VisualizationConditionalStyle, len(rule.Values))
+			for value, style := range rule.Values {
+				values[value] = canonicalConditionalStyle(style)
+			}
+			compiled.Rule.Value = &visualizationir.FieldVisualizationConditionalRule{
+				VisualizationConditionalRuleBase: visualizationir.VisualizationConditionalRuleBase{Kind: "field"},
+				Kind:                             "field", Source: source, Values: values, NullStyle: canonicalConditionalStyle(rule.NullStyle), DefaultStyle: canonicalConditionalStyle(rule.DefaultStyle),
+			}
+		default:
+			return nil, fmt.Errorf("entry %d has unsupported rule %T", index, authored.Rule.Value)
+		}
+		result = append(result, compiled)
+	}
+	return &result, nil
+}
+
+func canonicalConditionalStyle(authored document.DashboardConditionalStyle) visualizationir.VisualizationConditionalStyle {
+	return visualizationir.VisualizationConditionalStyle{Color: authored.Color, Icon: authored.Icon}
+}
+
+func canonicalSpatialBinding(binding visualizationdefinition.QueryBinding, presentation *document.GeographicDashboardPresentation, authoredQuery document.DashboardQuery) (visualizationdefinition.QueryBinding, error) {
 	if binding.Aggregate == nil {
-		return binding
+		return binding, nil
 	}
 	spatial := &visualizationdefinition.SpatialQueryBinding{TableID: binding.Aggregate.TableID, Dimensions: append([]visualizationdefinition.FieldBinding(nil), binding.Aggregate.Dimensions...), Metrics: append([]visualizationdefinition.FieldBinding(nil), binding.Aggregate.Metrics...), Limit: binding.Aggregate.Limit, Sort: append([]visualizationdefinition.Sort(nil), binding.Aggregate.Sort...)}
-	return visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QuerySpatial, ResultShape: visualizationdefinition.ResultGeographicFeatures, ModelID: binding.ModelID, DatasetID: binding.DatasetID, Identity: append([]string(nil), binding.Identity...), Spatial: spatial}
+	result := visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QuerySpatial, ResultShape: visualizationdefinition.ResultGeographicFeatures, ModelID: binding.ModelID, DatasetID: binding.DatasetID, Identity: append([]string(nil), binding.Identity...), Spatial: spatial}
+	if presentation == nil || presentation.Layers == nil {
+		return result, nil
+	}
+	latitudeAlias, longitudeAlias := "", ""
+	hasTiled, hasInline := false, false
+	cellRadius := 32.0
+	for index, layer := range *presentation.Layers {
+		switch value := layer.Value.(type) {
+		case *document.DashboardPointGeographicLayer:
+			hasTiled = true
+			if value != nil {
+				if value.Size != nil && value.Size.MaximumRadius != nil {
+					cellRadius = math.Max(cellRadius, *value.Size.MaximumRadius)
+				}
+				if value.Cluster != nil && value.Cluster.Radius != nil {
+					cellRadius = math.Max(cellRadius, float64(*value.Cluster.Radius))
+				}
+				if err := mergeTiledCoordinates(&latitudeAlias, &longitudeAlias, value.Latitude, value.Longitude); err != nil {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("layer %d: %w", index, err)
+				}
+			}
+		case *document.DashboardHeatGeographicLayer:
+			hasTiled = true
+			if value != nil {
+				if value.Heat != nil && value.Heat.Radius != nil {
+					cellRadius = math.Max(cellRadius, *value.Heat.Radius)
+				}
+				if err := mergeTiledCoordinates(&latitudeAlias, &longitudeAlias, value.Latitude, value.Longitude); err != nil {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("layer %d: %w", index, err)
+				}
+			}
+		case *document.DashboardDensityGeographicLayer:
+			hasTiled = true
+			if value != nil {
+				if value.Heat != nil && value.Heat.Radius != nil {
+					cellRadius = math.Max(cellRadius, *value.Heat.Radius)
+				}
+				if err := mergeTiledCoordinates(&latitudeAlias, &longitudeAlias, value.Latitude, value.Longitude); err != nil {
+					return visualizationdefinition.QueryBinding{}, fmt.Errorf("layer %d: %w", index, err)
+				}
+			}
+		case *document.DashboardChoroplethGeographicLayer, *document.DashboardPathGeographicLayer:
+			hasInline = true
+		case *document.DashboardReferenceGeographicLayer:
+		default:
+			return visualizationdefinition.QueryBinding{}, fmt.Errorf("layer %d has unsupported variant %T", index, layer.Value)
+		}
+	}
+	if hasTiled && hasInline {
+		return visualizationdefinition.QueryBinding{}, fmt.Errorf("cannot mix tiled point, heat, or density layers with inline choropleth or path layers")
+	}
+	if !hasTiled {
+		return result, nil
+	}
+	if aggregate, ok := authoredQuery.Value.(*document.AggregateDashboardQuery); ok && aggregate.Limit != nil {
+		return visualizationdefinition.QueryBinding{}, fmt.Errorf("tiled geographic visual must not set query.limit; tile budgets govern transport")
+	}
+	latitude, latitudeOK := fieldBindingByAlias(spatial.Dimensions, latitudeAlias)
+	longitude, longitudeOK := fieldBindingByAlias(spatial.Dimensions, longitudeAlias)
+	if !latitudeOK || !longitudeOK {
+		return visualizationdefinition.QueryBinding{}, fmt.Errorf("tiled coordinates %q and %q must reference compiled dimension aliases", latitudeAlias, longitudeAlias)
+	}
+	spatial.Limit = 0
+	spatial.Tiles = &visualizationdefinition.SpatialTileBinding{
+		Latitude: latitude, Longitude: longitude,
+		MinimumZoom: 0, MaximumZoom: 18, RawMinimumZoom: 5,
+		FeatureCap: 5000, MaximumBytes: 512 * 1024, MetatileSize: 4,
+		CellRadius: int32(math.Round(math.Max(32, math.Min(64, cellRadius)))),
+	}
+	return result, nil
 }
 
-func canonicalPointPresentation(value visualizationir.CartesianVisualizationPresentation) (visualizationir.PointVisualizationPresentation, error) {
-	if value.Smooth || value.Stacked || value.DataZoom || value.Area || value.Step || value.Orientation != nil || value.LabelPosition != nil || value.SymbolSize != nil || value.HistogramBins != nil || value.ComboSeries != nil || value.Stacking != nil || value.SeriesIntent != nil || value.ShowSymbols {
-		return visualizationir.PointVisualizationPresentation{}, fmt.Errorf("scatter presentation contains cartesian fields without point equivalents")
+func mergeTiledCoordinates(latitude, longitude *string, nextLatitude, nextLongitude string) error {
+	if strings.TrimSpace(nextLatitude) == "" || strings.TrimSpace(nextLongitude) == "" {
+		return fmt.Errorf("tiled layer requires latitude and longitude")
 	}
-	return visualizationir.PointVisualizationPresentation{
-		VisualizationPresentation: value.VisualizationPresentation,
-		Overplot:                  visualizationir.VisualizationPointOverplotStrategyOpacity,
-		Opacity:                   .7,
-		LargeMode:                 visualizationir.VisualizationPointLargeModeAutomatic,
-		LargeThreshold:            10000,
-		Brush:                     []visualizationir.VisualizationPointBrushGesture{},
-	}, nil
+	if *latitude == "" && *longitude == "" {
+		*latitude, *longitude = nextLatitude, nextLongitude
+		return nil
+	}
+	if *latitude != nextLatitude || *longitude != nextLongitude {
+		return fmt.Errorf("tiled coordinate layers must share one latitude and longitude pair")
+	}
+	return nil
+}
+
+func fieldBindingByAlias(fields []visualizationdefinition.FieldBinding, alias string) (visualizationdefinition.FieldBinding, bool) {
+	for _, field := range fields {
+		if field.Alias == alias {
+			return field, true
+		}
+	}
+	return visualizationdefinition.FieldBinding{}, false
+}
+
+func canonicalGeographicLayers(value *document.GeographicDashboardPresentation, query LoweredDashboardQuery) ([]visualizationir.VisualizationGeographicLayer, error) {
+	if value == nil || value.Layers == nil {
+		return nil, nil
+	}
+	result := make([]visualizationir.VisualizationGeographicLayer, 0, len(*value.Layers))
+	for index, authored := range *value.Layers {
+		if authored.Value == nil {
+			return nil, fmt.Errorf("map layer %d is required", index)
+		}
+		var layer visualizationir.VisualizationGeographicLayer
+		var err error
+		switch variant := authored.Value.(type) {
+		case *document.DashboardPointGeographicLayer:
+			if variant == nil {
+				return nil, fmt.Errorf("map layer %d variant is nil", index)
+			}
+			layer, err = canonicalPointGeographicLayer(variant, query)
+		case *document.DashboardChoroplethGeographicLayer:
+			if variant == nil {
+				return nil, fmt.Errorf("map layer %d variant is nil", index)
+			}
+			layer, err = canonicalChoroplethGeographicLayer(variant, query)
+		case *document.DashboardReferenceGeographicLayer:
+			if variant == nil {
+				return nil, fmt.Errorf("map layer %d variant is nil", index)
+			}
+			layer, err = canonicalReferenceGeographicLayer(variant, query)
+		case *document.DashboardHeatGeographicLayer:
+			if variant == nil {
+				return nil, fmt.Errorf("map layer %d variant is nil", index)
+			}
+			layer, err = canonicalHeatGeographicLayer(variant, query)
+		case *document.DashboardDensityGeographicLayer:
+			if variant == nil {
+				return nil, fmt.Errorf("map layer %d variant is nil", index)
+			}
+			layer, err = canonicalDensityGeographicLayer(variant, query)
+		case *document.DashboardPathGeographicLayer:
+			if variant == nil {
+				return nil, fmt.Errorf("map layer %d variant is nil", index)
+			}
+			layer, err = canonicalPathGeographicLayer(variant, query)
+		default:
+			return nil, fmt.Errorf("map layer %d uses unsupported variant %T", index, authored.Value)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("map layer %d: %w", index, err)
+		}
+		result = append(result, layer)
+	}
+	return result, nil
+}
+
+func canonicalMapLayerBase(base *document.DashboardGeographicLayerBase, kind string, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayerBase, error) {
+	if base == nil {
+		return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("map layer base is required")
+	}
+	id := strings.TrimSpace(base.ID)
+	if id == "" {
+		return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("map layer id is required")
+	}
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("map layer %q kind is required", id)
+	}
+	out := visualizationir.VisualizationGeographicLayerBase{
+		ID:         id,
+		Kind:       kind,
+		Tooltip:    []visualizationir.VisualizationFieldRef{},
+		Position:   visualizationir.VisualizationMapLayerPositionBelowLabels,
+		Visibility: visualizationir.VisualizationMapVisibility{MinimumZoom: 0, MaximumZoom: 24},
+	}
+	if base.Label != nil {
+		label, err := canonicalResultRef(query, "primary", *base.Label)
+		if err != nil {
+			return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("label: %w", err)
+		}
+		out.Label = &label
+	}
+	if base.Tooltip != nil {
+		out.Tooltip = make([]visualizationir.VisualizationFieldRef, 0, len(*base.Tooltip))
+		for _, name := range *base.Tooltip {
+			ref, err := canonicalResultRef(query, "primary", name)
+			if err != nil {
+				return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("tooltip %q: %w", name, err)
+			}
+			out.Tooltip = append(out.Tooltip, ref)
+		}
+	}
+	if base.Position != nil {
+		out.Position = *base.Position
+	}
+	if base.MinimumZoom != nil {
+		out.Visibility.MinimumZoom = *base.MinimumZoom
+	}
+	if base.MaximumZoom != nil {
+		out.Visibility.MaximumZoom = *base.MaximumZoom
+	}
+	if out.Visibility.MinimumZoom < 0 || out.Visibility.MaximumZoom <= out.Visibility.MinimumZoom {
+		return visualizationir.VisualizationGeographicLayerBase{}, fmt.Errorf("map layer %q has invalid visibility", id)
+	}
+	return out, nil
+}
+
+func canonicalMapOptionalRef(query LoweredDashboardQuery, name *string, field string) (*visualizationir.VisualizationFieldRef, error) {
+	if name == nil {
+		return nil, nil
+	}
+	ref, err := canonicalResultRef(query, "primary", *name)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", field, err)
+	}
+	return &ref, nil
+}
+
+func canonicalMapRequiredRef(query LoweredDashboardQuery, name, field string) (visualizationir.VisualizationFieldRef, error) {
+	if strings.TrimSpace(name) == "" {
+		return visualizationir.VisualizationFieldRef{}, fmt.Errorf("%s is required", field)
+	}
+	ref, err := canonicalResultRef(query, "primary", name)
+	if err != nil {
+		return visualizationir.VisualizationFieldRef{}, fmt.Errorf("%s: %w", field, err)
+	}
+	return ref, nil
+}
+
+func canonicalMapColor(value *document.DashboardMapColorScale) visualizationir.VisualizationMapColorScale {
+	out := visualizationir.VisualizationMapColorScale{Kind: visualizationir.VisualizationMapColorScaleKindSequential, Palette: "default"}
+	if value == nil {
+		return out
+	}
+	if value.Kind != nil {
+		out.Kind = *value.Kind
+	}
+	if value.Palette != nil {
+		out.Palette = *value.Palette
+	}
+	if value.Reverse != nil {
+		out.Reverse = *value.Reverse
+	}
+	out.DomainMinimum = value.DomainMinimum
+	out.DomainMidpoint = value.DomainMidpoint
+	out.DomainMaximum = value.DomainMaximum
+	if value.NullColor != nil {
+		out.NullColor = *value.NullColor
+	}
+	return out
+}
+
+func canonicalMapStroke(value *document.DashboardMapStroke) (visualizationir.VisualizationMapStroke, error) {
+	out := visualizationir.VisualizationMapStroke{Color: "#ffffff", Width: 1, Opacity: .8}
+	if value == nil {
+		return out, nil
+	}
+	if value.Color != nil {
+		out.Color = *value.Color
+	}
+	if value.Width != nil {
+		out.Width = *value.Width
+	}
+	if value.Opacity != nil {
+		out.Opacity = *value.Opacity
+	}
+	if out.Width < 0 {
+		return visualizationir.VisualizationMapStroke{}, fmt.Errorf("stroke width must be non-negative")
+	}
+	if out.Opacity < 0 || out.Opacity > 1 {
+		return visualizationir.VisualizationMapStroke{}, fmt.Errorf("stroke opacity must be between 0 and 1")
+	}
+	return out, nil
+}
+
+func canonicalMapSize(value *document.DashboardMapSizeScale) (visualizationir.VisualizationMapSizeScale, error) {
+	out := visualizationir.VisualizationMapSizeScale{MinimumRadius: 2, MaximumRadius: 12}
+	if value == nil {
+		return out, nil
+	}
+	if value.MinimumRadius != nil {
+		out.MinimumRadius = *value.MinimumRadius
+	}
+	if value.MaximumRadius != nil {
+		out.MaximumRadius = *value.MaximumRadius
+	}
+	out.DomainMinimum = value.DomainMinimum
+	out.DomainMaximum = value.DomainMaximum
+	if out.MinimumRadius < 0 || out.MaximumRadius < out.MinimumRadius {
+		return visualizationir.VisualizationMapSizeScale{}, fmt.Errorf("size scale has invalid radius range")
+	}
+	if out.DomainMinimum != nil && out.DomainMaximum != nil && *out.DomainMaximum < *out.DomainMinimum {
+		return visualizationir.VisualizationMapSizeScale{}, fmt.Errorf("size scale has invalid domain range")
+	}
+	return out, nil
+}
+
+func canonicalMapHeat(value *document.DashboardMapHeatStyle) (visualizationir.VisualizationMapHeatStyle, error) {
+	out := visualizationir.VisualizationMapHeatStyle{Radius: 24, Intensity: 1}
+	if value == nil {
+		return out, nil
+	}
+	if value.Radius != nil {
+		out.Radius = *value.Radius
+	}
+	if value.Intensity != nil {
+		out.Intensity = *value.Intensity
+	}
+	if out.Radius <= 0 || out.Intensity < 0 {
+		return visualizationir.VisualizationMapHeatStyle{}, fmt.Errorf("heat style requires positive radius and non-negative intensity")
+	}
+	return out, nil
+}
+
+func canonicalMapLine(value *document.DashboardMapLineStyle) (visualizationir.VisualizationMapLineStyle, error) {
+	out := visualizationir.VisualizationMapLineStyle{Width: 3}
+	if value == nil {
+		return out, nil
+	}
+	if value.Width != nil {
+		out.Width = *value.Width
+	}
+	if value.Curvature != nil {
+		out.Curvature = *value.Curvature
+	}
+	if out.Width < 0 || out.Curvature < 0 || out.Curvature > 1 {
+		return visualizationir.VisualizationMapLineStyle{}, fmt.Errorf("line style has invalid width or curvature")
+	}
+	return out, nil
+}
+
+func canonicalMapCluster(value *document.DashboardMapCluster) (visualizationir.VisualizationMapCluster, error) {
+	out := visualizationir.VisualizationMapCluster{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 2}
+	if value == nil {
+		return out, nil
+	}
+	if value.Enabled != nil {
+		out.Enabled = *value.Enabled
+	}
+	if value.Radius != nil {
+		out.Radius = *value.Radius
+	}
+	if value.MaximumZoom != nil {
+		out.MaximumZoom = *value.MaximumZoom
+	}
+	if value.MinimumPoints != nil {
+		out.MinimumPoints = *value.MinimumPoints
+	}
+	if value.ShowCount != nil {
+		out.ShowCount = *value.ShowCount
+	}
+	if out.Radius <= 0 || out.MaximumZoom < 0 || out.MinimumPoints < 2 {
+		return visualizationir.VisualizationMapCluster{}, fmt.Errorf("cluster configuration is invalid")
+	}
+	return out, nil
+}
+
+func canonicalMapOpacity(value *float64) (float64, error) {
+	opacity := 1.0
+	if value != nil {
+		opacity = *value
+	}
+	if opacity < 0 || opacity > 1 {
+		return 0, fmt.Errorf("opacity must be between 0 and 1")
+	}
+	return opacity, nil
+}
+
+func canonicalPointGeographicLayer(layer *document.DashboardPointGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, query)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	latitude, err := canonicalMapRequiredRef(query, layer.Latitude, "latitude")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	longitude, err := canonicalMapRequiredRef(query, layer.Longitude, "longitude")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	value, err := canonicalMapOptionalRef(query, layer.Value, "value")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	category, err := canonicalMapOptionalRef(query, layer.Category, "category")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	size, err := canonicalMapSize(layer.Size)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	stroke, err := canonicalMapStroke(layer.Stroke)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	cluster, err := canonicalMapCluster(layer.Cluster)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	opacity, err := canonicalMapOpacity(layer.Opacity)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationPointLayer{VisualizationGeographicLayerBase: base, Kind: layer.Kind, Latitude: latitude, Longitude: longitude, Value: value, Category: category, Size: size, Color: canonicalMapColor(layer.Color), Stroke: stroke, Cluster: cluster, Opacity: opacity}}, nil
+}
+
+func canonicalChoroplethGeographicLayer(layer *document.DashboardChoroplethGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, query)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	join, err := canonicalMapRequiredRef(query, layer.Join, "join")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	value, err := canonicalMapOptionalRef(query, layer.Value, "value")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	category, err := canonicalMapOptionalRef(query, layer.Category, "category")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	geometryAsset, err := geometry.Resolve(layer.GeometryAsset)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	stroke, err := canonicalMapStroke(layer.Stroke)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	opacity, err := canonicalMapOpacity(layer.Opacity)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationChoroplethLayer{VisualizationGeographicLayerBase: base, Kind: layer.Kind, Geometry: geometryAsset, Join: join, Value: value, Category: category, Color: canonicalMapColor(layer.Color), Stroke: stroke, Opacity: opacity}}, nil
+}
+
+func canonicalReferenceGeographicLayer(layer *document.DashboardReferenceGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, query)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	geometryAsset, err := geometry.Resolve(layer.GeometryAsset)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	stroke, err := canonicalMapStroke(layer.Stroke)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	opacity, err := canonicalMapOpacity(layer.Opacity)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationReferenceLayer{VisualizationGeographicLayerBase: base, Kind: layer.Kind, Geometry: geometryAsset, Color: canonicalMapColor(layer.Color), Stroke: stroke, Opacity: opacity}}, nil
+}
+
+func canonicalHeatGeographicLayer(layer *document.DashboardHeatGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
+	return canonicalHeatOrDensityGeographicLayer(layer.Kind, layer.Latitude, layer.Longitude, layer.Value, layer.Color, layer.Heat, layer.Opacity, query, true, &layer.DashboardGeographicLayerBase)
+}
+
+func canonicalDensityGeographicLayer(layer *document.DashboardDensityGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
+	return canonicalHeatOrDensityGeographicLayer(layer.Kind, layer.Latitude, layer.Longitude, layer.Value, layer.Color, layer.Heat, layer.Opacity, query, false, &layer.DashboardGeographicLayerBase)
+}
+
+func canonicalHeatOrDensityGeographicLayer(kind, latitudeName, longitudeName string, valueName *string, color *document.DashboardMapColorScale, heatStyle *document.DashboardMapHeatStyle, opacityValue *float64, query LoweredDashboardQuery, heat bool, baseValue *document.DashboardGeographicLayerBase) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(baseValue, kind, query)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	latitude, err := canonicalMapRequiredRef(query, latitudeName, "latitude")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	longitude, err := canonicalMapRequiredRef(query, longitudeName, "longitude")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	value, err := canonicalMapOptionalRef(query, valueName, "value")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	heatValue, err := canonicalMapHeat(heatStyle)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	opacity, err := canonicalMapOpacity(opacityValue)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	if heat {
+		return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationHeatLayer{VisualizationGeographicLayerBase: base, Kind: kind, Latitude: latitude, Longitude: longitude, Value: value, Color: canonicalMapColor(color), Heat: heatValue, Opacity: opacity}}, nil
+	}
+	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationDensityLayer{VisualizationGeographicLayerBase: base, Kind: kind, Latitude: latitude, Longitude: longitude, Value: value, Color: canonicalMapColor(color), Heat: heatValue, Opacity: opacity}}, nil
+}
+
+func canonicalPathGeographicLayer(layer *document.DashboardPathGeographicLayer, query LoweredDashboardQuery) (visualizationir.VisualizationGeographicLayer, error) {
+	base, err := canonicalMapLayerBase(&layer.DashboardGeographicLayerBase, layer.Kind, query)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	latitude, err := canonicalMapRequiredRef(query, layer.Latitude, "latitude")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	longitude, err := canonicalMapRequiredRef(query, layer.Longitude, "longitude")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	path, err := canonicalMapRequiredRef(query, layer.Path, "path")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	order, err := canonicalMapRequiredRef(query, layer.Order, "order")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	value, err := canonicalMapOptionalRef(query, layer.Value, "value")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	category, err := canonicalMapOptionalRef(query, layer.Category, "category")
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	stroke, err := canonicalMapStroke(layer.Stroke)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	line, err := canonicalMapLine(layer.Line)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	opacity, err := canonicalMapOpacity(layer.Opacity)
+	if err != nil {
+		return visualizationir.VisualizationGeographicLayer{}, err
+	}
+	return visualizationir.VisualizationGeographicLayer{Value: &visualizationir.VisualizationPathLayer{VisualizationGeographicLayerBase: base, Kind: layer.Kind, Latitude: latitude, Longitude: longitude, Path: path, Order: order, Value: value, Category: category, Color: canonicalMapColor(layer.Color), Stroke: stroke, Line: line, Opacity: opacity}}, nil
 }
 
 func canonicalBindingRef(query LoweredDashboardQuery, metric bool, index int) visualizationir.VisualizationFieldRef {
@@ -744,7 +1509,16 @@ func canonicalResultFields(query LoweredDashboardQuery, model *semanticmodel.Mod
 			source := field.Source
 			sourceRef = &source
 		}
-		fields = append(fields, visualizationir.VisualizationField{ID: field.Name, SourceRef: sourceRef, Role: role, DataType: typ, Nullable: true, Label: field.Name})
+		label := field.Name
+		var format *visualizationir.VisualizationFormat
+		if query.Type == "records" {
+			label = canonicalPhysicalFieldLabel(model, field.Source, label)
+		} else if _, metric := metricNames[field.Name]; metric && query.Type != "distribution" && query.Type != "histogram" {
+			label, format = canonicalMetricPresentation(model, field.Source, label)
+		} else if query.Type != "distribution" && query.Type != "histogram" {
+			label = canonicalDimensionLabel(model, field.Source, label)
+		}
+		fields = append(fields, visualizationir.VisualizationField{ID: field.Name, SourceRef: sourceRef, Role: role, DataType: typ, Nullable: true, Label: label, Format: format})
 	}
 	if query.Binding.ResultShape == visualizationdefinition.ResultHierarchyNodes {
 		mark := "node"
@@ -764,6 +1538,66 @@ func canonicalResultFields(query LoweredDashboardQuery, model *semanticmodel.Mod
 		)
 	}
 	return fields
+}
+
+func canonicalMetricPresentation(model *semanticmodel.Model, name, fallbackLabel string) (string, *visualizationir.VisualizationFormat) {
+	if model == nil {
+		return fallbackLabel, nil
+	}
+	metric, ok := model.Metrics[name]
+	if !ok {
+		return fallbackLabel, nil
+	}
+	label := fallbackLabel
+	if strings.TrimSpace(metric.Label) != "" {
+		label = metric.Label
+	}
+	switch metric.Format {
+	case "currency":
+		currency := strings.ToUpper(strings.TrimSpace(metric.Unit))
+		if currency == "" {
+			return label, nil
+		}
+		minimum, maximum := int32(2), int32(2)
+		return label, &visualizationir.VisualizationFormat{Value: &visualizationir.CurrencyVisualizationFormat{Kind: "currency", Currency: currency, MinimumFractionDigits: &minimum, MaximumFractionDigits: &maximum}}
+	case "integer":
+		digits := int32(0)
+		return label, &visualizationir.VisualizationFormat{Value: &visualizationir.NumberVisualizationFormat{Kind: "number", MinimumFractionDigits: &digits, MaximumFractionDigits: &digits}}
+	case "decimal":
+		return label, &visualizationir.VisualizationFormat{Value: &visualizationir.NumberVisualizationFormat{Kind: "number"}}
+	default:
+		return label, nil
+	}
+}
+
+func canonicalDimensionLabel(model *semanticmodel.Model, name, fallback string) string {
+	if model == nil {
+		return fallback
+	}
+	dimension, ok := model.Dimensions[name]
+	if ok && strings.TrimSpace(dimension.Label) != "" {
+		return dimension.Label
+	}
+	return fallback
+}
+
+func canonicalPhysicalFieldLabel(model *semanticmodel.Model, source, fallback string) string {
+	if model == nil {
+		return fallback
+	}
+	parts := strings.SplitN(source, ".", 2)
+	if len(parts) != 2 {
+		return fallback
+	}
+	table, ok := model.Tables[parts[0]]
+	if !ok {
+		return fallback
+	}
+	field, ok := table.Dimensions[parts[1]]
+	if ok && strings.TrimSpace(field.Label) != "" {
+		return field.Label
+	}
+	return fallback
 }
 
 func canonicalPhysicalDataType(model *semanticmodel.Model, source string) visualizationir.VisualizationDataType {
@@ -886,6 +1720,36 @@ func canonicalMetadataBindings(value *document.DashboardMetadataBindings, query 
 	return &visualizationir.VisualizationMetadataBindings{Title: title, Subtitle: subtitle, Description: description, Summary: summary}, nil
 }
 
+func canonicalKPIValueBinding(value *document.DashboardKPIValueBinding, query LoweredDashboardQuery, secondary []visualizationir.VisualizationDatasetSchema) (*visualizationir.VisualizationKPIValueBinding, error) {
+	if value == nil {
+		return nil, nil
+	}
+	field, err := canonicalDatasetResultRef(query, secondary, value.Dataset, value.Field)
+	if err != nil {
+		return nil, err
+	}
+	reducer := visualizationir.VisualizationReferenceReducerFirst
+	if value.Reducer != nil {
+		reducer = *value.Reducer
+	}
+	return &visualizationir.VisualizationKPIValueBinding{Field: field, Reducer: reducer, Label: value.Label}, nil
+}
+
+func canonicalKPITrendBinding(value *document.DashboardKPITrendBinding, query LoweredDashboardQuery, secondary []visualizationir.VisualizationDatasetSchema) (*visualizationir.VisualizationKPITrendBinding, error) {
+	if value == nil {
+		return nil, nil
+	}
+	category, err := canonicalDatasetResultRef(query, secondary, value.Dataset, value.Category)
+	if err != nil {
+		return nil, err
+	}
+	metric, err := canonicalDatasetResultRef(query, secondary, value.Dataset, value.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &visualizationir.VisualizationKPITrendBinding{Category: category, Value: metric}, nil
+}
+
 func canonicalCalculations(values *[]document.DashboardCalculation, query LoweredDashboardQuery) (*[]visualizationir.VisualizationCalculation, error) {
 	if values == nil {
 		return nil, nil
@@ -896,7 +1760,7 @@ func canonicalCalculations(values *[]document.DashboardCalculation, query Lowere
 		if err != nil {
 			return nil, fmt.Errorf("calculation %d source: %w", index, err)
 		}
-		calculation := visualizationir.VisualizationCalculation{ID: value.ID, Dataset: "primary", Source: source, Hidden: valueOrBool(value.Hidden), Template: value.Template}
+		calculation := visualizationir.VisualizationCalculation{ID: value.ID, Dataset: "primary", Source: source, Hidden: valueOrBool(value.Hidden), Template: value.Template, OrderBy: []visualizationir.VisualizationCalculationOrder{}, PartitionBy: []visualizationir.VisualizationFieldRef{}}
 		calculation.Label = valueOrString(value.Label, value.ID)
 		calculation.Axis = visualizationir.VisualizationCalculationAxisRows
 		if value.Axis != nil {
@@ -955,6 +1819,93 @@ func canonicalCalculations(values *[]document.DashboardCalculation, query Lowere
 		result[index] = calculation
 	}
 	return &result, nil
+}
+
+func appendCanonicalCalculationOutputs(spec *visualizationir.VisualizationSpec) error {
+	if spec == nil {
+		return nil
+	}
+	base, err := spec.Base()
+	if err != nil {
+		return err
+	}
+	if base.Calculations == nil || len(*base.Calculations) == 0 {
+		return nil
+	}
+	var primary *visualizationir.VisualizationDatasetSchema
+	for index := range base.Datasets {
+		if base.Datasets[index].ID == "primary" {
+			primary = &base.Datasets[index]
+			break
+		}
+	}
+	if primary == nil {
+		return fmt.Errorf("primary dataset is required")
+	}
+	fields := make(map[string]visualizationir.VisualizationField, len(primary.Fields)+len(*base.Calculations))
+	for _, field := range primary.Fields {
+		fields[field.ID] = field
+	}
+	for _, calculation := range *base.Calculations {
+		if _, exists := fields[calculation.ID]; exists {
+			return fmt.Errorf("calculation output %q collides with an existing result field", calculation.ID)
+		}
+		source, exists := fields[calculation.Source.Field]
+		if !exists {
+			return fmt.Errorf("calculation %q references unknown source %q", calculation.ID, calculation.Source.Field)
+		}
+		calculationID := calculation.ID
+		field := visualizationir.VisualizationField{
+			ID: calculation.ID, Role: visualizationir.VisualizationFieldRoleMetric,
+			DataType: canonicalCalculationDataType(calculation.Template, source.DataType), Nullable: true,
+			Label: calculation.Label, Format: calculation.Format,
+			Provenance: &visualizationir.VisualizationFieldProvenance{
+				Kind:       visualizationir.VisualizationFieldProvenanceKindVisualCalculation,
+				SourceRefs: []string{calculation.Source.Field}, CalculationID: &calculationID,
+			},
+		}
+		primary.Fields = append(primary.Fields, field)
+		fields[field.ID] = field
+		if calculation.Hidden {
+			continue
+		}
+		ref := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: field.ID}
+		switch value := spec.Value.(type) {
+		case *visualizationir.CartesianVisualizationSpec:
+			value.Y = append(value.Y, ref)
+		case *visualizationir.TableVisualizationSpec:
+			value.Columns = append(value.Columns, visualizationir.TableVisualizationColumn{Field: ref, Label: field.Label, Formatting: []visualizationir.TableVisualizationFormattingRule{}})
+		case *visualizationir.MatrixVisualizationSpec:
+			value.Metrics = append(value.Metrics, ref)
+		case *visualizationir.PivotVisualizationSpec:
+			value.Metrics = append(value.Metrics, ref)
+		default:
+			return fmt.Errorf("visible calculation %q is not supported for %T", calculation.ID, spec.Value)
+		}
+	}
+	base.DataBudget.RequiredCompleteness = visualizationir.VisualizationCompletenessPartial
+	return nil
+}
+
+func canonicalCalculationDataType(template visualizationir.VisualizationCalculationTemplate, source visualizationir.VisualizationDataType) visualizationir.VisualizationDataType {
+	switch template {
+	case visualizationir.VisualizationCalculationTemplateRank:
+		return visualizationir.VisualizationDataTypeInteger
+	case visualizationir.VisualizationCalculationTemplateRunningTotal,
+		visualizationir.VisualizationCalculationTemplateDifference:
+		if source == visualizationir.VisualizationDataTypeInteger {
+			return visualizationir.VisualizationDataTypeDecimal
+		}
+		return source
+	case visualizationir.VisualizationCalculationTemplateMovingAverage,
+		visualizationir.VisualizationCalculationTemplatePercentageDifference,
+		visualizationir.VisualizationCalculationTemplatePercentOfParent,
+		visualizationir.VisualizationCalculationTemplatePercentOfGrandTotal,
+		visualizationir.VisualizationCalculationTemplateCumulativeContribution:
+		return visualizationir.VisualizationDataTypeDecimal
+	default:
+		return source
+	}
 }
 
 func valueOrBool(value *bool) bool {
@@ -1028,10 +1979,6 @@ func canonicalInteractions(values *[]document.DashboardInteraction, query Lowere
 		}
 		if kind == "spatialSelection" {
 			continue
-		}
-		base, err := interaction.Base()
-		if err != nil {
-			return nil, fmt.Errorf("interaction %d: %w", index, err)
 		}
 		compiled := visualizationir.VisualizationInteraction{ID: fmt.Sprintf("interaction-%d", index), Kind: visualizationir.VisualizationInteractionKindSelect, Mappings: []visualizationir.VisualizationInteractionMapping{}, Targets: []visualizationir.VisualizationInteractionTarget{}, Mode: visualizationir.VisualizationSelectionModeSingle}
 		if kind == "selection" {
@@ -1112,9 +2059,6 @@ func canonicalInteractions(values *[]document.DashboardInteraction, query Lowere
 			appendTargets(value.Targets, visualizationir.VisualizationInteractionEffectFilter)
 			appendTargets(value.HighlightTargets, visualizationir.VisualizationInteractionEffectHighlight)
 			appendTargets(value.NoneTargets, visualizationir.VisualizationInteractionEffectNone)
-		}
-		if base.Type == "" {
-			return nil, fmt.Errorf("interaction %d type is required", index)
 		}
 		result = append(result, compiled)
 	}

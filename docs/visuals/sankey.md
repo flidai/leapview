@@ -69,7 +69,7 @@ visuals:
 
 ## Spacious nodes
 
-Increase `presentation.node_gap` when labels or links feel crowded, and tune `curveness` to keep parallel flows visually distinct.
+Increase `presentation.nodeGap` when labels or links feel crowded, and tune `curveness` to keep parallel flows visually distinct.
 
 {{< visual id="category_status_flow_spacious" >}}
 
@@ -80,6 +80,8 @@ visuals:
     type: sankey
     presentation:
       type: hierarchy
+      nodeGap: 18
+      curveness: 0.32
     query:
       type: aggregate
       dimensions:

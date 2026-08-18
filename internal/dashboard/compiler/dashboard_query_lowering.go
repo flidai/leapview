@@ -232,6 +232,18 @@ func lowerCanonicalDistribution(query document.DistributionDashboardQuery, model
 	if query.Approximation != document.DashboardHistogramApproximationExact && query.Approximation != document.DashboardHistogramApproximationApproximate {
 		return LoweredDashboardQuery{}, fmt.Errorf("distribution approximation must be exact or approximate")
 	}
+	var groupRequest []semanticquery.Field
+	var groupFields []DashboardQueryResultField
+	if query.Group != nil {
+		groupRequest, groupFields, err = canonicalDimensions([]document.DashboardDimensionSelection{*query.Group}, model)
+		if err != nil {
+			return LoweredDashboardQuery{}, fmt.Errorf("distribution group: %w", err)
+		}
+	}
+	limit, err := canonicalLimit(query.Limit, canonicalQueryDefaultLimit)
+	if err != nil {
+		return LoweredDashboardQuery{}, fmt.Errorf("distribution limit: %w", err)
+	}
 	var whiskers *semanticquery.DistributionWhiskers
 	if query.Whiskers != nil {
 		if !finiteDashboardFloat(query.Whiskers.Lower) || !finiteDashboardFloat(query.Whiskers.Upper) || query.Whiskers.Lower <= 0 || query.Whiskers.Upper >= 1 || query.Whiskers.Lower >= query.Whiskers.Upper {
@@ -239,8 +251,8 @@ func lowerCanonicalDistribution(query document.DistributionDashboardQuery, model
 		}
 		whiskers = &semanticquery.DistributionWhiskers{Lower: query.Whiskers.Lower, Upper: query.Whiskers.Upper}
 	}
-	raw := semanticquery.RawValueRequest{Metric: semanticquery.Field{Field: name, Alias: alias}}
-	plan, err := planCanonicalDistribution(raw, model, nil, 0, semanticquery.DistributionOptions{Quantiles: append([]float64(nil), query.Quantiles...), Whiskers: whiskers, Outliers: string(query.Outliers), Approximation: string(query.Approximation)})
+	raw := semanticquery.RawValueRequest{Dimensions: groupRequest, Metric: semanticquery.Field{Field: name, Alias: alias}}
+	plan, err := planCanonicalDistribution(raw, model, nil, int(limit), semanticquery.DistributionOptions{Quantiles: append([]float64(nil), query.Quantiles...), Whiskers: whiskers, Outliers: string(query.Outliers), Approximation: string(query.Approximation)})
 	if err != nil {
 		return LoweredDashboardQuery{}, err
 	}
@@ -249,11 +261,11 @@ func lowerCanonicalDistribution(query document.DistributionDashboardQuery, model
 	for index, column := range plan.Columns {
 		resultFrame[index] = DashboardQueryResultField{Source: column, Name: column}
 	}
-	binding := visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultDistribution, ModelID: modelID, DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: singleDataset(plan.Datasets), Limit: 1, Distribution: &visualizationdefinition.DistributionQueryBinding{Metric: visualizationdefinition.FieldBinding{FieldID: name, Alias: alias}, Quantiles: append([]float64(nil), query.Quantiles...), Whiskers: distributionBindingWhiskers(whiskers), Outliers: string(query.Outliers), Approximation: string(query.Approximation)}}}
+	binding := visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultDistribution, ModelID: modelID, DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: singleDataset(plan.Datasets), Dimensions: fieldsToBindings(groupFields), Limit: limit, Distribution: &visualizationdefinition.DistributionQueryBinding{Metric: visualizationdefinition.FieldBinding{FieldID: name, Alias: alias}, Quantiles: append([]float64(nil), query.Quantiles...), Whiskers: distributionBindingWhiskers(whiskers), Outliers: string(query.Outliers), Approximation: string(query.Approximation)}}}
 	if err := binding.Validate(); err != nil {
 		return LoweredDashboardQuery{}, fmt.Errorf("distribution query binding: %w", err)
 	}
-	return LoweredDashboardQuery{Type: "distribution", Request: semanticquery.Request{Dataset: singleDataset(plan.Datasets), Metrics: []semanticquery.Field{{Field: name, Alias: alias}}}, RawRequest: &raw, Plan: plan, Binding: binding, ResultFrame: resultFrame}, nil
+	return LoweredDashboardQuery{Type: "distribution", Request: semanticquery.Request{Dataset: singleDataset(plan.Datasets), Dimensions: groupRequest, Metrics: []semanticquery.Field{{Field: name, Alias: alias}}, Limit: int(limit)}, RawRequest: &raw, Plan: plan, Binding: binding, ResultFrame: resultFrame}, nil
 }
 
 func planCanonicalHistogram(request semanticquery.RawValueRequest, model *semanticmodel.Model, bins int, options semanticquery.HistogramOptions) (semanticquery.Plan, error) {

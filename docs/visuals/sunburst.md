@@ -40,6 +40,35 @@ visuals:
       limit: 80
 ```
 
+## Three-level hierarchy
+
+Add a third ordered dimension for deeper nesting, set `initialDepth` to control the first visible level, and enable roaming for exploration.
+
+{{< visual id="category_state_status_sunburst" >}}
+
+```yaml visual-example=category_state_status_sunburst
+visuals:
+  category_state_status_sunburst:
+    title: Category, state, and status sunburst
+    type: sunburst
+    presentation:
+      type: hierarchy
+      initialDepth: 2
+      roam: true
+    query:
+      type: aggregate
+      dimensions:
+      - category
+      - state
+      - status
+      metrics:
+      - order_count
+      sort:
+      - field: order_count
+        direction: desc
+      limit: 120
+```
+
 ## Alternate hierarchy
 
 Replace the parent dimension with state to reuse the hierarchy contract for a geographic breakdown.

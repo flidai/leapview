@@ -1010,6 +1010,7 @@ func (s *VisualizationDataService) distributionData(ctx context.Context, runtime
 	}
 	data, err := s.queryDistributionDatums(ctx, runtime, reportdef.RawValueQuery{
 		Dataset:      visual.Table,
+		Dimensions:   aliasedQueryFields(visual.Dimensions),
 		Metric:       queryFieldRef(distribution.Metric, distribution.Metric.Alias),
 		Filters:      queryFilters,
 		Distribution: options,

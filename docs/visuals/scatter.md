@@ -28,7 +28,19 @@ visuals:
         direction: asc
       limit: 500
     presentation:
-      type: cartesian
+      type: point
+      identity: [order_id]
+      x: delivery_days
+      y: revenue
+      color: status
+      tooltip: [order_id, status, delivery_days, revenue]
+      colorScale:
+        kind: categorical
+      overplot:
+        strategy: opacity
+        opacity: 0.58
+        largeMode: automatic
+        largeThreshold: 2000
 ```
 
 ## Bubble chart
@@ -50,12 +62,27 @@ visuals:
       metrics:
       - delivery_days
       - review_score
+      - revenue
       sort:
       - field: order_id
         direction: asc
       limit: 500
     presentation:
-      type: cartesian
+      type: point
+      identity: [order_id]
+      x: review_score
+      y: revenue
+      size: delivery_days
+      color: category
+      tooltip: [order_id, category, review_score, revenue, delivery_days]
+      colorScale:
+        kind: categorical
+      sizeScale:
+        minimumPixels: 7
+        maximumPixels: 34
+      overplot:
+        strategy: opacity
+        opacity: 0.52
 ```
 
 ## Time versus value
@@ -69,8 +96,21 @@ visuals:
   delivery_scatter_labeled:
     title: Labeled revenue by purchase time
     type: scatter
+    query:
+      type: aggregate
+      dimensions:
+      - order_id
+      - dimension: purchase_date
+        grain: day
+        alias: purchase_day
+      metrics:
+      - revenue
+      sort:
+      - field: purchase_day
+        direction: asc
+      limit: 30
     presentation:
-      type: cartesian
+      type: point
       labels:
         density: automatic
         priority:
@@ -80,15 +120,12 @@ visuals:
         maxCharacters: 16
         minimumSpacing: 6
         tooltipFallback: true
-    query:
-      type: aggregate
-      dimensions:
-      - order_id
-      metrics:
-      - revenue
-      - delivery_days
-      sort:
-      - field: order_id
-        direction: asc
-      limit: 30
+      identity: [order_id]
+      x: purchase_day
+      y: revenue
+      label: order_id
+      tooltip: [order_id, purchase_day, revenue]
+      overplot:
+        strategy: show_all
+        largeMode: never
 ```
