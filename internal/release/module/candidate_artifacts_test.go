@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/stretchr/testify/require"
 )
@@ -54,14 +56,16 @@ func TestCandidateManagedDataPinMapDoesNotRetainSwitchedManagedConnection(t *tes
 }
 
 func TestCandidateSourcesDataRevisionIsPinOrderIndependent(t *testing.T) {
-	first := candidateSourcesDataRevision("sha256:artifact", map[string]string{
+	first, err := candidateSourcesDataRevision("sha256:artifact", map[string]string{
 		"z_connection": "revision_z",
 		"a_connection": "revision_a",
 	})
-	second := candidateSourcesDataRevision("sha256:artifact", map[string]string{
+	require.NoError(t, err)
+	second, err := candidateSourcesDataRevision("sha256:artifact", map[string]string{
 		"a_connection": "revision_a",
 		"z_connection": "revision_z",
 	})
+	require.NoError(t, err)
 	if first != second {
 		t.Fatalf("source data revision changed with pin order: %q != %q", first, second)
 	}
@@ -73,7 +77,11 @@ func TestCandidateSourcesDataRevisionIsPinOrderIndependent(t *testing.T) {
 func TestCandidateSourcesDataRevisionChangesWhenManagedDataPinChanges(t *testing.T) {
 	base := map[string]string{"orders": "revision_a"}
 	changed := map[string]string{"orders": "revision_b"}
-	if candidateSourcesDataRevision("sha256:artifact", base) == candidateSourcesDataRevision("sha256:artifact", changed) {
+	baseRevision, err := candidateSourcesDataRevision("sha256:artifact", base)
+	require.NoError(t, err)
+	changedRevision, err := candidateSourcesDataRevision("sha256:artifact", changed)
+	require.NoError(t, err)
+	if baseRevision == changedRevision {
 		t.Fatal("source data revision did not change when managed-data pin changed")
 	}
 }
@@ -91,4 +99,78 @@ func TestCandidateArtifactErrorClassificationIsStable(t *testing.T) {
 	require.ErrorIs(t, invalid, release.ErrCandidateArtifactInvalid)
 	unavailable := candidateArtifactUnavailable(errors.New("source unavailable"))
 	require.ErrorIs(t, unavailable, release.ErrCandidateArtifactUnavailable)
+}
+
+func TestCandidateRelationContextScopesPinChangesToDependentRelation(t *testing.T) {
+	artifact := relationContextFixture(t)
+	first, err := candidateRelationContexts(map[string]string{"connection:orders": "revision-a", "connection:customers": "revision-a"}, artifact)
+	require.NoError(t, err)
+	second, err := candidateRelationContexts(map[string]string{"connection:orders": "revision-b", "connection:customers": "revision-a"}, artifact)
+	require.NoError(t, err)
+	firstDigests, err := artifact.RelationExecutionDigestsByContext(first)
+	require.NoError(t, err)
+	secondDigests, err := artifact.RelationExecutionDigestsByContext(second)
+	require.NoError(t, err)
+	if firstDigests["model:orders"] == secondDigests["model:orders"] {
+		t.Fatal("dependent orders relation ignored its changed source pin")
+	}
+	if firstDigests["model:customers"] != secondDigests["model:customers"] {
+		t.Fatal("unrelated customers relation changed when orders pin changed")
+	}
+	changedManifest := artifact.Manifest()
+	changedManifest.Connections["connection:orders"] = semanticmodel.Connection{Kind: "managed", Options: map[string]any{"region": "eu-west-1"}}
+	changedArtifact, err := projectartifact.NewProject(artifact.Graph(), changedManifest)
+	require.NoError(t, err)
+	changedContexts, err := candidateRelationContexts(map[string]string{"connection:orders": "revision-a", "connection:customers": "revision-a"}, changedArtifact)
+	require.NoError(t, err)
+	changedConnectionDigests, err := changedArtifact.RelationExecutionDigestsByContext(changedContexts)
+	require.NoError(t, err)
+	if firstDigests["model:orders"] == changedConnectionDigests["model:orders"] {
+		t.Fatal("dependent orders relation ignored its changed connection descriptor")
+	}
+	if firstDigests["model:customers"] != changedConnectionDigests["model:customers"] {
+		t.Fatal("unrelated customers relation changed when orders connection changed")
+	}
+	if firstDigests["model:summary"] == "" || firstDigests["model:summary"] == secondDigests["model:summary"] {
+		t.Fatal("transitive summary relation did not include changed orders context")
+	}
+}
+
+func TestRelationExecutionDigestsResolveCanonicalIDTransitiveModelDependencies(t *testing.T) {
+	artifact := relationContextFixture(t)
+	baseContext, err := candidateRelationContexts(map[string]string{"connection:orders": "revision-a", "connection:customers": "revision-a"}, artifact)
+	require.NoError(t, err)
+	changedContext, err := candidateRelationContexts(map[string]string{"connection:orders": "revision-b", "connection:customers": "revision-a"}, artifact)
+	require.NoError(t, err)
+	base, err := artifact.RelationExecutionDigestsByContext(baseContext)
+	require.NoError(t, err)
+	changed, err := artifact.RelationExecutionDigestsByContext(changedContext)
+	require.NoError(t, err)
+	// summary's dependency is written as canonical model:orders, while the
+	// digest walker indexes graph names. It must resolve the ID and carry the
+	// changed orders context transitively.
+	require.NotEqual(t, base["model:summary"], changed["model:summary"])
+}
+
+func relationContextFixture(t *testing.T) projectartifact.Project {
+	t.Helper()
+	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project:context", Kind: projectgraph.KindProject, Name: "context"},
+		{ID: "connection:orders", Kind: projectgraph.KindConnection, Name: "orders_connection"},
+		{ID: "connection:customers", Kind: projectgraph.KindConnection, Name: "customers_connection"},
+		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders_source"},
+		{ID: "source:customers", Kind: projectgraph.KindSource, Name: "customers_source"},
+		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
+		{ID: "model:customers", Kind: projectgraph.KindModel, Name: "customers_model"},
+		{ID: "model:summary", Kind: projectgraph.KindModel, Name: "summary_model"},
+	}, []projectgraph.Edge{{From: "source:orders", To: "connection:orders"}, {From: "source:customers", To: "connection:customers"}, {From: "model:orders", To: "source:orders"}, {From: "model:customers", To: "source:customers"}, {From: "model:summary", To: "model:orders"}})
+	require.NoError(t, err)
+	artifact, err := projectartifact.NewProject(graphValue, projectmanifest.Project{
+		ID:          "project:context",
+		Connections: map[string]semanticmodel.Connection{"connection:orders": {Kind: "managed"}, "connection:customers": {Kind: "managed"}},
+		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:orders", Format: "csv"}, "source:customers": {Connection: "connection:customers", Format: "csv"}},
+		Models:      map[string]semanticmodel.Table{"model:orders": {Source: "source:orders"}, "model:customers": {Source: "source:customers"}, "model:summary": {ModelDependencies: []string{"model:orders"}}},
+	})
+	require.NoError(t, err)
+	return artifact
 }

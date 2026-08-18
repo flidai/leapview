@@ -47,7 +47,12 @@ func ValidateCommand(ctx context.Context) *cobra.Command {
 }
 
 // PlanCommand constructs the local or active-state project plan command.
-func PlanCommand(ctx context.Context, _ ...any) *cobra.Command {
+func PlanCommand(ctx context.Context, operations ...any) *cobra.Command {
+	for _, value := range operations {
+		if delivery, ok := value.(DeliveryPlanOperations); ok && delivery != nil {
+			return DeliveryPlanCommand(ctx, delivery)
+		}
+	}
 	opts := &options{}
 	cmd := &cobra.Command{
 		Use:   "plan [project]",

@@ -31,7 +31,12 @@ func (r *Repository) CreateApproval(
 		parent.RequestDigest != approval.RequestDigest {
 		return deployment.Approval{}, deployment.ErrApprovalScope
 	}
-	err = r.queries.CreateDeploymentApproval(
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return deployment.Approval{}, err
+	}
+	defer tx.Rollback()
+	err = platformdb.New(tx).CreateDeploymentApproval(
 		ctx,
 		platformdb.CreateDeploymentApprovalParams{
 			ID: approval.ID, ProjectID: approval.ProjectID,
@@ -63,6 +68,12 @@ func (r *Repository) CreateApproval(
 		if strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			return deployment.Approval{}, deployment.ErrApprovalConflict
 		}
+		return deployment.Approval{}, err
+	}
+	if err := appendApprovalEventTx(ctx, tx, approval, "approval_requested", approval.RequestedBy, approval.RequestedAt); err != nil {
+		return deployment.Approval{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return deployment.Approval{}, err
 	}
 	return approval, nil
@@ -100,7 +111,12 @@ func (r *Repository) SaveApproval(
 	if err := approval.Validate(); err != nil {
 		return deployment.Approval{}, err
 	}
-	count, err := r.queries.UpdateDeploymentApproval(
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return deployment.Approval{}, err
+	}
+	defer tx.Rollback()
+	count, err := platformdb.New(tx).UpdateDeploymentApproval(
 		ctx,
 		platformdb.UpdateDeploymentApprovalParams{
 			Status:     string(approval.Status),
@@ -127,7 +143,49 @@ func (r *Repository) SaveApproval(
 	if count != 1 {
 		return deployment.Approval{}, deployment.ErrApprovalConflict
 	}
+	switch approval.Status {
+	case deployment.ApprovalApproved:
+		if err := appendApprovalEventTx(ctx, tx, approval, "approval_granted", approval.ApprovedBy, approval.ApprovedAt); err != nil {
+			return deployment.Approval{}, err
+		}
+	case deployment.ApprovalDenied:
+		if err := appendApprovalEventTx(ctx, tx, approval, "approval_rejected", approval.ApprovedBy, approval.ApprovedAt); err != nil {
+			return deployment.Approval{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return deployment.Approval{}, err
+	}
 	return approval, nil
+}
+
+// appendApprovalEventTx bridges the deployment approval projection to the
+// delivery ledger when the deployment scope has a plan-delivery target. Older
+// legacy-only deployments have no target revision and therefore cannot satisfy
+// the ledger's target foreign key; those rows remain governed by their own
+// immutable deployment approval history.
+func appendApprovalEventTx(ctx context.Context, q platformdb.DBTX, approval deployment.Approval, kind, actor string, at time.Time) error {
+	scope, err := platformdb.New(q).GetDeliveryTargetScope(ctx, platformdb.GetDeliveryTargetScopeParams{ProjectID: approval.ProjectID, Environment: approval.Environment})
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	targetID := scope.TargetID
+	if strings.TrimSpace(actor) == "" {
+		actor = approval.RequestedBy
+	}
+	if at.IsZero() {
+		at = approval.RequestedAt
+	}
+	_, err = appendDeliveryEventTx(ctx, q, deployment.DeliveryEvent{
+		ID: deployment.DeliveryEventID(targetID, approval.RequestDigest, kind, "approval", approval.ID), TargetID: targetID,
+		ProjectID: approval.ProjectID, Environment: approval.Environment, ActorID: actor, EventKind: kind,
+		ObjectKind: "approval", ObjectID: approval.ID, RequestDigest: approval.RequestDigest,
+		Outcome: "accepted", Details: map[string]any{"status": string(approval.Status)}, CreatedAt: at,
+	})
+	return err
 }
 
 func mapApproval(row platformdb.DeploymentApproval) (deployment.Approval, error) {

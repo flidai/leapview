@@ -18,6 +18,8 @@ import (
 
 type Profile string
 
+const DefaultDeliveryRollbackRetentionWindow = 24 * time.Hour
+
 const (
 	ProfileServe Profile = "serve"
 )
@@ -97,6 +99,13 @@ func (c Config) RuntimeDir() string {
 
 func (c Config) DuckLakeDataDir() string {
 	return filepath.Join(c.HomeDir, "data")
+}
+
+func (c Config) DeliveryRollbackRetention() time.Duration {
+	if c.DeliveryRollbackRetentionWindow == 0 {
+		return DefaultDeliveryRollbackRetentionWindow
+	}
+	return c.DeliveryRollbackRetentionWindow
 }
 
 func (c Config) DuckLakeCatalogPath() string {
@@ -223,6 +232,9 @@ func (c Config) Validate(profile Profile) error {
 	}
 	if err := c.validateAnalyticalResources(); err != nil {
 		return fmt.Errorf("invalid analytical resource configuration: %w", err)
+	}
+	if c.DeliveryRollbackRetentionWindow < 0 {
+		return fmt.Errorf("LEAPVIEW_DELIVERY_ROLLBACK_RETENTION_WINDOW must not be negative")
 	}
 	return nil
 }

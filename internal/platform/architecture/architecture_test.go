@@ -1901,10 +1901,41 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 		if !generatedOnly[file.pkgDir] && !generatedOnlyFiles[file.path] {
 			continue
 		}
+		// SQLite PRAGMA statements are session-local controls rather than
+		// durable queries. The deployment adapter keeps this one authored
+		// helper outside generated sqlc output; its exact shape is guarded by
+		// TestDeploymentSQLitePragmaHelperIsSessionOnly below.
+		if file.path == "internal/deployment/sqlite/pragma.go" {
+			continue
+		}
 		for _, directCall := range []string{".QueryContext(", ".QueryRowContext(", ".ExecContext("} {
 			if strings.Contains(file.body, directCall) {
 				t.Fatalf("%s bypasses sqlc via %s", file.path, directCall)
 			}
+		}
+	}
+}
+
+func TestDeploymentSQLitePragmaHelperIsSessionOnly(t *testing.T) {
+	const helperPath = "internal/deployment/sqlite/pragma.go"
+	var helper goFile
+	for _, file := range productionGoFiles(t) {
+		if file.path == helperPath {
+			helper = file
+			break
+		}
+	}
+	if helper.path == "" {
+		t.Fatalf("authored SQLite PRAGMA helper %s is missing", helperPath)
+	}
+	const call = `tx.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", milliseconds))`
+	if strings.Count(helper.body, ".ExecContext(") != 1 || !strings.Contains(helper.body, call) {
+		t.Fatalf("%s must issue exactly one busy_timeout PRAGMA ExecContext call", helperPath)
+	}
+	upper := strings.ToUpper(helper.body)
+	for _, durable := range []string{"INSERT ", "UPDATE ", "DELETE ", "SELECT ", "CREATE ", "DROP ", "ALTER "} {
+		if strings.Contains(upper, durable) {
+			t.Fatalf("%s contains durable SQL verb %q; PRAGMA helper must remain session-only", helperPath, durable)
 		}
 	}
 }
@@ -2551,10 +2582,20 @@ func TestDevelopmentPublishingCanonicalizesSharedDatasetRoots(t *testing.T) {
 	for _, want := range []string{
 		"canonical_source_root()",
 		`from="$(canonical_source_root "$from")"`,
+		`candidate_id="$(awk '$1 == "candidate" { print $2; exit }' <<<"$dev_output")"`,
+		`go run ./cmd/leapview publish "$candidate_id" --token dev`,
 		`publish) publish_running "$@" ;;`,
 	} {
 		if !strings.Contains(serverText, want) {
 			t.Fatalf("development server must safely resolve shared dataset roots: missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"go run ./cmd/leapview publish --project",
+		"go run ./cmd/leapview publish --target",
+	} {
+		if strings.Contains(serverText, forbidden) {
+			t.Fatalf("development server still uses retired publish selector %q", forbidden)
 		}
 	}
 

@@ -42,7 +42,9 @@ type CandidateRestriction struct {
 type CandidateDataMode string
 
 const (
-	CandidateDataReuseSnapshot  CandidateDataMode = "reuse_snapshot"
+	CandidateDataReuseBase CandidateDataMode = "reuse_base"
+	// CandidateDataReuseSnapshot is retained as a source-compatible alias.
+	CandidateDataReuseSnapshot  CandidateDataMode = CandidateDataReuseBase
 	CandidateDataRefreshSources CandidateDataMode = "refresh_sources"
 )
 
@@ -287,7 +289,7 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 	if err := platformdigest.ValidateSHA256Identity(value.ArtifactDigest); err != nil {
 		return CandidateCompatibility{}, fmt.Errorf("%w: artifact digest: %v", ErrCandidateRuntimeInvalid, err)
 	}
-	if value.DataMode != CandidateDataReuseSnapshot && value.DataMode != CandidateDataRefreshSources {
+	if value.DataMode != CandidateDataReuseBase && value.DataMode != CandidateDataRefreshSources {
 		return CandidateCompatibility{}, fmt.Errorf("%w: candidate data mode is required", ErrCandidateRuntimeInvalid)
 	}
 	bindings := append([]CandidateBindingVersion(nil), value.Bindings...)
@@ -373,9 +375,9 @@ func validateCandidateDataMode(state servingstate.State, compatibility Candidate
 	// serving-state bindings and the exact managed connection set below are the
 	// runtime guarantees, so the two revisions must not be compared.
 	switch compatibility.DataMode {
-	case CandidateDataReuseSnapshot:
-		if state.DuckLakeSnapshotID <= 0 || len(compatibility.AuthoredConnections) != 0 {
-			return fmt.Errorf("%w: immutable snapshot reuse requires an existing snapshot and no authored refresh connections", ErrCandidateRuntimeIncompatible)
+	case CandidateDataReuseBase:
+		if state.Digest == "" || len(compatibility.AuthoredConnections) != 0 {
+			return fmt.Errorf("%w: sealed-base reuse requires an exact serving-state identity and no authored refresh connections", ErrCandidateRuntimeIncompatible)
 		}
 	case CandidateDataRefreshSources:
 		if state.DuckLakeSnapshotID != 0 || (len(compatibility.Bindings) == 0 && len(compatibility.ManagedDataConnections) == 0 && len(compatibility.AuthoredConnections) == 0) {

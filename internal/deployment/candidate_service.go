@@ -370,6 +370,13 @@ func (service *CandidateService) mutate(
 		return Candidate{}, err
 	}
 	if next == current {
+		// MarkReady deliberately treats an exact ready replay as an idempotent
+		// no-op. The generated synchronization command still needs its
+		// candidate.ready best-effort audit completed, but the durable candidate
+		// must not receive a new revision or timestamp.
+		if action == CandidateAuditReady {
+			service.recordBestEffort(ctx, action, current, nil)
+		}
 		return current, nil
 	}
 	saved, err := service.repository.SaveCandidate(ctx, next, current.Revision)

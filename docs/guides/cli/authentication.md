@@ -37,7 +37,7 @@ export LEAPVIEW_TARGET=https://dash.example.com
 export LEAPVIEW_WORKLOAD_CLIENT_ID=sp_project_deployer
 export LEAPVIEW_WORKLOAD_CLIENT_SECRET='<injected by the CI secret manager>'
 export LEAPVIEW_WORKLOAD_PROJECT=analytics
-leapview plan --project dashboards/leapview.yaml --json
+leapview plan dashboards/leapview.yaml --format json
 ```
 
 The CLI exchanges those values immediately before the operation for a credential bound to the discovered instance, exact project, author/publish/request actions, and a 15-minute maximum lifetime. It does not persist the service-principal secret or workload access token.

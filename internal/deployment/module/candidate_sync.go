@@ -67,6 +67,50 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 	})
 }
 
+// RetainProjectCandidateSource stores an exact immutable source snapshot for
+// delivery planning. It deliberately does not create a candidate, acquire a
+// preparation lease, invoke DeliveryCandidateBuilder, or touch physical
+// credentials/catalog state. BuildDeliveryPlan is the first writer boundary.
+func (m *Module) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Request, project, _ string) {
+	request, ok := m.decodeCandidateSynchronizationRequest(w, r)
+	if !ok {
+		return
+	}
+	operationID := deploymentgen.GenCommandOperationRetainProjectCandidateSource()
+	principalID, ok := m.candidateSynchronizationPrincipal(w, r, deploymentCommandOperation(operationID))
+	if !ok {
+		return
+	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return
+	}
+	if request.ExpectedCandidateID != "" || request.ExpectedArtifactDigest != "" {
+		m.writeCandidateCommandFailure(w, r, operationID, apigenfailure.New("candidate_invalid", "source retention does not accept candidate concurrency inputs"))
+		return
+	}
+	request.SourceOnly = true
+	source, err := m.candidateSources.Commit(r.Context(), deployment.CandidateSourceScope{ProjectID: projectID, OwnerID: principalID, CandidateKey: request.CandidateKey}, request)
+	if err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return
+	}
+	// Source retention is a generated command even though it does not create a
+	// candidate row. Complete the command through the APIGen executor before
+	// writing the successful response so the generated transport guard can
+	// observe the best-effort audit completion.
+	if err := m.executeCandidateSourceAudit(r, operationID.APIGenOperationID(), principalID, project, source.ArtifactDigest, source.SourceAttestationDigest, 0); err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, apigenfailure.New("audit_unavailable", "Candidate source audit is temporarily unavailable"))
+		return
+	}
+	apitransport.WriteJSON(w, http.StatusCreated, deploymentgen.CandidateSourceSnapshotResponse{
+		ProjectId: project, SourceDigest: source.ArtifactDigest, ProjectDigest: source.ProjectDigest,
+		SourceAttestationDigest: source.SourceAttestationDigest,
+		TargetId:                m.instanceID, Environment: m.handlerEnvironment(),
+	})
+}
+
 func (m *Module) UploadProjectCandidateSourceBlob(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -98,25 +142,7 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), err)
 		return
 	}
-	logger := m.logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
-	if err != nil {
-		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), apigenfailure.New("audit_unavailable", "Candidate source blob audit is temporarily unavailable"))
-		return
-	}
-	if err := executor.Execute(r.Context(), operationID.APIGenOperationID(), apigencommand.Execution{
-		BestEffortAudit: func(context.Context, apigencommand.Contract) error {
-			return m.recordCandidateSourceBlobAudit(r, principalID, project, identity, counter.read)
-		},
-		LogMessage: "candidate source blob audit failed",
-		LogAttributes: []slog.Attr{
-			slog.String("project_id", strings.TrimSpace(project)),
-			slog.String("digest", identity),
-		},
-	}); err != nil {
+	if err := m.executeCandidateSourceAudit(r, operationID.APIGenOperationID(), principalID, project, identity, "", counter.read); err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), apigenfailure.New("audit_unavailable", "Candidate source blob audit is temporarily unavailable"))
 		return
 	}
@@ -127,52 +153,108 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 	})
 }
 
-func (m *Module) recordCandidateSourceBlobAudit(
+func (m *Module) executeCandidateSourceAudit(
 	r *http.Request,
-	principalID, projectID, identity string,
+	operationID, principalID, projectID, sourceDigest, sourceAttestationDigest string,
 	sizeBytes int64,
 ) error {
-	contract, ok := deploymentgen.GetAPIGenOperationContract(
-		deploymentgen.GenOperationUploadProjectCandidateSourceBlob,
-	)
-	if !ok || contract.Command == nil || !contract.Command.Audit.Required {
-		return errors.New("required candidate source blob command audit contract is unavailable")
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
-	if m == nil || m.candidateSourceBlobAudit == nil {
-		return errors.New("required candidate source blob audit sink is unavailable")
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		return err
+	}
+	logMessage := "candidate source audit failed"
+	if operationID == string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob) {
+		logMessage = "candidate source blob audit failed"
+	}
+	return executor.Execute(r.Context(), operationID, apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			return m.recordCandidateSourceAudit(ctx, r, contract, principalID, projectID, sourceDigest, sourceAttestationDigest, sizeBytes)
+		},
+		LogMessage: logMessage,
+		LogAttributes: []slog.Attr{
+			slog.String("project_id", strings.TrimSpace(projectID)),
+			slog.String("digest", sourceDigest),
+		},
+	})
+}
+
+func (m *Module) recordCandidateSourceAudit(
+	ctx context.Context,
+	r *http.Request,
+	contract apigencommand.Contract,
+	principalID, projectID, sourceDigest, sourceAttestationDigest string,
+	sizeBytes int64,
+) error {
+	if m == nil {
+		return errors.New("required candidate source audit sink is unavailable")
+	}
+	if contract.OperationID == "" || contract.AuditPayload == nil {
+		return errors.New("required candidate source command audit contract is unavailable")
+	}
+	auditSink := m.candidateSourceAudit
+	if auditSink == nil {
+		auditSink = m.candidateSourceBlobAudit
+	}
+	if auditSink == nil {
+		return errors.New("required candidate source audit sink is unavailable")
 	}
 	parsedProjectID, err := projectgraph.NewResourceID(projectID)
 	if err != nil {
-		return fmt.Errorf("candidate source blob project ID: %w", err)
+		return fmt.Errorf("candidate source project ID: %w", err)
 	}
-	capability, err := access.ParseCapability(contract.Command.Privilege)
+	capability, err := access.ParseCapability(contract.Privilege)
 	if err != nil {
-		return fmt.Errorf("candidate source blob capability: %w", err)
+		return fmt.Errorf("candidate source capability: %w", err)
 	}
-	// Caller surface headers affect audit attribution only. APIGen authorization
-	// has already enforced the generated privilege independently of this value.
 	surface := "api"
 	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Invocation-Surface")), "cli") ||
 		strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Client")), "cli") {
 		surface = "cli"
 	}
-	metadata, err := deploymentgen.EncodeGenUploadProjectCandidateSourceBlobAuditPayload(deploymentgen.GenSchemaCandidateSourceBlobAuditPayload{
-		OperationId: contract.OperationID, Surface: surface, Digest: identity, SizeBytes: sizeBytes,
-	})
+	var metadata string
+	switch contract.OperationID {
+	case string(deploymentgen.GenOperationRetainProjectCandidateSource):
+		metadata, err = deploymentgen.EncodeGenRetainProjectCandidateSourceAuditPayload(deploymentgen.GenSchemaCandidateSourceRetainedAuditPayload{
+			OperationId: contract.OperationID, Surface: surface, ProjectId: parsedProjectID.String(),
+			SourceDigest: sourceDigest, SourceAttestationDigest: sourceAttestationDigest,
+		})
+	case string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob):
+		metadata, err = deploymentgen.EncodeGenUploadProjectCandidateSourceBlobAuditPayload(deploymentgen.GenSchemaCandidateSourceBlobAuditPayload{
+			OperationId: contract.OperationID, Surface: surface, Digest: sourceDigest, SizeBytes: sizeBytes,
+		})
+	default:
+		return fmt.Errorf("unsupported candidate source audit operation %q", contract.OperationID)
+	}
 	if err != nil {
-		return fmt.Errorf("encode candidate source blob audit metadata: %w", err)
+		return fmt.Errorf("encode candidate source audit metadata: %w", err)
 	}
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
 	if correlationID == "" {
 		correlationID = requestID
 	}
-	return m.candidateSourceBlobAudit(r.Context(), CandidateSourceBlobAuditEvent{
-		PrincipalID: principalID, ProjectID: parsedProjectID, Digest: identity,
-		Action: contract.Command.Audit.SuccessAction, Capability: capability,
-		Status: "success", RequestID: requestID, CorrelationID: correlationID,
-		MetadataJSON: metadata,
+	return auditSink(ctx, CandidateSourceAuditEvent{
+		PrincipalID: principalID, ProjectID: parsedProjectID,
+		Digest: sourceDigest, SourceAttestationDigest: sourceAttestationDigest,
+		Action: contract.AuditAction, Capability: capability, Status: "success",
+		RequestID: requestID, CorrelationID: correlationID, MetadataJSON: metadata,
 	})
+}
+
+func (m *Module) recordCandidateSourceBlobAudit(
+	r *http.Request,
+	principalID, projectID, identity string,
+	sizeBytes int64,
+) error {
+	contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(deploymentgen.GenOperationUploadProjectCandidateSourceBlob)
+	if !ok {
+		return errors.New("required candidate source blob command audit contract is unavailable")
+	}
+	return m.recordCandidateSourceAudit(r.Context(), r, contract, principalID, projectID, identity, "", sizeBytes)
 }
 
 func (m *Module) CommitProjectCandidateSynchronization(
@@ -202,6 +284,12 @@ func (m *Module) CommitProjectCandidateSynchronization(
 	source, err := m.candidateSources.Commit(r.Context(), scope, request)
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
+		return
+	}
+	if request.SourceOnly {
+		// Source-only retention has a dedicated endpoint. Rejecting it here
+		// prevents the legacy commit route from creating a candidate row.
+		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), apigenfailure.New("candidate_invalid", "sourceOnly requires the source retention operation"))
 		return
 	}
 	var candidate deployment.Candidate
@@ -245,6 +333,16 @@ func (m *Module) CommitProjectCandidateSynchronization(
 			provenance.SourceRevision,
 			requestedSourceRevision,
 		) {
+			// MarkReady is intentionally idempotent for an exact ready replay;
+			// invoking it here completes the generated candidate.ready command
+			// audit while preserving the candidate revision and timestamps.
+			candidate, err = m.candidates.MarkReady(
+				r.Context(), candidateScope(candidate), request.ArtifactDigest, candidate.ProvenanceDigest,
+			)
+			if err != nil {
+				m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
+				return
+			}
 			apitransport.WriteJSON(w, http.StatusOK, m.candidateResponse(candidate, false))
 			return
 		}
@@ -268,6 +366,47 @@ func (m *Module) CommitProjectCandidateSynchronization(
 		}
 		defer preparationLease.Release()
 		preparationContext = preparationLease.Context()
+	}
+	// Production composition may provide the canonical plan -> build -> seal
+	// adapter. It receives the exact immutable source snapshot and the durable
+	// preparing candidate, so no second source capture or moving worktree is
+	// possible. The adapter owns target fencing and ready persistence.
+	if m.deliveryCandidateBuilder != nil {
+		ready, buildErr := m.deliveryCandidateBuilder(preparationContext, deployment.DeliveryCandidateBuildInput{
+			ProjectID: projectID, OwnerID: principalID, ArtifactDigest: request.ArtifactDigest, CandidateKey: request.CandidateKey,
+			Candidate: tentative, Source: source,
+		})
+		if buildErr != nil {
+			if request.ExpectedCandidateID == "" {
+				_, _ = m.candidates.MarkFailed(r.Context(), candidateScope(candidate), candidate.ArtifactDigest, "CANONICAL_DELIVERY_UNAVAILABLE")
+			}
+			m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), buildErr)
+			return
+		}
+		// The canonical adapter durably completes the delivery candidate/seal
+		// first, then returns the retained provenance digest as a projection
+		// update for the legacy candidate API. Persist that projection only after
+		// the physical completion has succeeded.
+		if ready.Status == deployment.CandidateReady {
+			if ready.ProvenanceDigest == "" {
+				m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), fmt.Errorf("canonical delivery returned ready candidate without provenance"))
+				return
+			}
+			if replaceCandidate {
+				candidate, err = m.candidates.ReplaceArtifact(r.Context(), candidateScope(candidate), currentArtifactDigest, request.ArtifactDigest)
+				if err != nil {
+					m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
+					return
+				}
+			}
+			ready, err = m.candidates.MarkReady(r.Context(), candidateScope(candidate), request.ArtifactDigest, ready.ProvenanceDigest)
+			if err != nil {
+				m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationCommitProjectCandidateSynchronization(), err)
+				return
+			}
+		}
+		apitransport.WriteJSON(w, http.StatusOK, m.candidateResponse(ready, false))
+		return
 	}
 	provenance, err := m.prepareCandidate(preparationContext, tentative, source)
 	if err != nil {
@@ -601,7 +740,8 @@ func (m *Module) decodeCandidateSynchronizationRequest(
 	}
 	request := deployment.CandidateSynchronizationRequest{
 		ProjectFile: body.ProjectFile, ArtifactDigest: body.ArtifactDigest,
-		Artifacts: make([]deployment.CandidateSourceArtifact, len(body.Artifacts)),
+		SourceOnly: body.SourceOnly,
+		Artifacts:  make([]deployment.CandidateSourceArtifact, len(body.Artifacts)),
 	}
 	if body.CandidateKey != nil {
 		request.CandidateKey = *body.CandidateKey

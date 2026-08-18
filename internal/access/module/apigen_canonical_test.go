@@ -600,6 +600,185 @@ func TestAPIGenCandidateActivePathKeepsNormalSessionSnapshotAuthorization(t *tes
 	}
 }
 
+func TestAPIGenDeliveryAuthorizerUsesTargetOwnedRoleDecision(t *testing.T) {
+	identity, snapshot := apigenSnapshot(t, "principal", "", "project_demo", projectgraph.KindProject, true, false)
+	module := browserGuardModule(nil, Principal{ID: "principal"}, true)
+	contract := APIGenOperationContract{
+		OperationID: "createDeliveryPlan", Method: http.MethodPost,
+		Path: "/api/v1/projects/{project}/delivery", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+	}
+	var calls int
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: "project_demo", lease: apigenLeaseFake{identity: identity, snapshot: snapshot}},
+		map[string]APIGenOperationContract{"createDeliveryPlan": contract},
+		APIGenResourceResolvers{Delivery: func(_ context.Context, _ *http.Request, operationID, objectID string, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			calls++
+			if operationID != "createDeliveryPlan" || objectID != "" || projectID.String() != "project_demo" || capability != access.CapabilityResourceRead {
+				t.Fatalf("delivery authorization request = %q/%q/%s/%s", operationID, objectID, projectID, capability)
+			}
+			return calls == 1, nil
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve := func() int {
+		protected, ok := authorizer.Protect("createDeliveryPlan", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+		if !ok || protected == nil {
+			t.Fatal("delivery authorizer was not created")
+		}
+		recorder := httptest.NewRecorder()
+		protected.ServeHTTP(recorder, apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery", map[string]string{"project": "project_demo"}))
+		return recorder.Code
+	}
+	if status := serve(); status != http.StatusNoContent {
+		t.Fatalf("target role allowed status = %d, want %d", status, http.StatusNoContent)
+	}
+	if status := serve(); status != http.StatusForbidden {
+		t.Fatalf("target role denied status = %d, want %d", status, http.StatusForbidden)
+	}
+}
+
+func TestAPIGenCreateDeliveryPlanUsesBootstrapBeforeFirstGeneration(t *testing.T) {
+	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "admin"}, true)
+	contract := APIGenOperationContract{
+		OperationID: "createDeliveryPlan", Method: http.MethodPost,
+		Path: "/api/v1/projects/{project}/delivery", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+	}
+	projectID, err := projectgraph.NewResourceID("project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: projectID, err: errors.New("no active serving generation")},
+		map[string]APIGenOperationContract{"createDeliveryPlan": contract},
+		APIGenResourceResolvers{Delivery: func(context.Context, *http.Request, string, string, projectgraph.ResourceID, access.Capability) (bool, error) {
+			t.Fatal("target-owned delivery authorization should not run before first generation")
+			return false, nil
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer.SetBootstrapAuthorizer(func(_ context.Context, _ *http.Request, operation string, project projectgraph.ResourceID, _ access.Capability) (APIGenBootstrapDecision, error) {
+		if operation != "createDeliveryPlan" || project != projectID {
+			t.Fatalf("bootstrap decision identity = %q/%s", operation, project)
+		}
+		return APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+	})
+	protected, ok := authorizer.Protect("createDeliveryPlan", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	if !ok || protected == nil {
+		t.Fatal("delivery authorizer was not created")
+	}
+	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
+	r := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery", map[string]string{"project": "project_demo"})
+	r.Header.Set("Authorization", "Bearer test-token")
+	r = r.WithContext(WithAPICredential(r.Context(), credential))
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, r)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("bootstrap create plan status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestAPIGenBuildDeliveryPlanUsesBootstrapBeforeFirstGeneration(t *testing.T) {
+	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "admin"}, true)
+	contract := APIGenOperationContract{
+		OperationID: "buildDeliveryPlan", Method: http.MethodPost,
+		Path: "/api/v1/projects/{project}/delivery/plans/{plan}/build", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_USE", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+	}
+	projectID, err := projectgraph.NewResourceID("project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: projectID, err: errors.New("no active serving generation")},
+		map[string]APIGenOperationContract{"buildDeliveryPlan": contract},
+		APIGenResourceResolvers{Delivery: func(context.Context, *http.Request, string, string, projectgraph.ResourceID, access.Capability) (bool, error) {
+			t.Fatal("target-owned delivery authorization should not run before first generation")
+			return false, nil
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer.SetBootstrapAuthorizer(func(_ context.Context, _ *http.Request, operation string, project projectgraph.ResourceID, capability access.Capability) (APIGenBootstrapDecision, error) {
+		if operation != "buildDeliveryPlan" || project != projectID || capability != access.CapabilityResourceUse {
+			t.Fatalf("bootstrap decision identity = %q/%s/%s", operation, project, capability)
+		}
+		return APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+	})
+	protected, ok := authorizer.Protect("buildDeliveryPlan", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	if !ok || protected == nil {
+		t.Fatal("delivery authorizer was not created")
+	}
+	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceUse}}}
+	r := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery/plans/plan_1/build", map[string]string{"project": "project_demo", "plan": "plan_1"})
+	r.Header.Set("Authorization", "Bearer test-token")
+	r = r.WithContext(WithAPICredential(r.Context(), credential))
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, r)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("bootstrap build status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestAPIGenPublishDeliveryCandidateUsesBootstrapMarker(t *testing.T) {
+	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "admin"}, true)
+	contract := APIGenOperationContract{
+		OperationID: "publishDeliveryCandidate", Method: http.MethodPost,
+		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}/publish", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_PUBLISH", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+	}
+	projectID, err := projectgraph.NewResourceID("project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: projectID, err: errors.New("no active serving generation")},
+		map[string]APIGenOperationContract{"publishDeliveryCandidate": contract},
+		APIGenResourceResolvers{Delivery: func(_ context.Context, _ *http.Request, operationID, objectID string, project projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			t.Fatalf("target-owned delivery authorization should not run before first generation: %q/%q/%s/%s", operationID, objectID, project, capability)
+			return false, nil
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer.SetBootstrapAuthorizer(func(_ context.Context, _ *http.Request, operation string, project projectgraph.ResourceID, capability access.Capability) (APIGenBootstrapDecision, error) {
+		if operation != "publishDeliveryCandidate" || project != projectID || capability != access.CapabilityResourcePublish {
+			t.Fatalf("bootstrap decision identity = %q/%s/%s", operation, project, capability)
+		}
+		return APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+	})
+	protected, ok := authorizer.Protect("publishDeliveryCandidate", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		marker, marked := BootstrapAuthorizationFromContext(r.Context())
+		if !marked || marker.ProjectID != projectID || marker.PrincipalID != "admin" || marker.Capability != access.CapabilityResourcePublish {
+			t.Fatalf("publish bootstrap marker = %#v, marked=%t", marker, marked)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if !ok || protected == nil {
+		t.Fatal("delivery authorizer was not created")
+	}
+	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_1", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourcePublish}}}
+	r := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery/candidates/candidate_1/publish", map[string]string{"project": "project_demo", "candidate": "candidate_1"})
+	r.Header.Set("Authorization", "Bearer test-token")
+	r = r.WithContext(WithAPICredential(r.Context(), credential))
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, r)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("bootstrap publish status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
 func TestAPIGenCandidatePreActivationRequiresExplicitRESTTokenPlatformAdmin(t *testing.T) {
 	contract := APIGenOperationContract{
 		OperationID: "startProjectCandidate", Method: http.MethodPost,
@@ -673,7 +852,10 @@ func TestAPIGenCandidatePreActivationRequiresExplicitRESTTokenPlatformAdmin(t *t
 	}
 }
 
-func TestAPIGenBootstrapAllowlistIncludesManagedDataStagingOnly(t *testing.T) {
+func TestAPIGenBootstrapAllowlistIncludesCandidateSourceAndManagedDataStaging(t *testing.T) {
+	if !isBootstrapAPIGenOperation("retainProjectCandidateSource") {
+		t.Fatal("source retention operation is not bootstrap-authorized")
+	}
 	for _, operation := range []string{
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",

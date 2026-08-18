@@ -11,17 +11,21 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	"github.com/flidai/leapview/internal/platform/jobs"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type ActivateJob struct {
-	Project          string
-	Deployment       string
-	Actor            string
-	Credential       deployment.ApprovalActor
-	ApprovalID       string
-	ApprovalRevision int64
-	IdempotencyKey   string
-	Bootstrap        bool
+	Project                  string
+	Deployment               string
+	Actor                    string
+	Credential               deployment.ApprovalActor
+	ApprovalID               string
+	ApprovalRevision         int64
+	IdempotencyKey           string
+	Bootstrap                bool
+	Rollback                 bool
+	ExpectedBaseGenerationID string
+	ExpectedTargetRevision   int64
 }
 
 type DeploymentCoordinator interface {
@@ -81,6 +85,14 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	if err != nil {
 		return err
 	}
+	releaseID := ""
+	if m.sealedCoordinator != nil && m.api.Releases != nil {
+		resolved, _, resolveErr := m.api.Releases.DeploymentRelease(ctx, payload.Project, payload.Deployment)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		releaseID = resolved
+	}
 	if payload.Bootstrap {
 		if !m.protected || m.bootstrapPolicies == nil || m.authorizeBootstrap == nil || payload.Credential.CredentialClass != deployment.CredentialClassAPIToken || payload.Credential.PrincipalID != payload.Actor {
 			return deployment.ErrApprovalRequired
@@ -101,7 +113,7 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			payload.Credential.PrincipalID != payload.Actor {
 			return deployment.ErrApprovalRequired
 		}
-		releaseID, _, releaseErr := m.api.Releases.DeploymentRelease(
+		resolvedReleaseID, _, releaseErr := m.api.Releases.DeploymentRelease(
 			ctx,
 			payload.Project,
 			payload.Deployment,
@@ -109,6 +121,7 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		if releaseErr != nil {
 			return releaseErr
 		}
+		releaseID = resolvedReleaseID
 		approval, approvalErr := m.authorizeApprovedActivation(
 			ctx,
 			pending,
@@ -135,10 +148,63 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			return err
 		}
 	}
-	row, err := m.jobs.Coordinator.Activate(ctx, apiadapter.ActivateRequest{
-		Scope: apiadapter.Scope{Project: payload.Project, DeploymentID: payload.Deployment},
-		Actor: payload.Actor, IdempotencyKey: payload.IdempotencyKey,
-	})
+	var row apiadapter.Deployment
+	if m.sealedCoordinator != nil {
+		if m.sealedPublishRequest == nil || m.sealedRollbackRequest == nil || m.sealedActivationMarker == nil {
+			return fmt.Errorf("sealed publication lifecycle is incomplete")
+		}
+		if payload.Rollback {
+			request, resolveErr := m.sealedRollbackRequest(ctx, pending, releaseID, payload.Credential, payload.ExpectedBaseGenerationID, payload.ExpectedTargetRevision)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			result, publishErr := m.sealedCoordinator.Rollback(ctx, request)
+			if publishErr != nil {
+				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
+				return publishErr
+			}
+			activation := sealedActivationInput(pending, payload.Actor, result.CatalogDigest)
+			activated, markErr := m.sealedActivationMarker(ctx, activation)
+			if markErr != nil {
+				return markErr
+			}
+			if m.sealedReconcile != nil {
+				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
+					return reconcileErr
+				}
+			}
+			row = mapSealedDeployment(activated)
+		} else {
+			request, resolveErr := m.sealedPublishRequest(ctx, pending, releaseID, payload.Credential)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			_, publishErr := m.sealedCoordinator.Publish(ctx, request)
+			if publishErr != nil {
+				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
+				return publishErr
+			}
+			activation := sealedActivationInput(pending, payload.Actor, request.Seal.CatalogDigest)
+			activated, markErr := m.sealedActivationMarker(ctx, activation)
+			if markErr != nil {
+				return markErr
+			}
+			if m.sealedReconcile != nil {
+				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
+					return reconcileErr
+				}
+			}
+			row = mapSealedDeployment(activated)
+		}
+	} else {
+		if m.requireSealedCoordinator {
+			return fmt.Errorf("sealed publication coordinator is unavailable")
+		}
+		row, err = m.jobs.Coordinator.Activate(ctx, apiadapter.ActivateRequest{
+			Scope: apiadapter.Scope{Project: payload.Project, DeploymentID: payload.Deployment},
+			Actor: payload.Actor, IdempotencyKey: payload.IdempotencyKey,
+		})
+	}
 	if err == nil && m.jobs.Reconcile != nil {
 		if reconcileErr := m.jobs.Reconcile(ctx); reconcileErr != nil {
 			logger := m.jobs.Logger
@@ -160,6 +226,24 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		row,
 	)
 	return err
+}
+
+func sealedActivationInput(pending apiadapter.Deployment, actor, verificationDigest string) deployment.ActivationInput {
+	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(pending.Project), Environment: pending.Environment, GenerationID: pending.GenerationID}
+	return deployment.ActivationInput{
+		DeploymentID: pending.ID, ServingIdentity: identity, ArtifactDigest: pending.ArtifactDigest,
+		PriorGenerationID: pending.PriorGenerationID, ActivationPrincipal: actor, VerificationDigest: verificationDigest,
+	}
+}
+
+func mapSealedDeployment(row deployment.Deployment) apiadapter.Deployment {
+	return apiadapter.Deployment{
+		ID: row.ID, Project: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment,
+		GenerationID: row.ServingIdentity.GenerationID, ArtifactDigest: row.ArtifactDigest,
+		PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest, Status: apiadapter.Status(row.Status),
+		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
+		ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
+	}
 }
 
 func activationWorkflow(
@@ -202,12 +286,33 @@ func activationWorkflowForOperationWithBootstrap(
 	idempotencyKey string,
 	bootstrap bool,
 ) (jobs.WorkflowIntent, error) {
+	return activationWorkflowForOperationWithRollbackFence(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, bootstrap, "", 0, false)
+}
+
+func activationWorkflowForOperationWithRollbackFence(
+	operationID string,
+	execution apigencommand.AsyncExecutionContract,
+	enqueue bool,
+	project,
+	deploymentID,
+	releaseID string,
+	actor deployment.ApprovalActor,
+	approval deployment.Approval,
+	idempotencyKey string,
+	bootstrap bool,
+	expectedBaseGenerationID string,
+	expectedTargetRevision int64,
+	rollbackIntent bool,
+) (jobs.WorkflowIntent, error) {
 	payload, _ := json.Marshal(ActivateJob{
 		Project: project, Deployment: deploymentID,
 		Actor: actor.PrincipalID, Credential: actor,
 		ApprovalID:       approval.ID,
 		ApprovalRevision: approval.Revision,
 		IdempotencyKey:   idempotencyKey, Bootstrap: bootstrap,
+		Rollback:                 operationID == string(deploymentgen.GenOperationRollbackDeployment) || rollbackIntent,
+		ExpectedBaseGenerationID: expectedBaseGenerationID,
+		ExpectedTargetRevision:   expectedTargetRevision,
 	})
 	queuedPayload := deploymentgen.GenSchemaDeploymentQueuedAuditPayload{
 		DeploymentId: deploymentID, ProjectId: project, ReleaseId: releaseID, Status: execution.InitialState,

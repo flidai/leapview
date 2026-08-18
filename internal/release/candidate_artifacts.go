@@ -10,7 +10,10 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/project"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 )
 
 var (
@@ -42,10 +45,17 @@ type CandidateRestriction struct {
 // collection: the serving identity and generation artifact are the unit of
 // preparation and publication.
 type CandidateGenerationArtifact struct {
-	Identity            projectgraph.ServingIdentity
-	ArtifactDigest      string
-	DataRevision        string
-	DataMode            GenerationDataMode
+	Identity projectgraph.ServingIdentity
+	// ServingArtifactID is the immutable artifact row identity. It is
+	// intentionally distinct from Identity.GenerationID/ServingStateID.
+	ServingArtifactID string
+	ArtifactDigest    string
+	DataRevision      string
+	DataMode          GenerationDataMode
+	// Deterministic is an explicit compiler/runtime declaration. Zero means
+	// unknown and therefore fail-closed for physical reuse.
+	Deterministic       bool
+	EquivalenceToken    string
 	ManagedDataPins     []ManagedDataPin
 	Connections         []CandidateConnectionRequirement
 	AuthoredConnections []CandidateAuthoredConnection
@@ -60,10 +70,39 @@ type CandidateArtifactRequest struct {
 	Source         project.CandidateSourceSnapshot
 }
 
+// CandidateArtifactIdentity is the immutable serving artifact identity
+// produced while preparing one candidate. It lives with the release artifact
+// contract so the release module does not depend on deployment persistence.
+type CandidateArtifactIdentity struct {
+	ServingArtifactID     string
+	ServingArtifactDigest string
+	ServingStateID        string
+}
+
 type CandidateArtifactSet struct {
 	Artifact                 ProjectArtifactProvenance
 	AuthorizationFingerprint string
 	Generation               CandidateGenerationArtifact
+	// Compiler is the exact immutable compiler evidence used to produce the
+	// serving artifact. Keeping the graph, manifest, and plan alongside the
+	// artifact prevents production delivery from reloading or recompiling a
+	// moving worktree while constructing a private candidate catalog.
+	Compiler CandidateCompilerEvidence
+}
+
+type CandidateCompilerEvidence struct {
+	Graph    projectgraph.ProjectGraph
+	Manifest projectmanifest.Project
+	Plan     projectcompiler.ProjectPlan
+	// RelationExecution and BaseRelationExecution are per-materialization
+	// identities. They let delivery retain unchanged sealed relation refs while
+	// rebuilding only changed/removed relations from the same base catalog.
+	RelationExecution     map[string]string
+	BaseRelationExecution map[string]string
+	// Artifact is the decoded portable artifact whose digest is bound by
+	// Artifact.ProjectDigest. It is retained for model projections used by
+	// candidate materialization.
+	Artifact projectartifact.Project
 }
 
 type CandidateArtifactPreparer interface {

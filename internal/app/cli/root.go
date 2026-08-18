@@ -52,6 +52,8 @@ func NewCommand(ctx context.Context) *cobra.Command {
 	root.AddCommand(versionCommand())
 	root.AddCommand(devCommand(ctx))
 	root.AddCommand(publishCommand(ctx))
+	root.AddCommand(buildCommand(ctx))
+	root.AddCommand(rollbackCommand(ctx))
 	root.AddCommand(deployCommand(ctx, opts))
 	root.AddCommand(validateCommand(ctx, opts))
 	root.AddCommand(planCommand(ctx, opts))

@@ -2,34 +2,32 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"path/filepath"
+	"strings"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
 )
 
 type PublishOptions struct {
-	ProjectPath  string
-	Credentials  cliapi.Credentials
-	Checkpoint   CandidateCheckpoint
-	CandidateKey string
-	Format       string
+	ProjectPath string
+	ProjectID   string
+	Credentials cliapi.Credentials
+	Checkpoint  CandidateCheckpoint
+	CandidateID string
+	Format      string
 }
 
 type PublishResult struct {
-	SchemaVersion     int    `json:"schemaVersion"`
-	DeploymentID      string `json:"deploymentId"`
-	Status            string `json:"status"`
-	CandidateID       string `json:"candidateId"`
-	CandidateRevision int64  `json:"candidateRevision"`
-	TargetID          string `json:"targetId"`
-	PrincipalID       string `json:"principalId"`
-	ArtifactDigest    string `json:"artifactDigest"`
-	ReleaseDigest     string `json:"releaseDigest"`
-	SourceRevision    string `json:"sourceRevision"`
+	SchemaVersion  int    `json:"schemaVersion"`
+	PublicationID  string `json:"publicationId"`
+	GenerationID   string `json:"generationId"`
+	CandidateID    string `json:"candidateId"`
+	PlanID         string `json:"planId"`
+	PlanDigest     string `json:"planDigest"`
+	Status         string `json:"status"`
+	TargetRevision int64  `json:"targetRevision,omitempty"`
 }
 
 // PublishOperations is the Project-owned port for requesting policy-governed
@@ -38,23 +36,22 @@ type PublishOperations interface {
 	Publish(context.Context, PublishOptions, io.Writer) error
 }
 
-// PublishCommand promotes the last exact candidate synchronized by dev.
+// PublishCommand publishes one exact sealed candidate returned by build. The
+// candidate checkpoint supplies project and target origin; callers cannot
+// redirect this operation with a second destination selector.
 func PublishCommand(
 	ctx context.Context,
 	client cliapi.Client,
 	store *CandidateCheckpointStore,
 	operations PublishOperations,
 ) *cobra.Command {
-	values := PublishOptions{
-		ProjectPath:  filepath.Join("dashboards", "leapview.yaml"),
-		CandidateKey: "default",
-		Format:       "text",
-	}
+	values := PublishOptions{Format: "text"}
 	command := &cobra.Command{
-		Use:   "publish",
-		Short: "Publish the exact candidate last synchronized by dev",
-		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		Use:   "publish <candidate-id>",
+		Short: "Publish an exact candidate through target policy",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			values.CandidateID = strings.TrimSpace(args[0])
 			return RunPublish(
 				ctx,
 				client,
@@ -66,18 +63,6 @@ func PublishCommand(
 		},
 	}
 	command.Flags().StringVar(
-		&values.ProjectPath, "project", values.ProjectPath,
-		"project manifest path used by leapview dev",
-	)
-	command.Flags().StringVar(
-		&values.CandidateKey, "candidate-key", values.CandidateKey,
-		"stable authoring session key used by leapview dev",
-	)
-	command.Flags().StringVar(
-		&values.Credentials.Target, "target", "",
-		"authenticated target profile or LeapView target URL",
-	)
-	command.Flags().StringVar(
 		&values.Credentials.Token, "token", "",
 		"ephemeral API token for one-shot automation",
 	)
@@ -88,9 +73,9 @@ func PublishCommand(
 	return command
 }
 
-// RunPublish promotes the exact candidate checkpoint produced by RunDev. It is
-// shared by the public command and target bootstrap adapters that must not
-// bypass policy-governed publication.
+// RunPublish promotes the exact sealed candidate checkpoint produced by Build.
+// Project and target identity are read from the durable object checkpoint
+// before credentials are resolved, so a caller cannot redirect publication.
 func RunPublish(
 	ctx context.Context,
 	client cliapi.Client,
@@ -111,23 +96,26 @@ func RunPublish(
 	if options.Format != "text" && options.Format != "json" {
 		return fmt.Errorf("publish format must be text or json")
 	}
+	if strings.TrimSpace(options.CandidateID) == "" {
+		return fmt.Errorf("candidate id is required; run build and publish its sealed candidate")
+	}
+	identity, err := store.LoadObjectIdentity("candidate", options.CandidateID)
+	if err != nil {
+		return fmt.Errorf("resolve candidate checkpoint: %w", err)
+	}
+	if strings.TrimSpace(options.ProjectID) == "" {
+		options.ProjectID = identity.ProjectID
+	}
+	if strings.TrimSpace(options.Credentials.Target) == "" {
+		options.Credentials.Target = identity.TargetOrigin
+	}
 	credentials, err := client.Resolve(ctx, options.Credentials)
 	if err != nil {
 		return err
 	}
-	checkpoint, err := store.LoadCandidate(
-		options.ProjectPath,
-		credentials.Target,
-		options.CandidateKey,
-	)
-	if errors.Is(err, ErrCandidateCheckpointNotFound) {
-		return fmt.Errorf(
-			"%w for this project and target; run leapview dev first",
-			err,
-		)
-	}
-	if err != nil {
-		return err
+	checkpoint := CandidateCheckpoint{ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target, TargetID: identity.TargetID, Environment: identity.Environment, ProjectID: options.ProjectID, CandidateID: options.CandidateID}
+	if options.CandidateID != "" {
+		checkpoint.CandidateID = options.CandidateID
 	}
 	options.Credentials = credentials
 	options.Checkpoint = checkpoint

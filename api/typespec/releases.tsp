@@ -58,6 +58,8 @@ model ReleaseBindingEvidence {
 }
 
 enum ReleaseGenerationDataMode {
+  reuse_base;
+  @doc("Deprecated historical value. Read-only compatibility; rebuild before planning or publication.")
   reuse_snapshot;
   refresh_sources;
 }

@@ -96,3 +96,10 @@ func (m *Module) ArtifactByServingState(ctx context.Context, id servingstate.ID)
 func (m *Module) ActiveServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string) (servingstate.AssetGraph, bool, error) {
 	return m.states.ActiveServingStateGraph(ctx, projectID, environment)
 }
+
+// ServingStateGraph returns the project-owned asset projection for one exact
+// serving generation. Callers bind the ID to an active runtime lease rather
+// than consulting a legacy active-scope pointer.
+func (m *Module) ServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string, servingStateID servingstate.ID) (servingstate.AssetGraph, bool, error) {
+	return m.states.ServingStateGraph(ctx, projectID, environment, servingStateID)
+}

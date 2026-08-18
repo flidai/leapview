@@ -36,11 +36,38 @@ type CandidateCheckpoint struct {
 	CandidateRevision int64  `json:"candidateRevision"`
 	ArtifactDigest    string `json:"artifactDigest"`
 	ProvenanceDigest  string `json:"provenanceDigest"`
+	PlanID            string `json:"planId,omitempty"`
+	PlanDigest        string `json:"planDigest,omitempty"`
+	ExecutionDigest   string `json:"executionDigest,omitempty"`
+	EvidenceDigest    string `json:"evidenceDigest,omitempty"`
 }
 
 type candidateCheckpointDocument struct {
-	Version    int                            `json:"version"`
-	Candidates map[string]CandidateCheckpoint `json:"candidates"`
+	Version         int                                 `json:"version"`
+	Candidates      map[string]CandidateCheckpoint      `json:"candidates"`
+	Plans           map[string]DeliveryPlanCheckpoint   `json:"plans,omitempty"`
+	CandidatesByID  map[string]DeliveryObjectCheckpoint `json:"candidateIdentities,omitempty"`
+	GenerationsByID map[string]DeliveryObjectCheckpoint `json:"generationIdentities,omitempty"`
+}
+
+type DeliveryPlanCheckpoint struct {
+	PlanID                  string `json:"planId"`
+	ProjectID               string `json:"projectId"`
+	TargetID                string `json:"targetId"`
+	Environment             string `json:"environment"`
+	TargetOrigin            string `json:"targetOrigin"`
+	SourceDigest            string `json:"sourceDigest"`
+	SourceAttestationDigest string `json:"sourceAttestationDigest,omitempty"`
+	PlanDigest              string `json:"planDigest"`
+	ExecutionDigest         string `json:"executionDigest,omitempty"`
+	EvidenceDigest          string `json:"evidenceDigest,omitempty"`
+}
+
+type DeliveryObjectCheckpoint struct {
+	ProjectID    string `json:"projectId"`
+	TargetOrigin string `json:"targetOrigin"`
+	TargetID     string `json:"targetId,omitempty"`
+	Environment  string `json:"environment,omitempty"`
 }
 
 // CandidateCheckpointStore atomically persists non-secret authoring state.
@@ -128,8 +155,11 @@ func (store *CandidateCheckpointStore) LoadCandidate(
 
 func (store *CandidateCheckpointStore) load() (candidateCheckpointDocument, error) {
 	document := candidateCheckpointDocument{
-		Version:    candidateCheckpointDocumentVersion,
-		Candidates: map[string]CandidateCheckpoint{},
+		Version:         candidateCheckpointDocumentVersion,
+		Candidates:      map[string]CandidateCheckpoint{},
+		Plans:           map[string]DeliveryPlanCheckpoint{},
+		CandidatesByID:  map[string]DeliveryObjectCheckpoint{},
+		GenerationsByID: map[string]DeliveryObjectCheckpoint{},
 	}
 	if store.path == "" {
 		return candidateCheckpointDocument{}, fmt.Errorf("candidate checkpoint path is required")
@@ -156,7 +186,98 @@ func (store *CandidateCheckpointStore) load() (candidateCheckpointDocument, erro
 	if document.Candidates == nil {
 		document.Candidates = map[string]CandidateCheckpoint{}
 	}
+	if document.Plans == nil {
+		document.Plans = map[string]DeliveryPlanCheckpoint{}
+	}
+	if document.CandidatesByID == nil {
+		document.CandidatesByID = map[string]DeliveryObjectCheckpoint{}
+	}
+	if document.GenerationsByID == nil {
+		document.GenerationsByID = map[string]DeliveryObjectCheckpoint{}
+	}
 	return document, nil
+}
+
+func (store *CandidateCheckpointStore) SavePlan(plan DeliveryPlanCheckpoint) error {
+	if store == nil || strings.TrimSpace(plan.PlanID) == "" || strings.TrimSpace(plan.ProjectID) == "" {
+		return fmt.Errorf("delivery plan checkpoint requires plan and project identity")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	lock, err := store.acquireMutationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	document, err := store.load()
+	if err != nil {
+		return err
+	}
+	document.Plans[plan.PlanID] = plan
+	return store.save(document)
+}
+
+func (store *CandidateCheckpointStore) LoadPlan(planID string) (DeliveryPlanCheckpoint, error) {
+	if store == nil {
+		return DeliveryPlanCheckpoint{}, fmt.Errorf("candidate checkpoint store is required")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	document, err := store.load()
+	if err != nil {
+		return DeliveryPlanCheckpoint{}, err
+	}
+	plan, ok := document.Plans[strings.TrimSpace(planID)]
+	if !ok {
+		return DeliveryPlanCheckpoint{}, ErrCandidateCheckpointNotFound
+	}
+	return plan, nil
+}
+
+func (store *CandidateCheckpointStore) SaveObjectIdentity(kind, objectID string, identity DeliveryObjectCheckpoint) error {
+	if store == nil || strings.TrimSpace(objectID) == "" || strings.TrimSpace(identity.ProjectID) == "" {
+		return fmt.Errorf("delivery object checkpoint requires object and project identity")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	lock, err := store.acquireMutationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	document, err := store.load()
+	if err != nil {
+		return err
+	}
+	if kind == "generation" {
+		document.GenerationsByID[objectID] = identity
+	} else {
+		document.CandidatesByID[objectID] = identity
+	}
+	return store.save(document)
+}
+
+func (store *CandidateCheckpointStore) LoadObjectIdentity(kind, objectID string) (DeliveryObjectCheckpoint, error) {
+	if store == nil {
+		return DeliveryObjectCheckpoint{}, fmt.Errorf("candidate checkpoint store is required")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	document, err := store.load()
+	if err != nil {
+		return DeliveryObjectCheckpoint{}, err
+	}
+	var identity DeliveryObjectCheckpoint
+	var ok bool
+	if kind == "generation" {
+		identity, ok = document.GenerationsByID[strings.TrimSpace(objectID)]
+	} else {
+		identity, ok = document.CandidatesByID[strings.TrimSpace(objectID)]
+	}
+	if !ok {
+		return DeliveryObjectCheckpoint{}, ErrCandidateCheckpointNotFound
+	}
+	return identity, nil
 }
 
 func (store *CandidateCheckpointStore) save(document candidateCheckpointDocument) error {
@@ -197,6 +318,10 @@ func normalizeCandidateCheckpoint(checkpoint CandidateCheckpoint) (CandidateChec
 	checkpoint.CandidateKey = normalizeCheckpointCandidateKey(checkpoint.CandidateKey)
 	checkpoint.ArtifactDigest = strings.TrimSpace(checkpoint.ArtifactDigest)
 	checkpoint.ProvenanceDigest = strings.TrimSpace(checkpoint.ProvenanceDigest)
+	checkpoint.PlanID = strings.TrimSpace(checkpoint.PlanID)
+	checkpoint.PlanDigest = strings.TrimSpace(checkpoint.PlanDigest)
+	checkpoint.ExecutionDigest = strings.TrimSpace(checkpoint.ExecutionDigest)
+	checkpoint.EvidenceDigest = strings.TrimSpace(checkpoint.EvidenceDigest)
 	if checkpoint.TargetID == "" || checkpoint.Environment == "" ||
 		checkpoint.ProjectID == "" || checkpoint.CandidateID == "" ||
 		checkpoint.CandidateRevision <= 0 {

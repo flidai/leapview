@@ -37,7 +37,9 @@ type CandidateRestriction struct {
 type CandidateDataMode string
 
 const (
-	CandidateDataReuseSnapshot  CandidateDataMode = "reuse_snapshot"
+	CandidateDataReuseBase CandidateDataMode = "reuse_base"
+	// CandidateDataReuseSnapshot is retained as a source-compatible alias.
+	CandidateDataReuseSnapshot  CandidateDataMode = CandidateDataReuseBase
 	CandidateDataRefreshSources CandidateDataMode = "refresh_sources"
 )
 
@@ -150,7 +152,7 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
 	switch generation.DataMode {
-	case CandidateDataReuseSnapshot:
+	case CandidateDataReuseBase:
 		if len(generation.AuthoredConnections) != 0 {
 			return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 		}

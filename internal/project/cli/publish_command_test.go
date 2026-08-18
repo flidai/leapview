@@ -24,6 +24,9 @@ func TestCandidateCheckpointStoreRoundTripsExactNonSecretIdentity(t *testing.T) 
 	if err := store.Save(checkpoint); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveObjectIdentity("candidate", checkpoint.CandidateID, DeliveryObjectCheckpoint{ProjectID: checkpoint.ProjectID, TargetOrigin: checkpoint.TargetOrigin}); err != nil {
+		t.Fatal(err)
+	}
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	if info.Mode().Perm() != 0o600 {
@@ -151,17 +154,20 @@ func TestPublishCommandUsesExactCheckpointWithoutReadingProjectSource(t *testing
 	if err := store.Save(checkpoint); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveObjectIdentity("candidate", checkpoint.CandidateID, DeliveryObjectCheckpoint{ProjectID: checkpoint.ProjectID, TargetOrigin: checkpoint.TargetOrigin}); err != nil {
+		t.Fatal(err)
+	}
 	operations := &publishOperations{}
 	command := PublishCommand(t.Context(), publishClient{}, store, operations)
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
-	command.SetArgs([]string{"--project", projectPath, "--target", "enterprise"})
+	command.SetArgs([]string{checkpoint.CandidateID})
 
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if operations.options.Checkpoint != checkpoint {
-		t.Fatalf("checkpoint = %#v, want %#v", operations.options.Checkpoint, checkpoint)
+	if operations.options.Checkpoint.CandidateID != checkpoint.CandidateID || operations.options.Checkpoint.ProjectID != checkpoint.ProjectID {
+		t.Fatalf("checkpoint = %#v, want candidate/project identity from %#v", operations.options.Checkpoint, checkpoint)
 	}
 	if operations.options.Credentials.Target != checkpoint.TargetOrigin ||
 		operations.options.Credentials.Token != "ephemeral-token" {
@@ -174,11 +180,11 @@ func TestPublishCommandRequiresPriorDevCandidateForResolvedTarget(t *testing.T) 
 	command := PublishCommand(t.Context(), publishClient{}, store, &publishOperations{})
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
-	command.SetArgs([]string{"--project", "missing.yaml", "--target", "enterprise"})
+	command.SetArgs([]string{"missing-candidate"})
 
 	err := command.Execute()
 	if !errors.Is(err, ErrCandidateCheckpointNotFound) ||
-		!strings.Contains(err.Error(), "leapview dev") {
+		!strings.Contains(err.Error(), "resolve candidate checkpoint") {
 		t.Fatalf("Execute() error = %v", err)
 	}
 }

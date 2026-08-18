@@ -105,7 +105,8 @@ func TestDeveloperWorkflowsUseExactCandidatePublishing(t *testing.T) {
 		},
 		filepath.Join("scripts", "agent_e2e.sh"): {
 			`"$BIN" dev --once`,
-			`"$BIN" publish`,
+			`CANDIDATE_ID="$(awk '$1 == "candidate" { print $2; exit }' <<<"$DEV_OUTPUT")"`,
+			`"$BIN" publish "$CANDIDATE_ID" --token "$TOKEN"`,
 		},
 		filepath.Join("internal", "app", "cli", "composectl", "qualification_client.go"): {
 			`"dev",`,
@@ -126,6 +127,8 @@ func TestDeveloperWorkflowsUseExactCandidatePublishing(t *testing.T) {
 			"data deploy",
 			"leapview deploy",
 			`"$BIN" deploy`,
+			"publish --project",
+			"publish --target",
 			"--auto-approve",
 			"deploy:dev:",
 		} {

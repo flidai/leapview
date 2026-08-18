@@ -3,10 +3,15 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"time"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/deployment"
 	"github.com/spf13/cobra"
 )
 
@@ -41,6 +46,8 @@ type Operations interface {
 	Maintenance(context.Context, adminoffline.MaintenanceRequest, io.Writer) error
 	Backup(context.Context, adminoffline.BackupRequest, io.Writer) error
 	Restore(context.Context, adminoffline.RestoreRequest, io.Reader, io.Writer) error
+	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
+	RepairDeliveryRoot(context.Context, adminoffline.DeliveryRepairRequest, io.Writer) error
 }
 
 // Command constructs the offline Admin command tree.
@@ -106,7 +113,99 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	restore.Flags().BoolVar(&values.DatabaseOnly, "database-only", false, "restore only the platform SQLite database")
 
 	parent.AddCommand(initialize, storage, maintenance, backup, restore)
+	delivery := deliveryPoolCommand(ctx, operations)
+	delivery.AddCommand(deliveryRepairCommand(ctx, operations))
+	parent.AddCommand(delivery)
 	return parent
+}
+
+func deliveryRepairCommand(ctx context.Context, operations Operations) *cobra.Command {
+	var poolID, kind, sourceID, candidateID, generationID, leaseID, catalogDigest, objectKey, status, createdAt, expiresAt string
+	var apply bool
+	repair := &cobra.Command{
+		Use:   "repair",
+		Short: "Verify and quarantine one exact delivery root",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if operations == nil {
+				return fmt.Errorf("Admin CLI operations are required")
+			}
+			if poolID == "" || kind == "" || sourceID == "" || catalogDigest == "" || objectKey == "" || createdAt == "" {
+				return fmt.Errorf("--pool-id, --kind, --source-id, --catalog-digest, --object-key, and --created-at are required")
+			}
+			created, err := time.Parse(time.RFC3339Nano, createdAt)
+			if err != nil || created.Location() != time.UTC {
+				return fmt.Errorf("--created-at must be an RFC3339 UTC timestamp")
+			}
+			var expires time.Time
+			if expiresAt != "" {
+				expires, err = time.Parse(time.RFC3339Nano, expiresAt)
+				if err != nil || expires.Location() != time.UTC {
+					return fmt.Errorf("--expires-at must be an RFC3339 UTC timestamp")
+				}
+			}
+			return operations.RepairDeliveryRoot(ctx, adminoffline.DeliveryRepairRequest{
+				Root:   deployment.DeliveryRoot{PhysicalPoolID: poolID, Kind: kind, SourceID: sourceID, CandidateID: candidateID, GenerationID: generationID, LeaseID: leaseID, CatalogDigest: catalogDigest, ObjectKey: objectKey, Status: status, CreatedAt: created, ExpiresAt: expires},
+				Action: "quarantine", Apply: apply,
+			}, command.OutOrStdout())
+		},
+	}
+	repair.Flags().StringVar(&poolID, "pool-id", "", "durable physical-pool identity")
+	repair.Flags().StringVar(&kind, "kind", "", "durable root kind (build, candidate, published, rollback, lease, retained, quarantined)")
+	repair.Flags().StringVar(&sourceID, "source-id", "", "durable root source identity")
+	repair.Flags().StringVar(&candidateID, "candidate-id", "", "candidate identity when the root carries one")
+	repair.Flags().StringVar(&generationID, "generation-id", "", "generation identity when the root carries one")
+	repair.Flags().StringVar(&leaseID, "lease-id", "", "query lease identity when the root carries one")
+	repair.Flags().StringVar(&catalogDigest, "catalog-digest", "", "immutable catalog digest")
+	repair.Flags().StringVar(&objectKey, "object-key", "", "immutable catalog object key")
+	repair.Flags().StringVar(&status, "status", "active", "durable root status")
+	repair.Flags().StringVar(&createdAt, "created-at", "", "durable root creation timestamp (RFC3339 UTC)")
+	repair.Flags().StringVar(&expiresAt, "expires-at", "", "durable root expiry timestamp (RFC3339 UTC), when present")
+	repair.Flags().BoolVar(&apply, "apply", false, "persist the bounded quarantine action after all verification")
+	return repair
+}
+
+func deliveryPoolCommand(ctx context.Context, operations Operations) *cobra.Command {
+	var poolPath, evidencePath string
+	var apply bool
+	bootstrap := &cobra.Command{
+		Use:   "bootstrap",
+		Short: "Create and admit one operator-controlled delivery physical pool",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if operations == nil {
+				return fmt.Errorf("Admin CLI operations are required")
+			}
+			if poolPath == "" || evidencePath == "" {
+				return fmt.Errorf("--pool and --evidence are required")
+			}
+			poolBytes, err := os.ReadFile(poolPath)
+			if err != nil {
+				return fmt.Errorf("read pool contract: %w", err)
+			}
+			evidenceBytes, err := os.ReadFile(evidencePath)
+			if err != nil {
+				return fmt.Errorf("read conformance evidence: %w", err)
+			}
+			var identity physicalpool.PoolIdentity
+			if err := json.Unmarshal(poolBytes, &identity); err != nil {
+				return fmt.Errorf("decode pool contract: %w", err)
+			}
+			evidence, err := physicalpool.UnmarshalEvidenceArtifact(evidenceBytes)
+			if err != nil {
+				return fmt.Errorf("decode conformance evidence: %w", err)
+			}
+			return operations.BootstrapPhysicalPool(ctx, adminoffline.PhysicalPoolBootstrapRequest{Pool: identity, Evidence: evidence, Apply: apply}, command.OutOrStdout())
+		},
+	}
+	bootstrap.Flags().StringVar(&poolPath, "pool", "", "path to non-secret physical-pool identity JSON")
+	bootstrap.Flags().StringVar(&evidencePath, "evidence", "", "path to machine-readable shared-pool conformance evidence JSON")
+	bootstrap.Flags().BoolVar(&apply, "apply", false, "persist the pool and admission; without this flag only validate and print digests")
+	pool := &cobra.Command{Use: "pool", Short: "Manage the delivery physical-pool admission"}
+	pool.AddCommand(bootstrap)
+	delivery := &cobra.Command{Use: "delivery", Short: "Manage plan-driven delivery state"}
+	delivery.AddCommand(pool)
+	return delivery
 }
 
 func operationCommand(operations Operations, use, short string, run func(*cobra.Command) error) *cobra.Command {

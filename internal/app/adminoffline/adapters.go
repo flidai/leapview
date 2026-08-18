@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +15,12 @@ import (
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	adminsqlite "github.com/flidai/leapview/internal/admin/sqlite"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	physicalpoolsqlite "github.com/flidai/leapview/internal/analytics/physicalpool/sqlite"
+	"github.com/flidai/leapview/internal/app/gcadapter"
+	"github.com/flidai/leapview/internal/deployment"
+	"github.com/flidai/leapview/internal/deployment/gc"
+	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/locking"
@@ -41,6 +48,128 @@ func (locker instanceLocker) Acquire(context.Context) (adminoffline.Lock, error)
 
 type instanceState struct {
 	dbPath string
+}
+
+type physicalPoolBootstrap struct {
+	dbPath string
+	s3     gcadapter.S3Config
+}
+
+type deliveryRepair struct {
+	dbPath      string
+	home        string
+	stagingRoot string
+	s3          gcadapter.S3Config
+}
+
+// RepairDeliveryRoot is the production offline/admin adapter for the bounded
+// control-plane quarantine action. It reconstructs the admitted pool contract
+// from SQLite, uses gcadapter's read-only Inspector, and exposes no raw object
+// deletion or catalog mutation capability.
+func (repair deliveryRepair) RepairDeliveryRoot(ctx context.Context, request adminoffline.DeliveryRepairRequest, out io.Writer) error {
+	if request.Action != "quarantine" {
+		return fmt.Errorf("unsupported delivery repair action %q", request.Action)
+	}
+	root := request.Root
+	if root.PhysicalPoolID == "" || root.Kind == "" || root.SourceID == "" {
+		return fmt.Errorf("delivery repair root identity is incomplete")
+	}
+	store, err := platform.Open(ctx, repair.dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	delivery := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
+	compatibilityDigest, err := delivery.DeliveryRootCompatibilityDigest(ctx, root)
+	if err != nil {
+		return err
+	}
+	pools := physicalpoolsqlite.NewRepository(store.SQLDB())
+	admission, err := pools.LoadAdmissionContractByCompatibilityDigest(ctx, physicalpool.PoolID(root.PhysicalPoolID), compatibilityDigest)
+	if err != nil {
+		return fmt.Errorf("load admitted physical pool: %w", err)
+	}
+	contract := &analyticsducklake.PoolContract{Pool: admission.Pool, Tuple: admission.Pool.Compatibility, Admission: admission.Admission, Evidence: admission.Evidence}
+	poolStore, err := gcadapter.NewPoolStore(ctx, contract, repair.s3)
+	if err != nil {
+		return err
+	}
+	inspector := gcadapter.Inspector{Store: poolStore, PoolContract: contract, StagingRoot: repair.stagingRoot}
+	runner, err := gcadapter.NewProductionRunner(delivery, poolStore, inspector, gc.Config{PhysicalPoolID: root.PhysicalPoolID, HolderID: "repair"})
+	if err != nil {
+		return err
+	}
+	err = runner.Repair(ctx, root, func(ctx context.Context, verified deployment.DeliveryRoot) error {
+		if !request.Apply {
+			return nil
+		}
+		const reason = "operator_repair_quarantine"
+		if err := delivery.QuarantineRootWithActor(ctx, verified, reason, "offline-admin", time.Now().UTC()); err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
+}
+
+func (physicalPoolBootstrap) ValidateEvidence(evidence physicalpool.Evidence) error {
+	return (&analyticsducklake.SharedPoolConformance{Compatibility: evidence.Compatibility}).ValidateEvidence(evidence)
+}
+
+func (bootstrap physicalPoolBootstrap) Bootstrap(ctx context.Context, request adminoffline.PhysicalPoolBootstrapRequest) (adminoffline.PhysicalPoolBootstrapResult, error) {
+	if err := request.Pool.Validate(); err != nil {
+		return adminoffline.PhysicalPoolBootstrapResult{}, err
+	}
+	evidence := request.Evidence
+	if err := (&analyticsducklake.SharedPoolConformance{Compatibility: evidence.Compatibility}).ValidateEvidence(evidence); err != nil {
+		return adminoffline.PhysicalPoolBootstrapResult{}, err
+	}
+	store, err := platform.Open(ctx, bootstrap.dbPath)
+	if err != nil {
+		return adminoffline.PhysicalPoolBootstrapResult{}, err
+	}
+	defer store.Close()
+	repository := physicalpoolsqlite.NewRepository(store.SQLDB())
+	ownerID, err := store.InstanceID(ctx)
+	if err != nil {
+		return adminoffline.PhysicalPoolBootstrapResult{}, fmt.Errorf("read durable instance identity: %w", err)
+	}
+	physicalPool := mustPhysicalPool(request.Pool)
+	admission, err := physicalPool.Admit(evidence)
+	if err != nil {
+		return adminoffline.PhysicalPoolBootstrapResult{}, err
+	}
+	contract := &analyticsducklake.PoolContract{Pool: physicalPool, Tuple: admission.Compatibility, Admission: admission, Evidence: evidence}
+	if admission.Compatibility.StorageImplementation == "local" || admission.Compatibility.StorageImplementation == "filesystem" {
+		path, pathErr := physicalPool.DataPath()
+		if pathErr != nil {
+			return adminoffline.PhysicalPoolBootstrapResult{}, pathErr
+		}
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			return adminoffline.PhysicalPoolBootstrapResult{}, fmt.Errorf("create local physical-pool namespace: %w", err)
+		}
+	}
+	storeAdapter, err := gcadapter.NewPoolStore(ctx, contract, bootstrap.s3)
+	if err != nil {
+		return adminoffline.PhysicalPoolBootstrapResult{}, fmt.Errorf("physical-pool ownership marker store: %w", err)
+	}
+	marker, ok := storeAdapter.(physicalpool.NamespaceOwnership)
+	if !ok {
+		return adminoffline.PhysicalPoolBootstrapResult{}, fmt.Errorf("physical-pool store does not support ownership markers")
+	}
+	pool, admission, err := repository.CreateAndAdmitWithOwnership(ctx, physicalPool, evidence, ownerID, marker)
+	if err != nil {
+		return adminoffline.PhysicalPoolBootstrapResult{}, err
+	}
+	return adminoffline.PhysicalPoolBootstrapResult{
+		PoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest,
+		EvidenceDigest: admission.EvidenceDigest, ConformanceVersion: admission.ConformanceVersion, Applied: true,
+	}, nil
+}
+
+func mustPhysicalPool(identity physicalpool.PoolIdentity) physicalpool.PhysicalPool {
+	pool, _ := physicalpool.NewPhysicalPool(identity)
+	return pool
 }
 
 func (state instanceState) withStore(ctx context.Context, operation func(*platform.Store) error) error {

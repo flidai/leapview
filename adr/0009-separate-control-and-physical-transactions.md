@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-08-17
 
-Implementation: pending
+Implementation: in progress (controlled rollout)
 
 Deciders: LeapView maintainers
 
@@ -154,8 +154,11 @@ A build attempt follows these phases:
    writer lease. The worker creates a private working catalog and performs
    materialization. Before managed writes, it verifies effective data-inlining
    options across global, schema, and table scopes. Legacy inlined inserts and
-   deletes are flushed explicitly table by table. Several DuckLake transactions
-   and retries are permitted.
+   deletes are flushed explicitly table by table. Because the pinned DuckLake
+   flush function consults `auto_compact` even for an explicit table, the
+   worker enables that option only for the exact flush target and persists it
+   back to `false` before continuing. Several DuckLake transactions and
+   retries are permitted.
 2. **Normalizing.** The worker explicitly expires every inherited and
    intermediate snapshot except the final snapshot, without invoking physical
    cleanup. The attempt fails if exactly one current snapshot does not remain.

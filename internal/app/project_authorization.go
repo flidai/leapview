@@ -124,6 +124,52 @@ func authorizeProjectResources(
 	return true, nil
 }
 
+// authorizeProjectRole evaluates a project-wide role binding against the
+// exact leased generation. Delivery publication uses this only when a plan's
+// graph-impact evidence is empty; a direct grant on an unrelated resource
+// must never widen that no-impact fallback.
+func authorizeProjectRole(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	capability access.Capability,
+) (bool, error) {
+	if accessModule == nil || runtimeHost == nil {
+		return false, fmt.Errorf("authorization modules are required")
+	}
+	if err := projectID.Validate(); err != nil {
+		return false, err
+	}
+	lease, err := runtimeHost.Acquire(ctx)
+	if err != nil {
+		return false, err
+	}
+	if lease == nil {
+		return false, fmt.Errorf("runtime host returned a nil lease")
+	}
+	defer lease.Release()
+	if lease.Identity().ProjectID != projectID {
+		return false, fmt.Errorf("runtime project %q does not match requested project %q", lease.Identity().ProjectID, projectID)
+	}
+	authorizedLease, ok := lease.(interface {
+		AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+	})
+	if !ok {
+		return false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
+	}
+	subjects, err := accessModule.AuthorizationSubjects(ctx, principalID)
+	if err != nil {
+		return false, err
+	}
+	snapshot := authorizedLease.AuthorizationSnapshot()
+	if snapshot.Identity() != lease.Identity() {
+		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
+	}
+	return deliveryRoleAllows(snapshot, subjects, capability), nil
+}
+
 // protectProjectResources authorizes a browser request against the immutable
 // graph-bound snapshot carried by the leased serving generation. Resource IDs
 // and capabilities are resolved before the handler runs; no alternate

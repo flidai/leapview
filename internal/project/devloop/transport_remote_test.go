@@ -41,6 +41,25 @@ func TestTransportRemoteUploadsOnlyMissingContentBeforeCommit(t *testing.T) {
 	}
 }
 
+func TestTransportRemoteRetainSourceDoesNotPrepareCandidate(t *testing.T) {
+	snapshot := testSnapshotWithArtifacts("source-only", []Artifact{
+		contentArtifact("leapview.yaml", []byte("project")),
+		contentArtifact("models/orders.yaml", []byte("orders")),
+	})
+	transport := &recordingSyncTransport{missing: []string{snapshot.Artifacts[0].Digest, snapshot.Artifacts[1].Digest}}
+	remote, err := NewTransportRemote(transport, 2)
+	require.NoError(t, err)
+
+	retained, err := remote.RetainSource(t.Context(), snapshot)
+	require.NoError(t, err)
+	require.Equal(t, snapshot.ProjectID, retained.ProjectID)
+	require.Equal(t, snapshot.Digest, retained.SourceDigest)
+	require.Equal(t, 1, transport.retained)
+	require.Equal(t, 0, transport.commits, "source retention must not create a candidate")
+	require.True(t, transport.plan.SourceOnly)
+	require.Len(t, transport.uploaded, 2)
+}
+
 func TestTransportRemoteRejectsUnknownMissingDigestWithoutUploadingOrCommit(t *testing.T) {
 	transport := &recordingSyncTransport{missing: []string{
 		"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
@@ -94,6 +113,7 @@ type recordingSyncTransport struct {
 	maxActive int
 	uploadErr error
 	commits   int
+	retained  int
 }
 
 func (transport *recordingSyncTransport) Plan(
@@ -134,6 +154,20 @@ func (transport *recordingSyncTransport) Commit(
 		ID: "cand_transport", ProjectID: request.ProjectID,
 		ArtifactDigest: request.ArtifactDigest,
 		PreviewURL:     "https://target.example/candidates/cand_transport",
+	}, nil
+}
+
+func (transport *recordingSyncTransport) RetainSource(
+	_ context.Context,
+	request SynchronizationPlanRequest,
+) (RetainedSource, error) {
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	transport.retained++
+	return RetainedSource{
+		ProjectID: request.ProjectID, SourceDigest: request.ArtifactDigest,
+		ProjectDigest: request.ArtifactDigest, TargetID: "target_source_only",
+		Environment: "test",
 	}, nil
 }
 

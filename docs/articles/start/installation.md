@@ -123,12 +123,12 @@ From a source checkout, the evaluator is also an ordinary authoring target:
 ```sh
 leapview login http://localhost:8080 \
   --project evaluation/project/leapview.yaml
-leapview dev --once \
-  --project evaluation/project/leapview.yaml \
-  --target http://localhost:8080
-leapview publish \
-  --project evaluation/project/leapview.yaml \
-  --target http://localhost:8080
+PLAN_JSON=$(leapview plan evaluation/project/leapview.yaml \
+  --target http://localhost:8080 --format json)
+PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
+BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
+CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
+leapview publish "$CANDIDATE_ID"
 ```
 
 Complete the browser sign-in prompted by `login`. Local evaluation policy
@@ -138,6 +138,18 @@ data, start with [Connect a data source](/docs/guides/build/connect-data). For
 a durable or externally reachable instance, use the versioned Compose release
 below; it adds immutable image pinning, HTTPS, backups, and state-aware
 upgrades.
+
+For an isolated one-shot private preview of the evaluator project, you may use
+the optional `dev` loop against the same loopback target:
+
+```sh
+leapview dev --once \
+  --project evaluation/project/leapview.yaml \
+  --target http://localhost:8080 --no-browser
+```
+
+This preview is a convenience for checking an authoring change; reviewed
+publication still follows the `plan`, `build`, and `publish` commands above.
 
 ## Run a durable production instance
 
@@ -246,12 +258,11 @@ task generate
 task dev
 ```
 
-`task dev` starts one worktree-local target, stages the sample source, creates
-the private candidate through `leapview dev`, and publishes it through
-`leapview publish`. Use `task dev:publish` to repeat that exact synchronization
-after managed data changes. Use `task dev:status`, `task dev:logs`, and
-`task dev:stop` for lifecycle operations. Run `task ci` before handing off
-substantial changes.
+`task dev` starts one worktree-local target and opens the private authoring
+watcher. For a durable rollout, use the canonical `plan`, `build`, and
+`publish CANDIDATE_ID` commands shown above. Use `task dev:status`,
+`task dev:logs`, and `task dev:stop` for lifecycle operations. Run `task ci`
+before handing off substantial changes.
 
 ## Validate
 

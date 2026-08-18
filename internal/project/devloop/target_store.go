@@ -1,6 +1,7 @@
 package devloop
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,11 +37,90 @@ type TargetStore struct {
 }
 
 type StoredSnapshot struct {
-	ProjectID           projectgraph.ResourceID
-	Digest              string
-	ProjectPath         string
-	ProjectDigest       string
-	ProjectArtifactPath string
+	ProjectID               projectgraph.ResourceID
+	Digest                  string
+	SourceAttestationDigest string
+	ProjectPath             string
+	ProjectDigest           string
+	ProjectArtifactPath     string
+	// SourceRevision is retained in the immutable manifest alongside the
+	// source bytes. It is deliberately not part of the byte-set digest, but a
+	// revision change for the same bytes must conflict rather than silently
+	// replacing provenance on a restarted target.
+	SourceRevision *SourceRevision
+}
+
+// sourceAttestation is append-only provenance for a retained byte snapshot.
+// The source digest remains the physical identity; each distinct revision is
+// recorded separately so reusing identical bytes from another commit or
+// repository never mutates or conflicts with the retained snapshot.
+type sourceAttestation struct {
+	SourceDigest   string          `json:"sourceDigest"`
+	SourceRevision *SourceRevision `json:"sourceRevision,omitempty"`
+}
+
+// Snapshot returns one previously committed immutable snapshot by digest. The
+// manifest is part of the retained snapshot and is revalidated before any
+// paths are returned, so callers cannot turn a digest lookup into a mutable
+// worktree read or accept a partially written directory.
+func (store *TargetStore) Snapshot(ctx context.Context, projectID projectgraph.ResourceID, artifactDigest string) (StoredSnapshot, error) {
+	return store.snapshot(ctx, projectID, artifactDigest, "")
+}
+
+// SnapshotAttestation resolves an exact append-only provenance record for a
+// retained byte snapshot and verifies its content-addressed identity.
+func (store *TargetStore) SnapshotAttestation(ctx context.Context, projectID projectgraph.ResourceID, artifactDigest, attestationDigest string) (StoredSnapshot, error) {
+	return store.snapshot(ctx, projectID, artifactDigest, strings.TrimSpace(attestationDigest))
+}
+
+func (store *TargetStore) snapshot(ctx context.Context, projectID projectgraph.ResourceID, artifactDigest, attestationDigest string) (StoredSnapshot, error) {
+	if store == nil {
+		return StoredSnapshot{}, fmt.Errorf("project target store is not configured")
+	}
+	if err := projectID.Validate(); err != nil {
+		return StoredSnapshot{}, err
+	}
+	request := SynchronizationPlanRequest{ProjectID: projectID, ArtifactDigest: strings.TrimSpace(artifactDigest)}
+	if err := digest.ValidateSHA256Identity(request.ArtifactDigest); err != nil {
+		return StoredSnapshot{}, err
+	}
+	directory := filepath.Join(store.snapshots, digestHex(request.ArtifactDigest))
+	manifest, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
+	if err != nil {
+		return StoredSnapshot{}, err
+	}
+	var retained SynchronizationPlanRequest
+	if err := json.Unmarshal(manifest, &retained); err != nil {
+		return StoredSnapshot{}, fmt.Errorf("decode retained project snapshot manifest: %w", err)
+	}
+	retained, err = normalizePlanRequest(retained)
+	if err != nil {
+		return StoredSnapshot{}, err
+	}
+	if retained.ProjectID != projectID || retained.ArtifactDigest != request.ArtifactDigest {
+		return StoredSnapshot{}, fmt.Errorf("retained project snapshot identity does not match lookup")
+	}
+	if attestationDigest != "" {
+		if err := digest.ValidateSHA256Identity(attestationDigest); err != nil {
+			return StoredSnapshot{}, err
+		}
+		attestation, err := readSourceAttestation(directory, attestationDigest)
+		if err != nil {
+			return StoredSnapshot{}, err
+		}
+		if attestation.SourceDigest != retained.ArtifactDigest {
+			return StoredSnapshot{}, fmt.Errorf("source attestation digest is bound to another snapshot")
+		}
+		retained.SourceRevision = cloneSourceRevision(attestation.SourceRevision)
+	}
+	stored, err := store.verifyStoredSnapshot(ctx, retained, directory)
+	if err != nil {
+		return StoredSnapshot{}, err
+	}
+	if attestationDigest != "" && stored.SourceAttestationDigest != attestationDigest {
+		return StoredSnapshot{}, fmt.Errorf("retained source attestation does not match requested digest")
+	}
+	return stored, nil
 }
 
 func NewTargetStore(root string) (*TargetStore, error) {
@@ -171,7 +251,14 @@ func (store *TargetStore) Commit(
 
 	destination := filepath.Join(store.snapshots, digestHex(request.ArtifactDigest))
 	if _, err := os.Stat(destination); err == nil {
-		return store.verifyStoredSnapshot(ctx, request, destination)
+		stored, verifyErr := store.verifyStoredSnapshot(ctx, request, destination)
+		if verifyErr != nil {
+			return StoredSnapshot{}, verifyErr
+		}
+		if _, err := store.appendSourceAttestation(destination, request); err != nil {
+			return StoredSnapshot{}, err
+		}
+		return storedSnapshot(request, destination, stored.ProjectDigest), nil
 	} else if !os.IsNotExist(err) {
 		return StoredSnapshot{}, err
 	}
@@ -235,8 +322,18 @@ func (store *TargetStore) Commit(
 	}
 	if err := os.Rename(staging, destination); err != nil {
 		if _, statErr := os.Stat(destination); statErr == nil {
-			return store.verifyStoredSnapshot(ctx, request, destination)
+			stored, verifyErr := store.verifyStoredSnapshot(ctx, request, destination)
+			if verifyErr != nil {
+				return StoredSnapshot{}, verifyErr
+			}
+			if _, err := store.appendSourceAttestation(destination, request); err != nil {
+				return StoredSnapshot{}, err
+			}
+			return storedSnapshot(request, destination, stored.ProjectDigest), nil
 		}
+		return StoredSnapshot{}, err
+	}
+	if _, err := store.appendSourceAttestation(destination, request); err != nil {
 		return StoredSnapshot{}, err
 	}
 	return storedSnapshot(request, destination, compiled.Digest()), nil
@@ -247,6 +344,23 @@ func (store *TargetStore) verifyStoredSnapshot(
 	request SynchronizationPlanRequest,
 	directory string,
 ) (StoredSnapshot, error) {
+	manifestBytes, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
+	if err != nil {
+		return StoredSnapshot{}, err
+	}
+	var manifestRequest SynchronizationPlanRequest
+	decoder := json.NewDecoder(bytes.NewReader(manifestBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifestRequest); err != nil {
+		return StoredSnapshot{}, fmt.Errorf("decode retained project snapshot manifest: %w", err)
+	}
+	manifestRequest, err = normalizePlanRequest(manifestRequest)
+	if err != nil {
+		return StoredSnapshot{}, err
+	}
+	if manifestRequest.ProjectID != request.ProjectID || manifestRequest.ArtifactDigest != request.ArtifactDigest {
+		return StoredSnapshot{}, fmt.Errorf("retained project snapshot identity does not match request")
+	}
 	sourceRoot := filepath.Join(directory, "source")
 	for _, reference := range request.Artifacts {
 		if err := ctx.Err(); err != nil {
@@ -267,7 +381,7 @@ func (store *TargetStore) verifyStoredSnapshot(
 	if compiled.ProjectID() != request.ProjectID {
 		return StoredSnapshot{}, fmt.Errorf("stored project identity changed")
 	}
-	retained, err := os.ReadFile(filepath.Join(directory, targetProjectArtifact))
+	retainedArtifact, err := os.ReadFile(filepath.Join(directory, targetProjectArtifact))
 	if os.IsNotExist(err) {
 		if err := writeRetainedProjectArtifact(
 			filepath.Join(directory, targetProjectArtifact),
@@ -275,20 +389,116 @@ func (store *TargetStore) verifyStoredSnapshot(
 		); err != nil {
 			return StoredSnapshot{}, fmt.Errorf("repair retained project artifact: %w", err)
 		}
-		retained = compiled.Canonical()
+		retainedArtifact = compiled.Canonical()
 		err = nil
 	}
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	if string(retained) != string(compiled.Canonical()) {
+	if string(retainedArtifact) != string(compiled.Canonical()) {
 		return StoredSnapshot{}, fmt.Errorf("retained project artifact does not match synchronized sources")
+	}
+	if _, err := resolveSourceAttestation(directory, manifestRequest, ""); err != nil {
+		return StoredSnapshot{}, err
 	}
 	return storedSnapshot(request, directory, compiled.Digest()), nil
 }
 
+func resolveSourceAttestation(directory string, request SynchronizationPlanRequest, expected string) (string, error) {
+	content, err := json.Marshal(sourceAttestation{SourceDigest: request.ArtifactDigest, SourceRevision: cloneSourceRevision(request.SourceRevision)})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(content)
+	actual := "sha256:" + hex.EncodeToString(sum[:])
+	if expected != "" && actual != expected {
+		return "", fmt.Errorf("source attestation digest mismatch")
+	}
+	path := filepath.Join(directory, "attestations", hex.EncodeToString(sum[:])+".json")
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read source attestation: %w", err)
+	}
+	if string(stored) != string(content) {
+		return "", fmt.Errorf("source attestation content mismatch")
+	}
+	return actual, nil
+}
+
+func readSourceAttestation(directory, expected string) (sourceAttestation, error) {
+	path := filepath.Join(directory, "attestations", digestHex(expected)+".json")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return sourceAttestation{}, fmt.Errorf("read source attestation: %w", err)
+	}
+	sum := sha256.Sum256(content)
+	actual := "sha256:" + hex.EncodeToString(sum[:])
+	if actual != expected {
+		return sourceAttestation{}, fmt.Errorf("source attestation content digest mismatch")
+	}
+	var attestation sourceAttestation
+	if err := json.Unmarshal(content, &attestation); err != nil {
+		return sourceAttestation{}, fmt.Errorf("decode source attestation: %w", err)
+	}
+	attestation.SourceDigest = strings.TrimSpace(attestation.SourceDigest)
+	if err := digest.ValidateSHA256Identity(attestation.SourceDigest); err != nil {
+		return sourceAttestation{}, err
+	}
+	var normalizeErr error
+	attestation.SourceRevision, normalizeErr = normalizeSourceRevision(attestation.SourceRevision)
+	if normalizeErr != nil {
+		return sourceAttestation{}, normalizeErr
+	}
+	return attestation, nil
+}
+
 func writeRetainedProjectArtifact(path string, content []byte) error {
 	return securefs.WritePrivateFileAtomic(path, content)
+}
+
+func (store *TargetStore) appendSourceAttestation(
+	directory string,
+	request SynchronizationPlanRequest,
+) (string, error) {
+	attestation := sourceAttestation{
+		SourceDigest:   request.ArtifactDigest,
+		SourceRevision: cloneSourceRevision(request.SourceRevision),
+	}
+	content, err := json.Marshal(attestation)
+	if err != nil {
+		return "", err
+	}
+	directory = filepath.Join(directory, "attestations")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(content)
+	attestationDigest := "sha256:" + hex.EncodeToString(sum[:])
+	path := filepath.Join(directory, hex.EncodeToString(sum[:])+".json")
+	if existing, err := os.ReadFile(path); err == nil {
+		if string(existing) != string(content) {
+			return "", fmt.Errorf("source attestation identity collision")
+		}
+		return attestationDigest, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := securefs.WritePrivateFileAtomic(path, content); err != nil {
+		if existing, readErr := os.ReadFile(path); readErr == nil && string(existing) == string(content) {
+			return attestationDigest, nil
+		}
+		return "", err
+	}
+	return attestationDigest, nil
+}
+
+func sourceAttestationDigest(request SynchronizationPlanRequest) string {
+	content, err := json.Marshal(sourceAttestation{SourceDigest: request.ArtifactDigest, SourceRevision: cloneSourceRevision(request.SourceRevision)})
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(content)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func normalizePlanRequest(request SynchronizationPlanRequest) (SynchronizationPlanRequest, error) {
@@ -405,9 +615,19 @@ func storedSnapshot(
 	artifactPath := filepath.Join(directory, targetProjectArtifact)
 	return StoredSnapshot{
 		ProjectID: request.ProjectID, Digest: request.ArtifactDigest,
-		ProjectPath:   filepath.Join(directory, "source", filepath.FromSlash(request.ProjectFile)),
-		ProjectDigest: projectDigest, ProjectArtifactPath: artifactPath,
+		SourceAttestationDigest: sourceAttestationDigest(request),
+		ProjectPath:             filepath.Join(directory, "source", filepath.FromSlash(request.ProjectFile)),
+		ProjectDigest:           projectDigest, ProjectArtifactPath: artifactPath,
+		SourceRevision: cloneSourceRevision(request.SourceRevision),
 	}
+}
+
+func cloneSourceRevision(value *SourceRevision) *SourceRevision {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
 }
 
 type contextReader struct {

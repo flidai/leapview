@@ -33,8 +33,17 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 		"cancelProjectCandidate":                {"candidate.cancelled", "RESOURCE_EDIT", "required", "best-effort"},
 		"cancelProjectCandidateByKey":           {"candidate.cancelled", "RESOURCE_EDIT", "required", "best-effort"},
 		"publishProjectCandidate":               {deploymentQueuedAuditAction, "RESOURCE_PUBLISH", "required", "best-effort"},
+		"retainProjectCandidateSource":          {"candidate.source_retained", "RESOURCE_EDIT", "required", "best-effort"},
 		"uploadProjectCandidateSourceBlob":      {"candidate.source_blob_uploaded", "RESOURCE_EDIT", "", "best-effort"},
 		"commitProjectCandidateSynchronization": {"candidate.ready", "RESOURCE_EDIT", "required", "best-effort"},
+		"createDeliveryPlan":                    {"delivery.plan.created", "RESOURCE_READ", "required", "transactional"},
+		"buildDeliveryPlan":                     {"delivery.build.sealed", "RESOURCE_USE", "required", "transactional"},
+		"publishDeliveryCandidate":              {"delivery.publication.requested", "RESOURCE_PUBLISH", "required", "transactional"},
+		"rollbackDeliveryGeneration":            {"delivery.rollback.requested", "PROJECT_ADMIN", "required", "transactional"},
+		"requestDeliveryPublicationApproval":    {"delivery.publication.approval_requested", "RESOURCE_PUBLISH", "required", "transactional"},
+		"approveDeliveryPublicationApproval":    {"delivery.publication.approved", "PROJECT_ADMIN", "required", "transactional"},
+		"denyDeliveryPublicationApproval":       {"delivery.publication.denied", "PROJECT_ADMIN", "required", "transactional"},
+		"revokeDeliveryPublicationApproval":     {"delivery.publication.approval_revoked", "PROJECT_ADMIN", "required", "transactional"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]
@@ -75,6 +84,14 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 		"getProjectCandidate":                 "RESOURCE_EDIT",
 		"reviewProjectCandidate":              "RESOURCE_EDIT",
 		"planProjectCandidateSynchronization": "RESOURCE_EDIT",
+		"getDeliveryPlanPreview":              "RESOURCE_READ",
+		"getDeliveryBuildStatus":              "RESOURCE_READ",
+		"getDeliverySealStatus":               "RESOURCE_READ",
+		"getDeliveryCandidateStatus":          "RESOURCE_READ",
+		"getDeliveryGenerationStatus":         "RESOURCE_READ",
+		"getDeliveryPublicationEvidence":      "RESOURCE_READ",
+		"getDeliveryPublicationApproval":      "RESOURCE_READ",
+		"getDeliveryOperatorSnapshot":         "PROJECT_ADMIN",
 	}
 	for operationID, wantPrivilege := range queryPrivileges {
 		contract, ok := contracts[operationID]
@@ -105,6 +122,28 @@ func TestCandidateSourceBlobDeclaresBestEffortAuditGuarantee(t *testing.T) {
 	contract, ok := deploymentgen.GetAPIGenOperationContract("uploadProjectCandidateSourceBlob")
 	if !ok || contract.Command == nil || contract.Command.Audit.Guarantee != "best-effort" {
 		t.Fatalf("candidate source blob command contract = %#v", contract)
+	}
+}
+
+func TestCandidateSourceRetentionUsesSourceOwnedAuditPayload(t *testing.T) {
+	contract, ok := deploymentgen.GetAPIGenOperationContract("retainProjectCandidateSource")
+	if !ok || contract.Command == nil || contract.Command.Audit.Payload == nil {
+		t.Fatalf("candidate source retention command contract = %#v", contract)
+	}
+	if contract.Command.Audit.Payload.Schema != "CandidateSourceRetainedAuditPayload" {
+		t.Fatalf("candidate source retention payload schema = %q", contract.Command.Audit.Payload.Schema)
+	}
+	fields := make(map[string]bool, len(contract.Command.Audit.Payload.Fields))
+	for _, field := range contract.Command.Audit.Payload.Fields {
+		fields[field.Name] = true
+	}
+	for _, field := range []string{"operationId", "surface", "projectId", "sourceDigest", "sourceAttestationDigest"} {
+		if !fields[field] {
+			t.Errorf("candidate source retention payload missing field %q", field)
+		}
+	}
+	if fields["candidateId"] || fields["targetId"] {
+		t.Errorf("candidate source retention payload contains candidate-owned fields: %#v", fields)
 	}
 }
 

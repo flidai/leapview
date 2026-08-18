@@ -1,6 +1,6 @@
 # Automation and CI
 
-Treat validation, candidate creation, publication, approval, activation, and verification as separate gates. Build one candidate from an immutable source revision and publish that unchanged candidate only from an approved branch or environment. Git is a useful source of change evidence, not LeapView's source of truth: correctness, rollback, and target activation depend on content digests, retained candidates, releases, and deployment evidence.
+Treat validation, plan creation, build, publication, approval, activation, and verification as separate gates. Build one candidate from an exact source-attestation digest and publish that unchanged candidate only from an approved branch or environment. Git is a useful source of change evidence, not LeapView's source of truth: correctness, rollback, and target activation depend on content digests, retained candidates, plans, and deployment evidence.
 
 ## Provide bounded credentials
 
@@ -25,37 +25,36 @@ leapview validate --project dashboards/leapview.yaml --json
 
 Stop the pipeline on any non-zero exit status. Do not allow a later deployment job to replace or edit the project after validation.
 
-## Create the immutable target candidate
+## Create and build the immutable delivery plan
 
-Synchronize the project to the exact target that will receive the deployment:
+Create a durable plan from the exact source snapshot, then build only that
+plan:
 
 ```sh
-leapview dev --once --no-browser \
-  --project dashboards/leapview.yaml \
-  --target "$LEAPVIEW_TARGET" \
-  --candidate-key "$CHANGE_KEY" \
-  --source-revision "$SOURCE_REVISION" \
-  --source-repository "$SOURCE_REPOSITORY" \
-  --source-ref "$SOURCE_REF" \
-  --source-change "$CHANGE_KEY"
+PLAN_JSON=$(leapview plan dashboards/leapview.yaml --target "$LEAPVIEW_TARGET" --format json)
+PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
+BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
+CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
 ```
 
-`CHANGE_KEY` is a stable, vendor-neutral identity such as `github:pull/42`, `gitlab:merge-request/42`, or `branch:main`. It isolates concurrent candidates owned by the same service principal. A newer source revision with identical bytes advances the candidate provenance without changing its content digest. Repeating the same key, revision, and content is idempotent.
-
-The target compiles the uploaded source snapshot, resolves target-owned connection evidence and managed-data pins, prepares an owner-isolated preview runtime, and retains immutable provenance for that exact candidate. `dev` stores only the non-secret candidate handoff locally; credentials remain in the workload-identity flow. Run `dev` again after any source change and complete review against the candidate preview before publication.
+The target retains the portable bytes and source-attestation digest before
+physical work. `build` resolves target policy, leases, and credentials, and
+returns a candidate only after its catalog is sealed. `dev` remains an optional
+private watch/preview loop; it is not a second CI deployment path. For a local
+candidate preview, use `leapview dev --once --project dashboards/leapview.yaml`.
 
 ## Publish an immutable deployment request
 
 Run publication from a protected job using the same project path and target used by `dev`:
 
 ```sh
-leapview publish \
-  --project dashboards/leapview.yaml \
-  --target "$LEAPVIEW_TARGET" \
-  --candidate-key "$CHANGE_KEY"
+leapview publish "$CANDIDATE_ID"
 ```
 
-`publish` does not read, compile, or upload the project again. It submits the exact retained candidate revision and provenance produced by `dev`. An environment configured for immediate publication waits for activation to finish. A protected environment returns the immutable deployment and approval request without activating it.
+`publish` does not read, compile, or upload the project again. It submits the
+exact sealed candidate and plan provenance returned by `build`. An environment
+configured for immediate publication activates it; a protected environment
+returns the immutable publication and approval request without activating it.
 
 Approve the exact persisted plan with a different principal holding `PROJECT_ADMIN`, then request cutover with a principal holding `PROJECT_ADMIN`. Immediately before cutover, LeapView rechecks the release, plan digest, approval revision, expiry, reviewer credential and grant, and activator credential and grant. Revocation or expiry closes the workflow safely.
 
@@ -65,11 +64,11 @@ Map source-control events onto the candidate lifecycle rather than inventing a C
 
 | Source event | LeapView action |
 | --- | --- |
-| Open or reopen | Validate locally, then `dev --once` in a trusted job |
-| Update or synchronize | Repeat `dev --once` with the same candidate key and the new exact revision |
+| Open or reopen | Validate locally, then create a target-owned `plan` in a trusted job |
+| Update or synchronize | Create a new plan for the new exact source snapshot |
 | Retry or missed webhook | Repeat the same operation and idempotency key |
 | Superseded commit | Synchronize the new revision; never publish the older checkpoint |
-| Merge to a protected branch | Create or refresh that branch's candidate, then run `publish` |
+| Merge to a protected branch | Build the reviewed plan, then run `publish CANDIDATE_ID` |
 | Close or abandon | Cancel the active candidate by its stable key |
 
 Cancellation uses the same generated Deployment API:
@@ -86,9 +85,12 @@ Candidates also expire on the target, so a missed close event does not leave an 
 
 ## Preserve evidence and verify
 
-The `dev` and `publish` output records the exact source revision when present, artifact, target, candidate revision, principal, and result. Retain those logs with the source-control run. The Release and Deployment APIs expose the same source revision and digest-bound evidence after the runner disappears.
+The `plan`, `build`, and `publish` output records the exact source-attestation
+digest, plan, artifact, target, candidate, principal, and result. Retain those
+logs with the source-control run. The Delivery APIs expose the same immutable
+evidence after the runner disappears.
 
-After activation, verify readiness and exercise a representative project query or dashboard with a separate verifier identity. A transport retry must reuse the same stable candidate key and immutable revision; never rebuild from a moving branch between attempts.
+After activation, verify readiness and exercise a representative project query or dashboard with a separate verifier identity. A transport retry must reuse the same durable plan or candidate ID and its plan/seal digests; never rebuild from a moving branch between attempts.
 
 The maintained GitHub Actions reference is [`/.github/examples/leapview-authoring.yml`](https://github.com/flidai/leapview/blob/main/.github/examples/leapview-authoring.yml). It keeps fork validation credential-free, gates trusted candidate creation, uses protected publication, and reconciles closed pull requests. Adapt only the source-control event syntax; keep the LeapView commands and target policy unchanged.
 

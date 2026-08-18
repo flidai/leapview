@@ -67,4 +67,13 @@ After the process starts:
 
 If a remote object store or catalog was restored independently, reconcile its point with LeapView metadata before serving. Preserve the failed and pre-restore artifacts until the incident is closed.
 
+For a plan-delivery restore, keep traffic stopped until the control-plane
+checks pass. Verify that every configured production target has an admitted
+physical pool, a target revision, and an active generation with a non-empty
+serving-state identity. Rows with missing identity or a publication in the
+`indeterminate` state remain non-serving until the original request is
+reconciled; never create a replacement request merely to probe the result.
+If any check is missing or ambiguous, leave readiness failed, preserve the
+backup, and repair or restore again from the last validated point.
+
 See [Storage and recovery](/docs/guides/data/storage-recovery) and the generated [`admin backup`](/docs/cli/admin-backup) and [`admin restore`](/docs/cli/admin-restore) references.

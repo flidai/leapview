@@ -47,15 +47,9 @@ jobs:
       SOURCE_REF: refs/pull/${{ github.event.pull_request.number }}/merge
     steps:
       - uses: actions/checkout@v4
-      - name: Create or update exact candidate
+      - name: Create exact source-attested plan for review
         run: |
-          leapview dev --once --no-browser \
-            --project "$LEAPVIEW_PROJECT_FILE" \
-            --candidate-key "$CHANGE_KEY" \
-            --source-revision "$GITHUB_SHA" \
-            --source-repository "$SOURCE_REPOSITORY" \
-            --source-ref "$SOURCE_REF" \
-            --source-change "$CHANGE_KEY"
+          leapview plan "$LEAPVIEW_PROJECT_FILE" --format json
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -72,20 +66,19 @@ jobs:
       SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build exact protected-branch candidate
+      - name: Create and build exact protected-branch plan
         run: |
-          leapview dev --once --no-browser \
-            --project "$LEAPVIEW_PROJECT_FILE" \
-            --candidate-key "$CHANGE_KEY" \
-            --source-revision "$GITHUB_SHA" \
-            --source-repository "$SOURCE_REPOSITORY" \
-            --source-ref "$GITHUB_REF" \
-            --source-change "$CHANGE_KEY"
+          plan_json=$(leapview plan "$LEAPVIEW_PROJECT_FILE" --format json)
+          plan_id=$(printf '%s' "$plan_json" | jq -r .planId)
+          build_json=$(leapview build "$plan_id" --format json)
+          status=$(printf '%s' "$build_json" | jq -r .status)
+          candidate_id=$(printf '%s' "$build_json" | jq -r '.candidateId // empty')
+          [ "$status" = sealed ] || { echo "delivery build did not seal: $status" >&2; exit 1; }
+          [ -n "$candidate_id" ] || { echo "delivery build returned no sealed candidate" >&2; exit 1; }
+          printf 'LEAPVIEW_CANDIDATE_ID=%s\n' "$candidate_id" >> "$GITHUB_ENV"
       - name: Request policy-governed publication
         run: |
-          leapview publish \
-            --project "$LEAPVIEW_PROJECT_FILE" \
-            --candidate-key "$CHANGE_KEY"
+          leapview publish "$LEAPVIEW_CANDIDATE_ID"
 
   reconcile-closed:
     if: >-

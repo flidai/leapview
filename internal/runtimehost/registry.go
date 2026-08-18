@@ -34,6 +34,7 @@ type RegistryOptions struct {
 	LeaseReleaseQueueCapacity   int
 	LeaseReleaseShutdownTimeout time.Duration
 	CleanupDrainTimeout         time.Duration
+	RequireSealedCatalog        bool
 }
 
 type Registry struct {
@@ -62,7 +63,7 @@ func NewRegistryWithFactory(options RegistryOptions) *Registry {
 		now = time.Now
 	}
 	r := &Registry{now: now, closeDone: make(chan struct{})}
-	r.manager = NewManagerWithFactory(ManagerOptions{Repo: options.Repo, ProjectID: options.ProjectID, Environment: options.Environment, Factory: options.Factory, ManagedData: options.ManagedData, Authorization: options.Authorization, OnDrained: options.OnDrained, Logger: options.Logger, OnCleanupFailure: options.OnCleanupFailure, OnLeaseRenewalFailure: options.OnLeaseRenewalFailure, LeaseTTL: options.LeaseTTL, LeaseOwner: options.LeaseOwner, LeaseReleaseQueueCapacity: options.LeaseReleaseQueueCapacity, LeaseReleaseShutdownTimeout: options.LeaseReleaseShutdownTimeout, CleanupDrainTimeout: options.CleanupDrainTimeout})
+	r.manager = NewManagerWithFactory(ManagerOptions{Repo: options.Repo, ProjectID: options.ProjectID, Environment: options.Environment, Factory: options.Factory, ManagedData: options.ManagedData, Authorization: options.Authorization, OnDrained: options.OnDrained, Logger: options.Logger, OnCleanupFailure: options.OnCleanupFailure, OnLeaseRenewalFailure: options.OnLeaseRenewalFailure, LeaseTTL: options.LeaseTTL, LeaseOwner: options.LeaseOwner, LeaseReleaseQueueCapacity: options.LeaseReleaseQueueCapacity, LeaseReleaseShutdownTimeout: options.LeaseReleaseShutdownTimeout, CleanupDrainTimeout: options.CleanupDrainTimeout, RequireSealedCatalog: options.RequireSealedCatalog})
 	r.candidates = newCandidateRuntimeRegistry(now)
 	return r
 }
@@ -117,6 +118,25 @@ func (r *Registry) Reload(ctx context.Context) error {
 		return ErrRegistryClosed
 	}
 	return r.manager.Reload(ctx)
+}
+
+// ReconcileSealed activates the exact delivery-committed serving state named
+// by the caller. It is deliberately gated by the registry's closed state so a
+// late post-CAS callback cannot publish into a shut-down runtime host.
+func (r *Registry) ReconcileSealed(ctx context.Context, id servingstate.ID) error {
+	if r == nil || r.manager == nil {
+		return ErrRegistryClosed
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return ErrRegistryClosed
+	}
+	if id == "" {
+		return fmt.Errorf("sealed serving state id is required")
+	}
+	return r.manager.ReconcileSealed(ctx, id)
 }
 func (r *Registry) PrepareServingState(ctx context.Context, id string) (*Prepared, error) {
 	if r == nil || r.manager == nil {

@@ -9,6 +9,7 @@ import (
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/app/config"
+	"github.com/flidai/leapview/internal/app/gcadapter"
 )
 
 type Operations struct{}
@@ -43,6 +44,22 @@ func (Operations) Maintenance(ctx context.Context, request adminoffline.Maintena
 		return err
 	}
 	return service.Maintenance(ctx, request, out)
+}
+
+func (Operations) BootstrapPhysicalPool(ctx context.Context, request adminoffline.PhysicalPoolBootstrapRequest, out io.Writer) error {
+	service, err := newService()
+	if err != nil {
+		return err
+	}
+	return service.BootstrapPhysicalPool(ctx, request, out)
+}
+
+func (Operations) RepairDeliveryRoot(ctx context.Context, request adminoffline.DeliveryRepairRequest, out io.Writer) error {
+	service, err := newService()
+	if err != nil {
+		return err
+	}
+	return service.RepairDeliveryRoot(ctx, request, out)
 }
 
 func (Operations) Backup(ctx context.Context, request adminoffline.BackupRequest, out io.Writer) error {
@@ -91,6 +108,16 @@ func newService() (*adminoffline.Service, error) {
 			dbPath: cfg.DBPath(), home: cfg.HomeDir,
 			catalogPath: cfg.DuckLakeCatalogPath(), dataPath: cfg.DuckLakeDataDir(),
 		},
+		PhysicalPool: physicalPoolBootstrap{dbPath: cfg.DBPath(), s3: gcadapter.S3Config{
+			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
+			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
+			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle,
+		}},
+		DeliveryRepair: deliveryRepair{dbPath: cfg.DBPath(), home: cfg.HomeDir, stagingRoot: cfg.RuntimeDir(), s3: gcadapter.S3Config{
+			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
+			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
+			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle,
+		}},
 		Archive: instanceArchive{home: cfg.HomeDir, dbPath: cfg.DBPath()},
 	}), nil
 }

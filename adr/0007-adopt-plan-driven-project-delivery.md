@@ -1,10 +1,10 @@
 # ADR-0007: Adopt plan-driven project delivery
 
-Status: proposed
+Status: accepted
 
 Decision date: 2026-08-17
 
-Implementation: pending
+Implementation: in progress (controlled rollout)
 
 Deciders: LeapView maintainers
 

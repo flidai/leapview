@@ -9,12 +9,12 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 )
 
-func candidateSourceBlobAuditRecorder(
+func candidateSourceAuditRecorder(
 	accessModule *accessmodule.Module,
-) func(context.Context, deploymentmodule.CandidateSourceBlobAuditEvent) error {
-	return func(ctx context.Context, event deploymentmodule.CandidateSourceBlobAuditEvent) error {
+) func(context.Context, deploymentmodule.CandidateSourceAuditEvent) error {
+	return func(ctx context.Context, event deploymentmodule.CandidateSourceAuditEvent) error {
 		if accessModule == nil {
-			return fmt.Errorf("candidate source blob access audit module is unavailable")
+			return fmt.Errorf("candidate source access audit module is unavailable")
 		}
 		return recordAccessAudit(ctx, accessModule, access.AuditEventInput{
 			PrincipalID: event.PrincipalID,
@@ -24,4 +24,13 @@ func candidateSourceBlobAuditRecorder(
 			MetadataJSON: event.MetadataJSON,
 		})
 	}
+}
+
+// candidateSourceBlobAuditRecorder remains the compatibility name used by
+// existing composition and tests; source snapshots and source blobs share the
+// same project-scoped access-audit sink.
+func candidateSourceBlobAuditRecorder(
+	accessModule *accessmodule.Module,
+) func(context.Context, deploymentmodule.CandidateSourceBlobAuditEvent) error {
+	return candidateSourceAuditRecorder(accessModule)
 }

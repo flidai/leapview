@@ -7,6 +7,9 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/deployment"
 )
 
 const (
@@ -57,6 +60,34 @@ type RestoreRequest struct {
 	CurrentBackup string
 	Confirm       bool
 	DatabaseOnly  bool
+}
+
+// PhysicalPoolBootstrapRequest is the offline operator input for the
+// controlled pre-release pool admission path. It contains only non-secret
+// pool identity and compatibility evidence; credentials remain target-owned
+// references in PoolIdentity.
+type PhysicalPoolBootstrapRequest struct {
+	Pool     physicalpool.PoolIdentity
+	Evidence physicalpool.Evidence
+	Apply    bool
+}
+
+type PhysicalPoolBootstrapResult struct {
+	PoolID              string
+	CompatibilityDigest string
+	EvidenceDigest      string
+	ConformanceVersion  string
+	Applied             bool
+}
+
+// DeliveryRepairRequest identifies one durable delivery root and one bounded
+// control-plane repair action. Repair never accepts an arbitrary object key or
+// physical deletion command; the application adapter verifies the exact
+// SQLite root, immutable artifact bytes/digest, and DuckLake closure first.
+type DeliveryRepairRequest struct {
+	Root   deployment.DeliveryRoot
+	Action string
+	Apply  bool
 }
 
 // InitialCredentials are the one-time credentials returned by instance
@@ -128,6 +159,21 @@ type StorageCleaner interface {
 	Cleanup(context.Context, string, bool, io.Writer) error
 }
 
+type PhysicalPoolBootstrap interface {
+	Bootstrap(context.Context, PhysicalPoolBootstrapRequest) (PhysicalPoolBootstrapResult, error)
+}
+
+type DeliveryRepair interface {
+	RepairDeliveryRoot(context.Context, DeliveryRepairRequest, io.Writer) error
+}
+
+// PhysicalPoolEvidenceValidator is supplied by the DuckLake adapter so the
+// offline command enforces the exact versioned checklist before either a
+// dry-run result or a database mutation is acknowledged.
+type PhysicalPoolEvidenceValidator interface {
+	ValidateEvidence(physicalpool.Evidence) error
+}
+
 type BackupOptions struct {
 	Path                 string
 	Writer               io.Writer
@@ -151,14 +197,16 @@ type Archive interface {
 }
 
 type Dependencies struct {
-	Locker      Locker
-	State       InstanceState
-	Initializer Initializer
-	Recovery    CredentialRecovery
-	Retention   Retention
-	Storage     StorageCleaner
-	Archive     Archive
-	Now         func() time.Time
+	Locker         Locker
+	State          InstanceState
+	Initializer    Initializer
+	Recovery       CredentialRecovery
+	Retention      Retention
+	Storage        StorageCleaner
+	PhysicalPool   PhysicalPoolBootstrap
+	DeliveryRepair DeliveryRepair
+	Archive        Archive
+	Now            func() time.Time
 }
 
 type Service struct {

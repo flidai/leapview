@@ -86,6 +86,30 @@ func TestPlannerGroupedMultiFactUsesFullOuterStitch(t *testing.T) {
 	}
 }
 
+func TestPlannerRelationshipDependenciesRemainFactQualified(t *testing.T) {
+	model := testModel()
+	request := Request{
+		Dimensions: []Field{{Field: "customer_state", Alias: "state"}},
+		Measures:   []Field{{Field: "order_count"}, {Field: "tag_count"}},
+		Filters:    []Filter{{Field: "customer_state", Operator: "equals", Values: []any{"DK"}}},
+	}
+	dependencies, err := ResolveDependencies(model, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"orders:orders_customers", "tags:tags_customers"}
+	if strings.Join(dependencies.RelationshipPaths, ",") != strings.Join(want, ",") {
+		t.Fatalf("relationship dependency scope = %#v, want %#v", dependencies.RelationshipPaths, want)
+	}
+	plan, err := NewPlanner(model).Plan(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(plan.RelationshipPaths, ",") != strings.Join(want, ",") {
+		t.Fatalf("planned relationship scope = %#v, want %#v", plan.RelationshipPaths, want)
+	}
+}
+
 func TestPlannerConformedFilterPropagatesToEveryFact(t *testing.T) {
 	plan, err := NewPlanner(testModel()).Plan(Request{
 		Measures: []Field{{Field: "order_count"}, {Field: "tag_count"}},

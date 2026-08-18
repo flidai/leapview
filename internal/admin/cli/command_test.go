@@ -45,6 +45,14 @@ func (operations *fakeOperations) Restore(_ context.Context, request adminofflin
 	operations.options.ConfirmRestore, operations.options.DatabaseOnly = request.Confirm, request.DatabaseOnly
 	return nil
 }
+func (operations *fakeOperations) BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error {
+	operations.called = "pool-bootstrap"
+	return nil
+}
+func (operations *fakeOperations) RepairDeliveryRoot(context.Context, adminoffline.DeliveryRepairRequest, io.Writer) error {
+	operations.called = "delivery-repair"
+	return nil
+}
 
 func TestCommandOwnsMaintenanceFlags(t *testing.T) {
 	operations := &fakeOperations{}
@@ -68,5 +76,17 @@ func TestCommandRequiresOperations(t *testing.T) {
 	err := command.Execute()
 	if err == nil || !strings.Contains(err.Error(), "operations are required") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCommandRoutesBoundedDeliveryRepair(t *testing.T) {
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{"delivery", "repair", "--pool-id", "pool", "--kind", "candidate", "--source-id", "candidate", "--catalog-digest", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--object-key", "catalogs/a.ducklake", "--created-at", "2026-08-17T12:00:00Z", "--apply"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.called != "delivery-repair" {
+		t.Fatalf("called = %q", operations.called)
 	}
 }

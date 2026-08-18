@@ -44,10 +44,14 @@ type Config struct {
 	TempMaxBytes          int64
 	MaxThreads            int
 	TempDir               string
-	RuntimeCacheEntries   int
-	RuntimeCacheBytes     int64
-	NodeCacheEntries      int
-	NodeCacheBytes        int64
+	// DisableProcessEnvironment prevents opening the process-wide writable
+	// DuckLake catalog. Production sealed serving sets this true; each runtime
+	// generation opens its own verified read-only catalog.
+	DisableProcessEnvironment bool
+	RuntimeCacheEntries       int
+	RuntimeCacheBytes         int64
+	NodeCacheEntries          int
+	NodeCacheBytes            int64
 }
 
 type Resources interface {
@@ -137,20 +141,25 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			targetResolvers.Environment = unboundProcessDevelopmentTargetResolver{targetID: config.CredentialTargetID, environment: config.CredentialEnvironment}
 		}
 	}
-	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
-		RootDir: config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
-		MaxConnections: config.MaxConnections, MemoryMaxBytes: config.MemoryMaxBytes,
-		TempMaxBytes: config.TempMaxBytes, MaxThreads: config.MaxThreads, TempDir: config.TempDir,
-	})
-	if err != nil {
-		return nil, err
+	var environment *analyticsducklake.Environment
+	if !config.DisableProcessEnvironment {
+		environment, err = analyticsducklake.Open(ctx, analyticsducklake.Config{
+			RootDir: config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
+			MaxConnections: config.MaxConnections, MemoryMaxBytes: config.MemoryMaxBytes,
+			TempMaxBytes: config.TempMaxBytes, MaxThreads: config.MaxThreads, TempDir: config.TempDir,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	cache, err := resultcache.New(resultcache.Limits{
 		RuntimeEntries: config.RuntimeCacheEntries, RuntimeBytes: config.RuntimeCacheBytes,
 		NodeEntries: config.NodeCacheEntries, NodeBytes: config.NodeCacheBytes,
 	})
 	if err != nil {
-		_ = environment.Close()
+		if environment != nil {
+			_ = environment.Close()
+		}
 		return nil, err
 	}
 	var queryAudit queryaudit.Repository
@@ -186,7 +195,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	)
 	if err != nil {
 		_ = cache.Close()
-		_ = environment.Close()
+		if environment != nil {
+			_ = environment.Close()
+		}
 		return nil, err
 	}
 	return &Module{

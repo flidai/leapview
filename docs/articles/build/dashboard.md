@@ -101,10 +101,12 @@ Ensure the project manifest includes dashboard files, then run:
 
 ```sh
 leapview validate --project dashboards/leapview.yaml
-leapview plan --project dashboards/leapview.yaml
+leapview plan dashboards/leapview.yaml
 ```
 
-Validation checks contract shape and references. The plan shows the resource-level candidate. Neither proves that a visual communicates the right result, so deploy to development and verify the rendered page with representative data.
+Validation checks contract shape and references. The plan shows target-owned
+impact and source-attestation evidence. Build the reviewed plan and verify the
+rendered page with representative data before publishing the sealed candidate.
 
 ## Verify the rendered page
 

@@ -12,6 +12,7 @@ type Input struct {
 	Identity                                                  projectgraph.ServingIdentity
 	SemanticModelDigest, ArtifactDigest, SourceDataDigest     string
 	CandidateID, AuthorizationFingerprint, BindingFingerprint string
+	SkipInitialRefresh                                        bool
 	SnapshotID                                                int64
 	Definition                                                *dashboardruntime.ProjectDefinition
 }

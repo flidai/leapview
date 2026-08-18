@@ -24,9 +24,9 @@ customer site.
 | [ADR-0003](0003-retain-narrow-infisical-resolver.md) | Retain the narrow Infisical resolver | Accepted | 2026-07-31 | Complete | — |
 | [ADR-0004](0004-defer-incremental-project-reconciliation.md) | Defer incremental project reconciliation | Accepted | 2026-08-05 | Deferred pending corrected measurement | [ADR-0005](0005-use-project-wide-resource-graph.md), scope and identity only |
 | [ADR-0005](0005-use-project-wide-resource-graph.md) | Use a project-wide resource graph | Accepted | 2026-08-15 | Complete | — |
-| [ADR-0007](0007-adopt-plan-driven-project-delivery.md) | Adopt plan-driven project delivery | Proposed | 2026-08-17 | Pending | — |
-| [ADR-0008](0008-isolate-ducklake-candidate-physical-state.md) | Use one immutable DuckLake catalog per candidate | Accepted | 2026-08-17 | Pending | — |
-| [ADR-0009](0009-separate-control-and-physical-transactions.md) | Separate control state from immutable physical catalogs | Accepted | 2026-08-17 | Pending | — |
+| [ADR-0007](0007-adopt-plan-driven-project-delivery.md) | Adopt plan-driven project delivery | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
+| [ADR-0008](0008-isolate-ducklake-candidate-physical-state.md) | Use one immutable DuckLake catalog per candidate | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
+| [ADR-0009](0009-separate-control-and-physical-transactions.md) | Separate control state from immutable physical catalogs | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
 
 ## Companion specifications
 

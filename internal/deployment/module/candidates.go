@@ -31,6 +31,17 @@ func (m *Module) ResolveOwnedCandidate(ctx context.Context, candidateID, princip
 	)
 }
 
+// MarkCanonicalCandidateReady is used by the plan-driven adapter after the
+// durable catalog seal has completed. It keeps the legacy candidate API view
+// synchronized with the immutable delivery candidate without allowing the
+// HTTP layer to bypass sealing.
+func (m *Module) MarkCanonicalCandidateReady(ctx context.Context, candidate Candidate, provenanceDigest string) (Candidate, error) {
+	if m == nil || m.candidates == nil {
+		return Candidate{}, deployment.ErrCandidateUnavailable
+	}
+	return m.candidates.MarkReady(ctx, candidateScope(candidate), candidate.ArtifactDigest, provenanceDigest)
+}
+
 func (m *Module) ServeCandidatePreview(
 	w http.ResponseWriter,
 	r *http.Request,

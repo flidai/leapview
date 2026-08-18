@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
 
 var ErrInstanceAlreadyInitialized = errors.New("LeapView instance is already initialized")
@@ -153,6 +155,93 @@ func (service *Service) Maintenance(ctx context.Context, request MaintenanceRequ
 	fmt.Fprintf(out, "stale api tokens: %d\n", result.StaleAPITokensDeleted)
 	fmt.Fprintf(out, "stale service principal secrets: %d\n", result.StaleServicePrincipalSecretsDeleted)
 	return nil
+}
+
+// BootstrapPhysicalPool validates and, when Apply is true, admits one
+// operator-supplied physical-pool compatibility tuple. The operation is
+// intentionally offline and lock-protected: production startup never
+// synthesizes a pool from environment configuration.
+func (service *Service) BootstrapPhysicalPool(ctx context.Context, request PhysicalPoolBootstrapRequest, out io.Writer) error {
+	if service == nil || service.deps.PhysicalPool == nil {
+		return fmt.Errorf("physical-pool bootstrap is unavailable")
+	}
+	if err := request.Pool.Validate(); err != nil {
+		return fmt.Errorf("physical-pool identity: %w", err)
+	}
+	evidence := request.Evidence
+	if err := evidence.Verify(); err != nil {
+		return fmt.Errorf("physical-pool conformance evidence: %w", err)
+	}
+	if validator, ok := service.deps.PhysicalPool.(PhysicalPoolEvidenceValidator); ok {
+		if err := validator.ValidateEvidence(evidence); err != nil {
+			return fmt.Errorf("physical-pool conformance checklist: %w", err)
+		}
+	}
+	if request.Pool.Compatibility.StableEqual(evidence.Compatibility) == false {
+		return fmt.Errorf("physical-pool identity and evidence storage contract differ")
+	}
+	if !request.Apply {
+		return writePoolBootstrapResult(out, PhysicalPoolBootstrapResult{
+			PoolID: string(mustPoolID(request.Pool)), CompatibilityDigest: mustCompatibilityDigest(evidence.Compatibility),
+			EvidenceDigest: evidence.Digest, ConformanceVersion: evidence.ConformanceVersion,
+			Applied: false,
+		})
+	}
+	lock, err := service.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	result, err := service.deps.PhysicalPool.Bootstrap(ctx, request)
+	if err != nil {
+		return fmt.Errorf("physical-pool bootstrap: %w", err)
+	}
+	return writePoolBootstrapResult(out, result)
+}
+
+// RepairDeliveryRoot verifies the durable root and immutable physical closure
+// before applying one bounded control-plane action. Dry-run still performs
+// every verification but never acquires the destructive lock or mutates rows.
+func (service *Service) RepairDeliveryRoot(ctx context.Context, request DeliveryRepairRequest, out io.Writer) error {
+	if service == nil || service.deps.DeliveryRepair == nil {
+		return fmt.Errorf("delivery repair is unavailable")
+	}
+	if request.Action != "quarantine" {
+		return fmt.Errorf("unsupported delivery repair action %q", request.Action)
+	}
+	release, err := service.acquireIf(ctx, request.Apply)
+	if err != nil {
+		return err
+	}
+	defer release.Release()
+	if err := service.deps.DeliveryRepair.RepairDeliveryRoot(ctx, request, out); err != nil {
+		return fmt.Errorf("delivery repair: %w", err)
+	}
+	if out != nil {
+		_, err := fmt.Fprintf(out, "verified root: %s/%s\naction: %s\napplied: %t\n", request.Root.Kind, request.Root.SourceID, request.Action, request.Apply)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writePoolBootstrapResult(out io.Writer, result PhysicalPoolBootstrapResult) error {
+	if out == nil {
+		return nil
+	}
+	_, err := fmt.Fprintf(out, "pool_id: %s\ncompatibility_digest: %s\nevidence_digest: %s\nconformance_version: %s\napplied: %t\n", result.PoolID, result.CompatibilityDigest, result.EvidenceDigest, result.ConformanceVersion, result.Applied)
+	return err
+}
+
+func mustPoolID(pool physicalpool.PoolIdentity) physicalpool.PoolID {
+	created, _ := physicalpool.NewPhysicalPool(pool)
+	return created.ID
+}
+
+func mustCompatibilityDigest(tuple physicalpool.Compatibility) string {
+	digest, _ := tuple.Digest()
+	return digest
 }
 
 func (service *Service) resolveEnvironment(ctx context.Context) (string, error) {

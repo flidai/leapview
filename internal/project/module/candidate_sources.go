@@ -175,9 +175,61 @@ func (synchronizer *candidateSourceSynchronizer) Commit(
 	synchronizer.mu.Unlock()
 	return project.CandidateSourceSnapshot{
 		ProjectID: stored.ProjectID, ArtifactDigest: stored.Digest,
-		ProjectPath: stored.ProjectPath, ProjectDigest: stored.ProjectDigest,
+		SourceAttestationDigest: stored.SourceAttestationDigest,
+		ProjectPath:             stored.ProjectPath, ProjectDigest: stored.ProjectDigest,
 		ProjectArtifactPath: stored.ProjectArtifactPath,
-		SourceRevision:      cloneCandidateSourceRevision(request.SourceRevision),
+		SourceRevision:      cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
+	}, nil
+}
+
+// Snapshot resolves an immutable, already committed source set. The target
+// store re-reads and validates the retained manifest and every source blob so
+// callers receive evidence for precisely the requested digest.
+func (synchronizer *candidateSourceSynchronizer) Snapshot(
+	ctx context.Context,
+	scope project.CandidateSourceScope,
+	artifactDigest string,
+) (project.CandidateSourceSnapshot, error) {
+	if synchronizer == nil || synchronizer.store == nil {
+		return project.CandidateSourceSnapshot{}, project.ErrCandidateSourceUnavailable
+	}
+	if err := scope.ProjectID.Validate(); err != nil {
+		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(fmt.Errorf("project identity: %w", err))
+	}
+	stored, err := synchronizer.store.Snapshot(ctx, scope.ProjectID, artifactDigest)
+	if err != nil {
+		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(err)
+	}
+	return project.CandidateSourceSnapshot{
+		ProjectID: stored.ProjectID, ArtifactDigest: stored.Digest,
+		SourceAttestationDigest: stored.SourceAttestationDigest,
+		ProjectPath:             stored.ProjectPath, ProjectDigest: stored.ProjectDigest,
+		ProjectArtifactPath: stored.ProjectArtifactPath,
+		SourceRevision:      cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
+	}, nil
+}
+
+func (synchronizer *candidateSourceSynchronizer) SnapshotAttestation(
+	ctx context.Context,
+	scope project.CandidateSourceScope,
+	artifactDigest, attestationDigest string,
+) (project.CandidateSourceSnapshot, error) {
+	if synchronizer == nil || synchronizer.store == nil {
+		return project.CandidateSourceSnapshot{}, project.ErrCandidateSourceUnavailable
+	}
+	if err := scope.ProjectID.Validate(); err != nil {
+		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(fmt.Errorf("project identity: %w", err))
+	}
+	stored, err := synchronizer.store.SnapshotAttestation(ctx, scope.ProjectID, artifactDigest, attestationDigest)
+	if err != nil {
+		return project.CandidateSourceSnapshot{}, candidateSourceInvalid(err)
+	}
+	return project.CandidateSourceSnapshot{
+		ProjectID: stored.ProjectID, ArtifactDigest: stored.Digest,
+		SourceAttestationDigest: stored.SourceAttestationDigest,
+		ProjectPath:             stored.ProjectPath, ProjectDigest: stored.ProjectDigest,
+		ProjectArtifactPath: stored.ProjectArtifactPath,
+		SourceRevision:      cloneCandidateSourceRevisionFromDevloop(stored.SourceRevision),
 	}, nil
 }
 
@@ -288,6 +340,7 @@ func synchronizationPlanRequest(
 		ExpectedCandidateID:    request.ExpectedCandidateID,
 		ExpectedArtifactDigest: request.ExpectedArtifactDigest,
 		Artifacts:              make([]projectdevloop.ArtifactReference, len(request.Artifacts)),
+		SourceRevision:         candidateSourceRevisionToDevloop(request.SourceRevision),
 	}
 	for index, artifact := range request.Artifacts {
 		result.Artifacts[index] = projectdevloop.ArtifactReference{
@@ -313,6 +366,30 @@ func cloneCandidateSourceRevision(
 	}
 	copied := *value
 	return &copied
+}
+
+func candidateSourceRevisionToDevloop(
+	value *project.CandidateSourceRevision,
+) *projectdevloop.SourceRevision {
+	if value == nil {
+		return nil
+	}
+	return &projectdevloop.SourceRevision{
+		Revision: value.Revision, Repository: value.Repository,
+		Ref: value.Ref, ChangeID: value.ChangeID,
+	}
+}
+
+func cloneCandidateSourceRevisionFromDevloop(
+	value *projectdevloop.SourceRevision,
+) *project.CandidateSourceRevision {
+	if value == nil {
+		return nil
+	}
+	return &project.CandidateSourceRevision{
+		Revision: value.Revision, Repository: value.Repository,
+		Ref: value.Ref, ChangeID: value.ChangeID,
+	}
 }
 
 func candidateSourceInvalid(err error) error {

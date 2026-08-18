@@ -33,6 +33,11 @@ type Config struct {
 	OnLeaseRenewalFailure func(error)
 	CandidateReapInterval time.Duration
 	OnCandidateReap       func(int)
+	RequireSealedCatalog  bool
+	// ResolveSealedActiveState is the authoritative delivery-pointer lookup
+	// used during production startup. When sealed mode is enabled, legacy
+	// serving-state active pointers are not consulted.
+	ResolveSealedActiveState func(context.Context) (servingstate.ID, error)
 }
 
 type Module struct {
@@ -44,11 +49,14 @@ type Module struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.RequireSealedCatalog && config.ResolveSealedActiveState == nil {
+		return nil, errors.New("sealed runtime host requires an authoritative active-state resolver")
+	}
 	if config.States == nil || config.Factory == nil {
 		return nil, errors.New("serving-state repository and runtime factory are required")
 	}
 	var registry *runtimehost.Registry
-	registry = runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{Repo: config.States, ProjectID: config.ProjectID, Environment: config.Environment, Factory: config.Factory, ManagedData: config.ManagedData, Authorization: config.Authorization, Logger: config.Logger, OnCleanupFailure: config.OnCleanupFailure, OnLeaseRenewalFailure: config.OnLeaseRenewalFailure, OnDrained: config.OnDrained})
+	registry = runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{Repo: config.States, ProjectID: config.ProjectID, Environment: config.Environment, Factory: config.Factory, ManagedData: config.ManagedData, Authorization: config.Authorization, Logger: config.Logger, OnCleanupFailure: config.OnCleanupFailure, OnLeaseRenewalFailure: config.OnLeaseRenewalFailure, OnDrained: config.OnDrained, RequireSealedCatalog: config.RequireSealedCatalog})
 	if config.ReadClaimedProject != nil {
 		claimedProject, found, err := config.ReadClaimedProject(ctx)
 		if err != nil {
@@ -60,7 +68,18 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			}
 		}
 	}
-	if err := registry.Reload(ctx); err != nil {
+	if config.RequireSealedCatalog {
+		id, err := config.ResolveSealedActiveState(ctx)
+		if err == nil {
+			if err := registry.ReconcileSealed(ctx, id); err != nil {
+				_ = registry.Close()
+				return nil, err
+			}
+		} else if !errors.Is(err, servingstate.ErrNotFound) {
+			_ = registry.Close()
+			return nil, err
+		}
+	} else if err := registry.Reload(ctx); err != nil {
 		_ = registry.Close()
 		return nil, err
 	}
@@ -87,6 +106,15 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	return m, nil
 }
 func (m *Module) Reload(ctx context.Context) error { return m.registry.Reload(ctx) }
+
+// ReconcileSealed activates a delivery-committed generation through the
+// sealed runtime factory without invoking the legacy deployment service.
+func (m *Module) ReconcileSealed(ctx context.Context, id servingstate.ID) error {
+	if m == nil || m.registry == nil {
+		return errors.New("runtime host is unavailable")
+	}
+	return m.registry.ReconcileSealed(ctx, id)
+}
 func (m *Module) PrepareServingState(ctx context.Context, id string) (*runtimehost.Prepared, error) {
 	return m.registry.PrepareServingState(ctx, id)
 }

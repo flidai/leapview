@@ -92,10 +92,7 @@ func TestLocalhostAndProtectedTargetsUseTheSamePublicAuthoringCommands(t *testin
 
 			publish.SetOut(&output)
 			publish.SetErr(&output)
-			publish.SetArgs([]string{
-				"--project", projectPath,
-				"--target", journey.target,
-			})
+			publish.SetArgs([]string{"cand_1"})
 			if err := publish.Execute(); err != nil {
 				t.Fatal(err)
 			}

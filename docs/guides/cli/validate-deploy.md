@@ -1,6 +1,15 @@
 # Develop, review, and publish
 
-LeapView has one authoring lifecycle: `login → dev → publish`. It is the same for a localhost evaluator, a hosted service, a self-hosted installation, and an air-gapped target. The CLI always sends an immutable project candidate to an already-running LeapView target; it never starts a hidden local runtime or publishes by copying repository files into a server.
+The canonical production lifecycle is `plan → build → publish`. `dev` is an
+optional private watch/preview loop, not a deployment alias. Production
+publication always binds the exact source-attestation digest, plan digest,
+sealed candidate, admitted physical pool, and target revision.
+
+The same canonical lifecycle applies to a localhost evaluator, hosted service,
+self-hosted installation, and air-gapped target. The CLI always sends an
+immutable source snapshot to an already-running LeapView target; it never
+starts a hidden local runtime or publishes by copying repository files into a
+server.
 
 ## Before you begin
 
@@ -55,23 +64,38 @@ leapview validate --project dashboards/leapview.yaml
 
 Validation is a credential-free preflight within the same lifecycle, not a second runtime or deployment path. It checks project structure and references but cannot prove target bindings, access policy, source availability, or rendered behavior.
 
-## Create and review the private candidate
+## Create and review the immutable delivery plan
 
-Start the authoring loop against the authenticated target:
+Create the durable target-owned plan from the exact source snapshot:
 
 ```sh
-leapview dev \
-  --project dashboards/leapview.yaml \
-  --target "$LEAPVIEW_TARGET"
+leapview plan dashboards/leapview.yaml \
+  --target "$LEAPVIEW_TARGET" --format json
 ```
 
-`dev` uploads content-addressed source files, compiles them on the target, resolves target-owned connection evidence and managed-data pins, and creates an owner-isolated private candidate. Local checkpoints contain only candidate identity and digests. Project YAML, author workstations, and CI never receive source credentials, Infisical references, or provider bootstrap material.
+The command retains the portable source bytes and returns a durable plan ID,
+source-attestation digest, plan digest, and target evidence. It does not create
+a candidate or acquire build credentials. Review this evidence before starting
+physical work. The `dev` command remains an optional private watch/preview
+convenience; it is not a substitute for the canonical plan/build/publish
+workflow. Use `leapview dev --once --project dashboards/leapview.yaml` when a
+private candidate preview is needed.
 
 In production, the target returns a canonical-origin, token-free HTTPS URL; the loopback evaluator uses the same URL shape over local HTTP. `dev` opens it in the system browser by default. Use `--no-browser` only on a headless workstation and open the printed URL in an authenticated browser. The preview does not require LeapView Desktop, and Desktop is not an authoring client; browsers and Desktop may only consume the same authenticated target-hosted page.
 
 Review the candidate using the author principal's real effective grants. RBAC, row-level security, column policy, and project-resource policy apply exactly as they do elsewhere. A developer does not receive a production viewer's data visibility merely because the candidate is private. Use separate representative verifier identities when a change must be qualified across several data-policy populations.
 
-Run `dev` again after every source edit. `--once` performs one synchronization for trusted automation, but it calls the same Project, Access, Release, and Deployment APIs as the interactive loop.
+Build only the reviewed plan, then publish the sealed candidate returned by the
+target:
+
+```sh
+leapview build PLAN_ID --format json
+leapview publish CANDIDATE_ID
+```
+
+Build runs synchronously and returns a durable build status plus the sealed
+candidate identity when successful. Retries reuse the same durable plan or
+candidate IDs; inspect the build-status endpoint for reconciliation.
 
 ## Resolve target-owned data safely
 
@@ -87,17 +111,13 @@ The initial enterprise scope intentionally defers provider fallback, a built-in 
 
 ## Publish the reviewed candidate
 
-Publish with the same project path and target:
+`publish` accepts only the sealed candidate ID returned by `build`; it does not reread or rebuild the project, and it does not upload source again. Immediate-
+policy targets activate it; protected targets persist a pending request bound
+to the candidate ID and its source attestation, plan/seal digests, policy snapshot,
+connection evidence, managed-data pins, and base generation. A separately
+authorized approver makes the decision on the target.
 
-```sh
-leapview publish \
-  --project dashboards/leapview.yaml \
-  --target "$LEAPVIEW_TARGET"
-```
-
-`publish` loads the exact candidate handoff produced by `dev`; it does not reread or rebuild the project, and it does not upload source again. Immediate-policy targets wait for activation. Protected targets persist a pending request bound to the candidate revision, release provenance, plan, policy snapshot, exact provider-version connection evidence, managed-data pins, and base generation. A separately authorized approver makes the decision on the target.
-
-Retries are idempotent. Reuse the same candidate and immutable revision after a lost response; do not rebuild from a moving source ref. Git and CI are integrations with these same APIs, not alternative user workflows or sources of truth.
+Retries are idempotent. Reuse the same candidate ID and plan/seal digests after a lost response; do not rebuild from a moving source ref. Git and CI are integrations with these same APIs, not alternative user workflows or sources of truth.
 
 ## Verify the active deployment
 
@@ -137,7 +157,7 @@ The modular monolith keeps the user lifecycle singular while preserving domain o
 | Deployment | Private candidates, approval policy, publication requests, activation orchestration, retry, and rollback. | Depends inward on Access, Project, Release, Serving State, Managed Data, and Runtime Host contracts. |
 | Analytics | Logical target bindings, Infisical and explicit development resolver adapters, pool rotation, and governed query execution. | Exposes contracts; provider adapters remain internal to Analytics. |
 | Runtime Host | Prepared generations, candidate runtimes, snapshot leases, cutover, and drain. | Depends on Managed Data and Serving State; never on Access or Deployment. |
-| Application CLI | Composes generated capability clients into `login`, `dev`, and `publish`. | Composition root only; it owns no domain state. |
+| Application CLI | Composes generated capability clients into `login`, `plan`, `build`, `publish`, and `rollback`; `dev` remains a private watcher. | Composition root only; it owns no domain state. |
 
 Architecture tests enforce capability ownership, public-contract imports, and the absence of reverse dependency edges. The localhost evaluator and protected enterprise target compose the same Project CLI and public commands; only target policy and adapters differ.
 
@@ -145,8 +165,12 @@ Architecture tests enforce capability ownership, public-contract imports, and th
 
 If `login` fails, verify canonical origin, released CLI/server compatibility, SSO reachability, clock synchronization, and revocation state. If `dev` fails after local validation, inspect target authorization, logical binding health, managed-data availability, and candidate diagnostics. If the browser cannot open, rerun with `--no-browser` and open the printed target URL manually.
 
-If `publish` cannot find a candidate, use the same project path, target, and candidate key used by `dev`. If it is pending, do not grant the publisher approval privilege; ask an independent approver. If verification fails after activation, preserve evidence and use the governed rollback operation rather than editing serving pointers or deleting retained versions.
+If `publish` cannot find a candidate, inspect the durable plan/build checkpoint
+and rerun only the missing canonical step. If it is pending, do not grant the
+publisher approval privilege; ask an independent approver. If verification
+fails after activation, preserve evidence and use `rollback GENERATION_ID`
+rather than editing serving pointers or deleting retained versions.
 
 ## Next steps
 
-For unattended integration, continue with [Automation and CI](/docs/cli/automation). Operators should continue with [Production configuration](/docs/guides/operate/production-configuration), [Connections and sources](/docs/concepts/connections-sources), and [Self-hosting](/docs/guides/operate/self-hosting). Exact current flags are generated in the [`login`](/docs/cli/login), [`dev`](/docs/cli/dev), and [`publish`](/docs/cli/publish) references.
+For unattended integration, continue with [Automation and CI](/docs/cli/automation). Operators should continue with [Production configuration](/docs/guides/operate/production-configuration), [Connections and sources](/docs/concepts/connections-sources), and [Self-hosting](/docs/guides/operate/self-hosting). Exact current flags are generated in the [`plan`](/docs/cli/plan), [`build`](/docs/cli/build), [`publish`](/docs/cli/publish), and [`rollback`](/docs/cli/rollback) references.

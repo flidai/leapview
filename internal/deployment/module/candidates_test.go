@@ -16,8 +16,10 @@ import (
 	"testing"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	"github.com/flidai/leapview/internal/platform"
@@ -243,6 +245,86 @@ func TestCandidateSourceBlobUploadPreservesSuccessWhenBestEffortAuditFails(t *te
 		!strings.Contains(auditLog.String(), "uploadProjectCandidateSourceBlob") ||
 		!strings.Contains(auditLog.String(), "audit store unavailable") {
 		t.Fatalf("audit failure log = %q", auditLog.String())
+	}
+}
+
+func TestCandidateSourceRetentionPersistsGeneratedCommandAudit(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	digest := "sha256:" + strings.Repeat("a", 64)
+	attestation := "sha256:" + strings.Repeat("b", 64)
+	sources := &candidateSourceSynchronizerStub{attestation: attestation}
+	module.candidateSources = sources
+	var events []CandidateSourceAuditEvent
+	module.candidateSourceAudit = func(_ context.Context, event CandidateSourceAuditEvent) error {
+		events = append(events, event)
+		return nil
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/projects/finance/candidate-sync/source",
+		strings.NewReader(`{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","artifacts":[]}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Request-ID", "req-source-retain")
+	request.Header.Set("X-Correlation-ID", "corr-source-retain")
+	request.Header.Set("X-LeapView-Invocation-Surface", "cli")
+	response := httptest.NewRecorder()
+	module.RetainProjectCandidateSource(response, request, "finance", "retain-1")
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("source retention response = %d %s", response.Code, response.Body.String())
+	}
+	if len(events) != 1 {
+		t.Fatalf("candidate source audits = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.PrincipalID != "principal_1" || event.ProjectID != "finance" ||
+		event.Digest != digest || event.SourceAttestationDigest != attestation ||
+		event.Action != "candidate.source_retained" || event.Capability != access.CapabilityResourceEdit ||
+		event.Status != "success" || event.RequestID != "req-source-retain" || event.CorrelationID != "corr-source-retain" {
+		t.Fatalf("candidate source audit = %#v", event)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(event.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("decode source audit metadata: %v", err)
+	}
+	if metadata["schemaVersion"] != float64(1) || metadata["retention"] != "security" ||
+		metadata["payloadSchema"] != "CandidateSourceRetainedAuditPayload" {
+		t.Fatalf("source audit metadata = %#v", metadata)
+	}
+	payload, ok := metadata["payload"].(map[string]any)
+	if !ok || payload["operationId"] != "retainProjectCandidateSource" ||
+		payload["surface"] != "cli" || payload["projectId"] != "finance" ||
+		payload["sourceDigest"] != digest || payload["sourceAttestationDigest"] != attestation {
+		t.Fatalf("source audit payload = %#v", payload)
+	}
+}
+
+func TestCandidateSourceRetentionCompletesGeneratedCommandGuard(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	digest := "sha256:" + strings.Repeat("a", 64)
+	module.candidateSources = &candidateSourceSynchronizerStub{attestation: "sha256:" + strings.Repeat("b", 64)}
+	contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(string(deploymentgen.GenOperationRetainProjectCandidateSource))
+	if !ok {
+		t.Fatal("retain source command contract is missing")
+	}
+	ctx, guard, err := apigencommand.Begin(t.Context(), contract)
+	if err != nil {
+		t.Fatalf("begin retain source command: %v", err)
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/projects/finance/candidate-sync/source",
+		strings.NewReader(`{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","artifacts":[]}`),
+	).WithContext(ctx)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	module.RetainProjectCandidateSource(response, request, "finance", "retain-guard")
+	if response.Code != http.StatusCreated {
+		t.Fatalf("source retention response = %d %s", response.Code, response.Body.String())
+	}
+	if !guard.Completed() {
+		t.Fatal("source retention did not complete generated command guard")
 	}
 }
 
@@ -698,10 +780,11 @@ func decodeCandidateResponse(t *testing.T, response *httptest.ResponseRecorder, 
 }
 
 type candidateSourceSynchronizerStub struct {
-	missing  []string
-	uploaded []byte
-	commits  int
-	planErr  error
+	missing     []string
+	uploaded    []byte
+	commits     int
+	planErr     error
+	attestation string
 }
 
 func (stub *candidateSourceSynchronizerStub) Plan(
@@ -731,8 +814,9 @@ func (stub *candidateSourceSynchronizerStub) Commit(
 	stub.commits++
 	return project.CandidateSourceSnapshot{
 		ProjectID: "finance", ArtifactDigest: request.ArtifactDigest,
-		ProjectPath:    "/target/snapshots/project/leapview.yaml",
-		SourceRevision: request.SourceRevision,
+		ProjectPath:             "/target/snapshots/project/leapview.yaml",
+		SourceAttestationDigest: stub.attestation,
+		SourceRevision:          request.SourceRevision,
 	}, nil
 }
 

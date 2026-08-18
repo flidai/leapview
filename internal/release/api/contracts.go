@@ -71,6 +71,9 @@ type GenerationPlanProvenance struct {
 	RuntimeVersion      string                       `json:"runtimeVersion"`
 	PolicyDigest        string                       `json:"policyDigest"`
 	DataRevision        string                       `json:"dataRevision"`
+	// DataMode is reuse_base or refresh_sources for new writes. The historical
+	// reuse_snapshot literal may appear on immutable read/audit responses and
+	// is rejected by strict create/publication validation.
 	DataMode            string                       `json:"dataMode"`
 	ManagedDataPins     []ManagedDataPin             `json:"managedDataPins"`
 	Bindings            []BindingEvidence            `json:"bindings"`

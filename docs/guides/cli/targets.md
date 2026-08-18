@@ -6,10 +6,10 @@ The target tells the CLI which LeapView instance to contact. The environment is 
 
 Give development, staging, and production separate URLs and credentials. A project ID may exist in more than one instance, so it is not a sufficient deployment boundary by itself.
 
-Create private candidates directly on the intended target:
+Create a durable plan directly on the intended target:
 
 ```sh
-leapview dev --project dashboards/leapview.yaml \
+leapview plan dashboards/leapview.yaml \
   --target https://dash.staging.example.com
 ```
 
@@ -33,7 +33,10 @@ The profile pins the server-reported canonical origin and immutable instance ID.
 leapview validate --project dashboards/leapview.yaml
 ```
 
-Then use an explicit remote target for `dev` and `publish`. Keep the project path and target unchanged between review and publication. Target-owned connection evidence and managed-data pins are captured in the immutable candidate rather than supplied again at publication time.
+Then use an explicit remote target for `plan`, `build`, and `publish`. Keep the
+project path and target unchanged between review and publication. Target-owned
+connection evidence and managed-data pins are resolved during `build` and are
+never supplied again at publication time.
 
 ## Verify before deployment
 

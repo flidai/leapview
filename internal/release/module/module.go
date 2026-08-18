@@ -33,6 +33,21 @@ type Module struct {
 	finalizeExecution  apigencommand.AsyncExecutionContract
 }
 
+// candidateArtifactPhases is the complete phase-aware artifact surface used
+// by canonical delivery. Keep the read-only inspect phase distinct from
+// materialization and hydration so callers cannot accidentally prepare or
+// mutate serving state while planning a delivery.
+type candidateArtifactPhases interface {
+	InspectCandidateArtifacts(context.Context, release.CandidateArtifactRequest) (release.CandidateArtifactSet, error)
+	MaterializeCandidateArtifacts(context.Context, release.CandidateArtifactRequest, release.CandidateArtifactSet) (release.CandidateArtifactSet, error)
+	HydrateCandidateArtifacts(context.Context, release.CandidateArtifactRequest, release.CandidateArtifactSet, release.CandidateArtifactIdentity) (release.CandidateArtifactSet, error)
+}
+
+var (
+	_ release.CandidateArtifactPreparer = (*Module)(nil)
+	_ candidateArtifactPhases           = (*Module)(nil)
+)
+
 type Config struct {
 	Database          *sql.DB
 	States            ServingStateRepository
@@ -152,6 +167,45 @@ func (m *Module) PrepareCandidateArtifacts(
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
 	}
 	return m.candidateArtifacts.Prepare(ctx, request)
+}
+
+// InspectCandidateArtifacts exposes the read-only compiler-evidence phase to
+// canonical delivery while retaining the module's nil-safe lifecycle guard.
+func (m *Module) InspectCandidateArtifacts(
+	ctx context.Context,
+	request release.CandidateArtifactRequest,
+) (release.CandidateArtifactSet, error) {
+	if m == nil || m.candidateArtifacts == nil {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	return m.candidateArtifacts.InspectCandidateArtifacts(ctx, request)
+}
+
+// MaterializeCandidateArtifacts exposes the write phase after a durable plan
+// has been accepted.
+func (m *Module) MaterializeCandidateArtifacts(
+	ctx context.Context,
+	request release.CandidateArtifactRequest,
+	inspected release.CandidateArtifactSet,
+) (release.CandidateArtifactSet, error) {
+	if m == nil || m.candidateArtifacts == nil {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	return m.candidateArtifacts.MaterializeCandidateArtifacts(ctx, request, inspected)
+}
+
+// HydrateCandidateArtifacts reattaches a durable artifact for a retry without
+// recompiling or writing a second serving artifact.
+func (m *Module) HydrateCandidateArtifacts(
+	ctx context.Context,
+	request release.CandidateArtifactRequest,
+	inspected release.CandidateArtifactSet,
+	identity release.CandidateArtifactIdentity,
+) (release.CandidateArtifactSet, error) {
+	if m == nil || m.candidateArtifacts == nil {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	return m.candidateArtifacts.HydrateCandidateArtifacts(ctx, request, inspected, identity)
 }
 
 func (m *Module) RetainCandidateProvenance(

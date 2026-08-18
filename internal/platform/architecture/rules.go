@@ -34,7 +34,7 @@ type PackageRule struct {
 var PublicContractPrefixes = map[string][]string{
 	"access":       {"internal/access", "internal/access/api", "internal/access/policy", "internal/access/snapshot", "internal/access/ui/signals"},
 	"agent":        {"internal/agent/api", "internal/agent/ui/signals"},
-	"analytics":    {"internal/analytics/model", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery"},
+	"analytics":    {"internal/analytics/model", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery", "internal/analytics/physicalpool", "internal/analytics/catalogseal", "internal/analytics/catalogartifact"},
 	"dashboard":    {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/authoring", "internal/dashboard/catalog", "internal/dashboard/compiler", "internal/dashboard/definition", "internal/dashboard/filter", "internal/dashboard/layoutcontract", "internal/dashboard/publication", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/resolver", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
 	"manageddata":  {"internal/manageddata", "internal/manageddata/binding", "internal/manageddata/runtimebinding"},
 	"project":      {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/artifact", "internal/project/bundle", "internal/project/catalog", "internal/project/compiler", "internal/project/manifest", "internal/project/runtime"},
@@ -96,19 +96,34 @@ var SharedContractPrefixes = map[string][]string{
 // process composition may wire directly alongside module surfaces. These are
 // exact package paths, not capability roots or adapter subtrees.
 var CompositionContractPrefixes = map[string]struct{}{
-	"internal/access":                      {},
-	"internal/access/snapshot":             {},
-	"internal/analytics/connectionbinding": {},
-	"internal/dashboard/authoring":         {},
-	"internal/deployment":                  {},
-	"internal/manageddata":                 {},
-	"internal/manageddata/control":         {},
-	"internal/project/bundle":              {},
-	"internal/project/catalog":             {},
-	"internal/project/graph":               {},
-	"internal/refresh/run":                 {},
-	"internal/runtimehost":                 {},
-	"internal/servingstate":                {},
+	// Process assembly is the explicit owner of these target adapters. Keep
+	// this list exact (rather than allowing capability roots) so a new app
+	// import still requires an architecture review while the sealed delivery
+	// wiring can construct its concrete physical/control-plane ports here.
+	"internal/analytics/candidatecatalog":    {},
+	"internal/analytics/catalogseal":         {},
+	"internal/analytics/ducklake":            {},
+	"internal/analytics/physicalpool":        {},
+	"internal/analytics/physicalpool/sqlite": {},
+	"internal/analytics/runtime":             {},
+	"internal/access":                        {},
+	"internal/access/snapshot":               {},
+	"internal/analytics/connectionbinding":   {},
+	"internal/dashboard/authoring":           {},
+	"internal/deployment":                    {},
+	"internal/deployment/apiadapter":         {},
+	"internal/deployment/gcstore":            {},
+	"internal/deployment/sealedcontrol":      {},
+	"internal/deployment/sqlite":             {},
+	"internal/manageddata":                   {},
+	"internal/manageddata/control":           {},
+	"internal/project/bundle":                {},
+	"internal/project/catalog":               {},
+	"internal/project/graph":                 {},
+	"internal/refresh/run":                   {},
+	"internal/runtimehost":                   {},
+	"internal/release":                       {},
+	"internal/servingstate":                  {},
 }
 
 func IsCompositionContractImport(packagePath string) bool {
@@ -155,7 +170,7 @@ var CapabilityDependencies = map[string]map[string]bool{
 	"agent":        {"access": true, "analytics": true, "dashboard": true, "project": true},
 	"admin":        {"access": true, "agent": true, "analytics": true, "dashboard": true},
 	"release":      {"access": true, "project": true, "servingstate": true},
-	"deployment":   {"access": true, "project": true, "release": true, "servingstate": true, "manageddata": true, "runtimehost": true},
+	"deployment":   {"access": true, "project": true, "release": true, "servingstate": true, "manageddata": true, "runtimehost": true, "analytics": true},
 	"servingstate": {"access": true, "workload": true},
 	"refresh":      {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
 	"runtimehost":  {"manageddata": true, "servingstate": true},
@@ -221,6 +236,11 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/project/compiler", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/project/artifact", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},
+	{Prefix: "internal/analytics/physicalpool", Capability: "analytics", Layer: LayerContract},
+	{Prefix: "internal/analytics/catalogseal", Capability: "analytics", Layer: LayerContract},
+	{Prefix: "internal/analytics/catalogartifact", Capability: "analytics", Layer: LayerContract},
+	{Prefix: "internal/analytics/candidatecatalog", Capability: "analytics", Layer: LayerAdapter},
+	{Prefix: "internal/analytics/sealedcatalog", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/connectionadmin", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/infisical", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/environment", Capability: "analytics", Layer: LayerAdapter},

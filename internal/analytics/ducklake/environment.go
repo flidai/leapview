@@ -32,15 +32,39 @@ const catalogFileMode = securefs.PrivateFileMode
 
 var catalogWriteLocks sync.Map
 
+// CredentialBootstrap lets a deployment target provision ephemeral connector
+// credentials without exposing secret values to the DuckLake runtime config.
+// It is called once for every pooled connector before that connector attaches
+// its DuckLake catalog.
+type CredentialBootstrap func(context.Context, driver.ExecerContext) error
+
 type Config struct {
-	RootDir        string
-	CatalogPath    string
-	DataPath       string
-	MaxConnections int
-	MemoryMaxBytes int64
-	TempMaxBytes   int64
-	MaxThreads     int
-	TempDir        string
+	RootDir     string
+	CatalogPath string
+	DataPath    string
+	// PhysicalPoolID marks this catalog as a member of a shared LeapView
+	// physical pool. Shared-pool catalogs may not invoke catalog-local cleanup.
+	PhysicalPoolID string
+	// SharedPool is retained for callers which have a pool identity in another
+	// control-plane record. PhysicalPoolID implies SharedPool when non-empty,
+	// but either shared-pool request requires PoolContract admission evidence.
+	SharedPool    bool
+	Compatibility CompatibilityTuple
+	PoolContract  *PoolContract
+	// ReadOnly attaches an existing DuckLake catalog with READ_ONLY and
+	// CREATE_IF_NOT_EXISTS false. Read-only environments reject all writes at
+	// the runtime boundary before reaching DuckDB.
+	ReadOnly bool
+	// CredentialBootstrap is invoked for every pooled connector after
+	// persistent secrets are disabled and before DuckLake ATTACH. The callback
+	// receives only the target-owned executor capability; credentials never
+	// enter Config or runtime diagnostics.
+	CredentialBootstrap CredentialBootstrap
+	MaxConnections      int
+	MemoryMaxBytes      int64
+	TempMaxBytes        int64
+	MaxThreads          int
+	TempDir             string
 }
 
 type Layout struct {
@@ -52,6 +76,10 @@ type Layout struct {
 type Environment struct {
 	db              *sql.DB
 	layout          Layout
+	physicalPoolID  string
+	sharedPool      bool
+	compatibility   CompatibilityTuple
+	readOnly        bool
 	readConcurrency int
 	extensionMu     sync.Mutex
 	extensions      map[string]*extensionLoad
@@ -68,6 +96,9 @@ type Environment struct {
 	commitRetries   atomic.Uint64
 	cleanupOK       atomic.Uint64
 	cleanupFailed   atomic.Uint64
+	closed          atomic.Bool
+	closeOnce       sync.Once
+	closeErr        error
 }
 
 type extensionLoad struct {
@@ -81,8 +112,10 @@ var approvedExtensions = map[string]struct{}{
 }
 
 var (
-	ErrUnadmitted       = errors.New("DuckDB access requires workload admission")
-	ErrConflictingLease = errors.New("a different DuckDB environment is already leased")
+	ErrUnadmitted          = errors.New("DuckDB access requires workload admission")
+	ErrConflictingLease    = errors.New("a different DuckDB environment is already leased")
+	ErrEnvironmentClosed   = errors.New("ducklake environment is closed")
+	ErrReadOnlyEnvironment = errors.New("ducklake environment is read-only")
 )
 
 type TransientCommitError struct{ Err error }
@@ -138,6 +171,9 @@ func (l *connectionLease) Release() {
 func (e *Environment) Acquire(ctx context.Context) (Lease, error) {
 	if e == nil || e.db == nil {
 		return nil, fmt.Errorf("ducklake environment is not initialized")
+	}
+	if e.closed.Load() {
+		return nil, ErrEnvironmentClosed
 	}
 	if healthErr := e.Healthy(); healthErr != nil {
 		return nil, fmt.Errorf("analytical environment is fatally unhealthy: %w", healthErr)
@@ -204,16 +240,47 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	if !nativeArrowEnabled {
 		return nil, fmt.Errorf("LeapView analytical runtime requires the duckdb_arrow build tag")
 	}
+	sharedRequested := config.SharedPool || strings.TrimSpace(config.PhysicalPoolID) != "" || config.PoolContract != nil
+	if sharedRequested {
+		if config.PoolContract == nil {
+			return nil, fmt.Errorf("shared physical-pool admission is required before DuckLake attach")
+		}
+		if err := config.PoolContract.Validate(); err != nil {
+			return nil, fmt.Errorf("shared physical-pool admission: %w", err)
+		}
+		contractID := config.PoolContract.Pool.ID.String()
+		if requestedID := strings.TrimSpace(config.PhysicalPoolID); requestedID != "" && requestedID != contractID {
+			return nil, fmt.Errorf("shared physical-pool ID %q does not match admitted pool %q", requestedID, contractID)
+		}
+		if requestedTuple := config.Compatibility; requestedTuple != (CompatibilityTuple{}) && requestedTuple != config.PoolContract.Tuple {
+			return nil, fmt.Errorf("shared physical-pool compatibility tuple does not match admitted pool")
+		}
+		config.PhysicalPoolID = contractID
+		config.Compatibility = config.PoolContract.Tuple
+		config.SharedPool = true
+	}
 	layout, err := config.layout()
 	if err != nil {
 		return nil, err
 	}
-	if err := prepareLayout(layout); err != nil {
+	if sharedRequested {
+		if err := config.PoolContract.ValidateDataPathBinding(layout.DataPath); err != nil {
+			return nil, fmt.Errorf("shared physical-pool DATA_PATH binding: %w", err)
+		}
+	}
+	if config.ReadOnly {
+		if err := validateReadOnlyLayout(layout); err != nil {
+			return nil, err
+		}
+	} else if err := prepareLayout(layout); err != nil {
 		return nil, err
 	}
-	migrated, err := migrateLegacySQLiteCatalog(ctx, layout.CatalogPath)
-	if err != nil {
-		return nil, err
+	migrated := false
+	if !config.ReadOnly {
+		migrated, err = migrateLegacySQLiteCatalog(ctx, layout.CatalogPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if migrated {
 		slog.InfoContext(ctx, "migrated legacy SQLite-backed DuckLake catalog", "catalog_path", layout.CatalogPath)
@@ -227,12 +294,19 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	if connections <= 0 {
 		connections = 1
 	}
-	attach := fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (DATA_PATH '%s')", sqlLiteral(layout.CatalogPath), catalogAlias, sqlLiteral(layout.DataPath))
+	// Keep both process and attach defaults explicit. DuckLake persisted
+	// global/schema/table options take precedence, so they are inspected by
+	// DataInliningPolicy before a catalog is sealed.
+	attachOptions := fmt.Sprintf("DATA_PATH '%s', DATA_INLINING_ROW_LIMIT 0", sqlLiteral(layout.DataPath))
+	if config.ReadOnly {
+		attachOptions += ", READ_ONLY, CREATE_IF_NOT_EXISTS false"
+	}
+	attach := fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (%s)", sqlLiteral(layout.CatalogPath), catalogAlias, attachOptions)
 	var initializeOnce sync.Once
 	var initializeErr error
 	connector, err := duckdb.NewConnector(":memory:", func(execer driver.ExecerContext) error {
 		initializeOnce.Do(func() {
-			statements := []string{"LOAD ducklake", "SET allow_persistent_secrets = false"}
+			statements := []string{"LOAD ducklake", "SET allow_persistent_secrets = false", "SET ducklake_default_data_inlining_row_limit = 0"}
 			if config.MemoryMaxBytes > 0 {
 				statements = append(statements, fmt.Sprintf("SET memory_limit = '%dB'", config.MemoryMaxBytes))
 			}
@@ -246,10 +320,8 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 				statements = append(statements, "SET temp_directory = '"+sqlLiteral(config.TempDir)+"'")
 			}
 			statements = append(statements,
-				attach,
 				"SET autoinstall_known_extensions = false",
 				"SET autoload_known_extensions = false",
-				"SET lock_configuration = true",
 			)
 			for _, statement := range statements {
 				if _, err := execer.ExecContext(context.Background(), statement, nil); err != nil {
@@ -261,6 +333,14 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 		if initializeErr != nil {
 			return initializeErr
 		}
+		if config.CredentialBootstrap != nil {
+			if err := config.CredentialBootstrap(context.Background(), execer); err != nil {
+				return fmt.Errorf("bootstrap DuckLake connector credentials: %w", err)
+			}
+		}
+		if _, err := execer.ExecContext(context.Background(), attach, nil); err != nil {
+			return err
+		}
 		for _, statement := range []string{"USE " + catalogAlias} {
 			if _, err := execer.ExecContext(context.Background(), statement, nil); err != nil {
 				return err
@@ -271,17 +351,32 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	if err != nil {
 		return nil, err
 	}
-	db := sql.OpenDB(connector)
+	var dbConnector driver.Connector = connector
+	if config.SharedPool {
+		dbConnector = &guardedConnector{inner: connector, guard: func(statement string) error {
+			return rejectSharedPoolStatementText(statement)
+		}}
+	}
+	db := sql.OpenDB(dbConnector)
 	db.SetMaxOpenConns(connections)
 	db.SetMaxIdleConns(connections)
 	env := &Environment{
 		db: db, layout: layout, readConcurrency: connections,
+		physicalPoolID: strings.TrimSpace(config.PhysicalPoolID), sharedPool: config.SharedPool || strings.TrimSpace(config.PhysicalPoolID) != "", compatibility: config.Compatibility, readOnly: config.ReadOnly,
 		extensions: map[string]*extensionLoad{"ducklake": {done: closedSignal()}}, fatal: make(chan struct{}),
 		sourceTotals: map[string]map[string]uint64{}, scopeContention: map[string]uint64{},
 	}
 	if err := warmConnections(ctx, db, connections); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize DuckDB node instance: %w", err)
+	}
+	// Configuration locking is GLOBAL_ONLY. Run every target bootstrap and
+	// catalog ATTACH while warming the complete pool, then lock the shared
+	// database instance exactly once so replacement connectors can still run
+	// their target-owned bootstrap callback before attaching.
+	if _, err := db.ExecContext(ctx, "SET lock_configuration = true"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("lock DuckDB configuration: %w", err)
 	}
 	if err := secureDuckDBCatalogFiles(layout.CatalogPath); err != nil {
 		_ = db.Close()
@@ -295,6 +390,9 @@ func (e *Environment) MarkFatal(err error) {
 		return
 	}
 	e.fatalMu.Lock()
+	if e.fatal == nil {
+		e.fatal = make(chan struct{})
+	}
 	e.fatalErr = errors.Join(e.fatalErr, err)
 	e.fatalMu.Unlock()
 	e.fatalOnce.Do(func() { close(e.fatal) })
@@ -439,9 +537,30 @@ func (e *Environment) ObserveRefreshCleanup(success bool) {
 
 func prepareLayout(layout Layout) error {
 	for _, dir := range []string{layout.RootDir, filepath.Dir(layout.CatalogPath), layout.DataPath} {
+		// DuckLake accepts object-store DATA_PATH values (s3://, gs://, ...).
+		// They are provisioned by the connector's target credential bootstrap,
+		// not as local private directories.
+		if strings.Contains(dir, "://") {
+			continue
+		}
 		if err := securefs.EnsurePrivateDir(dir); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateReadOnlyLayout(layout Layout) error {
+	catalogInfo, err := os.Stat(layout.CatalogPath)
+	if err != nil || catalogInfo.IsDir() {
+		return fmt.Errorf("read-only DuckLake catalog is unavailable")
+	}
+	if strings.Contains(layout.DataPath, "://") {
+		return nil
+	}
+	dataInfo, err := os.Stat(layout.DataPath)
+	if err != nil || !dataInfo.IsDir() {
+		return fmt.Errorf("read-only DuckLake data path is unavailable")
 	}
 	return nil
 }
@@ -520,6 +639,9 @@ func SnapshotRelation(snapshotID int64, table string) string {
 func (e *Environment) Commit(ctx context.Context, servingStateID string, extra map[string]string, fn func(*sql.Tx) error) (int64, error) {
 	if e == nil || e.db == nil {
 		return 0, fmt.Errorf("ducklake environment is not initialized")
+	}
+	if e.readOnly {
+		return 0, ErrReadOnlyEnvironment
 	}
 	if fn == nil {
 		return 0, fmt.Errorf("commit function is required")
@@ -688,6 +810,12 @@ func (e *Environment) RetentionCandidates(ctx context.Context, protected map[int
 }
 
 func (e *Environment) ExpireSnapshots(ctx context.Context, versions []int64, dryRun bool) error {
+	if e == nil || e.db == nil {
+		return fmt.Errorf("ducklake environment is not initialized")
+	}
+	if e.readOnly {
+		return ErrReadOnlyEnvironment
+	}
 	if len(versions) == 0 {
 		return nil
 	}
@@ -698,6 +826,15 @@ func (e *Environment) ExpireSnapshots(ctx context.Context, versions []int64, dry
 }
 
 func (e *Environment) CleanupOldFiles(ctx context.Context, dryRun bool) error {
+	if e != nil && e.readOnly {
+		return ErrReadOnlyEnvironment
+	}
+	if err := e.rejectSharedPoolMaintenance("ducklake_cleanup_old_files"); err != nil {
+		return err
+	}
+	if e == nil || e.db == nil {
+		return fmt.Errorf("ducklake environment is not initialized")
+	}
 	unlock := lockCatalogWrites(e.layout.CatalogPath)
 	defer unlock()
 	_, err := e.db.ExecContext(ctx, fmt.Sprintf("CALL ducklake_cleanup_old_files(%s, dry_run => %t)", sqlStringLiteral(catalogAlias), dryRun))
@@ -705,6 +842,15 @@ func (e *Environment) CleanupOldFiles(ctx context.Context, dryRun bool) error {
 }
 
 func (e *Environment) DeleteOrphanedFiles(ctx context.Context, dryRun bool) error {
+	if e != nil && e.readOnly {
+		return ErrReadOnlyEnvironment
+	}
+	if err := e.rejectSharedPoolMaintenance("ducklake_delete_orphaned_files"); err != nil {
+		return err
+	}
+	if e == nil || e.db == nil {
+		return fmt.Errorf("ducklake environment is not initialized")
+	}
 	unlock := lockCatalogWrites(e.layout.CatalogPath)
 	defer unlock()
 	_, err := e.db.ExecContext(ctx, fmt.Sprintf("CALL ducklake_delete_orphaned_files(%s, dry_run => %t)", sqlStringLiteral(catalogAlias), dryRun))
@@ -784,6 +930,12 @@ func (e *Environment) Path() string {
 }
 
 func (e *Environment) Exec(ctx context.Context, statement string) error {
+	if e != nil && e.readOnly {
+		return ErrReadOnlyEnvironment
+	}
+	if err := e.rejectSharedPoolStatement(statement); err != nil {
+		return err
+	}
 	conn, release, err := e.queryConnection(ctx)
 	if err != nil {
 		return err
@@ -970,6 +1122,15 @@ ORDER BY %s`, plan.SQL, spec.GroupColumn, spec.ValueColumn, spec.ValueColumn, sp
 }
 
 func (e *Environment) queryConnection(ctx context.Context) (*sql.Conn, func(), error) {
+	if e == nil || e.db == nil {
+		return nil, nil, fmt.Errorf("ducklake environment is not initialized")
+	}
+	if e.closed.Load() {
+		return nil, nil, ErrEnvironmentClosed
+	}
+	if healthErr := e.Healthy(); healthErr != nil {
+		return nil, nil, fmt.Errorf("analytical environment is fatally unhealthy: %w", healthErr)
+	}
 	if current, ok := ctx.Value(leaseContextKey{}).(*leaseState); ok && current != nil {
 		if current.env != e {
 			return nil, nil, ErrConflictingLease
@@ -998,11 +1159,159 @@ func (e *Environment) Layout() Layout {
 	return e.layout
 }
 
+func (e *Environment) PhysicalPoolID() string {
+	if e == nil {
+		return ""
+	}
+	return e.physicalPoolID
+}
+
+func (e *Environment) SharedPool() bool {
+	return e != nil && e.sharedPool
+}
+
+func (e *Environment) ReadOnly() bool {
+	return e != nil && e.readOnly
+}
+
+func (e *Environment) Compatibility() CompatibilityTuple {
+	if e == nil {
+		return CompatibilityTuple{}
+	}
+	return e.compatibility
+}
+
+func (e *Environment) rejectSharedPoolMaintenance(capability string) error {
+	if e != nil && e.sharedPool {
+		return fmt.Errorf("%w: %s", ErrSharedPoolMaintenance, capability)
+	}
+	return nil
+}
+
+func (e *Environment) rejectSharedPoolStatement(statement string) error {
+	if e == nil || !e.sharedPool {
+		return nil
+	}
+	return rejectSharedPoolStatementText(statement)
+}
+
+func rejectSharedPoolStatementText(statement string) error {
+	for _, token := range sqlTokens(statement) {
+		switch token {
+		case "DUCKLAKE_CLEANUP_OLD_FILES", "DUCKLAKE_DELETE_ORPHANED_FILES", "DUCKLAKE_MERGE_ADJACENT_FILES", "DUCKLAKE_REWRITE_DATA_FILES":
+			return fmt.Errorf("%w: %s", ErrSharedPoolMaintenance, strings.ToLower(token))
+		case "CHECKPOINT":
+			// DuckLake's catalog-level CHECKPOINT currently invokes expiration,
+			// compaction, old-file cleanup and orphan cleanup in sequence.
+			return ErrUnsafeCheckpoint
+		}
+	}
+	return nil
+}
+
+// sqlTokens is intentionally a small lexical scanner, not a SQL parser. It
+// recognizes identifiers while skipping string literals, quoted identifiers,
+// and both SQL comment forms. This keeps authored SQL containing words such as
+// "checkpoint" from being mistaken for a capability invocation.
+func sqlTokens(statement string) []string {
+	var tokens []string
+	for i := 0; i < len(statement); {
+		switch statement[i] {
+		case '\'', '"', '`', '[':
+			i = skipSQLQuoted(statement, i)
+			continue
+		case '$':
+			if next, ok := dollarQuoteDelimiter(statement, i); ok {
+				if end := strings.Index(statement[i+len(next):], next); end >= 0 {
+					i += len(next) + end + len(next)
+				} else {
+					i = len(statement)
+				}
+				continue
+			}
+		case '-':
+			if i+1 < len(statement) && statement[i+1] == '-' {
+				i += 2
+				for i < len(statement) && statement[i] != '\n' {
+					i++
+				}
+				continue
+			}
+		case '/':
+			if i+1 < len(statement) && statement[i+1] == '*' {
+				i += 2
+				for i+1 < len(statement) && !(statement[i] == '*' && statement[i+1] == '/') {
+					i++
+				}
+				if i+1 < len(statement) {
+					i += 2
+				}
+				continue
+			}
+		}
+		if !isSQLIdentifierByte(statement[i]) {
+			i++
+			continue
+		}
+		start := i
+		for i < len(statement) && isSQLIdentifierByte(statement[i]) {
+			i++
+		}
+		tokens = append(tokens, strings.ToUpper(statement[start:i]))
+	}
+	return tokens
+}
+
+func skipSQLQuoted(statement string, start int) int {
+	delimiter := statement[start]
+	i := start + 1
+	for i < len(statement) {
+		if delimiter == '[' {
+			if statement[i] == ']' {
+				return i + 1
+			}
+			i++
+			continue
+		}
+		if statement[i] == delimiter {
+			if i+1 < len(statement) && statement[i+1] == delimiter {
+				i += 2
+				continue
+			}
+			return i + 1
+		}
+		i++
+	}
+	return len(statement)
+}
+
+func dollarQuoteDelimiter(statement string, start int) (string, bool) {
+	end := start + 1
+	for end < len(statement) && statement[end] != '$' {
+		if !isSQLIdentifierByte(statement[end]) {
+			return "", false
+		}
+		end++
+	}
+	if end >= len(statement) {
+		return "", false
+	}
+	return statement[start : end+1], true
+}
+
+func isSQLIdentifierByte(value byte) bool {
+	return value == '_' || value == '$' || value >= '0' && value <= '9' || value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
+}
+
 func (e *Environment) Close() error {
 	if e == nil || e.db == nil {
 		return nil
 	}
-	return e.db.Close()
+	e.closeOnce.Do(func() {
+		e.closed.Store(true)
+		e.closeErr = e.db.Close()
+	})
+	return e.closeErr
 }
 
 func extensionUnavailable(err error) bool {
