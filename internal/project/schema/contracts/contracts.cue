@@ -27,6 +27,11 @@ package contracts
 
 #APIVersion: "leapview.dev/v1"
 
+// Connector identities are generated from the TypeSpec connection contract;
+// keeping the closed set here makes the current public registry visible to
+// CUE consumers as well.
+#ConnectorKind: "managed" | "s3" | "r2" | "gcs" | "http" | "azure_blob" | "postgres" | "mysql" | "sqlite" | "ducklake" | "quack"
+
 #Provenance: close({
 	origin?: string
 	path?:   string

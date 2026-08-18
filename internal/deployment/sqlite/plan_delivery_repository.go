@@ -550,8 +550,7 @@ func (r *Repository) RecordFailedBuildGateEvidence(ctx context.Context, attemptI
 	if r.deliveryNow != nil {
 		now = r.deliveryNow().UTC()
 	}
-	var existing string
-	lookupErr := r.db.QueryRowContext(ctx, `SELECT evidence_digest FROM delivery_failed_gate_evidence WHERE attempt_id=?`, attemptID).Scan(&existing)
+	existing, lookupErr := r.queries.GetFailedGateEvidenceDigest(ctx, attemptID)
 	if lookupErr == nil {
 		if existing != canonical.Digest {
 			return fmt.Errorf("%w: failed gate evidence for attempt %q is immutable", deployment.ErrDeliveryConflict, attemptID)
@@ -561,11 +560,16 @@ func (r *Repository) RecordFailedBuildGateEvidence(ctx context.Context, attemptI
 	if !errors.Is(lookupErr, sql.ErrNoRows) {
 		return lookupErr
 	}
-	_, err = r.db.ExecContext(ctx, `INSERT INTO delivery_failed_gate_evidence (attempt_id,evidence_json,evidence_digest,created_at) VALUES (?,?,?,?) ON CONFLICT(attempt_id) DO NOTHING`, attemptID, string(payload), canonical.Digest, deliveryTime(now))
+	_, err = r.queries.InsertFailedGateEvidence(ctx, deploydb.InsertFailedGateEvidenceParams{
+		AttemptID:      attemptID,
+		EvidenceJson:   string(payload),
+		EvidenceDigest: canonical.Digest,
+		CreatedAt:      deliveryTime(now),
+	})
 	if err != nil {
 		return err
 	}
-	if err := r.db.QueryRowContext(ctx, `SELECT evidence_digest FROM delivery_failed_gate_evidence WHERE attempt_id=?`, attemptID).Scan(&existing); err != nil {
+	if existing, err = r.queries.GetFailedGateEvidenceDigest(ctx, attemptID); err != nil {
 		return err
 	}
 	if existing != canonical.Digest {
@@ -578,10 +582,11 @@ func (r *Repository) FailedBuildGateEvidence(ctx context.Context, attemptID stri
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("delivery repository is not open")
 	}
-	var payload, digest string
-	if err := r.db.QueryRowContext(ctx, `SELECT evidence_json,evidence_digest FROM delivery_failed_gate_evidence WHERE attempt_id=?`, attemptID).Scan(&payload, &digest); err != nil {
+	record, err := r.queries.GetFailedGateEvidence(ctx, attemptID)
+	if err != nil {
 		return nil, err
 	}
+	payload, digest := record.EvidenceJson, record.EvidenceDigest
 	var evidence release.GateEvidence
 	if err := json.Unmarshal([]byte(payload), &evidence); err != nil {
 		return nil, fmt.Errorf("decode failed gate evidence: %w", err)

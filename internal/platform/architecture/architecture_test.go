@@ -36,7 +36,7 @@ var approvedInternalRoots = map[string]struct{}{
 	"app": {}, "platform": {},
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
-	"runtimehost": {}, "servingstate": {}, "workload": {},
+	"runtimehost": {}, "servingstate": {}, "workload": {}, "extension": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -4104,6 +4104,12 @@ func isForbiddenUseCaseImport(imported string) bool {
 	}
 	packagePath := strings.TrimPrefix(imported, modulePath+"/")
 	if rule, ok := ClassifyPackage(packagePath); ok && rule.Layer == LayerPlatform {
+		return false
+	}
+	// Query JSON is a typed analytical contract shared with the compiler. Its
+	// implementation lives below the DuckDB adapter tree, but the contract
+	// package itself is safe for use-case consumers.
+	if packagePath == "internal/analytics/duckdb/queryjson" {
 		return false
 	}
 	for _, segment := range []string{"/sqlite", "/filesystem", "/s3", "/tus", "/duckdb", "/ducklake", "/datastar", "/http", "/openai"} {

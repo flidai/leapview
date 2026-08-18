@@ -814,6 +814,23 @@ UNION ALL SELECT r.physical_pool_id,r.root_kind,r.source_id,COALESCE(r.candidate
 
 -- Append-only delivery lifecycle evidence. The unique request/object key makes
 -- a crash-replayed command resolve to the original event without rewriting it.
+
+-- name: GetFailedGateEvidenceDigest :one
+SELECT evidence_digest
+FROM delivery_failed_gate_evidence
+WHERE attempt_id = ?;
+
+-- name: InsertFailedGateEvidence :execresult
+INSERT INTO delivery_failed_gate_evidence
+  (attempt_id, evidence_json, evidence_digest, created_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(attempt_id) DO NOTHING;
+
+-- name: GetFailedGateEvidence :one
+SELECT evidence_json, evidence_digest
+FROM delivery_failed_gate_evidence
+WHERE attempt_id = ?;
+
 -- name: AppendDeliveryEvent :execresult
 INSERT INTO delivery_events
  (id, target_id, project_id, environment, actor_id, event_kind, object_kind,
