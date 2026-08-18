@@ -171,8 +171,8 @@ describe("APIGen TypeSpec emitter", () => {
       type: "object",
       additional_properties: { schema: { type: "string" } },
       property_names: {
-      type: "string",
-      pattern: "^[a-z_][a-z0-9_]*$",
+        type: "string",
+        pattern: "^[a-z_][a-z0-9_]*$",
       },
     });
   });
