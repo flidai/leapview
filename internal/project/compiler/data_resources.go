@@ -136,7 +136,11 @@ func decodeSourceResource(path string, content []byte, metadata metadata) (seman
 	switch location := authored.Spec.Location.Value.(type) {
 	case *projectcontracts.SourceLocationPathVariant:
 		source.LocationType, source.Path, source.Format = semanticmodel.KindPath, location.Path, location.Format
-		source.Options = pathOptions(location.Options)
+		options, err := pathOptions(location.Options)
+		if err != nil {
+			return semanticmodel.Source{}, fmt.Errorf("decode path options: %w", err)
+		}
+		source.Options = options
 	case *projectcontracts.SourceLocationRelationVariant:
 		source.LocationType, source.Catalog, source.SchemaName, source.RelationName = semanticmodel.KindObject, optionalString(location.Catalog), optionalString(location.Schema), location.Name
 		parts := make([]string, 0, 3)
@@ -186,12 +190,11 @@ func lowerSourceField(name string, field projectcontracts.SourceSchemaField) sem
 	return semanticmodel.SourceField{Field: name, Name: name, Datatype: semanticmodel.LogicalDataType(field.Datatype), Nullable: field.Nullable, Description: optionalString(field.Description)}
 }
 
-func pathOptions(value *projectcontracts.SourcePathOptions) map[string]any {
+func pathOptions(value *projectcontracts.SourcePathOptions) (map[string]any, error) {
 	if value == nil {
-		return map[string]any{}
+		return map[string]any{}, nil
 	}
-	result, _ := structMap(value)
-	return result
+	return structMap(value)
 }
 
 func structMap(value any) (map[string]any, error) {

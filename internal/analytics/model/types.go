@@ -198,7 +198,7 @@ type Connection struct {
 	Credentials    ConnectionCredentials     `yaml:"credentials" json:"-"`
 	Options        map[string]any            `yaml:"options" json:"Options"`
 	Defaults       ConnectionDefaults        `yaml:"defaults" json:"Defaults"`
-	ReaderDefaults map[string]map[string]any `yaml:"-" json:"-"`
+	ReaderDefaults map[string]map[string]any `yaml:"-" json:"readerDefaults,omitempty"`
 }
 
 type ConnectionCredentials struct {
@@ -223,15 +223,15 @@ type Source struct {
 	Object      string `yaml:"object"`
 	// Structured location evidence is retained after lowering. Object remains
 	// the canonical runtime relation string for existing adapters.
-	LocationType string         `yaml:"-" json:"-"`
-	Catalog      string         `yaml:"-" json:"-"`
-	SchemaName   string         `yaml:"-" json:"-"`
-	RelationName string         `yaml:"-" json:"-"`
+	LocationType string         `yaml:"-" json:"locationType,omitempty"`
+	Catalog      string         `yaml:"-" json:"catalog,omitempty"`
+	SchemaName   string         `yaml:"-" json:"schemaName,omitempty"`
+	RelationName string         `yaml:"-" json:"relationName,omitempty"`
 	Options      map[string]any `yaml:"options"`
 	// EffectiveOptions is compiler-owned and excludes secrets. Runtime readers
 	// consume this resolved map instead of independently merging defaults.
-	EffectiveOptions map[string]any         `yaml:"-" json:"-"`
-	SchemaMode       string                 `yaml:"-" json:"-"`
+	EffectiveOptions map[string]any         `yaml:"-" json:"effectiveOptions"`
+	SchemaMode       string                 `yaml:"-" json:"schemaMode,omitempty"`
 	Fields           map[string]SourceField `yaml:"fields"`
 	Schema           TableSchema            `yaml:"-"`
 }
@@ -297,8 +297,8 @@ type SourceField struct {
 	Table       string          `yaml:"-"`
 	Name        string          `yaml:"-"`
 	Type        string          `yaml:"type"`
-	Datatype    LogicalDataType `yaml:"-" json:"-"`
-	Nullable    *bool           `yaml:"-" json:"-"`
+	Datatype    LogicalDataType `yaml:"-" json:"datatype,omitempty"`
+	Nullable    *bool           `yaml:"-" json:"nullable,omitempty"`
 	Description string          `yaml:"description"`
 }
 

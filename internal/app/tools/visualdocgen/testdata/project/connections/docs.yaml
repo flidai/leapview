@@ -5,9 +5,7 @@ metadata:
   name: docs
   displayName: Documentation fixtures
 spec:
-  kind: managed
-  credentials:
-    provider: none
+  type: managed
   defaults:
-    options:
+    csv:
       header: true

@@ -128,14 +128,10 @@ func ResolveSourcePlan(model *semanticmodel.Model, source semanticmodel.Source) 
 			plan.connectionSpec = spec
 		}
 		if source.Kind() == connectors.KindPath {
-			if source.EffectiveOptions != nil {
-				plan.options = cloneSourceOptions(source.EffectiveOptions)
-			} else {
-				// Compiler-lowered Sources always carry EffectiveOptions. The
-				// fallback exists only for in-memory runtime callers and does not
-				// invent public defaults or reapply precedence.
-				plan.options = cloneSourceOptions(source.Options)
+			if source.EffectiveOptions == nil {
+				return plan, fmt.Errorf("source %q is missing compiled effective options", source.Connection)
 			}
+			plan.options = cloneSourceOptions(source.EffectiveOptions)
 		}
 	}
 	if source.Path == "" {

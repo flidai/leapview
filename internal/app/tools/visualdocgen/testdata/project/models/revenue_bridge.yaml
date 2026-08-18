@@ -5,8 +5,11 @@ metadata:
   name: revenue_bridge
   displayName: Revenue bridge
 spec:
-  sources:
-  - docs.revenue_bridge
+  definition:
+    type: sql
+    sql: |
+      SELECT component, CAST(amount AS DOUBLE) AS amount
+      FROM source."docs.revenue_bridge"
   fields:
     component:
       datatype: String
@@ -14,10 +17,6 @@ spec:
     amount:
       datatype: Float
       label: Revenue impact
-  transform:
-    sql: |
-      SELECT component, CAST(amount AS DOUBLE) AS amount
-      FROM source."docs.revenue_bridge"
   entities:
     component:
       type: primary

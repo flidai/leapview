@@ -5,8 +5,23 @@ metadata:
   name: orders
   displayName: Documentation orders
 spec:
-  sources:
-  - docs.orders
+  definition:
+    type: sql
+    sql: |
+      SELECT
+        order_id,
+        purchase_month,
+        CAST(purchase_month || '-01' AS DATE) AS purchase_date,
+        status,
+        category,
+        state,
+        CAST(-33 + (hash(order_id) % 3800) / 100.0 AS DOUBLE) AS latitude,
+        CAST(-74 + (hash(order_id || '-longitude') % 4000) / 100.0 AS DOUBLE) AS longitude,
+        CAST(revenue AS DECIMAL(18, 3)) AS revenue,
+        CAST(review_score AS DOUBLE) AS review_score,
+        CAST(delivery_days AS DOUBLE) AS delivery_days,
+        delivery_bucket
+      FROM source."docs.orders"
   fields:
     order_id:
       datatype: String
@@ -44,22 +59,6 @@ spec:
     delivery_bucket:
       datatype: String
       label: Delivery speed
-  transform:
-    sql: |
-      SELECT
-        order_id,
-        purchase_month,
-        CAST(purchase_month || '-01' AS DATE) AS purchase_date,
-        status,
-        category,
-        state,
-        CAST(-33 + (hash(order_id) % 3800) / 100.0 AS DOUBLE) AS latitude,
-        CAST(-74 + (hash(order_id || '-longitude') % 4000) / 100.0 AS DOUBLE) AS longitude,
-        CAST(revenue AS DECIMAL(18, 3)) AS revenue,
-        CAST(review_score AS DOUBLE) AS review_score,
-        CAST(delivery_days AS DOUBLE) AS delivery_days,
-        delivery_bucket
-      FROM source."docs.orders"
   entities:
     order:
       type: primary

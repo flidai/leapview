@@ -5,8 +5,11 @@ metadata:
   name: service_teams
   displayName: Service teams
 spec:
-  sources:
-  - docs.service_teams
+  definition:
+    type: sql
+    sql: |
+      SELECT division, team, CAST(active_work_items AS DOUBLE) AS active_work_items
+      FROM source."docs.service_teams"
   fields:
     division:
       datatype: String
@@ -17,10 +20,6 @@ spec:
     active_work_items:
       datatype: Float
       label: Active work items
-  transform:
-    sql: |
-      SELECT division, team, CAST(active_work_items AS DOUBLE) AS active_work_items
-      FROM source."docs.service_teams"
   entities:
     team:
       type: primary

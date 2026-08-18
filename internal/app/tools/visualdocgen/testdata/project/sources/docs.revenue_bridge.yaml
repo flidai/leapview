@@ -6,7 +6,5 @@ metadata:
   displayName: Documentation revenue bridge
 spec:
   connection: docs
-  path: revenue_bridge.csv
-  fields:
-    component: {type: string}
-    amount: {type: number}
+  location: {type: path, path: revenue_bridge.csv, format: csv, options: {header: true}}
+  schema: {mode: inferred}
