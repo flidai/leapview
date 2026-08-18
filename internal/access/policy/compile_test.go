@@ -60,7 +60,7 @@ func TestCompileColumnMask(t *testing.T) {
 func TestCompileRejectsNonCanonicalNestedIdentityLiterals(t *testing.T) {
 	for name, expression := range map[string]string{
 		"field":    `{"field":" ratings.country ","operator":"equals","value":"DK"}`,
-		"fact":     `{"filters":[{"field":"ratings.country","fact":" ratings ","operator":"equals","values":["DK"]}]}`,
+		"dataset":  `{"filters":[{"field":"ratings.country","dataset":" ratings ","operator":"equals","values":["DK"]}]}`,
 		"operator": `{"field":"ratings.country","operator":" equals ","value":"DK"}`,
 		"spatial":  `{"filters":[{"spatial":{"kind":"radius","latitudeField":" ratings.latitude ","longitudeField":"ratings.longitude","center":{"longitude":12.5,"latitude":55.7},"radiusMeters":1000}}]}`,
 	} {
@@ -79,6 +79,7 @@ func TestCompileRejectsUnsafePolicyExpressions(t *testing.T) {
 	}{
 		{name: "invalid json", policyType: TypeRowFilter, expression: `{`},
 		{name: "unknown property", policyType: TypeRowFilter, expression: `{"field":"region","value":"EU","op":"="}`},
+		{name: "removed fact property", policyType: TypeRowFilter, expression: `{"filters":[{"field":"ratings.country","fact":"ratings","operator":"equals","values":["DK"]}]}`},
 		{name: "ambiguous row form", policyType: TypeRowFilter, expression: `{"field":"region","value":"EU","filters":[{"field":"country","value":"DK"}]}`},
 		{name: "allow all plus filter", policyType: TypeRowFilter, expression: `{"allowAll":true,"field":"region","value":"EU"}`},
 		{name: "empty row", policyType: TypeRowFilter, expression: `{}`},

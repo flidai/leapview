@@ -45,9 +45,9 @@ func compileBuiltInVisualizationSpec(id string, authored dashboardauthoring.Visu
 	for _, mapping := range authored.Interaction.PointSelection.Mappings {
 		identities[mapping.Value] = struct{}{}
 	}
-	pointMeasures := map[string]struct{}{}
-	for _, measure := range compiledFields(authored.Query.Measures) {
-		pointMeasures[measure.Alias] = struct{}{}
+	pointMetrics := map[string]struct{}{}
+	for _, metric := range compiledFields(authored.Query.Metrics) {
+		pointMetrics[metric.Alias] = struct{}{}
 	}
 	pointTime := ""
 	if value := compiledTime(authored.Query.Time); value != nil {
@@ -55,14 +55,14 @@ func compileBuiltInVisualizationSpec(id string, authored dashboardauthoring.Visu
 	}
 	for index, column := range columns {
 		role := visualizationir.VisualizationFieldRoleDimension
-		if compiledShapeMeasure(column) || shape == "point" && containsStringKey(pointMeasures, column) {
-			role = visualizationir.VisualizationFieldRoleMeasure
+		if compiledShapeMetric(column) || shape == "point" && containsStringKey(pointMetrics, column) {
+			role = visualizationir.VisualizationFieldRoleMetric
 		}
 		if _, ok := identities[column]; ok {
 			role = visualizationir.VisualizationFieldRoleIdentity
 		}
 		dataType := compiledShapeDataType(column)
-		if shape == "point" && containsStringKey(pointMeasures, column) {
+		if shape == "point" && containsStringKey(pointMetrics, column) {
 			dataType = visualizationir.VisualizationDataTypeDecimal
 		}
 		if shape == "point" && column == pointTime {
@@ -186,7 +186,7 @@ func compileBuiltInVisualizationSpec(id string, authored dashboardauthoring.Visu
 			kind := authored.Point.ColorScale.Kind
 			if kind == "" {
 				kind = "categorical"
-				if containsStringKey(pointMeasures, authored.Point.Color) {
+				if containsStringKey(pointMetrics, authored.Point.Color) {
 					kind = "quantitative"
 				}
 			}
@@ -318,7 +318,7 @@ func compileContextDatasetSchemas(authored dashboardauthoring.Visual, model *sem
 				return nil, fmt.Errorf("context dataset %q uses duplicate alias %q", datasetID, binding.Alias)
 			}
 			seen[binding.Alias] = struct{}{}
-			role := visualizationir.VisualizationFieldRoleMeasure
+			role := visualizationir.VisualizationFieldRoleMetric
 			dataType := visualizationir.VisualizationDataTypeDecimal
 			if _, ok := dimensions[binding.Alias]; ok {
 				role = visualizationir.VisualizationFieldRoleDimension
@@ -787,7 +787,7 @@ func compiledShapeColumns(shape string) []string {
 	return append([]string(nil), columns...)
 }
 
-func compiledShapeMeasure(field string) bool {
+func compiledShapeMetric(field string) bool {
 	switch field {
 	case "value", "start", "end", "binStart", "binEnd", "open", "close", "low", "high", "min", "q1", "median", "q3", "max":
 		return true
@@ -797,7 +797,7 @@ func compiledShapeMeasure(field string) bool {
 }
 
 func compiledShapeDataType(field string) visualizationir.VisualizationDataType {
-	if compiledShapeMeasure(field) {
+	if compiledShapeMetric(field) {
 		return visualizationir.VisualizationDataTypeDecimal
 	}
 	if field == "positive" {

@@ -417,7 +417,7 @@ func authoredDocument(id, title string) authoring.Dashboard {
 		Visuals: map[string]authoring.AuthoringVisualization{
 			"revenue": authoring.ChartVisualization(authoring.Visual{Title: "Revenue", Type: "line", Query: authoring.VisualQuery{
 				Dimensions: []authoring.FieldRef{{Field: "month", Alias: "month"}},
-				Measures:   []authoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
+				Metrics:    []authoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
 			}}),
 		}, Pages: []dashboard.Page{page},
 	}

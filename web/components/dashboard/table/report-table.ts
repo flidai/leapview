@@ -519,7 +519,7 @@ export class ReportTable extends LitElement {
       text-transform: uppercase;
     }
 
-    .group-cell.measure-group {
+	.group-cell.metric-group {
       justify-content: center;
       color: var(--lv-fg-default);
     }
@@ -1439,7 +1439,7 @@ export class ReportTable extends LitElement {
       <div class="group-head" role="row">
         ${groupHeaders.map((group) => html`
           <div
-            class=${`group-cell ${group.rowHeader ? 'row-header' : 'measure-group'} ${this.pinnedCellClass(group.column)}`}
+			class=${`group-cell ${group.rowHeader ? 'row-header' : 'metric-group'} ${this.pinnedCellClass(group.column)}`}
             role="columnheader"
             style=${`grid-column:span ${group.span};${this.pinnedCellStyle(group.column)}`}
           >

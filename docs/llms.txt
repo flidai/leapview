@@ -29,7 +29,8 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Connections and sources](/docs/concepts/connections-sources): Separate physical data access from reusable logical source definitions.
 - [Managed data and revisions](/docs/concepts/managed-data): Understand immutable revisions, staging, activation, upload boundaries, and storage ownership.
 - [Model tables](/docs/concepts/model-tables): Materialize reusable analytical tables from source data.
-- [Semantic models](/docs/concepts/semantic-models): Define datasets, dimensions, measures, and relationships once.
+- [Semantic models](/docs/concepts/semantic-models): Define datasets, dimensions, metrics, and relationships once.
+- [Apache Ossie interchange](/docs/concepts/ossie-interchange): Import and export semantic models through the pinned Ossie boundary.
 - [Dashboards, pages, and visuals](/docs/concepts/dashboards): Understand the presentation resources rendered from the project graph.
 - [Query and interaction lifecycle](/docs/concepts/query-lifecycle): Follow a user interaction from signals through DuckDB and back.
 
@@ -49,7 +50,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Build dashboards](/docs/guides/build): Follow the dashboard-as-code authoring workflow.
 - [Connect a data source](/docs/guides/build/connect-data): Add a connection and source definitions to a project.
 - [Define model tables](/docs/guides/build/model-tables): Turn source data into stable analytical tables.
-- [Build a semantic model](/docs/guides/build/semantic-model): Expose reusable fields, measures, and relationships.
+- [Build a semantic model](/docs/guides/build/semantic-model): Expose reusable fields, metrics, and relationships.
 - [Create a dashboard](/docs/guides/build/dashboard): Define a project dashboard and its first report page.
 - [Pages and layout](/docs/guides/build/pages-layout): Compose responsive report pages from code.
 - [Filters and interactions](/docs/guides/build/filters-interactions): Configure filter cards and cross-visual selections.
@@ -168,6 +169,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview publish](/docs/cli/publish): Publish the exact candidate last synchronized by dev
 - [leapview schema](/docs/cli/schema): Inspect LeapView YAML schemas
 - [leapview search](/docs/cli/search): Search accessible product objects
+- [leapview semantic-model](/docs/cli/semantic-model): Compile and interchange semantic models
 - [leapview semantic-models](/docs/cli/semantic-models): Inspect semantic models
 - [leapview serve](/docs/cli/serve): Run the LeapView HTTP server
 - [leapview validate](/docs/cli/validate): Validate a configuration-as-code project

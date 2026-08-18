@@ -1,11 +1,46 @@
 {
   "$defs": {
+    "#AIContext": {
+      "additionalProperties": false,
+      "properties": {
+        "examples": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "synonyms": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "#APIVersion": {
       "const": "leapview.dev/v1"
     },
     "#Identifier": {
       "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
       "type": "string"
+    },
+    "#LogicalDataType": {
+      "enum": [
+        "String",
+        "Integer",
+        "Decimal",
+        "Float",
+        "Boolean",
+        "Date",
+        "Time",
+        "DateTime",
+        "DateTimeTz",
+        "Opaque"
+      ]
     },
     "#Metadata": {
       "additionalProperties": false,
@@ -53,41 +88,35 @@
         "description": {
           "type": "string"
         },
+        "entities": {
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[A-Za-z_][A-Za-z0-9_]*$": {
+              "$ref": "#/$defs/%23ModelEntity"
+            }
+          },
+          "type": "object"
+        },
         "fields": {
           "additionalProperties": false,
           "patternProperties": {
             "^[A-Za-z_][A-Za-z0-9_]*$": {
-              "additionalProperties": false,
-              "properties": {
-                "description": {
-                  "type": "string"
-                },
-                "expr": {
-                  "type": "string"
-                },
-                "expression": {
-                  "type": "string"
-                },
-                "label": {
-                  "type": "string"
-                },
-                "type": {
-                  "type": "string"
-                }
-              },
-              "type": "object"
+              "$ref": "#/$defs/%23ModelField"
             }
           },
           "type": "object"
         },
         "grain": {
-          "$ref": "#/$defs/%23Identifier"
-        },
-        "kind": {
-          "type": "string"
-        },
-        "primaryKey": {
-          "$ref": "#/$defs/%23Identifier"
+          "additionalProperties": false,
+          "properties": {
+            "entity": {
+              "$ref": "#/$defs/%23Identifier"
+            }
+          },
+          "required": [
+            "entity"
+          ],
+          "type": "object"
         },
         "source": {
           "$ref": "#/$defs/%23ResourceID"
@@ -97,9 +126,6 @@
             "$ref": "#/$defs/%23ResourceID"
           },
           "type": "array"
-        },
-        "sql": {
-          "type": "string"
         },
         "transform": {
           "additionalProperties": false,
@@ -112,7 +138,66 @@
         }
       },
       "required": [
-        "primaryKey"
+        "entities",
+        "fields",
+        "grain"
+      ],
+      "type": "object"
+    },
+    "#ModelEntity": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "description": {
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/%23Identifier"
+          },
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/%23Identifier"
+            }
+          ],
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "primary",
+            "unique",
+            "foreign",
+            "natural"
+          ]
+        }
+      },
+      "required": [
+        "fields",
+        "type"
+      ],
+      "type": "object"
+    },
+    "#ModelField": {
+      "additionalProperties": false,
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/%23AIContext"
+        },
+        "datatype": {
+          "$ref": "#/$defs/%23LogicalDataType"
+        },
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "datatype"
       ],
       "type": "object"
     },
@@ -143,6 +228,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "aiContext": {
+      "$ref": "#/$defs/%23AIContext"
+    },
     "apiVersion": {
       "$ref": "#/$defs/%23APIVersion"
     },

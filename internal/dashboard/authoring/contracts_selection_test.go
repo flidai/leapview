@@ -6,13 +6,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestSelectionMappingDecodesFactAndGrain(t *testing.T) {
+func TestSelectionMappingDecodesDatasetAndGrain(t *testing.T) {
 	var interaction Interaction
 	err := yaml.Unmarshal([]byte(`
 point_selection:
   mappings:
     - field: ratings.rated_at
-      fact: ratings
+      dataset: ratings
       grain: month
       value: label
       label: label
@@ -22,7 +22,7 @@ point_selection:
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 	mapping := interaction.PointSelection.Mappings[0]
-	if mapping.Field != "ratings.rated_at" || mapping.Fact != "ratings" || mapping.Grain != "month" {
+	if mapping.Field != "ratings.rated_at" || mapping.Dataset != "ratings" || mapping.Grain != "month" {
 		t.Fatalf("mapping = %#v", mapping)
 	}
 }

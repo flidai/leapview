@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/masking"
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
 func (p *Planner) Plan(request Request) (Plan, error) {
@@ -18,94 +18,102 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	masks, err := columnMaskMap(request.ColumnMasks)
+	_, err = columnMaskMap(request.ColumnMasks)
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet := []string{}
 	for _, dimension := range request.Dimensions {
-		field, _, err := view.ResolveDimensionRef(dimension.Field)
+		_, _, _, err := view.ResolveDimensionRefPath(dimension.Field)
 		if err != nil {
 			return Plan{}, err
 		}
-		fieldSet = append(fieldSet, field)
 	}
-	for _, measure := range request.Measures {
-		field, resolved, err := view.ResolveMeasureRef(measure.Field)
+	var population []CompiledNamedFilter
+	populationSignature := ""
+	populationSet := false
+	for _, metric := range request.Metrics {
+		field, resolved, err := view.ResolveMetricRef(metric.Field)
 		if err != nil {
 			return Plan{}, err
 		}
-		if resolved.Fact != view.Fact {
-			return Plan{}, fmt.Errorf("measure %q is not owned by fact %q", field, view.Fact)
+		if resolved.Dataset != view.Dataset {
+			return Plan{}, fmt.Errorf("metric %q is not owned by dataset %q", field, view.Dataset)
 		}
-		fieldSet = append(fieldSet, measurePhysicalFields(resolved)...)
+		signature, err := flatPlanFilterSignature(resolved.NamedFilters)
+		if err != nil {
+			return Plan{}, fmt.Errorf("metric %q population signature: %w", field, err)
+		}
+		if !populationSet {
+			population = canonicalCompiledNamedFilters(resolved.NamedFilters)
+			populationSignature = signature
+			populationSet = true
+		} else if signature != populationSignature {
+			return Plan{}, fmt.Errorf("row query selects metrics with divergent populations")
+		}
+		for _, field := range aggregateMetricPhysicalFields(resolved) {
+			physical, err := p.resolveDimension(field)
+			if err != nil {
+				return Plan{}, err
+			}
+			path, err := p.relationshipPath(view.Dataset, physical.Table)
+			if err != nil {
+				return Plan{}, err
+			}
+			_ = path // relationship validation is retained; lowering is PlanIR-owned
+		}
 	}
-	filterFields, err := filterFieldSet(view, request.Filters)
-	if err != nil {
+	metricFilters := namedFlatPlanFilters(population, view.Dataset)
+	if len(metricFilters) > 0 {
+		compiledFilters := make([]Filter, 0, len(metricFilters))
+		for _, spec := range metricFilters {
+			compiledFilters = append(compiledFilters, spec.Filter)
+		}
+		if err := p.exposeViewFilters(view, compiledFilters); err != nil {
+			return Plan{}, err
+		}
+	}
+	if _, err := filterFieldBindings(view, request.Filters); err != nil {
 		return Plan{}, err
 	}
-	fieldSet = append(fieldSet, filterFields...)
-	aliases, err := p.aliases(view, fieldSet)
-	if err != nil {
-		return Plan{}, err
+	for _, spec := range metricFilters {
+		if _, err := filterFieldBindings(view, []Filter{spec.Filter}); err != nil {
+			return Plan{}, err
+		}
 	}
-	from, err := joinSQL(p, view.Fact, aliases)
-	if err != nil {
-		return Plan{}, err
-	}
-	selects := []string{}
-	columns := []string{}
-	columnSet := map[string]bool{}
-	for _, item := range request.Dimensions {
-		field, _, _ := view.ResolveDimensionRef(item.Field)
-		alias, err := outputAlias(Field{Field: field, Alias: item.Alias})
-		if err != nil {
-			return Plan{}, err
-		}
-		if err := addOutputColumn(columnSet, alias); err != nil {
-			return Plan{}, err
-		}
-		expr, err := maskedDimensionExpr(field, view.Dimensions[field], aliases, masks)
-		if err != nil {
-			return Plan{}, err
-		}
-		selects = append(selects, expr+" AS "+alias)
-		columns = append(columns, alias)
-	}
-	for _, item := range request.Measures {
-		field, _, _ := view.ResolveMeasureRef(item.Field)
-		alias, err := outputAlias(Field{Field: field, Alias: item.Alias})
-		if err != nil {
-			return Plan{}, err
-		}
-		if err := addOutputColumn(columnSet, alias); err != nil {
-			return Plan{}, err
-		}
-		expr, err := maskedRawMeasureExpr(p.Model, field, view.Measures[field], aliases, masks)
-		if err != nil {
-			return Plan{}, err
-		}
-		selects = append(selects, expr+" AS "+alias)
-		columns = append(columns, alias)
-	}
-	if len(selects) == 0 {
+	if len(request.Dimensions) == 0 && len(request.Metrics) == 0 {
 		return Plan{}, fmt.Errorf("row query requires at least one selected field")
 	}
-	whereParts, args, err := p.whereParts(view, aliases, request.Filters)
-	if err != nil {
-		return Plan{}, err
+	filterSpecs := append(requestFlatPlanFilters(request.Filters), metricFilters...)
+	irGraph, irErr := p.buildFlatPlanIRWithFilters(view.Dataset, request.Dimensions, request.Metrics, filterSpecs, view.Paths, request.Sort, request.Limit, request.Offset)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("build row plan IR: %w", irErr)
 	}
-	var sql strings.Builder
-	sql.WriteString("SELECT ")
-	sql.WriteString(strings.Join(selects, ", "))
-	sql.WriteString("\nFROM ")
-	sql.WriteString(from)
-	sql.WriteString("\nWHERE ")
-	sql.WriteString(strings.Join(whereParts, " AND "))
-	if err := writeOrderLimitOffset(&sql, request.Sort, columnSet, request.Limit, request.Offset); err != nil {
-		return Plan{}, err
+	if sortNode, ok := irGraph.Nodes[irGraph.Output].(planir.SortLimit); ok {
+		masks, _ := columnMaskMap(request.ColumnMasks)
+		for index := range sortNode.Projection {
+			if kind, found := masks[strings.ToLower(sortNode.Projection[index].Source)]; found {
+				sortNode.Projection[index].Mask = string(kind)
+			}
+			if physical, _, err := p.flatPhysicalField(view.Dataset, sortNode.Projection[index].Source); err == nil {
+				for _, key := range []string{physical.Field, physical.Table + "." + physical.Name} {
+					if kind, found := masks[strings.ToLower(key)]; found {
+						sortNode.Projection[index].Mask = string(kind)
+					}
+				}
+			}
+		}
+		irGraph.Nodes[irGraph.Output] = sortNode
+		irGraph.NodeMeta = sortNode.NodeMeta
 	}
-	return Plan{SQL: sql.String(), Args: args, Columns: columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet)}, nil
+	rendered, irErr := planir.RenderDuckDB(irGraph)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("render row plan IR: %w", irErr)
+	}
+	columnSet := make(map[string]bool, len(rendered.Columns))
+	for _, column := range rendered.Columns {
+		columnSet[column] = true
+	}
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
@@ -117,96 +125,87 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet := []string{}
 	for _, dimension := range request.Dimensions {
-		field, _, err := view.ResolveDimensionRef(dimension.Field)
+		_, _, _, err := view.ResolveDimensionRefPath(dimension.Field)
 		if err != nil {
 			return Plan{}, err
 		}
-		fieldSet = append(fieldSet, field)
 	}
-	measureField, measure, err := view.ResolveMeasureRef(request.Measure.Field)
+	metricField, metric, err := view.ResolveMetricRef(request.Metric.Field)
 	if err != nil {
 		return Plan{}, err
 	}
-	if measure.Fact != view.Fact {
-		return Plan{}, fmt.Errorf("measure %q is not owned by fact %q", measureField, view.Fact)
+	if metric.Dataset != view.Dataset {
+		return Plan{}, fmt.Errorf("metric %q is not owned by dataset %q", metricField, view.Dataset)
 	}
-	if masks.matchesMeasure(measureField, measure) {
-		return Plan{}, fmt.Errorf("measure %q depends on a masked field", measureField)
+	if masks.matchesMetric(metricField, metric) {
+		return Plan{}, fmt.Errorf("metric %q depends on a masked field", metricField)
 	}
-	fieldSet = append(fieldSet, measurePhysicalFields(measure)...)
-	filterFields, err := filterFieldSet(view, request.Filters)
-	if err != nil {
+	metricFilterSpecs := namedFlatPlanFilters(metric.NamedFilters, view.Dataset)
+	metricFilters := make([]Filter, 0, len(metricFilterSpecs))
+	for _, spec := range metricFilterSpecs {
+		metricFilters = append(metricFilters, spec.Filter)
+	}
+	if err := p.exposeViewFilters(view, metricFilters); err != nil {
 		return Plan{}, err
 	}
-	fieldSet = append(fieldSet, filterFields...)
-	aliases, err := p.aliases(view, fieldSet)
-	if err != nil {
-		return Plan{}, err
-	}
-	from, err := joinSQL(p, view.Fact, aliases)
-	if err != nil {
-		return Plan{}, err
-	}
-	selects := []string{}
-	columns := []string{}
-	columnSet := map[string]bool{}
-	dimensionFields := []string{}
-	for _, item := range request.Dimensions {
-		field, _, _ := view.ResolveDimensionRef(item.Field)
-		alias, err := outputAlias(Field{Field: field, Alias: item.Alias})
+	for _, field := range aggregateMetricPhysicalFields(metric) {
+		physical, err := p.resolveDimension(field)
 		if err != nil {
 			return Plan{}, err
 		}
-		if err := addOutputColumn(columnSet, alias); err != nil {
-			return Plan{}, err
-		}
-		expr, err := maskedDimensionExpr(field, view.Dimensions[field], aliases, masks)
+		path, err := p.relationshipPath(view.Dataset, physical.Table)
 		if err != nil {
 			return Plan{}, err
 		}
-		selects = append(selects, expr+" AS "+alias)
-		columns = append(columns, alias)
-		dimensionFields = append(dimensionFields, field)
+		_ = path // relationship validation is retained; lowering is PlanIR-owned
 	}
-	rawExpr, err := rawMeasureExpr(p.Model, measure, aliases)
-	if err != nil {
-		return Plan{}, err
-	}
-	valueAlias := request.Measure.Alias
+	valueAlias := request.Metric.Alias
 	if valueAlias == "" {
 		valueAlias = "value"
 	}
 	if _, err := quoteIdent(valueAlias); err != nil {
 		return Plan{}, err
 	}
-	if err := addOutputColumn(columnSet, valueAlias); err != nil {
+	if _, err := filterFieldBindings(view, request.Filters); err != nil {
 		return Plan{}, err
 	}
-	selects = append(selects, "CAST("+rawExpr+" AS DOUBLE) AS "+valueAlias)
-	columns = append(columns, valueAlias)
-	whereParts, args, err := p.whereParts(view, aliases, request.Filters)
-	if err != nil {
+	if _, err := filterFieldBindings(view, metricFilters); err != nil {
 		return Plan{}, err
 	}
-	for _, field := range dimensionFields {
-		if where := dimensionWhereExpr(view.Dimensions[field], aliases); where != "" {
-			whereParts = append(whereParts, where)
+	filterSpecs := append(requestFlatPlanFilters(request.Filters), metricFilterSpecs...)
+	// The input null guard is a request-local execution constraint, not part of
+	// the compiled named population identity.
+	filterSpecs = append(filterSpecs, flatPlanFilter{Filter: Filter{Field: metric.InputField, Operator: "is_not_null"}, Source: planir.FilterSourceRequest})
+	irGraph, irErr := p.buildFlatPlanIRWithFilters(view.Dataset, request.Dimensions, []Field{{Field: metricField, Alias: valueAlias}}, filterSpecs, view.Paths, request.Sort, request.Limit, 0)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("build raw-value plan IR: %w", irErr)
+	}
+	if sortNode, ok := irGraph.Nodes[irGraph.Output].(planir.SortLimit); ok {
+		for index := range sortNode.Projection {
+			if kind, found := masks[strings.ToLower(sortNode.Projection[index].Source)]; found {
+				sortNode.Projection[index].Mask = string(kind)
+			}
+			if physical, _, err := p.flatPhysicalField(view.Dataset, sortNode.Projection[index].Source); err == nil {
+				for _, key := range []string{physical.Field, physical.Table + "." + physical.Name} {
+					if kind, found := masks[strings.ToLower(key)]; found {
+						sortNode.Projection[index].Mask = string(kind)
+					}
+				}
+			}
 		}
+		irGraph.Nodes[irGraph.Output] = sortNode
+		irGraph.NodeMeta = sortNode.NodeMeta
 	}
-	whereParts = append(whereParts, rawExpr+" IS NOT NULL")
-	var sql strings.Builder
-	sql.WriteString("SELECT ")
-	sql.WriteString(strings.Join(selects, ", "))
-	sql.WriteString("\nFROM ")
-	sql.WriteString(from)
-	sql.WriteString("\nWHERE ")
-	sql.WriteString(strings.Join(whereParts, " AND "))
-	if err := writeOrderLimitOffset(&sql, request.Sort, columnSet, request.Limit, 0); err != nil {
-		return Plan{}, err
+	rendered, irErr := planir.RenderDuckDB(irGraph)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("render raw-value plan IR: %w", irErr)
 	}
-	return Plan{SQL: sql.String(), Args: args, Columns: columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet)}, nil
+	columnSet := make(map[string]bool, len(rendered.Columns))
+	for _, column := range rendered.Columns {
+		columnSet[column] = true
+	}
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
@@ -214,90 +213,18 @@ func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	fieldSet := []string{}
-	filterFields, err := filterFieldSet(view, request.Filters)
-	if err != nil {
+	if _, err := filterFieldBindings(view, request.Filters); err != nil {
 		return Plan{}, err
 	}
-	fieldSet = append(fieldSet, filterFields...)
-	aliases, err := p.aliases(view, fieldSet)
-	if err != nil {
-		return Plan{}, err
+	irGraph, irErr := p.buildFlatPlanIR(view.Dataset, nil, nil, request.Filters, nil, 0, 0)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("build count plan IR: %w", irErr)
 	}
-	from, err := joinSQL(p, view.Fact, aliases)
-	if err != nil {
-		return Plan{}, err
+	rendered, irErr := planir.RenderDuckDB(irGraph)
+	if irErr != nil {
+		return Plan{}, fmt.Errorf("render count plan IR: %w", irErr)
 	}
-	whereParts, args, err := p.whereParts(view, aliases, request.Filters)
-	if err != nil {
-		return Plan{}, err
-	}
-	sql := "SELECT COUNT(*) AS value\nFROM " + from + "\nWHERE " + strings.Join(whereParts, " AND ")
-	return Plan{SQL: sql, Args: args, Columns: []string{"value"}}, nil
-}
-
-func (p *Planner) whereParts(view *queryView, aliases map[string]tableAlias, filters []Filter) ([]string, []any, error) {
-	whereParts := []string{"1 = 1"}
-	args := []any{}
-	for _, filter := range filters {
-		part, partArgs, err := p.filterPart(view, aliases, filter)
-		if err != nil {
-			return nil, nil, err
-		}
-		if part != "" {
-			whereParts = append(whereParts, part)
-			args = append(args, partArgs...)
-		}
-	}
-	return whereParts, args, nil
-}
-
-func (p *Planner) filterPart(view *queryView, aliases map[string]tableAlias, filter Filter) (string, []any, error) {
-	if filter.Spatial != nil {
-		if filter.Field != "" || len(filter.Groups) != 0 {
-			return "", nil, fmt.Errorf("spatial filter cannot combine scalar or grouped filter fields")
-		}
-		_, latitude, err := view.ResolveDimensionRef(filter.Spatial.LatitudeField)
-		if err != nil {
-			return "", nil, err
-		}
-		_, longitude, err := view.ResolveDimensionRef(filter.Spatial.LongitudeField)
-		if err != nil {
-			return "", nil, err
-		}
-		return spatialFilterSQL(dimensionExpr(latitude, aliases), dimensionExpr(longitude, aliases), *filter.Spatial)
-	}
-	if len(filter.Groups) > 0 {
-		parts := []string{}
-		args := []any{}
-		for _, group := range filter.Groups {
-			groupParts := []string{}
-			for _, child := range group.Filters {
-				part, partArgs, err := p.filterPart(view, aliases, child)
-				if err != nil {
-					return "", nil, err
-				}
-				if part == "" {
-					continue
-				}
-				groupParts = append(groupParts, part)
-				args = append(args, partArgs...)
-			}
-			if len(groupParts) > 0 {
-				parts = append(parts, "("+strings.Join(groupParts, " AND ")+")")
-			}
-		}
-		if len(parts) == 0 {
-			return "", nil, nil
-		}
-		return "(" + strings.Join(parts, " OR ") + ")", args, nil
-	}
-	if filter.Field == "" {
-		return "", nil, nil
-	}
-	_, dimension, _ := view.ResolveDimensionRef(filter.Field)
-	expr := dimensionExpr(dimension, aliases)
-	return filterSQL(expr, filter)
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, IR: irGraph}, nil
 }
 
 type columnMaskSet map[string]masking.Kind
@@ -318,26 +245,16 @@ func columnMaskMap(masks []ColumnMask) (columnMaskSet, error) {
 	return out, nil
 }
 
-func (m columnMaskSet) matchesDimension(ref string, dimension semanticmodel.MetricDimension) bool {
+func (m columnMaskSet) matchesMetric(ref string, metric resolvedAggregateMetric) bool {
 	if len(m) == 0 {
 		return false
 	}
-	if _, ok := m[strings.ToLower(strings.TrimSpace(ref))]; ok {
-		return true
-	}
-	return false
-}
-
-func (m columnMaskSet) matchesMeasure(ref string, measure ResolvedMeasure) bool {
-	if len(m) == 0 {
-		return false
-	}
-	for _, key := range []string{ref, measure.Field} {
+	for _, key := range []string{ref, metric.Field} {
 		if _, ok := m[strings.ToLower(strings.TrimSpace(key))]; ok {
 			return true
 		}
 	}
-	for _, dependency := range measurePhysicalFields(measure) {
+	for _, dependency := range aggregateMetricPhysicalFields(metric) {
 		if _, ok := m[strings.ToLower(strings.TrimSpace(dependency))]; ok {
 			return true
 		}
@@ -345,39 +262,12 @@ func (m columnMaskSet) matchesMeasure(ref string, measure ResolvedMeasure) bool 
 	return false
 }
 
-func maskedDimensionExpr(ref string, dimension semanticmodel.MetricDimension, aliases map[string]tableAlias, masks columnMaskSet) (string, error) {
-	mask, ok := masks[strings.ToLower(strings.TrimSpace(ref))]
-	if !ok {
-		return dimensionExpr(dimension, aliases), nil
-	}
-	return mask.SQL(), nil
-}
-
-func maskedRawMeasureExpr(model *semanticmodel.Model, ref string, measure ResolvedMeasure, aliases map[string]tableAlias, masks columnMaskSet) (string, error) {
-	if mask, ok := masks[strings.ToLower(strings.TrimSpace(ref))]; ok {
-		return mask.SQL(), nil
-	}
-	for _, dependency := range measurePhysicalFields(measure) {
-		if mask, ok := masks[strings.ToLower(strings.TrimSpace(dependency))]; ok {
-			return mask.SQL(), nil
-		}
-	}
-	return rawMeasureExpr(model, measure, aliases)
-}
-
-func measurePhysicalFields(measure ResolvedMeasure) []string {
+func aggregateMetricPhysicalFields(metric resolvedAggregateMetric) []string {
 	fields := []string{}
-	if measure.InputField != "" {
-		fields = append(fields, measure.InputField)
+	if metric.InputField != "" {
+		fields = append(fields, metric.InputField)
 	}
-	if measure.InputExpr != "" {
-		if measure.InputExpression != nil {
-			fields = append(fields, measure.InputExpression.References()...)
-		} else if expression, err := semanticmodel.ParseExpression(measure.InputExpr); err == nil {
-			fields = append(fields, expression.References()...)
-		}
-	}
-	for _, filter := range measure.Filters {
+	for _, filter := range metric.Filters {
 		if filter.Field != "" {
 			fields = append(fields, filter.Field)
 		}
@@ -385,49 +275,46 @@ func measurePhysicalFields(measure ResolvedMeasure) []string {
 	return fields
 }
 
-func filterFieldSet(view *queryView, filters []Filter) ([]string, error) {
-	fields := []string{}
-	for _, filter := range filters {
-		items, err := filterFields(view, filter)
-		if err != nil {
-			return nil, err
-		}
-		fields = append(fields, items...)
-	}
-	return fields, nil
-}
-
-func filterFields(view *queryView, filter Filter) ([]string, error) {
-	fields := []string{}
-	if filter.Spatial != nil {
-		for _, ref := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
-			field, _, err := view.ResolveDimensionRef(ref)
-			if err != nil {
-				return nil, err
+func filterFieldBindings(view *queryView, filters []Filter) ([]physicalFieldBinding, error) {
+	bindings := []physicalFieldBinding{}
+	var walk func(Filter) error
+	walk = func(filter Filter) error {
+		if filter.Spatial != nil {
+			for _, ref := range []string{filter.Spatial.LatitudeField, filter.Spatial.LongitudeField} {
+				field, _, path, err := view.ResolveDimensionRefPath(ref)
+				if err != nil {
+					return err
+				}
+				bindings = append(bindings, physicalFieldBinding{Field: field, Path: path})
 			}
-			fields = append(fields, field)
 		}
+		if filter.Field != "" {
+			field, _, path, err := view.ResolveDimensionRefPath(filter.Field)
+			if err != nil {
+				return err
+			}
+			bindings = append(bindings, physicalFieldBinding{Field: field, Path: path})
+		}
+		for _, group := range filter.Groups {
+			for _, child := range group.Filters {
+				if err := walk(child); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
-	if filter.Field != "" {
-		field, _, err := view.ResolveDimensionRef(filter.Field)
-		if err != nil {
+	for _, filter := range filters {
+		if err := walk(filter); err != nil {
 			return nil, err
 		}
-		fields = append(fields, field)
 	}
-	for _, group := range filter.Groups {
-		items, err := filterFieldSet(view, group.Filters)
-		if err != nil {
-			return nil, err
-		}
-		fields = append(fields, items...)
-	}
-	return fields, nil
+	return bindings, nil
 }
 
 func allowedTimeGrain(grain string) bool {
 	switch grain {
-	case "day", "week", "month", "quarter", "year":
+	case "second", "minute", "hour", "day", "week", "month", "quarter", "year":
 		return true
 	default:
 		return false
@@ -464,48 +351,11 @@ func addOutputColumn(columns map[string]bool, alias string) error {
 	return nil
 }
 
-func sortSQL(sorts []Sort, columns map[string]bool) ([]string, error) {
-	parts := make([]string, 0, len(sorts))
-	for _, sort := range sorts {
-		field, err := quoteIdent(sort.Field)
-		if err != nil {
-			return nil, err
-		}
-		if !columns[field] {
-			return nil, fmt.Errorf("sort field %q is not a selected output alias", sort.Field)
-		}
-		direction := "ASC"
-		switch {
-		case sort.Direction == "" || strings.EqualFold(sort.Direction, "asc"):
-			direction = "ASC"
-		case strings.EqualFold(sort.Direction, "desc"):
-			direction = "DESC"
-		default:
-			return nil, fmt.Errorf("unsupported sort direction %q", sort.Direction)
-		}
-		parts = append(parts, field+" "+direction)
-	}
-	return parts, nil
-}
-
-func writeOrderLimitOffset(sql *strings.Builder, sorts []Sort, columns map[string]bool, limit, offset int) error {
-	effective := effectiveOrderSorts(sorts, columns)
-	if len(effective) > 0 {
-		parts, err := sortSQL(effective, columns)
-		if err != nil {
-			return err
-		}
-		sql.WriteString("\nORDER BY ")
-		sql.WriteString(strings.Join(parts, ", "))
-	}
-	return writeLimitOffset(sql, limit, offset)
-}
-
 // effectiveOrderSorts makes every paginated result deterministic. Explicit
 // sorts remain authoritative and selected output columns are appended as
 // ascending tie-breakers in deterministic alias order. Aggregate rows are
 // unique by their selected dimension tuple; a zero-dimension aggregate has one
-// row, so its measure ordering is deterministic but vacuous. Row/value plans
+// row, so its metric ordering is deterministic but vacuous. Row/value plans
 // also receive a stable order over their projected columns.
 func effectiveOrderSorts(sorts []Sort, columns map[string]bool) []Sort {
 	effective := append([]Sort(nil), sorts...)
@@ -525,17 +375,4 @@ func effectiveOrderSorts(sorts []Sort, columns map[string]bool) []Sort {
 		effective = append(effective, Sort{Field: field, Direction: "asc"})
 	}
 	return effective
-}
-
-func writeLimitOffset(sql *strings.Builder, limit, offset int) error {
-	if limit > 0 {
-		sql.WriteString(fmt.Sprintf("\nLIMIT %d", limit))
-	}
-	if offset > 0 {
-		if limit <= 0 {
-			return fmt.Errorf("offset requires limit")
-		}
-		sql.WriteString(fmt.Sprintf("\nOFFSET %d", offset))
-	}
-	return nil
 }

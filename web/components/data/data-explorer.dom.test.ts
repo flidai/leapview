@@ -340,7 +340,7 @@ test('data explorer prompts for a selection when objects are available', async (
           }],
           preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
           command: { offset: 0, limit: 100, start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
-          explore: { command: { dimensions: [], measures: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
+          explore: { command: { dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
           warnings: [],
         },
       })
@@ -370,7 +370,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         kind: 'data', title: 'Data Explorer', description: 'Inspect or explore data.', tabs: [],
       }
       const exploreCommand = {
-        modelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], measures: ['revenue'],
+        modelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: ['revenue'],
         filters: [], sort: [{ field: 'revenue', direction: 'desc' }], limit: 100, requestSeq: 1, resetVersion: 1, columnWidths: {},
       }
       const selectedObject = {
@@ -399,17 +399,17 @@ test('data explorer builds a governed semantic exploration and filter command', 
         command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
         explore: {
           command: exploreCommand,
-          models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 }] }],
-          datasets: [{ id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 }],
-          selectedModel: { id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 }] },
-          selectedDataset: { id: 'orders', title: 'Orders', grain: 'order_id', fieldCount: 3 },
+          models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] }],
+          datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }],
+          selectedModel: { id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] },
+          selectedDataset: { id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] },
           fields: [
             { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: false },
             { id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: true },
             { id: 'customers.customer_id', label: 'Customer ID', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'customers.state', label: 'State', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
             { id: 'items.sku', label: 'SKU', kind: 'dimension', modelTable: 'items', type: 'string', compatible: false, compatibilityReason: 'Not available from Orders because no grain-preserving relationship path reaches Items.', selected: false },
-            { id: 'revenue', label: 'Revenue', kind: 'measure', modelTable: 'orders', type: 'sum', compatible: true, selected: true },
+            { id: 'revenue', label: 'Revenue', kind: 'metric', modelTable: 'orders', type: 'sum', compatible: true, selected: true },
           ],
           result: {
             columns: [{ key: 'status', label: 'Status' }, { key: 'revenue', label: 'Revenue', type: 'decimal' }],
@@ -470,7 +470,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
       const unavailableField = { disabled: skuField.disabled, text: skuField.textContent?.replace(/\s+/g, ' ').trim(), title: skuField.title }
 
       const customerCommand = {
-        ...exploreCommand, datasetId: 'customers', dimensions: ['customers.state'], measures: [], sort: [], requestSeq: 100, resetVersion: 100,
+        ...exploreCommand, datasetId: 'customers', dimensions: ['customers.state'], metrics: [], sort: [], requestSeq: 100, resetVersion: 100,
       }
       const customerExplorer = {
         ...dataExplorer,
@@ -480,7 +480,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
         explore: {
           ...dataExplorer.explore,
           command: customerCommand,
-          selectedDataset: { id: 'customers', title: 'Customers', grain: 'customer_id', fieldCount: 1 },
+          selectedDataset: { id: 'customers', title: 'Customers', grainEntity: 'customer_id', grainFields: ['customer_id'], fieldCount: 1, entities: [] },
           fields: [
             { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Order ID and change grain from Customers to Orders.', selected: false },
             { id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Status and change grain from Customers to Orders.', selected: false },
@@ -530,7 +530,7 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.rebaseCommand.dimensions).toEqual(['customers.state', 'orders.status'])
     expect(state.tableSelectionCommand.datasetId).toBe('customers')
     expect(state.tableSelectionCommand.dimensions).toEqual(['customers.customer_id', 'customers.state'])
-    expect(state.tableSelectionCommand.measures).toEqual([])
+    expect(state.tableSelectionCommand.metrics).toEqual([])
     expect(state.commands.some((command) => command.explore?.dimensions?.includes('items.sku'))).toBe(false)
     expect(state.commands.some((command) => command.mode === 'explore' && command.explore?.dimensions?.includes('orders.order_id'))).toBe(true)
     expect(state.commands.some((command) => command.explore?.filters?.[0]?.field === 'orders.status' && command.explore.filters[0].values[0] === 'delivered')).toBe(true)

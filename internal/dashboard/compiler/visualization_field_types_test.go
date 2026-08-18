@@ -10,11 +10,11 @@ import (
 )
 
 func TestCompiledKPIFieldRetainsSemanticPresentation(t *testing.T) {
-	model := &semanticmodel.Model{Measures: map[string]semanticmodel.MetricMeasure{
+	model := &semanticmodel.Model{Metrics: map[string]semanticmodel.Metric{
 		"revenue": {Label: "Revenue", Aggregation: "sum", Unit: "R$", Format: "currency"},
 	}}
 	authored := dashboardauthoring.Visual{Type: "kpi", Query: dashboardauthoring.VisualQuery{
-		Measures: []dashboardauthoring.FieldRef{{Field: "revenue"}},
+		Metrics: []dashboardauthoring.FieldRef{{Field: "revenue"}},
 	}}
 
 	spec, err := compileBuiltInVisualizationSpec("revenue", authored, model)
@@ -43,10 +43,10 @@ func TestCompiledCategoricalFieldRetainsStringType(t *testing.T) {
 		Tables: map[string]semanticmodel.Table{
 			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"month": {Label: "Month", Type: "string"}}},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"revenue": {Aggregation: "sum", Format: "currency"}},
+		Metrics: map[string]semanticmodel.Metric{"revenue": {Aggregation: "sum", Format: "currency"}},
 	}
 	authored := dashboardauthoring.Visual{Type: "line", Query: dashboardauthoring.VisualQuery{
-		Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}}, Measures: []dashboardauthoring.FieldRef{{Field: "revenue"}},
+		Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}}, Metrics: []dashboardauthoring.FieldRef{{Field: "revenue"}},
 	}}
 	spec, err := compileBuiltInVisualizationSpec("revenue", authored, model)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestCompiledGaugeRetainsTruthfulDomainAndTarget(t *testing.T) {
 			Target:  &target,
 		},
 		Query: dashboardauthoring.VisualQuery{
-			Measures: []dashboardauthoring.FieldRef{{Field: "review_score"}},
+			Metrics: []dashboardauthoring.FieldRef{{Field: "review_score"}},
 		},
 	}
 
@@ -94,14 +94,14 @@ func TestCompiledGaugeRetainsTruthfulDomainAndTarget(t *testing.T) {
 func TestCompiledMultiMeasureValueDoesNotClaimOneMeasureFormat(t *testing.T) {
 	model := &semanticmodel.Model{
 		Tables: map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"month": {Type: "string"}}}},
-		Measures: map[string]semanticmodel.MetricMeasure{
+		Metrics: map[string]semanticmodel.Metric{
 			"revenue": {Aggregation: "sum", Format: "currency"},
 			"orders":  {Aggregation: "count", Format: "integer"},
 		},
 	}
 	authored := dashboardauthoring.Visual{Type: "combo", Query: dashboardauthoring.VisualQuery{
 		Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}},
-		Measures:   []dashboardauthoring.FieldRef{{Field: "revenue"}, {Field: "orders"}},
+		Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue"}, {Field: "orders"}},
 	}}
 	spec, err := compileBuiltInVisualizationSpec("summary", authored, model)
 	if err != nil {
@@ -114,10 +114,68 @@ func TestCompiledMultiMeasureValueDoesNotClaimOneMeasureFormat(t *testing.T) {
 	}
 }
 
+func TestCompiledMultiMeasureRejectsDecimalFloatMix(t *testing.T) {
+	model := &semanticmodel.Model{
+		Tables: map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{
+			"exact": {Datatype: semanticmodel.DataTypeDecimal}, "approx": {Datatype: semanticmodel.DataTypeFloat}, "count": {Datatype: semanticmodel.DataTypeInteger},
+		}}},
+		Metrics: map[string]semanticmodel.Metric{
+			"exact":  {Type: "aggregate", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.exact"}},
+			"approx": {Type: "aggregate", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.approx"}},
+			"count":  {Type: "aggregate", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.count"}},
+		},
+	}
+	authored := dashboardauthoring.Visual{Type: "combo", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "exact"}, {Field: "approx"}}}}
+	if err := validateVisualizationMetricTypes(authored, model); err == nil || !strings.Contains(err.Error(), "cannot mix Float with exact numeric") {
+		t.Fatalf("validateVisualizationMetricTypes() error = %v, want Decimal/Float rejection", err)
+	}
+
+	authored.Query.Metrics = []dashboardauthoring.FieldRef{{Field: "exact"}, {Field: "count"}}
+	if err := validateVisualizationMetricTypes(authored, model); err != nil {
+		t.Fatalf("Decimal/Integer mix rejected: %v", err)
+	}
+	// Float mixed with Integer is also rejected: a normalized value column
+	// cannot preserve the Integer transport without an explicit series type.
+	authored.Query.Metrics = []dashboardauthoring.FieldRef{{Field: "approx"}, {Field: "count"}}
+	if err := validateVisualizationMetricTypes(authored, model); err == nil || !strings.Contains(err.Error(), "cannot mix Float with exact numeric") {
+		t.Fatalf("Float/Integer mix error = %v, want rejection", err)
+	}
+
+	authored.Query.Metrics = []dashboardauthoring.FieldRef{{Field: "exact"}, {Field: "count"}}
+	spec, err := compileBuiltInVisualizationSpec("combo", authored, model)
+	if err != nil {
+		t.Fatalf("Decimal/Integer combo compile: %v", err)
+	}
+	base, err := visualizationir.SpecificationBase(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range base.Datasets[0].Fields {
+		if field.ID == "value" && field.DataType != visualizationir.VisualizationDataTypeDecimal {
+			t.Fatalf("Decimal/Integer value datatype = %q, want decimal", field.DataType)
+		}
+	}
+
+	authored.Query.Metrics = []dashboardauthoring.FieldRef{{Field: "count"}}
+	spec, err = compileBuiltInVisualizationSpec("combo", authored, model)
+	if err != nil {
+		t.Fatalf("Integer-only multi-measure compile: %v", err)
+	}
+	base, err = visualizationir.SpecificationBase(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range base.Datasets[0].Fields {
+		if field.ID == "value" && field.DataType != visualizationir.VisualizationDataTypeInteger {
+			t.Fatalf("Integer-only value datatype = %q, want integer", field.DataType)
+		}
+	}
+}
+
 func TestCompiledDimensionFormatPreservesSemanticScalarTypes(t *testing.T) {
 	t.Parallel()
 	for semanticType, want := range map[string]string{
-		"string": "", "number": "decimal", "boolean": "boolean", "date": "date", "timestamp": "timestamp",
+		string(semanticmodel.DataTypeString): "", string(semanticmodel.DataTypeInteger): "decimal", string(semanticmodel.DataTypeDecimal): "decimal", string(semanticmodel.DataTypeFloat): "decimal", string(semanticmodel.DataTypeBoolean): "boolean", string(semanticmodel.DataTypeDate): "date", string(semanticmodel.DataTypeDateTime): "timestamp",
 	} {
 		if got := compiledDimensionFormat(semanticType); got != want {
 			t.Errorf("compiledDimensionFormat(%q) = %q, want %q", semanticType, got, want)
@@ -129,7 +187,7 @@ func TestCompiledHierarchyRejectsReservedFrameAliases(t *testing.T) {
 	t.Parallel()
 	authored := dashboardauthoring.Visual{Title: "Hierarchy", Type: "tree", Query: dashboardauthoring.VisualQuery{
 		Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.category", Alias: "node"}},
-		Measures:   []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
+		Metrics:    []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "value"}},
 	}}
 	_, err := compileBuiltInVisualizationSpec("hierarchy", authored, nil)
 	if err == nil || !strings.Contains(err.Error(), `alias "node" conflicts with a reserved frame field`) {
@@ -142,7 +200,7 @@ func TestCompiledHierarchyFrameBudgetAccountsForMaterializedAncestors(t *testing
 
 	authored := dashboardauthoring.Visual{Title: "Hierarchy", Type: "treemap", Query: dashboardauthoring.VisualQuery{
 		Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.category", Alias: "category"}, {Field: "orders.status", Alias: "status"}},
-		Measures:   []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "order_count"}},
+		Metrics:    []dashboardauthoring.FieldRef{{Field: "order_count", Alias: "order_count"}},
 		Limit:      80,
 	}}
 	spec, err := compileBuiltInVisualizationSpec("hierarchy", authored, nil)
@@ -163,7 +221,7 @@ func TestCompiledMultiMeasureFrameBudgetAccountsForNormalizedSeriesRows(t *testi
 
 	authored := dashboardauthoring.Visual{Title: "Revenue and orders", Type: "combo", Query: dashboardauthoring.VisualQuery{
 		Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month", Alias: "month"}},
-		Measures: []dashboardauthoring.FieldRef{
+		Metrics: []dashboardauthoring.FieldRef{
 			{Field: "revenue", Alias: "revenue"},
 			{Field: "order_count", Alias: "order_count"},
 		},
@@ -178,13 +236,13 @@ func TestCompiledMultiMeasureFrameBudgetAccountsForNormalizedSeriesRows(t *testi
 		t.Fatal(err)
 	}
 	if got, want := base.DataBudget.MaxRows, int64(60); got != want {
-		t.Fatalf("multi-measure frame budget = %d, want %d", got, want)
+		t.Fatalf("multi-metric frame budget = %d, want %d", got, want)
 	}
 }
 
 func TestCompiledPhysicalFieldFormatUsesMeasureSemanticsWhenModelTypeIsUnknown(t *testing.T) {
-	model := &semanticmodel.Model{Measures: map[string]semanticmodel.MetricMeasure{
-		"revenue": {Input: semanticmodel.MeasureInput{Field: "orders.revenue"}, Aggregation: "sum", Format: "currency"},
+	model := &semanticmodel.Model{Metrics: map[string]semanticmodel.Metric{
+		"revenue": {Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Aggregation: "sum", Format: "currency"},
 	}}
 	if got := compiledPhysicalFieldFormat(model, "orders.revenue", ""); got != "currency" {
 		t.Fatalf("compiledPhysicalFieldFormat = %q, want currency", got)
@@ -192,8 +250,8 @@ func TestCompiledPhysicalFieldFormatUsesMeasureSemanticsWhenModelTypeIsUnknown(t
 }
 
 func TestCompiledPhysicalFieldFormatDoesNotTreatCountIdentityAsNumeric(t *testing.T) {
-	model := &semanticmodel.Model{Measures: map[string]semanticmodel.MetricMeasure{
-		"orders": {Input: semanticmodel.MeasureInput{Field: "orders.order_id"}, Aggregation: "count_distinct"},
+	model := &semanticmodel.Model{Metrics: map[string]semanticmodel.Metric{
+		"orders": {Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Aggregation: "count_distinct"},
 	}}
 	if got := compiledPhysicalFieldFormat(model, "orders.order_id", ""); got != "" {
 		t.Fatalf("compiledPhysicalFieldFormat = %q, want string default", got)

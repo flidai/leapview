@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,17 @@ type DataRuntimeSnapshot interface {
 
 type DataRuntimeReadConcurrency interface {
 	ReadConcurrency() int
+}
+
+type DataRuntimeSemanticVerifier interface {
+	VerifySemantic(context.Context) error
+}
+
+// DataRuntimePlanner exposes the immutable planner compiled for the active
+// serving generation. Dashboard optimization must consume this port instead
+// of compiling a second planner from the model projection.
+type DataRuntimePlanner interface {
+	Planner() consumer.Planner
 }
 
 type setupRequiredError interface {
@@ -199,11 +211,7 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 		visualizations: service.visualizations,
 	}
 	for modelID, model := range definition.Models() {
-		optimizer, err := consumer.NewOptimizer(model)
-		if err != nil {
-			return nil, fmt.Errorf("compile semantic model %q: %w", modelID, err)
-		}
-		service.runtimes[modelID] = &modelRuntime{model: model, optimizer: optimizer}
+		service.runtimes[modelID] = &modelRuntime{model: model}
 	}
 	dataRuntimes, err := factory.OpenDashboardProjectDataRuntimes(ctx, ProjectDataRuntimeConfig{
 		Definition: definition,
@@ -223,7 +231,16 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 		if !ok {
 			return nil, fmt.Errorf("project data runtime missing semantic model %q", modelID)
 		}
+		plannerPort, ok := dataRuntime.(DataRuntimePlanner)
+		if !ok || plannerPort.Planner() == nil {
+			return nil, fmt.Errorf("semantic model %q runtime does not provide compiled planner", modelID)
+		}
+		optimizer, err := consumer.NewOptimizerFromPlanner(plannerPort.Planner())
+		if err != nil {
+			return nil, fmt.Errorf("bind semantic model %q planner: %w", modelID, err)
+		}
 		runtime.data = newGovernedDataRuntime(identity.ProjectID, modelID, dataRuntime)
+		runtime.optimizer = optimizer
 		runtime.ready = true
 	}
 	for modelID := range dataRuntimes {
@@ -232,6 +249,29 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 		}
 	}
 	return service, nil
+}
+
+// Planner returns the activation-owned planner for one semantic model.
+func (m *Service) Planner(modelID string) (consumer.Planner, bool) {
+	if m == nil {
+		return nil, false
+	}
+	id, err := projectgraph.NewResourceID(modelID)
+	if err != nil {
+		return nil, false
+	}
+	m.mu.RLock()
+	runtime, ok := m.runtimes[id]
+	m.mu.RUnlock()
+	if !ok || runtime == nil || runtime.data == nil {
+		return nil, false
+	}
+	port, ok := runtime.data.(DataRuntimePlanner)
+	if !ok {
+		return nil, false
+	}
+	planner := port.Planner()
+	return planner, planner != nil
 }
 
 func (m *Service) Close() error {
@@ -255,8 +295,16 @@ func (m *Service) Verify(ctx context.Context) error {
 		return err
 	}
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	runtimes := make(map[projectgraph.ResourceID]*modelRuntime, len(m.runtimes))
+	modelIDs := make([]projectgraph.ResourceID, 0, len(m.runtimes))
 	for modelID, runtime := range m.runtimes {
+		modelIDs = append(modelIDs, modelID)
+		runtimes[modelID] = runtime
+	}
+	m.mu.RUnlock()
+	sort.Slice(modelIDs, func(i, j int) bool { return modelIDs[i] < modelIDs[j] })
+	for _, modelID := range modelIDs {
+		runtime := runtimes[modelID]
 		if runtime == nil || !runtime.ready || runtime.data == nil {
 			if runtime != nil && runtime.missing != nil {
 				return fmt.Errorf(
@@ -266,6 +314,13 @@ func (m *Service) Verify(ctx context.Context) error {
 				)
 			}
 			return fmt.Errorf("semantic model %q is unavailable", modelID)
+		}
+		verifier, ok := runtime.data.(DataRuntimeSemanticVerifier)
+		if !ok {
+			return fmt.Errorf("semantic model %q does not support semantic verification", modelID)
+		}
+		if err := verifier.VerifySemantic(ctx); err != nil {
+			return fmt.Errorf("semantic model %q verification failed: %w", modelID, err)
 		}
 	}
 	return nil

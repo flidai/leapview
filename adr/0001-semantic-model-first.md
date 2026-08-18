@@ -6,6 +6,9 @@ Decision date: 2026-06-18
 
 Implementation: complete
 
+Amended by: [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md), authored
+semantic shape and quantitative-member vocabulary only
+
 Deciders: LeapView maintainers
 
 ## Summary
@@ -57,13 +60,14 @@ sources:
 models:
   orders:
     sources: [olist_orders]
-    sql: |
-      SELECT
-        order_id,
-        customer_id,
-        CAST(order_purchase_timestamp AS TIMESTAMP) AS purchase_timestamp,
-        order_status AS status
-      FROM source.olist_orders
+    transform:
+      sql: |
+        SELECT
+          order_id,
+          customer_id,
+          CAST(order_purchase_timestamp AS TIMESTAMP) AS purchase_timestamp,
+          order_status AS status
+        FROM source.olist_orders
 
 semantic_models:
   olist:

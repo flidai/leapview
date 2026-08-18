@@ -586,9 +586,9 @@
     --lv-asset-filter-bg: var(--label-pine-bgColor-rest);
     --lv-asset-filter-accent: var(--label-pine-fgColor-rest);
     --lv-asset-filter-border: var(--label-pine-borderColor);
-    --lv-asset-measure-bg: var(--label-green-bgColor-rest);
-    --lv-asset-measure-accent: var(--label-green-fgColor-rest);
-    --lv-asset-measure-border: var(--label-green-borderColor);
+    --lv-asset-metric-bg: var(--label-green-bgColor-rest);
+    --lv-asset-metric-accent: var(--label-green-fgColor-rest);
+    --lv-asset-metric-border: var(--label-green-borderColor);
     --lv-asset-model-table-bg: var(--label-auburn-bgColor-rest);
     --lv-asset-model-table-accent: var(--label-auburn-fgColor-rest);
     --lv-asset-model-table-border: var(--label-auburn-borderColor);

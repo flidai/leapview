@@ -16,7 +16,7 @@ func TestDashboardVisualAgentProjectionUsesCanonicalSpecKind(t *testing.T) {
 		Datasets: []visualizationir.VisualizationDatasetSchema{{
 			ID: "primary",
 			Fields: []visualizationir.VisualizationField{{
-				ID: "value", Label: "Revenue", Role: visualizationir.VisualizationFieldRoleMeasure,
+				ID: "value", Label: "Revenue", Role: visualizationir.VisualizationFieldRoleMetric,
 				DataType: visualizationir.VisualizationDataTypeDecimal,
 			}},
 		}},

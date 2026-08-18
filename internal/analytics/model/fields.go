@@ -45,14 +45,27 @@ func (m *Model) ResolveRelationshipEndpoint(ref string) (MetricDimension, error)
 	return MetricDimension{}, fmt.Errorf("unknown relationship endpoint field %q on table %q", fieldName, tableName)
 }
 
-func (m *Model) ResolveMeasure(ref string) (MetricMeasure, error) {
-	measure, ok := m.Measures[ref]
+func (m *Model) ResolveMetric(ref string) (Metric, error) {
+	metric, ok := m.Metrics[ref]
 	if !ok {
-		return MetricMeasure{}, fmt.Errorf("unknown measure %q", ref)
+		return Metric{}, fmt.Errorf("unknown metric %q", ref)
 	}
-	measure.Field = ref
-	measure.Name = ref
-	return measure, nil
+	metric.Name = ref
+	return metric, nil
+}
+
+func (m *Model) ResolveAggregateMetric(ref string) (Metric, error) {
+	metric, err := m.ResolveMetric(ref)
+	if err != nil {
+		return Metric{}, err
+	}
+	if metric.Type != "aggregate" {
+		return Metric{}, fmt.Errorf("metric %q is not aggregate", ref)
+	}
+	if metric.Input == nil || strings.TrimSpace(metric.Input.Field) == "" {
+		return Metric{}, fmt.Errorf("metric %q aggregate input is required", ref)
+	}
+	return metric, nil
 }
 
 func (m *Model) ResolveSemanticDimension(ref string) (SemanticDimension, error) {
@@ -73,23 +86,20 @@ func (m *Model) ValidateQueryDimension(ref string) error {
 }
 
 func (m *Model) ValidateAggregateMember(ref string) error {
-	if _, ok := m.Measures[ref]; ok {
-		return nil
-	}
 	if _, ok := m.Metrics[ref]; ok {
 		return nil
 	}
-	return fmt.Errorf("unknown measure or metric %q", ref)
+	return fmt.Errorf("unknown metric or metric %q", ref)
 }
 
-func (m *Model) ResolveField(ref string) (MetricDimension, MetricMeasure, string, error) {
+func (m *Model) ResolveField(ref string) (MetricDimension, Metric, string, error) {
 	if dimension, err := m.ResolveDimension(ref); err == nil {
-		return dimension, MetricMeasure{}, "dimension", nil
+		return dimension, Metric{}, "dimension", nil
 	}
-	if measure, err := m.ResolveMeasure(ref); err == nil {
-		return MetricDimension{}, measure, "measure", nil
+	if metric, err := m.ResolveMetric(ref); err == nil {
+		return MetricDimension{}, metric, "metric", nil
 	}
-	return MetricDimension{}, MetricMeasure{}, "", fmt.Errorf("unknown field %q", ref)
+	return MetricDimension{}, Metric{}, "", fmt.Errorf("unknown field %q", ref)
 }
 
 func splitSemanticField(ref string) (string, string, error) {

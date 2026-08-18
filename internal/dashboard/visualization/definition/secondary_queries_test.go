@@ -16,11 +16,11 @@ func TestNewWithSecondaryQueriesOwnsEveryDataset(t *testing.T) {
 			Datasets: []ir.VisualizationDatasetSchema{
 				{ID: "primary", Fields: []ir.VisualizationField{
 					{ID: "label", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Label: "Month"},
-					{ID: "value", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Label: "Revenue"},
+					{ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Label: "Revenue"},
 				}},
 				{ID: "context", Fields: []ir.VisualizationField{
 					{ID: "region", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Label: "Region"},
-					{ID: "target", Role: ir.VisualizationFieldRoleMeasure, DataType: ir.VisualizationDataTypeDecimal, Label: "Target"},
+					{ID: "target", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Label: "Target"},
 				}},
 			},
 			DataBudget:    ir.VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: ir.VisualizationCompletenessComplete},
@@ -45,14 +45,14 @@ func TestNewWithSecondaryQueriesOwnsEveryDataset(t *testing.T) {
 		Kind: QueryAggregate, ResultShape: ResultCategoryValue, ModelID: "sales", DatasetID: "primary",
 		Aggregate: &AggregateQueryBinding{
 			Dimensions: []FieldBinding{{FieldID: "orders.month", Alias: "label"}},
-			Measures:   []FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100,
+			Metrics:    []FieldBinding{{FieldID: "revenue", Alias: "value"}}, Limit: 100,
 		},
 	}
 	context := QueryBinding{
 		Kind: QueryAggregate, ResultShape: ResultCategoryMultiMeasure, ModelID: "sales", DatasetID: "context",
 		Aggregate: &AggregateQueryBinding{
 			Dimensions: []FieldBinding{{FieldID: "orders.region", Alias: "region"}},
-			Measures:   []FieldBinding{{FieldID: "target_revenue", Alias: "target"}}, Limit: 1,
+			Metrics:    []FieldBinding{{FieldID: "target_revenue", Alias: "target"}}, Limit: 1,
 		},
 	}
 	if _, err := NewWithSecondaryQueries("revenue", spec, primary, map[string]QueryBinding{"context": context}); err != nil {

@@ -13,7 +13,7 @@ import (
 func TestDashboardContractConversionsPreserveJSON(t *testing.T) {
 	t.Parallel()
 
-	selections := []dashboard.InteractionSelection{{ID: "visual:orders:point", SourceKind: "visual", SourceID: "orders", InteractionKind: "point", Label: "42", Order: 1, Entries: []dashboard.InteractionSelectionEntry{{Label: "42", Mappings: []dashboard.InteractionSelectionMapping{{Field: "ratings.rating_bucket", Fact: "ratings", Value: float64(42), Label: "Rating"}}}}}}
+	selections := []dashboard.InteractionSelection{{ID: "visual:orders:point", SourceKind: "visual", SourceID: "orders", InteractionKind: "point", Label: "42", Order: 1, Entries: []dashboard.InteractionSelectionEntry{{Label: "42", Mappings: []dashboard.InteractionSelectionMapping{{Field: "ratings.rating_bucket", Dataset: "ratings", Value: float64(42), Label: "Rating"}}}}}}
 	assertSameJSON(t, selections, DashboardInteractionSelectionsFromDashboard(selections))
 	spatial := []dashboard.SpatialInteractionSelection{}
 	assertSameJSON(t, spatial, DashboardSpatialSelectionsFromDashboard(spatial))

@@ -218,7 +218,7 @@ func restrictCanonicalVisual(node *yaml.Node) {
 		allowed = map[string]struct{}{
 			"title": {}, "subtitle": {}, "description": {}, "type": {}, "query": {},
 			"default_sort": {}, "presentation": {}, "columns": {}, "interaction": {},
-			"measure_formatting": {}, "conditional_formatting": {}, "calculations": {},
+			"metric_formatting": {}, "conditional_formatting": {}, "calculations": {},
 		}
 	}
 	deleteYAMLMapKeys(node, allowed)

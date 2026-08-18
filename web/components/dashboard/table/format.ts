@@ -40,14 +40,14 @@ export function formatCell(value: unknown, column: TableColumn): string {
 }
 
 function inferredFormat(column: TableColumn): string {
-  if (column.key === 'revenue' || column.measure === 'revenue') return 'currency'
+	if (column.key === 'revenue' || column.metric === 'revenue') return 'currency'
   if (column.key === 'review_score') return 'decimal'
   if (column.key === 'delivery_days') return 'days'
   return ''
 }
 
 export function defaultDirection(column: TableColumn): 'asc' | 'desc' {
-  return ['revenue', 'review_score', 'delivery_days', 'purchase_date'].includes(column.key) || column.role === 'measure' ? 'desc' : 'asc'
+  return ['revenue', 'review_score', 'delivery_days', 'purchase_date'].includes(column.key) || column.role === 'metric' ? 'desc' : 'asc'
 }
 
 export function rowKey(row: TableRow, fallback: number): string {

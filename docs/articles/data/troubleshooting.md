@@ -82,7 +82,7 @@ Reproduce with the same source revision in development. Add defensive casts only
 
 ## Refresh succeeds but results are wrong
 
-Treat this as a data correctness incident, not a rendering issue. Compare row count, primary-key uniqueness, null rates, field types, and trusted aggregate totals. Check joins for fact multiplication and verify relationship cardinality.
+Treat this as a data correctness incident, not a rendering issue. Compare row count, primary-key uniqueness, null rates, field types, and trusted aggregate totals. Check joins for dataset-row multiplication and verify relationship endpoint keys.
 
 Use semantic preview/query and explain commands to isolate the model from the dashboard. If direct semantic results are correct, then inspect dashboard filters, selections, aliases, sorting, and limits.
 

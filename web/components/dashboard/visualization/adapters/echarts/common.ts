@@ -47,7 +47,7 @@ export function formatDisplayField(
 ): string {
   if (value === null || value === undefined) return '—'
   const definition = field(envelope, ref)
-  if (definition && definition.dataType !== 'integer' && definition.dataType !== 'decimal') return formatField(envelope, ref, value, context)
+  if (definition && definition.dataType !== 'integer' && definition.dataType !== 'decimal' && definition.dataType !== 'float') return formatField(envelope, ref, value, context)
   return formatDisplayValue(context.locale, definition?.format ?? { kind: 'number' }, value, unit)
 }
 

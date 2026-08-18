@@ -10,7 +10,7 @@ func TestTurnContextItemsIncludeResolvedResourceReferences(t *testing.T) {
 	items := turnContextItems(&TurnContext{
 		Surface: "chat",
 		References: []TurnReference{{
-			Reference: TurnReferenceKey{Kind: "measure", ID: "orders.order_count"},
+			Reference: TurnReferenceKey{Kind: "metric", ID: "orders.order_count"},
 			Name:      "Order count",
 			Resource:  TurnReferenceResource{ID: "sales", Name: "Sales"},
 			ModelID:   "sales",
@@ -27,7 +27,7 @@ func TestTurnContextItemsIncludeResolvedResourceReferences(t *testing.T) {
 	}
 	input := string(payload)
 
-	for _, want := range []string{`"surface":"chat"`, `"kind":"measure"`, "Order count"} {
+	for _, want := range []string{`"surface":"chat"`, `"kind":"metric"`, "Order count"} {
 		if !strings.Contains(input, want) {
 			t.Fatalf("contextual input missing %q:\n%s", want, input)
 		}
@@ -52,7 +52,7 @@ func TestTurnContextItemsIncludeBoundedDataExploration(t *testing.T) {
 	items := turnContextItems(&TurnContext{
 		Surface: "data", ModelID: " commerce ", DatasetID: " orders ",
 		Exploration: &DataExploration{
-			Dimensions: []string{"orders.status", "orders.status", ""}, Measures: []string{"order_count"},
+			Dimensions: []string{"orders.status", "orders.status", ""}, Metrics: []string{"order_count"},
 			Filters: []DataExplorationFilter{{Field: " orders.status ", Operator: " EQUALS ", Values: []string{"delivered"}}},
 			Sort:    []DataExplorationSort{{Field: "order_count", Direction: "DESC"}}, Limit: 5000,
 		},

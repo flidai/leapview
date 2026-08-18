@@ -349,7 +349,7 @@ func compilerCode(err error) string {
 	message := err.Error()
 	switch {
 	case strings.Contains(message, "unknown dimension"),
-		strings.Contains(message, "unknown measure"),
+		strings.Contains(message, "unknown metric"),
 		strings.Contains(message, "unknown semantic model"),
 		strings.Contains(message, "unknown table"),
 		strings.Contains(message, "references unknown"):
@@ -420,7 +420,7 @@ var schemaOverlays = map[Kind]schemaOverlay{
 	KindSemanticModel: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
 		collections: []collectionRule{
-			definitionCollection("#ProjectSemanticModelSpec", "tables", collectionSequence),
+			definitionCollection("#ProjectSemanticModelSpec", "datasets", collectionMapping),
 		},
 	},
 	KindPipeline: {

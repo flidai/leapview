@@ -78,7 +78,7 @@ type agentVisualInput struct {
 	Presentation    agentVisualPresentation                `json:"presentation"`
 	Dimensions      []agentVisualFieldRef                  `json:"dimensions"`
 	Series          *agentVisualFieldRef                   `json:"series"`
-	Measures        []agentVisualFieldRef                  `json:"measures"`
+	Metrics         []agentVisualFieldRef                  `json:"metrics"`
 	Fields          []agentVisualFieldRef                  `json:"fields"`
 	Rows            []agentVisualFieldRef                  `json:"rows"`
 	Columns         []dashboard.TableColumn                `json:"columns"`
@@ -102,7 +102,7 @@ type agentVisualSort struct {
 
 type agentVisualFilter struct {
 	Field    string                   `json:"field,omitempty"`
-	Fact     string                   `json:"fact,omitempty"`
+	Dataset  string                   `json:"dataset,omitempty"`
 	Operator string                   `json:"operator,omitempty"`
 	Values   []string                 `json:"values,omitempty"`
 	Groups   []agentVisualFilterGroup `json:"groups,omitempty"`
@@ -234,7 +234,7 @@ func decodeAgentVisualInput(rawArgs json.RawMessage) (agentVisualInput, error) {
 	}
 	input.Dataset = stripCatalogRefString(input.Dataset, input.Model)
 	normalizeAgentVisualFieldRefs(input.Dimensions, input.Model)
-	normalizeAgentVisualFieldRefs(input.Measures, input.Model)
+	normalizeAgentVisualFieldRefs(input.Metrics, input.Model)
 	normalizeAgentVisualFieldRefs(input.Fields, input.Model)
 	normalizeAgentVisualFieldRefs(input.Rows, input.Model)
 	if input.Series != nil {
@@ -257,7 +257,7 @@ func decodeAgentVisualInput(rawArgs json.RawMessage) (agentVisualInput, error) {
 func normalizeAgentVisualFilters(filters []agentVisualFilter, modelID string) {
 	for index := range filters {
 		filters[index].Field = stripCatalogRefString(filters[index].Field, modelID)
-		filters[index].Fact = stripCatalogRefString(filters[index].Fact, modelID)
+		filters[index].Dataset = stripCatalogRefString(filters[index].Dataset, modelID)
 		filters[index].Operator = strings.ToLower(strings.TrimSpace(filters[index].Operator))
 		if filters[index].Operator == "" {
 			filters[index].Operator = "equals"
@@ -318,7 +318,7 @@ func agentVisualFilters(filters []agentVisualFilter) []reportdef.QueryFilter {
 			groups = append(groups, reportdef.QueryFilterGroup{Filters: agentVisualFilters(group.Filters)})
 		}
 		out = append(out, reportdef.QueryFilter{
-			Field: filter.Field, Fact: filter.Fact, Operator: filter.Operator, Values: values, Groups: groups,
+			Field: filter.Field, Dataset: filter.Dataset, Operator: filter.Operator, Values: values, Groups: groups,
 		})
 	}
 	return out
@@ -450,7 +450,7 @@ func agentVisualFieldUsages(projectID, modelID string, model *semanticmodel.Mode
 		ref  agentVisualFieldRef
 		role string
 	}
-	values := make([]fieldRole, 0, len(input.Dimensions)+len(input.Measures)+len(input.Fields)+len(input.Rows)+1)
+	values := make([]fieldRole, 0, len(input.Dimensions)+len(input.Metrics)+len(input.Fields)+len(input.Rows)+1)
 	for _, field := range input.Dimensions {
 		values = append(values, fieldRole{ref: field, role: "dimension"})
 	}
@@ -463,8 +463,8 @@ func agentVisualFieldUsages(projectID, modelID string, model *semanticmodel.Mode
 	for _, field := range input.Rows {
 		values = append(values, fieldRole{ref: field, role: "table_row"})
 	}
-	for _, field := range input.Measures {
-		values = append(values, fieldRole{ref: field, role: "measure"})
+	for _, field := range input.Metrics {
+		values = append(values, fieldRole{ref: field, role: "metric"})
 	}
 	out := make([]agentcontracts.QueryVisualFieldUsage, 0, len(values))
 	for _, value := range values {
@@ -491,14 +491,8 @@ func agentVisualFieldUsage(projectID, modelID string, model *semanticmodel.Model
 		usage.DataType = optionalString(dimension.Type)
 		return usage
 	}
-	if measure, err := model.ResolveMeasure(ref.Field); err == nil {
-		usage.Label = measureLabelForAgent(ref.Field, measure)
-		usage.Unit = optionalString(measure.Unit)
-		usage.Format = optionalString(measure.Format)
-		return usage
-	}
 	if metric, ok := model.Metrics[ref.Field]; ok {
-		usage.Label = firstNonEmpty(metric.Label, ref.Field)
+		usage.Label = metricLabelForAgent(ref.Field, metric)
 		usage.Unit = optionalString(metric.Unit)
 		usage.Format = optionalString(metric.Format)
 	}
@@ -534,9 +528,9 @@ func agentVisualFilterUsages(
 				path := append([]int32{}, groupPath...)
 				usage.Path = &path
 			}
-			if filter.Fact != "" {
-				factID := filter.Fact
-				usage.ResolvedFactID = &factID
+			if filter.Dataset != "" {
+				datasetID := filter.Dataset
+				usage.ResolvedDatasetID = &datasetID
 			}
 			out = append(out, usage)
 		}
@@ -569,10 +563,10 @@ func (p VisualProvider) queryAgentChart(ctx context.Context, projectID string, m
 	if err != nil {
 		return agentVisualResult{}, err
 	}
-	measure, _ := model.ResolveMeasure(input.Measures[0].Field)
+	metric, _ := model.Metrics[input.Metrics[0].Field]
 	title := input.Title
 	if title == "" {
-		title = measureLabelForAgent(input.Measures[0].Field, measure)
+		title = metricLabelForAgent(input.Metrics[0].Field, metric)
 	}
 	chartType := input.Type
 	authored := agentReportVisual(input)
@@ -617,9 +611,9 @@ func agentReportVisual(input agentVisualInput) dashboardauthoring.Visual {
 	for index, field := range input.Dimensions {
 		dimensions[index] = dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias}
 	}
-	measures := make([]dashboardauthoring.FieldRef, len(input.Measures))
-	for index, field := range input.Measures {
-		measures[index] = dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias}
+	metrics := make([]dashboardauthoring.FieldRef, len(input.Metrics))
+	for index, field := range input.Metrics {
+		metrics[index] = dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias}
 	}
 	series := dashboardauthoring.FieldRef{}
 	if input.Series != nil {
@@ -627,7 +621,7 @@ func agentReportVisual(input agentVisualInput) dashboardauthoring.Visual {
 	}
 	return dashboardauthoring.Visual{
 		Title: firstNonEmpty(input.Title, "Agent visual"), Type: input.Type, Presentation: input.Presentation,
-		Query:        dashboardauthoring.VisualQuery{Table: input.Dataset, Dimensions: dimensions, Series: series, Measures: measures, Limit: input.Limit},
+		Query:        dashboardauthoring.VisualQuery{Dataset: input.Dataset, Dimensions: dimensions, Series: series, Metrics: metrics, Limit: input.Limit},
 		Calculations: input.Calculations,
 	}
 }
@@ -660,7 +654,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 		}
 		binCount = max(5, min(60, binCount))
 		bins, err := p.Histogram(ctx, projectID, input.Model, reportdef.RawValueQuery{
-			Table: input.Dataset, Measure: reportdef.QueryField{Field: input.Measures[0].Field, Alias: "value"},
+			Dataset: input.Dataset, Metric: reportdef.QueryField{Field: input.Metrics[0].Field, Alias: "value"},
 			Filters: filters,
 		}, binCount)
 		if err != nil {
@@ -677,11 +671,11 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 			return nil, fmt.Errorf("distribution query provider is not configured")
 		}
 		rows, err := p.Distribution(ctx, projectID, input.Model, reportdef.RawValueQuery{
-			Table:      input.Dataset,
+			Dataset:    input.Dataset,
 			Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
-			Measure:    reportdef.QueryField{Field: input.Measures[0].Field, Alias: "value"},
+			Metric:     reportdef.QueryField{Field: input.Metrics[0].Field, Alias: "value"},
 			Filters:    filters,
-		}, agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Measures), input.Limit)
+		}, agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Metrics), input.Limit)
 		return agentDatums(rows), err
 	}
 	if p.AggregateRows == nil {
@@ -689,53 +683,53 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 	}
 	if shape == "single_value" {
 		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table:    input.Dataset,
-			Measures: []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
-			Filters:  filters,
-			Limit:    1,
+			Dataset: input.Dataset,
+			Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
+			Filters: filters,
+			Limit:   1,
 		})
 		if err != nil {
 			return nil, err
 		}
 		value := any(nil)
 		if len(rows) > 0 {
-			value = agentRowValue(rows[0], "value", input.Measures[0])
+			value = agentRowValue(rows[0], "value", input.Metrics[0])
 		}
-		return []dashboard.Datum{{"label": firstNonEmpty(input.Title, measureLabelForAgent(input.Measures[0].Field, mustResolveMeasure(model, input.Measures[0].Field))), "value": value}}, nil
+		return []dashboard.Datum{{"label": firstNonEmpty(input.Title, metricLabelForAgent(input.Metrics[0].Field, mustResolveMetric(model, input.Metrics[0].Field))), "value": value}}, nil
 	}
-	if shape == "category_multi_measure" || len(input.Measures) > 1 {
+	if shape == "category_multi_measure" || len(input.Metrics) > 1 {
 		if shape == "ohlc" {
 			aliases := []string{"open", "close", "low", "high"}
-			measures := make([]reportdef.QueryField, len(input.Measures))
-			for index, measure := range input.Measures {
-				measures[index] = reportdef.QueryField{Field: measure.Field, Alias: aliases[index]}
+			metrics := make([]reportdef.QueryField, len(input.Metrics))
+			for index, metric := range input.Metrics {
+				metrics[index] = reportdef.QueryField{Field: metric.Field, Alias: aliases[index]}
 			}
 			rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-				Table: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
-				Measures: measures, Filters: filters,
-				Sort: agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Measures), Limit: input.Limit,
+				Dataset: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
+				Metrics: metrics, Filters: filters,
+				Sort: agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Metrics), Limit: input.Limit,
 			})
 			return agentDatums(rows), err
 		}
 		out := []dashboard.Datum{}
-		for _, measureRef := range input.Measures {
+		for _, metricRef := range input.Metrics {
 			rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-				Table:      input.Dataset,
+				Dataset:    input.Dataset,
 				Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "label"}},
-				Measures:   []reportdef.QueryField{{Field: measureRef.Field, Alias: "value"}},
+				Metrics:    []reportdef.QueryField{{Field: metricRef.Field, Alias: "value"}},
 				Filters:    filters,
-				Sort:       agentVisualSorts(input.Sort, input.Dimensions, input.Series, []agentVisualFieldRef{measureRef}),
+				Sort:       agentVisualSorts(input.Sort, input.Dimensions, input.Series, []agentVisualFieldRef{metricRef}),
 				Limit:      input.Limit,
 			})
 			if err != nil {
 				return nil, err
 			}
-			measure, _ := model.ResolveMeasure(measureRef.Field)
+			metric, _ := model.Metrics[metricRef.Field]
 			for _, row := range rows {
 				out = append(out, dashboard.Datum{
 					"label":  agentRowValue(row, "label", input.Dimensions[0]),
-					"series": measureLabelForAgent(measureRef.Field, measure),
-					"value":  agentRowValue(row, "value", measureRef),
+					"series": metricLabelForAgent(metricRef.Field, metric),
+					"value":  agentRowValue(row, "value", metricRef),
 				})
 			}
 		}
@@ -747,7 +741,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 			dimensions[index] = reportdef.QueryField{Field: dimension.Field, Alias: fmt.Sprintf("level_%d", index)}
 		}
 		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table: input.Dataset, Dimensions: dimensions, Measures: []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
+			Dataset: input.Dataset, Dimensions: dimensions, Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
 			Filters: filters, Limit: input.Limit,
 		})
 		if err != nil {
@@ -771,18 +765,18 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 			left, right = "source", "target"
 		}
 		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table:      input.Dataset,
+			Dataset:    input.Dataset,
 			Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: left}, {Field: input.Dimensions[1].Field, Alias: right}},
-			Measures:   []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
+			Metrics:    []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
 			Filters:    filters, Limit: input.Limit,
 		})
 		return agentDatums(rows), err
 	}
 	if shape == "geo" {
 		rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "name"}},
-			Measures: []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
-			Filters:  filters, Limit: input.Limit,
+			Dataset: input.Dataset, Dimensions: []reportdef.QueryField{{Field: input.Dimensions[0].Field, Alias: "name"}},
+			Metrics: []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
+			Filters: filters, Limit: input.Limit,
 		})
 		return agentDatums(rows), err
 	}
@@ -791,11 +785,11 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 		dimensions = append(dimensions, reportdef.QueryField{Field: input.Series.Field, Alias: "series"})
 	}
 	rows, err := p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-		Table:      input.Dataset,
+		Dataset:    input.Dataset,
 		Dimensions: dimensions,
-		Measures:   []reportdef.QueryField{{Field: input.Measures[0].Field, Alias: "value"}},
+		Metrics:    []reportdef.QueryField{{Field: input.Metrics[0].Field, Alias: "value"}},
 		Filters:    filters,
-		Sort:       agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Measures),
+		Sort:       agentVisualSorts(input.Sort, input.Dimensions, input.Series, input.Metrics),
 		Limit:      input.Limit,
 	})
 	if err != nil {
@@ -803,7 +797,7 @@ func (p VisualProvider) agentChartData(ctx context.Context, projectID string, in
 	}
 	out := make([]dashboard.Datum, 0, len(rows))
 	for _, row := range rows {
-		datum := dashboard.Datum{"label": agentRowValue(row, "label", input.Dimensions[0]), "value": agentRowValue(row, "value", input.Measures[0])}
+		datum := dashboard.Datum{"label": agentRowValue(row, "label", input.Dimensions[0]), "value": agentRowValue(row, "value", input.Metrics[0])}
 		if input.Series != nil && input.Series.Field != "" {
 			datum["series"] = agentRowValue(row, "series", *input.Series)
 		}
@@ -855,15 +849,15 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 		return agentVisualResult{}, fmt.Errorf("semantic model ID: %w", err)
 	}
 	fields := input.Fields
-	aggregate := len(fields) == 0 && (len(input.Rows) > 0 || len(input.Measures) > 0)
+	aggregate := len(fields) == 0 && (len(input.Rows) > 0 || len(input.Metrics) > 0)
 	if len(fields) == 0 {
 		fields = append([]agentVisualFieldRef{}, input.Rows...)
-		fields = append(fields, input.Measures...)
+		fields = append(fields, input.Metrics...)
 	}
 	if len(fields) == 0 {
-		return agentVisualResult{}, fmt.Errorf("table requires fields, or rows and measures")
+		return agentVisualResult{}, fmt.Errorf("table requires fields, or rows and metrics")
 	}
-	dimensions, measures, columns, err := agentTableFields(model, fields, input.Columns)
+	dimensions, metrics, columns, err := agentTableFields(model, fields, input.Columns)
 	if err != nil {
 		return agentVisualResult{}, err
 	}
@@ -873,9 +867,9 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 			return agentVisualResult{}, fmt.Errorf("aggregate query provider is not configured")
 		}
 		rows, err = p.AggregateRows(ctx, projectID, input.Model, reportdef.AggregateQuery{
-			Table:      input.Dataset,
+			Dataset:    input.Dataset,
 			Dimensions: dimensions,
-			Measures:   measures,
+			Metrics:    metrics,
 			Filters:    agentVisualFilters(input.Filters),
 			Sort:       agentTableSorts(input.Sort, fields),
 			Limit:      input.Limit,
@@ -885,9 +879,9 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 			return agentVisualResult{}, fmt.Errorf("preview query provider is not configured")
 		}
 		rows, err = p.PreviewRows(ctx, projectID, input.Model, reportdef.RowQuery{
-			Table:      input.Dataset,
+			Dataset:    input.Dataset,
 			Dimensions: dimensions,
-			Measures:   measures,
+			Metrics:    metrics,
 			Filters:    agentVisualFilters(input.Filters),
 			Sort:       agentTableSorts(input.Sort, fields),
 			Limit:      input.Limit,
@@ -905,7 +899,7 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 	if len(input.Sort) > 0 {
 		sortSpec = dashboard.TableSort{Key: agentFieldAlias(input.Sort[0].Field), Direction: normalizedSortDirection(input.Sort[0].Direction)}
 	}
-	authored := dashboardauthoring.TableVisual{Title: title, DefaultSort: sortSpec, Style: dashboard.TableStyle{}.WithDefaults(), Columns: columns, Query: dashboardauthoring.TableQuery{Table: input.Dataset}, Calculations: input.Calculations}
+	authored := dashboardauthoring.TableVisual{Title: title, DefaultSort: sortSpec, Style: dashboard.TableStyle{}.WithDefaults(), Columns: columns, Query: dashboardauthoring.TableQuery{Dataset: input.Dataset}, Calculations: input.Calculations}
 	for _, field := range fields {
 		authored.DataColumns = append(authored.DataColumns, dashboardauthoring.FieldRef{Field: field.Field, Alias: agentFieldAliasForRef(field)})
 	}
@@ -917,8 +911,8 @@ func (p VisualProvider) queryAgentTable(ctx context.Context, projectID string, m
 		for _, field := range dimensions {
 			authored.Query.Rows = append(authored.Query.Rows, dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias})
 		}
-		for _, field := range measures {
-			authored.Query.Measures = append(authored.Query.Measures, dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias})
+		for _, field := range metrics {
+			authored.Query.Metrics = append(authored.Query.Metrics, dashboardauthoring.FieldRef{Field: field.Field, Alias: field.Alias})
 		}
 	}
 	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
@@ -1036,14 +1030,14 @@ func applyAgentTableCalculations(base visualizationir.VisualizationSpecBase, rec
 				format = kind
 			}
 		}
-		columns = append(columns, dashboard.TableColumn{Key: calculation.ID, Label: field.Label, Align: "right", Role: "measure", Measure: calculation.ID, Format: format})
+		columns = append(columns, dashboard.TableColumn{Key: calculation.ID, Label: field.Label, Align: "right", Role: "metric", Metric: calculation.ID, Format: format})
 	}
 	return out, columns, nil
 }
 
 func agentTableFields(model *semanticmodel.Model, fields []agentVisualFieldRef, overrides []dashboard.TableColumn) ([]reportdef.QueryField, []reportdef.QueryField, []dashboard.TableColumn, error) {
 	dimensions := []reportdef.QueryField{}
-	measures := []reportdef.QueryField{}
+	metrics := []reportdef.QueryField{}
 	columns := make([]dashboard.TableColumn, 0, len(fields))
 	overrideByKey := map[string]dashboard.TableColumn{}
 	for _, column := range overrides {
@@ -1061,14 +1055,14 @@ func agentTableFields(model *semanticmodel.Model, fields []agentVisualFieldRef, 
 			columns = append(columns, mergeAgentTableColumn(dashboard.TableColumn{Key: alias, Label: dimensionLabelForAgent(alias, dimension), Format: "text"}, overrideByKey[alias]))
 			continue
 		}
-		measure, err := model.ResolveMeasure(field.Field)
-		if err != nil {
+		metric, ok := model.Metrics[field.Field]
+		if !ok {
 			return nil, nil, nil, fmt.Errorf("unknown field %q", field.Field)
 		}
-		measures = append(measures, reportdef.QueryField{Field: field.Field, Alias: alias})
-		columns = append(columns, mergeAgentTableColumn(dashboard.TableColumn{Key: alias, Label: measureLabelForAgent(field.Field, measure), Align: "right", Role: "measure", Measure: alias, Format: measure.Format}, overrideByKey[alias]))
+		metrics = append(metrics, reportdef.QueryField{Field: field.Field, Alias: alias})
+		columns = append(columns, mergeAgentTableColumn(dashboard.TableColumn{Key: alias, Label: metricLabelForAgent(field.Field, metric), Align: "right", Role: "metric", Metric: alias, Format: metric.Format}, overrideByKey[alias]))
 	}
-	return dimensions, measures, columns, nil
+	return dimensions, metrics, columns, nil
 }
 
 func agentVisualLimit(limit int) int {
@@ -1078,7 +1072,7 @@ func agentVisualLimit(limit int) int {
 	return limit
 }
 
-func agentVisualSorts(sorts []agentVisualSort, dimensions []agentVisualFieldRef, series *agentVisualFieldRef, measures []agentVisualFieldRef) []reportdef.QuerySort {
+func agentVisualSorts(sorts []agentVisualSort, dimensions []agentVisualFieldRef, series *agentVisualFieldRef, metrics []agentVisualFieldRef) []reportdef.QuerySort {
 	if len(sorts) == 0 {
 		return []reportdef.QuerySort{{Field: "label", Direction: "asc"}}
 	}
@@ -1089,7 +1083,7 @@ func agentVisualSorts(sorts []agentVisualSort, dimensions []agentVisualFieldRef,
 			field = "label"
 		} else if series != nil && agentSortMatches(field, []agentVisualFieldRef{*series}) {
 			field = "series"
-		} else if agentSortMatches(field, measures) {
+		} else if agentSortMatches(field, metrics) {
 			field = "value"
 		}
 		out = append(out, reportdef.QuerySort{Field: field, Direction: normalizedSortDirection(sortSpec.Direction)})
@@ -1216,9 +1210,9 @@ func dimensionLabelForAgent(fallback string, dimension semanticmodel.MetricDimen
 	return fallback
 }
 
-func measureLabelForAgent(fallback string, measure semanticmodel.MetricMeasure) string {
-	if measure.Label != "" {
-		return measure.Label
+func metricLabelForAgent(fallback string, metric semanticmodel.Metric) string {
+	if metric.Label != "" {
+		return metric.Label
 	}
 	return fallback
 }
@@ -1232,9 +1226,8 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func mustResolveMeasure(model *semanticmodel.Model, field string) semanticmodel.MetricMeasure {
-	measure, _ := model.ResolveMeasure(field)
-	return measure
+func mustResolveMetric(model *semanticmodel.Model, field string) semanticmodel.Metric {
+	return model.Metrics[field]
 }
 
 func mergeAgentTableColumn(base, override dashboard.TableColumn) dashboard.TableColumn {
@@ -1253,8 +1246,8 @@ func mergeAgentTableColumn(base, override dashboard.TableColumn) dashboard.Table
 	if override.Group != "" {
 		base.Group = override.Group
 	}
-	if override.Measure != "" {
-		base.Measure = override.Measure
+	if override.Metric != "" {
+		base.Metric = override.Metric
 	}
 	if override.ColumnValue != "" {
 		base.ColumnValue = override.ColumnValue

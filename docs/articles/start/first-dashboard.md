@@ -48,17 +48,19 @@ dashboards/dashboards/executive-sales.yaml
 dashboards/access/*.yaml
 ```
 
-Read them from the outside in. The project discovers shared Olist inputs, model tables, the `sales` semantic model, refresh pipelines, dashboards, and access rules from one graph. The dashboard refers to fields and measures exposed by the `sales` semantic model.
+Read them from the outside in. The project discovers shared Olist inputs, model tables, the `sales` semantic model, refresh pipelines, dashboards, and access rules from one graph. The dashboard refers to fields and metrics exposed by the `sales` semantic model.
 
 ## Add a semantic metric
 
-Open `dashboards/semantic-models/sales.yaml`. Its `revenue` and `order_count` measures are the inputs to the existing average-order-value metric:
+Open `dashboards/semantic-models/sales.yaml`. Its `revenue` and `order_count` metrics are the inputs to the existing average-order-value metric:
 
 ```yaml
 metrics:
   aov:
+    type: ratio
     label: Average order value
-    expression: safe_divide(${revenue}, ${order_count})
+    numerator: revenue
+    denominator: order_count
     format: currency
 ```
 
@@ -80,7 +82,7 @@ Open `dashboards/dashboards/executive-sales.yaml`. Find the `aov_kpi` visual and
 aov_kpi:
   type: kpi
   query:
-    measures:
+    metrics:
       aov:
   presentation:
     note: Average revenue per completed order

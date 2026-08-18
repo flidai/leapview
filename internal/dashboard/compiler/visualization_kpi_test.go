@@ -14,15 +14,15 @@ func TestCompileKPIOwnsComparisonGoalAndTrendBindings(t *testing.T) {
 	authored := dashboardauthoring.Visual{
 		Type:  "kpi",
 		Title: "Revenue",
-		Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "revenue"}}},
+		Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "revenue"}}},
 		Datasets: map[string]dashboardauthoring.VisualQuery{
-			"comparison": {Measures: []dashboardauthoring.FieldRef{{Field: "prior_revenue", Alias: "value"}}, Limit: 1},
-			"goal":       {Measures: []dashboardauthoring.FieldRef{{Field: "target_revenue", Alias: "value"}}, Limit: 1},
+			"comparison": {Metrics: []dashboardauthoring.FieldRef{{Field: "prior_revenue", Alias: "value"}}, Limit: 1},
+			"goal":       {Metrics: []dashboardauthoring.FieldRef{{Field: "target_revenue", Alias: "value"}}, Limit: 1},
 			"trend": {
-				Time:     dashboardauthoring.QueryTime{Field: "orders.created_at", Grain: "month", Alias: "period"},
-				Measures: []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "value"}},
-				Sort:     []dashboardauthoring.Sort{{Field: "period", Direction: "asc"}},
-				Limit:    12,
+				Time:    dashboardauthoring.QueryTime{Field: "orders.created_at", Grain: "month", Alias: "period"},
+				Metrics: []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "value"}},
+				Sort:    []dashboardauthoring.Sort{{Field: "period", Direction: "asc"}},
+				Limit:   12,
 			},
 		},
 		KPI: dashboardauthoring.VisualKPI{
@@ -72,7 +72,7 @@ func TestCompileKPIDefaultsRemainExplicit(t *testing.T) {
 
 	authored := dashboardauthoring.Visual{
 		Type:  "kpi",
-		Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "revenue"}}},
+		Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "revenue"}}},
 	}
 	specification, err := compileBuiltInVisualizationSpec("revenue", authored, nil)
 	if err != nil {
@@ -95,7 +95,7 @@ func TestCompileKPIUsesAuthoredDescriptionForAccessibleContext(t *testing.T) {
 		Type:        "kpi",
 		Title:       "Revenue",
 		Description: "Revenue against the governed baseline.",
-		Query:       dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "revenue"}}},
+		Query:       dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "revenue"}}},
 	}
 	specification, err := compileBuiltInVisualizationSpec("revenue", authored, nil)
 	if err != nil {

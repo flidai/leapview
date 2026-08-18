@@ -16,7 +16,7 @@ func TestCompiledVisualizationResultShapes(t *testing.T) {
 		"scalar":          {dashboardauthoring.Visual{Type: "kpi"}, visualizationdefinition.ResultScalar},
 		"category":        {dashboardauthoring.Visual{Type: "bar"}, visualizationdefinition.ResultCategoryValue},
 		"series":          {dashboardauthoring.Visual{Type: "line", Query: dashboardauthoring.VisualQuery{Series: dashboardauthoring.FieldRef{Field: "series"}}}, visualizationdefinition.ResultCategorySeriesValue},
-		"multi measure":   {dashboardauthoring.Visual{Type: "combo", Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "one"}, {Field: "two"}}}}, visualizationdefinition.ResultCategoryMultiMeasure},
+		"multi metric":    {dashboardauthoring.Visual{Type: "combo", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "one"}, {Field: "two"}}}}, visualizationdefinition.ResultCategoryMultiMeasure},
 		"waterfall":       {dashboardauthoring.Visual{Type: "waterfall"}, visualizationdefinition.ResultCategoryDelta},
 		"histogram":       {dashboardauthoring.Visual{Type: "histogram"}, visualizationdefinition.ResultHistogramBins},
 		"matrix cells":    {dashboardauthoring.Visual{Type: "heatmap"}, visualizationdefinition.ResultMatrixCells},
@@ -56,7 +56,7 @@ func TestCompiledTabularResultShapes(t *testing.T) {
 		"pivot":  visualizationdefinition.ResultPivotWindow,
 	}
 	for visualType, want := range tests {
-		binding := compiledTableBinding("model", visualType, dashboardauthoring.TableVisual{Query: dashboardauthoring.TableQuery{Table: "orders"}})
+		binding := compiledTableBinding("model", visualType, dashboardauthoring.TableVisual{Query: dashboardauthoring.TableQuery{Dataset: "orders"}})
 		if binding.ResultShape != want {
 			t.Fatalf("%s result shape = %q, want %q", visualType, binding.ResultShape, want)
 		}

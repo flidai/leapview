@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/big"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
+	visualizationdecimal "github.com/flidai/leapview/internal/dashboard/visualization/decimal"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -280,16 +282,50 @@ func canonicalizeEnvelopeData(envelope *visualizationir.VisualizationEnvelope, s
 	if !ok {
 		return
 	}
+	base, err := envelope.Spec.Base()
+	if err != nil {
+		return
+	}
 	for datasetIndex := range state.Datasets {
-		rows := state.Datasets[datasetIndex].Rows
-		sortEnvelopeRows(rows, sortColumn, descending)
+		dataset := state.Datasets[datasetIndex]
+		columnTypes := envelopeColumnTypes(*base, datasetIndex, dataset)
+		sortEnvelopeRows(dataset.Rows, sortColumn, descending, columnTypes)
 	}
 }
 
-func sortEnvelopeRows(rows [][]any, sortColumn int, descending bool) {
+func envelopeColumnTypes(base visualizationir.VisualizationSpecBase, datasetIndex int, dataset visualizationir.VisualizationInlineDataset) []visualizationir.VisualizationDataType {
+	var schema *visualizationir.VisualizationDatasetSchema
+	for index := range base.Datasets {
+		candidate := &base.Datasets[index]
+		if candidate.ID == dataset.ID || (dataset.ID == "" && index == 0) {
+			schema = candidate
+			break
+		}
+	}
+	if schema == nil {
+		if datasetIndex >= 0 && datasetIndex < len(base.Datasets) {
+			schema = &base.Datasets[datasetIndex]
+		}
+	}
+	types := make([]visualizationir.VisualizationDataType, len(dataset.Columns))
+	if schema == nil {
+		return types
+	}
+	for columnIndex, column := range dataset.Columns {
+		for _, field := range schema.Fields {
+			if field.ID == column {
+				types[columnIndex] = field.DataType
+				break
+			}
+		}
+	}
+	return types
+}
+
+func sortEnvelopeRows(rows [][]any, sortColumn int, descending bool, columnTypes []visualizationir.VisualizationDataType) {
 	sort.SliceStable(rows, func(left, right int) bool {
 		if sortColumn >= 0 && sortColumn < len(rows[left]) && sortColumn < len(rows[right]) {
-			comparison := compareEnvelopeValues(rows[left][sortColumn], rows[right][sortColumn])
+			comparison := compareEnvelopeValues(rows[left][sortColumn], rows[right][sortColumn], columnTypeAt(columnTypes, sortColumn))
 			if comparison != 0 {
 				if descending {
 					return comparison > 0
@@ -301,13 +337,20 @@ func sortEnvelopeRows(rows [][]any, sortColumn int, descending bool) {
 			if column == sortColumn {
 				continue
 			}
-			comparison := compareEnvelopeValues(rows[left][column], rows[right][column])
+			comparison := compareEnvelopeValues(rows[left][column], rows[right][column], columnTypeAt(columnTypes, column))
 			if comparison != 0 {
 				return comparison < 0
 			}
 		}
 		return len(rows[left]) < len(rows[right])
 	})
+}
+
+func columnTypeAt(columnTypes []visualizationir.VisualizationDataType, column int) visualizationir.VisualizationDataType {
+	if column < 0 || column >= len(columnTypes) {
+		return ""
+	}
+	return columnTypes[column]
 }
 
 func visualExampleSort(example visualExample, envelope visualizationir.VisualizationEnvelope) (int, bool) {
@@ -348,7 +391,7 @@ func visualExampleSort(example visualExample, envelope visualizationir.Visualiza
 	if fieldMatches(example.Chart.Query.Series) {
 		return columnIndex("series"), authored.Direction == "desc"
 	}
-	for _, field := range example.Chart.Query.Measures {
+	for _, field := range example.Chart.Query.Metrics {
 		if fieldMatches(field) || authored.Field == "value" {
 			return columnIndex("value"), authored.Direction == "desc"
 		}
@@ -356,19 +399,74 @@ func visualExampleSort(example visualExample, envelope visualizationir.Visualiza
 	return -1, authored.Direction == "desc"
 }
 
-func compareEnvelopeValues(left, right any) int {
-	leftNumber, leftIsNumber := envelopeNumber(left)
-	rightNumber, rightIsNumber := envelopeNumber(right)
+func compareEnvelopeValues(left, right any, dataType visualizationir.VisualizationDataType) int {
+	var leftNumber, rightNumber *big.Rat
+	var leftIsNumber, rightIsNumber bool
+	switch dataType {
+	case visualizationir.VisualizationDataTypeDecimal:
+		leftNumber, leftIsNumber = exactDecimalEnvelopeNumber(left)
+		rightNumber, rightIsNumber = exactDecimalEnvelopeNumber(right)
+	case visualizationir.VisualizationDataTypeInteger, visualizationir.VisualizationDataTypeFloat:
+		leftNumber, leftIsNumber = exactEnvelopeNumber(left)
+		rightNumber, rightIsNumber = exactEnvelopeNumber(right)
+	}
 	if leftIsNumber && rightIsNumber {
-		if leftNumber < rightNumber {
-			return -1
-		}
-		if leftNumber > rightNumber {
-			return 1
-		}
-		return 0
+		return leftNumber.Cmp(rightNumber)
 	}
 	return strings.Compare(fmt.Sprint(left), fmt.Sprint(right))
+}
+
+// exactEnvelopeNumber converts the numeric values allowed at the visualization
+// boundary into exact rationals. Decimal metrics are canonical fixed-point
+// strings, so they must never pass through float64 during deterministic row
+// ordering.
+func exactEnvelopeNumber(value any) (*big.Rat, bool) {
+	switch typed := value.(type) {
+	case int:
+		return new(big.Rat).SetInt64(int64(typed)), true
+	case int8:
+		return new(big.Rat).SetInt64(int64(typed)), true
+	case int16:
+		return new(big.Rat).SetInt64(int64(typed)), true
+	case int32:
+		return new(big.Rat).SetInt64(int64(typed)), true
+	case int64:
+		return new(big.Rat).SetInt64(typed), true
+	case uint:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(uint64(typed))), true
+	case uint8:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(uint64(typed))), true
+	case uint16:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(uint64(typed))), true
+	case uint32:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(uint64(typed))), true
+	case uint64:
+		return new(big.Rat).SetInt(new(big.Int).SetUint64(typed)), true
+	case float32:
+		if math.IsNaN(float64(typed)) || math.IsInf(float64(typed), 0) {
+			return nil, false
+		}
+		return new(big.Rat).SetFloat64(float64(typed)), true
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return nil, false
+		}
+		return new(big.Rat).SetFloat64(typed), true
+	default:
+		return nil, false
+	}
+}
+
+func exactDecimalEnvelopeNumber(value any) (*big.Rat, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return nil, false
+	}
+	parsed, _, err := visualizationdecimal.Parse(text)
+	if err != nil {
+		return nil, false
+	}
+	return parsed, true
 }
 
 var visualDocMapRegions = map[string]map[string]struct{}{
@@ -511,29 +609,6 @@ func normalizeEnvelopeRevision(envelope *visualizationir.VisualizationEnvelope, 
 	}
 }
 
-func envelopeNumber(value any) (float64, bool) {
-	switch typed := value.(type) {
-	case int:
-		return float64(typed), true
-	case int32:
-		return float64(typed), true
-	case int64:
-		return float64(typed), true
-	case uint:
-		return float64(typed), true
-	case uint32:
-		return float64(typed), true
-	case uint64:
-		return float64(typed), true
-	case float32:
-		return float64(typed), true
-	case float64:
-		return typed, true
-	default:
-		return 0, false
-	}
-}
-
 func inspectPayloadValue(value any, path string, finiteNumbers *int) error {
 	switch typed := value.(type) {
 	case float64:
@@ -548,6 +623,10 @@ func inspectPayloadValue(value any, path string, finiteNumbers *int) error {
 		*finiteNumbers++
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		*finiteNumbers++
+	case string:
+		if visualizationdecimal.Validate(typed) == nil {
+			*finiteNumbers++
+		}
 	case dashboard.Datum:
 		keys := make([]string, 0, len(typed))
 		for key := range typed {
@@ -584,10 +663,10 @@ func buildVisualDocumentReference(examples []visualExample) (visualDocumentRefer
 	if len(examples) > 0 && examples[0].Tabular != nil {
 		return visualDocumentReference{
 			Kind: "visual", Renderer: "tabular", Shapes: []string{examples[0].Type},
-			QueryFields: []string{"table", "fields", "rows", "columns", "measures"},
+			QueryFields: []string{"dataset", "fields", "rows", "columns", "metrics"},
 			Fields: []visualdocs.FieldReference{
 				{Path: "type", Type: "string", AllowedValues: []string{"table", "matrix", "pivot"}, Description: "Selects the tabular visual behavior."},
-				{Path: "query", Type: "tabular query", Description: "Selects record fields or grouped row, column, and measure fields."},
+				{Path: "query", Type: "tabular query", Description: "Selects record fields or grouped row, column, and metric fields."},
 				{Path: "cardinality", Type: "string", AllowedValues: []string{"bounded", "exact"}, Description: "Controls whether the visual resolves an exact row count."},
 			},
 			Accessibility: "Tabular visuals expose semantic headers and virtualized rows while preserving keyboard navigation.",
@@ -646,8 +725,8 @@ func buildVisualDocumentReference(examples []visualExample) (visualDocumentRefer
 }
 
 func collectQueryFields(query dashboardauthoring.VisualQuery, fields map[string]struct{}) {
-	if query.Table != "" {
-		fields["table"] = struct{}{}
+	if query.Dataset != "" {
+		fields["dataset"] = struct{}{}
 	}
 	if len(query.Dimensions) > 0 {
 		fields["dimensions"] = struct{}{}
@@ -655,8 +734,8 @@ func collectQueryFields(query dashboardauthoring.VisualQuery, fields map[string]
 	if !query.Series.IsZero() {
 		fields["series"] = struct{}{}
 	}
-	if len(query.Measures) > 0 {
-		fields["measures"] = struct{}{}
+	if len(query.Metrics) > 0 {
+		fields["metrics"] = struct{}{}
 	}
 	if query.Time.Field != "" {
 		fields["time"] = struct{}{}
@@ -678,10 +757,10 @@ func visualKeyFields(previous *dashboardauthoring.Visual, visual dashboardauthor
 		name string
 		get  func(dashboardauthoring.VisualQuery) any
 	}{
-		{"table", func(query dashboardauthoring.VisualQuery) any { return query.Table }},
+		{"dataset", func(query dashboardauthoring.VisualQuery) any { return query.Dataset }},
 		{"dimensions", func(query dashboardauthoring.VisualQuery) any { return query.Dimensions }},
 		{"series", func(query dashboardauthoring.VisualQuery) any { return query.Series }},
-		{"measures", func(query dashboardauthoring.VisualQuery) any { return query.Measures }},
+		{"metrics", func(query dashboardauthoring.VisualQuery) any { return query.Metrics }},
 		{"time", func(query dashboardauthoring.VisualQuery) any { return query.Time }},
 	}
 	for _, check := range queryChecks {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -41,10 +42,10 @@ func projectFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Project) 
 			"source:orders": {Connection: "connection:warehouse"},
 		},
 		Models: map[string]semanticmodel.Table{
-			"model:orders": {Source: "source:orders", SourceDependencies: []string{"source:orders"}},
+			"model:orders": {Source: "source:orders", SourceDependencies: []string{"source:orders"}, Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}},
 		},
 		SemanticModels: map[string]*semanticmodel.Model{
-			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders"}}},
+			"semantic:sales": {Name: "sales", Sources: map[string]semanticmodel.Source{"orders": {}}, Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}}}}},
 		},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{
 			"dashboard:sales": {ID: "dashboard:sales", SemanticModel: "semantic:sales"},
@@ -104,6 +105,12 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	if _, ok := model.Sources["orders"]; !ok {
 		t.Fatalf("semantic runtime symbolic ref was rewritten: %#v", model.Sources)
 	}
+	if got := model.Tables["orders"].Dimensions["order_id"].Datatype; got != semanticmodel.DataTypeString {
+		t.Fatalf("semantic logical datatype = %q, want %q after artifact round trip", got, semanticmodel.DataTypeString)
+	}
+	if got := decoded.ModelTables()["model:orders"].Dimensions["order_id"].Datatype; got != semanticmodel.DataTypeString {
+		t.Fatalf("model logical datatype = %q, want %q after artifact round trip", got, semanticmodel.DataTypeString)
+	}
 	if got := decoded.Manifest().NameIndex.SemanticModels["sales"]; got != "semantic:sales" {
 		t.Fatalf("name index semantic model = %q, want semantic:sales", got)
 	}
@@ -119,6 +126,38 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 	if _, ok := wire["identity"]; ok {
 		t.Fatalf("project artifact retained serving identity: %#v", wire)
+	}
+}
+
+func TestProjectArtifactRoundTripPreservesLoweredSemanticModelBinding(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.SemanticModels["semantic:sales"] = &semanticmodel.Model{
+		Name: "sales",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"sales_orders": {Model: "orders_model"},
+		},
+		Tables: map[string]semanticmodel.Table{
+			"sales_orders": {ModelName: "orders_model"},
+		},
+	}
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(project.Canonical())
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := decoded.Models()["semantic:sales"]
+	if got := model.Tables["sales_orders"].ModelName; got != "orders_model" {
+		t.Fatalf("lowered ModelName = %q, want orders_model after artifact round trip", got)
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatalf("CompileDatasetBindings() after artifact round trip: %v", err)
+	}
+	if dataset, ok := compiled.Dataset("sales_orders"); !ok || dataset.ModelName() != "orders_model" {
+		t.Fatalf("compiled dataset = %#v, ok=%v, want sales_orders bound to orders_model", dataset, ok)
 	}
 }
 

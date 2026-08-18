@@ -410,6 +410,21 @@ type ProjectRuntime struct {
 	cacheScope           *resultcache.Scope
 }
 
+// Planner returns the activation-owned planner for one semantic model. The
+// returned pointer is immutable after construction and is shared by dashboard
+// consumers and authorization rather than recompiled per request.
+func (r *ProjectRuntime) Planner(modelID string) (*semanticquery.Planner, bool) {
+	if r == nil {
+		return nil, false
+	}
+	view, ok := r.views[modelID]
+	if !ok || view == nil {
+		return nil, false
+	}
+	planner := view.Planner()
+	return planner, planner != nil
+}
+
 type duckLakeCommitter interface {
 	CommitTransaction(ctx context.Context, servingStateID string, extra map[string]string, fn func(transaction.Transaction) error) (int64, error)
 }
@@ -441,9 +456,11 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 	if err != nil {
 		return nil, err
 	}
-	for modelID, model := range config.Models {
-		if err := analyticsmaterialize.ValidateFilesWithResolver(model, sources); err != nil {
-			return nil, fmt.Errorf("semantic model %q: %w", modelID, err)
+	if config.SnapshotID == 0 {
+		for modelID, model := range config.Models {
+			if err := analyticsmaterialize.ValidateFilesWithResolver(model, sources); err != nil {
+				return nil, fmt.Errorf("semantic model %q: %w", modelID, err)
+			}
 		}
 	}
 	runtime := &ProjectRuntime{
@@ -459,11 +476,19 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		cacheScope:           config.QueryCache,
 	}
 	for modelID, model := range config.Models {
-		var tableRelation semanticquery.TableRelation
-		if config.SnapshotID > 0 {
-			tableRelation = func(table string) (string, error) {
-				return analyticsducklake.QualifiedSnapshotRelation(config.SnapshotID, table)
+		// Semantic datasets are query-facing aliases. Materialization is
+		// project-scoped and keyed by the referenced authored Model name, so
+		// bind every planner relation through that alias map in both snapshot
+		// and live execution modes.
+		tableRelation := func(table string) (string, error) {
+			physical := strings.TrimSpace(table)
+			if err := validateIdentifier(physical); err != nil {
+				return "", fmt.Errorf("physical table %q: %w", physical, err)
 			}
+			if config.SnapshotID > 0 {
+				return analyticsducklake.QualifiedSnapshotRelation(config.SnapshotID, physical)
+			}
+			return "model." + physical, nil
 		}
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
 			ModelID:             modelID,
@@ -472,6 +497,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 			Database:            db,
 			Sources:             sources,
 			Resolver:            sources,
+			SnapshotOnly:        config.SnapshotID > 0,
 			TableRelation:       tableRelation,
 			QueryCache:          config.QueryCache,
 			ResultLimits:        config.ResultLimits,
@@ -483,6 +509,12 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		runtime.views[modelID] = view
 	}
 	if config.SnapshotID > 0 {
+		// Compile planners from the authored definition first so their source
+		// fingerprints remain stable. Then attach immutable snapshot table
+		// schemas to the runtime models used for source-free verification.
+		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID); err != nil {
+			return nil, errors.Join(err, runtime.Close())
+		}
 		runtime.lastSnapshotID = config.SnapshotID
 	} else if !config.SkipInitialRefresh {
 		if err := runtime.Refresh(ctx); err != nil {
@@ -490,6 +522,68 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		}
 	}
 	return runtime, nil
+}
+
+// discoverSnapshotModelSchemas populates executable table schemas from the
+// immutable DuckLake snapshot. Snapshot activation deliberately does not
+// inspect authored sources: source connections and credentials may no longer
+// be available when a committed serving generation is reopened.
+func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresource.SessionProvider, models map[string]*semanticmodel.Model, snapshotID int64) error {
+	if provider == nil {
+		return fmt.Errorf("snapshot schema discovery requires a DuckDB database")
+	}
+	if snapshotID <= 0 {
+		return fmt.Errorf("snapshot schema discovery requires a positive snapshot id")
+	}
+	leaseProvider, ok := provider.(analyticsresource.Provider)
+	if !ok {
+		return fmt.Errorf("snapshot schema discovery requires an analytical lease provider")
+	}
+	lease, err := leaseProvider.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("snapshot schema discovery: acquire database lease: %w", err)
+	}
+	defer lease.Release()
+	queryCtx := lease.Context()
+	session, err := provider.Session(queryCtx)
+	if err != nil {
+		return fmt.Errorf("snapshot schema discovery: open database session: %w", err)
+	}
+	for _, modelID := range sortedKeys(models) {
+		model := models[modelID]
+		if model == nil {
+			return fmt.Errorf("snapshot schema discovery: semantic model %q is required", modelID)
+		}
+		tableNames := make([]string, 0, len(model.Tables))
+		for tableName := range model.Tables {
+			tableNames = append(tableNames, tableName)
+		}
+		sort.Strings(tableNames)
+		for _, tableName := range tableNames {
+			physical, err := physicalTableName(model, tableName)
+			if err != nil {
+				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
+			}
+			relation, err := analyticsducklake.QualifiedSnapshotRelation(snapshotID, physical)
+			if err != nil {
+				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
+			}
+			columns, err := describeRelationSchema(queryCtx, session, relation)
+			if err != nil {
+				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
+			}
+			if len(columns) == 0 {
+				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: relation has no columns", modelID, tableName)
+			}
+			for index := range columns {
+				columns[index].PrimaryKey = false
+			}
+			table := model.Tables[tableName]
+			table.Schema = semanticmodel.TableSchema{Columns: columns}
+			model.Tables[tableName] = table
+		}
+	}
+	return nil
 }
 
 func projectQueryCacheNamespace(config ProjectRuntimeConfig) string {
@@ -639,6 +733,10 @@ func (r *ProjectRuntime) RefreshModelTables(ctx context.Context, modelID string,
 	if !ok {
 		return fmt.Errorf("unknown semantic model %q", modelID)
 	}
+	physicalNames, err := physicalTableNames(model, tableNames)
+	if err != nil {
+		return err
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -648,7 +746,7 @@ func (r *ProjectRuntime) RefreshModelTables(ctx context.Context, modelID string,
 	}
 	defer release()
 
-	lastRefresh, snapshotID, err := r.refreshModel(ctx, model, tableNames)
+	lastRefresh, snapshotID, err := r.refreshModel(ctx, r.materializationModel, physicalNames)
 	if err != nil {
 		return err
 	}
@@ -659,6 +757,20 @@ func (r *ProjectRuntime) RefreshModelTables(ctx context.Context, modelID string,
 	r.lastRefresh = lastRefresh
 	r.lastSnapshotID = snapshotID
 	return nil
+}
+
+// VerifySemantic prepares representative governed plans and proves entity
+// claims for one model against this immutable project runtime.
+func (r *ProjectRuntime) VerifySemantic(ctx context.Context, modelID string) error {
+	if r == nil {
+		return fmt.Errorf("project runtime is not initialized")
+	}
+	modelID = strings.TrimSpace(modelID)
+	view, ok := r.views[modelID]
+	if !ok || view == nil {
+		return fmt.Errorf("semantic model %q is not available", modelID)
+	}
+	return view.VerifySemantic(ctx)
 }
 
 func (r *ProjectRuntime) RefreshProjectTables(ctx context.Context, tableNames []string) error {
@@ -749,7 +861,72 @@ func ProjectModelTableDependencyOrder(models map[string]*semanticmodel.Model, se
 	if err != nil {
 		return nil, err
 	}
+	selectedTable = strings.TrimSpace(selectedTable)
+	if _, ok := model.Tables[selectedTable]; !ok {
+		matches := map[string]struct{}{}
+		for _, modelID := range sortedKeys(models) {
+			semantic := models[modelID]
+			if semantic == nil {
+				continue
+			}
+			compiled, compileErr := semanticquery.CompileDatasetBindings(semantic)
+			if compileErr != nil {
+				return nil, fmt.Errorf("semantic model %q dataset bindings: %w", modelID, compileErr)
+			}
+			if dataset, ok := compiled.Dataset(selectedTable); ok && strings.TrimSpace(dataset.ModelName()) != "" {
+				matches[strings.TrimSpace(dataset.ModelName())] = struct{}{}
+			}
+		}
+		if len(matches) == 1 {
+			for physical := range matches {
+				selectedTable = physical
+			}
+		} else if len(matches) > 1 {
+			return nil, fmt.Errorf("semantic dataset alias %q resolves to multiple Model tables", selectedTable)
+		}
+	}
 	return analyticsmaterialize.ModelTableDependencyOrder(model, selectedTable)
+}
+
+// physicalTableName resolves a semantic dataset alias to the authored backing
+// Model table that is materialized in the project catalog. Missing dataset
+// bindings are activation errors and are never inferred at runtime.
+func physicalTableName(model *semanticmodel.Model, table string) (string, error) {
+	if model == nil {
+		return "", fmt.Errorf("semantic model is required")
+	}
+	table = strings.TrimSpace(table)
+	if table == "" {
+		return "", fmt.Errorf("model table is required")
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		return "", err
+	}
+	if dataset, ok := compiled.Dataset(table); ok {
+		return dataset.ModelName(), nil
+	}
+	return "", fmt.Errorf("unknown semantic dataset %q", table)
+}
+
+func physicalTableNames(model *semanticmodel.Model, tables []string) ([]string, error) {
+	if len(tables) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(tables))
+	result := make([]string, 0, len(tables))
+	for _, table := range tables {
+		physical, err := physicalTableName(model, table)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[physical]; ok {
+			continue
+		}
+		seen[physical] = struct{}{}
+		result = append(result, physical)
+	}
+	return result, nil
 }
 
 func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.Model, tableNames []string) (time.Time, int64, error) {
@@ -915,9 +1092,11 @@ func physicalProjectModel(models map[string]*semanticmodel.Model) (*semanticmode
 		Connections:       map[string]semanticmodel.Connection{},
 		Sources:           map[string]semanticmodel.Source{},
 		Tables:            map[string]semanticmodel.Table{},
-		Measures:          map[string]semanticmodel.MetricMeasure{},
+		Metrics:           map[string]semanticmodel.Metric{},
 	}
-	for modelID, model := range models {
+	modelIDs := sortedKeys(models)
+	for _, modelID := range modelIDs {
+		model := models[modelID]
 		if model == nil {
 			return nil, fmt.Errorf("semantic model %q is required", modelID)
 		}
@@ -938,12 +1117,31 @@ func physicalProjectModel(models map[string]*semanticmodel.Model) (*semanticmode
 			}
 			projectModel.Sources[name] = source
 		}
-		for name, table := range model.Tables {
-			existing, ok := projectModel.Tables[name]
-			if ok && !reflect.DeepEqual(tablePhysicalSignature(existing), tablePhysicalSignature(table)) {
-				return nil, fmt.Errorf("semantic model %q model table %q conflicts with another project model", modelID, name)
+		// A semantic model exposes dataset aliases, but project materialization
+		// must emit one physical table per authored Model. Resolve aliases before
+		// merging so two semantic datasets can safely reuse one Model table.
+		compiled, err := semanticquery.CompileDatasetBindings(model)
+		if err != nil {
+			return nil, fmt.Errorf("semantic model %q dataset bindings: %w", modelID, err)
+		}
+		tableNames := compiled.DatasetNames()
+		for _, name := range tableNames {
+			dataset, _ := compiled.Dataset(name)
+			table := dataset.Table()
+			physicalName := dataset.ModelName()
+			table.ModelDependencies = append([]string(nil), table.ModelDependencies...)
+			for index, dependency := range table.ModelDependencies {
+				physicalDependency, err := compiled.ResolvePhysicalModelName(dependency)
+				if err != nil {
+					return nil, fmt.Errorf("semantic model %q table %q dependency %q: %w", modelID, name, dependency, err)
+				}
+				table.ModelDependencies[index] = physicalDependency
 			}
-			projectModel.Tables[name] = table
+			existing, ok := projectModel.Tables[physicalName]
+			if ok && !reflect.DeepEqual(tablePhysicalSignature(existing), tablePhysicalSignature(table)) {
+				return nil, fmt.Errorf("semantic model %q model table %q conflicts with another project model", modelID, physicalName)
+			}
+			projectModel.Tables[physicalName] = table
 		}
 	}
 	return projectModel, nil
@@ -959,11 +1157,10 @@ func sourcePhysicalSignature(source semanticmodel.Source) semanticmodel.Source {
 type tablePhysicalSignatureValue struct {
 	Source             string
 	Sources            []string
-	SQL                string
 	Transform          semanticmodel.Transform
 	Columns            map[string]semanticmodel.ModelColumn
-	PrimaryKey         string
-	Grain              string
+	Entities           map[string]semanticmodel.ModelEntitySpec
+	GrainEntity        string
 	SourceDependencies []string
 	ModelDependencies  []string
 }
@@ -972,11 +1169,10 @@ func tablePhysicalSignature(table semanticmodel.Table) tablePhysicalSignatureVal
 	return tablePhysicalSignatureValue{
 		Source:             table.Source,
 		Sources:            append([]string{}, table.Sources...),
-		SQL:                table.SQL,
 		Transform:          table.Transform,
 		Columns:            table.Columns,
-		PrimaryKey:         table.PrimaryKey,
-		Grain:              table.Grain,
+		Entities:           table.Entities,
+		GrainEntity:        table.GrainEntity,
 		SourceDependencies: append([]string{}, table.SourceDependencies...),
 		ModelDependencies:  append([]string{}, table.ModelDependencies...),
 	}

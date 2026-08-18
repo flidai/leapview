@@ -3,22 +3,24 @@ package query
 import (
 	"strings"
 	"testing"
+
+	"github.com/flidai/leapview/internal/analytics/query/planir"
 )
 
-func TestSpatialFilterSQLSupportsExactBoxLassoAndRadiusPredicates(t *testing.T) {
+func TestSpatialPredicateRendersThroughPlanIR(t *testing.T) {
 	tests := []struct {
-		name   string
-		filter SpatialFilter
-		parts  []string
+		name  string
+		value planir.SpatialPredicate
+		parts []string
 	}{
-		{name: "box", filter: SpatialFilter{Kind: "box", West: -74, South: -34, East: -34, North: 6}, parts: []string{"lat >= ?", "lat <= ?", "lon >= ?", "lon <= ?"}},
-		{name: "antimeridian box", filter: SpatialFilter{Kind: "box", West: 170, South: -10, East: -170, North: 10}, parts: []string{"lon >= ? OR lon <= ?"}},
-		{name: "lasso", filter: SpatialFilter{Kind: "lasso", Points: []SpatialPoint{{Longitude: -50, Latitude: -20}, {Longitude: -40, Latitude: -20}, {Longitude: -45, Latitude: -10}}}, parts: []string{"MOD(", "CASE WHEN", "NULLIF"}},
-		{name: "radius", filter: SpatialFilter{Kind: "radius", Center: SpatialPoint{Longitude: -46.63, Latitude: -23.55}, RadiusMeters: 50000}, parts: []string{"ASIN", "RADIANS", "<= ?"}},
+		{name: "box", value: planir.SpatialPredicate{Kind: "box", Latitude: "lat", Longitude: "lon", West: -74, South: -34, East: -34, North: 6}, parts: []string{"lat", "lon", "?"}},
+		{name: "antimeridian box", value: planir.SpatialPredicate{Kind: "box", Latitude: "lat", Longitude: "lon", West: 170, South: -10, East: -170, North: 10}, parts: []string{"OR", "?"}},
+		{name: "lasso", value: planir.SpatialPredicate{Kind: "lasso", Latitude: "lat", Longitude: "lon", Points: []planir.SpatialPoint{{Longitude: -50, Latitude: -20}, {Longitude: -40, Latitude: -20}, {Longitude: -45, Latitude: -10}}}, parts: []string{"MOD(", "CASE WHEN", "NULLIF"}},
+		{name: "radius", value: planir.SpatialPredicate{Kind: "radius", Latitude: "lat", Longitude: "lon", Center: planir.SpatialPoint{Longitude: -46.63, Latitude: -23.55}, RadiusMeters: 50000}, parts: []string{"ASIN", "RADIANS", "?"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sql, args, err := spatialFilterSQL("lat", "lon", tt.filter)
+			sql, args, err := renderTypedSpatial(tt.value)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -34,7 +36,7 @@ func TestSpatialFilterSQLSupportsExactBoxLassoAndRadiusPredicates(t *testing.T) 
 	}
 }
 
-func TestSpatialFilterSQLRejectsUnsafeGeometry(t *testing.T) {
+func TestValidateSpatialFilterRejectsUnsafeGeometry(t *testing.T) {
 	tests := []SpatialFilter{
 		{Kind: "box", West: -181, South: 0, East: 1, North: 2},
 		{Kind: "box", West: 0, South: 2, East: 1, North: 1},
@@ -45,8 +47,23 @@ func TestSpatialFilterSQLRejectsUnsafeGeometry(t *testing.T) {
 		{Kind: "polygon"},
 	}
 	for _, filter := range tests {
-		if _, _, err := spatialFilterSQL("lat", "lon", filter); err == nil {
+		if err := ValidateSpatialFilter(filter); err == nil {
 			t.Fatalf("unsafe spatial filter accepted: %#v", filter)
 		}
 	}
+}
+
+func renderTypedSpatial(predicate planir.SpatialPredicate) (string, []any, error) {
+	lineage := []planir.PhysicalLineage{{Logical: "lat", Dataset: "points", Field: "lat"}, {Logical: "lon", Dataset: "points", Field: "lon"}}
+	scanMeta := planir.NodeMeta{NodeID: "scan", OutputGrain: planir.Grain{Fields: []string{"lat", "lon"}}, AvailableFields: []planir.Field{{Name: "lat", Type: "float"}, {Name: "lon", Type: "float"}}, RootDatasets: []string{"points"}, FilterPhase: planir.FilterPhaseScan, PhysicalLineage: lineage}
+	filterMeta := scanMeta
+	filterMeta.NodeID = "filter"
+	aggMeta := planir.NodeMeta{NodeID: "aggregate", OutputGrain: planir.Grain{Fields: []string{"lat", "lon"}}, AvailableFields: []planir.Field{{Name: "lat", Type: "float"}, {Name: "lon", Type: "float"}}, AvailableMetrics: []planir.Metric{{Name: "rows", Type: "integer"}}, RootDatasets: []string{"points"}, FilterPhase: planir.FilterPhaseAggregate, PhysicalLineage: lineage}
+	graph := &planir.Graph{NodeMeta: aggMeta, Roots: []string{"scan"}, Output: "aggregate", Nodes: map[string]planir.Node{
+		"scan":      planir.ScanDataset{NodeMeta: scanMeta, Dataset: "points"},
+		"filter":    planir.FilterRows{NodeMeta: filterMeta, Input: "scan", Predicate: planir.Predicate{Kind: planir.PredicateSpatial, Spatial: &predicate}, Source: planir.FilterSourceRequest, Fields: []string{"lat", "lon"}},
+		"aggregate": planir.AggregateMetrics{NodeMeta: aggMeta, Input: "filter", GroupBy: []string{"lat", "lon"}, Metrics: []planir.MetricSpec{{Name: "rows", Aggregation: "COUNT_STAR"}}},
+	}}
+	rendered, err := planir.RenderDuckDB(graph)
+	return rendered.SQL, rendered.Args, err
 }

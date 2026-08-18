@@ -16,7 +16,7 @@ func TestCompiledCartesianDecisionContextUsesClosedIR(t *testing.T) {
 		Type: "line",
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}},
-			Measures:   []dashboardauthoring.FieldRef{{Field: "revenue"}},
+			Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue"}},
 		},
 		Presentation: dashboardauthoring.VisualPresentation{
 			DisplayUnits: "millions",
@@ -75,7 +75,7 @@ func TestCompiledCartesianDecisionContextRejectsUnknownFields(t *testing.T) {
 
 	authored := dashboardauthoring.Visual{
 		Type:  "line",
-		Query: dashboardauthoring.VisualQuery{Measures: []dashboardauthoring.FieldRef{{Field: "revenue"}}},
+		Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "revenue"}}},
 		Presentation: dashboardauthoring.VisualPresentation{ReferenceLines: []dashboardauthoring.VisualReferenceLine{{
 			ID: "target", Axis: "primary_y", Value: dashboardauthoring.VisualReferenceValue{Field: "deleted_target"},
 		}}},
@@ -95,7 +95,7 @@ func TestCompiledCartesianSeriesIntentIsDeterministic(t *testing.T) {
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}},
 			Series:     dashboardauthoring.FieldRef{Field: "orders.status", Alias: "status"},
-			Measures:   []dashboardauthoring.FieldRef{{Field: "revenue"}},
+			Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue"}},
 		},
 		Presentation: dashboardauthoring.VisualPresentation{
 			Stacking:     "percent",
@@ -136,7 +136,7 @@ func TestCompiledConditionalFormattingUsesClosedFieldBindings(t *testing.T) {
 		Query: dashboardauthoring.VisualQuery{
 			Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month"}},
 			Series:     dashboardauthoring.FieldRef{Field: "orders.status", Alias: "status"},
-			Measures:   []dashboardauthoring.FieldRef{{Field: "revenue"}},
+			Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue"}},
 		},
 		Presentation: dashboardauthoring.VisualPresentation{ConditionalFormatting: []dashboardauthoring.VisualConditionalFormat{
 			{

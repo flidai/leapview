@@ -1,12 +1,12 @@
 # Line chart
 
-Use a line chart to show a measure changing across an ordered category such as time.
+Use a line chart to show a metric changing across an ordered category such as time.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Basic
 
-Use one ordered `query.dimensions` field for the horizontal axis and one `query.measures` field for the plotted value. Sorting by month keeps the line chronological, while explicitly hidden labels keep the trend readable.
+Use one ordered `query.dimensions` field for the horizontal axis and one `query.metrics` field for the plotted value. Sorting by month keeps the line chronological, while explicitly hidden labels keep the trend readable.
 
 {{< visual id="revenue_line" >}}
 
@@ -20,7 +20,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_month
@@ -30,7 +30,7 @@ visuals:
 
 ## Multiple series
 
-Map `query.series` to split the measure into one line per order status; the compiler derives the required series-aware Cartesian specification.
+Map `query.series` to split the metric into one line per order status; the compiler derives the required series-aware Cartesian specification.
 
 {{< visual id="revenue_line_status" >}}
 
@@ -45,7 +45,7 @@ visuals:
       series:
         field: orders.status
         alias: status
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_month
@@ -76,7 +76,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_month
@@ -102,7 +102,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_month
@@ -126,9 +126,9 @@ visuals:
       context:
         dimensions:
           status: orders.status
-        measures:
+        metrics:
           target:
-            measure: revenue
+            metric: revenue
         sort:
           - field: status
             direction: asc
@@ -170,7 +170,7 @@ visuals:
     query:
       dimensions:
         purchase_month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: purchase_month

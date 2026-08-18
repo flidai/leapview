@@ -2,7 +2,6 @@ package arrowresult
 
 import (
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -95,22 +94,22 @@ func compileValueDecoder(values arrow.Array) (valueDecoder, error) {
 	case *array.Decimal32:
 		typeInfo := values.DataType().(*arrow.Decimal32Type)
 		decode = func(index int) any {
-			return decodeDecimal(values.Value(index).ToString(typeInfo.Scale), typeInfo.Scale)
+			return decodeDecimal(values.Value(index).ToString(typeInfo.Scale))
 		}
 	case *array.Decimal64:
 		typeInfo := values.DataType().(*arrow.Decimal64Type)
 		decode = func(index int) any {
-			return decodeDecimal(values.Value(index).ToString(typeInfo.Scale), typeInfo.Scale)
+			return decodeDecimal(values.Value(index).ToString(typeInfo.Scale))
 		}
 	case *array.Decimal128:
 		typeInfo := values.DataType().(*arrow.Decimal128Type)
 		decode = func(index int) any {
-			return decodeDecimal(values.Value(index).ToString(typeInfo.Scale), typeInfo.Scale)
+			return decodeDecimal(values.Value(index).ToString(typeInfo.Scale))
 		}
 	case *array.Decimal256:
 		typeInfo := values.DataType().(*arrow.Decimal256Type)
 		decode = func(index int) any {
-			return decodeDecimal(values.Value(index).ToString(typeInfo.Scale), typeInfo.Scale)
+			return decodeDecimal(values.Value(index).ToString(typeInfo.Scale))
 		}
 	case *array.Dictionary:
 		dictionary, err := compileValueDecoder(values.Dictionary())
@@ -176,13 +175,11 @@ func ownedLargeBinaryDecoder(values *array.LargeBinary) valueDecoder {
 	}
 }
 
-func decodeDecimal(value string, scale int32) any {
-	if scale != 0 {
-		return value
-	}
-	integer := new(big.Int)
-	if _, ok := integer.SetString(value, 10); ok {
-		return integer
-	}
+func decodeDecimal(value string) any {
+	// Decimal values cross the Arrow boundary as canonical fixed-point text,
+	// including scale-zero values. Returning *big.Int for integral DECIMAL
+	// values makes the transport type depend on scale and invites lossy JSON
+	// coercion downstream. Keep the exact base-10 representation uniform for
+	// every physical DECIMAL width and scale.
 	return value
 }

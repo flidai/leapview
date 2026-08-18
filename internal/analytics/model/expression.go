@@ -2,16 +2,83 @@ package model
 
 import (
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/flidai/leapview/internal/analytics/semanticnumeric"
 )
 
 type Expression struct {
 	root  expressionNode
 	refs  []string
 	calls []string
+}
+
+// ScalarExpressionNode is the immutable, renderer-neutral view of a parsed
+// scalar expression. Number is retained as its source token so downstream
+// typed plans do not round-trip decimal literals through float64.
+type ScalarExpressionKind string
+type ScalarExpressionOperator string
+type ScalarExpressionFunction string
+
+type ScalarExpressionNode struct {
+	Kind     ScalarExpressionKind
+	Metric   string
+	Number   string
+	Operator ScalarExpressionOperator
+	Function ScalarExpressionFunction
+	Children []ScalarExpressionNode
+}
+
+const (
+	ScalarExpressionMetric ScalarExpressionKind = "metric_ref"
+	ScalarExpressionNumber ScalarExpressionKind = "number"
+	ScalarExpressionUnary  ScalarExpressionKind = "unary"
+	ScalarExpressionBinary ScalarExpressionKind = "binary"
+	ScalarExpressionCall   ScalarExpressionKind = "function"
+)
+
+// Tree returns a detached typed AST for a parsed expression. Keeping this
+// conversion beside the parser ensures every planner consumes the same
+// grammar and function/arity checks.
+func (e Expression) Tree() (ScalarExpressionNode, error) {
+	if e.root == nil {
+		return ScalarExpressionNode{}, fmt.Errorf("expression is not parsed")
+	}
+	return expressionTree(e.root)
+}
+
+func expressionTree(node expressionNode) (ScalarExpressionNode, error) {
+	var out ScalarExpressionNode
+	var children []expressionNode
+	switch value := node.(type) {
+	case expressionRef:
+		out.Kind, out.Metric = ScalarExpressionMetric, string(value)
+	case expressionNumber:
+		out.Kind, out.Number = ScalarExpressionNumber, string(value)
+	case expressionUnary:
+		out.Kind, out.Operator = ScalarExpressionUnary, ScalarExpressionOperator(value.op)
+		children = []expressionNode{value.node}
+	case expressionBinary:
+		out.Kind, out.Operator = ScalarExpressionBinary, ScalarExpressionOperator(value.op)
+		children = []expressionNode{value.left, value.right}
+	case expressionCall:
+		out.Kind, out.Function = ScalarExpressionCall, ScalarExpressionFunction(value.name)
+		children = value.args
+	default:
+		return ScalarExpressionNode{}, fmt.Errorf("unsupported expression node %T", node)
+	}
+	if len(children) != 0 {
+		out.Children = make([]ScalarExpressionNode, len(children))
+		for index, child := range children {
+			converted, err := expressionTree(child)
+			if err != nil {
+				return ScalarExpressionNode{}, err
+			}
+			out.Children[index] = converted
+		}
+	}
+	return out, nil
 }
 
 func ParseExpression(input string) (Expression, error) {
@@ -75,7 +142,11 @@ func (n expressionNumber) sql(_ func(string) (string, error)) (string, error) {
 }
 
 func (n expressionNumber) evaluate(_ func(string) (any, error)) (any, error) {
-	return strconv.ParseFloat(string(n), 64)
+	value, err := semanticnumeric.Parse(string(n))
+	if err != nil {
+		return nil, err
+	}
+	return value.Value(), nil
 }
 
 type expressionUnary struct {
@@ -96,14 +167,17 @@ func (n expressionUnary) evaluate(resolve func(string) (any, error)) (any, error
 	if err != nil || value == nil {
 		return value, err
 	}
-	number, err := expressionFloat(value)
+	number, err := semanticnumeric.FromValue(value)
 	if err != nil {
 		return nil, err
 	}
 	if n.op == '-' {
-		return -number, nil
+		number, err = number.Neg()
 	}
-	return number, nil
+	if err != nil {
+		return nil, err
+	}
+	return number.Value(), nil
 }
 
 type expressionBinary struct {
@@ -135,26 +209,31 @@ func (n expressionBinary) evaluate(resolve func(string) (any, error)) (any, erro
 	if left == nil || right == nil {
 		return nil, nil
 	}
-	l, err := expressionFloat(left)
+	l, err := semanticnumeric.FromValue(left)
 	if err != nil {
 		return nil, err
 	}
-	r, err := expressionFloat(right)
+	r, err := semanticnumeric.FromValue(right)
 	if err != nil {
 		return nil, err
 	}
+	var result semanticnumeric.Number
 	switch n.op {
 	case '+':
-		return l + r, nil
+		result, err = l.Add(r)
 	case '-':
-		return l - r, nil
+		result, err = l.Sub(r)
 	case '*':
-		return l * r, nil
+		result, err = l.Mul(r)
 	case '/':
-		return l / r, nil
+		result, err = l.Quo(r)
 	default:
 		return nil, fmt.Errorf("unsupported arithmetic operator %q", n.op)
 	}
+	if err != nil {
+		return nil, err
+	}
+	return result.Value(), nil
 }
 
 type expressionCall struct {
@@ -198,15 +277,19 @@ func (n expressionCall) evaluate(resolve func(string) (any, error)) (any, error)
 		if args[0] == nil || args[1] == nil {
 			return args[0], nil
 		}
-		left, err := expressionFloat(args[0])
+		left, err := semanticnumeric.FromValue(args[0])
 		if err != nil {
 			return nil, err
 		}
-		right, err := expressionFloat(args[1])
+		right, err := semanticnumeric.FromValue(args[1])
 		if err != nil {
 			return nil, err
 		}
-		if left == right {
+		equal, err := left.Cmp(right)
+		if err != nil {
+			return nil, err
+		}
+		if equal == 0 {
 			return nil, nil
 		}
 		return args[0], nil
@@ -214,80 +297,64 @@ func (n expressionCall) evaluate(resolve func(string) (any, error)) (any, error)
 		if args[0] == nil {
 			return nil, nil
 		}
-		value, err := expressionFloat(args[0])
-		return math.Abs(value), err
+		value, err := semanticnumeric.FromValue(args[0])
+		if err != nil {
+			return nil, err
+		}
+		value, err = value.Abs()
+		if err != nil {
+			return nil, err
+		}
+		return value.Value(), nil
 	case "round":
 		if args[0] == nil {
 			return nil, nil
 		}
-		value, err := expressionFloat(args[0])
+		value, err := semanticnumeric.FromValue(args[0])
 		if err != nil {
 			return nil, err
 		}
-		digits := 0
+		var digits int32
 		if len(args) == 2 {
 			if args[1] == nil {
 				return nil, nil
 			}
-			digitValue, digitErr := expressionFloat(args[1])
+			digitValue, digitErr := semanticnumeric.FromValue(args[1])
 			if digitErr != nil {
 				return nil, digitErr
 			}
-			digits = int(digitValue)
+			digits, digitErr = digitValue.Int32()
+			if digitErr != nil {
+				return nil, digitErr
+			}
 		}
-		factor := math.Pow10(digits)
-		return math.Round(value*factor) / factor, nil
+		value, err = value.Round(digits)
+		if err != nil {
+			return nil, err
+		}
+		return value.Value(), nil
 	case "safe_divide":
 		if args[0] == nil || args[1] == nil {
 			return nil, nil
 		}
-		numerator, err := expressionFloat(args[0])
+		numerator, err := semanticnumeric.FromValue(args[0])
 		if err != nil {
 			return nil, err
 		}
-		denominator, err := expressionFloat(args[1])
+		denominator, err := semanticnumeric.FromValue(args[1])
 		if err != nil {
 			return nil, err
 		}
-		if denominator == 0 {
+		if denominator.IsZero() {
 			return nil, nil
 		}
-		return numerator / denominator, nil
+		value, err := numerator.Quo(denominator)
+		if err != nil {
+			return nil, err
+		}
+		return value.Value(), nil
 	default:
 		return nil, fmt.Errorf("unsupported expression function %q", n.name)
-	}
-}
-
-func expressionFloat(value any) (float64, error) {
-	switch typed := value.(type) {
-	case int:
-		return float64(typed), nil
-	case int8:
-		return float64(typed), nil
-	case int16:
-		return float64(typed), nil
-	case int32:
-		return float64(typed), nil
-	case int64:
-		return float64(typed), nil
-	case uint:
-		return float64(typed), nil
-	case uint8:
-		return float64(typed), nil
-	case uint16:
-		return float64(typed), nil
-	case uint32:
-		return float64(typed), nil
-	case uint64:
-		return float64(typed), nil
-	case float32:
-		return float64(typed), nil
-	case float64:
-		return typed, nil
-	case interface{ Float64() float64 }:
-		return typed.Float64(), nil
-	default:
-		return 0, fmt.Errorf("expression value %T is not numeric", value)
 	}
 }
 
@@ -349,9 +416,34 @@ func (p *expressionParser) parseUnary() (expressionNode, error) {
 		if err != nil {
 			return nil, err
 		}
+		if op == '+' {
+			if _, numeric := node.(expressionNumber); numeric {
+				return nil, fmt.Errorf("numeric literal leading plus is not canonical")
+			}
+			return expressionUnary{op: op, node: node}, nil
+		}
+		if isZeroExpressionNumber(node) {
+			return nil, fmt.Errorf("numeric literal %q must not be negative zero", expressionNumberValue(node))
+		}
 		return expressionUnary{op: op, node: node}, nil
 	}
 	return p.parsePrimary()
+}
+
+func isZeroExpressionNumber(node expressionNode) bool {
+	literal, ok := node.(expressionNumber)
+	if !ok {
+		return false
+	}
+	number, err := semanticnumeric.Parse(string(literal))
+	return err == nil && number.IsZero()
+}
+
+func expressionNumberValue(node expressionNode) string {
+	if literal, ok := node.(expressionNumber); ok {
+		return string(literal)
+	}
+	return "0"
 }
 
 func (p *expressionParser) parsePrimary() (expressionNode, error) {
@@ -428,7 +520,13 @@ func (p *expressionParser) parseNumber() (expressionNode, error) {
 		break
 	}
 	value := p.input[start:p.pos]
-	if _, err := strconv.ParseFloat(value, 64); err != nil {
+	if p.pos < len(p.input) && (p.input[p.pos] == 'e' || p.input[p.pos] == 'E') {
+		return nil, fmt.Errorf("exponent notation is not supported in authored numeric literals")
+	}
+	if err := semanticnumeric.ValidateCanonicalFixedPoint(value); err != nil {
+		return nil, err
+	}
+	if _, err := semanticnumeric.Parse(value); err != nil {
 		return nil, fmt.Errorf("invalid number %q", value)
 	}
 	return expressionNumber(value), nil

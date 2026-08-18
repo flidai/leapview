@@ -94,10 +94,10 @@ model DashboardBuilderProjectSourceEvidence extends DashboardBuilderSourceEviden
 model DashboardBuilderSemanticModelSignal {
   `id`: string;
   `title`: string;
-  `tables`: DashboardBuilderTableSignal[];
+  `datasets`: DashboardBuilderDatasetSignal[];
 }
 
-model DashboardBuilderTableSignal {
+model DashboardBuilderDatasetSignal {
   `id`: string;
   `title`: string;
   `fields`: DashboardBuilderFieldSignal[];
@@ -106,7 +106,7 @@ model DashboardBuilderTableSignal {
 model DashboardBuilderFieldSignal {
   `id`: string;
   `label`: string;
-  `kind`: "dimension" | "measure";
+  `kind`: "dimension" | "metric";
   `dataType`: string;
   `description`?: string;
 }
@@ -132,7 +132,7 @@ model DashboardBuilderVisualSignal {
 model DashboardBuilderVisualSlotSignal {
   `id`: string;
   `label`: string;
-  `kind`: "dimension" | "measure" | "category" | "value" | "detail";
+  `kind`: "dimension" | "metric" | "category" | "value" | "detail";
   `fieldId`?: string;
   `required`: boolean;
 }
@@ -1042,7 +1042,7 @@ model DashboardCompiledFilterDefinition {
   `label`: string;
   `description`?: string;
   `field`: string;
-  `fact`?: string;
+  `dataset`?: string;
   `valueKind`: "string" | "boolean" | "integer" | "decimal" | "date" | "timestamp";
   `predicates`: DashboardFilterPredicatePolicy[];
   `options`: DashboardFilterOptionSource;
@@ -1200,7 +1200,7 @@ model DashboardVisualizationSignal {
 }
 
 model DashboardInteractionCommandMapping {
-  `fact`?: string;
+  `dataset`?: string;
   `field`: string;
   `grain`?: string;
   `label`?: string;
@@ -1223,7 +1223,7 @@ model DashboardInteractionConfig {
 }
 
 model DashboardInteractionConfigMapping {
-  `fact`?: string;
+  `dataset`?: string;
   `field`: string;
   `grain`?: string;
   `label`?: string;
@@ -1246,7 +1246,7 @@ model DashboardInteractionSelectionEntry {
 }
 
 model DashboardInteractionSelectionMapping {
-  `fact`?: string;
+  `dataset`?: string;
   `field`: string;
   `grain`?: string;
   `label`?: string;
@@ -1335,7 +1335,7 @@ model DataExploreAgentContextSignal {
   `dimensions`: string[];
   `filters`: DataExploreFilterSignal[];
   `limit`: int64;
-  `measures`: string[];
+  `metrics`: string[];
   `sort`: DataExploreSortSignal[];
   `time`?: DataExploreTimeSignal;
 }
@@ -1348,7 +1348,7 @@ model DataExploreCommand {
   `dimensions`: string[];
   `filters`: DataExploreFilterSignal[];
   `limit`: int64;
-  `measures`: string[];
+  `metrics`: string[];
   `modelId`?: string;
   `requestSeq`: int64;
   `resetVersion`: int64;
@@ -1360,8 +1360,10 @@ model DataExploreCommand {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreDatasetSignal {
   `description`?: string;
+  `entities`: SemanticModelGraphEntitySignal[];
   `fieldCount`: int64;
-  `grain`?: string;
+  `grainEntity`: string;
+  `grainFields`: string[];
   `id`: string;
   `title`: string;
 }
@@ -1372,9 +1374,9 @@ model DataExploreFieldSignal {
   `compatible`: boolean;
   `compatibilityReason`?: string;
   `description`?: string;
-  `fact`?: string;
+  `dataset`?: string;
   `id`: string;
-  `kind`: "dimension" | "measure";
+  `kind`: "dimension" | "metric";
   `label`: string;
   `modelTable`: string;
   `rebaseDatasetId`?: string;
@@ -1384,7 +1386,7 @@ model DataExploreFieldSignal {
 }
 
 model DataExploreFilterSignal {
-  `fact`?: string;
+  `dataset`?: string;
   `field`: string;
   `operator`: string;
   `values`: string[];
@@ -1673,7 +1675,7 @@ model ReportFilterConfig {
   `defaultOperator`?: string;
   `description`?: string;
   `dimension`: string;
-  `fact`?: string;
+  `dataset`?: string;
   `fromURLParam`?: string;
   `id`: string;
   `label`: string;
@@ -1704,7 +1706,7 @@ model ReportFilterDefinition {
   `defaultOperator`?: string;
   `description`?: string;
   `dimension`: string;
-  `fact`?: string;
+  `dataset`?: string;
   `fromURLParam`?: string;
   `label`: string;
   `operator`?: string;
@@ -1769,12 +1771,22 @@ model SemanticModelGraphEdgeSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model SemanticModelGraphFieldSignal {
+  `entities`?: string[];
+  `grain`?: boolean;
   `join`?: boolean;
   `label`?: string;
   `name`: string;
-  `primaryKey`?: boolean;
   `relationships`?: string[];
   `type`?: string;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model SemanticModelGraphEntitySignal {
+  `fields`: string[];
+  `grain`?: boolean;
+  `name`: string;
+  `type`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
@@ -1782,9 +1794,10 @@ model SemanticModelGraphFieldSignal {
 model SemanticModelGraphNodeSignal {
   `badges`?: string[];
   `description`?: string;
+  `entities`?: SemanticModelGraphEntitySignal[];
   `fields`: SemanticModelGraphFieldSignal[];
+  `grainEntity`?: string;
   `id`: string;
-  `primaryKey`?: string;
   `title`: string;
 }
 
@@ -1792,7 +1805,7 @@ model SemanticModelGraphNodeSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model SemanticModelGraphSignal {
   `edges`: SemanticModelGraphEdgeSignal[];
-  `facts`?: string[];
+  `datasets`?: string[];
   `nodes`: SemanticModelGraphNodeSignal[];
 }
 

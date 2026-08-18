@@ -577,13 +577,12 @@ const nodePalette: Record<string, [string, string, string]> = {
   dashboard: ['var(--lv-asset-dashboard-bg)', 'var(--lv-asset-dashboard-accent)', 'var(--lv-asset-dashboard-border)'],
   field: ['var(--lv-asset-dimension-bg)', 'var(--lv-asset-dimension-accent)', 'var(--lv-asset-dimension-border)'],
   filter: ['var(--lv-asset-filter-bg)', 'var(--lv-asset-filter-accent)', 'var(--lv-asset-filter-border)'],
-  measure: ['var(--lv-asset-measure-bg)', 'var(--lv-asset-measure-accent)', 'var(--lv-asset-measure-border)'],
+  metric: ['var(--lv-asset-metric-bg)', 'var(--lv-asset-metric-accent)', 'var(--lv-asset-metric-border)'],
   model_table: ['var(--lv-asset-model-table-bg)', 'var(--lv-asset-model-table-accent)', 'var(--lv-asset-model-table-border)'],
   page: ['var(--lv-asset-page-bg)', 'var(--lv-asset-page-accent)', 'var(--lv-asset-page-border)'],
   page_item: ['var(--lv-asset-page-bg)', 'var(--lv-asset-page-accent)', 'var(--lv-asset-page-border)'],
   relationship: ['var(--lv-asset-dimension-bg)', 'var(--lv-asset-dimension-accent)', 'var(--lv-asset-dimension-border)'],
   semantic_model: ['var(--lv-asset-semantic-model-bg)', 'var(--lv-asset-semantic-model-accent)', 'var(--lv-asset-semantic-model-border)'],
-  semantic_table: ['var(--lv-asset-model-table-bg)', 'var(--lv-asset-model-table-accent)', 'var(--lv-asset-model-table-border)'],
   source: ['var(--lv-asset-source-bg)', 'var(--lv-asset-source-accent)', 'var(--lv-asset-source-border)'],
   table: ['var(--lv-asset-table-bg)', 'var(--lv-asset-table-accent)', 'var(--lv-asset-table-border)'],
   visual: ['var(--lv-asset-visual-bg)', 'var(--lv-asset-visual-accent)', 'var(--lv-asset-visual-border)'],
@@ -615,8 +614,6 @@ function kindLabel(kind: string): string {
       return 'Page item'
     case 'semantic_model':
       return 'Semantic model'
-    case 'semantic_table':
-      return 'Semantic table'
     default:
       return kind.replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase())
   }

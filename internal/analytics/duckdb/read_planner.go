@@ -24,9 +24,6 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
 	sqlText := strings.TrimSpace(table.Transform.SQL)
-	if sqlText == "" {
-		sqlText = strings.TrimSpace(table.SQL)
-	}
 	if table.Source != "" && sqlText == "" {
 		return planDirectSourceTable(ctx, runtimeDB, model, tableName, table, staged)
 	}

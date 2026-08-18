@@ -35,6 +35,10 @@ type RuntimeConfig struct {
 	Database Database
 	Sources  SourcePreparer
 	Resolver SourcePathResolver
+	// SnapshotOnly binds this view to immutable model.* relations. It skips
+	// authored source-file validation and uses source-free semantic verification
+	// because committed generations may outlive source credentials/files.
+	SnapshotOnly bool
 	// OwnDatabase and OwnQueryCache transfer close ownership to the runtime.
 	// Supplied resources are borrowed by default because project runtimes
 	// commonly share a process database and cache scope.
@@ -61,6 +65,7 @@ type Runtime struct {
 	resultLimits       dataquery.ResultLimits
 	requiredExtensions []string
 	lastRefresh        time.Time
+	snapshotOnly       bool
 	dbOwned            bool
 	closeOnce          sync.Once
 	closeErr           error
@@ -141,8 +146,10 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	if resolver == nil {
 		resolver = defaultSourcePathResolver{}
 	}
-	if err := ValidateFilesWithResolver(config.Model, resolver); err != nil {
-		return nil, err
+	if !config.SnapshotOnly {
+		if err := ValidateFilesWithResolver(config.Model, resolver); err != nil {
+			return nil, err
+		}
 	}
 	plannerOptions := []semanticquery.PlannerOption{}
 	if config.TableRelation != nil {
@@ -151,6 +158,9 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	planner, err := semanticquery.NewCompiledPlanner(config.Model, plannerOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("compile semantic model: %w", err)
+	}
+	if !planner.IsCompiled() {
+		return nil, fmt.Errorf("compiled semantic planner is required")
 	}
 	cache = newQueryResultCacheWithScope(config.QueryCache, config.QueryCacheNamespace)
 	if config.QueryCache == nil {
@@ -171,7 +181,7 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	runtime = &Runtime{
 		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
 		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
-		queryCache: cache, resultLimits: limits, dbOwned: config.OwnDatabase,
+		queryCache: cache, resultLimits: limits, dbOwned: config.OwnDatabase, snapshotOnly: config.SnapshotOnly,
 	}
 	return runtime, nil
 }
@@ -206,11 +216,23 @@ func (r *Runtime) ensureRequiredExtensions(ctx context.Context) error {
 	return nil
 }
 
-func (r *Runtime) queryPlanner() *semanticquery.Planner {
-	if r != nil && r.planner != nil {
-		return r.planner
+func (r *Runtime) queryPlanner() (*semanticquery.Planner, error) {
+	if r == nil {
+		return nil, fmt.Errorf("compiled semantic planner is unavailable")
 	}
-	return semanticquery.NewPlanner(r.model)
+	if r.planner == nil {
+		return nil, fmt.Errorf("compiled semantic planner is unavailable")
+	}
+	return r.planner, nil
+}
+
+// Planner returns the immutable planner bound during activation. It is a
+// narrow read-only port used by dashboard optimization and authorization.
+func (r *Runtime) Planner() *semanticquery.Planner {
+	if r == nil {
+		return nil
+	}
+	return r.planner
 }
 
 func (r *Runtime) Close() error {
@@ -285,6 +307,108 @@ func (r *Runtime) RefreshModelTables(ctx context.Context, tableNames []string) e
 		}
 	}
 	r.lastRefresh = lastRefresh
+	return nil
+}
+
+// VerifySemantic prepares representative governed plans and proves all
+// authored primary/unique entity claims against the discovered serving data.
+// It intentionally never executes authored SQL; only planner-generated
+// statements and bounded key checks are run during deployment verification.
+func (r *Runtime) VerifySemantic(ctx context.Context) error {
+	if r == nil || r.model == nil {
+		return fmt.Errorf("semantic verification: materialization runtime is not initialized")
+	}
+	if r.planner == nil {
+		return fmt.Errorf("semantic verification: compiled semantic planner is unavailable")
+	}
+	verificationModel := r.model
+	if r.snapshotOnly {
+		// Serving verification is source-free for reopened snapshots. The
+		// execution snapshot preserves discovered model-table schemas while
+		// stripping source/connection state that may no longer be available.
+		verificationModel = r.model.ExecutionSnapshot()
+	}
+	if _, err := r.planner.PrepareRepresentativePlans(verificationModel); err != nil {
+		return err
+	}
+	return r.VerifyEntityClaims(ctx)
+}
+
+// VerifyEntityClaims checks non-null and uniqueness for every primary and
+// unique entity tuple. Queries are bounded by EXISTS/LIMIT so a pathological
+// relation cannot materialize an unbounded verification result.
+func (r *Runtime) VerifyEntityClaims(ctx context.Context) error {
+	if r == nil || r.model == nil || r.db == nil {
+		return fmt.Errorf("entity verification: materialization runtime is not initialized")
+	}
+	provider, ok := r.db.(analyticsresource.SessionProvider)
+	if !ok {
+		return fmt.Errorf("entity verification: analytical database does not support schema sessions")
+	}
+	lease, queryCtx, err := acquireDatabaseLease(ctx, r.db)
+	if err != nil {
+		return fmt.Errorf("entity verification: acquire database lease: %w", err)
+	}
+	if lease != nil {
+		defer lease.Release()
+	}
+	session, err := provider.Session(queryCtx)
+	if err != nil {
+		return fmt.Errorf("entity verification: open database session: %w", err)
+	}
+	if r.planner == nil || r.planner.CompiledModel() == nil {
+		return fmt.Errorf("entity verification: compiled dataset bindings are unavailable")
+	}
+	for _, tableName := range r.planner.CompiledModel().DatasetNames() {
+		if err := queryCtx.Err(); err != nil {
+			return err
+		}
+		dataset, ok := r.planner.Dataset(tableName)
+		if !ok {
+			return fmt.Errorf("entity verification table %q: compiled dataset is unavailable", tableName)
+		}
+		table := dataset.Table()
+		relation, err := r.physicalModelTable(tableName)
+		if err != nil {
+			return fmt.Errorf("entity verification table %q: %w", tableName, err)
+		}
+		entityNames := make([]string, 0, len(table.Entities))
+		for entityName, entity := range table.Entities {
+			if entity.Type == "primary" || entity.Type == "unique" {
+				entityNames = append(entityNames, entityName)
+			}
+		}
+		sort.Strings(entityNames)
+		for _, entityName := range entityNames {
+			entity := table.Entities[entityName]
+			fields := make([]string, len(entity.Fields))
+			for index, field := range entity.Fields {
+				if err := validateIdentifier(field); err != nil {
+					return fmt.Errorf("entity verification table %q entity %q field %q: %w", tableName, entityName, field, err)
+				}
+				fields[index] = quoteMaterializedIdentifier(field)
+			}
+			for _, field := range fields {
+				var found bool
+				err := session.QueryRowContext(queryCtx, "SELECT EXISTS (SELECT 1 FROM "+relation+" WHERE "+field+" IS NULL LIMIT 1)").Scan(&found)
+				if err != nil {
+					return fmt.Errorf("entity verification table %q entity %q null check: %w", tableName, entityName, err)
+				}
+				if found {
+					return fmt.Errorf("entity verification table %q entity %q has null key field %q", tableName, entityName, strings.Trim(field, `"`))
+				}
+			}
+			groupFields := strings.Join(fields, ", ")
+			var duplicate bool
+			duplicateSQL := "SELECT EXISTS (SELECT 1 FROM (SELECT " + groupFields + " FROM " + relation + " GROUP BY " + groupFields + " HAVING COUNT(*) > 1 LIMIT 1) AS __leapview_duplicates)"
+			if err := session.QueryRowContext(queryCtx, duplicateSQL).Scan(&duplicate); err != nil {
+				return fmt.Errorf("entity verification table %q entity %q uniqueness check: %w", tableName, entityName, err)
+			}
+			if duplicate {
+				return fmt.Errorf("entity verification table %q entity %q has duplicate key tuple", tableName, entityName)
+			}
+		}
+	}
 	return nil
 }
 
@@ -425,10 +549,14 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 }
 
 func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, error) {
+	planner, err := r.queryPlanner()
+	if err != nil {
+		return semanticquery.Plan{}, err
+	}
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate:
-		return r.queryPlanner().Plan(semanticquery.Request{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures),
+		return planner.Plan(semanticquery.Request{
+			Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Time:    semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
@@ -437,8 +565,8 @@ func (r *Runtime) planArrowQuery(request dataquery.Query) (semanticquery.Plan, e
 		if request.IncludeTotal {
 			return semanticquery.Plan{}, fmt.Errorf("native Arrow row queries do not include an auxiliary total")
 		}
-		return r.queryPlanner().PlanRows(semanticquery.RowRequest{
-			Table: request.Target, Dimensions: dataQueryFields(request.Fields), Measures: dataQueryFields(request.Measures),
+		return planner.PlanRows(semanticquery.RowRequest{
+			Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics),
 			Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort),
 			ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset,
 		})
@@ -591,16 +719,6 @@ func (r *Runtime) ClearQueryCache() {
 
 const totalRowsColumn = "__leapview_total_rows"
 
-func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
-	from := strings.Index(plan.SQL, "\nFROM ")
-	if from < 0 {
-		return semanticquery.Plan{}, fmt.Errorf("row query plan has no FROM clause")
-	}
-	plan.SQL = plan.SQL[:from] + ", COUNT(*) OVER () AS " + totalRowsColumn + plan.SQL[from:]
-	plan.Columns = append(append([]string{}, plan.Columns...), totalRowsColumn)
-	return plan, nil
-}
-
 func intFromDataQueryValue(value any) int {
 	switch typed := value.(type) {
 	case int:
@@ -698,6 +816,15 @@ func (r *Runtime) modelTableQueryPlan(request ModelTableQuery) (semanticquery.Pl
 }
 
 func (r *Runtime) physicalModelTable(tableName string) (string, error) {
+	// Entity verification iterates semantic dataset aliases, while the
+	// activation table relation is keyed by the backing authored Model name.
+	// Resolve the alias at this boundary just as the governed planner does
+	// before invoking its TableRelation callback.
+	if r != nil && r.planner != nil {
+		if dataset, ok := r.planner.Dataset(tableName); ok {
+			tableName = dataset.ModelName()
+		}
+	}
 	quoted, err := quotedModelTableName(tableName)
 	if err != nil {
 		return "", err
@@ -940,7 +1067,7 @@ func dataQueryFilters(filters []dataquery.Filter) []semanticquery.Filter {
 		}
 		out = append(out, semanticquery.Filter{
 			Field:    filter.Field,
-			Fact:     filter.Fact,
+			Dataset:  filter.Dataset,
 			Operator: filter.Operator,
 			Values:   append([]any{}, filter.Values...),
 			Groups:   groups,

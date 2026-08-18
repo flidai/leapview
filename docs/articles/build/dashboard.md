@@ -41,7 +41,7 @@ spec:
       query:
         dimensions:
           purchase_month: orders.purchase_month
-        measures:
+        metrics:
           revenue:
         sort:
           - field: purchase_month
@@ -66,20 +66,20 @@ The visual definition owns semantic query and presentation settings. The page en
 
 ### Design the query result
 
-Names on the left of `dimensions` and `measures` are stable field IDs compiled into the visualization specification. Values on the right refer to semantic fields. Choose clear aliases and keep them stable when typed presentation or interactions depend on them.
+Names on the left of `dimensions` and `metrics` are stable field IDs compiled into the visualization specification. Values on the right refer to semantic fields. Choose clear aliases and keep them stable when typed presentation or interactions depend on them.
 
 Every chart query should have a bounded limit and deterministic sort. For time series, sort the time field ascending. For ranked bars, sort the value descending and choose a limit that users can read. Do not rely on database default order.
 
 ### Add a KPI
 
-KPI visuals use one measure and typed KPI presentation:
+KPI visuals use one metric and typed KPI presentation:
 
 ```yaml
 visuals:
   total_revenue:
     type: kpi
     query:
-      measures:
+      metrics:
         revenue:
     presentation:
       display_units: auto

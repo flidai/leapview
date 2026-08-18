@@ -282,10 +282,10 @@ func ordersRowSelectionCommand(t *testing.T, status string, patches []map[string
 		"interactionRevision": visual["interactionRevision"],
 		"mappings": []map[string]any{
 			{
-				"field": "orders.status",
-				"fact":  "orders",
-				"value": status,
-				"label": status,
+				"field":   "orders.status",
+				"dataset": "orders",
+				"value":   status,
+				"label":   status,
 			},
 		},
 	}
@@ -313,10 +313,10 @@ func selectionSignal(sourceID, field, value string) map[string]any {
 		"interactionKind": "point_selection",
 		"entries": []map[string]any{{
 			"mappings": []map[string]any{{
-				"field": field,
-				"fact":  "orders",
-				"value": value,
-				"label": value,
+				"field":   field,
+				"dataset": "orders",
+				"value":   value,
+				"label":   value,
 			}},
 		}},
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
@@ -27,6 +28,20 @@ func WithAdmission(metrics Metrics, admitter workload.Admitter) Metrics {
 		return nil
 	}
 	return admittedMetrics{Metrics: metrics, admitter: admitter}
+}
+
+// Planner preserves the activation-owned semantic planner through the
+// workload admission decorator. Semantic APIs and authorization must observe
+// the same compiled planner as the wrapped runtime.
+func (m admittedMetrics) Planner(modelID string) (consumer.Planner, bool) {
+	provider, ok := m.Metrics.(interface {
+		Planner(string) (consumer.Planner, bool)
+	})
+	if !ok {
+		return nil, false
+	}
+	planner, available := provider.Planner(modelID)
+	return planner, available && planner != nil
 }
 
 func (m admittedMetrics) readContext(ctx context.Context) context.Context {

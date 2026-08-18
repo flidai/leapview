@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"math"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,7 +32,7 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 		"    query:\n" +
 		"      dimensions:\n" +
 		"        month: orders.month\n" +
-		"      measures:\n" +
+		"      metrics:\n" +
 		"        revenue: null\n" +
 		"```\n")
 
@@ -70,6 +71,58 @@ func TestNormalizeEnvelopeRevisionUsesCanonicalSpatialTileURL(t *testing.T) {
 	}
 	if strings.Contains(state.TileURL, "/projects/") {
 		t.Fatalf("tile URL retains project-prefixed route: %q", state.TileURL)
+	}
+}
+
+func TestCompareEnvelopeValuesPreservesExactDecimalOrdering(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		left, right string
+		want        int
+	}{
+		{name: "decimal strings are numeric", left: "1251.000", right: "684.000", want: 1},
+		{name: "beyond float safe range", left: "9007199254740993.125", right: "9007199254740993.124", want: 1},
+		{name: "negative decimals", left: "-1.001", right: "-1.01", want: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := compareEnvelopeValues(test.left, test.right, visualizationir.VisualizationDataTypeDecimal); got != test.want {
+				t.Fatalf("compareEnvelopeValues(%q, %q) = %d, want %d", test.left, test.right, got, test.want)
+			}
+		})
+	}
+}
+
+func TestCompareEnvelopeValuesRespectsStringFieldType(t *testing.T) {
+	if got := compareEnvelopeValues("10", "2", visualizationir.VisualizationDataTypeString); got >= 0 {
+		t.Fatalf("string comparison = %d, want lexical 10 < 2", got)
+	}
+}
+
+func TestCanonicalizeEnvelopeDataUsesDatasetFieldTypes(t *testing.T) {
+	spec := &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{
+		Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: []visualizationir.VisualizationField{
+			{ID: "label", DataType: visualizationir.VisualizationDataTypeString},
+			{ID: "value", DataType: visualizationir.VisualizationDataTypeDecimal},
+		}}},
+	}}
+	envelope := visualizationir.VisualizationEnvelope{
+		Spec: visualizationir.VisualizationSpec{Value: spec},
+		DataState: visualizationir.VisualizationDataState{Value: &visualizationir.InlineVisualizationDataState{
+			Datasets: []visualizationir.VisualizationInlineDataset{{ID: "primary", Columns: []string{"label", "value"}, Rows: [][]any{
+				{"10", "2.000"},
+				{"2", "10.000"},
+			}}},
+		}},
+	}
+
+	canonicalizeEnvelopeData(&envelope, 0, true, false)
+	rows := envelope.DataState.Value.(*visualizationir.InlineVisualizationDataState).Datasets[0].Rows
+	if got, want := rows[0][0], "2"; got != want {
+		t.Fatalf("string dimension was sorted numerically: first label = %#v, want %q", got, want)
+	}
+	canonicalizeEnvelopeData(&envelope, 1, true, false)
+	if got, want := rows[0][1], "10.000"; got != want {
+		t.Fatalf("decimal metric was not sorted numerically: first value = %#v, want %q", got, want)
 	}
 }
 
@@ -152,9 +205,9 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	if !ok || len(barState.Datasets) != 1 || len(barState.Datasets[0].Rows) < 2 {
 		t.Fatalf("ranked bar rows are missing: %#v", artifact.Documents["visuals/bar"][0].DataState.Value)
 	}
-	firstBarValue, firstOK := envelopeNumber(barState.Datasets[0].Rows[0][1])
-	secondBarValue, secondOK := envelopeNumber(barState.Datasets[0].Rows[1][1])
-	if !firstOK || !secondOK || firstBarValue < secondBarValue {
+	firstBarValue, firstOK := exactDecimalEnvelopeNumber(barState.Datasets[0].Rows[0][1])
+	secondBarValue, secondOK := exactDecimalEnvelopeNumber(barState.Datasets[0].Rows[1][1])
+	if !firstOK || !secondOK || firstBarValue.Cmp(secondBarValue) < 0 {
 		t.Fatalf("ranked bar rows do not preserve descending query order: %#v", artifact.Documents["visuals/bar"][0].DataState.Value)
 	}
 	histogramState, ok := artifact.Documents["visuals/histogram"][0].DataState.Value.(*visualizationir.InlineVisualizationDataState)
@@ -265,10 +318,10 @@ func assertCuratedShowcaseExamples(t *testing.T, artifact visualExamplesArtifact
 	if len(funnelRows) != 5 {
 		t.Fatalf("showcase funnel stages = %d, want 5", len(funnelRows))
 	}
-	previous := math.Inf(1)
+	var previous *big.Rat
 	for _, row := range funnelRows {
-		value, ok := envelopeNumber(row[1])
-		if !ok || value >= previous {
+		value, ok := exactEnvelopeNumber(row[1])
+		if !ok || (previous != nil && value.Cmp(previous) >= 0) {
 			t.Fatalf("showcase funnel must strictly decrease through its stages: %#v", funnelRows)
 		}
 		previous = value
@@ -277,12 +330,12 @@ func assertCuratedShowcaseExamples(t *testing.T, artifact visualExamplesArtifact
 	waterfallRows := rows(first("waterfall", "revenue_bridge_waterfall"))
 	hasPositive, hasNegative := false, false
 	for _, row := range waterfallRows {
-		value, ok := envelopeNumber(row[1])
+		value, ok := exactEnvelopeNumber(row[1])
 		if !ok {
 			t.Fatalf("showcase waterfall has a non-numeric contribution: %#v", row)
 		}
-		hasPositive = hasPositive || value > 0
-		hasNegative = hasNegative || value < 0
+		hasPositive = hasPositive || value.Sign() > 0
+		hasNegative = hasNegative || value.Sign() < 0
 	}
 	if !hasPositive || !hasNegative {
 		t.Fatalf("showcase waterfall must explain gains and losses: %#v", waterfallRows)
@@ -291,15 +344,25 @@ func assertCuratedShowcaseExamples(t *testing.T, artifact visualExamplesArtifact
 	candlestickRows := rows(first("candlestick", "market_candlestick"))
 	hasRise, hasFall := false, false
 	for _, row := range candlestickRows {
-		open, openOK := envelopeNumber(row[1])
-		close, closeOK := envelopeNumber(row[2])
-		low, lowOK := envelopeNumber(row[3])
-		high, highOK := envelopeNumber(row[4])
-		if !openOK || !closeOK || !lowOK || !highOK || low > math.Min(open, close) || high < math.Max(open, close) {
+		open, openOK := exactEnvelopeNumber(row[1])
+		close, closeOK := exactEnvelopeNumber(row[2])
+		low, lowOK := exactEnvelopeNumber(row[3])
+		high, highOK := exactEnvelopeNumber(row[4])
+		if !openOK || !closeOK || !lowOK || !highOK {
 			t.Fatalf("showcase candlestick contains invalid OHLC data: %#v", row)
 		}
-		hasRise = hasRise || close > open
-		hasFall = hasFall || close < open
+		minimum, maximum := open, open
+		if close.Cmp(minimum) < 0 {
+			minimum = close
+		}
+		if close.Cmp(maximum) > 0 {
+			maximum = close
+		}
+		if low.Cmp(minimum) > 0 || high.Cmp(maximum) < 0 {
+			t.Fatalf("showcase candlestick contains invalid OHLC data: %#v", row)
+		}
+		hasRise = hasRise || close.Cmp(open) > 0
+		hasFall = hasFall || close.Cmp(open) < 0
 	}
 	if !hasRise || !hasFall {
 		t.Fatalf("showcase candlestick must include rising and falling periods: %#v", candlestickRows)
@@ -603,7 +666,7 @@ func TestParseVisualExamplesRejectsBrokenContracts(t *testing.T) {
 		},
 		{
 			name: "missing shortcode",
-			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    query:\n      dimensions: [orders.month]\n      measures: [revenue]\n```",
+			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    query:\n      dimensions: [orders.month]\n      metrics: [revenue]\n```",
 			want: `visual example "line_basic" has no matching shortcode`,
 		},
 		{
@@ -623,12 +686,12 @@ func TestParseVisualExamplesRejectsBrokenContracts(t *testing.T) {
 		},
 		{
 			name: "missing type",
-			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    shape: single_value\n    query:\n      measures: [revenue]\n```",
+			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    shape: single_value\n    query:\n      metrics: [revenue]\n```",
 			want: `type`,
 		},
 		{
 			name: "legacy kind",
-			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    kind: kpi\n    shape: single_value\n    query:\n      measures: [revenue]\n```",
+			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    kind: kpi\n    shape: single_value\n    query:\n      metrics: [revenue]\n```",
 			want: `kind`,
 		},
 	}

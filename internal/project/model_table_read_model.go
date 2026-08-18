@@ -15,11 +15,10 @@ type ModelTableAssetReadModel struct {
 	Source             string                                   `json:"Source,omitempty"`
 	Sources            []string                                 `json:"Sources,omitempty"`
 	SourceReads        map[string][]string                      `json:"SourceReads,omitempty"`
-	SQL                string                                   `json:"SQL,omitempty"`
 	Transform          semanticmodel.Transform                  `json:"Transform,omitempty"`
 	Columns            map[string]semanticmodel.ModelColumn     `json:"Columns,omitempty"`
-	PrimaryKey         string                                   `json:"PrimaryKey,omitempty"`
-	Grain              string                                   `json:"Grain,omitempty"`
+	Entities           map[string]semanticmodel.ModelEntitySpec `json:"Entities,omitempty"`
+	GrainEntity        string                                   `json:"GrainEntity,omitempty"`
 	Dimensions         map[string]semanticmodel.MetricDimension `json:"Dimensions,omitempty"`
 	Description        string                                   `json:"Description,omitempty"`
 	Schema             semanticmodel.TableSchema                `json:"Schema,omitempty"`
@@ -36,11 +35,10 @@ func ModelTableAssetPayload(table semanticmodel.Table) map[string]any {
 		Source:             table.Source,
 		Sources:            append([]string(nil), table.Sources...),
 		SourceReads:        cloneStringSliceMap(table.SourceReads),
-		SQL:                table.SQL,
 		Transform:          table.Transform,
 		Columns:            cloneModelColumns(table.Columns),
-		PrimaryKey:         table.PrimaryKey,
-		Grain:              table.Grain,
+		Entities:           cloneModelEntities(table.Entities),
+		GrainEntity:        table.GrainEntity,
 		Dimensions:         cloneMetricDimensions(table.Dimensions),
 		Description:        table.Description,
 		Schema:             table.Schema,
@@ -75,6 +73,18 @@ func cloneModelColumns(input map[string]semanticmodel.ModelColumn) map[string]se
 	}
 	output := make(map[string]semanticmodel.ModelColumn, len(input))
 	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
+
+func cloneModelEntities(input map[string]semanticmodel.ModelEntitySpec) map[string]semanticmodel.ModelEntitySpec {
+	if input == nil {
+		return nil
+	}
+	output := make(map[string]semanticmodel.ModelEntitySpec, len(input))
+	for key, value := range input {
+		value.Fields = append([]string(nil), value.Fields...)
 		output[key] = value
 	}
 	return output

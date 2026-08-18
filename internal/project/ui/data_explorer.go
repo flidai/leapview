@@ -90,7 +90,7 @@ func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer ui
 		Surface: "data", ModelID: modelID, DatasetID: &datasetID,
 		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "",
 		Exploration: &uisignals.DataExploreAgentContextSignal{
-			Dimensions: append([]string(nil), command.Dimensions...), Measures: append([]string(nil), command.Measures...),
+			Dimensions: append([]string(nil), command.Dimensions...), Metrics: append([]string(nil), command.Metrics...),
 			Filters: append([]uisignals.DataExploreFilterSignal(nil), command.Filters...),
 			Sort:    append([]uisignals.DataExploreSortSignal(nil), command.Sort...), Time: command.Time, Limit: command.Limit,
 		},

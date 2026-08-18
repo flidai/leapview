@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledRawPrecisionVisible, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceDataReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
@@ -220,7 +220,7 @@ test('a superseded MapLibre mount cannot remove the winning renderer frame', () 
   expect(ownedRemoved).toBe(true)
 })
 
-test('MapLibre normalizes finite measure values without losing raw tooltip values', () => {
+test('MapLibre normalizes finite metric values without losing raw tooltip values', () => {
   const data = {
     type: 'FeatureCollection',
     features: [
@@ -268,7 +268,7 @@ test('MapLibre tooltips use compiled fields and contractual formatting without e
   expect(entries.some((entry) => entry.value.includes('governed'))).toBe(false)
 })
 
-test('MapLibre aggregate tooltips lead with the business measure and retain location count', () => {
+test('MapLibre aggregate tooltips lead with the business metric and retain location count', () => {
 	const envelope = tiledPointEnvelope()
 	const entries = mapTooltipEntries(envelope, [{
 		layer: { id: 'lv-orders' },
@@ -307,6 +307,50 @@ test('MapLibre switches the complete tiled map to one precision family at the gl
 	expect(tiledRawPrecisionVisible(18, 19)).toBe(false)
 })
 
+test('MapLibre replaces the tiled source generation before exposing a new precision family', () => {
+  const previous = 'https://dash.example/tiles/revision-raw/{z}/{x}/{y}.mvt'
+  const next = 'https://dash.example/tiles/revision-aggregate/{z}/{x}/{y}.mvt'
+  expect(tiledSourceTransition(undefined, previous)).toBe('stable')
+  expect(tiledSourceTransition(previous, previous)).toBe('stable')
+  expect(tiledSourceTransition(previous, next)).toBe('replace')
+  expect(tiledSourceLifecycle('replace', true)).toBe('waiting')
+  expect(tiledSourceLifecycle('stable', true)).toBe('stable')
+  expect(tiledSourceLifecycle('replace', false)).toBe('error')
+})
+
+test('MapLibre waits for an idle source event before ending a tiled replacement', () => {
+  expect(tiledSourceDataReady('metadata', true)).toBe(false)
+  expect(tiledSourceDataReady('content', true)).toBe(false)
+  expect(tiledSourceDataReady('idle', false)).toBe(false)
+  expect(tiledSourceDataReady('idle', true)).toBe(true)
+})
+
+test('MapLibre hides both tiled precision families during replacement and restores exactly one after source readiness', () => {
+  const previous = 'https://dash.example/tiles/revision-raw/{z}/{x}/{y}.mvt'
+  const next = 'https://dash.example/tiles/revision-aggregate/{z}/{x}/{y}.mvt'
+  const visibility = new Map<string, string>()
+  const map = {
+    getLayer: (id: string) => ({ id }),
+    setLayoutProperty: (id: string, property: string, value: string) => visibility.set(`${id}:${property}`, value),
+  }
+  const raw = ['raw-point', 'raw-label']
+  const aggregate = ['aggregate-point', 'aggregate-count']
+  const replacement = tiledSourceLifecycle(tiledSourceTransition(previous, next), true)
+  expect(replacement).toBe('waiting')
+  expect(tiledPrecisionLayerFamily(replacement === 'waiting', 12, 8)).toBe('hidden')
+  applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(replacement === 'waiting', 12, 8))
+  expect([...visibility.values()]).toEqual(['none', 'none', 'none', 'none'])
+  const sourceReady = tiledSourceLifecycle(tiledSourceTransition(previous, next), true) === 'waiting'
+  applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(!sourceReady, 12, 8))
+  expect(raw.map((id) => visibility.get(`${id}:visibility`))).toEqual(['visible', 'visible'])
+  expect(aggregate.map((id) => visibility.get(`${id}:visibility`))).toEqual(['none', 'none'])
+  const stable = tiledSourceLifecycle(tiledSourceTransition(previous, previous), true)
+  expect(stable).toBe('stable')
+  applyTiledPrecisionLayerVisibility(map, raw, aggregate, tiledPrecisionLayerFamily(stable === 'waiting', 6, 8))
+  expect(raw.map((id) => visibility.get(`${id}:visibility`))).toEqual(['none', 'none'])
+  expect(aggregate.map((id) => visibility.get(`${id}:visibility`))).toEqual(['visible', 'visible'])
+})
+
 test('MapLibre refreshes tiled paint domains when governed metadata replaces the loading placeholder', () => {
   const exact = tiledPointEnvelope()
   if (exact.dataState.kind !== 'spatial_tiled') throw new Error('tiled state fixture is unavailable')
@@ -327,7 +371,7 @@ test('MapLibre refreshes tiled paint domains when governed metadata replaces the
 	expect(tiledLayerPaintUpdates(exact, 'lv-map-tiles').find((update) => update.id === 'lv-orders-aggregate')?.maxzoom).toBe(10)
 })
 
-test('MapLibre tiled point aggregates encode and label the authored business measure', () => {
+test('MapLibre tiled point aggregates encode and label the authored business metric', () => {
 	const envelope = tiledPointEnvelope()
 	const layer = envelope.spec.kind === 'geographic' ? envelope.spec.layers[0]! : undefined
 	if (!layer || layer.kind !== 'point') throw new Error('point layer fixture is unavailable')
@@ -578,10 +622,10 @@ function tiledPointEnvelope(): VisualizationEnvelope {
         { id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
         { id: 'latitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Latitude' },
         { id: 'longitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Longitude' },
-        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] }],
       dataBudget: { maxRows: 0, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Order locations' },
-      interactions: [{ id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['detail'], mappings: [{ source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetFactID: 'orders' }] }],
+      interactions: [{ id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['detail'], mappings: [{ source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetDatasetID: 'orders' }] }],
       layers: [layer], spatialInteractions: [],
       presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam: true, theme: 'auto', labelDensity: 'normal', camera: { mode: 'fit_data', padding: 24, minimumZoom: 0, maximumZoom: 18 }, controls: { zoom: true, reset: true, compass: true } },
     },
@@ -591,7 +635,7 @@ function tiledPointEnvelope(): VisualizationEnvelope {
         { id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' },
         { id: 'latitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Latitude' },
         { id: 'longitude', role: 'dimension', dataType: 'decimal', nullable: false, label: 'Longitude' },
-        { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] },
       cardinality: { kind: 'exact', count: 15_000 }, extent: { west: -47, south: -24, east: -46, north: -23 },
       rawDomains: [{ field: 'revenue', minimum: 0, maximum: 500, total: 5000 }], aggregateDomains: [{ field: 'revenue', minimum: 0, maximum: 5000, total: 5000 }],
@@ -607,12 +651,12 @@ function selectableEnvelope(): VisualizationEnvelope {
     spec: {
       kind: 'geographic', title: 'States', datasets: [{ id: 'primary', fields: [
         { id: 'state', role: 'identity', dataType: 'string', nullable: false, label: 'State' },
-        { id: 'value', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
         { id: 'customer_secret', role: 'dimension', dataType: 'string', nullable: true, label: 'Secret' },
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'States', description: 'States' },
       interactions: [{ id: 'point_selection', kind: 'select', mode: 'single', requiresStableIdentity: true, targets: ['detail'], mappings: [
-        { source: { dataset: 'primary', field: 'state' }, targetFieldID: 'customers.state', targetFactID: 'customers' },
+        { source: { dataset: 'primary', field: 'state' }, targetFieldID: 'customers.state', targetDatasetID: 'customers' },
       ] }],
       layers: [{ id: 'states', kind: 'choropleth', geometry: {} as any, join: { dataset: 'primary', field: 'state' }, value: { dataset: 'primary', field: 'value' }, tooltip: [{ dataset: 'primary', field: 'state' }, { dataset: 'primary', field: 'value' }], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#d0d7de' }, stroke: { color: '#fff', width: 1.5, opacity: 1 }, opacity: .82 }],
       presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam: false, theme: 'auto', labelDensity: 'normal', camera: { mode: 'fit_data', padding: 24, minimumZoom: 0, maximumZoom: 10 }, controls: { zoom: false, reset: false, compass: false } },

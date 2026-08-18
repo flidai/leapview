@@ -6,7 +6,7 @@ Raw inputs often contain transport-oriented names, weakly typed values, duplicat
 
 ## Contract
 
-A model table declares a stable identity, primary key, grain, source dependencies, documented output fields, and a SQL transformation:
+A model table declares named identity entities (primary, unique, or foreign), a selected grain entity, source dependencies, documented output fields, and a SQL transformation:
 
 ```yaml
 apiVersion: leapview.dev/v1
@@ -14,33 +14,49 @@ kind: Model
 metadata:
   id: model:orders
   name: orders
-  displayName: Orders Fact
+  displayName: Orders
 spec:
-  primaryKey: order_id
-  grain: order_id
+  entities:
+    order:
+      type: primary
+      fields: [order_id]
+  grain:
+    entity: order
   sources:
     - olist.orders
   fields:
-    order_id: {label: Order ID}
-    purchase_date: {label: Purchase date}
-    revenue: {label: Revenue}
+    order_id: {datatype: String, label: Order ID}
+    purchase_date: {datatype: Date, label: Purchase date}
+    revenue: {datatype: Decimal, label: Revenue}
   transform:
     sql: |
       SELECT
         order_id,
         try_cast(order_purchase_timestamp AS DATE) AS purchase_date,
-        0::DOUBLE AS revenue
+        CAST(0 AS DECIMAL(38, 2)) AS revenue
       FROM source."olist.orders"
       WHERE order_id IS NOT NULL
 ```
 
 The generated [Model configuration](/docs/config/model) is the exact field reference. Real transformations can use several declared sources and should expose every field needed by downstream semantic models.
 
-## Grain and key
+## Grain and identity entities
 
-The grain states what one row represents; the primary key identifies that row. Document both even when they use the same field. For example, an order table may have `grain: order_id`, while an order-item table may use an item key and a grain composed conceptually of order plus product line.
+The grain states what one row represents through `grain.entity`; identity entities declare the ordered field tuple that identifies or relates those rows. Use `type: primary` for the row identity, `type: unique` for alternate identities, and `type: foreign` for relationships to another entity. For example:
 
-Do not join a one-to-many dimension into a fact table without deciding how the join changes grain. Duplicate fact rows will inflate sums and counts later, even if individual previews look plausible. Validate key uniqueness and expected row counts during development.
+```yaml
+entities:
+  order:
+    type: primary
+    fields: [order_id]
+  order_line:
+    type: unique
+    fields: [order_id, product_id]
+grain:
+  entity: order_line
+```
+
+This makes composite identity explicit instead of encoding it as a scalar grain value. Do not join a one-to-many dimension into an order-grain model table without deciding how the join changes grain. Duplicate rows will inflate sums and counts later, even if individual previews look plausible. Validate entity uniqueness, nullability, and expected row counts during development.
 
 ## What belongs in a model table
 
@@ -53,7 +69,7 @@ Good model-table work includes:
 - deriving reusable physical columns;
 - reducing expensive raw inputs to a supported analytical grain.
 
-Business aggregations such as revenue, active customers, or conversion rate generally belong in semantic measures and metrics. Keep them out of model SQL unless the table's declared grain itself is aggregated.
+Business aggregations such as revenue, active customers, or conversion rate generally belong in semantic metrics. Keep them out of model SQL unless the table's declared grain itself is aggregated.
 
 ## Source namespace
 
@@ -71,7 +87,7 @@ Before exposing a table to the semantic layer, confirm:
 
 - its name and field IDs are stable;
 - one sentence can describe the grain;
-- the primary key is non-null and unique at that grain;
+- the primary entity fields are non-null and unique at the selected grain;
 - field types do not depend on accidental source inference;
 - every source dependency is declared;
 - expensive repeated work is materialized once;

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	"github.com/flidai/leapview/internal/dashboard/consumer"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -21,6 +22,21 @@ func newGovernedDataRuntime(projectID projectgraph.ResourceID, modelID projectgr
 	wrapped := &governedDataRuntime{DataRuntime: runtime, projectID: projectID}
 	wrapped.service = reportdef.NewDataQueryService(projectID, modelID.String(), wrapped)
 	return wrapped
+}
+
+// Planner forwards the activation-owned planner through the governed runtime
+// wrapper. Embedding DataRuntime alone does not promote optional capability
+// methods from the wrapped dynamic value, so retain this narrow forwarding
+// method for Service.Planner and composition adapters.
+func (r *governedDataRuntime) Planner() consumer.Planner {
+	if r == nil || r.DataRuntime == nil {
+		return nil
+	}
+	port, ok := r.DataRuntime.(DataRuntimePlanner)
+	if !ok {
+		return nil
+	}
+	return port.Planner()
 }
 
 func (r *governedDataRuntime) bindProject(request dataquery.Query) (dataquery.Query, error) {
@@ -63,6 +79,14 @@ func (r *governedDataRuntime) Distribution(ctx context.Context, request reportde
 	return r.service.Distribution(ctx, request, sort, limit)
 }
 
+func (r *governedDataRuntime) VerifySemantic(ctx context.Context) error {
+	verifier, ok := r.DataRuntime.(DataRuntimeSemanticVerifier)
+	if !ok {
+		return fmt.Errorf("dashboard data runtime does not support semantic verification")
+	}
+	return verifier.VerifySemantic(ctx)
+}
+
 func (r *governedDataRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	bound, err := r.bindProject(request)
 	if err != nil {
@@ -98,7 +122,7 @@ func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, reques
 	}
 	audit := boundRequests[0].Query
 	fieldSet := map[string]bool{}
-	measureSet := map[string]bool{}
+	metricSet := map[string]bool{}
 	for i := range boundRequests {
 		ids[i] = boundRequests[i].ID
 		for _, field := range boundRequests[i].Query.Fields {
@@ -108,17 +132,17 @@ func (r *governedDataRuntime) ExecuteDataQueryBundle(ctx context.Context, reques
 				audit.Fields = append(audit.Fields, field)
 			}
 		}
-		for _, measure := range boundRequests[i].Query.Measures {
-			key := measure.Field + "\x00" + measure.Alias
-			if !measureSet[key] {
-				measureSet[key] = true
-				audit.Measures = append(audit.Measures, measure)
+		for _, metric := range boundRequests[i].Query.Metrics {
+			key := metric.Field + "\x00" + metric.Alias
+			if !metricSet[key] {
+				metricSet[key] = true
+				audit.Metrics = append(audit.Metrics, metric)
 			}
 		}
 	}
-	// The first request's fields/measures were appended again above.
+	// The first request's fields/metrics were appended again above.
 	audit.Fields = dedupeDataQueryFields(audit.Fields)
-	audit.Measures = dedupeDataQueryFields(audit.Measures)
+	audit.Metrics = dedupeDataQueryFields(audit.Metrics)
 	sort.Strings(ids)
 	audit.ObjectType = "dashboard_refresh_bundle"
 	audit.ObjectID = strings.Join(ids, ",")

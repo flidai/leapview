@@ -253,6 +253,65 @@ func TestAccessMayImportOnlyThePublishedProjectGraphContract(t *testing.T) {
 	}
 }
 
+func TestAIContextIsNotConsumedByExecutablePackages(t *testing.T) {
+	// AI context is authoring metadata. The project compiler may preserve it
+	// while translating authored resources, but executable consumers must not
+	// inspect it when authorizing, planning, materializing, or serving queries.
+	for _, file := range productionGoFiles(t) {
+		if !hasPackagePrefix(file.pkgDir, []string{
+			"internal/access",
+			"internal/analytics/query",
+			"internal/analytics/materialize",
+			"internal/analytics/duckdb",
+			"internal/project/artifact",
+			"internal/project/runtime",
+		}) {
+			continue
+		}
+		for _, forbidden := range []string{"AIContext", "aiContext"} {
+			if strings.Contains(file.body, forbidden) {
+				t.Errorf("%s consumes executable-forbidden AI context field %q", file.path, forbidden)
+			}
+		}
+	}
+}
+
+func TestActivationOwnsCompiledPlannerConstruction(t *testing.T) {
+	root := repoRoot(t)
+	forbidden := []string{
+		"internal/dashboard/consumer/optimizer.go",
+		"internal/dashboard/runtime/service.go",
+		"internal/dashboard/module/runtime_metrics.go",
+		"internal/dashboard/queryauthz/data_authorization.go",
+		"internal/dashboard/semanticapi/handler.go",
+	}
+	for _, relative := range forbidden {
+		body, err := os.ReadFile(filepath.Join(root, relative))
+		require.NoError(t, err)
+		if strings.Contains(string(body), "NewCompiledPlanner") {
+			t.Errorf("%s constructs a request-local semantic planner", relative)
+		}
+	}
+
+	materializePath := filepath.Join(root, "internal/analytics/materialize/runtime.go")
+	file, err := parser.ParseFile(token.NewFileSet(), materializePath, nil, 0)
+	require.NoError(t, err)
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Name.Name != "queryPlanner" || function.Body == nil {
+			continue
+		}
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			if call, ok := node.(*ast.CallExpr); ok {
+				if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "NewCompiledPlanner" {
+					t.Errorf("materialize.Runtime.queryPlanner lazily compiles a semantic planner")
+				}
+			}
+			return true
+		})
+	}
+}
+
 func TestEnterpriseAuthoringStateRemainsCapabilityOwned(t *testing.T) {
 	tests := []struct {
 		path       string
@@ -2377,10 +2436,10 @@ func TestBuildSourceGenerationContract(t *testing.T) {
 		"go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate",
 		"go run ./internal/app/tools/configgen",
 		"go run ./internal/app/tools/layoutcontractgen",
-		"typespec-compile -manifest api/apigen.yaml -target leapview-v1",
-		"typespec-compile -manifest api/apigen.yaml -target ui-signals",
-		"typespec-compile -manifest api/apigen.yaml -target visualization-ir",
-		"all -manifest api/apigen.yaml -target visualization-ir",
+		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target leapview-v1",
+		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target ui-signals",
+		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target visualization-ir",
+		"go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target visualization-ir",
 		"schema export --format json-schema --out schemas/json",
 	}
 	previous := -1
@@ -3842,6 +3901,15 @@ func isSQLDBAllowedFile(file goFile) bool {
 func importListContains(imports []string, value string) bool {
 	for _, imported := range imports {
 		if imported == value || strings.Contains(imported, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPackagePrefix(packagePath string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if packagePath == prefix || strings.HasPrefix(packagePath, prefix+"/") {
 			return true
 		}
 	}

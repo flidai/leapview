@@ -5,14 +5,24 @@ metadata:
   name: market_ohlc
   displayName: Monthly market prices
 spec:
-  primaryKey: month
-  sources: [docs.market_ohlc]
+  sources:
+  - docs.market_ohlc
   fields:
-    month: {label: Month, type: string}
-    open: {label: Open, type: number}
-    close: {label: Close, type: number}
-    low: {label: Low, type: number}
-    high: {label: High, type: number}
+    month:
+      datatype: String
+      label: Month
+    open:
+      datatype: Float
+      label: Open
+    close:
+      datatype: Float
+      label: Close
+    low:
+      datatype: Float
+      label: Low
+    high:
+      datatype: Float
+      label: High
   transform:
     sql: |
       SELECT
@@ -22,3 +32,10 @@ spec:
         CAST(low AS DOUBLE) AS low,
         CAST(high AS DOUBLE) AS high
       FROM source."docs.market_ohlc"
+  entities:
+    month:
+      type: primary
+      fields:
+      - month
+  grain:
+    entity: month

@@ -20,7 +20,7 @@ export interface RowSelectionCommand {
     field: string
     value: InteractionSelectionMapping['value']
     label: string
-    fact?: string
+    dataset?: string
     grain?: string
   }>
 }
@@ -84,7 +84,7 @@ function semanticCommandMappings(row: TableRow, mappings: NonNullable<Interactio
     const configuredLabel = mapping.label ? interactionSelectionValue(row[mapping.label]) : undefined
     return [{
       field: mapping.field,
-      ...(mapping.fact !== undefined ? { fact: mapping.fact } : {}),
+      ...(mapping.dataset !== undefined ? { dataset: mapping.dataset } : {}),
       ...(mapping.grain !== undefined ? { grain: mapping.grain } : {}),
       value,
       label: interactionSelectionLabel(configuredLabel === undefined ? value : configuredLabel),

@@ -26,9 +26,9 @@ export interface TableColumn {
   key: string
   label: string
   align?: 'left' | 'right'
-  role?: 'row_header' | 'measure'
+  role?: 'row_header' | 'metric'
   group?: string
-  measure?: string
+	metric?: string
   columnValue?: string
   width?: number
   format?: 'text' | 'integer' | 'decimal' | 'currency' | 'days'

@@ -355,7 +355,7 @@ func projectVisual(component dashboard.PageVisual, authored authoring.AuthoringV
 }
 
 func chartSlots(query authoring.VisualQuery) ([]uisignals.DashboardBuilderVisualSlotSignal, error) {
-	slots := make([]uisignals.DashboardBuilderVisualSlotSignal, 0, len(query.Dimensions)+len(query.Measures)+2)
+	slots := make([]uisignals.DashboardBuilderVisualSlotSignal, 0, len(query.Dimensions)+len(query.Metrics)+2)
 	for index, field := range query.Dimensions {
 		slots = append(slots, slot(fmt.Sprintf("dimension-%d", index), display(field.Alias, field.Field), "dimension", field.Field, true))
 	}
@@ -365,22 +365,22 @@ func chartSlots(query authoring.VisualQuery) ([]uisignals.DashboardBuilderVisual
 	if query.Time.Field != "" {
 		slots = append(slots, slot("time", display(query.Time.Alias, query.Time.Field), "category", query.Time.Field, false))
 	}
-	for index, field := range query.Measures {
-		slots = append(slots, slot(fmt.Sprintf("measure-%d", index), display(field.Alias, field.Field), "measure", field.Field, true))
+	for index, field := range query.Metrics {
+		slots = append(slots, slot(fmt.Sprintf("metric-%d", index), display(field.Alias, field.Field), "metric", field.Field, true))
 	}
 	return boundSlots(slots)
 }
 
 func tableSlots(query authoring.TableQuery) ([]uisignals.DashboardBuilderVisualSlotSignal, error) {
-	slots := make([]uisignals.DashboardBuilderVisualSlotSignal, 0, len(query.Columns)+len(query.Rows)+len(query.Measures))
+	slots := make([]uisignals.DashboardBuilderVisualSlotSignal, 0, len(query.Columns)+len(query.Rows)+len(query.Metrics))
 	for index, field := range query.Columns {
 		slots = append(slots, slot(fmt.Sprintf("column-%d", index), display(field.Alias, field.Field), "dimension", field.Field, true))
 	}
 	for index, field := range query.Rows {
 		slots = append(slots, slot(fmt.Sprintf("row-%d", index), display(field.Alias, field.Field), "detail", field.Field, false))
 	}
-	for index, field := range query.Measures {
-		slots = append(slots, slot(fmt.Sprintf("measure-%d", index), display(field.Alias, field.Field), "measure", field.Field, true))
+	for index, field := range query.Metrics {
+		slots = append(slots, slot(fmt.Sprintf("metric-%d", index), display(field.Alias, field.Field), "metric", field.Field, true))
 	}
 	for index, field := range query.Fields {
 		slots = append(slots, slot(fmt.Sprintf("field-%d", index), field, "detail", field, false))
@@ -449,9 +449,9 @@ func projectSemanticModel(model *semanticmodel.Model) (uisignals.DashboardBuilde
 			tableIDs[table] = struct{}{}
 		}
 	}
-	for _, measure := range model.Measures {
-		if strings.TrimSpace(measure.Fact) != "" {
-			tableIDs[measure.Fact] = struct{}{}
+	for _, metric := range model.Metrics {
+		if strings.TrimSpace(metric.Dataset) != "" {
+			tableIDs[metric.Dataset] = struct{}{}
 		}
 	}
 	tables := make([]string, 0, len(tableIDs))
@@ -464,7 +464,7 @@ func projectSemanticModel(model *semanticmodel.Model) (uisignals.DashboardBuilde
 	if len(tables) > maxTables {
 		return uisignals.DashboardBuilderSemanticModelSignal{}, fmt.Errorf("dashboard builder semantic tables exceed bounded limit")
 	}
-	result := make([]uisignals.DashboardBuilderTableSignal, 0, len(tables))
+	result := make([]uisignals.DashboardBuilderDatasetSignal, 0, len(tables))
 	totalFields := 0
 	for _, tableID := range tables {
 		fields := make([]uisignals.DashboardBuilderFieldSignal, 0)
@@ -496,15 +496,12 @@ func projectSemanticModel(model *semanticmodel.Model) (uisignals.DashboardBuilde
 				}
 			}
 		}
-		for id, measure := range model.Measures {
-			if strings.TrimSpace(measure.Fact) != tableID {
+		for id, metric := range model.Metrics {
+			if strings.TrimSpace(metric.Dataset) != tableID {
 				continue
 			}
 			fieldID := id
-			if strings.TrimSpace(measure.Field) != "" {
-				fieldID = measure.Field
-			}
-			if projected, ok := fieldSignal(fieldID, display(measure.Label, id), "measure", "number", measure.Description); ok {
+			if projected, ok := fieldSignal(fieldID, display(metric.Label, id), "metric", "number", metric.Description); ok {
 				fields = append(fields, projected)
 			}
 		}
@@ -521,12 +518,12 @@ func projectSemanticModel(model *semanticmodel.Model) (uisignals.DashboardBuilde
 		if totalFields > maxFields {
 			return uisignals.DashboardBuilderSemanticModelSignal{}, fmt.Errorf("dashboard builder fields exceed bounded limit")
 		}
-		result = append(result, uisignals.DashboardBuilderTableSignal{ID: tableID, Title: display(model.Tables[tableID].Description, tableID), Fields: fields})
+		result = append(result, uisignals.DashboardBuilderDatasetSignal{ID: tableID, Title: display(model.Tables[tableID].Description, tableID), Fields: fields})
 	}
 	if result == nil {
-		result = []uisignals.DashboardBuilderTableSignal{}
+		result = []uisignals.DashboardBuilderDatasetSignal{}
 	}
-	return uisignals.DashboardBuilderSemanticModelSignal{ID: model.Name, Title: display(model.Title, model.Name), Tables: result}, nil
+	return uisignals.DashboardBuilderSemanticModelSignal{ID: model.Name, Title: display(model.Title, model.Name), Datasets: result}, nil
 }
 
 func fieldSignal(id, label, kind, dataType, description string) (uisignals.DashboardBuilderFieldSignal, bool) {

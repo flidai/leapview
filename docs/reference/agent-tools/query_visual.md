@@ -209,7 +209,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
           "label": {
             "type": "string"
           },
-          "measure": {
+          "metric": {
             "type": "string"
           },
           "role": {
@@ -228,7 +228,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
       "type": "array"
     },
     "dataset": {
-      "description": "Semantic dataset/table ID.",
+      "description": "Semantic dataset ID.",
       "minLength": 1,
       "type": "string"
     },
@@ -281,8 +281,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
       "items": {
         "additionalProperties": false,
         "properties": {
-          "fact": {
-            "description": "Fact table used to resolve an otherwise ambiguous conformed dimension.",
+          "dataset": {
+            "description": "Semantic dataset used to resolve an otherwise ambiguous conformed dimension.",
             "type": "string"
           },
           "field": {
@@ -343,8 +343,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
       "minimum": 1,
       "type": "integer"
     },
-    "measures": {
-      "description": "Measure fields for chart values.",
+    "metrics": {
+      "description": "Metric fields for chart values.",
       "items": {
         "additionalProperties": false,
         "properties": {
@@ -771,7 +771,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
             "enum": [
               "dimension",
               "series",
-              "measure",
+              "metric",
               "table_field",
               "table_row"
             ],
@@ -819,8 +819,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
             },
             "type": "array"
           },
-          "resolvedFactId": {
-            "description": "Fact table selected to resolve a conformed dimension.",
+          "resolvedDatasetId": {
+            "description": "Semantic dataset selected to resolve a conformed dimension.",
             "type": "string"
           },
           "values": {

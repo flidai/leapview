@@ -758,7 +758,6 @@ function iconForName(name: string): any {
     case 'dashboard':
       return BarChart3
     case 'model_table':
-    case 'semantic_table':
     case 'table':
       return Table2
     case 'semantic_model':
@@ -768,7 +767,7 @@ function iconForName(name: string): any {
       return Server
     case 'field':
       return KeyRound
-    case 'measure':
+    case 'metric':
       return Sigma
     case 'filter':
       return Filter
@@ -1360,8 +1359,7 @@ const recordTableStyles = `
     color: var(--lv-asset-semantic-model-accent, var(--lv-fg-muted));
   }
 
-  lv-record-table .variant-primary .record-icon-model_table,
-  lv-record-table .variant-primary .record-icon-semantic_table {
+  lv-record-table .variant-primary .record-icon-model_table {
     border-color: var(--lv-asset-model-table-border, var(--lv-line-muted));
     background: var(--lv-asset-model-table-bg, var(--lv-bg-panel-muted));
     color: var(--lv-asset-model-table-accent, var(--lv-fg-muted));

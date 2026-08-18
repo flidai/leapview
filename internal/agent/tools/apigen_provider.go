@@ -204,7 +204,7 @@ func normalizeCuratedQueryArguments(toolName string, arguments json.RawMessage) 
 		input["visual"] = stripCatalogRefPrefix(input["visual"], dashboardID)
 	case "query_semantic_model":
 		modelID, _ := input["model"].(string)
-		for _, key := range []string{"dimensions", "measures", "time", "sort", "filters"} {
+		for _, key := range []string{"dimensions", "metrics", "time", "sort", "filters"} {
 			normalizeCatalogFieldValues(input[key], modelID)
 		}
 	}
@@ -223,7 +223,7 @@ func normalizeCatalogFieldValues(value any, modelID string) {
 		}
 	case map[string]any:
 		for key, item := range current {
-			if key == "field" || key == "fact" {
+			if key == "field" || key == "dataset" {
 				current[key] = stripCatalogRefPrefix(item, modelID)
 				continue
 			}

@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 )
 
@@ -34,13 +33,25 @@ type Plan struct {
 }
 
 type Optimizer struct {
-	planner *semanticquery.Planner
+	planner Planner
 }
 
-func NewOptimizer(model *semanticmodel.Model) (*Optimizer, error) {
-	planner, err := semanticquery.NewCompiledPlanner(model)
-	if err != nil {
-		return nil, err
+// Planner is the activation-owned semantic planning capability consumed by
+// dashboard batching. Keeping this narrow port in the dashboard consumer
+// package lets runtime orchestration depend on the capability without owning
+// the analytics planner implementation or compiling a second one.
+type Planner interface {
+	IsCompiled() bool
+	AnalyzeAggregate(semanticquery.Request) (semanticquery.AggregateAnalysis, error)
+}
+
+// NewOptimizerFromPlanner binds the dashboard consumer optimizer to the
+// planner compiled for the active serving generation. The planner is shared
+// with governed execution and authorization; this constructor deliberately
+// does not compile or copy semantic metadata.
+func NewOptimizerFromPlanner(planner Planner) (*Optimizer, error) {
+	if planner == nil || !planner.IsCompiled() {
+		return nil, fmt.Errorf("compiled semantic planner is required")
 	}
 	return &Optimizer{planner: planner}, nil
 }
@@ -49,21 +60,10 @@ type analyzedQuery struct {
 	logical   LogicalQuery
 	index     int
 	scope     string
-	facts     string
+	datasets  string
 	scalar    bool
 	grouped   bool
 	aggregate bool
-}
-
-// Optimize groups renderer-neutral semantic consumers by their normalized
-// governed query scope. Presentation shape and visual identifiers never
-// participate in physical compatibility decisions.
-func Optimize(model *semanticmodel.Model, queries []LogicalQuery) (Plan, error) {
-	optimizer, err := NewOptimizer(model)
-	if err != nil {
-		return Plan{}, err
-	}
-	return optimizer.Optimize(queries)
 }
 
 func (o *Optimizer) Optimize(queries []LogicalQuery) (Plan, error) {
@@ -71,16 +71,16 @@ func (o *Optimizer) Optimize(queries []LogicalQuery) (Plan, error) {
 }
 
 // OptimizeForConcurrency chooses between one heterogeneous shared projection
-// and independent fact-signature bundles. A serial executor benefits from one
-// governed fact scan; concurrent readers can execute the smaller bundles in
+// and independent dataset-signature bundles. A serial executor benefits from one
+// governed dataset scan; concurrent readers can execute the smaller bundles in
 // parallel without paying projection materialization on the critical path.
 func (o *Optimizer) OptimizeForConcurrency(queries []LogicalQuery, concurrency int) (Plan, error) {
 	return o.optimize(queries, concurrency <= 1)
 }
 
-func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool) (Plan, error) {
+func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousDatasets bool) (Plan, error) {
 	planner := o.planner
-	if planner == nil || planner.Model == nil {
+	if !planner.IsCompiled() {
 		return Plan{}, fmt.Errorf("compiled semantic planner is required")
 	}
 	analyzed := make([]analyzedQuery, len(queries))
@@ -95,7 +95,7 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 			item.aggregate = true
 			item.scalar = len(logical.Query.Fields) == 0 && logical.Query.Time.Field == ""
 			item.grouped = !item.scalar
-			item.facts = strings.Join(analysis.Facts, ",")
+			item.datasets = strings.Join(analysis.Datasets, ",")
 		}
 		scope, err := physicalScopeKey(logical.Query)
 		if err != nil {
@@ -120,7 +120,7 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 			if candidateIndex == sourceIndex || assigned[candidateIndex] || !candidate.aggregate || candidate.scope != source.scope {
 				continue
 			}
-			if !fuseHeterogeneousFacts && candidate.facts != source.facts {
+			if !fuseHeterogeneousDatasets && candidate.datasets != source.datasets {
 				continue
 			}
 			members = append(members, candidateIndex)
@@ -137,7 +137,7 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 	}
 
 	// Scalar aggregates with the same governed scope can be combined into one
-	// model-scoped multi-member query even when their fact sets differ.
+	// model-scoped multi-member query even when their dataset sets differ.
 	for index, source := range analyzed {
 		if assigned[index] || !source.aggregate || !source.scalar {
 			continue
@@ -168,7 +168,7 @@ func (o *Optimizer) optimize(queries []LogicalQuery, fuseHeterogeneousFacts bool
 		members := []int{index}
 		for candidateIndex := index + 1; candidateIndex < len(analyzed); candidateIndex++ {
 			candidate := analyzed[candidateIndex]
-			if assigned[candidateIndex] || !candidate.aggregate || candidate.scope != source.scope || candidate.facts != source.facts {
+			if assigned[candidateIndex] || !candidate.aggregate || candidate.scope != source.scope || candidate.datasets != source.datasets {
 				continue
 			}
 			members = append(members, candidateIndex)
@@ -223,18 +223,18 @@ func semanticRequest(query dataquery.Query) semanticquery.Request {
 	for index, field := range query.Fields {
 		dimensions[index] = semanticquery.Field{Field: field.Field, Alias: field.Alias}
 	}
-	measures := make([]semanticquery.Field, len(query.Measures))
-	for index, field := range query.Measures {
-		measures[index] = semanticquery.Field{Field: field.Field, Alias: field.Alias}
+	metrics := make([]semanticquery.Field, len(query.Metrics))
+	for index, field := range query.Metrics {
+		metrics[index] = semanticquery.Field{Field: field.Field, Alias: field.Alias}
 	}
 	filters := make([]semanticquery.Filter, len(query.Filters))
 	for index, filter := range query.Filters {
 		filters[index] = semanticFilter(filter)
 	}
 	return semanticquery.Request{
-		Table:      query.Target,
+		Dataset:    query.Target,
 		Dimensions: dimensions,
-		Measures:   measures,
+		Metrics:    metrics,
 		Time:       semanticquery.Time{Field: query.Time.Field, Grain: query.Time.Grain, Alias: query.Time.Alias},
 		Filters:    filters,
 		Limit:      query.Limit,
@@ -250,7 +250,7 @@ func semanticFilter(filter dataquery.Filter) semanticquery.Filter {
 			groups[groupIndex].Filters[filterIndex] = semanticFilter(child)
 		}
 	}
-	return semanticquery.Filter{Field: filter.Field, Fact: filter.Fact, Operator: filter.Operator, Values: append([]any{}, filter.Values...), Groups: groups}
+	return semanticquery.Filter{Field: filter.Field, Dataset: filter.Dataset, Operator: filter.Operator, Values: append([]any{}, filter.Values...), Groups: groups}
 }
 
 func consumerKindPriority(kind Kind) int {

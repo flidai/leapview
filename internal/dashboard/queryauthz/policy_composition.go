@@ -190,7 +190,7 @@ func dataQueryFilters(filters []accesspolicy.Filter) []dataquery.Filter {
 	out := make([]dataquery.Filter, 0, len(filters))
 	for _, filter := range filters {
 		converted := dataquery.Filter{
-			Field: filter.Field, Fact: filter.Fact, Operator: filter.Operator,
+			Field: filter.Field, Dataset: filter.Dataset, Operator: filter.Operator,
 			Values: append([]any(nil), filter.Values...),
 		}
 		for _, group := range filter.Groups {
@@ -199,7 +199,7 @@ func dataQueryFilters(filters []accesspolicy.Filter) []dataquery.Filter {
 		if spatial := filter.Spatial; spatial != nil {
 			converted.Spatial = &dataquery.SpatialFilter{
 				Kind: spatial.Kind, LatitudeField: spatial.LatitudeField, LongitudeField: spatial.LongitudeField,
-				Fact: spatial.Fact, West: spatial.West, South: spatial.South, East: spatial.East, North: spatial.North,
+				Dataset: spatial.Dataset, West: spatial.West, South: spatial.South, East: spatial.East, North: spatial.North,
 				Center:       dataquery.SpatialPoint{Longitude: spatial.Center.Longitude, Latitude: spatial.Center.Latitude},
 				RadiusMeters: spatial.RadiusMeters,
 			}

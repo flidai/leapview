@@ -116,7 +116,7 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 			Type:  "bar",
 			Query: dashboardauthoring.VisualQuery{
 				Dimensions: fieldRefs("orders.status"),
-				Measures:   fieldRefs("order_count"),
+				Metrics:    fieldRefs("order_count"),
 			},
 		}
 		components = append(components, dashboard.PageVisual{ID: id, Kind: "visual", Visual: id, X: float64((i % 4) * 300), Y: float64((i / 4) * 180), Width: 280, Height: 160})
@@ -133,7 +133,7 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 		id := "table_" + string(rune('a'+i))
 		tables[id] = dashboardauthoring.TableVisual{
 			Title: "Benchmark Table " + string(rune('A'+i)),
-			Query: dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"orders.order_id", "orders.status", "orders.state", "orders.category"}},
+			Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id", "orders.status", "orders.state", "orders.category"}},
 			Style: dashboard.TableStyle{Density: "compact", Grid: "full", Zebra: &zebra},
 			Columns: []dashboard.TableColumn{
 				{Key: "order_id", Label: "Order", Width: 180, Format: "text"},
@@ -160,23 +160,24 @@ func benchmarkDashboardFixture() (dashboardauthoring.Dashboard, *semanticmodel.M
 		}},
 	}
 	model := &semanticmodel.Model{
-		Name:  "benchmark",
-		Title: "Benchmark Semantic Model",
+		Name:     "benchmark",
+		Title:    "Benchmark Semantic Model",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:     "orders",
-				PrimaryKey: "order_id",
-				Grain:      "order_id",
+				Source: "orders", ModelName: "orders",
+				Entities:    map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
-					"order_id": {Expr: "order_id", Type: "string"},
-					"status":   {Expr: "status", Type: "string"},
-					"state":    {Expr: "state", Type: "string"},
-					"category": {Expr: "category", Type: "string"},
-					"channel":  {Expr: "channel", Type: "string"},
+					"order_id": {Field: "orders.order_id", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"status":   {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"state":    {Field: "orders.state", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"category": {Field: "orders.category", Type: "string", Datatype: semanticmodel.DataTypeString},
+					"channel":  {Field: "orders.channel", Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{"order_count": {Fact: "orders", Aggregation: "count", Empty: "zero", Label: "Orders"}},
+		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero", Label: "Orders"}},
 	}
 	catalog := catalog.Catalog{Project: catalog.Project{ID: "benchmark", Title: "Benchmark Workspace"}}
 	return report, model, catalog

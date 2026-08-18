@@ -9,7 +9,7 @@ namespace LeapViewVisualization;
 
 enum VisualizationFieldRole {
   dimension: "dimension",
-  measure: "measure",
+  metric: "metric",
   metadata: "metadata",
   identity: "identity",
 }
@@ -19,6 +19,7 @@ enum VisualizationDataType {
   boolean: "boolean",
   integer: "integer",
   decimal: "decimal",
+  float: "float",
   temporal: "temporal",
   date: "date",
   geographic: "geographic",
@@ -467,7 +468,7 @@ model TemporalVisualizationFormat extends VisualizationFormat {
 
 model VisualizationGridFieldMetadata {
   `group`?: string;
-  `measure`?: string;
+  `metric`?: string;
   `columnValue`?: string;
   `formatting`: TableVisualizationFormattingRule[];
 }
@@ -666,7 +667,7 @@ model VisualizationAccessibility {
 model VisualizationInteractionMapping {
   `source`: VisualizationFieldRef;
   `targetFieldID`: string;
-  `targetFactID`?: string;
+  `targetDatasetID`?: string;
   `grain`?: string;
   `label`?: VisualizationFieldRef;
 }
@@ -948,7 +949,7 @@ model TableVisualizationColumn {
   `label`: string;
   `width`?: int64;
   `group`?: string;
-  `measure`?: string;
+  `metric`?: string;
   `columnValue`?: string;
   `formatting`: TableVisualizationFormattingRule[];
 }
@@ -969,8 +970,8 @@ model MatrixVisualizationSpec extends VisualizationSpec {
   `kind`: "matrix";
   `rows`: VisualizationFieldRef[];
   `columns`: VisualizationFieldRef[];
-  `measures`: VisualizationFieldRef[];
-  `measureFormatting`: Record<TableVisualizationFormattingRule[]>;
+  `metrics`: VisualizationFieldRef[];
+  `metricFormatting`: Record<TableVisualizationFormattingRule[]>;
   `presentation`: GridVisualizationPresentation;
 }
 
@@ -978,8 +979,8 @@ model PivotVisualizationSpec extends VisualizationSpec {
   `kind`: "pivot";
   `rows`: VisualizationFieldRef[];
   `columns`: VisualizationFieldRef[];
-  `measures`: VisualizationFieldRef[];
-  `measureFormatting`: Record<TableVisualizationFormattingRule[]>;
+  `metrics`: VisualizationFieldRef[];
+  `metricFormatting`: Record<TableVisualizationFormattingRule[]>;
   `presentation`: GridVisualizationPresentation;
 }
 
@@ -1083,7 +1084,7 @@ model VisualizationMapLineStyle {
 model VisualizationSpatialFieldMapping {
   `source`: VisualizationFieldRef;
   `targetFieldID`: string;
-  `targetFactID`?: string;
+  `targetDatasetID`?: string;
 }
 
 model VisualizationSpatialSelectionInteraction {
@@ -1354,7 +1355,7 @@ model VisualizationSelectionEntry {
 
 model VisualizationHighlightMapping {
   `targetFieldID`: string;
-  `targetFactID`?: string;
+  `targetDatasetID`?: string;
   `grain`?: string;
   `value`: unknown;
   `label`?: string;
@@ -1390,7 +1391,7 @@ model VisualizationDiagnostic {
 @apigen.contract(#{ kind: "visualization-envelope", tags: #["visualization", "ir"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "visualization-envelope" })
 model VisualizationEnvelope {
-  `schemaVersion`: 10;
+  `schemaVersion`: 11;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;

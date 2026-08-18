@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	visualizationdecimal "github.com/flidai/leapview/internal/dashboard/visualization/decimal"
 )
 
 // ValidateEnvelope validates the complete renderer boundary: immutable
@@ -823,7 +825,7 @@ func visualizationField(ref VisualizationFieldRef, schemas map[string]Visualizat
 }
 
 func numericVisualizationField(field VisualizationField) bool {
-	return field.DataType == VisualizationDataTypeInteger || field.DataType == VisualizationDataTypeDecimal
+	return field.DataType == VisualizationDataTypeInteger || field.DataType == VisualizationDataTypeDecimal || field.DataType == VisualizationDataTypeFloat
 }
 
 func validateVisualizationConditionalStyle(style VisualizationConditionalStyle, redundantCue bool) error {
@@ -984,14 +986,14 @@ func (visitor *specificationReferenceVisitor) VisitTableVisualizationSpec(value 
 func (visitor *specificationReferenceVisitor) VisitMatrixVisualizationSpec(value *MatrixVisualizationSpec) error {
 	visitor.refs = append(visitor.refs, value.Rows...)
 	visitor.refs = append(visitor.refs, value.Columns...)
-	visitor.refs = append(visitor.refs, value.Measures...)
+	visitor.refs = append(visitor.refs, value.Metrics...)
 	return nil
 }
 
 func (visitor *specificationReferenceVisitor) VisitPivotVisualizationSpec(value *PivotVisualizationSpec) error {
 	visitor.refs = append(visitor.refs, value.Rows...)
 	visitor.refs = append(visitor.refs, value.Columns...)
-	visitor.refs = append(visitor.refs, value.Measures...)
+	visitor.refs = append(visitor.refs, value.Metrics...)
 	return nil
 }
 
@@ -1504,7 +1506,7 @@ func validateSpatialDomains(domains []VisualizationSpatialScaleDomain, schema Vi
 		if !ok {
 			return fmt.Errorf("domain references unknown field %q", domain.Field)
 		}
-		if field.DataType != VisualizationDataTypeInteger && field.DataType != VisualizationDataTypeDecimal {
+		if field.DataType != VisualizationDataTypeInteger && field.DataType != VisualizationDataTypeDecimal && field.DataType != VisualizationDataTypeFloat {
 			return fmt.Errorf("domain field %q is not numeric", domain.Field)
 		}
 		if _, ok := seen[domain.Field]; ok {
@@ -1591,14 +1593,29 @@ func validateScalar(field VisualizationField, value any) error {
 			return fmt.Errorf("expected finite integer scalar, got %v", value)
 		}
 	case VisualizationDataTypeDecimal:
+		text, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("expected canonical decimal string, got %T", value)
+		}
+		if err := validateCanonicalVisualizationDecimal(text); err != nil {
+			return err
+		}
+	case VisualizationDataTypeFloat:
 		number, ok := scalarNumber(value)
 		if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
-			return fmt.Errorf("expected finite decimal scalar, got %v", value)
+			return fmt.Errorf("expected finite float scalar, got %v", value)
 		}
 	default:
 		return fmt.Errorf("unsupported data type %q", field.DataType)
 	}
 	return nil
+}
+
+// validateCanonicalVisualizationDecimal enforces the exact Decimal transport
+// spelling without importing analytics execution packages into the dashboard
+// renderer boundary. Decimal values are always JSON strings at this boundary.
+func validateCanonicalVisualizationDecimal(token string) error {
+	return visualizationdecimal.Validate(token)
 }
 
 func scalarNumber(value any) (float64, bool) {

@@ -17,9 +17,9 @@ function specificationKind(spec: VisualizationSpec): string {
     case 'table':
       return `${spec.kind}:${spec.columns.length}`
     case 'matrix':
-      return `${spec.kind}:${spec.measures.length}`
+      return `${spec.kind}:${spec.metrics.length}`
     case 'pivot':
-      return `${spec.kind}:${spec.measures.length}`
+      return `${spec.kind}:${spec.metrics.length}`
     case 'kpi':
       return `${spec.kind}:${spec.value.field}`
     case 'geographic':

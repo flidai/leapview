@@ -41,9 +41,9 @@ func ValidateAndNormalizeDashboard(d *dashboardauthoring.Dashboard, models map[s
 			continue
 		}
 		visual := *authored.Chart
-		if visual.Query.Table != "" {
-			if _, ok := model.Tables[visual.Query.Table]; !ok {
-				return nil, fmt.Errorf("visual %q query.table references unknown table %q", name, visual.Query.Table)
+		if visual.Query.Dataset != "" {
+			if _, ok := model.Tables[visual.Query.Dataset]; !ok {
+				return nil, fmt.Errorf("visual %q query.dataset references unknown dataset %q", name, visual.Query.Dataset)
 			}
 		}
 		for _, dimension := range visual.Query.Dimensions {
@@ -56,9 +56,9 @@ func ValidateAndNormalizeDashboard(d *dashboardauthoring.Dashboard, models map[s
 				return nil, fmt.Errorf("visual %q references unknown series dimension %q", name, visual.Query.Series.Field)
 			}
 		}
-		for _, measure := range visual.Query.Measures {
-			if err := model.ValidateAggregateMember(measure.Field); err != nil {
-				return nil, fmt.Errorf("visual %q references unknown measure %q", name, measure.Field)
+		for _, metric := range visual.Query.Metrics {
+			if err := model.ValidateAggregateMember(metric.Field); err != nil {
+				return nil, fmt.Errorf("visual %q references unknown metric %q", name, metric.Field)
 			}
 		}
 		if !visual.Interaction.PointSelection.IsZero() {
@@ -84,9 +84,9 @@ func ValidateAndNormalizeDashboard(d *dashboardauthoring.Dashboard, models map[s
 		}
 		table := *authored.Tabular
 		normalizeTableFormatting(model, &table)
-		for measure := range table.MeasureFormatting {
-			if err := model.ValidateAggregateMember(measure); err != nil {
-				return nil, fmt.Errorf("table %q measure_formatting references unknown measure %q", name, measure)
+		for metric := range table.MetricFormatting {
+			if err := model.ValidateAggregateMember(metric); err != nil {
+				return nil, fmt.Errorf("table %q metric_formatting references unknown metric %q", name, metric)
 			}
 		}
 		switch authored.Type {
@@ -129,16 +129,19 @@ func ValidateAndNormalizeDashboard(d *dashboardauthoring.Dashboard, models map[s
 }
 
 func validateVisualQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, name string, visual dashboardauthoring.Visual) error {
-	planner := semanticquery.NewPlanner(model)
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		return fmt.Errorf("semantic model is invalid: %w", err)
+	}
 	plan := func(query dashboardauthoring.VisualQuery) error {
 		dimensions := reportFieldRefsToQueryFields(query.Dimensions)
 		if !query.Series.IsZero() {
 			dimensions = append(dimensions, reportFieldRefToQueryField(query.Series))
 		}
 		_, err := planner.Plan(semanticquery.Request{
-			Table:      query.Table,
+			Dataset:    query.Dataset,
 			Dimensions: dimensions,
-			Measures:   reportFieldRefsToQueryFields(query.Measures),
+			Metrics:    reportFieldRefsToQueryFields(query.Metrics),
 			Time: semanticquery.Time{
 				Field: query.Time.Field,
 				Grain: query.Time.Grain,
@@ -149,14 +152,14 @@ func validateVisualQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmod
 		})
 		return err
 	}
-	err := plan(visual.Query)
+	err = plan(visual.Query)
 	if err != nil {
 		return fmt.Errorf("visual %q query is invalid: %w", name, err)
 	}
 	for _, datasetID := range sortedMapKeys(visual.Datasets) {
 		query := visual.Datasets[datasetID]
-		if query.Table == "" {
-			query.Table = visual.Query.Table
+		if query.Dataset == "" {
+			query.Dataset = visual.Query.Dataset
 		}
 		if err := plan(query); err != nil {
 			return fmt.Errorf("visual %q context dataset %q query is invalid: %w", name, datasetID, err)
@@ -166,33 +169,35 @@ func validateVisualQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmod
 }
 
 func validateTableQueryPlan(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, name, visualType string, table dashboardauthoring.TableVisual) error {
-	planner := semanticquery.NewPlanner(model)
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		return fmt.Errorf("semantic model is invalid: %w", err)
+	}
 	filters := scopedQueryFilters(d, model, "visual", name)
-	var err error
 	switch visualType {
 	case "matrix", "pivot":
 		dimensions := reportFieldRefsToQueryFields(table.Query.Rows)
 		dimensions = append(dimensions, reportFieldRefsToQueryFields(table.Query.Columns)...)
 		_, err = planner.Plan(semanticquery.Request{
-			Table:      table.Query.Table,
+			Dataset:    table.Query.Dataset,
 			Dimensions: dimensions,
-			Measures:   reportFieldRefsToQueryFields(table.Query.Measures),
+			Metrics:    reportFieldRefsToQueryFields(table.Query.Metrics),
 			Filters:    filters,
 		})
 	default:
 		dimensions := []semanticquery.Field{}
-		measures := []semanticquery.Field{}
+		metrics := []semanticquery.Field{}
 		for _, column := range table.DataColumns {
 			if _, resolveErr := model.ResolveDimension(column.Field); resolveErr == nil {
 				dimensions = append(dimensions, reportFieldRefToQueryField(column))
 				continue
 			}
-			measures = append(measures, reportFieldRefToQueryField(column))
+			metrics = append(metrics, reportFieldRefToQueryField(column))
 		}
 		_, err = planner.PlanRows(semanticquery.RowRequest{
-			Table:      table.Query.Table,
+			Dataset:    table.Query.Dataset,
 			Dimensions: dimensions,
-			Measures:   measures,
+			Metrics:    metrics,
 			Filters:    filters,
 		})
 	}
@@ -240,8 +245,8 @@ func tableHasOutputColumn(table dashboardauthoring.TableVisual, key string) bool
 			return true
 		}
 	}
-	for _, measure := range table.Measures {
-		if displayField(measure) == key {
+	for _, metric := range table.Metrics {
+		if displayField(metric) == key {
 			return true
 		}
 	}
@@ -272,12 +277,12 @@ func normalizeTableFields(name string, model *semanticmodel.Model, table *dashbo
 		}
 		table.ColumnDims[index] = item.Field
 	}
-	table.Measures = make([]string, len(table.Query.Measures))
-	for index, measure := range table.Query.Measures {
-		if err := model.ValidateAggregateMember(measure.Field); err != nil {
-			return fmt.Errorf("table %q query.measures references unknown measure %q", name, measure.Field)
+	table.Metrics = make([]string, len(table.Query.Metrics))
+	for index, metric := range table.Query.Metrics {
+		if err := model.ValidateAggregateMember(metric.Field); err != nil {
+			return fmt.Errorf("table %q query.metrics references unknown metric %q", name, metric.Field)
 		}
-		table.Measures[index] = measure.Field
+		table.Metrics[index] = metric.Field
 	}
 	return nil
 }
@@ -308,12 +313,13 @@ func normalizeDataTableFields(name string, model *semanticmodel.Model, table *da
 			columns[index] = column
 			continue
 		}
-		measure, err := model.ResolveMeasure(column.Field)
-		if err != nil {
-			return fmt.Errorf("table %q query column %q references unknown field %q", name, column.Alias, column.Field)
+		if _, ok := model.Metrics[column.Field]; !ok {
+			if _, err := model.ResolveMetric(column.Field); err != nil {
+				return fmt.Errorf("table %q query column %q references unknown field %q", name, column.Alias, column.Field)
+			}
 		}
-		column.Field = measure.Field
 		columns[index] = column
+		continue
 	}
 	table.DataColumns = columns
 	if len(table.Columns) == 0 {
@@ -322,11 +328,19 @@ func normalizeDataTableFields(name string, model *semanticmodel.Model, table *da
 			format := "text"
 			role := ""
 			align := ""
-			if measure, err := model.ResolveMeasure(column.Field); err == nil {
-				role = "measure"
+			if metric, ok := model.Metrics[column.Field]; ok {
+				role = "metric"
 				align = "right"
-				if measure.Format != "" {
-					format = measure.Format
+				if metric.Format != "" {
+					format = metric.Format
+				} else {
+					format = "decimal"
+				}
+			} else if metric, err := model.ResolveMetric(column.Field); err == nil {
+				role = "metric"
+				align = "right"
+				if metric.Format != "" {
+					format = metric.Format
 				} else {
 					format = "decimal"
 				}
@@ -350,14 +364,14 @@ func normalizeDataTableFields(name string, model *semanticmodel.Model, table *da
 }
 
 func normalizeTableFormatting(model *semanticmodel.Model, table *dashboardauthoring.TableVisual) {
-	if len(table.MeasureFormatting) == 0 {
+	if len(table.MetricFormatting) == 0 {
 		return
 	}
 	next := map[string][]dashboard.TableFormattingRule{}
-	for measure, rules := range table.MeasureFormatting {
-		next[measure] = rules
+	for metric, rules := range table.MetricFormatting {
+		next[metric] = rules
 	}
-	table.MeasureFormatting = next
+	table.MetricFormatting = next
 }
 
 func validateFilterTargets(_ *dashboardauthoring.Dashboard, _ *semanticmodel.Model) error {

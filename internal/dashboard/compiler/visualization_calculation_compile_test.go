@@ -8,6 +8,26 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
+func TestCompiledCalculationDataTypePromotion(t *testing.T) {
+	tests := []struct {
+		template visualizationir.VisualizationCalculationTemplate
+		source   visualizationir.VisualizationDataType
+		want     visualizationir.VisualizationDataType
+	}{
+		{visualizationir.VisualizationCalculationTemplateRunningTotal, visualizationir.VisualizationDataTypeInteger, visualizationir.VisualizationDataTypeDecimal},
+		{visualizationir.VisualizationCalculationTemplateDifference, visualizationir.VisualizationDataTypeDecimal, visualizationir.VisualizationDataTypeDecimal},
+		{visualizationir.VisualizationCalculationTemplateMovingAverage, visualizationir.VisualizationDataTypeInteger, visualizationir.VisualizationDataTypeDecimal},
+		{visualizationir.VisualizationCalculationTemplatePercentageDifference, visualizationir.VisualizationDataTypeDecimal, visualizationir.VisualizationDataTypeDecimal},
+		{visualizationir.VisualizationCalculationTemplatePercentOfParent, visualizationir.VisualizationDataTypeFloat, visualizationir.VisualizationDataTypeFloat},
+		{visualizationir.VisualizationCalculationTemplateRank, visualizationir.VisualizationDataTypeFloat, visualizationir.VisualizationDataTypeInteger},
+	}
+	for _, test := range tests {
+		if got := compiledCalculationDataType(test.template, test.source); got != test.want {
+			t.Errorf("compiledCalculationDataType(%q, %q) = %q, want %q", test.template, test.source, got, test.want)
+		}
+	}
+}
+
 func TestCompiledVisualCalculationAddsGovernedFieldAndVisibleBinding(t *testing.T) {
 	t.Parallel()
 
@@ -18,7 +38,7 @@ func TestCompiledVisualCalculationAddsGovernedFieldAndVisibleBinding(t *testing.
 				Type: "line",
 				Query: dashboardauthoring.VisualQuery{
 					Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month", Alias: "month"}},
-					Measures:   []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
+					Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
 					Sort:       []dashboardauthoring.Sort{{Field: "orders.month", Direction: "asc"}},
 				},
 				Calculations: []dashboardauthoring.VisualCalculation{{
@@ -91,7 +111,7 @@ func TestCompiledVisualCalculationRejectsInvalidPlans(t *testing.T) {
 						Type: "line",
 						Query: dashboardauthoring.VisualQuery{
 							Dimensions: []dashboardauthoring.FieldRef{{Field: "orders.month", Alias: "month"}},
-							Measures:   []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
+							Metrics:    []dashboardauthoring.FieldRef{{Field: "revenue", Alias: "revenue"}},
 						},
 						Calculations: test.calculations,
 					}),
@@ -112,7 +132,7 @@ func TestCompiledHiddenTableCalculationRemainsAvailableWithoutDisplayColumn(t *t
 		ID: "sales", SemanticModel: "sales",
 		Visuals: map[string]dashboardauthoring.AuthoringVisualization{
 			"orders": dashboardauthoring.TabularVisualization("table", dashboardauthoring.TableVisual{
-				Query:   dashboardauthoring.TableQuery{Table: "orders", Fields: []string{"month", "revenue"}},
+				Query:   dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"month", "revenue"}},
 				Columns: nil,
 				Calculations: []dashboardauthoring.VisualCalculation{{
 					ID: "running_revenue", Template: "running_total", Source: "revenue", Hidden: true,

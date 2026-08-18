@@ -13,16 +13,16 @@ test('canonical visual selections project back to renderer-independent datum ref
     spec: { interactions: [{
       id: 'point_selection', kind: 'select',
       mappings: [
-        { source: { dataset: 'primary', field: 'customer_id' }, targetFieldID: 'customers.customer_id', targetFactID: 'customers' },
-        { source: { dataset: 'primary', field: 'state' }, targetFieldID: 'customers.state', targetFactID: 'customers' },
+        { source: { dataset: 'primary', field: 'customer_id' }, targetFieldID: 'customers.customer_id', targetDatasetID: 'customers' },
+        { source: { dataset: 'primary', field: 'state' }, targetFieldID: 'customers.state', targetDatasetID: 'customers' },
       ],
     }] },
   } as VisualizationEnvelope
   const selections: CanonicalInteractionSelection[] = [{
     sourceKind: 'visual', sourceId: 'customers', interactionKind: 'point_selection',
     entries: [{ label: 'Customer 2', mappings: [
-      { field: 'customers.state', fact: 'customers', value: 'RJ' },
-      { field: 'customers.customer_id', fact: 'customers', value: 'c-2' },
+      { field: 'customers.state', dataset: 'customers', value: 'RJ' },
+      { field: 'customers.customer_id', dataset: 'customers', value: 'c-2' },
     ] }],
   }]
 
@@ -57,7 +57,7 @@ test('optimistic cross-highlights follow only explicit highlight edges and prese
   } as unknown as VisualizationEnvelope
   const selections: CanonicalInteractionSelection[] = [{
     sourceKind: 'visual', sourceId: 'source', interactionKind: 'point_selection', label: 'São Paulo',
-    entries: [{ label: 'São Paulo', mappings: [{ field: 'customers.state', fact: 'orders', value: 'SP', label: 'São Paulo' }] }],
+    entries: [{ label: 'São Paulo', mappings: [{ field: 'customers.state', dataset: 'orders', value: 'SP', label: 'São Paulo' }] }],
   }]
   const geometry = { kind: 'box', bounds: { west: -50, south: -25, east: -40, north: -15 } } as const
 
@@ -70,7 +70,7 @@ test('optimistic cross-highlights follow only explicit highlight edges and prese
       sourceVisualID: 'source', interactionID: 'point_selection', label: 'São Paulo',
       entries: [{
         label: 'São Paulo',
-        mappings: [{ targetFieldID: 'customers.state', targetFactID: 'orders', value: 'SP', label: 'São Paulo' }],
+        mappings: [{ targetFieldID: 'customers.state', targetDatasetID: 'orders', value: 'SP', label: 'São Paulo' }],
       }],
     },
     {

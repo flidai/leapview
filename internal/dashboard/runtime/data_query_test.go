@@ -21,20 +21,20 @@ func TestReportAggregateDataQueryDefaultsToDashboardCacheOperation(t *testing.T)
 
 func TestReportCountDataQueryPreservesAuthorizationProjection(t *testing.T) {
 	request := reportRowDataQuery("sales", reportdef.RowQuery{
-		Table: "orders",
+		Dataset: "orders",
 		Dimensions: []reportdef.QueryField{
 			{Field: "orders.order_id", Alias: "order_id"},
 			{Field: "orders.customer_email", Alias: "email"},
 		},
-		Measures: []reportdef.QueryField{{Field: "order_value", Alias: "value"}},
+		Metrics: []reportdef.QueryField{{Field: "order_value", Alias: "value"}},
 	}, true)
 	request = countOnlyDataQuery(request)
 
 	if request.Operation != dataquery.OperationDashboardCount {
 		t.Fatalf("operation = %q, want dashboard count", request.Operation)
 	}
-	if len(request.Fields) != 0 || len(request.Measures) != 0 {
-		t.Fatalf("physical projection = fields %#v measures %#v, want count-only", request.Fields, request.Measures)
+	if len(request.Fields) != 0 || len(request.Metrics) != 0 {
+		t.Fatalf("physical projection = fields %#v metrics %#v, want count-only", request.Fields, request.Metrics)
 	}
 	if got := request.AuthorizationFields; len(got) != 3 || got[0].Field != "orders.order_id" || got[1].Field != "orders.customer_email" || got[2].Field != "order_value" {
 		t.Fatalf("authorization projection = %#v", got)

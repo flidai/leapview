@@ -10,12 +10,12 @@ const envelope = {
     datasets: [{ id: 'primary', fields: [
       { id: 'customer_id', role: 'identity', dataType: 'string', nullable: false, label: 'Customer' },
       { id: 'state', role: 'identity', dataType: 'string', nullable: false, label: 'State' },
-      { id: 'revenue', role: 'measure', dataType: 'decimal', nullable: false, label: 'Revenue' },
+      { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
     ] }],
     dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Customers', description: 'Customers' },
     interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['states'], mappings: [
-      { source: { dataset: 'primary', field: 'customer_id' }, targetFieldID: 'customers.customer_id', targetFactID: 'customers', label: { dataset: 'primary', field: 'revenue' } },
-      { source: { dataset: 'primary', field: 'state' }, targetFieldID: 'customers.state', targetFactID: 'customers' },
+      { source: { dataset: 'primary', field: 'customer_id' }, targetFieldID: 'customers.customer_id', targetDatasetID: 'customers', label: { dataset: 'primary', field: 'revenue' } },
+      { source: { dataset: 'primary', field: 'state' }, targetFieldID: 'customers.state', targetDatasetID: 'customers' },
     ] }],
     layers: [], presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, roam: false },
   },
@@ -30,8 +30,8 @@ test('row-index interaction translation validates the locator and compiled mappi
   expect(interactionCommandForRowIndex(envelope, 'primary', 0)).toEqual({
     sourceKind: 'visual', sourceId: 'customers', interactionKind: 'point_selection', action: 'set', toggle: true,
     mappings: [
-      { field: 'customers.customer_id', fact: 'customers', value: 'c-1', label: '42' },
-      { field: 'customers.state', fact: 'customers', value: 'SP', label: 'SP' },
+      { field: 'customers.customer_id', dataset: 'customers', value: 'c-1', label: '42' },
+      { field: 'customers.state', dataset: 'customers', value: 'SP', label: 'SP' },
     ],
   })
   expect(interactionCommandForRowIndex(envelope, 'primary', -1)).toBeUndefined()

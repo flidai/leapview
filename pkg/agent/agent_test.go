@@ -213,12 +213,12 @@ func TestToolSchemasRequireProviderPortableSubset(t *testing.T) {
 		},
 		{
 			name:   "if",
-			schema: json.RawMessage(`{"type":"object","if":{"properties":{"kind":{"const":"chart"}}},"then":{"required":["measures"]}}`),
+			schema: json.RawMessage(`{"type":"object","if":{"properties":{"kind":{"const":"chart"}}},"then":{"required":["metrics"]}}`),
 			want:   "if",
 		},
 		{
 			name:   "then",
-			schema: json.RawMessage(`{"type":"object","then":{"required":["measures"]}}`),
+			schema: json.RawMessage(`{"type":"object","then":{"required":["metrics"]}}`),
 			want:   "then",
 		},
 		{

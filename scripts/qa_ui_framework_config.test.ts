@@ -8,11 +8,11 @@ test('UI framework QA gives the managed dev task its full readiness budget', asy
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
 })
 
-test('development MCP smoke queries an authored semantic measure', async () => {
+test('development MCP smoke queries an authored semantic metric', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
 
-  expect(source).toContain('measures: [{field: "revenue"}]')
-  expect(source).not.toContain('measures: [{field: "sales_orders.revenue"}]')
+  expect(source).toContain('metrics: [{field: "revenue"}]')
+  expect(source).not.toContain('metrics: [{field: "sales_orders.revenue"}]')
 })
 
 test('browser QA uses canonical project resource IDs', async () => {

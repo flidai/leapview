@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -66,14 +67,9 @@ func (s browserGraphStub) ActiveServingStateGraph(context.Context, projectgraph.
 	return s.graph, true, nil
 }
 
-type browserSemanticModelStub struct{ model *semanticmodel.Model }
-
-func (s browserSemanticModelStub) SemanticModel(string) (*semanticmodel.Model, bool) {
-	return s.model, s.model != nil
-}
-
 type browserProjectDefinitionStub struct {
 	definition projectmanifest.Project
+	compiled   map[string]*semanticquery.CompiledModel
 	err        error
 }
 
@@ -88,8 +84,8 @@ func (s *browserDataQueryStub) ExecuteDataQuery(_ context.Context, query dataque
 	return s.result, s.err
 }
 
-func (s browserProjectDefinitionStub) ProjectDefinition(context.Context) (projectmanifest.Project, error) {
-	return s.definition, s.err
+func (s browserProjectDefinitionStub) ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error) {
+	return s.definition, s.compiled, s.err
 }
 
 func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
@@ -103,7 +99,7 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 			ID: projectID,
 			Models: map[string]semanticmodel.Table{assetID: {
 				Sources: []string{"geolocations"}, Transform: semanticmodel.Transform{SQL: "select zip_code from source.geolocations"},
-				PrimaryKey: "zip_code", Grain: "zip_code", Dimensions: map[string]semanticmodel.MetricDimension{"zip_code": {Label: "ZIP code"}},
+				Entities: map[string]semanticmodel.ModelEntitySpec{"zip": {Type: "primary", Fields: []string{"zip_code"}}}, GrainEntity: "zip", Dimensions: map[string]semanticmodel.MetricDimension{"zip_code": {Label: "ZIP code"}},
 			}},
 		}},
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
@@ -129,8 +125,12 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	const projectID = "project:test"
 	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-		"orders": {Grain: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
-	}}
+		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
 			{ID: "source:orders", ProjectID: projectID, ServingStateID: "state", Type: "source", Key: "orders", Title: "Orders source", PayloadJSON: `{}`},
@@ -143,7 +143,7 @@ func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 			Models:         map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]},
 			SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 			NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
-		}},
+		}, compiled: map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}},
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
 		Environment:      "dev",
 		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
@@ -205,32 +205,64 @@ func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
 	}}
 	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
 		ModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("orders"),
-		Dimensions: []string{"orders.status"}, Measures: []string{"orders"}, Filters: []projectsignals.DataExploreFilterSignal{},
+		Dimensions: []string{"orders.status"}, Metrics: []string{"orders"}, Filters: []projectsignals.DataExploreFilterSignal{},
 		Sort: []projectsignals.DataExploreSortSignal{{Field: "orders", Direction: "desc"}}, Limit: 100,
 	}, []projectsignals.DataExploreFieldSignal{
 		{ID: "orders.status", Label: "Status", Kind: "dimension", Compatible: true},
-		{ID: "orders", Label: "Orders", Kind: "measure", Compatible: true},
+		{ID: "orders", Label: "Orders", Kind: "metric", Compatible: true},
 	})
 
 	if result.Error != nil || result.RowsReturned != 1 || len(result.Rows) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
-	if len(command.Dimensions) != 1 || len(command.Measures) != 1 {
+	if len(command.Dimensions) != 1 || len(command.Metrics) != 1 {
 		t.Fatalf("normalized command = %#v", command)
 	}
 	if executor.query.Kind != dataquery.KindSemanticAggregate || executor.query.ProjectID != "project:test" || executor.query.Operation != dataquery.OperationSemanticExplore {
 		t.Fatalf("query = %#v", executor.query)
 	}
-	if executor.query.Fields[0].Alias != "status" || executor.query.Measures[0].Alias != "orders" {
-		t.Fatalf("query aliases = %#v / %#v", executor.query.Fields, executor.query.Measures)
+	if executor.query.Fields[0].Alias != "status" || executor.query.Metrics[0].Alias != "orders" {
+		t.Fatalf("query aliases = %#v / %#v", executor.query.Fields, executor.query.Metrics)
+	}
+}
+
+func TestDataExplorerSemanticExploreUnscopesMultiRootMetric(t *testing.T) {
+	executor := &browserDataQueryStub{result: dataquery.Result{
+		Columns: []dataquery.Column{{Name: "order_share"}},
+		Rows:    []dataquery.Row{{"order_share": 0.5}}, SQL: "select order_share",
+	}}
+	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
+		ModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("customers"),
+		Metrics: []string{"order_share"}, Limit: 100,
+	}, []projectsignals.DataExploreFieldSignal{
+		// An empty modelTable is the projection contract for a derived/ratio
+		// metric whose dependencies span more than one physical dataset.
+		{ID: "order_share", Label: "Order share", Kind: "metric", Compatible: true},
+	})
+
+	if result.Error != nil {
+		t.Fatalf("result error = %q", *result.Error)
+	}
+	if len(command.Metrics) != 1 || executor.query.Kind != dataquery.KindSemanticAggregate {
+		t.Fatalf("normalized command/query = %#v / %#v", command, executor.query)
+	}
+	if executor.query.Target != "" {
+		t.Fatalf("query target = %q, want unscoped multi-root execution", executor.query.Target)
+	}
+	if executor.query.Metrics[0].Field != "order_share" {
+		t.Fatalf("query metrics = %#v", executor.query.Metrics)
 	}
 }
 
 func TestAssetDataExplorerScopesModelsAndSemanticModels(t *testing.T) {
 	const projectID = "project:test"
 	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-		"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
-	}}
+		"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
 	executor := &browserDataQueryStub{result: dataquery.Result{Rows: []dataquery.Row{{"status": "paid"}}, TotalRows: 1, TotalRowsKnown: true}}
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
@@ -240,7 +272,7 @@ func TestAssetDataExplorerScopesModelsAndSemanticModels(t *testing.T) {
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
 			ID: projectID, Models: map[string]semanticmodel.Table{"model:orders": model.Tables["orders"]},
 			SemanticModels: map[string]*semanticmodel.Model{"semantic-model:sales": model}, NameIndex: projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
-		}},
+		}, compiled: map[string]*semanticquery.CompiledModel{"semantic-model:sales": compiled}},
 		QueryExecutor: executor, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
 		Environment: "dev", CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
 	}
@@ -272,13 +304,26 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {PrimaryKey: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
-			"customers": {PrimaryKey: "customer_id"},
+			"orders":    {ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
-		Measures: map[string]semanticmodel.MetricMeasure{
-			"order_count": {Fact: "orders", Aggregation: "count"},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
 		},
-		Relationships: []semanticmodel.Relationship{{ID: "orders_customer", From: "orders.customer_id", To: "customers.customer_id", Cardinality: "many_to_one"}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders"}, "customers": {Model: "customers"},
+		},
+		StructuredRelationships: map[string]semanticmodel.RelationshipSpec{
+			"orders_customer": {
+				From: semanticmodel.RelationshipEndpointSpec{Dataset: "orders", Fields: []string{"customer_id"}},
+				To:   semanticmodel.RelationshipEndpointSpec{Dataset: "customers", Fields: []string{"customer_id"}},
+			},
+		},
+		Relationships: []semanticmodel.Relationship{{ID: "orders_customer", FromDataset: "orders", FromFields: []string{"customer_id"}, ToDataset: "customers", ToFields: []string{"customer_id"}, Cardinality: "many_to_one"}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
 	}
 	const projectID = "project:test"
 	const assetID = "semantic:sales"
@@ -286,10 +331,10 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{
 			Assets: []servingstate.Asset{{ID: assetID, ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{"kind":"semantic_model"}`}},
 		}},
-		SemanticModelReader: browserSemanticModelStub{model: model},
-		ResolveProjectID:    func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
-		Environment:         "dev",
-		CurrentUser:         func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{ID: projectID, SemanticModels: map[string]*semanticmodel.Model{assetID: model}}, compiled: map[string]*semanticquery.CompiledModel{assetID: compiled}},
+		ResolveProjectID:        func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
+		Environment:             "dev",
+		CurrentUser:             func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
 	}
 
 	patch, ok := h.assetBootstrap(httptest.NewRecorder(), httptest.NewRequest(stdhttp.MethodGet, "/updates?surface=asset&asset="+assetID+"&section=details", nil))
@@ -300,7 +345,7 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Model tables (2)", "Measures (1)", "Relationships (1)"} {
+	for _, want := range []string{"Datasets (2)", "Metrics (1)", "Relationships (1)"} {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("bootstrap = %s, missing %q", encoded, want)
 		}
@@ -311,13 +356,17 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 }
 
 func TestSemanticModelAssetBootstrapRejectsMissingCompiledModel(t *testing.T) {
+	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+		"orders": {ModelName: "orders"},
+	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{
 			Assets: []servingstate.Asset{{ID: "semantic:sales", ProjectID: "project:test", ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{"kind":"semantic_model"}`}},
 		}},
-		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
-		Environment:      "dev",
-		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{ID: "project:test", SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}},
+		ResolveProjectID:        func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		Environment:             "dev",
+		CurrentUser:             func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
 	}
 	recorder := httptest.NewRecorder()
 	if _, ok := h.assetBootstrap(recorder, httptest.NewRequest(stdhttp.MethodGet, "/updates?surface=asset&asset=semantic:sales&section=details", nil)); ok {

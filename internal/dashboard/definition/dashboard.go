@@ -249,15 +249,15 @@ func TableColumns(spec ir.VisualizationSpec) []dashboard.TableColumn {
 		if column.Group != nil {
 			out[index].Group = *column.Group
 		}
-		if column.Measure != nil {
-			out[index].Measure = *column.Measure
+		if column.Metric != nil {
+			out[index].Metric = *column.Metric
 		}
 		if column.ColumnValue != nil {
 			out[index].ColumnValue = *column.ColumnValue
 		}
 		if field, ok := fields[column.Field.Field]; ok {
-			if field.Role == ir.VisualizationFieldRoleMeasure {
-				out[index].Role, out[index].Align = "measure", "right"
+			if field.Role == ir.VisualizationFieldRoleMetric {
+				out[index].Role, out[index].Align = "metric", "right"
 			} else {
 				out[index].Role = "row_header"
 			}
@@ -267,18 +267,18 @@ func TableColumns(spec ir.VisualizationSpec) []dashboard.TableColumn {
 	return out
 }
 
-func MeasureFormatting(spec ir.VisualizationSpec, measures []visualizationdefinition.FieldBinding) map[string][]dashboard.TableFormattingRule {
+func MetricFormatting(spec ir.VisualizationSpec, metrics []visualizationdefinition.FieldBinding) map[string][]dashboard.TableFormattingRule {
 	values := map[string][]ir.TableVisualizationFormattingRule{}
 	switch value := spec.Value.(type) {
 	case *ir.MatrixVisualizationSpec:
-		values = value.MeasureFormatting
+		values = value.MetricFormatting
 	case *ir.PivotVisualizationSpec:
-		values = value.MeasureFormatting
+		values = value.MetricFormatting
 	}
 	out := make(map[string][]dashboard.TableFormattingRule, len(values))
-	for _, measure := range measures {
-		if rules := values[measure.Alias]; len(rules) > 0 {
-			out[measure.FieldID] = formatting(rules)
+	for _, metric := range metrics {
+		if rules := values[metric.Alias]; len(rules) > 0 {
+			out[metric.FieldID] = formatting(rules)
 		}
 	}
 	return out

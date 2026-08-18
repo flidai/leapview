@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Two-level hierarchy
 
-Order two dimensions from parent to child and provide one measure for sector size to show category composition by status.
+Order two dimensions from parent to child and provide one metric for sector size to show category composition by status.
 
 {{< visual id="category_status_sunburst" >}}
 
@@ -22,7 +22,7 @@ visuals:
       dimensions:
         category: orders.category
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -45,7 +45,7 @@ visuals:
       dimensions:
         state: orders.state
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value
@@ -72,7 +72,7 @@ visuals:
         category: orders.category
         state: orders.state
         status: orders.status
-      measures:
+      metrics:
         order_count: null
       sort:
         - field: value

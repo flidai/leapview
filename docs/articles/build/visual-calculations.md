@@ -4,11 +4,11 @@ Visual calculations are governed post-aggregation analysis attached to one visua
 
 ## Choose the right calculation layer
 
-Use a semantic measure when the business definition should be reused across visuals, dashboards, APIs, exports, or agents. Revenue, gross margin, active customers, and other governed business concepts belong in the semantic model.
+Use a semantic metric when the business definition should be reused across visuals, dashboards, APIs, exports, or agents. Revenue, gross margin, active customers, and other governed business concepts belong in the semantic model.
 
 Use a visual calculation when the input is already aggregated and the analysis depends on the displayed structure or ordering. Running totals, moving averages, period differences, percent of parent, percent of grand total, rank, cumulative contribution, and a lookup within the visible frame are good examples.
 
-A visual calculation is stored with one visual. Its result changes with the visual’s governed filters and compiled frame, but it cannot change the meaning of the source measure.
+A visual calculation is stored with one visual. Its result changes with the visual’s governed filters and compiled frame, but it cannot change the meaning of the source metric.
 
 ## Author a closed template
 
@@ -30,7 +30,7 @@ visuals:
     query:
       dimensions:
         month: orders.purchase_month
-      measures:
+      metrics:
         revenue: null
       sort:
         - field: month
@@ -66,6 +66,6 @@ Fields used only to order, partition, or look up a result can set `hidden: true`
 
 ## Completeness and provenance
 
-Every compiled field identifies whether it is modeled, aggregated, or visually calculated. Visual-calculation fields retain their calculation ID and source aliases, so tooltips, exports, accessibility projections, and agent results can distinguish them from semantic measures.
+Every compiled field identifies whether it is modeled, aggregated, or visually calculated. Visual-calculation fields retain their calculation ID and source aliases, so tooltips, exports, accessibility projections, and agent results can distinguish them from semantic metrics.
 
 Inline calculations run over the complete bounded result frame. Calculated tables evaluate one deterministic, bounded visible frame before virtualized windows are sliced, so scrolling does not restart a running total. If a query reaches its row cap or otherwise returns an incomplete frame, LeapView marks the visual partial and emits a `visual_calculation_incomplete_frame` diagnostic. It never presents a rank, total, or percentage over a truncated frame as complete.

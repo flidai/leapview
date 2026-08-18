@@ -12,9 +12,9 @@ import (
 )
 
 type semanticOptions struct {
-	remote      cliapi.RemoteOptions
-	pagination  cliapi.PaginationOptions
-	bodyJSON    string
+	remote     cliapi.RemoteOptions
+	pagination cliapi.PaginationOptions
+	bodyJSON   string
 }
 
 // SemanticModelsCommand constructs the semantic-model inspection and query command.

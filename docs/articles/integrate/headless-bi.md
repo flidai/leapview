@@ -6,7 +6,7 @@ Headless BI operations expose the same active dashboards and semantic models use
 
 Use dashboard operations when an integration should reproduce a reviewed report experience: its filters, component identities, visual shapes, table configuration, sorting, and limits.
 
-Use semantic-model operations when an integration has its own presentation but should reuse governed dimensions, measures, metrics, datasets, and relationships.
+Use semantic-model operations when an integration has its own presentation but should reuse governed dimensions, metrics, datasets, and relationships.
 
 Do not copy generated SQL out of an explain response and turn it into a second integration contract. Explain is for diagnosis; semantic requests are the stable input.
 
@@ -50,7 +50,7 @@ Use visual or table data commands for focused refreshes. Table requests support 
 
 ## Query a semantic dataset
 
-Preview row-level data to understand fields, then send an aggregate query for dimensions and measures. Use a body file for non-trivial JSON:
+Preview row-level data to understand fields, then send an aggregate query for dimensions and metrics. Use a body file for non-trivial JSON:
 
 ```sh
 leapview semantic-models preview sales orders \

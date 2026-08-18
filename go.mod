@@ -16,6 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.1
 	github.com/aws/smithy-go v1.27.3
 	github.com/caarlos0/env/v11 v11.4.1
+	github.com/cockroachdb/apd/v3 v3.2.1
 	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/creachadair/jrpc2 v1.3.5
 	github.com/cyphar/filepath-securejoin v0.7.0
@@ -85,7 +86,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cockroachdb/apd/v3 v3.2.1 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect

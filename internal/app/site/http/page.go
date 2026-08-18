@@ -480,9 +480,10 @@ metadata:
   id: semantic-model:sales
   name: sales
 spec:
-  measures:
+  metrics:
     revenue:
-      fact: orders
+      type: aggregate
+      dataset: orders
       aggregation: sum
       input: {field: orders.revenue}`
 

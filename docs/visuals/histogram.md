@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic distribution
 
-Set `query.table` and one numeric measure so LeapView can bin raw delivery values and count observations in each interval.
+Set `query.dataset` and one numeric metric so LeapView can bin raw delivery values and count observations in each interval.
 
 {{< visual id="delivery_histogram" >}}
 
@@ -19,14 +19,14 @@ visuals:
     presentation:
       histogram_bins: 16
     query:
-      table: orders
-      measures:
+      dataset: orders
+      metrics:
         delivery_days: null
 ```
 
 ## Custom bins
 
-Change the raw measure to revenue and use `presentation.bin_count` to balance distribution detail against the available chart width.
+Change the raw metric to revenue and use `presentation.bin_count` to balance distribution detail against the available chart width.
 
 {{< visual id="revenue_histogram" >}}
 
@@ -38,8 +38,8 @@ visuals:
     presentation:
       histogram_bins: 18
     query:
-      table: orders
-      measures:
+      dataset: orders
+      metrics:
         revenue: null
 ```
 
@@ -58,7 +58,7 @@ visuals:
       histogram_bins: 10
       labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 12, minimum_spacing: 6, tooltip_fallback: true}
     query:
-      table: orders
-      measures:
+      dataset: orders
+      metrics:
         review_score: null
 ```

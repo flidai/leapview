@@ -6,18 +6,33 @@ metadata:
   displayName: Governed Orders
   description: Order-grain synthetic sales data with typed dimensions and revenue.
 spec:
-  primaryKey: order_id
   sources:
-    - sample.orders
+  - sample.orders
   fields:
-    order_id: {label: Order}
-    purchase_timestamp: {label: Purchased at}
-    purchase_date: {label: Purchase date}
-    purchase_month: {label: Purchase month}
-    state: {label: State}
-    category: {label: Category}
-    status: {label: Status}
-    revenue: {label: Revenue}
+    order_id:
+      datatype: String
+      label: Order
+    purchase_timestamp:
+      datatype: DateTime
+      label: Purchased at
+    purchase_date:
+      datatype: Date
+      label: Purchase date
+    purchase_month:
+      datatype: String
+      label: Purchase month
+    state:
+      datatype: String
+      label: State
+    category:
+      datatype: String
+      label: Category
+    status:
+      datatype: String
+      label: Status
+    revenue:
+      datatype: Decimal
+      label: Revenue
   transform:
     sql: |
       SELECT
@@ -30,3 +45,10 @@ spec:
         status,
         round(try_cast(revenue AS DOUBLE), 2) AS revenue
       FROM source."sample.orders"
+  entities:
+    order:
+      type: primary
+      fields:
+      - order_id
+  grain:
+    entity: order

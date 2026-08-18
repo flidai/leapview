@@ -10,19 +10,33 @@ import (
 )
 
 func TestDashboardTableRowsetIsTypedPrecisionSafeAndCursorPaged(t *testing.T) {
-	envelope := rowsetTestEnvelope([]visualizationir.VisualizationField{{ID: "order_id", DataType: visualizationir.VisualizationDataTypeInteger}, {ID: "amount", DataType: visualizationir.VisualizationDataTypeDecimal}}, [][]any{{int64(9007199254740993), 12.5}}, 2)
+	envelope := rowsetTestEnvelope([]visualizationir.VisualizationField{{ID: "order_id", DataType: visualizationir.VisualizationDataTypeInteger}, {ID: "amount", DataType: visualizationir.VisualizationDataTypeDecimal}}, [][]any{{int64(9007199254740993), "9007199254740993.125"}}, 2)
 	response, err := dashboardVisualizationRowset(envelope, "a", 0, 1, "scope-a", "snapshot-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Columns) != 2 || response.Columns[0].Type != "int64" || response.Columns[1].Type != "float64" {
+	if len(response.Columns) != 2 || response.Columns[0].Type != "int64" || response.Columns[1].Type != "decimal" {
 		t.Fatalf("columns = %#v", response.Columns)
 	}
-	if len(response.Rows) != 1 || response.Rows[0][0] != "9007199254740993" || response.Page.NextCursor == "" {
+	if len(response.Rows) != 1 || response.Rows[0][0] != "9007199254740993" || response.Rows[0][1] != "9007199254740993.125" || response.Page.NextCursor == "" {
 		t.Fatalf("rowset = %#v", response)
 	}
 	if offset, err := decodeIndexCursor(response.Page.NextCursor, "scope-a", "snapshot-a"); err != nil || offset != 1 {
 		t.Fatalf("cursor offset=%d err=%v", offset, err)
+	}
+}
+
+func TestDashboardTableRowsetMapsFloatToFloat64(t *testing.T) {
+	envelope := rowsetTestEnvelope([]visualizationir.VisualizationField{{ID: "ratio", DataType: visualizationir.VisualizationDataTypeFloat}}, [][]any{{float64(1.25)}}, 1)
+	response, err := dashboardVisualizationRowset(envelope, "a", 0, 100, "scope-a", "snapshot-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Columns) != 1 || response.Columns[0].Type != "float64" {
+		t.Fatalf("columns = %#v", response.Columns)
+	}
+	if len(response.Rows) != 1 || response.Rows[0][0] != "1.25" {
+		t.Fatalf("rows = %#v", response.Rows)
 	}
 }
 

@@ -10,8 +10,8 @@ import (
 
 func TestSpatialFilterFromSelectionPreservesExactGovernedGeometry(t *testing.T) {
 	resolved := reportmodel.ResolvedSpatialSelectionInteraction{
-		Latitude:  reportmodel.ResolvedSelectionMapping{Field: "customers.latitude", Fact: "customers"},
-		Longitude: reportmodel.ResolvedSelectionMapping{Field: "customers.longitude", Fact: "customers"},
+		Latitude:  reportmodel.ResolvedSelectionMapping{Field: "customers.latitude", Dataset: "customers"},
+		Longitude: reportmodel.ResolvedSelectionMapping{Field: "customers.longitude", Dataset: "customers"},
 	}
 	tests := []struct {
 		name     string
@@ -41,7 +41,7 @@ func TestSpatialFilterFromSelectionPreservesExactGovernedGeometry(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if filter.Kind != test.wantKind || filter.LatitudeField != "customers.latitude" || filter.LongitudeField != "customers.longitude" || filter.Fact != "customers" {
+			if filter.Kind != test.wantKind || filter.LatitudeField != "customers.latitude" || filter.LongitudeField != "customers.longitude" || filter.Dataset != "customers" {
 				t.Fatalf("filter = %#v", filter)
 			}
 			test.assert(t, filter)

@@ -6,31 +6,31 @@ metadata:
   displayName: Million-point spatial load fixture
   description: Deterministic synthetic locations used to verify governed viewport aggregation at production scale.
 spec:
-  description: Exactly one million stable observations derived from the real Olist geolocation source without adding a repository data artifact.
-  primaryKey: point_id
+  description: Exactly one million stable observations derived from the real Olist geolocation source without adding a repository
+    data artifact.
   sources:
   - olist.geolocation
   fields:
     point_id:
+      datatype: String
       label: Point ID
       description: Stable identity for one generated location.
-      type: string
     city:
+      datatype: String
       label: City
       description: Metropolitan area used as the center of the generated location cloud.
-      type: string
     state:
+      datatype: String
       label: State
       description: Brazilian state containing the generated location.
-      type: string
     latitude:
+      datatype: Float
       label: Latitude
       description: Deterministic latitude near the metropolitan center.
-      type: number
     longitude:
+      datatype: Float
       label: Longitude
       description: Deterministic longitude near the metropolitan center.
-      type: number
   transform:
     sql: |
       WITH normalized AS (
@@ -54,7 +54,14 @@ spec:
         printf('olist-geo-%07d', point_number) AS point_id,
         city,
         state,
-        -33.5 + ((point_number - 1) % 1000) * 0.037 AS latitude,
-        -73.5 + floor((point_number - 1) / 1000) * 0.039 AS longitude
+        CAST(-33.5 + ((point_number - 1) % 1000) * 0.037 AS DOUBLE) AS latitude,
+        CAST(-73.5 + floor((point_number - 1) / 1000) * 0.039 AS DOUBLE) AS longitude
       FROM numbered
       WHERE point_number <= 1000000
+  entities:
+    point:
+      type: primary
+      fields:
+      - point_id
+  grain:
+    entity: point

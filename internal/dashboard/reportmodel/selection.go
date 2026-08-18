@@ -11,8 +11,8 @@ import (
 type SelectionScope string
 
 const (
-	SelectionScopeConformed SelectionScope = "conformed"
-	SelectionScopeFactLocal SelectionScope = "fact_local"
+	SelectionScopeConformed    SelectionScope = "conformed"
+	SelectionScopeDatasetLocal SelectionScope = "dataset_local"
 )
 
 type ResolvedSelectionInteraction struct {
@@ -21,18 +21,18 @@ type ResolvedSelectionInteraction struct {
 }
 
 type ResolvedSelectionMapping struct {
-	Field string
-	Fact  string
-	Grain string
-	Type  string
-	Scope SelectionScope
+	Field   string
+	Dataset string
+	Grain   string
+	Type    string
+	Scope   SelectionScope
 }
 
 type ResolvedSelectionTarget struct {
-	Kind   string
-	ID     string
-	Facts  []string
-	Effect string
+	Kind     string
+	ID       string
+	Datasets []string
+	Effect   string
 }
 
 type ResolvedSpatialSelectionInteraction struct {
@@ -50,7 +50,7 @@ func ResolveSpatialSelectionInteraction(d *dashboardauthoring.Dashboard, model *
 	}
 	selection := visual.Chart.Interaction.SpatialSelection
 	resolve := func(axis string, mapping dashboardauthoring.SpatialSelectionMapping) (ResolvedSelectionMapping, error) {
-		resolved, err := resolveSelectionMapping(model, dashboardauthoring.SelectionMapping{Field: mapping.Field, Fact: mapping.Fact, Value: mapping.Source})
+		resolved, err := resolveSelectionMapping(model, dashboardauthoring.SelectionMapping{Field: mapping.Field, Dataset: mapping.Dataset, Value: mapping.Source})
 		if err != nil {
 			return ResolvedSelectionMapping{}, fmt.Errorf("visual %q spatial_selection %s: %w", sourceID, axis, err)
 		}
@@ -71,7 +71,7 @@ func ResolveSpatialSelectionInteraction(d *dashboardauthoring.Dashboard, model *
 	if err := validateSelectionTupleScope(mappings); err != nil {
 		return ResolvedSpatialSelectionInteraction{}, fmt.Errorf("visual %q spatial_selection coordinates %w", sourceID, err)
 	}
-	if err := validateSelectionSourceFacts(d, model, "visual", sourceID, mappings); err != nil {
+	if err := validateSelectionSourceDatasets(d, model, "visual", sourceID, mappings); err != nil {
 		return ResolvedSpatialSelectionInteraction{}, err
 	}
 	targetEffects, err := authoredInteractionTargets(selection.Targets, selection.HighlightTargets, selection.NoneTargets)
@@ -85,22 +85,22 @@ func ResolveSpatialSelectionInteraction(d *dashboardauthoring.Dashboard, model *
 		if err != nil {
 			return ResolvedSpatialSelectionInteraction{}, err
 		}
-		facts, err := TargetFacts(d, model, targetKind, targetID)
+		datasets, err := TargetDatasets(d, model, targetKind, targetID)
 		if err != nil {
 			return ResolvedSpatialSelectionInteraction{}, fmt.Errorf("visual %q spatial_selection target %q: %w", sourceID, targetID, err)
 		}
-		if err := validateSelectionTarget(model, targetID, facts, mappings); err != nil {
+		if err := validateSelectionTarget(model, targetID, datasets, mappings); err != nil {
 			return ResolvedSpatialSelectionInteraction{}, fmt.Errorf("visual %q spatial_selection: %w", sourceID, err)
 		}
-		resolved.Targets = append(resolved.Targets, ResolvedSelectionTarget{Kind: targetKind, ID: targetID, Facts: facts, Effect: effect})
+		resolved.Targets = append(resolved.Targets, ResolvedSelectionTarget{Kind: targetKind, ID: targetID, Datasets: datasets, Effect: effect})
 	}
 	return resolved, nil
 }
 
 type SelectionMappingIdentity struct {
-	Field string
-	Fact  string
-	Grain string
+	Field   string
+	Dataset string
+	Grain   string
 }
 
 // CanonicalizeMappings validates that an incoming tuple contains each configured
@@ -111,16 +111,16 @@ func (r ResolvedSelectionInteraction) CanonicalizeMappings(incoming []SelectionM
 	}
 	configured := make(map[SelectionMappingIdentity]ResolvedSelectionMapping, len(r.Mappings))
 	for _, mapping := range r.Mappings {
-		identity := SelectionMappingIdentity{Field: mapping.Field, Fact: mapping.Fact, Grain: mapping.Grain}
+		identity := SelectionMappingIdentity{Field: mapping.Field, Dataset: mapping.Dataset, Grain: mapping.Grain}
 		configured[identity] = mapping
 	}
 	seen := make(map[SelectionMappingIdentity]bool, len(incoming))
 	for _, identity := range incoming {
 		if _, ok := configured[identity]; !ok {
-			return nil, fmt.Errorf("selection tuple contains unknown mapping identity field=%q fact=%q grain=%q", identity.Field, identity.Fact, identity.Grain)
+			return nil, fmt.Errorf("selection tuple contains unknown mapping identity field=%q dataset=%q grain=%q", identity.Field, identity.Dataset, identity.Grain)
 		}
 		if seen[identity] {
-			return nil, fmt.Errorf("selection tuple contains duplicate mapping identity field=%q fact=%q grain=%q", identity.Field, identity.Fact, identity.Grain)
+			return nil, fmt.Errorf("selection tuple contains duplicate mapping identity field=%q dataset=%q grain=%q", identity.Field, identity.Dataset, identity.Grain)
 		}
 		seen[identity] = true
 	}
@@ -155,7 +155,7 @@ func ResolveSelectionInteraction(d *dashboardauthoring.Dashboard, model *semanti
 	if err := validateSelectionTupleScope(resolved.Mappings); err != nil {
 		return ResolvedSelectionInteraction{}, fmt.Errorf("%s %q interaction mappings %w", sourceKind, sourceID, err)
 	}
-	if err := validateSelectionSourceFacts(d, model, sourceKind, sourceID, resolved.Mappings); err != nil {
+	if err := validateSelectionSourceDatasets(d, model, sourceKind, sourceID, resolved.Mappings); err != nil {
 		return ResolvedSelectionInteraction{}, err
 	}
 	targets, err := authoredInteractionTargets(selection.Targets, selection.HighlightTargets, selection.NoneTargets)
@@ -168,14 +168,14 @@ func ResolveSelectionInteraction(d *dashboardauthoring.Dashboard, model *semanti
 		if err != nil {
 			return ResolvedSelectionInteraction{}, err
 		}
-		facts, err := TargetFacts(d, model, targetKind, targetID)
+		datasets, err := TargetDatasets(d, model, targetKind, targetID)
 		if err != nil {
 			return ResolvedSelectionInteraction{}, fmt.Errorf("%s %q interaction target %q: %w", sourceKind, sourceID, targetID, err)
 		}
-		if err := validateSelectionTarget(model, targetID, facts, resolved.Mappings); err != nil {
+		if err := validateSelectionTarget(model, targetID, datasets, resolved.Mappings); err != nil {
 			return ResolvedSelectionInteraction{}, fmt.Errorf("%s %q interaction: %w", sourceKind, sourceID, err)
 		}
-		resolved.Targets = append(resolved.Targets, ResolvedSelectionTarget{Kind: targetKind, ID: targetID, Facts: facts, Effect: effect})
+		resolved.Targets = append(resolved.Targets, ResolvedSelectionTarget{Kind: targetKind, ID: targetID, Datasets: datasets, Effect: effect})
 	}
 	return resolved, nil
 }
@@ -265,28 +265,28 @@ func resolveSelectionMapping(model *semanticmodel.Model, mapping dashboardauthor
 		if err != nil {
 			return ResolvedSelectionMapping{}, err
 		}
-		if mapping.Fact != "" {
-			return ResolvedSelectionMapping{}, fmt.Errorf("semantic dimension %q must not specify fact", mapping.Field)
+		if mapping.Dataset != "" {
+			return ResolvedSelectionMapping{}, fmt.Errorf("semantic dimension %q must not specify dataset", mapping.Field)
 		}
 		if mapping.Grain != "" && !containsString(dimension.Grains, mapping.Grain) {
 			return ResolvedSelectionMapping{}, fmt.Errorf("semantic dimension %q does not support grain %q", mapping.Field, mapping.Grain)
 		}
 		return ResolvedSelectionMapping{Field: mapping.Field, Grain: mapping.Grain, Type: dimension.Type, Scope: SelectionScopeConformed}, nil
 	}
-	if mapping.Fact == "" {
-		return ResolvedSelectionMapping{}, fmt.Errorf("physical field %q requires fact", mapping.Field)
+	if mapping.Dataset == "" {
+		return ResolvedSelectionMapping{}, fmt.Errorf("physical field %q requires dataset", mapping.Field)
 	}
-	if _, ok := model.Tables[mapping.Fact]; !ok {
-		return ResolvedSelectionMapping{}, fmt.Errorf("physical field %q references unknown fact %q", mapping.Field, mapping.Fact)
+	if _, ok := model.Tables[mapping.Dataset]; !ok {
+		return ResolvedSelectionMapping{}, fmt.Errorf("physical field %q references unknown dataset %q", mapping.Field, mapping.Dataset)
 	}
 	dimension, err := model.ResolveDimension(mapping.Field)
 	if err != nil {
 		return ResolvedSelectionMapping{}, err
 	}
-	if err := model.CanReachField(mapping.Fact, mapping.Field); err != nil {
+	if err := model.CanReachField(mapping.Dataset, mapping.Field); err != nil {
 		return ResolvedSelectionMapping{}, err
 	}
-	return ResolvedSelectionMapping{Field: mapping.Field, Fact: mapping.Fact, Grain: mapping.Grain, Type: dimension.Type, Scope: SelectionScopeFactLocal}, nil
+	return ResolvedSelectionMapping{Field: mapping.Field, Dataset: mapping.Dataset, Grain: mapping.Grain, Type: dimension.Type, Scope: SelectionScopeDatasetLocal}, nil
 }
 
 func validateSelectionGrain(mapping dashboardauthoring.SelectionMapping, fieldType string, time dashboardauthoring.QueryTime) error {
@@ -308,49 +308,49 @@ func validateSelectionGrain(mapping dashboardauthoring.SelectionMapping, fieldTy
 func validateSelectionTupleScope(mappings []ResolvedSelectionMapping) error {
 	seen := map[SelectionMappingIdentity]bool{}
 	for _, mapping := range mappings {
-		identity := SelectionMappingIdentity{Field: mapping.Field, Fact: mapping.Fact, Grain: mapping.Grain}
+		identity := SelectionMappingIdentity{Field: mapping.Field, Dataset: mapping.Dataset, Grain: mapping.Grain}
 		if seen[identity] {
-			return fmt.Errorf("contains duplicate mapping identity field=%q fact=%q grain=%q", mapping.Field, mapping.Fact, mapping.Grain)
+			return fmt.Errorf("contains duplicate mapping identity field=%q dataset=%q grain=%q", mapping.Field, mapping.Dataset, mapping.Grain)
 		}
 		seen[identity] = true
 	}
 	if len(mappings) < 2 {
 		return nil
 	}
-	scope, fact := mappings[0].Scope, mappings[0].Fact
+	scope, dataset := mappings[0].Scope, mappings[0].Dataset
 	for _, mapping := range mappings[1:] {
-		if mapping.Scope != scope || (scope == SelectionScopeFactLocal && mapping.Fact != fact) {
-			return fmt.Errorf("must be entirely conformed or fact-local to one fact")
+		if mapping.Scope != scope || (scope == SelectionScopeDatasetLocal && mapping.Dataset != dataset) {
+			return fmt.Errorf("must be entirely conformed or dataset-local to one dataset")
 		}
 	}
 	return nil
 }
 
-func validateSelectionSourceFacts(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, sourceKind, sourceID string, mappings []ResolvedSelectionMapping) error {
-	facts, err := TargetFacts(d, model, sourceKind, sourceID)
+func validateSelectionSourceDatasets(d *dashboardauthoring.Dashboard, model *semanticmodel.Model, sourceKind, sourceID string, mappings []ResolvedSelectionMapping) error {
+	datasets, err := TargetDatasets(d, model, sourceKind, sourceID)
 	if err != nil {
-		return fmt.Errorf("%s %q interaction source facts: %w", sourceKind, sourceID, err)
+		return fmt.Errorf("%s %q interaction source datasets: %w", sourceKind, sourceID, err)
 	}
-	return validateSelectionCompatibility(model, "source", sourceID, facts, mappings)
+	return validateSelectionCompatibility(model, "source", sourceID, datasets, mappings)
 }
 
-func validateSelectionTarget(model *semanticmodel.Model, targetID string, facts []string, mappings []ResolvedSelectionMapping) error {
-	return validateSelectionCompatibility(model, "target", targetID, facts, mappings)
+func validateSelectionTarget(model *semanticmodel.Model, targetID string, datasets []string, mappings []ResolvedSelectionMapping) error {
+	return validateSelectionCompatibility(model, "target", targetID, datasets, mappings)
 }
 
-func validateSelectionCompatibility(model *semanticmodel.Model, role, id string, facts []string, mappings []ResolvedSelectionMapping) error {
+func validateSelectionCompatibility(model *semanticmodel.Model, role, id string, datasets []string, mappings []ResolvedSelectionMapping) error {
 	for _, mapping := range mappings {
 		switch mapping.Scope {
 		case SelectionScopeConformed:
 			dimension := model.Dimensions[mapping.Field]
-			for _, fact := range facts {
-				if _, ok := dimension.Bindings[fact]; !ok {
-					return fmt.Errorf("semantic dimension %q has no binding for %s fact %q", mapping.Field, role, fact)
+			for _, dataset := range datasets {
+				if _, ok := dimension.Bindings[dataset]; !ok {
+					return fmt.Errorf("semantic dimension %q has no binding for %s dataset %q", mapping.Field, role, dataset)
 				}
 			}
-		case SelectionScopeFactLocal:
-			if !containsFact(facts, mapping.Fact) {
-				return fmt.Errorf("%s %q does not participate in fact %q", role, id, mapping.Fact)
+		case SelectionScopeDatasetLocal:
+			if !containsDataset(datasets, mapping.Dataset) {
+				return fmt.Errorf("%s %q does not participate in dataset %q", role, id, mapping.Dataset)
 			}
 		}
 	}
@@ -364,9 +364,9 @@ func selectionTargetKind(d *dashboardauthoring.Dashboard, targetID string) (stri
 	return "visual", nil
 }
 
-func containsFact(facts []string, fact string) bool {
-	for _, candidate := range facts {
-		if candidate == fact {
+func containsDataset(datasets []string, dataset string) bool {
+	for _, candidate := range datasets {
+		if candidate == dataset {
 			return true
 		}
 	}

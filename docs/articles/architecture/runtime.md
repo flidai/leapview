@@ -47,7 +47,7 @@ The consumer optimizer can coordinate related page work. The stream coordinator 
 
 ## Semantic queries
 
-Headless semantic requests identify model, dataset, dimensions, measures, filters, sorting, and bounds. The semantic query planner validates fields and relationships, chooses fact/join paths, and produces a plan for DuckDB. Explain operations return resolution information without turning generated SQL into a new public input surface.
+Headless semantic requests identify model, dataset, dimensions, metrics, filters, sorting, and bounds. The semantic query planner validates fields and relationships, chooses dataset/join paths, and produces a plan for DuckDB. Explain operations return resolution information without turning generated SQL into a new public input surface.
 
 Query audit records operation, principal, project, model/target, status, timing, and safe diagnostics according to the surface contract.
 

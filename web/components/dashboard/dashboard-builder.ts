@@ -5,7 +5,7 @@ import type {
   DashboardBuilderFieldSignal,
   DashboardBuilderPageSignal,
   DashboardBuilderSignal,
-  DashboardBuilderTableSignal,
+  DashboardBuilderDatasetSignal,
   DashboardBuilderVisualSignal,
   DashboardBuilderVisualSlotSignal,
   DashboardVisualizationSignal,
@@ -840,7 +840,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderFieldPane(builder: DashboardBuilderSignal) {
-    const tables = this.filteredTables(builder.semanticModel.tables)
+    const datasets = this.filteredDatasets(builder.semanticModel.datasets ?? [])
     return html`
       <aside class="pane fields" aria-label="Semantic model fields">
         <div class="pane-header">
@@ -851,21 +851,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <input class="search" type="search" placeholder="Search fields" .value=${this.fieldQuery} @input=${this.onFieldQuery} />
           </label>
         </div>
-        ${tables.length === 0
+        ${datasets.length === 0
           ? html`<p class="pane-hint" style="padding: 0.85rem">No fields match this search.</p>`
-          : tables.map((table) => this.renderTable(table))}
+          : datasets.map((dataset) => this.renderDataset(dataset))}
       </aside>
     `
   }
 
-  private renderTable(table: DashboardBuilderTableSignal) {
+  private renderDataset(dataset: DashboardBuilderDatasetSignal) {
     return html`
       <details class="table" open>
-        <summary>${table.title}<span class="field-type">${table.fields.length}</span></summary>
+        <summary>${dataset.title}<span class="field-type">${dataset.fields.length}</span></summary>
         <div class="field-list">
-          ${table.fields.map((field) => html`
+          ${dataset.fields.map((field) => html`
             <button class="field" draggable=${this.builder?.capabilities.canEdit ? 'true' : 'false'} ?disabled=${!this.builder?.capabilities.canEdit} title=${this.builder?.capabilities.canEdit ? `Add ${field.label} to the selected visual` : 'Editing is not permitted'} aria-label="Add ${field.label}" @click=${() => this.addField(field)} @dragstart=${(event: DragEvent) => this.dragField(event, field)}>
-              <span class="field-kind" aria-hidden="true">${field.kind === 'measure' ? '∑' : '◇'}</span>
+              <span class="field-kind" aria-hidden="true">${field.kind === 'metric' ? '∑' : '◇'}</span>
               <span class="field-label">${field.label}</span>
               ${field.dataType.toLowerCase() === 'unknown' ? nothing : html`<span class="field-type">${field.dataType}</span>`}
             </button>
@@ -980,10 +980,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>Unavailable</span></div></section>`
   }
 
-  private filteredTables(tables: DashboardBuilderTableSignal[]): DashboardBuilderTableSignal[] {
+  private filteredDatasets(datasets: DashboardBuilderDatasetSignal[]): DashboardBuilderDatasetSignal[] {
     const query = this.fieldQuery.trim().toLowerCase()
-    if (!query) return tables
-    return tables.map((table) => ({ ...table, fields: table.fields.filter((field) => `${field.label} ${field.id} ${field.dataType}`.toLowerCase().includes(query)) })).filter((table) => table.title.toLowerCase().includes(query) || table.fields.length > 0)
+    if (!query) return datasets
+    return datasets.map((dataset) => ({ ...dataset, fields: dataset.fields.filter((field) => `${field.label} ${field.id} ${field.dataType}`.toLowerCase().includes(query)) })).filter((dataset) => dataset.title.toLowerCase().includes(query) || dataset.fields.length > 0)
   }
 
   private selectedPage(builder: DashboardBuilderSignal): DashboardBuilderPageSignal | undefined {
@@ -1040,7 +1040,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     if (!page) return
     const visual = this.selectedVisual(page, builder)
-    const field = builder.semanticModel.tables.flatMap((table) => table.fields).find((item) => item.id === fieldID)
+    const field = (builder.semanticModel.datasets ?? []).flatMap((dataset) => dataset.fields).find((item) => item.id === fieldID)
     if (!field || !visual) return
     this.emitCommand('assign_field', { pageId: page.id, visualId: visual.id, fieldId: field.id, role: field.kind })
   }

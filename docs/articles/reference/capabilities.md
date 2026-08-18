@@ -24,7 +24,7 @@ Model tables materialize source transformations into DuckLake-managed analytical
 
 ## Semantic and BI surfaces
 
-Semantic models provide model-table datasets/fields, dimensions, measures, derived metrics, and explicit relationships. Supported aggregations and cardinalities are listed by the generated schema.
+Semantic models provide model-table datasets/fields, dimensions, metrics, and explicit relationships. Supported aggregations and cardinalities are listed by the generated schema.
 
 Headless operations cover semantic model and dataset discovery, field listing, row preview, aggregate query, and explain. Dashboard operations cover dashboard/page/component discovery, filter options, coordinated page query, visual data, and bounded table data.
 
