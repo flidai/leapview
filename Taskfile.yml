@@ -389,10 +389,11 @@ tasks:
     desc: Verify the unified documentation catalog and FTS5 search index are current
     deps:
       - node:deps
+      - ci:extensions:prepare
     cmds:
       - bun run docs:validate-diagrams
       - go run ./internal/app/tools/agenttooldocgen --check
-      - go run ./internal/app/tools/visualdocgen --check
+      - go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen --check
       - go run ./internal/app/tools/docsitegen --check
       - go test ./internal/app/site/http -run '^TestEveryRenderedDocumentationLinkResolves$' -count=1
 
@@ -404,6 +405,7 @@ tasks:
       - api:generate
       - ui-signals:generate
       - data-resource-contracts:generate
+      - ci:extensions:prepare
     method: checksum
     sources:
       - Taskfile.yml
@@ -418,7 +420,7 @@ tasks:
     generates:
       - docs/visuals/examples.gen.json
     cmds:
-      - go run ./internal/app/tools/visualdocgen
+      - go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen
 
   cli-docs:generate:
     desc: Generate public CLI reference documentation from Cobra commands
@@ -942,9 +944,15 @@ tasks:
   ci:prepare:
     desc: Generate and build the shared inputs required by every CI validation lane
     cmds:
+      - task: ci:extensions:prepare
       - task: generate
       - task: build
       - task: site:build
+
+  ci:extensions:prepare:
+    desc: Provision the pinned DuckLake artifact used by CI documentation fixtures
+    cmds:
+      - go run ./internal/app/tools/ducklakeprepare
 
   ci:pr:
     desc: Run the fast required contract for every pull-request update

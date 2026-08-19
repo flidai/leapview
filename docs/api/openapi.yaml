@@ -64835,6 +64835,10 @@ components:
         smooth:
           type: boolean
           example: true
+        step:
+          type: boolean
+          description: Render line segments as discrete steps between categories.
+          example: true
         dataZoom:
           type: boolean
           example: true
@@ -64846,6 +64850,15 @@ components:
           $ref: '#/components/schemas/DashboardLabelPosition'
         displayUnits:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardComboSeries'
+          description: Explicit per-measure marks and axis assignments for combo visuals.
+          example:
+            - axis: primary
+              field: example
+              mark: line
       example:
         dataZoom: true
         displayUnits: auto
@@ -64859,9 +64872,14 @@ components:
           tooltipFallback: true
         legend: none
         orientation: horizontal
+        series:
+          - axis: primary
+            field: example
+            mark: line
         showSymbols: true
         smooth: true
         stacking: none
+        step: true
         symbolSize: !!float 1
         type: example
     CartesianVisualizationPresentation:
@@ -69469,6 +69487,102 @@ components:
       example:
         field: example
         value: example
+    DashboardChoroplethGeographicLayer:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardGeographicLayerBase'
+      required:
+        - kind
+        - geometryAsset
+        - join
+      properties:
+        kind:
+          type: string
+          enum:
+            - choropleth
+          example: example
+        geometryAsset:
+          type: string
+          example: example
+        join:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        value:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        category:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        color:
+          $ref: '#/components/schemas/DashboardMapColorScale'
+        stroke:
+          $ref: '#/components/schemas/DashboardMapStroke'
+        opacity:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        category: example
+        color:
+          domainMaximum: !!float 1
+          domainMidpoint: !!float 1
+          domainMinimum: !!float 1
+          kind: sequential
+          nullColor: example
+          palette: example
+          reverse: true
+        geometryAsset: example
+        join: example
+        kind: example
+        opacity: !!float 1
+        stroke:
+          color: example
+          opacity: !!float 1
+          width: !!float 1
+        value: example
+    DashboardComboSeries:
+      type: object
+      required:
+        - field
+        - mark
+        - axis
+      properties:
+        field:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        mark:
+          $ref: '#/components/schemas/DashboardComboSeriesMark'
+        axis:
+          $ref: '#/components/schemas/DashboardComboSeriesAxis'
+      description: One result-frame measure and its governed combo rendering policy.
+      example:
+        axis: primary
+        field: example
+        mark: line
+    DashboardComboSeriesAxis:
+      type: string
+      enum:
+        - primary
+        - secondary
+      description: Axis assignment for one governed combo measure.
+      example: primary
+    DashboardComboSeriesMark:
+      type: string
+      enum:
+        - line
+        - area
+        - bar
+        - column
+      description: Marks supported by a governed multi-measure combo series.
+      example: line
     DashboardCompiledFilterBinding:
       type: object
       required:
@@ -69739,6 +69853,88 @@ components:
         width: !!float 1
         x: !!float 1
         'y': !!float 1
+    DashboardConditionalFormat:
+      type: object
+      required:
+        - id
+        - target
+        - field
+        - rule
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        target:
+          $ref: '#/components/schemas/VisualizationConditionalTarget'
+        field:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        rule:
+          $ref: '#/components/schemas/DashboardConditionalRule'
+      description: A closed, governed conditional-format binding over compiled result names.
+      example:
+        field: example
+        id: example
+        target: mark_fill
+    DashboardConditionalRule:
+      oneOf:
+        - $ref: '#/components/schemas/DashboardGradientConditionalRule'
+        - $ref: '#/components/schemas/DashboardRulesConditionalRule'
+        - $ref: '#/components/schemas/DashboardFieldConditionalRule'
+      discriminator:
+        propertyName: kind
+        mapping:
+          field: '#/components/schemas/DashboardFieldConditionalRule'
+          gradient: '#/components/schemas/DashboardGradientConditionalRule'
+          rules: '#/components/schemas/DashboardRulesConditionalRule'
+    DashboardConditionalRuleBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      example:
+        kind: example
+    DashboardConditionalStyle:
+      type: object
+      properties:
+        color:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+        icon:
+          $ref: '#/components/schemas/VisualizationIconIntent'
+      description: A renderer-neutral color or icon intent applied by a conditional rule.
+      example:
+        color: accent
+        icon: circle
+    DashboardConditionalThreshold:
+      type: object
+      required:
+        - operator
+        - value
+        - style
+      properties:
+        operator:
+          $ref: '#/components/schemas/VisualizationComparisonOperator'
+        value:
+          type: number
+          format: double
+          example: !!float 1
+        style:
+          $ref: '#/components/schemas/DashboardConditionalStyle'
+      description: One ordered numeric comparison in a rules-based conditional format.
+      example:
+        operator: less_than
+        style:
+          color: accent
+          icon: circle
+        value: !!float 1
     DashboardDataBudget:
       type: object
       required:
@@ -69753,6 +69949,60 @@ components:
       example:
         maxRows: 1
         requiredCompleteness: complete
+    DashboardDensityGeographicLayer:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardGeographicLayerBase'
+      required:
+        - kind
+        - latitude
+        - longitude
+      properties:
+        kind:
+          type: string
+          enum:
+            - density
+          example: example
+        latitude:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        longitude:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        value:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        color:
+          $ref: '#/components/schemas/DashboardMapColorScale'
+        heat:
+          $ref: '#/components/schemas/DashboardMapHeatStyle'
+        opacity:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        color:
+          domainMaximum: !!float 1
+          domainMidpoint: !!float 1
+          domainMinimum: !!float 1
+          kind: sequential
+          nullColor: example
+          palette: example
+          reverse: true
+        heat:
+          intensity: !!float 1
+          radius: !!float 1
+        kind: example
+        latitude: example
+        longitude: example
+        opacity: !!float 1
+        value: example
     DashboardDimensionReference:
       type: object
       required:
@@ -69940,6 +70190,52 @@ components:
               subtitle: example
               title: example
               type: line
+    DashboardFieldConditionalRule:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardConditionalRuleBase'
+      required:
+        - kind
+        - source
+        - values
+        - nullStyle
+        - defaultStyle
+      properties:
+        kind:
+          type: string
+          enum:
+            - field
+          example: example
+        source:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        values:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/DashboardConditionalStyle'
+          example:
+            key:
+              color: accent
+              icon: circle
+        nullStyle:
+          $ref: '#/components/schemas/DashboardConditionalStyle'
+        defaultStyle:
+          $ref: '#/components/schemas/DashboardConditionalStyle'
+      example:
+        defaultStyle:
+          color: accent
+          icon: circle
+        kind: example
+        nullStyle:
+          color: accent
+          icon: circle
+        source: example
+        values:
+          key:
+            color: accent
+            icon: circle
     DashboardFilter:
       type: object
       required:
@@ -70401,6 +70697,121 @@ components:
           example: example
       example:
         type: example
+    DashboardGeographicLayer:
+      oneOf:
+        - $ref: '#/components/schemas/DashboardPointGeographicLayer'
+        - $ref: '#/components/schemas/DashboardChoroplethGeographicLayer'
+        - $ref: '#/components/schemas/DashboardReferenceGeographicLayer'
+        - $ref: '#/components/schemas/DashboardHeatGeographicLayer'
+        - $ref: '#/components/schemas/DashboardDensityGeographicLayer'
+        - $ref: '#/components/schemas/DashboardPathGeographicLayer'
+      discriminator:
+        propertyName: kind
+        mapping:
+          choropleth: '#/components/schemas/DashboardChoroplethGeographicLayer'
+          density: '#/components/schemas/DashboardDensityGeographicLayer'
+          heat: '#/components/schemas/DashboardHeatGeographicLayer'
+          path: '#/components/schemas/DashboardPathGeographicLayer'
+          point: '#/components/schemas/DashboardPointGeographicLayer'
+          reference: '#/components/schemas/DashboardReferenceGeographicLayer'
+    DashboardGeographicLayerBase:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardGeographicLayerOptions'
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      example:
+        kind: example
+    DashboardGeographicLayerOptions:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        label:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        tooltip:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example:
+            - example
+        position:
+          $ref: '#/components/schemas/VisualizationMapLayerPosition'
+        minimumZoom:
+          type: number
+          format: double
+          example: !!float 1
+        maximumZoom:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        id: example
+        label: example
+        maximumZoom: !!float 1
+        minimumZoom: !!float 1
+        position: below_labels
+        tooltip:
+          - example
+    DashboardGradientConditionalRule:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardConditionalRuleBase'
+      required:
+        - kind
+        - minimum
+        - maximum
+        - low
+        - high
+        - nullStyle
+      properties:
+        kind:
+          type: string
+          enum:
+            - gradient
+          example: example
+        minimum:
+          type: number
+          format: double
+          example: !!float 1
+        maximum:
+          type: number
+          format: double
+          example: !!float 1
+        low:
+          $ref: '#/components/schemas/DashboardConditionalStyle'
+        high:
+          $ref: '#/components/schemas/DashboardConditionalStyle'
+        nullStyle:
+          $ref: '#/components/schemas/DashboardConditionalStyle'
+      example:
+        high:
+          color: accent
+          icon: circle
+        kind: example
+        low:
+          color: accent
+          icon: circle
+        maximum: !!float 1
+        minimum: !!float 1
+        nullStyle:
+          color: accent
+          icon: circle
     DashboardHeaderComponentResponse:
       type: object
       allOf:
@@ -70415,6 +70826,60 @@ components:
           example: example
       example:
         kind: example
+    DashboardHeatGeographicLayer:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardGeographicLayerBase'
+      required:
+        - kind
+        - latitude
+        - longitude
+      properties:
+        kind:
+          type: string
+          enum:
+            - heat
+          example: example
+        latitude:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        longitude:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        value:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        color:
+          $ref: '#/components/schemas/DashboardMapColorScale'
+        heat:
+          $ref: '#/components/schemas/DashboardMapHeatStyle'
+        opacity:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        color:
+          domainMaximum: !!float 1
+          domainMidpoint: !!float 1
+          domainMinimum: !!float 1
+          kind: sequential
+          nullColor: example
+          palette: example
+          reverse: true
+        heat:
+          intensity: !!float 1
+          radius: !!float 1
+        kind: example
+        latitude: example
+        longitude: example
+        opacity: !!float 1
+        value: example
     DashboardHistogramApproximation:
       type: string
       enum:
@@ -70541,6 +71006,63 @@ components:
         grain: second
         label: example
         value: example
+    DashboardKPITrendBinding:
+      type: object
+      required:
+        - dataset
+        - category
+        - value
+      properties:
+        dataset:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        category:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        value:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+      description: A governed result frame used for a KPI sparkline trend.
+      example:
+        category: example
+        dataset: example
+        value: example
+    DashboardKPIValueBinding:
+      type: object
+      required:
+        - dataset
+        - field
+        - label
+      properties:
+        dataset:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        field:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        reducer:
+          $ref: '#/components/schemas/VisualizationReferenceReducer'
+        label:
+          type: string
+          example: example
+      description: A governed numeric result used for a KPI comparison or goal.
+      example:
+        dataset: example
+        field: example
+        label: example
+        reducer: first
     DashboardLabelDensity:
       type: string
       enum:
@@ -70846,6 +71368,189 @@ components:
             title: example
         semantic_model: example
         title: example
+    DashboardMapCamera:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/VisualizationMapCameraMode'
+        center:
+          type: array
+          items:
+            type: number
+            format: double
+          example:
+            - !!float 1
+        zoom:
+          type: number
+          format: double
+          example: !!float 1
+        padding:
+          type: integer
+          format: int32
+          example: 1
+        minimumZoom:
+          type: number
+          format: double
+          example: !!float 1
+        maximumZoom:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        center:
+          - !!float 1
+        maximumZoom: !!float 1
+        minimumZoom: !!float 1
+        mode: fit_data
+        padding: 1
+        zoom: !!float 1
+    DashboardMapCluster:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        radius:
+          type: integer
+          format: int32
+          example: 1
+        maximumZoom:
+          type: integer
+          format: int32
+          example: 1
+        minimumPoints:
+          type: integer
+          format: int32
+          example: 1
+        showCount:
+          type: boolean
+          example: true
+      example:
+        enabled: true
+        maximumZoom: 1
+        minimumPoints: 1
+        radius: 1
+        showCount: true
+    DashboardMapColorScale:
+      type: object
+      properties:
+        kind:
+          $ref: '#/components/schemas/VisualizationMapColorScaleKind'
+        palette:
+          type: string
+          example: example
+        reverse:
+          type: boolean
+          example: true
+        domainMinimum:
+          type: number
+          format: double
+          example: !!float 1
+        domainMidpoint:
+          type: number
+          format: double
+          example: !!float 1
+        domainMaximum:
+          type: number
+          format: double
+          example: !!float 1
+        nullColor:
+          type: string
+          example: example
+      example:
+        domainMaximum: !!float 1
+        domainMidpoint: !!float 1
+        domainMinimum: !!float 1
+        kind: sequential
+        nullColor: example
+        palette: example
+        reverse: true
+    DashboardMapControls:
+      type: object
+      properties:
+        zoom:
+          type: boolean
+          example: true
+        reset:
+          type: boolean
+          example: true
+        compass:
+          type: boolean
+          example: true
+      example:
+        compass: true
+        reset: true
+        zoom: true
+    DashboardMapHeatStyle:
+      type: object
+      properties:
+        radius:
+          type: number
+          format: double
+          example: !!float 1
+        intensity:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        intensity: !!float 1
+        radius: !!float 1
+    DashboardMapLineStyle:
+      type: object
+      properties:
+        width:
+          type: number
+          format: double
+          example: !!float 1
+        curvature:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        curvature: !!float 1
+        width: !!float 1
+    DashboardMapSizeScale:
+      type: object
+      properties:
+        minimumRadius:
+          type: number
+          format: double
+          example: !!float 1
+        maximumRadius:
+          type: number
+          format: double
+          example: !!float 1
+        domainMinimum:
+          type: number
+          format: double
+          example: !!float 1
+        domainMaximum:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        domainMaximum: !!float 1
+        domainMinimum: !!float 1
+        maximumRadius: !!float 1
+        minimumRadius: !!float 1
+    DashboardMapStroke:
+      type: object
+      properties:
+        color:
+          type: string
+          example: example
+        width:
+          type: number
+          format: double
+          example: !!float 1
+        opacity:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        color: example
+        opacity: !!float 1
+        width: !!float 1
     DashboardMetadata:
       type: object
       required:
@@ -71232,6 +71937,86 @@ components:
         description: example
         id: example
         title: example
+    DashboardPathGeographicLayer:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardGeographicLayerBase'
+      required:
+        - kind
+        - latitude
+        - longitude
+        - path
+        - order
+      properties:
+        kind:
+          type: string
+          enum:
+            - path
+          example: example
+        latitude:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        longitude:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        path:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        order:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        value:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        category:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        color:
+          $ref: '#/components/schemas/DashboardMapColorScale'
+        stroke:
+          $ref: '#/components/schemas/DashboardMapStroke'
+        line:
+          $ref: '#/components/schemas/DashboardMapLineStyle'
+        opacity:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        category: example
+        color:
+          domainMaximum: !!float 1
+          domainMidpoint: !!float 1
+          domainMinimum: !!float 1
+          kind: sequential
+          nullColor: example
+          palette: example
+          reverse: true
+        kind: example
+        latitude: example
+        line:
+          curvature: !!float 1
+          width: !!float 1
+        longitude: example
+        opacity: !!float 1
+        order: example
+        path: example
+        stroke:
+          color: example
+          opacity: !!float 1
+          width: !!float 1
+        value: example
     DashboardPivotTotals:
       type: object
       properties:
@@ -71293,9 +72078,86 @@ components:
         columnSpan: 1
         row: 1
         rowSpan: 1
+    DashboardPointGeographicLayer:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardGeographicLayerBase'
+      required:
+        - kind
+        - latitude
+        - longitude
+      properties:
+        kind:
+          type: string
+          enum:
+            - point
+          example: example
+        latitude:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        longitude:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        value:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        category:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        size:
+          $ref: '#/components/schemas/DashboardMapSizeScale'
+        color:
+          $ref: '#/components/schemas/DashboardMapColorScale'
+        stroke:
+          $ref: '#/components/schemas/DashboardMapStroke'
+        cluster:
+          $ref: '#/components/schemas/DashboardMapCluster'
+        opacity:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        category: example
+        cluster:
+          enabled: true
+          maximumZoom: 1
+          minimumPoints: 1
+          radius: 1
+          showCount: true
+        color:
+          domainMaximum: !!float 1
+          domainMidpoint: !!float 1
+          domainMinimum: !!float 1
+          kind: sequential
+          nullColor: example
+          palette: example
+          reverse: true
+        kind: example
+        latitude: example
+        longitude: example
+        opacity: !!float 1
+        size:
+          domainMaximum: !!float 1
+          domainMinimum: !!float 1
+          maximumRadius: !!float 1
+          minimumRadius: !!float 1
+        stroke:
+          color: example
+          opacity: !!float 1
+          width: !!float 1
+        value: example
     DashboardPresentation:
       oneOf:
         - $ref: '#/components/schemas/CartesianDashboardPresentation'
+        - $ref: '#/components/schemas/PointDashboardPresentation'
         - $ref: '#/components/schemas/ProportionalDashboardPresentation'
         - $ref: '#/components/schemas/HierarchyDashboardPresentation'
         - $ref: '#/components/schemas/PolarDashboardPresentation'
@@ -71309,6 +72171,7 @@ components:
           geographic: '#/components/schemas/GeographicDashboardPresentation'
           hierarchy: '#/components/schemas/HierarchyDashboardPresentation'
           kpi: '#/components/schemas/KPIDashboardPresentation'
+          point: '#/components/schemas/PointDashboardPresentation'
           polar: '#/components/schemas/PolarDashboardPresentation'
           proportional: '#/components/schemas/ProportionalDashboardPresentation'
           table: '#/components/schemas/TableDashboardPresentation'
@@ -71320,9 +72183,28 @@ components:
         type:
           type: string
           example: example
+        conditionalFormatting:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardConditionalFormat'
+          example:
+            - field: example
+              id: example
+              target: mark_fill
       description: Renderer-neutral presentation policies; renderer options are intentionally absent.
       example:
+        conditionalFormatting:
+          - field: example
+            id: example
+            target: mark_fill
         type: example
+    DashboardProportionalAlignment:
+      type: string
+      enum:
+        - left
+        - center
+        - right
+      example: left
     DashboardPublicationCommandAuditPayload:
       type: object
       required:
@@ -71554,6 +72436,46 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
         - $ref: '#/components/schemas/DashboardRecordFieldReference'
+    DashboardReferenceGeographicLayer:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardGeographicLayerBase'
+      required:
+        - kind
+        - geometryAsset
+      properties:
+        kind:
+          type: string
+          enum:
+            - reference
+          example: example
+        geometryAsset:
+          type: string
+          example: example
+        color:
+          $ref: '#/components/schemas/DashboardMapColorScale'
+        stroke:
+          $ref: '#/components/schemas/DashboardMapStroke'
+        opacity:
+          type: number
+          format: double
+          example: !!float 1
+      example:
+        color:
+          domainMaximum: !!float 1
+          domainMidpoint: !!float 1
+          domainMinimum: !!float 1
+          kind: sequential
+          nullColor: example
+          palette: example
+          reverse: true
+        geometryAsset: example
+        kind: example
+        opacity: !!float 1
+        stroke:
+          color: example
+          opacity: !!float 1
+          width: !!float 1
     DashboardRelativeAnchor:
       type: string
       enum:
@@ -71586,6 +72508,49 @@ components:
         - Dashboard
       description: Common resource kind for a dashboard document.
       example: Dashboard
+    DashboardRulesConditionalRule:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardConditionalRuleBase'
+      required:
+        - kind
+        - rules
+        - nullStyle
+        - defaultStyle
+      properties:
+        kind:
+          type: string
+          enum:
+            - rules
+          example: example
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardConditionalThreshold'
+          example:
+            - operator: less_than
+              style:
+                color: accent
+                icon: circle
+              value: !!float 1
+        nullStyle:
+          $ref: '#/components/schemas/DashboardConditionalStyle'
+        defaultStyle:
+          $ref: '#/components/schemas/DashboardConditionalStyle'
+      example:
+        defaultStyle:
+          color: accent
+          icon: circle
+        kind: example
+        nullStyle:
+          color: accent
+          icon: circle
+        rules:
+          - operator: less_than
+            style:
+              color: accent
+              icon: circle
+            value: !!float 1
     DashboardSelectionMode:
       type: string
       enum:
@@ -74872,6 +75837,8 @@ components:
           example: example
         field:
           $ref: '#/components/schemas/DashboardMetricSelection'
+        group:
+          $ref: '#/components/schemas/DashboardDimensionSelection'
         quantiles:
           type: array
           items:
@@ -74885,8 +75852,13 @@ components:
           $ref: '#/components/schemas/DashboardDistributionOutlierPolicy'
         approximation:
           $ref: '#/components/schemas/DashboardHistogramApproximation'
+        limit:
+          type: integer
+          format: int32
+          example: 1
       example:
         approximation: exact
+        limit: 1
         outliers: omit
         quantiles:
           - !!float 1
@@ -75089,7 +76061,40 @@ components:
           example: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
+        theme:
+          $ref: '#/components/schemas/VisualizationMapTheme'
+        basemap:
+          type: string
+          example: example
+        labelDensity:
+          $ref: '#/components/schemas/VisualizationMapLabelDensity'
+        camera:
+          $ref: '#/components/schemas/DashboardMapCamera'
+        controls:
+          $ref: '#/components/schemas/DashboardMapControls'
+        roam:
+          type: boolean
+          example: true
+        layers:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardGeographicLayer'
+          example: []
       example:
+        basemap: example
+        camera:
+          center:
+            - !!float 1
+          maximumZoom: !!float 1
+          minimumZoom: !!float 1
+          mode: fit_data
+          padding: 1
+          zoom: !!float 1
+        controls:
+          compass: true
+          reset: true
+          zoom: true
+        labelDensity: hidden
         labels:
           density: hidden
           maxCharacters: 1
@@ -75097,6 +76102,9 @@ components:
           priority:
             - selected
           tooltipFallback: true
+        layers: []
+        roam: true
+        theme: auto
         type: example
     GeographicVisualizationPresentation:
       type: object
@@ -75740,7 +76748,33 @@ components:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         orientation:
           $ref: '#/components/schemas/DashboardOrientation'
+        initialDepth:
+          type: integer
+          format: int32
+          example: 1
+        roam:
+          type: boolean
+          example: true
+        layout:
+          $ref: '#/components/schemas/VisualizationHierarchyLayout'
+        breadcrumb:
+          type: boolean
+          example: true
+        nodeGap:
+          type: number
+          format: double
+          example: !!float 1
+        curveness:
+          type: number
+          format: double
+          example: !!float 1
+        focus:
+          $ref: '#/components/schemas/VisualizationGraphFocus'
       example:
+        breadcrumb: true
+        curveness: !!float 1
+        focus: none
+        initialDepth: 1
         labels:
           density: hidden
           maxCharacters: 1
@@ -75748,8 +76782,11 @@ components:
           priority:
             - selected
           tooltipFallback: true
+        layout: standard
         legend: none
+        nodeGap: !!float 1
         orientation: horizontal
+        roam: true
         type: example
     HierarchyVisualizationPresentation:
       type: object
@@ -75995,6 +77032,36 @@ components:
           enum:
             - kpi
           example: example
+        mode:
+          $ref: '#/components/schemas/VisualizationKPIMode'
+        delta:
+          $ref: '#/components/schemas/VisualizationKPIDeltaMode'
+        favorableDirection:
+          $ref: '#/components/schemas/VisualizationKPIDirection'
+        missingComparison:
+          $ref: '#/components/schemas/VisualizationKPIMissingComparison'
+        ranges:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationKPIQualitativeRange'
+          example:
+            - label: example
+              maximum: !!float 1
+              minimum: !!float 1
+              tone: neutral
+        thresholds:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationThreshold'
+          example:
+            - tone: neutral
+              value: !!float 1
+        comparison:
+          $ref: '#/components/schemas/DashboardKPIValueBinding'
+        goal:
+          $ref: '#/components/schemas/DashboardKPIValueBinding'
+        trend:
+          $ref: '#/components/schemas/DashboardKPITrendBinding'
         displayUnits:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
         note:
@@ -76003,9 +77070,35 @@ components:
         tone:
           $ref: '#/components/schemas/VisualizationTone'
       example:
+        comparison:
+          dataset: example
+          field: example
+          label: example
+          reducer: first
+        delta: absolute
         displayUnits: auto
+        favorableDirection: increase
+        goal:
+          dataset: example
+          field: example
+          label: example
+          reducer: first
+        missingComparison: show_unavailable
+        mode: compact
         note: example
+        ranges:
+          - label: example
+            maximum: !!float 1
+            minimum: !!float 1
+            tone: neutral
+        thresholds:
+          - tone: neutral
+            value: !!float 1
         tone: neutral
+        trend:
+          category: example
+          dataset: example
+          value: example
         type: example
     KPIVisualizationPresentation:
       type: object
@@ -77399,6 +78492,196 @@ components:
         rows:
           - dataset: example
             field: example
+    PointDashboardColorScale:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          $ref: '#/components/schemas/VisualizationPointColorScaleKind'
+        minimum:
+          type: number
+          format: double
+          example: !!float 1
+        maximum:
+          type: number
+          format: double
+          example: !!float 1
+        scheme:
+          type: string
+          example: example
+      description: A governed result-frame binding used by a point/scatter visual.
+      example:
+        kind: categorical
+        maximum: !!float 1
+        minimum: !!float 1
+        scheme: example
+    PointDashboardOverplot:
+      type: object
+      required:
+        - strategy
+      properties:
+        strategy:
+          $ref: '#/components/schemas/VisualizationPointOverplotStrategy'
+        opacity:
+          type: number
+          format: double
+          example: !!float 1
+        largeMode:
+          $ref: '#/components/schemas/VisualizationPointLargeMode'
+        largeThreshold:
+          type: integer
+          format: int64
+          example: 1
+      description: Overplotting policy for a point/scatter visual.
+      example:
+        largeMode: automatic
+        largeThreshold: 1
+        opacity: !!float 1
+        strategy: show_all
+    PointDashboardPresentation:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardPresentationBase'
+      required:
+        - type
+        - identity
+        - x
+        - 'y'
+      properties:
+        type:
+          type: string
+          enum:
+            - point
+          example: example
+        legend:
+          $ref: '#/components/schemas/DashboardLegendPosition'
+        labels:
+          $ref: '#/components/schemas/DashboardLabelPolicy'
+        identity:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example:
+            - example
+        x:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        'y':
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        size:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        color:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        series:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        label:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        tooltip:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example:
+            - example
+        colorScale:
+          $ref: '#/components/schemas/PointDashboardColorScale'
+        sizeScale:
+          $ref: '#/components/schemas/PointDashboardSizeScale'
+        overplot:
+          $ref: '#/components/schemas/PointDashboardOverplot'
+        brush:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationPointBrushGesture'
+          example:
+            - rectangle
+      description: Strict point/scatter presentation and its governed result-frame channels.
+      example:
+        brush:
+          - rectangle
+        color: example
+        colorScale:
+          kind: categorical
+          maximum: !!float 1
+          minimum: !!float 1
+          scheme: example
+        identity:
+          - example
+        label: example
+        labels:
+          density: hidden
+          maxCharacters: 1
+          minimumSpacing: 1
+          priority:
+            - selected
+          tooltipFallback: true
+        legend: none
+        overplot:
+          largeMode: automatic
+          largeThreshold: 1
+          opacity: !!float 1
+          strategy: show_all
+        series: example
+        size: example
+        sizeScale:
+          maximum: !!float 1
+          maximumPixels: !!float 1
+          minimum: !!float 1
+          minimumPixels: !!float 1
+        tooltip:
+          - example
+        type: example
+        x: example
+        'y': example
+    PointDashboardSizeScale:
+      type: object
+      required:
+        - minimumPixels
+        - maximumPixels
+      properties:
+        minimum:
+          type: number
+          format: double
+          example: !!float 1
+        maximum:
+          type: number
+          format: double
+          example: !!float 1
+        minimumPixels:
+          type: number
+          format: double
+          example: !!float 1
+        maximumPixels:
+          type: number
+          format: double
+          example: !!float 1
+      description: Pixel and optional domain bounds for a governed point size binding.
+      example:
+        maximum: !!float 1
+        maximumPixels: !!float 1
+        minimum: !!float 1
+        minimumPixels: !!float 1
     PointVisualizationColorScale:
       type: object
       required:
@@ -77662,7 +78945,37 @@ components:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         displayUnits:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
+        minimum:
+          type: number
+          format: double
+          example: !!float 1
+        maximum:
+          type: number
+          format: double
+          example: !!float 1
+        target:
+          type: number
+          format: double
+          example: !!float 1
+        showPointer:
+          type: boolean
+          example: true
+        area:
+          type: boolean
+          example: true
+        progressWidth:
+          type: number
+          format: double
+          example: !!float 1
+        thresholds:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationThreshold'
+          example:
+            - tone: neutral
+              value: !!float 1
       example:
+        area: true
         displayUnits: auto
         labels:
           density: hidden
@@ -77672,6 +78985,14 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        maximum: !!float 1
+        minimum: !!float 1
+        progressWidth: !!float 1
+        showPointer: true
+        target: !!float 1
+        thresholds:
+          - tone: neutral
+            value: !!float 1
         type: example
     PolarVisualizationPresentation:
       type: object
@@ -78569,8 +79890,34 @@ components:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         displayUnits:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
+        orientation:
+          $ref: '#/components/schemas/DashboardOrientation'
+        rose:
+          type: boolean
+          example: true
+        centerLabel:
+          type: string
+          example: example
+        labelPosition:
+          $ref: '#/components/schemas/DashboardLabelPosition'
+        innerRadius:
+          type: number
+          format: double
+          example: !!float 1
+        outerRadius:
+          type: number
+          format: double
+          example: !!float 1
+        align:
+          $ref: '#/components/schemas/DashboardProportionalAlignment'
+        sort:
+          $ref: '#/components/schemas/VisualizationSortDirection'
       example:
+        align: left
+        centerLabel: example
         displayUnits: auto
+        innerRadius: !!float 1
+        labelPosition: automatic
         labels:
           density: hidden
           maxCharacters: 1
@@ -78579,6 +79926,10 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        orientation: horizontal
+        outerRadius: !!float 1
+        rose: true
+        sort: ascending
         type: example
     ProportionalVisualizationPresentation:
       type: object

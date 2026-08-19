@@ -99,6 +99,7 @@ func findVisualDocExtension(name string) (string, error) {
 		roots = append(roots, configured)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		roots = append(roots, filepath.Join(home, filepath.FromSlash(".cache/leapview/ci-duckdb-extensions")))
 		roots = append(roots, filepath.Join(home, ".duckdb", "extensions"))
 	}
 	for _, root := range roots {
@@ -142,7 +143,7 @@ func findVisualDocExtension(name string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("visual-doc %s extension is not installed; set DUCKDB_EXTENSION_DIRECTORY or prepare the reviewed local DuckDB extension cache", name)
+	return "", fmt.Errorf("visual-doc %s extension is not installed; run task ci:extensions:prepare or set DUCKDB_EXTENSION_DIRECTORY", name)
 }
 
 type visualExample struct {
