@@ -178,6 +178,18 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 	}
 }
 
+func TestPublicArrowResultPackageIsAnalyticsOwned(t *testing.T) {
+	for _, path := range []string{"pkg/arrowresult", "pkg/arrowresult/internalcopy"} {
+		rule, ok := ClassifyPackage(path)
+		if !ok {
+			t.Fatalf("%s is not classified", path)
+		}
+		if rule.Capability != "analytics" || rule.Layer != LayerContract {
+			t.Fatalf("%s classification = %#v, want analytics contract-layer", path, rule)
+		}
+	}
+}
+
 func TestEnterpriseAuthoringForbiddenImportsAreRejected(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -1862,12 +1874,13 @@ func TestOnlyWorkloadAdaptersAndCompositionDependOnWorkload(t *testing.T) {
 func TestArrowImportsStayInsideAnalyticalDataPlaneAndExplicitEncoders(t *testing.T) {
 	allowed := []string{
 		"internal/analytics/arrowquery",
-		"internal/analytics/arrowresult",
+		"internal/analytics/arrowdecode",
 		"internal/analytics/resultcache",
 		"internal/analytics/materialize",
 		"internal/analytics/ducklake",
 		"internal/dashboard/semanticapi",
 		"internal/dashboard/http",
+		"pkg/arrowresult",
 	}
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {

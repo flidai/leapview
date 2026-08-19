@@ -8,8 +8,8 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/compute"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 func splitArrowBundle(ctx context.Context, bundle semanticquery.BundlePlan, source *arrowresult.Result) (map[string]*arrowresult.Result, error) {
