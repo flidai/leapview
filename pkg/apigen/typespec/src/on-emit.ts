@@ -11,6 +11,7 @@ import {
   getMinValue,
   getOverloadedOperation,
   getOverloads,
+  getPattern,
   getService,
   getSummary,
   isArrayModelType,
@@ -57,6 +58,7 @@ import {
   getMetadata,
   getNamedFailures,
   getPackages,
+  getPropertyNames,
   getResponseShape,
   getSensitivity,
   getTool,
@@ -284,8 +286,10 @@ interface SchemaRef {
   maximum?: number;
   min_length?: number;
   max_length?: number;
+  pattern?: string;
   items?: SchemaRef;
   additional_properties?: { any?: boolean; schema?: SchemaRef };
+  property_names?: SchemaRef;
 }
 
 class IRBuilder {
@@ -535,6 +539,21 @@ class IRBuilder {
         one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
       };
     }
+    // A compact authored reference may intentionally be either a JSON scalar
+    // (for example an unaliased metric name) or a closed object carrying the
+    // additional reference fields. This is still a structural union: it has
+    // no discriminator because the scalar branch has no object properties.
+    // Keep the variants explicit in the IR so JSON Schema and TypeScript
+    // projections retain the exact authored shape. Go's model projection emits
+    // a strict scalar/object wrapper; contextual visual/query compatibility
+    // remains compiler-owned.
+    if (scalarVariants.some((variant) => isJSONScalarType(variant.type))) {
+      return {
+        type: "union",
+        namespace: namespaceName(type.namespace),
+        one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
+      };
+    }
     const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
     this.program.reportDiagnostics(diagnostics);
     if (!union || !type.name) {
@@ -600,8 +619,13 @@ class IRBuilder {
   }
 
   private schemaProperty(property: ModelProperty): SchemaProperty {
+    const schema = withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`));
+    const propertyNames = getPropertyNames({ program: this.program }, property);
+    if (propertyNames) {
+      schema.property_names = this.schemaRef(propertyNames, `${property.name} key`);
+    }
     const schemaProperty: SchemaProperty = {
-      schema: withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`)),
+      schema,
     };
     const doc = getDoc(this.program, property);
     if (doc) {
@@ -2157,12 +2181,14 @@ function withSchemaConstraints(program: Program, target: Type, schema: SchemaRef
   const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
   const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
   const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
+  const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
   return prune({
     ...schema,
     minimum,
     maximum,
     min_length: minLength,
     max_length: maxLength,
+    pattern,
   }) as SchemaRef;
 }
 
@@ -2179,7 +2205,7 @@ function schemaConstraintCandidates(target: Type): Type[] {
   return candidates;
 }
 
-function firstSchemaConstraint(candidates: Type[], read: (candidate: Type) => number | undefined): number | undefined {
+function firstSchemaConstraint<T>(candidates: Type[], read: (candidate: Type) => T | undefined): T | undefined {
   for (const candidate of candidates) {
     const value = read(candidate);
     if (value !== undefined) {

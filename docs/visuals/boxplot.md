@@ -1,12 +1,13 @@
 # Boxplot
 
-Use a boxplot to compare the distribution of a raw metric across categories.
+Use a boxplot to compare quantiles and outliers for a governed numeric field.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Delivery distribution
 
-Set `query.dataset` and select a numeric metric so LeapView can derive the quartiles, median, whiskers, and outliers from raw delivery values.
+Select a numeric field, a semantic grouping dimension, and explicit quantiles
+so LeapView can derive comparable quartiles, medians, whiskers, and outliers.
 
 {{< visual id="delivery_distribution" >}}
 
@@ -17,19 +18,25 @@ visuals:
     description: Summarizes delivery-day distribution by speed bucket.
     type: boxplot
     query:
-      dataset: orders
-      dimensions:
-        delivery_bucket: orders.delivery_bucket
-      metrics:
-        delivery_days: null
-      sort:
-        - field: delivery_bucket
-          direction: asc
+      type: distribution
+      field: delivery_days
+      group: delivery_bucket
+      quantiles:
+      - 0.25
+      - 0.5
+      - 0.75
+      outliers: omit
+      approximation: exact
+      whiskers:
+        lower: 0.05
+        upper: 0.95
+    presentation:
+      type: cartesian
 ```
 
 ## Review distribution
 
-Swap the numeric metric to compare review-score spread with the same `distribution` shape and raw-table query path.
+Swap the numeric field to compare review-score spread with the same `distribution` shape.
 
 {{< visual id="review_distribution" >}}
 
@@ -39,19 +46,25 @@ visuals:
     title: Review score distribution
     type: boxplot
     query:
-      dataset: orders
-      dimensions:
-        status: orders.status
-      metrics:
-        review_score: null
-      sort:
-        - field: status
-          direction: asc
+      type: distribution
+      field: review_score
+      group: status
+      quantiles:
+      - 0.25
+      - 0.5
+      - 0.75
+      outliers: omit
+      approximation: exact
+      whiskers:
+        lower: 0.05
+        upper: 0.95
+    presentation:
+      type: cartesian
 ```
 
 ## Zoomable distribution
 
-Use revenue as the raw metric and enable `presentation.data_zoom` when the range contains values that benefit from closer inspection.
+Use revenue as the numeric field and enable `presentation.dataZoom` when the range contains values that benefit from closer inspection.
 
 {{< visual id="revenue_distribution" >}}
 
@@ -61,15 +74,20 @@ visuals:
     title: Revenue distribution
     type: boxplot
     presentation:
-      data_zoom: true
+      type: cartesian
+      dataZoom: true
     query:
-      dataset: orders
-      dimensions:
-        category: orders.category
-      metrics:
-        revenue: null
-      sort:
-        - field: category
-          direction: desc
+      type: distribution
+      field: revenue
+      group: category
+      quantiles:
+      - 0.25
+      - 0.5
+      - 0.75
+      outliers: omit
+      approximation: exact
+      whiskers:
+        lower: 0.05
+        upper: 0.95
       limit: 12
 ```

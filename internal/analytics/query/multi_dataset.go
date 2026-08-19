@@ -263,16 +263,24 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		if !allowedTimeGrain(request.Time.Grain) {
 			return aggregateResolution{}, fmt.Errorf("unsupported time grain %q", request.Time.Grain)
 		}
-		dimensionFields = append(dimensionFields, Field{Field: request.Time.Field, Alias: request.Time.Alias})
+		// Request.Time is retained for callers that predate per-dimension grain,
+		// but canonical requests carry grain on the dimension reference itself.
+		dimensionFields = append(dimensionFields, Field{Field: request.Time.Field, Alias: request.Time.Alias, Grain: request.Time.Grain})
 	}
 	for index, item := range dimensionFields {
 		alias, err := outputAlias(item)
 		if err != nil {
 			return aggregateResolution{}, err
 		}
-		grain := ""
-		if request.Time.Field != "" && index == len(dimensionFields)-1 {
+		grain := item.Grain
+		// Preserve the old Request.Time positional behavior only when the
+		// reference did not already carry a grain. Canonical lowering never uses
+		// Request.Time, so independent temporal dimensions remain independent.
+		if grain == "" && request.Time.Field != "" && index == len(dimensionFields)-1 {
 			grain = request.Time.Grain
+		}
+		if grain != "" && !allowedTimeGrain(grain) {
+			return aggregateResolution{}, fmt.Errorf("unsupported time grain %q", grain)
 		}
 		if dimension, ok := p.compiled.SemanticDimension(item.Field); ok {
 			if grain != "" && !containsString(dimension.Grains, grain) {

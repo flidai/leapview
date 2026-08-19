@@ -244,10 +244,10 @@ func projectDeterministic(project Project) bool {
 	// source-backed tables and non-expression semantic metrics. Unknown or
 	// hand-built plans remain false and force a refresh.
 	for _, table := range project.Models {
-		if table.Transform.SQL != "" || table.Source == "" {
+		if table.Execution.SQL != "" || table.Execution.Source == "" {
 			return false
 		}
-		source, ok := project.Sources[table.Source]
+		source, ok := project.Sources[table.Execution.Source]
 		connection, connected := project.Connections[source.Connection]
 		// Only managed revisions are target-pinned at this phase. Authored
 		// connector bindings are observed/unbounded here and must not be reused

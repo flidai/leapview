@@ -36,7 +36,7 @@ var approvedInternalRoots = map[string]struct{}{
 	"app": {}, "platform": {},
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
-	"runtimehost": {}, "servingstate": {}, "workload": {},
+	"runtimehost": {}, "servingstate": {}, "workload": {}, "extension": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -2270,8 +2270,8 @@ func TestProductionContainerContractExists(t *testing.T) {
 		t.Fatalf("Dockerfile downloads Go modules %d times, want one shared dependency stage", count)
 	}
 	const seededModuleCache = "type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked"
-	if count := strings.Count(text, seededModuleCache); count != 3 {
-		t.Fatalf("Dockerfile uses the seeded persistent Go module cache %d times, want source generation, map extraction, and compilation", count)
+	if count := strings.Count(text, seededModuleCache); count != 4 {
+		t.Fatalf("Dockerfile uses the seeded persistent Go module cache %d times, want source generation, map extraction, compilation, and extension-supply packaging", count)
 	}
 
 	ignored, err := os.ReadFile(filepath.Join(root, ".dockerignore"))
@@ -2425,6 +2425,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 		"FROM node:24-bookworm@sha256:",
 		"FROM golang:1.25-bookworm@sha256:",
 		"./scripts/generate_build_sources.sh",
+		"go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare",
 		"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
 		"FROM oven/bun:1.3.14@sha256:",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
@@ -2982,7 +2983,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		}
 	}
 	prepare := taskfileTaskBlock(t, taskfile, "ci:prepare")
-	for _, want := range []string{"- task: generate", "- task: build", "- task: site:build"} {
+	for _, want := range []string{"- task: ci:extensions:prepare", "- task: generate", "- task: build", "- task: site:build"} {
 		if !strings.Contains(prepare, want) {
 			t.Fatalf("ci:prepare missing %q", want)
 		}
@@ -3599,6 +3600,7 @@ func TestDerivedArtifactsAreGeneratedBuildInputs(t *testing.T) {
 			"AS go-deps",
 			"FROM go-deps AS sourcegen",
 			"./scripts/generate_build_sources.sh",
+			"go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare",
 			"go run ./internal/app/tools/clidocgen",
 			"go run ./internal/app/tools/schemadocgen",
 			"go run ./internal/app/tools/openapidocgen",
@@ -3617,6 +3619,9 @@ func TestDerivedArtifactsAreGeneratedBuildInputs(t *testing.T) {
 			"go run ./internal/app/tools/configgen",
 		},
 		"Taskfile.yml": {
+			"ci:extensions:prepare:",
+			"go run ./internal/app/tools/ducklakeprepare",
+			"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
 			"desc: Build the LeapView public site assets from generated contracts",
 			"desc: Build the independently deployable public site from generated documentation",
 			"desc: Start the public site from generated documentation on http://localhost:8081",
@@ -4104,6 +4109,12 @@ func isForbiddenUseCaseImport(imported string) bool {
 	}
 	packagePath := strings.TrimPrefix(imported, modulePath+"/")
 	if rule, ok := ClassifyPackage(packagePath); ok && rule.Layer == LayerPlatform {
+		return false
+	}
+	// Query JSON is a typed analytical contract shared with the compiler. Its
+	// implementation lives below the DuckDB adapter tree, but the contract
+	// package itself is safe for use-case consumers.
+	if packagePath == "internal/analytics/duckdb/queryjson" {
 		return false
 	}
 	for _, segment := range []string{"/sqlite", "/filesystem", "/s3", "/tus", "/duckdb", "/ducklake", "/datastar", "/http", "/openai"} {

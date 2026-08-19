@@ -6,7 +6,5 @@ metadata:
   displayName: Documentation conversion stages
 spec:
   connection: docs
-  path: conversion_stages.csv
-  fields:
-    stage: {type: string}
-    conversions: {type: number}
+  location: {type: path, path: conversion_stages.csv, format: csv, options: {header: true}}
+  schema: {mode: inferred}

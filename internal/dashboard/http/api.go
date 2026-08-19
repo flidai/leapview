@@ -125,7 +125,6 @@ func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request
 	}
 	if binding.URL.Param != "" {
 		bindingResponse["urlParam"] = binding.URL.Param
-		bindingResponse["urlEncoding"] = binding.URL.Encoding
 	}
 	if binding.Pane.Label != "" {
 		bindingResponse["paneLabel"] = binding.Pane.Label

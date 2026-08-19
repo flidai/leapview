@@ -20,12 +20,13 @@ import (
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 )
 
 func TestOpenRejectsLeaseBeforeCreatingStaging(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "staging")
 	contract := testPoolContract(t, filepath.Join(t.TempDir(), "data"))
-	request := testRequest(contract, root)
+	request := testRequest(t, contract, root)
 	request.VerifyLease = func(context.Context, WriterLease) error { return errors.New("lease was revoked") }
 	if _, err := Open(context.Background(), request); !errors.Is(err, ErrLeaseMismatch) {
 		t.Fatalf("Open() error = %v, want lease mismatch", err)
@@ -38,7 +39,7 @@ func TestOpenRejectsLeaseBeforeCreatingStaging(t *testing.T) {
 func TestOpenRejectsDigestMismatchWithoutPrivateStaging(t *testing.T) {
 	contract := testPoolContract(t, filepath.Join(t.TempDir(), "data"))
 	root := filepath.Join(t.TempDir(), "staging")
-	request := testRequest(contract, root)
+	request := testRequest(t, contract, root)
 	request.Base = &SealedArtifact{
 		ObjectKey:      "catalogs/base",
 		Digest:         "sha256:" + strings.Repeat("0", 64),
@@ -65,7 +66,7 @@ func TestOpenReadsBaseThroughObjectStoreWithoutSourcePath(t *testing.T) {
 	contract := testPoolContract(t, filepath.Join(t.TempDir(), "data"))
 	baseBytes, baseDigest := closedBaseBytes(t, contract)
 	store := memoryObjectStore{objects: map[string][]byte{"catalogs/base": baseBytes}}
-	request := testRequest(contract, filepath.Join(t.TempDir(), "staging"))
+	request := testRequest(t, contract, filepath.Join(t.TempDir(), "staging"))
 	request.Base = &SealedArtifact{
 		ObjectKey:      "catalogs/base",
 		Digest:         baseDigest,
@@ -93,7 +94,7 @@ func TestOpenReadsBaseThroughObjectStoreWithoutSourcePath(t *testing.T) {
 
 func TestDetachForSealPreservesStagingAndIsIdempotent(t *testing.T) {
 	contract := testPoolContract(t, filepath.Join(t.TempDir(), "data"))
-	request := testRequest(contract, filepath.Join(t.TempDir(), "staging"))
+	request := testRequest(t, contract, filepath.Join(t.TempDir(), "staging"))
 	working, err := Open(context.Background(), request)
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
@@ -132,7 +133,7 @@ func TestDetachForSealPreservesStagingAndIsIdempotent(t *testing.T) {
 
 func TestCloseRemovesOrdinaryStaging(t *testing.T) {
 	contract := testPoolContract(t, filepath.Join(t.TempDir(), "data"))
-	working, err := Open(context.Background(), testRequest(contract, filepath.Join(t.TempDir(), "staging")))
+	working, err := Open(context.Background(), testRequest(t, contract, filepath.Join(t.TempDir(), "staging")))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestCloseRemovesOrdinaryStaging(t *testing.T) {
 
 func TestExecLeaseRevocationAfterMutationClosesStaging(t *testing.T) {
 	contract := testPoolContract(t, filepath.Join(t.TempDir(), "data"))
-	request := testRequest(contract, filepath.Join(t.TempDir(), "staging"))
+	request := testRequest(t, contract, filepath.Join(t.TempDir(), "staging"))
 	var mu sync.Mutex
 	verifications := 0
 	request.VerifyLease = func(context.Context, WriterLease) error {
@@ -186,10 +187,10 @@ func TestBuildFailureReturnsNoHandleAndLeavesBaseUnchanged(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, filepath.Join(t.TempDir(), "data"))
 	baseRoot := t.TempDir()
-	base, err := ducklake.Open(ctx, ducklake.Config{
+	base, err := ducklake.Open(ctx, testDuckLakeConfig(t, ducklake.Config{
 		RootDir: baseRoot, DataPath: filepath.Join(contract.Pool.Identity.StorageLocation, contract.Pool.Identity.StorageNamespace),
 		PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract,
-	})
+	}))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -212,7 +213,7 @@ func TestBuildFailureReturnsNoHandleAndLeavesBaseUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseDigest := digestForTest(baseBytes)
-	request := testRequest(contract, filepath.Join(t.TempDir(), "staging"))
+	request := testRequest(t, contract, filepath.Join(t.TempDir(), "staging"))
 	request.Base = &SealedArtifact{ObjectKey: "catalogs/base", Digest: baseDigest, SizeBytes: int64(len(baseBytes)), PhysicalPoolID: contract.Pool.ID.String(), Compatibility: contract.Tuple, Reader: ArtifactReaderFunc(func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(baseBytes)), nil })}
 	working, err := Build(ctx, request, func(ctx context.Context, working *WorkingCatalog) error {
 		_, err := working.Commit(ctx, "failed", nil, func(tx *sql.Tx) error {
@@ -232,7 +233,7 @@ func TestBuildFailureReturnsNoHandleAndLeavesBaseUnchanged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(baseRoot, "catalog.duckdb"), baseBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	base, err = ducklake.Open(ctx, ducklake.Config{RootDir: baseRoot, DataPath: filepath.Join(contract.Pool.Identity.StorageLocation, contract.Pool.Identity.StorageNamespace), PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract})
+	base, err = ducklake.Open(ctx, testDuckLakeConfig(t, ducklake.Config{RootDir: baseRoot, DataPath: filepath.Join(contract.Pool.Identity.StorageLocation, contract.Pool.Identity.StorageNamespace), PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +257,7 @@ func TestConcurrentBuildsFromOneBaseAreDistinct(t *testing.T) {
 	baseBytes, baseDigest := closedBaseBytes(t, contract)
 	root := t.TempDir()
 	makeRequest := func(id string) Request {
-		req := testRequest(contract, root)
+		req := testRequest(t, contract, root)
 		req.AttemptID = id
 		req.Lease.AttemptID = id
 		req.Base = &SealedArtifact{ObjectKey: "catalogs/base", Digest: baseDigest, SizeBytes: int64(len(baseBytes)), PhysicalPoolID: contract.Pool.ID.String(), Compatibility: contract.Tuple, Reader: ArtifactReaderFunc(func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(baseBytes)), nil })}
@@ -380,7 +381,7 @@ func TestSealedBaseWithoutSnapshotIDRetainsUnchangedRefs(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, filepath.Join(t.TempDir(), "data"))
 	baseBytes, baseDigest := closedBaseBytes(t, contract)
-	request := testRequest(contract, filepath.Join(t.TempDir(), "staging"))
+	request := testRequest(t, contract, filepath.Join(t.TempDir(), "staging"))
 	request.Base = &SealedArtifact{ObjectKey: "catalogs/sealed-base", Digest: baseDigest, SizeBytes: int64(len(baseBytes)), PhysicalPoolID: contract.Pool.ID.String(), Compatibility: contract.Tuple, Reader: ArtifactReaderFunc(func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(baseBytes)), nil })}
 	working, err := Open(ctx, request)
 	if extensionUnavailableForTest(err) {
@@ -414,9 +415,16 @@ func TestSealedBaseWithoutSnapshotIDRetainsUnchangedRefs(t *testing.T) {
 	}
 }
 
-func testRequest(contract *ducklake.PoolContract, root string) Request {
+func testRequest(t *testing.T, contract *ducklake.PoolContract, root string) Request {
+	t.Helper()
 	now := time.Now().UTC()
-	return Request{AttemptID: "attempt-test", StagingRoot: root, PoolContract: contract, Lease: WriterLease{ID: "lease-test", AttemptID: "attempt-test", PhysicalPoolID: contract.Pool.ID.String(), Epoch: 1, ExpiresAt: now.Add(time.Hour), Status: LeaseActive}, VerifyLease: func(context.Context, WriterLease) error { return nil }, Now: func() time.Time { return now }}
+	return Request{AttemptID: "attempt-test", StagingRoot: root, PoolContract: contract, ExtensionAdmission: extensionfixture.New(t, "ducklake").Admission, Lease: WriterLease{ID: "lease-test", AttemptID: "attempt-test", PhysicalPoolID: contract.Pool.ID.String(), Epoch: 1, ExpiresAt: now.Add(time.Hour), Status: LeaseActive}, VerifyLease: func(context.Context, WriterLease) error { return nil }, Now: func() time.Time { return now }}
+}
+
+func testDuckLakeConfig(t *testing.T, config ducklake.Config) ducklake.Config {
+	t.Helper()
+	config.ExtensionAdmission = extensionfixture.New(t, "ducklake").Admission
+	return config
 }
 
 func testPoolContract(t *testing.T, dataPath string) *ducklake.PoolContract {
@@ -450,7 +458,7 @@ func closedBaseBytes(t *testing.T, contract *ducklake.PoolContract) ([]byte, str
 	t.Helper()
 	ctx := context.Background()
 	root := t.TempDir()
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: root, DataPath: filepath.Join(contract.Pool.Identity.StorageLocation, contract.Pool.Identity.StorageNamespace), PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract})
+	env, err := ducklake.Open(ctx, testDuckLakeConfig(t, ducklake.Config{RootDir: root, DataPath: filepath.Join(contract.Pool.Identity.StorageLocation, contract.Pool.Identity.StorageNamespace), PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract}))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -487,7 +495,7 @@ func baseFileSets(t *testing.T, contract *ducklake.PoolContract, catalogBytes []
 	if err := os.WriteFile(path, catalogBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env, err := ducklake.Open(context.Background(), ducklake.Config{RootDir: root, CatalogPath: path, DataPath: filepath.Join(contract.Pool.Identity.StorageLocation, contract.Pool.Identity.StorageNamespace), PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ReadOnly: true})
+	env, err := ducklake.Open(context.Background(), testDuckLakeConfig(t, ducklake.Config{RootDir: root, CatalogPath: path, DataPath: filepath.Join(contract.Pool.Identity.StorageLocation, contract.Pool.Identity.StorageNamespace), PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ReadOnly: true}))
 	if err != nil {
 		t.Fatal(err)
 	}

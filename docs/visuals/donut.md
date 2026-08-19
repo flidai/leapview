@@ -6,7 +6,7 @@ Every preview on this page is generated from the YAML shown below it using a fix
 
 ## Basic
 
-Use one categorical dimension and one metric to show each status as a share of the whole, with an explicit center annotation identifying the represented total.
+Use one categorical dimension and one metric to show each status as a share of the whole.
 
 {{< visual id="orders" >}}
 
@@ -17,17 +17,43 @@ visuals:
     description: Breaks down orders by lifecycle status.
     type: donut
     presentation:
-      center_label: Orders
-      inner_radius: 0.54
-      outer_radius: 0.76
+      type: proportional
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
+```
+
+## Center label
+
+Set `presentation.centerLabel` to state the total represented by the ring, and adjust the typed inner and outer radii to control the ring diameters.
+
+{{< visual id="orders_donut_center" >}}
+
+```yaml visual-example=orders_donut_center
+visuals:
+  orders_donut_center:
+    title: Orders donut with center label
+    type: donut
+    presentation:
+      type: proportional
+      centerLabel: Orders
+      innerRadius: 0.54
+      outerRadius: 0.76
+    query:
+      type: aggregate
+      dimensions:
+      - status
+      metrics:
+      - order_count
+      sort:
+      - field: order_count
+        direction: desc
 ```
 
 ## Alternate metric
@@ -42,37 +68,15 @@ visuals:
     title: Revenue by category donut
     type: donut
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: revenue
+        direction: desc
       limit: 8
-```
-
-## Center label
-
-Set `presentation.center_label` to state the total represented by the ring, and adjust the typed inner and outer radii to control the ring diameters.
-
-{{< visual id="orders_donut_center" >}}
-
-```yaml visual-example=orders_donut_center
-visuals:
-  orders_donut_center:
-    title: Orders donut with center label
-    type: donut
     presentation:
-      center_label: Orders
-      inner_radius: 0.54
-      outer_radius: 0.76
-    query:
-      dimensions:
-        status: orders.status
-      metrics:
-        order_count: null
-      sort:
-        - field: value
-          direction: desc
+      type: proportional
 ```

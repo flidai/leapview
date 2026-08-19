@@ -13,9 +13,8 @@ import (
 func TestSourceAssetPayloadProjectsSchemaAndFields(t *testing.T) {
 	source := semanticmodel.Source{
 		Format: "csv", Connection: "warehouse", Path: "s3://bucket/orders.csv",
-		Fields:  map[string]semanticmodel.SourceField{"order_id": {Type: "int", Description: "Order ID"}},
-		Schema:  semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "order_id", Ordinal: 0, PhysicalType: "BIGINT"}}},
-		Options: map[string]any{"header": true},
+		Fields: map[string]semanticmodel.SourceField{"order_id": {Type: "int", Description: "Order ID"}},
+		Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "order_id", Ordinal: 0, PhysicalType: "BIGINT"}}},
 	}
 	payload := SourceAssetPayload(source)
 	if payload["Format"] != "csv" || payload["Connection"] != "warehouse" || payload["Path"] != "s3://bucket/orders.csv" {
@@ -35,7 +34,6 @@ func TestConnectionAssetPayloadOmitsCredentialMaterial(t *testing.T) {
 	connection := semanticmodel.Connection{
 		Kind: "postgres", Scope: "warehouse", Path: "db.example", Root: "orders",
 		Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "PROD_PASSWORD", Region: "eu-west-1"},
-		Options:     map[string]any{"sslmode": "verify-full"},
 	}
 	payload := ConnectionAssetPayload(connection)
 	if payload["Kind"] != "postgres" || payload["Scope"] != "warehouse" || payload["credentials_configured"] != true {

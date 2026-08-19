@@ -257,16 +257,52 @@ async function verifyFilterShowcase(): Promise<void> {
     const response = await page.goto(new URL(path, baseURL).toString(), { waitUntil: 'domcontentloaded' })
     if (!response?.ok()) throw new Error(`${path}: status ${response?.status() ?? 'unknown'}`)
     await page.waitForSelector('lv-dashboard-page')
-    await page.waitForFunction(() => {
-      const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
-      const slicers = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-slicer') ?? []) as any[]
-      return (dashboard as any)?.status?.loading === false
-        && slicers.length === 8
-        && slicers.every((slicer) => slicer.shadowRoot?.querySelector('lv-filter-leaf')?.shadowRoot?.querySelector('fieldset'))
-        && slicers
-          .filter((slicer) => slicer.definition?.id === 'order_status')
-          .every((slicer) => (slicer.options?.items?.length ?? 0) > 0)
-    }, undefined, { timeout: 30_000 })
+    try {
+      await page.waitForFunction(() => {
+        const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
+        const slicers = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-slicer') ?? []) as any[]
+        return (dashboard as any)?.status?.loading === false
+          && slicers.length === 8
+          && slicers.every((slicer) => slicer.shadowRoot?.querySelector('lv-filter-leaf')?.shadowRoot?.querySelector('fieldset'))
+          && slicers
+            .filter((slicer) => slicer.definition?.id === 'order_status')
+            .every((slicer) => (slicer.options?.items?.length ?? 0) > 0)
+      }, undefined, { timeout: 30_000 })
+    } catch (error) {
+      const state = await page.evaluate(() => {
+        const dashboard = document.querySelector('lv-dashboard-page') as any
+        return {
+          status: dashboard?.status,
+          filterState: dashboard?.canonicalFilterState,
+          filterBindingKeys: Object.keys(dashboard?.filterContract?.bindings ?? {}),
+          filterOptionsReady: dashboard?.filterOptionsReady,
+          filterOptionPages: dashboard?.filterOptionPages,
+          slicers: Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-slicer') ?? []).map((candidate: any) => ({
+            binding: candidate.binding?.id,
+            bindingKey: candidate.binding?.key,
+            definition: candidate.definition?.id,
+            presentation: candidate.presentation,
+            options: candidate.options,
+            optionRequestReady: candidate.optionRequestReady,
+            leaf: Boolean(candidate.shadowRoot?.querySelector('lv-filter-leaf')),
+            leafState: (() => {
+              const leaf = candidate.shadowRoot?.querySelector('lv-filter-leaf') as any
+              return leaf ? {
+                optionRequestReady: leaf.optionRequestReady,
+                optionLoading: leaf.optionLoading,
+                optionDirty: leaf.optionDirty,
+                hasRequestedOptions: leaf.hasRequestedOptions,
+                requestedOptionContext: leaf.requestedOptionContext,
+                stale: leaf.stale,
+                presentation: leaf.presentation,
+                fieldset: Boolean(leaf.shadowRoot?.querySelector('fieldset')),
+              } : undefined
+            })(),
+          })),
+        }
+      })
+      throw new Error(`filter showcase did not become ready: ${JSON.stringify(state)}; ${String(error)}`)
+    }
 
     const matrix = await page.evaluate(() => {
       const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
@@ -307,7 +343,7 @@ async function verifyFilterShowcase(): Promise<void> {
         label: 'state dropdown',
         bindingID: 'state',
         mutate: async () => {
-          const dropdown = page.getByRole('combobox', { name: 'Filter by customer state' })
+          const dropdown = page.getByRole('combobox', { name: 'State', exact: true })
           await dropdown.focus()
           await page.waitForFunction(() => {
             const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
@@ -321,17 +357,17 @@ async function verifyFilterShowcase(): Promise<void> {
       },
       {
         label: 'status list',
-        bindingID: 'status_list',
+        bindingID: 'order_status',
         mutate: async () => {
-          await page.getByRole('checkbox').first().check()
+          await page.getByRole('radio').first().check()
         },
         expressionKind: 'set',
       },
       {
         label: 'category input',
-        bindingID: 'category_input',
+        bindingID: 'category_text',
         mutate: async () => {
-          const input = page.getByRole('textbox', { name: 'Filter by category text' })
+          const input = page.getByRole('textbox', { name: 'Category text, Contains', exact: true })
           await input.fill('bed')
           await input.press('Tab')
         },
@@ -339,7 +375,7 @@ async function verifyFilterShowcase(): Promise<void> {
       },
       {
         label: 'boolean buttons',
-        bindingID: 'delivered_buttons',
+        bindingID: 'delivered',
         mutate: async () => {
           await page.getByRole('button', { name: 'Delivered', exact: true }).click()
         },
@@ -349,7 +385,7 @@ async function verifyFilterShowcase(): Promise<void> {
         label: 'date range',
         bindingID: 'purchase_date',
         mutate: async () => {
-          const control = page.getByRole('region', { name: 'Filter by purchase date range' })
+          const control = page.getByRole('region', { name: 'Purchase date', exact: true })
           const from = control.getByLabel('Start date')
           const to = control.getByLabel('End date')
           await from.fill('2017-01-01')
@@ -362,9 +398,9 @@ async function verifyFilterShowcase(): Promise<void> {
       },
       {
         label: 'integer range',
-        bindingID: 'delivery_days_range',
+        bindingID: 'delivery_days',
         mutate: async () => {
-          const control = page.getByRole('region', { name: 'Filter by delivery days' })
+          const control = page.getByRole('region', { name: 'Delivery days', exact: true })
           const minimum = control.getByLabel('Minimum')
           const maximum = control.getByLabel('Maximum')
           await minimum.fill('0')
@@ -376,9 +412,9 @@ async function verifyFilterShowcase(): Promise<void> {
       },
       {
         label: 'decimal range',
-        bindingID: 'revenue_range',
+        bindingID: 'revenue_amount',
         mutate: async () => {
-          const control = page.getByRole('region', { name: 'Filter by order revenue' })
+          const control = page.getByRole('region', { name: 'Order revenue', exact: true })
           const minimum = control.getByLabel('Minimum')
           const maximum = control.getByLabel('Maximum')
           await minimum.fill('1.25')
@@ -390,9 +426,9 @@ async function verifyFilterShowcase(): Promise<void> {
       },
       {
         label: 'relative period',
-        bindingID: 'purchase_time_relative',
+        bindingID: 'purchase_time',
         mutate: async () => {
-          const control = page.getByRole('region', { name: 'Filter by relative purchase period' })
+          const control = page.getByRole('region', { name: 'Relative purchase period', exact: true })
           await control.getByLabel('Period unit').selectOption('year')
           const count = control.getByLabel('Period count')
           await count.fill('10')

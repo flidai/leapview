@@ -8,6 +8,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
@@ -85,17 +86,23 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	if revision.DashboardID != command.DashboardID || !sameRevision(revision.Token(), command.ExpectedRevision) {
 		return fmt.Errorf("%w: intent revision identity does not match request", authoring.ErrStaleRevision)
 	}
-	if revision.Document.SemanticModel != lifecycle.SemanticModel {
+	if revision.Document.Spec.SemanticModel != lifecycle.SemanticModel.String() {
 		return fmt.Errorf("dashboard intent semantic model does not match lifecycle")
 	}
 	var componentVisual string
-	for _, page := range revision.Document.Pages {
+	for _, page := range revision.Document.Spec.Pages {
 		if page.ID != field.PageID {
 			continue
 		}
-		for _, component := range page.Visuals {
-			if component.ID == field.VisualID {
-				componentVisual = component.Visual
+		for _, component := range page.Components {
+			base, baseErr := component.Base()
+			if baseErr != nil {
+				return baseErr
+			}
+			if base.ID == field.VisualID {
+				if visual, ok := component.Value.(*document.VisualDashboardPageComponent); ok {
+					componentVisual = visual.Visual
+				}
 				break
 			}
 		}
@@ -104,7 +111,7 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	if componentVisual == "" {
 		return fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, field.VisualID, field.PageID)
 	}
-	authored, ok := revision.Document.Visuals[componentVisual]
+	authored, ok := revision.Document.Spec.Visuals[componentVisual]
 	if !ok {
 		return fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, componentVisual)
 	}
@@ -131,9 +138,10 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	if !ok || active == nil {
 		return fmt.Errorf("active runtime does not provide semantic model projection")
 	}
-	model, ok := active.SemanticModelProjection(revision.Document.SemanticModel)
-	if !ok || model == nil || model.Name != revision.Document.SemanticModel.String() {
-		return fmt.Errorf("semantic model %q is unavailable in active runtime", revision.Document.SemanticModel)
+	semanticModelID := projectgraph.ResourceID(revision.Document.Spec.SemanticModel)
+	model, ok := active.SemanticModelProjection(semanticModelID)
+	if !ok || model == nil || model.Name != semanticModelID.String() {
+		return fmt.Errorf("semantic model %q is unavailable in active runtime", semanticModelID)
 	}
 	if err := validateGovernedField(model, field.FieldID, field.Role); err != nil {
 		return err
@@ -150,10 +158,7 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 // bind to multiple datasets, so they deliberately leave the table unset and let
 // the existing compiler relationship validation decide whether the authored
 // query is valid.
-func resolvedTableForField(model *semanticmodel.Model, authored authoring.AuthoringVisualization, field authoring.AssignFieldPayload) string {
-	if authored.Tabular == nil || strings.TrimSpace(authored.Tabular.Query.Dataset) != "" {
-		return ""
-	}
+func resolvedTableForField(model *semanticmodel.Model, _ document.DashboardVisual, field authoring.AssignFieldPayload) string {
 	switch field.Role {
 	case authoring.FieldRoleMetric:
 		if metric, ok := model.Metrics[strings.TrimSpace(field.FieldID)]; ok {

@@ -2,10 +2,6 @@ package compiler
 
 import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/dashboard"
-	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
-	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	"gopkg.in/yaml.v3"
 )
 
@@ -59,59 +55,12 @@ type dashboardPublicationEmbeddingSpec struct {
 	AllowedOrigins []string `yaml:"allowedOrigins"`
 }
 
-type sourceSpec struct {
-	Format      string                        `yaml:"format"`
-	Description string                        `yaml:"description"`
-	Path        string                        `yaml:"path"`
-	Connection  string                        `yaml:"connection"`
-	Object      string                        `yaml:"object"`
-	Options     map[string]any                `yaml:"options"`
-	Fields      map[string]projectSourceField `yaml:"fields"`
-}
-
-type projectSourceField struct {
-	Type        string `yaml:"type"`
-	Description string `yaml:"description"`
-}
-
 type projectSemanticModelSpec struct {
 	Datasets      map[string]semanticmodel.SemanticDatasetSpec   `yaml:"datasets"`
 	Relationships map[string]semanticmodel.RelationshipSpec      `yaml:"relationships"`
 	Dimensions    map[string]semanticmodel.SemanticDimensionSpec `yaml:"dimensions"`
 	Filters       map[string]semanticmodel.SemanticFilterSpec    `yaml:"filters"`
 	Metrics       map[string]semanticmodel.SemanticMetricSpec    `yaml:"metrics"`
-}
-
-type dashboardSpec struct {
-	Title             string                                               `yaml:"title"`
-	Appearance        dashboardappearance.Patch                            `yaml:"appearance"`
-	SemanticModel     string                                               `yaml:"semanticModel"`
-	Filters           map[string]dashboardfilter.Definition                `yaml:"filters"`
-	FilterBindings    map[string]dashboardfilter.Binding                   `yaml:"filter_bindings"`
-	FilterApplication dashboardfilter.ApplicationPolicy                    `yaml:"filter_application"`
-	Visuals           map[string]dashboardauthoring.AuthoringVisualization `yaml:"visuals"`
-	Pages             []projectDashboardPage                               `yaml:"pages"`
-}
-
-type projectModelTableSpec struct {
-	Source      string                                   `yaml:"source"`
-	Sources     []string                                 `yaml:"sources"`
-	SourceReads map[string][]string                      `yaml:"sourceReads"`
-	Transform   semanticmodel.Transform                  `yaml:"transform"`
-	Entities    map[string]semanticmodel.ModelEntitySpec `yaml:"entities"`
-	Grain       semanticmodel.ModelGrainSpec             `yaml:"grain"`
-	Fields      map[string]semanticmodel.ModelFieldSpec  `yaml:"fields"`
-	Description string                                   `yaml:"description"`
-}
-
-type projectDashboardPage struct {
-	ID             string                             `yaml:"id"`
-	Title          string                             `yaml:"title"`
-	Description    string                             `yaml:"description"`
-	Canvas         dashboard.PageCanvas               `yaml:"canvas"`
-	Grid           dashboard.PageGrid                 `yaml:"grid"`
-	FilterBindings map[string]dashboardfilter.Binding `yaml:"filter_bindings"`
-	Components     []dashboard.PageVisual             `yaml:"components"`
 }
 
 type projectGroupSpec struct {

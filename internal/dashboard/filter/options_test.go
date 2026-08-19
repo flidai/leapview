@@ -2,8 +2,52 @@ package filter
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestCanonicalizeStaticOptionsUsesTypedOrderAndRejectsConflictingLabels(t *testing.T) {
+	options, err := CanonicalizeStaticOptions([]Option{
+		{Value: Value{Kind: ValueInteger, Value: "10"}, Label: "ten"},
+		{Value: Value{Kind: ValueInteger, Value: "2"}, Label: "two"},
+		{Value: Value{Kind: ValueInteger, Value: "02"}, Label: "two"},
+	}, ValueInteger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 2 || options[0].Value.Value != "2" || options[1].Value.Value != "10" {
+		t.Fatalf("canonical static options = %#v", options)
+	}
+	_, err = CanonicalizeStaticOptions([]Option{{Value: Value{Kind: ValueString, Value: "CA"}, Label: "California"}, {Value: Value{Kind: ValueString, Value: "CA"}, Label: "CA"}}, ValueString)
+	if err == nil {
+		t.Fatal("conflicting duplicate labels were accepted")
+	}
+}
+
+func TestCanonicalOptionItemsOrdersNullLastBeforeLimit(t *testing.T) {
+	items, err := canonicalOptionItems([]OptionItem{
+		{Value: Value{Kind: ValueInteger, Value: "10"}},
+		{Null: true},
+		{Value: Value{Kind: ValueInteger, Value: "2"}},
+	}, ValueInteger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 || items[0].Value.Value != "2" || items[1].Value.Value != "10" || !items[2].Null {
+		t.Fatalf("canonical option items = %#v", items)
+	}
+}
+
+func TestNullOptionWireShapeOmitsFabricatedTypedValue(t *testing.T) {
+	encoded, err := json.Marshal(OptionItem{Null: true, Label: "(null)", Available: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"value"`) || !strings.Contains(string(encoded), `"null":true`) {
+		t.Fatalf("null option wire shape = %s", encoded)
+	}
+}
 
 func TestOptionEngineUsesIncomingDependenciesAndExcludesSelf(t *testing.T) {
 	var captured OptionQuery

@@ -121,6 +121,16 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags="$BUILD_LDFLAGS" -o /out/leapview ./cmd/leapview && \
     CGO_ENABLED=0 go build -trimpath -ldflags="$BUILD_LDFLAGS" -o /out/leapviewctl ./cmd/leapviewctl
 
+# The production image carries a complete, target-native, offline extension
+# supply. This stage performs the only upstream acquisition during packaging;
+# the tool installs the exact pinned core artifacts, asks DuckDB to LOAD every
+# absolute file with automatic install/load disabled, and emits a digested
+# manifest consumed by the runtime image.
+FROM build AS extension-supply
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
+    go run ./internal/app/tools/extensionsupply --out /out/extension-supply
+
 FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df AS runtime
 
 ARG BUILD_VERSION=development
@@ -151,6 +161,7 @@ WORKDIR /app
 COPY --from=build /out/leapview /usr/local/bin/leapview
 COPY --from=build /out/leapviewctl /usr/local/libexec/leapviewctl
 COPY --from=build /out/leapviewctl /usr/local/share/leapview/deployment/leapviewctl
+COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions
 COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/deployment.env.example /usr/local/share/leapview/deployment/
 COPY deploy/host/files/ /usr/local/share/leapview/deployment/
 COPY --from=web /src/static ./static
@@ -162,6 +173,8 @@ COPY evaluation ./evaluation
 RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
       /usr/local/share/leapview/deployment/leapviewctl-wrapper \
       /usr/local/share/leapview/deployment/leapview-backup-hook && \
+    find /usr/local/share/leapview/extensions -type d -exec chmod 0555 {} + && \
+    find /usr/local/share/leapview/extensions -type f -exec chmod 0444 {} + && \
     chmod 0400 /usr/local/share/leapview/deployment/compose.yaml \
       /usr/local/share/leapview/deployment/compose.https.yaml \
       /usr/local/share/leapview/deployment/Caddyfile \
@@ -180,6 +193,7 @@ ENV LEAPVIEW_ADDR=:8080 \
     LEAPVIEW_HOME=/var/lib/leapview/home \
     LEAPVIEW_MAP_ASSET_DIR=/app/.data/map-assets \
     LEAPVIEW_MANAGED_DATA_DIR=/var/lib/leapview/home/managed-data \
+    LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH=/usr/local/share/leapview/extensions/extension-supply.json \
     LEAPVIEW_PRODUCTION=1
 
 EXPOSE 8080

@@ -403,7 +403,7 @@ func decimalConformanceModel(expression string) *semanticmodel.Model {
 		Tables: map[string]semanticmodel.Table{
 			"decimal_datasets": {
 				GrainEntity: "dataset",
-				Entities:    map[string]semanticmodel.ModelEntitySpec{"dataset": {Type: "primary", Fields: []string{"id"}}},
+				Entities:    map[string]semanticmodel.EntityDefinition{"dataset": {Type: "primary", Fields: []string{"id"}}},
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"id":           {Datatype: semanticmodel.DataTypeInteger},
 					"amount":       {Type: "number", Datatype: semanticmodel.DataTypeDecimal},
@@ -446,7 +446,7 @@ func decimalIntermediateOverflowModel() *semanticmodel.Model {
 		Tables: map[string]semanticmodel.Table{
 			"decimal_wide": {
 				GrainEntity: "row",
-				Entities:    map[string]semanticmodel.ModelEntitySpec{"row": {Type: "primary", Fields: []string{"id"}}},
+				Entities:    map[string]semanticmodel.EntityDefinition{"row": {Type: "primary", Fields: []string{"id"}}},
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"id":          {Datatype: semanticmodel.DataTypeInteger},
 					"left_value":  {Type: "number", Datatype: semanticmodel.DataTypeDecimal},
@@ -469,7 +469,7 @@ func decimalQuotientCorpusModel() *semanticmodel.Model {
 		Tables: map[string]semanticmodel.Table{
 			"decimal_quotients": {
 				GrainEntity: "row",
-				Entities:    map[string]semanticmodel.ModelEntitySpec{"row": {Type: "primary", Fields: []string{"case_id"}}},
+				Entities:    map[string]semanticmodel.EntityDefinition{"row": {Type: "primary", Fields: []string{"case_id"}}},
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"case_id":     {Datatype: semanticmodel.DataTypeInteger},
 					"left_value":  {Type: "number", Datatype: semanticmodel.DataTypeDecimal},

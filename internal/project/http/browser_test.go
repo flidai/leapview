@@ -98,8 +98,8 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
 			ID: projectID,
 			Models: map[string]semanticmodel.Table{assetID: {
-				Sources: []string{"geolocations"}, Transform: semanticmodel.Transform{SQL: "select zip_code from source.geolocations"},
-				Entities: map[string]semanticmodel.ModelEntitySpec{"zip": {Type: "primary", Fields: []string{"zip_code"}}}, GrainEntity: "zip", Dimensions: map[string]semanticmodel.MetricDimension{"zip_code": {Label: "ZIP code"}},
+				SourceDependencies: []string{"geolocations"}, Execution: semanticmodel.ExecutionDefinition{SQL: "select zip_code from source.geolocations"},
+				Entities: map[string]semanticmodel.EntityDefinition{"zip": {Type: "primary", Fields: []string{"zip_code"}}}, GrainEntity: "zip", Dimensions: map[string]semanticmodel.MetricDimension{"zip_code": {Label: "ZIP code"}},
 			}},
 		}},
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
@@ -125,7 +125,7 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	const projectID = "project:test"
 	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
 	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
 	compiled, err := semanticquery.CompileDatasetBindings(model)
 	if err != nil {
@@ -304,8 +304,8 @@ func TestSemanticModelAssetBootstrapUsesCompiledModelProjection(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":    {ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
-			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
+			"orders":    {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},

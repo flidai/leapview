@@ -77,6 +77,14 @@ func (s dataQueryService) Count(ctx context.Context, request CountQuery) (int, e
 }
 
 func (s dataQueryService) Histogram(ctx context.Context, request RawValueQuery, binCount int) ([]HistogramBin, error) {
+	var options *dataquery.HistogramOptions
+	if request.Histogram != nil {
+		options = &dataquery.HistogramOptions{NullPolicy: request.Histogram.NullPolicy, Approximation: request.Histogram.Approximation}
+		if request.Histogram.Domain != nil {
+			minimum, maximum := request.Histogram.Domain.Minimum, request.Histogram.Domain.Maximum
+			options.DomainMinimum, options.DomainMaximum = &minimum, &maximum
+		}
+	}
 	result, err := s.executor.ExecuteDataQuery(ctx, dataquery.Query{
 		ProjectID: s.projectID,
 		Surface:   dataquery.SurfaceDashboard,
@@ -88,6 +96,7 @@ func (s dataQueryService) Histogram(ctx context.Context, request RawValueQuery, 
 		Value:     dataQueryField(request.Metric),
 		Filters:   dataQueryFilters(request.Filters),
 		BinCount:  binCount,
+		Histogram: options,
 	})
 	if err != nil {
 		return nil, err
@@ -105,18 +114,31 @@ func (s dataQueryService) Histogram(ctx context.Context, request RawValueQuery, 
 }
 
 func (s dataQueryService) Distribution(ctx context.Context, request RawValueQuery, sort []QuerySort, limit int) (QueryRows, error) {
+	var options *dataquery.DistributionOptions
+	if request.Distribution != nil {
+		options = &dataquery.DistributionOptions{
+			Quantiles:     append([]float64(nil), request.Distribution.Quantiles...),
+			Outliers:      request.Distribution.Outliers,
+			Approximation: request.Distribution.Approximation,
+		}
+		if request.Distribution.Whiskers != nil {
+			lower, upper := request.Distribution.Whiskers.Lower, request.Distribution.Whiskers.Upper
+			options.WhiskerLower, options.WhiskerUpper = &lower, &upper
+		}
+	}
 	result, err := s.executor.ExecuteDataQuery(ctx, dataquery.Query{
-		ProjectID: s.projectID,
-		Surface:   dataquery.SurfaceDashboard,
-		Operation: dataquery.OperationDashboardDistribution,
-		ModelID:   s.modelID,
-		Kind:      dataquery.KindSemanticDistribution,
-		Target:    request.Dataset,
-		Fields:    dataQueryFields(request.Dimensions),
-		Value:     dataQueryField(request.Metric),
-		Filters:   dataQueryFilters(request.Filters),
-		Sort:      dataQuerySort(sort),
-		Limit:     limit,
+		ProjectID:    s.projectID,
+		Surface:      dataquery.SurfaceDashboard,
+		Operation:    dataquery.OperationDashboardDistribution,
+		ModelID:      s.modelID,
+		Kind:         dataquery.KindSemanticDistribution,
+		Target:       request.Dataset,
+		Fields:       dataQueryFields(request.Dimensions),
+		Value:        dataQueryField(request.Metric),
+		Filters:      dataQueryFilters(request.Filters),
+		Sort:         dataQuerySort(sort),
+		Limit:        limit,
+		Distribution: options,
 	})
 	return rowsFromDataQuery(result.Rows), err
 }

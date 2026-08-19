@@ -6,9 +6,7 @@ import (
 	"strings"
 	"time"
 
-	dashboardmodel "github.com/flidai/leapview/internal/dashboard"
-	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
-	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	"github.com/flidai/leapview/internal/dashboard/document"
 )
 
 // AuthorizationAction is the domain-level action required to execute an
@@ -79,12 +77,12 @@ type authoringPayload interface {
 // MetadataPatch uses pointers so omitted fields and explicit clears remain
 // distinct. Title and semantic model are required values when supplied.
 type MetadataPatch struct {
-	Title         *string                    `json:"title,omitempty"`
-	Description   *string                    `json:"description,omitempty"`
-	Slug          *string                    `json:"slug,omitempty"`
-	SemanticModel *string                    `json:"semanticModel,omitempty"`
-	Visibility    *Visibility                `json:"visibility,omitempty"`
-	Appearance    *dashboardappearance.Patch `json:"appearance,omitempty"`
+	Title         *string                       `json:"title,omitempty"`
+	Description   *string                       `json:"description,omitempty"`
+	Slug          *string                       `json:"slug,omitempty"`
+	SemanticModel *string                       `json:"semanticModel,omitempty"`
+	Visibility    *Visibility                   `json:"visibility,omitempty"`
+	Appearance    *document.DashboardAppearance `json:"appearance,omitempty"`
 }
 
 // SetVisibilityPayload changes only the dashboard lifecycle visibility. It is
@@ -168,7 +166,7 @@ func (MetadataPatch) RequiredAction() (AuthorizationAction, error) {
 }
 
 type UpsertPagePayload struct {
-	Page dashboardmodel.Page `json:"page"`
+	Page document.DashboardPage `json:"page"`
 }
 
 func (UpsertPagePayload) authoringPayload() {}
@@ -186,8 +184,8 @@ func (RemovePagePayload) RequiredAction() (AuthorizationAction, error) {
 }
 
 type UpsertVisualPayload struct {
-	VisualID string                 `json:"visualId"`
-	Visual   AuthoringVisualization `json:"visual"`
+	VisualID string                   `json:"visualId"`
+	Visual   document.DashboardVisual `json:"visual"`
 }
 
 func (UpsertVisualPayload) authoringPayload() {}
@@ -205,10 +203,8 @@ func (RemoveVisualPayload) RequiredAction() (AuthorizationAction, error) {
 }
 
 type SetLayoutPayload struct {
-	PageID     string                                  `json:"pageId"`
-	Canvas     *dashboardmodel.PageCanvas              `json:"canvas,omitempty"`
-	Grid       *dashboardmodel.PageGrid                `json:"grid,omitempty"`
-	Placements map[string]dashboardmodel.PagePlacement `json:"placements,omitempty"`
+	PageID string                            `json:"pageId"`
+	Layout *document.DashboardLayoutOverride `json:"layout,omitempty"`
 }
 
 func (SetLayoutPayload) authoringPayload() {}
@@ -217,10 +213,8 @@ func (SetLayoutPayload) RequiredAction() (AuthorizationAction, error) {
 }
 
 type SetFiltersPayload struct {
-	Definitions map[string]dashboardfilter.Definition `json:"definitions,omitempty"`
-	Bindings    map[string]dashboardfilter.Binding    `json:"bindings,omitempty"`
-	Application *dashboardfilter.ApplicationPolicy    `json:"application,omitempty"`
-	Clear       bool                                  `json:"clear,omitempty"`
+	Filters []document.DashboardFilter `json:"filters,omitempty"`
+	Clear   bool                       `json:"clear,omitempty"`
 }
 
 func (SetFiltersPayload) authoringPayload() {}
@@ -229,10 +223,10 @@ func (SetFiltersPayload) RequiredAction() (AuthorizationAction, error) {
 }
 
 type SetInteractionPayload struct {
-	PageID      string       `json:"pageId,omitempty"`
-	VisualID    string       `json:"visualId,omitempty"`
-	Interaction *Interaction `json:"interaction,omitempty"`
-	Clear       bool         `json:"clear,omitempty"`
+	PageID      string                         `json:"pageId,omitempty"`
+	VisualID    string                         `json:"visualId,omitempty"`
+	Interaction *document.DashboardInteraction `json:"interaction,omitempty"`
+	Clear       bool                           `json:"clear,omitempty"`
 }
 
 func (SetInteractionPayload) authoringPayload() {}
@@ -425,8 +419,8 @@ func validatePayload(payload authoringPayload) error {
 			return fmt.Errorf("%w: unsupported visibility %q", ErrInvalidPayload, *value.Visibility)
 		}
 		if value.Appearance != nil {
-			if err := dashboardappearance.ValidatePatch(*value.Appearance); err != nil {
-				return err
+			if value.Appearance.Icon != nil && strings.TrimSpace(*value.Appearance.Icon) == "" {
+				return fmt.Errorf("%w: appearance icon cannot be blank", ErrInvalidPayload)
 			}
 		}
 	case *SetVisibilityPayload:
@@ -435,7 +429,7 @@ func validatePayload(payload authoringPayload) error {
 		}
 	case *AddPagePayload:
 		if value.PageID != "" {
-			if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+			if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
 				return err
 			}
 		}
@@ -446,24 +440,20 @@ func validatePayload(payload authoringPayload) error {
 		if strings.TrimSpace(value.PageID) == "" {
 			return fmt.Errorf("%w: add visual requires page id", ErrInvalidPayload)
 		}
-		if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
 			return err
 		}
 		if strings.TrimSpace(value.VisualID) != "" {
-			if err := validateCanonicalBuilderIdentifier("visual id", value.VisualID); err != nil {
+			if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
 				return err
 			}
 		}
 		if strings.TrimSpace(value.ComponentID) != "" {
-			// Page component IDs use the schema's #ObjectID contract, which
-			// intentionally permits hyphens (for example, an existing
-			// "orders-card" placement). Keep explicit IDs backwards-compatible;
-			// only generated defaults need the stricter identifier form.
-			if err := validateBuilderIdentifier("component id", value.ComponentID); err != nil {
+			if err := validateCanonicalObjectID("component id", value.ComponentID); err != nil {
 				return err
 			}
 		}
-		if _, ok := VisualizationCapabilityForType(strings.TrimSpace(value.Type)); !ok {
+		if !canonicalVisualTypeSupported(document.DashboardVisualType(strings.TrimSpace(value.Type))) {
 			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
 		}
 	case *AssignFieldPayload:
@@ -472,10 +462,10 @@ func validatePayload(payload authoringPayload) error {
 				return fmt.Errorf("%w: assign field requires %s", ErrInvalidPayload, kind)
 			}
 		}
-		if err := validateBuilderIdentifier("page id", value.PageID); err != nil {
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
 			return err
 		}
-		if err := validateBuilderIdentifier("visual id", value.VisualID); err != nil {
+		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
 			return err
 		}
 		if !ValidGovernedFieldID(value.FieldID) {
@@ -488,38 +478,63 @@ func validatePayload(payload authoringPayload) error {
 		if value.Page.ID == "" {
 			return fmt.Errorf("%w: upsert page requires page id", ErrInvalidPayload)
 		}
+		if err := validateCanonicalObjectID("page id", value.Page.ID); err != nil {
+			return err
+		}
 	case *RemovePagePayload:
 		if strings.TrimSpace(value.PageID) == "" {
 			return fmt.Errorf("%w: remove page requires page id", ErrInvalidPayload)
+		}
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
 		}
 	case *UpsertVisualPayload:
 		if strings.TrimSpace(value.VisualID) == "" {
 			return fmt.Errorf("%w: upsert visual requires visual id", ErrInvalidPayload)
 		}
-		if (value.Visual.Chart == nil) == (value.Visual.Tabular == nil) {
-			return fmt.Errorf("%w: upsert visual requires exactly one visual variant", ErrInvalidPayload)
+		if value.Visual.Type == "" {
+			return fmt.Errorf("%w: upsert visual requires type", ErrInvalidPayload)
+		}
+		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
+			return err
 		}
 	case *RemoveVisualPayload:
 		if strings.TrimSpace(value.VisualID) == "" {
 			return fmt.Errorf("%w: remove visual requires visual id", ErrInvalidPayload)
 		}
+		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
+			return err
+		}
 	case *SetLayoutPayload:
 		if strings.TrimSpace(value.PageID) == "" {
 			return fmt.Errorf("%w: set layout requires page id", ErrInvalidPayload)
 		}
-		if value.Canvas == nil && value.Grid == nil && value.Placements == nil {
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.Layout == nil {
 			return fmt.Errorf("%w: set layout has no edits", ErrInvalidPayload)
 		}
 	case *SetFiltersPayload:
-		if value.Clear && (len(value.Definitions) != 0 || len(value.Bindings) != 0 || value.Application != nil) {
+		if value.Clear && len(value.Filters) != 0 {
 			return fmt.Errorf("%w: clear filters cannot include replacement values", ErrInvalidPayload)
 		}
-		if !value.Clear && len(value.Definitions) == 0 && len(value.Bindings) == 0 && value.Application == nil {
+		if !value.Clear && value.Filters == nil {
 			return fmt.Errorf("%w: set filters has no edits", ErrInvalidPayload)
 		}
 	case *SetInteractionPayload:
 		if strings.TrimSpace(value.PageID) == "" && strings.TrimSpace(value.VisualID) == "" {
 			return fmt.Errorf("%w: set interaction requires a page or visual id", ErrInvalidPayload)
+		}
+		if value.PageID != "" {
+			if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+				return err
+			}
+		}
+		if value.VisualID != "" {
+			if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
+				return err
+			}
 		}
 		if value.Clear && value.Interaction != nil {
 			return fmt.Errorf("%w: clear interaction cannot include replacement values", ErrInvalidPayload)
@@ -534,17 +549,9 @@ func validatePayload(payload authoringPayload) error {
 	return nil
 }
 
-func validateBuilderIdentifier(kind, value string) error {
-	value = strings.TrimSpace(value)
-	if value == "" || value != strings.TrimSpace(value) || !identifierPattern.MatchString(value) {
-		return fmt.Errorf("%w: invalid %s %q", ErrInvalidPayload, kind, value)
-	}
-	return nil
-}
-
-func validateCanonicalBuilderIdentifier(kind, value string) error {
+func validateCanonicalObjectID(kind, value string) error {
 	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || value != trimmed || !canonicalIdentifierPattern.MatchString(trimmed) {
+	if trimmed == "" || value != trimmed || !canonicalObjectIDPattern.MatchString(trimmed) {
 		return fmt.Errorf("%w: invalid canonical %s %q", ErrInvalidPayload, kind, value)
 	}
 	return nil
@@ -555,11 +562,11 @@ func validateCanonicalBuilderIdentifier(kind, value string) error {
 // model member (name) or a qualified physical dimension (table.field); no
 // expression, renderer alias, or raw SQL syntax is accepted.
 func ValidGovernedFieldID(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || value != strings.TrimSpace(value) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || value != trimmed {
 		return false
 	}
-	parts := strings.Split(value, ".")
+	parts := strings.Split(trimmed, ".")
 	if len(parts) > 2 {
 		return false
 	}
@@ -569,6 +576,14 @@ func ValidGovernedFieldID(value string) bool {
 		}
 	}
 	return true
+}
+
+// ValidSemanticMemberID accepts the unqualified semantic member identifiers
+// used by aggregate, pivot, histogram, and distribution query selections.
+// Physical table-qualified fields are reserved for records queries.
+func ValidSemanticMemberID(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed != "" && value == trimmed && validSemanticPart(trimmed)
 }
 
 func validSemanticPart(value string) bool {

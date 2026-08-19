@@ -99,6 +99,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_search.json) ·
               "id": {
                 "maxLength": 256,
                 "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
                 "type": "string"
               },
               "kind": {

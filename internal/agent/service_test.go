@@ -13,9 +13,9 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -1199,20 +1199,21 @@ func (fakeAgentMetrics) dashboardDefinition(id string) (dashboarddefinition.Defi
 	return dashboardfixture.Compile(report, model), model, true
 }
 
-func fakeAgentAuthoringReport() dashboardauthoring.Dashboard {
-	return dashboardauthoring.Dashboard{
-		ID:            "executive-sales",
-		Title:         "Executive Sales",
-		Description:   "Sales dashboard",
-		SemanticModel: "test",
-		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders": {Title: "Orders", Type: "bar", Query: dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count"}}}},
-		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"orders_table": {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id"}}},
-		})),
-		Pages: []dashboard.Page{{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{{ID: "orders", Kind: "visual", Visual: "orders"}, {ID: "orders-table", Kind: "visual", Visual: "orders_table"}}}},
+func fakeAgentAuthoringReport() dashboarddocument.DashboardDocument {
+	metric := "order_count"
+	field := "order_id"
+	return dashboarddocument.DashboardDocument{
+		APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1,
+		Kind:       dashboarddocument.DashboardResourceKindDashboard,
+		Metadata:   dashboarddocument.DashboardMetadata{ID: "executive-sales", Name: "executive-sales", DisplayName: agentStringPtr("Executive Sales"), Description: agentStringPtr("Sales dashboard")},
+		Spec: dashboarddocument.DashboardSpec{SemanticModel: "test", Visuals: map[string]dashboarddocument.DashboardVisual{
+			"orders":       {Type: dashboarddocument.DashboardVisualTypeBar, Title: agentStringPtr("Orders"), Query: dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Metrics: []dashboarddocument.DashboardMetricSelection{{String: &metric}}}}, Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.CartesianDashboardPresentation{Type: "cartesian"}}},
+			"orders_table": {Type: dashboarddocument.DashboardVisualTypeTable, Title: agentStringPtr("Orders"), Query: dashboarddocument.DashboardQuery{Value: &dashboarddocument.RecordsDashboardQuery{Type: "records", Dataset: "orders", Fields: []dashboarddocument.DashboardRecordFieldSelection{{String: &field}}}}, Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.TableDashboardPresentation{Type: "table", RowHeight: 36, ShowHeader: true, Striped: false}}},
+		}, Pages: []dashboarddocument.DashboardPage{{ID: "overview", Title: "Overview", Components: []dashboarddocument.DashboardPageComponent{{Value: &dashboarddocument.VisualDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: "orders", Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}}, Type: "visual", Visual: "orders"}}, {Value: &dashboarddocument.VisualDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: "orders-table", Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4}}, Type: "visual", Visual: "orders_table"}}}}}},
 	}
 }
+
+func agentStringPtr(value string) *string { return &value }
 
 func fakeSemanticModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
@@ -1223,13 +1224,17 @@ func fakeSemanticModel() *semanticmodel.Model {
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source:      "orders",
-				Entities:    map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+				Execution:   semanticmodel.ExecutionDefinition{Source: "orders"},
+				Entities:    map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
 				GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {},
 				},
 			},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"order_id": {Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Dataset: "orders", Aggregation: "count_distinct", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero"},
@@ -1277,41 +1282,25 @@ func (largeDashboardMetrics) dashboardDefinition(id string) (dashboarddefinition
 		return dashboarddefinition.Definition{}, nil, false
 	}
 	report, model := fakeAgentAuthoringReport(), fakeSemanticModel()
-	report.Pages = make([]dashboard.Page, 0, 24)
-	report.Visuals = map[string]dashboardauthoring.AuthoringVisualization{}
+	report.Spec.Pages = make([]dashboarddocument.DashboardPage, 0, 24)
+	report.Spec.Visuals = map[string]dashboarddocument.DashboardVisual{}
 	for pageIndex := 1; pageIndex <= 24; pageIndex++ {
 		chartID := fmt.Sprintf("chart_%02d", pageIndex)
 		kpiID := fmt.Sprintf("kpi_%02d", pageIndex)
 		tableID := fmt.Sprintf("table_%02d", pageIndex)
-		report.Visuals[chartID] = dashboardauthoring.ChartVisualization(dashboardauthoring.Visual{
-			Title:       fmt.Sprintf("Chart %02d", pageIndex),
-			Description: largeDashboardPayloadMarker + strings.Repeat("x", 4096),
-			Type:        "bar",
-			Query:       dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count"}}},
-		})
-		report.Visuals[kpiID] = dashboardauthoring.ChartVisualization(dashboardauthoring.Visual{
-			Title:       fmt.Sprintf("KPI %02d", pageIndex),
-			Description: largeDashboardPayloadMarker + strings.Repeat("y", 4096),
-			Type:        "kpi",
-			Query:       dashboardauthoring.VisualQuery{Metrics: []dashboardauthoring.FieldRef{{Field: "order_count"}}},
-		})
-		report.Visuals[tableID] = dashboardauthoring.TabularVisualization("table", dashboardauthoring.TableVisual{
-			Title: fmt.Sprintf("Table %02d", pageIndex),
-			Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id"}},
-			Columns: []dashboard.TableColumn{{
-				Key:   largeDashboardPayloadMarker + strings.Repeat("z", 4096),
-				Label: "Large Column",
-			}},
-		})
-		report.Pages = append(report.Pages, dashboard.Page{
-			ID:    fmt.Sprintf("page_%02d", pageIndex),
-			Title: fmt.Sprintf("Page %02d", pageIndex),
-			Visuals: []dashboard.PageVisual{
-				{ID: chartID, Kind: "visual", Visual: chartID},
-				{ID: kpiID, Kind: "visual", Visual: kpiID},
-				{ID: tableID, Kind: "visual", Visual: tableID},
-			},
-		})
+		chartTitle, chartDescription := fmt.Sprintf("Chart %02d", pageIndex), largeDashboardPayloadMarker+strings.Repeat("x", 4096)
+		kpiTitle, kpiDescription := fmt.Sprintf("KPI %02d", pageIndex), largeDashboardPayloadMarker+strings.Repeat("y", 4096)
+		metric := "order_count"
+		field := "order_id"
+		report.Spec.Visuals[chartID] = dashboarddocument.DashboardVisual{Type: dashboarddocument.DashboardVisualTypeBar, Title: &chartTitle, Description: &chartDescription, Query: dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Metrics: []dashboarddocument.DashboardMetricSelection{{String: &metric}}}}, Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.CartesianDashboardPresentation{Type: "cartesian"}}}
+		report.Spec.Visuals[kpiID] = dashboarddocument.DashboardVisual{Type: dashboarddocument.DashboardVisualTypeKpi, Title: &kpiTitle, Description: &kpiDescription, Query: dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Metrics: []dashboarddocument.DashboardMetricSelection{{String: &metric}}}}, Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.KPIDashboardPresentation{Type: "kpi"}}}
+		tableTitle := fmt.Sprintf("Table %02d", pageIndex)
+		report.Spec.Visuals[tableID] = dashboarddocument.DashboardVisual{Type: dashboarddocument.DashboardVisualTypeTable, Title: &tableTitle, Query: dashboarddocument.DashboardQuery{Value: &dashboarddocument.RecordsDashboardQuery{Type: "records", Dataset: "orders", Fields: []dashboarddocument.DashboardRecordFieldSelection{{String: &field}}}}, Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.TableDashboardPresentation{Type: "table", RowHeight: 36, ShowHeader: true, Striped: false}}}
+		report.Spec.Pages = append(report.Spec.Pages, dashboarddocument.DashboardPage{ID: fmt.Sprintf("page_%02d", pageIndex), Title: fmt.Sprintf("Page %02d", pageIndex), Components: []dashboarddocument.DashboardPageComponent{
+			{Value: &dashboarddocument.VisualDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: chartID, Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 4}}, Type: "visual", Visual: chartID}},
+			{Value: &dashboarddocument.VisualDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: kpiID, Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 5, Row: 1, ColumnSpan: 4, RowSpan: 4}}, Type: "visual", Visual: kpiID}},
+			{Value: &dashboarddocument.VisualDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: tableID, Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 9, Row: 1, ColumnSpan: 4, RowSpan: 4}}, Type: "visual", Visual: tableID}},
+		}})
 	}
 	return dashboardfixture.Compile(report, model), model, true
 }

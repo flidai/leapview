@@ -33,6 +33,7 @@ type TimeSemantics struct {
 type BindingSpec struct {
 	ValueKind  ValueKind
 	Default    Expression
+	Required   bool
 	Selection  SelectionPolicy
 	Editable   bool
 	Time       TimeSemantics
@@ -80,8 +81,9 @@ type CommandResult struct {
 }
 
 var (
-	ErrStaleRevision = errors.New("filter state revision is stale")
-	ErrBindingLocked = errors.New("filter binding is locked")
+	ErrStaleRevision  = errors.New("filter state revision is stale")
+	ErrBindingLocked  = errors.New("filter binding is locked")
+	ErrFilterRequired = errors.New("filter binding is required")
 )
 
 type IdempotencyRecord struct {
@@ -134,6 +136,9 @@ func NewMachine(mode ApplicationMode, bindings map[string]BindingSpec) *Machine 
 		}
 		if !predicateAllowed(canonical, binding.Predicates) {
 			panic(fmt.Sprintf("compiled default for binding %q uses disallowed predicate %q operator %q", key, canonical.Kind, canonical.Operator))
+		}
+		if binding.Required && canonical.Kind == ExpressionUnfiltered {
+			panic(fmt.Sprintf("required filter binding %q cannot have an unfiltered default", key))
 		}
 		machine.bindings[key] = bindingWithDefault(binding, canonical)
 		applied, err := machine.resolve(key, canonical, evaluatedAt)
@@ -192,6 +197,9 @@ func (machine *Machine) validateRestoredState() error {
 		}
 		if !predicateAllowed(applied.Expression, binding.Predicates) {
 			return fmt.Errorf("restored binding %q expression uses a disallowed predicate", key)
+		}
+		if binding.Required && applied.Expression.Kind == ExpressionUnfiltered {
+			return fmt.Errorf("restored binding %q is required", key)
 		}
 		if _, err := Canonicalize(applied.ResolvedExpression, binding.ValueKind); err != nil {
 			return fmt.Errorf("restored binding %q resolved expression: %w", key, err)
@@ -310,6 +318,9 @@ func (machine *Machine) mutate(command Command) error {
 	}
 	if !predicateAllowed(canonical, binding.Predicates) {
 		return fmt.Errorf("filter predicate %q operator %q is not allowed", canonical.Kind, canonical.Operator)
+	}
+	if binding.Required && canonical.Kind == ExpressionUnfiltered {
+		return fmt.Errorf("%w: %s", ErrFilterRequired, command.BindingKey)
 	}
 	if machine.mode == ApplicationDeferred {
 		machine.state.DraftControls[command.BindingKey] = canonical

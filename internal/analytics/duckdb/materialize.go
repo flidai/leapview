@@ -2,8 +2,10 @@ package duckdb
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	extensiondomain "github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -29,11 +32,18 @@ type SourceRuntime struct {
 	db                 analyticsresource.SessionProvider
 	resolver           CredentialResolver
 	connectionResolver analyticsruntime.ConnectionResolver
+	extensionAdmission ExtensionAdmission
 }
 
-type extensionProvider interface {
-	EnsureExtension(context.Context, string) error
-}
+// AdmittedExtension is immutable evidence for one exact, already verified
+// extension artifact. The path is target-owned and never enters authored
+// resources or fingerprints.
+type AdmittedExtension = extensiondomain.AdmittedExtension
+
+// ExtensionAdmission is supplied by the deployment/runtime host after it has
+// verified the pinned extension artifact. Source preparation never acquires or
+// installs extensions; it loads only the exact path returned here.
+type ExtensionAdmission = extensiondomain.Admission
 
 type fatalReporter interface {
 	MarkFatal(error)
@@ -47,6 +57,10 @@ type refreshTelemetry interface {
 
 func NewSourceRuntime(db analyticsresource.SessionProvider) *SourceRuntime {
 	return &SourceRuntime{db: db, resolver: NonSecretCredentialResolver{}}
+}
+
+func NewSourceRuntimeWithExtensionAdmission(db analyticsresource.SessionProvider, admission ExtensionAdmission) *SourceRuntime {
+	return &SourceRuntime{db: db, resolver: NonSecretCredentialResolver{}, extensionAdmission: admission}
 }
 
 func NewSourceRuntimeWithCredentials(db analyticsresource.SessionProvider, resolver CredentialResolver) *SourceRuntime {
@@ -70,14 +84,15 @@ var refreshSessionSequence atomic.Uint64
 var sourceScopeLocks sync.Map
 
 type PreparedSources struct {
-	model     *semanticmodel.Model
-	session   analyticsresource.Session
-	relations map[string]string
-	tables    []string
-	once      sync.Once
-	closeErr  error
-	reporter  fatalReporter
-	telemetry refreshTelemetry
+	model           *semanticmodel.Model
+	session         analyticsresource.Session
+	relations       map[string]stagedRelation
+	relationQueries map[string]string
+	tables          []string
+	once            sync.Once
+	closeErr        error
+	reporter        fatalReporter
+	telemetry       refreshTelemetry
 }
 
 func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model) (analyticsmaterialize.PreparedSources, error) {
@@ -91,21 +106,40 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 	if err != nil {
 		return nil, err
 	}
+	closeSession := true
+	defer func() {
+		if closeSession {
+			if closer, ok := session.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+		}
+	}()
 	resolved, err := r.resolveCredentials(ctx, model)
 	if err != nil {
 		return nil, err
 	}
 	telemetry, _ := r.db.(refreshTelemetry)
-	if extensions, ok := r.db.(extensionProvider); ok {
-		for _, extension := range RequiredExtensions(resolved) {
-			if err := extensions.EnsureExtension(ctx, extension); err != nil {
+	requiredExtensions := RequiredExtensions(resolved)
+	if len(requiredExtensions) > 0 {
+		if r.extensionAdmission == nil {
+			return nil, fmt.Errorf("source preparation requires extension admission for %s", strings.Join(requiredExtensions, ", "))
+		}
+		for _, extension := range requiredExtensions {
+			admitted, err := r.extensionAdmission.AdmitExtension(ctx, extension)
+			if err != nil {
+				return nil, fmt.Errorf("extension %s was not admitted: %w", extension, err)
+			}
+			if err := validateAdmittedExtension(extension, admitted); err != nil {
 				return nil, err
+			}
+			if _, err := session.ExecContext(ctx, loadExtensionStatement(admitted.Path)); err != nil {
+				return nil, fmt.Errorf("loading admitted extension %s: %w", extension, err)
 			}
 		}
 	}
 	releaseScopes := lockSourceScopes(resolved, telemetry)
 	defer releaseScopes()
-	prepared := &PreparedSources{model: resolved, session: session, relations: map[string]string{}, telemetry: telemetry}
+	prepared := &PreparedSources{model: resolved, session: session, relations: map[string]stagedRelation{}, relationQueries: map[string]string{}, telemetry: telemetry}
 	prepared.reporter, _ = r.db.(fatalReporter)
 	for _, sourceName := range sortedKeys(resolved.Sources) {
 		source := resolved.Sources[sourceName]
@@ -123,6 +157,11 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 			}
 			source.Schema = semanticmodel.TableSchema{Columns: columns}
 			resolved.Sources[sourceName] = source
+			// Keep the resolved relation on the live prepared session so the
+			// freshness observation seam can query it before Close releases the
+			// target-owned connection.
+			prepared.relations[sourceName] = stagedRelation{value: relation, kind: stagedRelationQuery}
+			prepared.relationQueries[sourceName] = "(" + relation + ")"
 			original := model.Sources[sourceName]
 			original.Schema = source.Schema
 			model.Sources[sourceName] = original
@@ -160,7 +199,8 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 			return nil, safeSourceError(sourceName, err)
 		}
 		prepared.tables = append(prepared.tables, table)
-		prepared.relations[sourceName] = quoteIdentifier(table)
+		prepared.relations[sourceName] = stagedRelation{value: quoteIdentifier(table), kind: stagedRelationTable}
+		prepared.relationQueries[sourceName] = quoteIdentifier(table)
 		columns, err := describeRelationSchema(ctx, session, quoteIdentifier(table))
 		if err != nil {
 			observeSource(telemetry, connection.Kind, "failed")
@@ -186,7 +226,35 @@ func (r *SourceRuntime) Prepare(ctx context.Context, model *semanticmodel.Model)
 		_ = prepared.Close()
 		return nil, fmt.Errorf("validating staged source schemas: %w", err)
 	}
+	closeSession = false
 	return prepared, nil
+}
+
+func validateAdmittedExtension(requested string, admitted AdmittedExtension) error {
+	if strings.TrimSpace(admitted.Name) != requested {
+		return fmt.Errorf("extension admission returned %q for requested %q", admitted.Name, requested)
+	}
+	if strings.TrimSpace(admitted.Identity) == "" || strings.TrimSpace(admitted.Version) == "" || strings.TrimSpace(admitted.Platform) == "" {
+		return fmt.Errorf("extension %s admission is missing immutable identity, version, or platform", requested)
+	}
+	digest := strings.TrimSpace(admitted.Digest)
+	if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
+		return fmt.Errorf("extension %s admission digest must be sha256:<64 hex characters>", requested)
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:")); err != nil {
+		return fmt.Errorf("extension %s admission digest is not canonical sha256: %w", requested, err)
+	}
+	base := filepath.Base(admitted.Path)
+	stem := strings.TrimSuffix(base, ".duckdb_extension")
+	expectedStem := extensiondomain.ArtifactFilenameStem(requested)
+	if !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(base, ".duckdb_extension") || stem != expectedStem && !strings.HasPrefix(stem, expectedStem+"-") {
+		return fmt.Errorf("extension %s admission path must be absolute", requested)
+	}
+	return nil
+}
+
+func loadExtensionStatement(path string) string {
+	return "LOAD '" + strings.ReplaceAll(filepath.ToSlash(path), "'", "''") + "'"
 }
 
 func refreshSourceModel(model *semanticmodel.Model, sourceName string, source semanticmodel.Source) *semanticmodel.Model {
@@ -273,11 +341,16 @@ func (r *SourceRuntime) resolveCredentials(ctx context.Context, model *semanticm
 			// serving-state bindings by Runtime Host. They must never be
 			// replaced by a secret-backed target connection.
 		} else if r.connectionResolver != nil {
+			// The target-bound resolver supplies endpoint/scope even for public
+			// connections; its no-auth binding deliberately contributes no Auth.
 			var err error
 			connection, err = r.connectionResolver.Resolve(ctx, name, connection)
 			if err != nil {
 				return nil, err
 			}
+		} else if connection.Access == semanticmodel.ConnectionAccessPublic {
+			// Authored public connectors need no resolver and carry no auth.
+			connection.Auth = nil
 		} else {
 			auth, err := r.resolver.Resolve(ctx, name, connection)
 			if err != nil {
@@ -304,6 +377,145 @@ func (r *SourceRuntime) resolveCredentials(ctx context.Context, model *semanticm
 
 func (p *PreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table) (analyticsmaterialize.ModelTablePlan, error) {
 	return planModelTable(ctx, p.session, p.model, tableName, table, p.relations)
+}
+
+// SourceObservations captures all source evidence while the resolved source
+// session remains live.  The returned record contains only schemas and
+// target-owned timestamps/revision tokens; no relation text or credentials
+// leave this seam.
+func (p *PreparedSources) SourceObservations(ctx context.Context) ([]analyticsmaterialize.SourceObservation, error) {
+	if p == nil || p.session == nil {
+		return nil, fmt.Errorf("prepared source session is unavailable")
+	}
+	ids := sortedKeys(p.model.Sources)
+	result := make([]analyticsmaterialize.SourceObservation, 0, len(ids))
+	budget := analyticsmaterialize.ObservationBudgetFromContext(ctx)
+	started := time.Now()
+	if budget.MaxMillis > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(budget.MaxMillis)*time.Millisecond)
+		defer cancel()
+	}
+	queries := 0
+	for _, id := range ids {
+		if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
+			failure := analyticsmaterialize.ObservationBounds
+			if budget.MaxMillis > 0 && (ctx.Err() != nil || time.Since(started).Milliseconds() >= budget.MaxMillis) {
+				failure = analyticsmaterialize.ObservationTimeout
+			}
+			for _, remaining := range ids[len(result):] {
+				result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: failure})
+			}
+			break
+		}
+		sourceStarted := time.Now()
+		sourceQueries := 0
+		sourceRows := int64(0)
+		source := p.model.Sources[id]
+		relation := p.relationQueries[id]
+		if relation == "" {
+			result = append(result, analyticsmaterialize.SourceObservation{ID: id, SchemaFailure: analyticsmaterialize.ObservationUnavailable})
+			continue
+		}
+		// Re-describe the prepared relation on this still-live session. The
+		// schema carried on the semantic model is only a refresh aid; the gate
+		// evidence must reflect the exact target relation acquired for this
+		// candidate.
+		columns, err := describeRelationSchema(ctx, p.session, relation)
+		if err != nil {
+			failure := sourceObservationFailure(ctx, budget, err)
+			queries++
+			result = append(result, analyticsmaterialize.SourceObservation{ID: id, SchemaFailure: failure, ObservationQueries: 1, ObservationMillis: time.Since(sourceStarted).Milliseconds()})
+			if failure == analyticsmaterialize.ObservationTimeout || failure == analyticsmaterialize.ObservationBounds {
+				for _, remaining := range ids[len(result):] {
+					result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: failure})
+				}
+				break
+			}
+			continue
+		}
+		queries++
+		sourceQueries++
+		sourceRows += int64(len(columns))
+		observation := analyticsmaterialize.SourceObservation{ID: id, Schema: append([]semanticmodel.ColumnSchema(nil), columns...)}
+		observation.ObservationQueries = sourceQueries
+		observation.ObservationRows = sourceRows
+		if source.Freshness != nil && source.Freshness.Basis == "revision" {
+			// The typed revision contract is a canonical UTC timestamp and thus
+			// supplies the observation used for freshness age. Connectors may
+			// replace it with equivalent target metadata when available.
+			observation.Revision = source.Freshness.Revision
+			if source.Freshness.RevisionAt != nil {
+				observation.RevisionObserved = source.Freshness.RevisionAt.UTC()
+				observation.FreshnessObserved = observation.RevisionObserved
+			}
+		} else if source.Freshness != nil && source.Freshness.Basis == "field" {
+			field := source.Freshness.Field
+			if relation == "" || field == "" {
+				observation.FreshnessFailure = analyticsmaterialize.ObservationUnavailable
+				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
+				result = append(result, observation)
+				continue
+			}
+			if budget.MaxQueries > 0 && queries >= budget.MaxQueries || budget.MaxMillis > 0 && time.Since(started).Milliseconds() >= budget.MaxMillis {
+				failure := analyticsmaterialize.ObservationBounds
+				if budget.MaxMillis > 0 && (ctx.Err() != nil || time.Since(started).Milliseconds() >= budget.MaxMillis) {
+					failure = analyticsmaterialize.ObservationTimeout
+				}
+				observation.FreshnessFailure = failure
+				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
+				result = append(result, observation)
+				for _, remaining := range ids[len(result):] {
+					result = append(result, analyticsmaterialize.SourceObservation{ID: remaining, SchemaFailure: failure})
+				}
+				break
+			}
+			row := p.session.QueryRowContext(ctx, "SELECT MAX(\""+strings.ReplaceAll(field, "\"", "\"\"")+"\") FROM ("+relation+")")
+			var value any
+			if err := row.Scan(&value); err != nil {
+				observation.FreshnessFailure = sourceObservationFailure(ctx, budget, err)
+				queries++
+				observation.ObservationQueries++
+				observation.ObservationMillis = time.Since(sourceStarted).Milliseconds()
+				result = append(result, observation)
+				continue
+			}
+			queries++
+			sourceQueries++
+			observation.ObservationQueries++
+			observation.FreshnessObserved = sourceObservationTime(value)
+			observation.FreshnessEmpty = value == nil
+		}
+		result = append(result, observation)
+		result[len(result)-1].ObservationRows = sourceRows
+		result[len(result)-1].ObservationMillis = time.Since(sourceStarted).Milliseconds()
+	}
+	return result, nil
+}
+
+func sourceObservationFailure(ctx context.Context, budget analyticsmaterialize.ObservationBudget, err error) analyticsmaterialize.ObservationFailure {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || budget.MaxMillis > 0 && ctx.Err() != nil {
+		return analyticsmaterialize.ObservationTimeout
+	}
+	return analyticsmaterialize.ObservationUnavailable
+}
+
+func sourceObservationTime(value any) time.Time {
+	switch value := value.(type) {
+	case time.Time:
+		return value.UTC()
+	case *time.Time:
+		if value != nil {
+			return value.UTC()
+		}
+	case string:
+		for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05", "2006-01-02"} {
+			if parsed, err := time.Parse(layout, value); err == nil {
+				return parsed.UTC()
+			}
+		}
+	}
+	return time.Time{}
 }
 
 func (p *PreparedSources) Close() error {
@@ -376,6 +588,7 @@ type ProjectRuntimeConfig struct {
 	Database                 analyticsruntime.ProjectDatabase
 	CredentialResolver       CredentialResolver
 	ConnectionResolver       analyticsruntime.ConnectionResolver
+	ExtensionAdmission       ExtensionAdmission
 	SnapshotID               int64
 	ServingStateID           string
 	ProjectID                projectgraph.ResourceID
@@ -406,6 +619,7 @@ type ProjectRuntime struct {
 	views                map[string]*analyticsmaterialize.Runtime
 	lastRefresh          time.Time
 	lastSnapshotID       int64
+	sourceObservations   []analyticsmaterialize.SourceObservation
 	commitMetadata       map[string]string
 	cacheScope           *resultcache.Scope
 }
@@ -449,8 +663,14 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		}
 	}
 	sources := NewSourceRuntimeWithCredentials(db, config.CredentialResolver)
+	if config.ExtensionAdmission != nil {
+		sources.extensionAdmission = config.ExtensionAdmission
+	}
 	if config.ConnectionResolver != nil {
 		sources = NewSourceRuntimeWithConnectionResolver(db, config.ConnectionResolver)
+		if config.ExtensionAdmission != nil {
+			sources.extensionAdmission = config.ExtensionAdmission
+		}
 	}
 	materializationModel, err := physicalProjectModel(config.Models)
 	if err != nil {
@@ -937,10 +1157,18 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 	if r.committer == nil {
 		if len(tableNames) > 0 {
 			lastRefresh, err := analyticsmaterialize.RefreshModelTables(ctx, r.db, prepared, model, tableNames)
-			return lastRefresh, 0, errors.Join(err, prepared.Close())
+			observations, observationErr := captureSourceObservations(ctx, prepared)
+			if err == nil && observationErr == nil {
+				r.sourceObservations = observations
+			}
+			return lastRefresh, 0, errors.Join(err, observationErr, prepared.Close())
 		}
 		lastRefresh, err := analyticsmaterialize.Refresh(ctx, r.db, prepared, model)
-		return lastRefresh, 0, errors.Join(err, prepared.Close())
+		observations, observationErr := captureSourceObservations(ctx, prepared)
+		if err == nil && observationErr == nil {
+			r.sourceObservations = observations
+		}
+		return lastRefresh, 0, errors.Join(err, observationErr, prepared.Close())
 	}
 	metadata := map[string]string{}
 	for key, value := range r.commitMetadata {
@@ -959,10 +1187,24 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 		_ = prepared.Close()
 		return time.Time{}, 0, err
 	}
+	observations, observationErr := captureSourceObservations(ctx, prepared)
+	if observationErr != nil {
+		_ = prepared.Close()
+		return time.Time{}, 0, observationErr
+	}
+	r.sourceObservations = observations
 	if err := prepared.Close(); err != nil {
 		return time.Time{}, 0, fmt.Errorf("cleaning refresh staging: %w", err)
 	}
 	return time.Now(), snapshotID, nil
+}
+
+func captureSourceObservations(ctx context.Context, prepared analyticsmaterialize.PreparedSources) ([]analyticsmaterialize.SourceObservation, error) {
+	provider, ok := prepared.(analyticsmaterialize.SourceObservationProvider)
+	if !ok {
+		return nil, nil
+	}
+	return provider.SourceObservations(ctx)
 }
 
 func (r *ProjectRuntime) acquireOperation(ctx context.Context) (context.Context, func(), error) {
@@ -1033,6 +1275,22 @@ func (r *ProjectRuntime) LastRefresh() time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.lastRefresh
+}
+
+// SourceObservations returns source evidence captured during the latest live
+// refresh. It never resolves authored paths or opens a new credential session.
+func (r *ProjectRuntime) SourceObservations() []analyticsmaterialize.SourceObservation {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]analyticsmaterialize.SourceObservation, len(r.sourceObservations))
+	for i, item := range r.sourceObservations {
+		result[i] = item
+		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), item.Schema...)
+	}
+	return result
 }
 
 func (r *ProjectRuntime) DBPath() string {
@@ -1155,11 +1413,9 @@ func sourcePhysicalSignature(source semanticmodel.Source) semanticmodel.Source {
 }
 
 type tablePhysicalSignatureValue struct {
-	Source             string
-	Sources            []string
-	Transform          semanticmodel.Transform
+	Execution          semanticmodel.ExecutionDefinition
 	Columns            map[string]semanticmodel.ModelColumn
-	Entities           map[string]semanticmodel.ModelEntitySpec
+	Entities           map[string]semanticmodel.EntityDefinition
 	GrainEntity        string
 	SourceDependencies []string
 	ModelDependencies  []string
@@ -1167,9 +1423,7 @@ type tablePhysicalSignatureValue struct {
 
 func tablePhysicalSignature(table semanticmodel.Table) tablePhysicalSignatureValue {
 	return tablePhysicalSignatureValue{
-		Source:             table.Source,
-		Sources:            append([]string{}, table.Sources...),
-		Transform:          table.Transform,
+		Execution:          table.Execution,
 		Columns:            table.Columns,
 		Entities:           table.Entities,
 		GrainEntity:        table.GrainEntity,

@@ -19,6 +19,7 @@ import (
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -73,7 +74,10 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("configure development credential resolver: %v", err)
 	}
-	db, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(t.TempDir(), "ducklake"), MaxConnections: 2})
+	admission := newTestExactExtensionAdmission(t, "ducklake", "httpfs")
+	db, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
+		RootDir: filepath.Join(t.TempDir(), "ducklake"), MaxConnections: 2, ExtensionAdmission: admission,
+	})
 	require.NoError(t, err)
 	defer db.Close()
 	controller, err := workload.New(workload.DefaultConfig())
@@ -85,6 +89,7 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 		Models:             map[string]*semanticmodel.Model{"commerce": model},
 		Database:           db,
 		CredentialResolver: credentialResolver,
+		ExtensionAdmission: admission,
 		ProjectID:          "project:commerce",
 		Environment:        "test",
 	})
@@ -194,11 +199,11 @@ func minIOModel(bucket, key string) *semanticmodel.Model {
 			"lake": {Kind: "s3", Scope: scope, Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_TEST_MINIO_CREDENTIALS"}},
 		},
 		Sources: map[string]semanticmodel.Source{
-			"orders": {Connection: "lake", Path: "s3://" + bucket + "/commerce/" + key, Format: "parquet"},
+			"orders": {Connection: "lake", Path: "s3://" + bucket + "/commerce/" + key, Format: "parquet", EffectivePathLocation: &projectcontracts.PathSourceLocation{Value: &projectcontracts.ParquetPathSourceLocation{PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "s3://" + bucket + "/commerce/" + key, Format: "parquet"}, Format: "parquet", Options: projectcontracts.DefaultParquetReaderOptions()}}},
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Datatype: semanticmodel.DataTypeString},
 					"revenue":  {Type: "number", Datatype: semanticmodel.DataTypeFloat},

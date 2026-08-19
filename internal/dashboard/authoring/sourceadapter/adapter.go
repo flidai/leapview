@@ -12,6 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -86,7 +87,7 @@ type Provenance struct {
 // metadata are detached copies and are safe for callers to mutate.
 type Source struct {
 	Ref        SourceRef
-	Document   authoring.Dashboard
+	Document   document.DashboardDocument
 	Metadata   authoring.AuthoredDashboardMetadata
 	Lifecycle  *authoring.DashboardLifecycle
 	Provenance Provenance
@@ -121,19 +122,17 @@ type AcquireRuntime func(context.Context) (projectruntime.Lease, error)
 // project source operations. Authoring is the existing transactional service
 // used for forks; adapters never write its repository directly.
 type Options struct {
-	Repository      PublishedRepository
-	Authorizer      service.Authorizer
-	AcquireRuntime  AcquireRuntime
-	Authoring       *service.Service
-	ExportDashboard authoring.DashboardExporter
+	Repository     PublishedRepository
+	Authorizer     service.Authorizer
+	AcquireRuntime AcquireRuntime
+	Authoring      *service.Service
 }
 
 type Adapter struct {
-	repository      PublishedRepository
-	authorizer      service.Authorizer
-	acquireRuntime  AcquireRuntime
-	authoring       *service.Service
-	exportDashboard authoring.DashboardExporter
+	repository     PublishedRepository
+	authorizer     service.Authorizer
+	acquireRuntime AcquireRuntime
+	authoring      *service.Service
 }
 
 func New(options Options) (*Adapter, error) {
@@ -149,7 +148,6 @@ func New(options Options) (*Adapter, error) {
 	return &Adapter{
 		repository: options.Repository, authorizer: options.Authorizer,
 		acquireRuntime: options.AcquireRuntime, authoring: options.Authoring,
-		exportDashboard: options.ExportDashboard,
 	}, nil
 }
 
@@ -259,7 +257,7 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 	if revision.DashboardID != ref.DashboardID || !sameToken(revision.Token(), selectedToken) {
 		return Source{}, fmt.Errorf("selected authored revision pointer does not match retained authored revision")
 	}
-	if revision.Document.SemanticModel != lifecycle.SemanticModel {
+	if revision.Document.Spec.SemanticModel != lifecycle.SemanticModel.String() {
 		return Source{}, fmt.Errorf("published authored revision semantic model does not match lifecycle")
 	}
 	document, err := revision.Document.Clone()
@@ -323,10 +321,10 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 		return Source{}, sourceUnavailable(ref, nil)
 	}
 	if retained.Metadata.Project != ref.ProjectID ||
-		strings.TrimSpace(retained.Metadata.Name) != ref.DashboardID.String() || retained.Document.ID != ref.DashboardID {
+		strings.TrimSpace(retained.Metadata.Name) != ref.DashboardID.String() || retained.Document.Metadata.ID != ref.DashboardID.String() {
 		return Source{}, fmt.Errorf("retained project source identity does not match request")
 	}
-	if err := retained.Document.ValidateDraftStructure(); err != nil {
+	if err := authoring.ValidateCanonicalDocument(retained.Document); err != nil {
 		return Source{}, err
 	}
 	document, err := retained.Document.Clone()
@@ -381,15 +379,10 @@ func (a *Adapter) ExportDraft(ctx context.Context, request ExportRequest) ([]byt
 }
 
 func (a *Adapter) exportSource(source Source) ([]byte, error) {
-	if a.exportDashboard == nil {
-		return nil, fmt.Errorf("dashboard source exporter is not configured")
-	}
-	return a.exportDashboard(source.Document, authoring.DashboardExportMetadata{
-		Name: source.Metadata.Name, Project: source.Metadata.Project,
-		Title: source.Metadata.Title, Description: source.Metadata.Description,
-		Owner: source.Metadata.Owner, Domain: source.Metadata.Domain,
-		Tags: append([]string(nil), source.Metadata.Tags...),
-	})
+	// Source bytes are emitted directly from the generated canonical DTO. The
+	// adapter never accepts a compiler definition or a legacy authoring object
+	// as an export source, so every authored field survives the round trip.
+	return document.EncodeYAML(source.Document)
 }
 
 // ForkRequest copies a source into a new private authoring draft. Source

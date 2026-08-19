@@ -17,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticssqlite "github.com/flidai/leapview/internal/analytics/sqlite"
+	"github.com/flidai/leapview/internal/extension"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
 	"github.com/prometheus/client_golang/prometheus"
@@ -52,6 +53,7 @@ type Config struct {
 	RuntimeCacheBytes         int64
 	NodeCacheEntries          int
 	NodeCacheBytes            int64
+	ExtensionAdmission        extension.Admission
 }
 
 type Resources interface {
@@ -146,7 +148,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		environment, err = analyticsducklake.Open(ctx, analyticsducklake.Config{
 			RootDir: config.RootDir, CatalogPath: config.CatalogPath, DataPath: config.DataPath,
 			MaxConnections: config.MaxConnections, MemoryMaxBytes: config.MemoryMaxBytes,
-			TempMaxBytes: config.TempMaxBytes, MaxThreads: config.MaxThreads, TempDir: config.TempDir,
+			TempMaxBytes: config.TempMaxBytes, MaxThreads: config.MaxThreads, TempDir: config.TempDir, ExtensionAdmission: config.ExtensionAdmission,
 		})
 		if err != nil {
 			return nil, err
@@ -190,7 +192,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			Limits: analyticsduckdb.TargetRuntimeLimits{
 				MemoryMaxBytes: memoryMax, TempMaxBytes: tempMax, MaxThreads: maxThreads,
 			},
-			RequireTLS: targetClass == connectionbinding.TargetProduction,
+			RequireTLS:         targetClass == connectionbinding.TargetProduction,
+			ExtensionAdmission: config.ExtensionAdmission,
 		},
 	)
 	if err != nil {
@@ -301,19 +304,26 @@ func (m *Module) ensureConnectionPools(
 	pools, err := connectionbinding.NewPoolDirectory(connectionbinding.PoolDirectoryConfig{
 		Build: func(binding connectionbinding.TargetBinding) (*connectionbinding.PoolManager, error) {
 			if binding.TargetID != connectionbinding.TargetID(m.targetID) ||
-				binding.Scope.Environment != m.targetEnvironment ||
-				binding.AuthenticationMode != connectionbinding.AuthenticationExternalBundle {
+				binding.Scope.Environment != m.targetEnvironment {
 				return nil, connectionbinding.ErrUnauthorizedBinding
 			}
-			resolver, err := connectionbinding.SelectResolver(
-				connectionbinding.ResolverSelection{
-					TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
-					TargetClass: m.targetClass, Kind: m.connectionResolverKind(),
-				},
-				m.targetResolvers,
-			)
-			if err != nil {
-				return nil, err
+			var resolver connectionbinding.CredentialResolver
+			if binding.AuthenticationMode == connectionbinding.AuthenticationNone {
+				// Public bindings deliberately skip target credential resolution. The
+				// no-auth resolver supplies non-secret evidence for the pool manager.
+				resolver = connectionbinding.NoAuthCredentialResolver{}
+			} else {
+				var err error
+				resolver, err = connectionbinding.SelectResolver(
+					connectionbinding.ResolverSelection{
+						TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
+						TargetClass: m.targetClass, Kind: m.connectionResolverKind(),
+					},
+					m.targetResolvers,
+				)
+				if err != nil {
+					return nil, err
+				}
 			}
 			return connectionbinding.NewPoolManager(connectionbinding.PoolManagerConfig{
 				Binding: binding, Resolver: resolver, Factory: m.connectionFactory,

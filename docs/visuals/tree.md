@@ -17,20 +17,62 @@ visuals:
     description: Shows the operating model and active workload across its teams.
     type: tree
     presentation:
+      type: hierarchy
       orientation: horizontal
-      initial_depth: 2
-      roam: true
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
-      dataset: service_teams
+      type: aggregate
       dimensions:
-        division: service_teams.division
-        team: service_teams.team
+      - division
+      - team
       metrics:
-        active_work_items: null
+      - active_work_items
       sort:
-        - field: value
-          direction: desc
+      - field: active_work_items
+        direction: desc
+```
+
+## Three-level hierarchy
+
+Add state as an intermediate ordered dimension and use `initialDepth` to limit the initial expansion so deeper nodes remain legible as the card resizes.
+
+{{< visual id="category_state_status_tree" >}}
+
+```yaml visual-example=category_state_status_tree
+visuals:
+  category_state_status_tree:
+    title: Category, state, and status tree
+    type: tree
+    presentation:
+      type: hierarchy
+      orientation: vertical
+      initialDepth: 2
+      labels:
+        density: automatic
+        priority: [selected, anomaly, threshold]
+        maxCharacters: 16
+        minimumSpacing: 6
+        tooltipFallback: true
+    query:
+      type: aggregate
+      dimensions:
+      - category
+      - state
+      - status
+      metrics:
+      - order_count
+      sort:
+      - field: order_count
+        direction: desc
+      limit: 120
 ```
 
 ## Alternate hierarchy
@@ -45,41 +87,16 @@ visuals:
     title: Category and status tree
     type: tree
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
       limit: 80
-```
-
-## Three-level hierarchy
-
-Add state as an intermediate level, use `initial_depth` to limit the initial expansion, and apply automatic label collision handling so deeper nodes remain legible as the card resizes.
-
-{{< visual id="category_state_status_tree" >}}
-
-```yaml visual-example=category_state_status_tree
-visuals:
-  category_state_status_tree:
-    title: Category, state, and status tree
-    type: tree
     presentation:
-      orientation: vertical
-      initial_depth: 2
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 16, minimum_spacing: 6, tooltip_fallback: true}
-    query:
-      dimensions:
-        category: orders.category
-        state: orders.state
-        status: orders.status
-      metrics:
-        order_count: null
-      sort:
-        - field: value
-          direction: desc
-      limit: 120
+      type: hierarchy
 ```

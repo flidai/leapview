@@ -16,21 +16,28 @@ visuals:
     title: Revenue line by month
     type: line
     presentation:
-      labels: {density: hidden, priority: [], max_characters: 24, minimum_spacing: 0, tooltip_fallback: true}
+      type: cartesian
+      labels:
+        density: hidden
+        priority: []
+        maxCharacters: 24
+        minimumSpacing: 0
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```
 
 ## Multiple series
 
-Map `query.series` to split the metric into one line per order status; the compiler derives the required series-aware Cartesian specification.
+Use two ordered `query.dimensions` fields to split the metric into one line per status. The first dimension supplies the category axis and the second supplies the series identity.
 
 {{< visual id="revenue_line_status" >}}
 
@@ -39,23 +46,24 @@ visuals:
   revenue_line_status:
     title: Revenue line by status
     type: line
+    presentation:
+      type: cartesian
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
-      series:
-        field: orders.status
-        alias: status
+      - purchase_month
+      - status
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 60
 ```
 
 ## Visual calculation
 
-Use a visual calculation for analysis that belongs only to this result frame, such as a running total. The source and ordering fields are compiler-owned output aliases (`value` and `label` for this line shape), not semantic expressions. LeapView evaluates the closed template on the trusted runtime before the renderer receives the frame.
+Add a running-total calculation to the same result frame. Calculation references use compiled result aliases, so the ordering field is the category dimension returned by the query.
 
 {{< visual id="revenue_line_running" >}}
 
@@ -65,54 +73,58 @@ visuals:
     title: Revenue and running total
     type: line
     calculations:
-      - id: running_revenue
-        label: Running revenue
-        template: running_total
-        source: value
-        order_by:
-          - field: label
-            direction: asc
-        format: currency
+    - id: running_revenue
+      label: Running revenue
+      template: running_total
+      source: revenue
+      orderBy:
+      - field: purchase_month
+        direction: asc
+    presentation:
+      type: cartesian
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```
 
 ## Stepped line
 
-Set `presentation.step: true` for discrete changes between periods, hide point symbols for a quieter trace, and enable `data_zoom` for long ranges.
+Set `presentation.step: true` for discrete changes between periods, hide point symbols for a quieter trace, and enable `dataZoom` for long ranges.
 
 {{< visual id="revenue_line_step" >}}
 
 ```yaml visual-example=revenue_line_step
 visuals:
   revenue_line_step:
-    title: Stepped revenue line
+    title: Long-range revenue line
     type: line
     presentation:
+      type: cartesian
       step: true
-      show_symbols: false
-      data_zoom: true
+      showSymbols: false
+      dataZoom: true
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```
 
 ## Governed decision context
 
-Use a named context dataset when a title or reference line must be recomputed from the same active semantic filters as the chart. Context queries are compiled with the visual, bounded by the data budget, and delivered in the typed visualization envelope; the renderer cannot issue its own query.
+Use a named context dataset when a title or description must be recomputed from the same active semantic filters as the chart. Context queries are compiled with the visual and delivered in the typed visualization envelope.
 
 {{< visual id="revenue_line_context" >}}
 
@@ -124,14 +136,15 @@ visuals:
     type: line
     datasets:
       context:
+        type: aggregate
         dimensions:
-          status: orders.status
+        - status
         metrics:
-          target:
-            metric: revenue
+        - metric: revenue
+          alias: target
         sort:
-          - field: status
-            direction: asc
+        - field: status
+          direction: asc
         limit: 1
     metadata:
       title:
@@ -148,32 +161,15 @@ visuals:
         suffix: " USD."
         fallback: Current target is unavailable.
     presentation:
-      axes:
-        - id: x
-          title: Month
-          tick_density: sparse
-        - id: primary_y
-          title: Revenue
-          scale: linear
-          zero: include
-          unit: USD
-          display_units: thousands
-      reference_lines:
-        - id: target
-          axis: primary_y
-          value:
-            dataset: context
-            field: target
-            reducer: mean
-          label: Current target
-          tone: success
+      type: cartesian
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```

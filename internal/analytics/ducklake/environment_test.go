@@ -38,7 +38,7 @@ func TestOpenMigratesSiblingLegacySQLiteCatalog(t *testing.T) {
 	dataPath := filepath.Join(root, "data")
 	createLegacySQLiteCatalog(t, ctx, legacyPath, dataPath)
 
-	env, err := Open(ctx, Config{RootDir: root, CatalogPath: targetPath, DataPath: dataPath})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: root, CatalogPath: targetPath, DataPath: dataPath}, "ducklake", "sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestOpenMigratesConfiguredSQLiteCatalogInPlace(t *testing.T) {
 	dataPath := filepath.Join(root, "data")
 	createLegacySQLiteCatalog(t, ctx, catalogPath, dataPath)
 
-	env, err := Open(ctx, Config{RootDir: root, CatalogPath: catalogPath, DataPath: dataPath})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: root, CatalogPath: catalogPath, DataPath: dataPath}, "ducklake", "sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestOpenCreatesPrivateCatalogAndDataDirectories(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "ducklake")
 	restoreUmask := setUmask(t, 0)
-	env, err := Open(ctx, Config{RootDir: root})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: root}))
 	restoreUmask()
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
@@ -144,7 +144,7 @@ func TestEnvironmentCommitsAndReadsStableSnapshots(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	env, err := Open(ctx, Config{RootDir: dir})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: dir}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestEnvironmentCommitsAndReadsStableSnapshots(t *testing.T) {
 func TestValidateSnapshotRejectsMissingSnapshot(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	env, err := Open(ctx, Config{RootDir: dir})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: dir}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestValidateSnapshotRejectsMissingSnapshot(t *testing.T) {
 func TestFailedCommitDoesNotAdvanceVisibleSnapshot(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	env, err := Open(ctx, Config{RootDir: dir})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: dir}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestFailedCommitDoesNotAdvanceVisibleSnapshot(t *testing.T) {
 func TestRetentionCandidatesPreserveProtectedSnapshots(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	env, err := Open(ctx, Config{RootDir: dir})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: dir}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestRetentionCandidatesPreserveProtectedSnapshots(t *testing.T) {
 func TestMaintenanceDryRunsUseDuckLakeMetadata(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	env, err := Open(ctx, Config{RootDir: dir})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: dir}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}

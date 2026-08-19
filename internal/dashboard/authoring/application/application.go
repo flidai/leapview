@@ -25,12 +25,11 @@ import (
 // used by the composed application boundary. Runtime acquisition remains a
 // callback so the transport does not depend on registry topology.
 type Options struct {
-	Authoring       *authoringservice.Service
-	Repository      authoring.Repository
-	Authorizer      authoringservice.Authorizer
-	Compiler        authoringservice.Compiler
-	AcquireRuntime  sourceadapter.AcquireRuntime
-	ExportDashboard authoring.DashboardExporter
+	Authoring      *authoringservice.Service
+	Repository     authoring.Repository
+	Authorizer     authoringservice.Authorizer
+	Compiler       authoringservice.Compiler
+	AcquireRuntime sourceadapter.AcquireRuntime
 }
 
 // Application is the small canonical dashboard authoring application
@@ -65,11 +64,10 @@ func New(options Options) (*Application, error) {
 
 	acquireRuntime := guardedAcquire(options.AcquireRuntime)
 	sources, err := sourceadapter.New(sourceadapter.Options{
-		Repository:      options.Repository,
-		Authorizer:      options.Authorizer,
-		AcquireRuntime:  acquireRuntime,
-		Authoring:       options.Authoring,
-		ExportDashboard: options.ExportDashboard,
+		Repository:     options.Repository,
+		Authorizer:     options.Authorizer,
+		AcquireRuntime: acquireRuntime,
+		Authoring:      options.Authoring,
 	})
 	if err != nil {
 		return nil, err
@@ -343,7 +341,7 @@ func (c revalidationCompiler) Compile(ctx context.Context, generation authoring.
 	if err := generation.Validate(); err != nil {
 		return authoring.CompiledRevision{}, err
 	}
-	semanticModelID := revision.Document.SemanticModel
+	semanticModelID := projectgraph.ResourceID(revision.Document.Spec.SemanticModel)
 	compiled, err := c.compiler.Compile(ctx, generation.Identity.ProjectID, semanticModelID, revision.Document)
 	if err != nil {
 		return authoring.CompiledRevision{}, err
@@ -355,5 +353,5 @@ func (c revalidationCompiler) Compile(ctx context.Context, generation authoring.
 	if c.now != nil {
 		now = c.now
 	}
-	return authoring.NewCompiledRevision(generation.Identity.ProjectID, revision.Document.ID, revision.Token(), compiled.Definition, generation.Identity, now().UTC())
+	return authoring.NewCompiledRevision(generation.Identity.ProjectID, authoring.DashboardID(revision.Document.Metadata.ID), revision.Token(), compiled.Definition, generation.Identity, now().UTC())
 }

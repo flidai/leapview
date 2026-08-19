@@ -6,8 +6,6 @@ metadata:
   displayName: Governed Orders
   description: Order-grain synthetic sales data with typed dimensions and revenue.
 spec:
-  sources:
-  - sample.orders
   fields:
     order_id:
       datatype: String
@@ -33,7 +31,8 @@ spec:
     revenue:
       datatype: Decimal
       label: Revenue
-  transform:
+  definition:
+    type: sql
     sql: |
       SELECT
         order_id,

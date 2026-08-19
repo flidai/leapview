@@ -26,6 +26,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 var (
@@ -98,6 +99,7 @@ type Request struct {
 	Authorize           Authorization
 	StagingRoot         string
 	CredentialBootstrap ducklake.CredentialBootstrap
+	ExtensionAdmission  extension.Admission
 	MaxConnections      int
 	MemoryMaxBytes      int64
 	TempMaxBytes        int64
@@ -283,7 +285,7 @@ func Open(ctx context.Context, request Request) (*Reader, error) {
 		RootDir: staging, CatalogPath: catalogPath, DataPath: dataPath,
 		PhysicalPoolID: request.Artifact.PhysicalPoolID, SharedPool: true,
 		Compatibility: request.Artifact.Compatibility, PoolContract: request.Artifact.PoolContract,
-		ReadOnly: true, CredentialBootstrap: request.CredentialBootstrap,
+		ReadOnly: true, CredentialBootstrap: request.CredentialBootstrap, ExtensionAdmission: request.ExtensionAdmission,
 		MaxConnections: request.MaxConnections, MemoryMaxBytes: request.MemoryMaxBytes,
 		TempMaxBytes: request.TempMaxBytes, MaxThreads: request.MaxThreads, TempDir: request.TempDir,
 	})

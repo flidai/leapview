@@ -17,16 +17,25 @@ visuals:
     description: Shows progression from product visits to completed orders.
     type: funnel
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 24, minimum_spacing: 6, tooltip_fallback: true}
+      type: proportional
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 24
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
-      dataset: conversion_stages
+      type: aggregate
       dimensions:
-        stage: conversion_stages.stage
+      - stage
       metrics:
-        conversions: null
+      - conversions
       sort:
-        - field: stage
-          direction: asc
+      - field: stage
+        direction: asc
 ```
 
 ## Alternate dimension
@@ -41,13 +50,16 @@ visuals:
     title: Delivery speed funnel
     type: funnel
     query:
+      type: aggregate
       dimensions:
-        delivery_bucket: orders.delivery_bucket
+      - delivery_bucket
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: delivery_bucket
-          direction: asc
+      - field: delivery_bucket
+        direction: asc
+    presentation:
+      type: proportional
 ```
 
 ## Aligned labels
@@ -62,15 +74,25 @@ visuals:
     title: Left aligned status funnel
     type: funnel
     presentation:
+      type: proportional
       align: left
       sort: ascending
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 20, minimum_spacing: 6, tooltip_fallback: true}
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 20
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: asc
+      - field: order_count
+        direction: asc
 ```

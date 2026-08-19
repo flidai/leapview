@@ -20,12 +20,14 @@ import (
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/gc"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 type Inspector struct {
 	Store               gc.PoolStore
 	PoolContract        *ducklake.PoolContract
 	StagingRoot         string
+	ExtensionAdmission  extension.Admission
 	CredentialBootstrap ducklake.CredentialBootstrap
 	MaxConnections      int
 	MemoryMaxBytes      int64
@@ -37,6 +39,9 @@ type Inspector struct {
 func (i Inspector) Inspect(ctx context.Context, root deployment.DeliveryRoot) (gc.CatalogReachability, error) {
 	if i.Store == nil || i.PoolContract == nil {
 		return gc.CatalogReachability{}, fmt.Errorf("GC catalog inspector requires store and pool contract")
+	}
+	if i.ExtensionAdmission == nil {
+		return gc.CatalogReachability{}, fmt.Errorf("GC catalog inspector requires exact DuckDB extension admission")
 	}
 	if root.PhysicalPoolID != i.PoolContract.Pool.ID.String() {
 		return gc.CatalogReachability{}, fmt.Errorf("catalog root is bound to a different physical pool")
@@ -88,7 +93,7 @@ func (i Inspector) Inspect(ctx context.Context, root deployment.DeliveryRoot) (g
 	if err != nil {
 		return gc.CatalogReachability{}, err
 	}
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: staging, CatalogPath: path, DataPath: dataPath, PhysicalPoolID: root.PhysicalPoolID, SharedPool: true, Compatibility: i.PoolContract.Tuple, PoolContract: i.PoolContract, ReadOnly: true, CredentialBootstrap: i.CredentialBootstrap, MaxConnections: i.MaxConnections, MemoryMaxBytes: i.MemoryMaxBytes, TempMaxBytes: i.TempMaxBytes, MaxThreads: i.MaxThreads, TempDir: i.TempDir})
+	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: staging, CatalogPath: path, DataPath: dataPath, PhysicalPoolID: root.PhysicalPoolID, SharedPool: true, Compatibility: i.PoolContract.Tuple, PoolContract: i.PoolContract, ExtensionAdmission: i.ExtensionAdmission, ReadOnly: true, CredentialBootstrap: i.CredentialBootstrap, MaxConnections: i.MaxConnections, MemoryMaxBytes: i.MemoryMaxBytes, TempMaxBytes: i.TempMaxBytes, MaxThreads: i.MaxThreads, TempDir: i.TempDir})
 	if err != nil {
 		return gc.CatalogReachability{}, err
 	}
@@ -100,11 +105,7 @@ func (i Inspector) Inspect(ctx context.Context, root deployment.DeliveryRoot) (g
 	if err := policy.ValidateZero(); err != nil {
 		return gc.CatalogReachability{}, err
 	}
-	inline, err := env.LegacyInlineTables(ctx)
-	if err != nil {
-		return gc.CatalogReachability{}, err
-	}
-	if err := ducklake.ValidateNoLiveInlineData(inline); err != nil {
+	if err := env.ValidateNoLiveInlineData(ctx); err != nil {
 		return gc.CatalogReachability{}, err
 	}
 	snapshots, err := env.Snapshots(ctx)

@@ -110,6 +110,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Reference](/docs/reference): Find exact syntax and supported contracts.
 - [Environment variable reference](/docs/configuration): Process-wide settings generated from the runtime configuration specification.
 - [Supported capabilities](/docs/reference/capabilities): Review supported resource, data, visual, and integration surfaces.
+- [Data-resource connector capabilities](/docs/reference/data-resource-connectors): Review generated connector locations, approved extensions, target-binding modes, and typed path options.
 - [CLI troubleshooting](/docs/cli/troubleshooting): Diagnose local validation and remote operation failures.
 
 #### Agent tools
@@ -145,12 +146,12 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Model configuration](/docs/config/model): Fields and validation rules for the Model YAML resource.
 - [Semantic Model configuration](/docs/config/semantic-model): Fields and validation rules for the SemanticModel YAML resource.
 - [Pipeline configuration](/docs/config/pipeline): Fields and validation rules for the Pipeline YAML resource.
-- [Dashboard configuration](/docs/config/dashboard): Fields and validation rules for the Dashboard YAML resource.
 - [Group configuration](/docs/config/group): Fields and validation rules for the Group YAML resource.
 - [Role Binding configuration](/docs/config/role-binding): Fields and validation rules for the RoleBinding YAML resource.
 - [Grant configuration](/docs/config/grant): Fields and validation rules for the Grant YAML resource.
 - [Data Policy configuration](/docs/config/data-policy): Fields and validation rules for the DataPolicy YAML resource.
 - [Dashboard Publication configuration](/docs/config/dashboard-publication): Fields and validation rules for the DashboardPublication YAML resource.
+- [Dashboard configuration](/docs/config/dashboard-document): Fields and validation rules for the Dashboard YAML resource.
 
 #### CLI commands
 

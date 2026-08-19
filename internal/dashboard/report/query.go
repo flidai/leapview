@@ -4,7 +4,6 @@ import (
 	"context"
 
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 )
 
 type QueryField struct {
@@ -49,11 +48,16 @@ type QuerySort struct {
 	Direction string
 }
 
+// QueryTime is a runtime query projection. Authoring documents use the
+// generated Dashboard query contract; this alias keeps the execution request
+// independent of authoring package types.
+type QueryTime = semanticquery.Time
+
 type AggregateQuery struct {
 	Dataset    string
 	Dimensions []QueryField
 	Metrics    []QueryField
-	Time       dashboardauthoring.QueryTime
+	Time       QueryTime
 	Filters    []QueryFilter
 	Sort       []QuerySort
 	Limit      int
@@ -79,10 +83,38 @@ type ModelTableQuery struct {
 }
 
 type RawValueQuery struct {
-	Dataset    string
-	Dimensions []QueryField
-	Metric     QueryField
-	Filters    []QueryFilter
+	Dataset      string
+	Dimensions   []QueryField
+	Metric       QueryField
+	Filters      []QueryFilter
+	Histogram    *HistogramOptions
+	Distribution *DistributionOptions
+}
+
+// HistogramOptions carries the explicit statistical contract from a compiled
+// visualization into the governed data service. Keeping it on the raw-value
+// request prevents runtime presentation defaults from changing query meaning.
+type HistogramOptions struct {
+	Domain        *HistogramDomain
+	NullPolicy    string
+	Approximation string
+}
+
+type HistogramDomain struct {
+	Minimum float64
+	Maximum float64
+}
+
+type DistributionOptions struct {
+	Quantiles     []float64
+	Whiskers      *DistributionWhiskers
+	Outliers      string
+	Approximation string
+}
+
+type DistributionWhiskers struct {
+	Lower float64
+	Upper float64
 }
 
 type CountQuery struct {

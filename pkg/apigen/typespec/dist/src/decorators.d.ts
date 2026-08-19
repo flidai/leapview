@@ -1,4 +1,4 @@
-import type { DecoratorContext, Enum, Interface, Model, ModelProperty, Namespace, Operation } from "@typespec/compiler";
+import { type DecoratorContext, type Enum, type Interface, type Model, type ModelProperty, type Namespace, type Operation, type Scalar } from "@typespec/compiler";
 export interface CLIArg {
     source: "path" | "query" | "body";
     name: string;
@@ -167,6 +167,7 @@ export declare function $contract(context: DecoratorContext, target: Model | Enu
 export declare function $metadata(context: DecoratorContext, target: Model | ModelProperty | Enum, value: Record<string, unknown>): void;
 export declare function $tool(context: DecoratorContext, target: Operation, options: ToolOptions): void;
 export declare function $transportErrors(context: DecoratorContext, target: Namespace, schema: Model, options: TransportErrorsOptions): void;
+export declare function $propertyNames(context: DecoratorContext, target: ModelProperty, key: Scalar): void;
 export declare const $decorators: {
     apigen: {
         cli: typeof $cli;
@@ -194,6 +195,7 @@ export declare const $decorators: {
         metadata: typeof $metadata;
         tool: typeof $tool;
         transportErrors: typeof $transportErrors;
+        propertyNames: typeof $propertyNames;
     };
 };
 export declare function getCLI(context: {
@@ -265,3 +267,6 @@ export declare function getTool(context: {
 export declare function getTransportErrors(context: {
     program: DecoratorContext["program"];
 }, target: Namespace): TransportErrorsDefinition | undefined;
+export declare function getPropertyNames(context: {
+    program: DecoratorContext["program"];
+}, target: ModelProperty): Scalar | undefined;

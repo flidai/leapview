@@ -24,7 +24,7 @@ Use distinct development and production service principals. Target identity and 
 
 ## Understand ownership and status
 
-Dashboards are project assets whether their visibility is private, restricted, or organization-visible. The interactive builder must select a governed semantic model from that project graph. Semantic-model usage, visibility counts, and publication state remain observable and governable in catalog, audit, and access surfaces.
+Dashboards are project assets whether their visibility is private, restricted, or organization-wide. The interactive builder must select a governed semantic model from that project graph. Semantic-model usage, visibility counts, and publication state remain observable and governable in catalog, audit, and access surfaces.
 
 File-authored, UI-authored, and agent-authored are origins. Origin is provenance, not ownership: it must not decide who can edit, publish, or deploy. Access and RBAC grant those actions to principals over a project and its assets. Anonymous publication is a separate, explicit publication capability; it does not transfer dashboard ownership or authoring rights.
 
@@ -32,7 +32,7 @@ Treat common UI badges as projections of these separate facts:
 
 | Badge or concept | Meaning | Does not mean |
 | --- | --- | --- |
-| **Private** / **Restricted** / **Organization-visible** | The dashboard's project visibility | A different owner or a different semantic model |
+| **Private** / **Restricted** / **Organization** | The dashboard's project visibility | A different owner or a different semantic model |
 | **Draft** | A mutable project draft that can be edited by an authorized principal | A production deployment or an immutable version |
 | **Published** | A selected immutable dashboard revision is available through the project publication path | That the project is deployed to production |
 | **Archived** | The dashboard lifecycle no longer accepts normal publication | That its historical revision or deployment evidence was deleted |
@@ -72,7 +72,7 @@ The builder currently exposes four bounded intents:
 
 | Intent | Browser action | Required governed identity |
 | --- | --- | --- |
-| **Set visibility** | Choose a visibility state | `private`, `restricted`, or `organization-visible` |
+| **Set visibility** | Choose a visibility state | `private`, `restricted`, or `organization` |
 | **Add page** | Select **Add page** (including the empty-page state) | The new page ID and optional title; the server allocates missing IDs |
 | **Add visual** | Choose a type and select **Add visual** | Target page, visual type, and optional visual/component IDs and title |
 | **Assign governed field** | Click **Add** beside a field or drag it onto a visual slot | Target page and visual, semantic field ID, and `metric`, `dimension`, or `detail` role |
@@ -89,7 +89,7 @@ The **Preview** link identifies one exact draft revision. It includes the draft 
 GET /dashboards/{dashboard}/preview?draft={draft}&page={page}&revisionId={id}&revisionNumber={number}&revisionContentHash={hash}
 ```
 
-Preview compiles that retained document against the active governed runtime and returns the definition, page patch, semantic-model/runtime identity, serving-state ID, and DuckLake snapshot evidence. Preview does not change the draft, publish the dashboard, deploy a serving generation, or mutate data.
+Preview compiles that retained document against the active governed runtime and returns the definition, page patch, semantic-model/runtime identity, exact serving identity (`projectId`, `environment`, and `generationId`), and DuckLake snapshot evidence. Preview does not change the draft, publish the dashboard, deploy a serving generation, or mutate data.
 
 **Publish** is a typed command against the same complete expected revision. LeapView compiles the draft with its governed semantic model, stores the compiled revision and publication evidence, and moves the dashboard lifecycle to `published`. Publishing does not deploy a full project to production; use the development publication and full-project promotion gates described above.
 
@@ -124,6 +124,7 @@ Command requests must name the exact `dashboardId`, `draftId`, and `expectedRevi
 
 ```json
 {
+  "kind": "addVisual",
   "dashboardId": "revenue",
   "draftId": "draft-7",
   "expectedRevision": {
@@ -139,7 +140,7 @@ Command requests must name the exact `dashboardId`, `draftId`, and `expectedRevi
 }
 ```
 
-The union accepts exactly one of `setVisibility`, `addPage`, `addVisual`, `assignField`, `publish`, or `archive`. Every successful edit returns the new immutable revision token and the repository-authoritative lifecycle pointer. A stale token is a `409` conflict; read the current draft and reconcile rather than dropping the token or defaulting to a newer revision. Preview requests repeat the complete token in their body, and responses include the same revision plus runtime and snapshot evidence.
+The discriminated command union accepts exactly one payload for its `kind`: `metadata`, `setVisibility`, `addPage`, `addVisual`, `assignField`, `upsertPage`, `removePage`, `upsertVisual`, `removeVisual`, `setLayout`, `setFilters`, `setInteraction`, `publish`, or `archive`. Every successful edit returns the new immutable revision token and the repository-authoritative lifecycle pointer. A stale token is a `409` conflict; read the current draft and reconcile rather than dropping the token or defaulting to a newer revision. Preview requests repeat the complete token in their body, and responses include the same revision plus runtime and snapshot evidence.
 
 ## Use dashboard-authoring agent tools
 
@@ -187,7 +188,7 @@ Before production deployment, confirm that:
 
 - the draft and published revision belong to the intended project and use the intended governed semantic model;
 - the development and production instances are separate, permanent environment boundaries;
-- dashboard visibility (`private`, `restricted`, or `organization-visible`), access grants, row and column policies, and anonymous publication settings are intentional;
+- dashboard visibility (`private`, `restricted`, or `organization`), access grants, row and column policies, and anonymous publication settings are intentional;
 - QA verified the development publication with representative viewer identities;
 - the exported YAML, source revision (when Git is used), plan, and deploy service-account identity are retained as evidence; and
 - coordinated model, semantic, policy, and dashboard changes are present in one full-project candidate.

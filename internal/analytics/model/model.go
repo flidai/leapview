@@ -73,16 +73,13 @@ func (m *Model) validate(authored bool) error {
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("model table %q has invalid name: %w", name, err)
 		}
-		if table.Source == "" && table.Transform.SQL == "" {
-			return fmt.Errorf("model table %q requires source or transform.sql", name)
+		if table.Execution.Source == "" && table.Execution.SQL == "" {
+			return fmt.Errorf("model table %q requires direct source or definition.sql", name)
 		}
-		if table.Source != "" {
-			if _, ok := m.Sources[table.Source]; !ok {
-				return fmt.Errorf("model table %q references unknown source %q", name, table.Source)
+		if table.Execution.Source != "" {
+			if _, ok := m.Sources[table.Execution.Source]; !ok {
+				return fmt.Errorf("model table %q references unknown source %q", name, table.Execution.Source)
 			}
-		}
-		if len(table.SourceReads) > 0 {
-			return fmt.Errorf("model table %q source_reads is no longer supported; source reads are inferred from transform.sql", name)
 		}
 		dependencies, err := m.modelTableSourceDependencies(name, table)
 		if err != nil {
@@ -173,17 +170,16 @@ func (m *Model) validate(authored bool) error {
 }
 
 func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]string, error) {
-	sql := strings.TrimSpace(table.Transform.SQL)
+	sql := strings.TrimSpace(table.Execution.SQL)
 	hasSQL := sql != ""
 	if hasSQL {
-		if table.Source != "" {
-			return nil, fmt.Errorf("model table %q uses transform.sql and must declare sources instead of source", tableName)
+		if table.Execution.Source != "" {
+			return nil, fmt.Errorf("model table %q definition cannot contain both direct source and sql", tableName)
 		}
-		if err := validateModelSQLQuery(tableName, sql); err != nil {
-			return nil, err
-		}
-	} else if table.Source == "" {
-		return nil, fmt.Errorf("model table %q requires source or transform.sql", tableName)
+		// SQL lineage is populated by the compiler-owned DuckDB AST analyzer.
+		return append([]string(nil), table.SourceDependencies...), nil
+	} else if table.Execution.Source == "" {
+		return nil, fmt.Errorf("model table %q requires direct source or definition.sql", tableName)
 	}
 	seen := map[string]struct{}{}
 	add := func(source string) error {
@@ -197,37 +193,14 @@ func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]s
 		seen[source] = struct{}{}
 		return nil
 	}
-	if err := add(table.Source); err != nil {
+	if err := add(table.Execution.Source); err != nil {
 		return nil, err
-	}
-	for _, source := range table.Sources {
-		if err := add(source); err != nil {
-			return nil, err
-		}
-	}
-	inferred, rawRefs, unqualifiedRefs := m.modelSQLSourceRefs(sql)
-	if len(rawRefs) > 0 {
-		return nil, fmt.Errorf("model table %q model SQL must reference sources through source.<name>; raw.<name> is internal", tableName)
-	}
-	if len(unqualifiedRefs) > 0 {
-		return nil, fmt.Errorf("model table %q SQL must reference sources through source.<name>; found unqualified relation %q", tableName, unqualifiedRefs[0])
-	}
-	for _, source := range inferred {
-		if _, ok := m.Sources[source]; !ok {
-			return nil, fmt.Errorf("model table %q SQL references unknown source %q", tableName, source)
-		}
 	}
 	result := make([]string, 0, len(seen))
 	for source := range seen {
 		result = append(result, source)
 	}
 	sort.Strings(result)
-	if hasSQL && !sameStringSet(result, inferred) {
-		if len(result) == 0 && len(inferred) > 0 {
-			return nil, fmt.Errorf("model table %q uses transform.sql and requires sources", tableName)
-		}
-		return nil, fmt.Errorf("model table %q SQL source references %v do not match declared sources %v", tableName, inferred, result)
-	}
 	return result, nil
 }
 
@@ -249,7 +222,7 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 			if column.SourceField == "" {
 				column.SourceField = name
 			}
-			if table.Source != "" && table.Transform.SQL == "" {
+			if table.Execution.Source != "" && table.Execution.SQL == "" {
 				if err := validateSemanticIdentifier(column.SourceField); err != nil {
 					return nil, fmt.Errorf("model table %q column %q source_field %q is invalid: %w", tableName, name, column.SourceField, err)
 				}
@@ -324,30 +297,15 @@ func validateRequiredModelColumns(tableName string, table Table, columns map[str
 }
 
 func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]string, error) {
-	sql := strings.TrimSpace(table.Transform.SQL)
+	sql := strings.TrimSpace(table.Execution.SQL)
 	if sql == "" {
 		return nil, nil
 	}
-	seen := map[string]struct{}{}
-	for _, ref := range scanSQLRelationRefs(sql) {
-		if ref.Namespace != "model" {
-			continue
-		}
-		dependency, err := m.resolveModelDependency(ref.Name)
-		if err != nil {
-			return nil, fmt.Errorf("model table %q SQL references %w", tableName, err)
-		}
-		currentPhysical := strings.TrimSpace(table.ModelName)
-		if ref.Name == tableName || (currentPhysical != "" && dependency == currentPhysical) {
-			return nil, fmt.Errorf("model table %q cannot read itself", tableName)
-		}
-		seen[dependency] = struct{}{}
-	}
-	return sortedStringSet(seen), nil
+	return append([]string(nil), table.ModelDependencies...), nil
 }
 
 // resolveModelDependency resolves the physical relation name emitted by a
-// model transform. Transform SQL is authored in the global physical Model
+// model transform. ExecutionDefinition SQL is authored in the global physical Model
 // namespace; semantic dataset aliases are intentionally not an alternate
 // dependency syntax. After semantic lowering, validate only against bound
 // physical ModelNames (deduplicating aliases that share one Model).
@@ -382,379 +340,6 @@ func (m *Model) resolveModelDependency(name string) (string, error) {
 		return name, nil
 	}
 	return "", fmt.Errorf("unknown model table %q", name)
-}
-
-func (m *Model) modelSQLSourceRefs(sql string) ([]string, []string, []string) {
-	if sql == "" {
-		return nil, nil, nil
-	}
-	sourceSeen := map[string]struct{}{}
-	rawSeen := map[string]struct{}{}
-	unqualifiedSeen := map[string]struct{}{}
-	for _, ref := range scanSQLRelationRefs(sql) {
-		switch ref.Namespace {
-		case "source":
-			sourceSeen[ref.Name] = struct{}{}
-		case "raw":
-			rawSeen[ref.Name] = struct{}{}
-		case "":
-			unqualifiedSeen[ref.Name] = struct{}{}
-		}
-	}
-	sourceRefs := sortedStringSet(sourceSeen)
-	rawRefs := sortedStringSet(rawSeen)
-	unqualifiedRefs := sortedStringSet(unqualifiedSeen)
-	return sourceRefs, rawRefs, unqualifiedRefs
-}
-
-func (m *Model) SQLSourceRefs(sql string) ([]string, []string, []string) {
-	return m.modelSQLSourceRefs(sql)
-}
-
-func validateModelSQLQuery(tableName string, sql string) error {
-	keyword, _, ok := firstSQLKeyword(sql)
-	if !ok || (keyword != "select" && keyword != "with") {
-		return fmt.Errorf("model table %q transform.sql must be a read-only SELECT or WITH query", tableName)
-	}
-	if keyword == "with" {
-		start := scanSQLCTEs(sql, map[string]struct{}{}, &[]sqlRelationRef{})
-		nextKeyword, _, ok := firstSQLKeyword(sql[start:])
-		if !ok || nextKeyword != "select" {
-			return fmt.Errorf("model table %q transform.sql must be a read-only SELECT or WITH query", tableName)
-		}
-	}
-	return nil
-}
-
-func firstSQLKeyword(sql string) (string, int, bool) {
-	for index := 0; index < len(sql); {
-		switch sql[index] {
-		case '\'':
-			index = skipSQLSingleQuoted(sql, index)
-			continue
-		case '-':
-			if index+1 < len(sql) && sql[index+1] == '-' {
-				index = skipSQLLineComment(sql, index+2)
-				continue
-			}
-		case '/':
-			if index+1 < len(sql) && sql[index+1] == '*' {
-				index = skipSQLBlockComment(sql, index+2)
-				continue
-			}
-		}
-		if isSQLIdentifierStart(sql[index]) {
-			keyword, next, _ := readSQLIdentifier(sql, index)
-			return strings.ToLower(keyword), next, true
-		}
-		index++
-	}
-	return "", len(sql), false
-}
-
-type sqlRelationRef struct {
-	Namespace string
-	Name      string
-}
-
-func scanSQLRelationRefs(sql string) []sqlRelationRef {
-	return scanSQLRelationRefsWithLocals(sql, nil)
-}
-
-func scanSQLRelationRefsWithLocals(sql string, locals map[string]struct{}) []sqlRelationRef {
-	refs := []sqlRelationRef{}
-	localRefs := map[string]struct{}{}
-	for name := range locals {
-		localRefs[strings.ToLower(name)] = struct{}{}
-	}
-	start := scanSQLCTEs(sql, localRefs, &refs)
-	for index := start; index < len(sql); {
-		switch sql[index] {
-		case '\'':
-			index = skipSQLSingleQuoted(sql, index)
-			continue
-		case '-':
-			if index+1 < len(sql) && sql[index+1] == '-' {
-				index = skipSQLLineComment(sql, index+2)
-				continue
-			}
-		case '/':
-			if index+1 < len(sql) && sql[index+1] == '*' {
-				index = skipSQLBlockComment(sql, index+2)
-				continue
-			}
-		}
-		if isSQLIdentifierStart(sql[index]) {
-			keyword, next, _ := readSQLIdentifier(sql, index)
-			if relationKeyword(strings.ToLower(keyword)) {
-				relationRefs, relationNext := readSQLRelationList(sql, next, localRefs)
-				refs = append(refs, relationRefs...)
-				index = relationNext
-				continue
-			}
-			index = next
-			continue
-		}
-		index++
-	}
-	return refs
-}
-
-func scanSQLCTEs(sql string, locals map[string]struct{}, refs *[]sqlRelationRef) int {
-	keyword, next, ok := firstSQLKeyword(sql)
-	if !ok || keyword != "with" {
-		return 0
-	}
-	index := skipSQLSpaces(sql, next)
-	if recursive, afterRecursive, ok := readSQLIdentifier(sql, index); ok && strings.EqualFold(recursive, "recursive") {
-		index = skipSQLSpaces(sql, afterRecursive)
-	}
-	for {
-		name, afterName, ok := readSQLIdentifier(sql, index)
-		if !ok {
-			return index
-		}
-		locals[strings.ToLower(name)] = struct{}{}
-		index = skipSQLSpaces(sql, afterName)
-		if index < len(sql) && sql[index] == '(' {
-			index = skipSQLBalanced(sql, index)
-			index = skipSQLSpaces(sql, index)
-		}
-		asKeyword, afterAS, ok := readSQLIdentifier(sql, index)
-		if !ok || !strings.EqualFold(asKeyword, "as") {
-			return index
-		}
-		index = skipSQLSpaces(sql, afterAS)
-		if index >= len(sql) || sql[index] != '(' {
-			return index
-		}
-		inside, afterBody := readSQLBalancedContent(sql, index)
-		*refs = append(*refs, scanSQLRelationRefsWithLocals(inside, locals)...)
-		index = skipSQLSpaces(sql, afterBody)
-		if index >= len(sql) || sql[index] != ',' {
-			return index
-		}
-		index = skipSQLSpaces(sql, index+1)
-	}
-}
-
-func relationKeyword(keyword string) bool {
-	switch keyword {
-	case "from", "join":
-		return true
-	default:
-		return false
-	}
-}
-
-func readSQLRelationList(sql string, index int, locals map[string]struct{}) ([]sqlRelationRef, int) {
-	refs := []sqlRelationRef{}
-	for {
-		index = skipSQLSpaces(sql, index)
-		if index >= len(sql) {
-			return refs, index
-		}
-		if sql[index] == '(' {
-			inside, next := readSQLBalancedContent(sql, index)
-			refs = append(refs, scanSQLRelationRefsWithLocals(inside, locals)...)
-			index = next
-			return refs, index
-		}
-		ref, next, ok := readSQLRelationRef(sql, index, locals)
-		if !ok {
-			return refs, index
-		}
-		refs = append(refs, ref)
-		index = skipSQLRelationAlias(sql, next)
-		index = skipSQLSpaces(sql, index)
-		if index >= len(sql) || sql[index] != ',' {
-			return refs, index
-		}
-		index++
-	}
-}
-
-func readSQLRelationRef(sql string, index int, locals map[string]struct{}) (sqlRelationRef, int, bool) {
-	first, next, ok := readSQLIdentifier(sql, index)
-	if !ok {
-		return sqlRelationRef{}, index, false
-	}
-	dot := skipSQLSpaces(sql, next)
-	if dot < len(sql) && sql[dot] == '.' {
-		nameStart := skipSQLSpaces(sql, dot+1)
-		name, afterName, ok := readSQLIdentifier(sql, nameStart)
-		if !ok {
-			return sqlRelationRef{}, index, false
-		}
-		namespace := strings.ToLower(first)
-		if namespace == "source" || namespace == "raw" || namespace == "model" {
-			return sqlRelationRef{Namespace: namespace, Name: name}, afterName, true
-		}
-		return sqlRelationRef{Name: name}, afterName, true
-	}
-	if _, ok := locals[strings.ToLower(first)]; ok {
-		return sqlRelationRef{Namespace: "local", Name: first}, next, true
-	}
-	return sqlRelationRef{Name: first}, next, true
-}
-
-func readSQLIdentifier(sql string, index int) (string, int, bool) {
-	if index >= len(sql) {
-		return "", index, false
-	}
-	if sql[index] == '"' {
-		var builder strings.Builder
-		for cursor := index + 1; cursor < len(sql); cursor++ {
-			if sql[cursor] == '"' {
-				if cursor+1 < len(sql) && sql[cursor+1] == '"' {
-					builder.WriteByte('"')
-					cursor++
-					continue
-				}
-				return builder.String(), cursor + 1, true
-			}
-			builder.WriteByte(sql[cursor])
-		}
-		return "", len(sql), false
-	}
-	if !isSQLIdentifierStart(sql[index]) {
-		return "", index, false
-	}
-	cursor := index + 1
-	for cursor < len(sql) && isSQLIdentifierPart(sql[cursor]) {
-		cursor++
-	}
-	return sql[index:cursor], cursor, true
-}
-
-func skipSQLSingleQuoted(sql string, index int) int {
-	for cursor := index + 1; cursor < len(sql); cursor++ {
-		if sql[cursor] == '\'' {
-			if cursor+1 < len(sql) && sql[cursor+1] == '\'' {
-				cursor++
-				continue
-			}
-			return cursor + 1
-		}
-	}
-	return len(sql)
-}
-
-func skipSQLLineComment(sql string, index int) int {
-	for index < len(sql) && sql[index] != '\n' && sql[index] != '\r' {
-		index++
-	}
-	return index
-}
-
-func skipSQLBlockComment(sql string, index int) int {
-	for index+1 < len(sql) {
-		if sql[index] == '*' && sql[index+1] == '/' {
-			return index + 2
-		}
-		index++
-	}
-	return len(sql)
-}
-
-func skipSQLBalanced(sql string, index int) int {
-	_, next := readSQLBalancedContent(sql, index)
-	return next
-}
-
-func readSQLBalancedContent(sql string, index int) (string, int) {
-	depth := 0
-	start := index + 1
-	for index < len(sql) {
-		switch sql[index] {
-		case '\'':
-			index = skipSQLSingleQuoted(sql, index)
-			continue
-		case '"':
-			_, next, ok := readSQLIdentifier(sql, index)
-			if ok {
-				index = next
-				continue
-			}
-		case '-':
-			if index+1 < len(sql) && sql[index+1] == '-' {
-				index = skipSQLLineComment(sql, index+2)
-				continue
-			}
-		case '/':
-			if index+1 < len(sql) && sql[index+1] == '*' {
-				index = skipSQLBlockComment(sql, index+2)
-				continue
-			}
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return sql[start:index], index + 1
-			}
-		}
-		index++
-	}
-	return sql[start:], index
-}
-
-func skipSQLRelationAlias(sql string, index int) int {
-	index = skipSQLSpaces(sql, index)
-	if index >= len(sql) {
-		return index
-	}
-	if sql[index] == '(' {
-		return skipSQLBalanced(sql, index)
-	}
-	if sql[index] == '"' {
-		_, next, ok := readSQLIdentifier(sql, index)
-		if ok {
-			return next
-		}
-		return index
-	}
-	if !isSQLIdentifierStart(sql[index]) {
-		return index
-	}
-	value, next, _ := readSQLIdentifier(sql, index)
-	lower := strings.ToLower(value)
-	if lower == "as" {
-		return skipSQLRelationAlias(sql, next)
-	}
-	if relationListTerminator(lower) {
-		return index
-	}
-	return next
-}
-
-func relationListTerminator(value string) bool {
-	switch value {
-	case "set", "where", "group", "order", "having", "limit", "offset", "qualify", "union", "except", "intersect", "join", "left", "right", "full", "inner", "outer", "cross", "on", "using":
-		return true
-	default:
-		return false
-	}
-}
-
-func skipSQLSpaces(sql string, index int) int {
-	for index < len(sql) {
-		switch sql[index] {
-		case ' ', '\n', '\r', '\t', '\f':
-			index++
-		default:
-			return index
-		}
-	}
-	return index
-}
-
-func isSQLIdentifierStart(char byte) bool {
-	return char == '_' || (char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z')
-}
-
-func isSQLIdentifierPart(char byte) bool {
-	return isSQLIdentifierStart(char) || (char >= '0' && char <= '9')
 }
 
 func sortedStringSet(values map[string]struct{}) []string {
@@ -898,8 +483,93 @@ func (m *Model) validateExecutionDatasetsAndTables() error {
 		if err := validateExecutionTable(tableName, m.Tables[tableName]); err != nil {
 			return err
 		}
+		if err := validateModelChecks(m, tableName, m.Tables[tableName]); err != nil {
+			return err
+		}
 	}
 	return validateExecutionTimeSemantics(m)
+}
+
+func validateModelChecks(model *Model, tableName string, table Table) error {
+	for index, check := range table.Checks {
+		severity := strings.ToLower(strings.TrimSpace(check.Severity))
+		if severity != "" && severity != "warning" && severity != "error" {
+			return fmt.Errorf("model table %q check %d severity must be warning or error", tableName, index)
+		}
+		fieldExists := func(field string) bool {
+			_, ok := table.Dimensions[field]
+			return ok
+		}
+		switch check.Type {
+		case "non_null", "accepted_values":
+			if !fieldExists(check.Field) {
+				return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, check.Field)
+			}
+			if check.Type == "accepted_values" {
+				if table.Dimensions[check.Field].Datatype != DataTypeString {
+					return fmt.Errorf("model table %q check %d accepted_values requires a String field", tableName, index)
+				}
+				if len(check.Values) == 0 {
+					return fmt.Errorf("model table %q check %d accepted_values requires values", tableName, index)
+				}
+				seen := map[string]struct{}{}
+				for _, value := range check.Values {
+					if _, duplicate := seen[value]; duplicate {
+						return fmt.Errorf("model table %q check %d accepted_values duplicates %q", tableName, index, value)
+					}
+					seen[value] = struct{}{}
+				}
+			}
+		case "unique":
+			if len(check.Fields) == 0 {
+				return fmt.Errorf("model table %q check %d unique requires fields", tableName, index)
+			}
+			seen := map[string]struct{}{}
+			for _, field := range check.Fields {
+				if !fieldExists(field) {
+					return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, field)
+				}
+				if _, duplicate := seen[field]; duplicate {
+					return fmt.Errorf("model table %q check %d unique duplicates %q", tableName, index, field)
+				}
+				seen[field] = struct{}{}
+			}
+		case "relationship":
+			if !fieldExists(check.Field) {
+				return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, check.Field)
+			}
+			parts := strings.Split(strings.TrimSpace(check.To), ".")
+			if len(parts) < 2 || parts[len(parts)-1] == "" {
+				return fmt.Errorf("model table %q check %d relationship target %q is invalid", tableName, index, check.To)
+			}
+			targetName := strings.Join(parts[:len(parts)-1], ".")
+			var target Table
+			found := false
+			for name, candidate := range model.Tables {
+				if name == targetName || candidate.ModelName == targetName {
+					target, found = candidate, true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("model table %q check %d references unknown model %q", tableName, index, targetName)
+			}
+			targetField := parts[len(parts)-1]
+			if _, ok := target.Dimensions[targetField]; !ok {
+				return fmt.Errorf("model table %q check %d references unknown target field %q", tableName, index, check.To)
+			}
+			if !relationshipTypesCompatible(table.Dimensions[check.Field], target.Dimensions[targetField]) {
+				return fmt.Errorf("model table %q check %d relationship field %q type %q is incompatible with target %q type %q", tableName, index, check.Field, relationshipFieldType(table.Dimensions[check.Field]), check.To, relationshipFieldType(target.Dimensions[targetField]))
+			}
+		case "row_count":
+			if check.Minimum == nil && check.Maximum == nil || check.Minimum != nil && *check.Minimum < 0 || check.Maximum != nil && *check.Maximum < 0 || check.Minimum != nil && check.Maximum != nil && *check.Minimum > *check.Maximum {
+				return fmt.Errorf("model table %q check %d row_count bounds are invalid", tableName, index)
+			}
+		default:
+			return fmt.Errorf("model table %q check %d has unsupported type %q", tableName, index, check.Type)
+		}
+	}
+	return nil
 }
 
 func validateExecutionTimeSemantics(m *Model) error {
@@ -1257,27 +927,13 @@ func (m *Model) resolveSource(source Source) (Source, error) {
 		if source.Connection == "" {
 			return source, fmt.Errorf("requires connection")
 		}
-		connection, ok := m.Connections[source.Connection]
+		_, ok := m.Connections[source.Connection]
 		if !ok {
 			return source, fmt.Errorf("references unknown connection %q", source.Connection)
 		}
 		if source.Path != "" {
-			if len(connection.Defaults.Options) > 0 {
-				options := make(map[string]any, len(connection.Defaults.Options)+len(source.Options))
-				for key, value := range connection.Defaults.Options {
-					options[key] = value
-				}
-				for key, value := range source.Options {
-					options[key] = value
-				}
-				source.Options = options
-			}
 			if source.Format == "" {
-				format, ok := InferFormat(source.Path)
-				if !ok {
-					return source, fmt.Errorf("path %q requires format", source.Path)
-				}
-				source.Format = format
+				return source, fmt.Errorf("path %q requires explicit format", source.Path)
 			}
 		}
 		return source, nil
@@ -1290,9 +946,27 @@ func (s Source) Validate(name string, connections map[string]Connection) error {
 	if err := validateSemanticIdentifier(name); err != nil {
 		return fmt.Errorf("source %q has invalid name: %w", name, err)
 	}
-	for key := range s.Options {
-		if err := validateSemanticIdentifier(key); err != nil {
-			return fmt.Errorf("source %q option %q is invalid: %w", name, key, err)
+	if _, err := PathLocationHasOptions(s.PathLocation); err != nil {
+		return fmt.Errorf("source %q has invalid path options: %w", name, err)
+	}
+	mode := strings.ToLower(strings.TrimSpace(s.SchemaMode))
+	if mode == "" {
+		mode = "inferred"
+	}
+	if mode != "inferred" && mode != "compatible" && mode != "strict" {
+		return fmt.Errorf("source %q has unsupported schema mode %q", name, s.SchemaMode)
+	}
+	if mode == "inferred" && len(s.Fields) > 0 {
+		return fmt.Errorf("source %q inferred schema cannot declare fields", name)
+	}
+	if mode != "inferred" && len(s.Fields) == 0 {
+		return fmt.Errorf("source %q %s schema requires fields", name, mode)
+	}
+	for field, declaration := range s.Fields {
+		if declaration.Datatype != "" {
+			if err := validateLogicalDataType("source "+name+" field "+field, declaration.Datatype); err != nil {
+				return err
+			}
 		}
 	}
 	switch s.Kind() {
@@ -1330,14 +1004,22 @@ func (s Source) Validate(name string, connections map[string]Connection) error {
 		if !ok {
 			return fmt.Errorf("source %q has unsupported format %q", name, s.Format)
 		}
-		if !formatSpec.AllowsOptions && len(s.Options) > 0 {
+		hasOptions, err := PathLocationHasOptions(s.PathLocation)
+		if err != nil {
+			return fmt.Errorf("source %q has invalid path options: %w", name, err)
+		}
+		if !formatSpec.AllowsOptions && hasOptions {
 			return fmt.Errorf("source %q %s path cannot set options", name, s.Format)
 		}
 	case KindObject:
 		if s.Connection == "" {
 			return fmt.Errorf("source %q object requires connection", name)
 		}
-		if s.Format != "" || len(s.Options) > 0 {
+		hasOptions, err := PathLocationHasOptions(s.PathLocation)
+		if err != nil {
+			return fmt.Errorf("source %q has invalid path options: %w", name, err)
+		}
+		if s.Format != "" || hasOptions {
 			return fmt.Errorf("source %q object cannot set format or options", name)
 		}
 		connection, ok := connections[s.Connection]
@@ -1347,6 +1029,21 @@ func (s Source) Validate(name string, connections map[string]Connection) error {
 		connectionSpec, ok := LookupConnection(connection.Kind)
 		if !ok || !connectionSpec.AllowsObjectSource {
 			return fmt.Errorf("source %q object cannot use %s connection %q", name, connection.Kind, s.Connection)
+		}
+		if s.Catalog != "" {
+			if err := validateSemanticIdentifier(s.Catalog); err != nil {
+				return fmt.Errorf("source %q catalog is invalid: %w", name, err)
+			}
+		}
+		if s.SchemaName != "" {
+			if err := validateSemanticIdentifier(s.SchemaName); err != nil {
+				return fmt.Errorf("source %q schema is invalid: %w", name, err)
+			}
+		}
+		if s.RelationName != "" {
+			if err := validateSemanticIdentifier(s.RelationName); err != nil {
+				return fmt.Errorf("source %q relation name is invalid: %w", name, err)
+			}
 		}
 	default:
 		return fmt.Errorf("source %q requires exactly one of path or object", name)
@@ -1417,6 +1114,15 @@ func (c Connection) validate(name string, requireResolvedAuth bool) (Connection,
 	if !ok {
 		return c, fmt.Errorf("connection %q has unsupported kind %q", name, c.Kind)
 	}
+	if c.Access != "" && c.Access != ConnectionAccessPublic {
+		return c, fmt.Errorf("connection %q has unsupported access policy %q", name, c.Access)
+	}
+	if c.Access == ConnectionAccessPublic && !connectionSpec.AllowPublicAccess {
+		return c, fmt.Errorf("connection %q connector %q does not support public access", name, c.Kind)
+	}
+	if c.Access == ConnectionAccessPublic && (len(c.Auth) != 0 || connectionCredentialReferenceConfigured(c.Credentials)) {
+		return c, fmt.Errorf("connection %q public access cannot include credentials", name)
+	}
 	if c.Kind == "managed" && (strings.TrimSpace(c.Root) != "" || strings.TrimSpace(c.Scope) != "") {
 		return c, fmt.Errorf("connection %q managed physical location is supplied by the active revision and cannot be authored", name)
 	}
@@ -1445,18 +1151,8 @@ func (c Connection) validate(name string, requireResolvedAuth bool) (Connection,
 		}
 		c.Auth = auth
 	}
-	for key := range c.Options {
-		if !connectionAllowsOption(connectionSpec, key) {
-			return c, fmt.Errorf("connection %q has unsupported option %q", name, key)
-		}
-	}
 	if err := validateConnectionOptions(name, c); err != nil {
 		return c, err
-	}
-	for key := range c.Defaults.Options {
-		if err := validateSemanticIdentifier(key); err != nil {
-			return c, fmt.Errorf("connection %q default option %q is invalid: %w", name, key, err)
-		}
 	}
 	return c, nil
 }
@@ -1473,6 +1169,12 @@ func (s Source) Role() string {
 }
 
 func (s Source) Kind() string {
+	if s.LocationType == KindPath && s.Path != "" {
+		return KindPath
+	}
+	if s.LocationType == KindObject && s.Object != "" {
+		return s.LocationType
+	}
 	count := 0
 	kind := ""
 	if s.Path != "" {
@@ -1552,6 +1254,12 @@ func validateConnectionCredentials(name, kind, scope string, credentials Connect
 }
 
 func validateConnectionAuth(name string, connection Connection, spec ConnectionSpec) (ConnectionAuth, error) {
+	if connection.Access == ConnectionAccessPublic {
+		if len(connection.Auth) != 0 {
+			return nil, fmt.Errorf("connection %q public access cannot include resolved auth", name)
+		}
+		return nil, nil
+	}
 	if len(connection.Auth) == 0 {
 		if connection.Credentials.Provider == "ambient" || connection.Credentials.Provider == "env" {
 			return nil, nil
@@ -1562,7 +1270,7 @@ func validateConnectionAuth(name string, connection Connection, spec ConnectionS
 		if connection.Kind == "ducklake" && duckLakeNeedsAuth(connection) {
 			return nil, fmt.Errorf("connection %q ducklake remote path requires auth", name)
 		}
-		if connection.Kind == "sqlite" && connection.Options["path"] != nil {
+		if connection.Kind == "sqlite" && connection.RuntimeOptions.Path != "" {
 			return nil, nil
 		}
 		if spec.AllowNoAuth {
@@ -1587,6 +1295,12 @@ func validateConnectionAuth(name string, connection Connection, spec ConnectionS
 }
 
 func ResolveConnectionAuth(connection Connection) (ConnectionAuth, error) {
+	if connection.Access == ConnectionAccessPublic {
+		if len(connection.Auth) != 0 || ConnectionCredentialsConfigured(connection) {
+			return nil, fmt.Errorf("public connection cannot resolve credentials")
+		}
+		return nil, nil
+	}
 	if len(connection.Auth) > 0 {
 		resolved := make(ConnectionAuth, len(connection.Auth))
 		for key, value := range connection.Auth {
@@ -1611,7 +1325,14 @@ func ResolveConnectionAuth(connection Connection) (ConnectionAuth, error) {
 }
 
 func ConnectionCredentialsConfigured(connection Connection) bool {
-	return len(connection.Auth) > 0 || connection.Credentials.Provider != "" && connection.Credentials.Provider != "none"
+	if connection.Access == ConnectionAccessPublic {
+		return false
+	}
+	return len(connection.Auth) > 0 || connectionCredentialReferenceConfigured(connection.Credentials)
+}
+
+func connectionCredentialReferenceConfigured(credentials ConnectionCredentials) bool {
+	return credentials.Provider != "" && credentials.Provider != "none"
 }
 
 func connectionAllowsAuthKey(connection ConnectionSpec, key string) bool {
@@ -1650,7 +1371,7 @@ func duckLakeNeedsAuth(connection Connection) bool {
 	if connection.Path != "" && !IsLocalPath(connection.Path) {
 		return true
 	}
-	if dataPath, ok := connection.Options["data_path"]; ok && !IsLocalPath(fmt.Sprint(dataPath)) {
+	if connection.RuntimeOptions.DataPath != "" && !IsLocalPath(connection.RuntimeOptions.DataPath) {
 		return true
 	}
 	return false

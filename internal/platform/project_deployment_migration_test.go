@@ -43,7 +43,7 @@ func TestManagedDataMigrationCreatesProjectDeploymentsWithoutLegacyRollouts(t *t
 
 // TestDeliveryMigrationChainIsContiguousAndRestartSafe keeps the embedded
 // Goose chain's current tail explicit. A fresh install and a second Open both
-// apply/verify every migration through 090; a missing or duplicated sequence
+// apply/verify every migration through 092; a missing or duplicated sequence
 // entry would either fail the numeric assertion or leave one of the tail
 // columns absent after restart.
 func TestDeliveryMigrationChainIsContiguousAndRestartSafe(t *testing.T) {
@@ -67,7 +67,7 @@ func TestDeliveryMigrationChainIsContiguousAndRestartSafe(t *testing.T) {
 
 // TestDeliveryMigrationUpgradeFrom072 exercises the real upgrade path rather
 // than only a fresh install: seed a database through the last pre-delivery
-// migration, then let Open apply 073..089 in one restart-safe upgrade.
+// migration, then let Open apply 073..092 in one restart-safe upgrade.
 func TestDeliveryMigrationUpgradeFrom072(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "delivery-upgrade.db")
@@ -152,6 +152,16 @@ func TestDeliveryMigrationUpgradePreservesBuildAttemptDependents(t *testing.T) {
 			t.Fatalf("seed dependent delivery row: %v", err)
 		}
 	}
+	if err := goose.UpToContext(ctx, legacy, "migrations", 88); err != nil {
+		legacy.Close()
+		t.Fatalf("apply failed-gate evidence migration: %v", err)
+	}
+	if _, err := legacy.ExecContext(ctx, `INSERT INTO delivery_failed_gate_evidence (
+		attempt_id, evidence_json, evidence_digest, created_at
+		) VALUES ('attempt-dependent', '{}', ?, '2026-08-17T00:00:00Z')`, sha); err != nil {
+		legacy.Close()
+		t.Fatalf("seed dependent failed-gate evidence: %v", err)
+	}
 	if err := legacy.Close(); err != nil {
 		t.Fatalf("close pre-088 database: %v", err)
 	}
@@ -183,6 +193,21 @@ func TestDeliveryMigrationUpgradePreservesBuildAttemptDependents(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("build-artifact foreign key count = %d, want 1", count)
 	}
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM delivery_failed_gate_evidence WHERE attempt_id = 'attempt-dependent'`).Scan(&count); err != nil {
+		t.Fatalf("read preserved failed-gate evidence: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("preserved failed-gate evidence count = %d, want 1", count)
+	}
+	if err := store.SQLDB().QueryRowContext(ctx, `
+		SELECT count(*)
+		FROM pragma_foreign_key_list('delivery_failed_gate_evidence')
+		WHERE "table" = 'delivery_build_attempts'`).Scan(&count); err != nil {
+		t.Fatalf("inspect preserved failed-gate foreign key: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("failed-gate foreign key count = %d, want 1", count)
+	}
 	for _, name := range []string{
 		"delivery_build_attempts_sealed_plan_idx",
 		"delivery_build_attempts_plan_idempotency_idx",
@@ -206,6 +231,12 @@ func TestDeliveryMigrationUpgradePreservesBuildAttemptDependents(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("cascaded build artifact binding count = %d, want 0", count)
 	}
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM delivery_failed_gate_evidence WHERE attempt_id = 'attempt-dependent'`).Scan(&count); err != nil {
+		t.Fatalf("read cascaded failed-gate evidence: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("cascaded failed-gate evidence count = %d, want 0", count)
+	}
 }
 
 func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store) {
@@ -214,19 +245,19 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied = 1`).Scan(&latest); err != nil {
 		t.Fatalf("inspect applied Goose migrations: %v", err)
 	}
-	if latest != 91 {
-		t.Fatalf("latest applied migration = %d, want 91", latest)
+	if latest != 92 {
+		t.Fatalf("latest applied migration = %d, want 92", latest)
 	}
 	rows, err := store.SQLDB().QueryContext(ctx, `
 		SELECT version_id
 		FROM goose_db_version
-		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 91
+		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 92
 		ORDER BY version_id`)
 	if err != nil {
 		t.Fatalf("inspect applied delivery migration sequence: %v", err)
 	}
 	defer rows.Close()
-	for want := int64(73); want <= 91; want++ {
+	for want := int64(73); want <= 92; want++ {
 		if !rows.Next() {
 			t.Fatalf("applied delivery migration sequence ended before %d", want)
 		}

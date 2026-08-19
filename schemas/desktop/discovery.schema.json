@@ -51,6 +51,7 @@
           "type": "string"
         },
         "instanceId": {
+          "pattern": "^instance_[0-9a-f]{32}$",
           "type": "string"
         },
         "schemaVersion": {

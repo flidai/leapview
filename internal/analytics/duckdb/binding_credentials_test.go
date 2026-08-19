@@ -34,6 +34,26 @@ func TestApplyTargetBindingBuildsBoundedValidatedRuntimeConnection(t *testing.T)
 	}
 }
 
+func TestApplyTargetBindingPublicUsesNoAuthSnapshotAndRetainsTargetEndpoint(t *testing.T) {
+	binding, err := connectionbinding.NewTargetBinding(connectionbinding.TargetBindingInput{
+		ID: "binding_public_s3", TargetID: "lvinst_prod", ConnectionID: "public_files",
+		ConnectorKind: "s3", AuthenticationMode: connectionbinding.AuthenticationNone,
+		Scope:    connectionbinding.BindingScope{ProjectID: "sales", Environment: "prod"},
+		Endpoint: connectionbinding.EndpointConfig{ObjectScope: "s3://public-bucket/"},
+		Enabled:  true, Now: time.Now(),
+	})
+	require.NoError(t, err)
+	runtime, err := ApplyTargetBinding(
+		semanticmodel.Connection{Kind: "s3", Access: semanticmodel.ConnectionAccessPublic},
+		binding,
+		connectionbinding.NewNoAuthCredentialSnapshot(time.Now()),
+	)
+	require.NoError(t, err)
+	if runtime.Access != semanticmodel.ConnectionAccessPublic || runtime.Scope != "s3://public-bucket/" || len(runtime.Auth) != 0 || runtime.Credentials.Provider != "" {
+		t.Fatalf("public runtime connection leaked auth or lost endpoint: %#v", runtime)
+	}
+}
+
 func TestApplyTargetBindingFailsClosedWithoutDisclosingInvalidBundle(t *testing.T) {
 	snapshot, err := connectionbinding.NewCredentialSnapshot(
 		map[string]string{"api_token": "source-secret"},

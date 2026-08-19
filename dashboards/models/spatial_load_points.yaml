@@ -6,10 +6,6 @@ metadata:
   displayName: Million-point spatial load fixture
   description: Deterministic synthetic locations used to verify governed viewport aggregation at production scale.
 spec:
-  description: Exactly one million stable observations derived from the real Olist geolocation source without adding a repository
-    data artifact.
-  sources:
-  - olist.geolocation
   fields:
     point_id:
       datatype: String
@@ -31,7 +27,8 @@ spec:
       datatype: Float
       label: Longitude
       description: Deterministic longitude near the metropolitan center.
-  transform:
+  definition:
+    type: sql
     sql: |
       WITH normalized AS (
         SELECT

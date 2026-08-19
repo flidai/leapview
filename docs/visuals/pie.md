@@ -16,18 +16,21 @@ visuals:
     title: Orders by status pie
     type: pie
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
+    presentation:
+      type: proportional
 ```
 
 ## Rose sectors
 
-Set `presentation.rose_type: radius` to encode values through sector radius as well as angle, and show labels so the less familiar form remains readable.
+Set `presentation.rose: true` to encode values through sector radius as well as angle, and show labels so the less familiar form remains readable.
 
 {{< visual id="status_pie_rose" >}}
 
@@ -37,16 +40,26 @@ visuals:
     title: Orders by status rose pie
     type: pie
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 24, minimum_spacing: 6, tooltip_fallback: true}
+      type: proportional
       rose: true
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 24
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
 ```
 
 ## Compact labels
@@ -61,15 +74,25 @@ visuals:
     title: Compact category pie
     type: pie
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
-      label_position: inside
+      type: proportional
+      labelPosition: inside
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: revenue
+        direction: desc
       limit: 6
 ```

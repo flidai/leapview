@@ -24,7 +24,7 @@ func TestValidateDiscoveredSchemasRejectsIncompatibleAuthoredDatatype(t *testing
 	model := &Model{
 		Sources: map[string]Source{"source": {Schema: TableSchema{Columns: []ColumnSchema{{Name: "id", PhysicalType: "BIGINT"}}}}},
 		Tables: map[string]Table{"orders": {
-			Source: "source", GrainEntity: "order", Entities: map[string]ModelEntitySpec{"order": {Type: "primary", Fields: []string{"id"}}},
+			Execution: ExecutionDefinition{Source: "source"}, GrainEntity: "order", Entities: map[string]EntityDefinition{"order": {Type: "primary", Fields: []string{"id"}}},
 			Columns: map[string]ModelColumn{"id": {Datatype: DataTypeString}},
 			Schema:  TableSchema{Columns: []ColumnSchema{{Name: "id", PhysicalType: "BIGINT"}}},
 		}},

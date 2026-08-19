@@ -144,7 +144,7 @@ func (r *Repository) ProvenanceForServingState(ctx context.Context, identity pro
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return release.Provenance{}, err
 	}
-	if err := p.ValidateStored(); err != nil {
+	if err := p.Validate(); err != nil {
 		return release.Provenance{}, err
 	}
 	if p.Plan.Identity != identity {
@@ -210,7 +210,7 @@ func (r *Repository) CandidateProvenance(ctx context.Context, projectID projectg
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return release.Provenance{}, err
 	}
-	if err := p.ValidateStored(); err != nil {
+	if err := p.Validate(); err != nil {
 		return release.Provenance{}, err
 	}
 	return p, nil
@@ -415,7 +415,7 @@ func getRelease(ctx context.Context, q *releasedb.Queries, projectID, releaseID 
 		if err := json.Unmarshal([]byte(dbrow.ProvenanceJson), &p); err != nil {
 			return release.Release{}, err
 		}
-		if err := p.ValidateStored(); err != nil {
+		if err := p.Validate(); err != nil {
 			return release.Release{}, err
 		}
 		row.Provenance = &p

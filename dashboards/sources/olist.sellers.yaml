@@ -6,9 +6,14 @@ metadata:
   displayName: Sellers
 spec:
   connection: olist
-  path: olist_sellers_dataset.csv
-  fields:
-    seller_id: {type: string, description: Stable seller identifier used by order items.}
-    seller_zip_code_prefix: {type: string, description: Five-digit Brazilian ZIP-code prefix used for geographic joins.}
-    seller_city: {type: string, description: Seller city supplied by Olist.}
-    seller_state: {type: string, description: Brazilian state abbreviation for the seller.}
+  location:
+    type: path
+    path: olist_sellers_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      seller_id: {datatype: String, description: Stable seller identifier used by order items.}
+      seller_zip_code_prefix: {datatype: String, description: Five-digit Brazilian ZIP-code prefix used for geographic joins.}
+      seller_city: {datatype: String, description: Seller city supplied by Olist.}
+      seller_state: {datatype: String, description: Brazilian state abbreviation for the seller.}

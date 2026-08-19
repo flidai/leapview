@@ -1,14 +1,22 @@
 # KPI
 
-Use a KPI for a governed current value, an optional comparison and delta, an explicit goal, and a compact historical trend. Comparison, goal, and trend datasets run through the same semantic model and active filters as the primary value.
+Use a KPI for a governed current value, an optional comparison and delta, an
+explicit goal, and a compact historical trend. Comparison, goal, and trend
+datasets run through the same semantic model and active filters as the primary
+value.
 
-Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
+Every preview on this page is generated from the YAML shown below against the
+fixed documentation dataset.
 
-Each preview automatically shows every valid responsive arrangement derived from that visual's explicitly configured features. The YAML does not name layout variants: LeapView rearranges the same label, value, comparison, goal, status, trend, and note, while enforcing the minimum size needed to preserve them.
+Each preview automatically shows every valid responsive arrangement derived
+from its explicitly configured features. The YAML does not name layout
+variants: LeapView rearranges the same configured fields while enforcing the
+minimum size needed to preserve them.
 
 ## Decision-ready comparison and trend
 
-Lead with the current result, a filter-aligned baseline, the relative change, and recent history. `favorable_direction` makes the decision meaning explicit instead of assuming that an increase is good.
+Lead with the current result, a filter-aligned baseline, relative change, and
+recent history. `favorableDirection` makes the decision meaning explicit.
 
 {{< visual id="revenue_kpi_favorable" >}}
 
@@ -19,45 +27,49 @@ visuals:
     type: kpi
     description: Shows revenue, its filter-aligned baseline, and monthly trend.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        revenue: null
+      - revenue
     datasets:
       comparison:
+        type: aggregate
+        dimensions: []
         metrics:
-          value:
-            metric: revenue_baseline
+        - revenue_baseline
         limit: 1
       trend:
+        type: aggregate
         dimensions:
-          period: orders.purchase_month
+        - purchase_month
         metrics:
-          value:
-            metric: revenue
+        - revenue
         sort:
-          - field: period
-            direction: asc
+        - field: purchase_month
+          direction: asc
         limit: 12
-    kpi:
+    presentation:
+      type: kpi
       mode: compact
       comparison:
         dataset: comparison
-        field: value
+        field: revenue_baseline
         reducer: first
         label: Baseline
       trend:
         dataset: trend
-        category: period
-        value: value
+        category: purchase_month
+        value: revenue
       delta: relative
-      favorable_direction: increase
-      missing_comparison: show_unavailable
-    presentation:
-      display_units: auto
+      favorableDirection: increase
+      missingComparison: show_unavailable
+      displayUnits: auto
 ```
 
 ## Trend only
 
-A trend is an explicit feature, independent of comparison. This example keeps the current value and historical shape without adding baseline semantics.
+A trend is an explicit feature, independent of comparison. This example keeps
+the current value and historical shape without adding baseline semantics.
 
 {{< visual id="revenue_kpi_trend" >}}
 
@@ -68,52 +80,61 @@ visuals:
     type: kpi
     description: Shows revenue with an explicitly configured monthly trend.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        revenue: null
+      - revenue
     datasets:
       trend:
+        type: aggregate
         dimensions:
-          period: orders.purchase_month
+        - purchase_month
         metrics:
-          value:
-            metric: revenue
+        - revenue
         sort:
-          - field: period
-            direction: asc
+        - field: purchase_month
+          direction: asc
         limit: 12
-    kpi:
+    presentation:
+      type: kpi
       mode: compact
       trend:
         dataset: trend
-        category: period
-        value: value
+        category: purchase_month
+        value: revenue
 ```
 
 ## Current value
 
-Use compact mode when the current value is meaningful without a comparison. A note may add context, but it should not duplicate the title.
+Use compact mode when the current value is meaningful without a comparison. A
+note may add context, but it should not duplicate the title.
 
 {{< visual id="total_orders" >}}
 
 ```yaml visual-example=total_orders
 visuals:
   total_orders:
+    title: Total orders
     type: kpi
     description: Shows the filtered count of distinct orders.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        order_count: null
-    kpi:
-      mode: compact
+      - order_count
     presentation:
-      display_units: none
+      type: kpi
+      mode: compact
+      displayUnits: none
       note: Filtered order count
       tone: ink
 ```
 
 ## Unfavorable direction
 
-The same positive delta is unfavorable when the authored decision context says decreases are better. The arrow, value, and status word keep the meaning available without color.
+The same positive delta is unfavorable when the authored decision context says
+decreases are better. The direction and label keep the meaning available
+without relying on color.
 
 {{< visual id="revenue_kpi_unfavorable" >}}
 
@@ -124,26 +145,32 @@ visuals:
     type: kpi
     description: Demonstrates an increase that is explicitly unfavorable.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        revenue: null
+      - revenue
     datasets:
       comparison:
+        type: aggregate
+        dimensions: []
         metrics:
-          value:
-            metric: revenue_baseline
+        - revenue_baseline
         limit: 1
-    kpi:
+    presentation:
+      type: kpi
       comparison:
         dataset: comparison
-        field: value
+        field: revenue_baseline
+        reducer: first
         label: Baseline
       delta: relative
-      favorable_direction: decrease
+      favorableDirection: decrease
 ```
 
 ## Bullet with an explicit goal
 
-Bullet and progress modes require a goal binding. Qualitative ranges are ordered, non-overlapping, and labeled so status never depends on color alone.
+Bullet and progress modes require a goal binding. Qualitative ranges are
+ordered, non-overlapping, and labeled so status never depends on color alone.
 
 {{< visual id="revenue_kpi_bullet" >}}
 
@@ -154,36 +181,42 @@ visuals:
     type: kpi
     description: Shows revenue against a filter-aligned target.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        revenue: null
+      - revenue
     datasets:
       goal:
+        type: aggregate
+        dimensions: []
         metrics:
-          value:
-            metric: revenue_target
+        - revenue_target
         limit: 1
-    kpi:
+    presentation:
+      type: kpi
       mode: bullet
       goal:
         dataset: goal
-        field: value
+        field: revenue_target
+        reducer: first
         label: Target
       ranges:
-        - maximum: 4000
-          label: Behind
-          tone: danger
-        - minimum: 4000
-          maximum: 5000
-          label: On track
-          tone: success
-        - minimum: 5000
-          label: Ahead
-          tone: ink
+      - maximum: 4000
+        label: Behind
+        tone: danger
+      - minimum: 4000
+        maximum: 5000
+        label: On track
+        tone: success
+      - minimum: 5000
+        label: Ahead
+        tone: ink
 ```
 
 ## Progress with an out-of-range value
 
-The progress fill is visually clamped to its track, while the actual value and the explicit “Out of range” status remain truthful.
+The progress fill is visually clamped to its track, while the actual value and
+explicit operating status remain truthful.
 
 {{< visual id="revenue_kpi_out_of_range" >}}
 
@@ -194,29 +227,35 @@ visuals:
     type: kpi
     description: Demonstrates explicit out-of-range status.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        revenue: null
+      - revenue
     datasets:
       goal:
+        type: aggregate
+        dimensions: []
         metrics:
-          value:
-            metric: revenue_target
+        - revenue_target
         limit: 1
-    kpi:
+    presentation:
+      type: kpi
       mode: progress
       goal:
         dataset: goal
-        field: value
+        field: revenue_target
+        reducer: first
         label: Target
       ranges:
-        - maximum: 4000
-          label: Operating band
-          tone: neutral
+      - maximum: 4000
+        label: Operating band
+        tone: neutral
 ```
 
 ## Status without a goal
 
-Qualitative status may describe the current value without implying progress toward a target. The visible label keeps the status independent of color.
+Qualitative status may describe the current value without implying progress
+toward a target. The visible label keeps status independent of color.
 
 {{< visual id="revenue_kpi_status" >}}
 
@@ -227,26 +266,31 @@ visuals:
     type: kpi
     description: Shows a current value classified by explicit operating ranges.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        revenue: null
-    kpi:
+      - revenue
+    presentation:
+      type: kpi
       mode: compact
       ranges:
-        - maximum: 4000
-          label: Below plan
-          tone: warning
-        - minimum: 4000
-          maximum: 6000
-          label: On plan
-          tone: success
-        - minimum: 6000
-          label: Above plan
-          tone: ink
+      - maximum: 4000
+        label: Below plan
+        tone: warning
+      - minimum: 4000
+        maximum: 6000
+        label: On plan
+        tone: success
+      - minimum: 6000
+        label: Above plan
+        tone: ink
 ```
 
 ## All explicit features
 
-This coverage fixture intentionally combines subtitle, comparison, progress, goal, status, trend, and note. Automatic layout may rearrange them, but it may not remove or reformat any configured feature.
+This coverage fixture combines subtitle, comparison, progress, goal, status,
+trend, and note. Automatic layout may rearrange them, but may not remove any
+configured feature.
 
 {{< visual id="revenue_kpi_all_features" >}}
 
@@ -258,64 +302,71 @@ visuals:
     type: kpi
     description: Exercises every explicit KPI feature in one responsive contract.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        revenue: null
+      - revenue
     datasets:
       comparison:
+        type: aggregate
+        dimensions: []
         metrics:
-          value:
-            metric: revenue_baseline
+        - revenue_baseline
         limit: 1
       goal:
+        type: aggregate
+        dimensions: []
         metrics:
-          value:
-            metric: revenue_target
+        - revenue_target
         limit: 1
       trend:
+        type: aggregate
         dimensions:
-          period: orders.purchase_month
+        - purchase_month
         metrics:
-          value:
-            metric: revenue
+        - revenue
         sort:
-          - field: period
-            direction: asc
+        - field: purchase_month
+          direction: asc
         limit: 12
-    kpi:
+    presentation:
+      type: kpi
       mode: progress
       comparison:
         dataset: comparison
-        field: value
+        field: revenue_baseline
+        reducer: first
         label: Baseline
       trend:
         dataset: trend
-        category: period
-        value: value
+        category: purchase_month
+        value: revenue
       goal:
         dataset: goal
-        field: value
+        field: revenue_target
+        reducer: first
         label: Target
       ranges:
-        - maximum: 4000
-          label: Behind
-          tone: danger
-        - minimum: 4000
-          maximum: 6000
-          label: On track
-          tone: success
-        - minimum: 6000
-          label: Ahead
-          tone: ink
+      - maximum: 4000
+        label: Behind
+        tone: danger
+      - minimum: 4000
+        maximum: 6000
+        label: On track
+        tone: success
+      - minimum: 6000
+        label: Ahead
+        tone: ink
       delta: relative
-      favorable_direction: increase
-      missing_comparison: show_unavailable
-    presentation:
+      favorableDirection: increase
+      missingComparison: show_unavailable
       note: Filter-aligned decision context
 ```
 
 ## Missing comparison
 
-Choose whether a missing comparison is displayed as unavailable or hidden. Showing it is the safer default because it distinguishes missing context from a zero delta.
+Choose whether a missing comparison is displayed as unavailable or hidden.
+Showing it distinguishes missing context from a zero delta.
 
 {{< visual id="revenue_kpi_missing_comparison" >}}
 
@@ -326,20 +377,25 @@ visuals:
     type: kpi
     description: Demonstrates an explicitly unavailable comparison.
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        revenue: null
+      - revenue
     datasets:
       comparison:
+        type: aggregate
+        dimensions: []
         metrics:
-          value:
-            metric: missing_revenue
+        - missing_revenue
         limit: 1
-    kpi:
+    presentation:
+      type: kpi
       comparison:
         dataset: comparison
-        field: value
+        field: missing_revenue
+        reducer: first
         label: Prior period
       delta: absolute
-      favorable_direction: neutral
-      missing_comparison: show_unavailable
+      favorableDirection: neutral
+      missingComparison: show_unavailable
 ```

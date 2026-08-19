@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
     ./scripts/generate_build_sources.sh && \
     go run ./internal/app/tools/mapassets --out .data/map-assets && \
+    go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare && \
     go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen && \
     go run ./internal/app/tools/clidocgen && \
     go run ./internal/app/tools/schemadocgen && \

@@ -12,6 +12,7 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 )
@@ -37,7 +38,7 @@ func bundleProject(t *testing.T) projectartifact.Project {
 			"source:orders": {Connection: "connection:warehouse"},
 		},
 		Models: map[string]semanticmodel.Table{
-			"model:orders": {Source: "source:orders"},
+			"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
 		},
 		ResourceFiles: map[string]string{"project:demo": "leapview.yaml", "connection:warehouse": "connections/warehouse.yaml", "source:orders": "sources/orders.yaml", "model:orders": "models/orders.yaml"},
 	})
@@ -93,6 +94,107 @@ func TestPackCompiledProjectUsesSingleDeterministicCompiledPath(t *testing.T) {
 	}
 }
 
+func TestCompiledProjectRoundTripPreservesRuntimeProjection(t *testing.T) {
+	base := bundleProject(t)
+	manifest := base.Manifest()
+	header := true
+	location := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
+		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "orders.csv", Format: "csv"},
+		Format:                 "csv",
+		Options:                &projectcontracts.CSVReaderOptions{Header: &header},
+	}}
+	source := manifest.Sources["source:orders"]
+	source.Path = "orders.csv"
+	source.LocationType = "path"
+	source.PathLocation = location
+	source.EffectivePathLocation = location
+	manifest.Sources["source:orders"] = source
+	project, err := projectartifact.NewProject(base.Graph(), manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if _, _, err := PackCompiledProject(project, bundlePlan(project), &output); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "project.tar.gz")
+	if err := os.WriteFile(path, output.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validation, err := ValidateArtifact(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(validation.RootDir)
+	if got := validation.Manifest.Sources["source:orders"]; got.PathLocation == nil || got.EffectivePathLocation == nil {
+		t.Fatalf("compiled manifest lost typed path runtime projection: %#v", got)
+	}
+	if got := validation.Manifest.Models["model:orders"].Execution.Source; got != "source:orders" {
+		t.Fatalf("compiled manifest lost model execution projection: %q", got)
+	}
+	compiled, _, err := LoadCompiledProjectArtifact(validation.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.Runtime.Sources["source:orders"].PathLocation == nil || compiled.Runtime.Models["model:orders"].Source != "source:orders" {
+		t.Fatalf("compiled runtime projection is incomplete: %#v", compiled.Runtime)
+	}
+}
+
+func TestCompiledProjectRejectsMissingRuntimeProjectionAndTargetState(t *testing.T) {
+	project := bundleProject(t)
+	var output bytes.Buffer
+	if _, _, err := PackCompiledProject(project, bundlePlan(project), &output); err != nil {
+		t.Fatal(err)
+	}
+	versionOnePath := filepath.Join(t.TempDir(), "version-one.tar.gz")
+	if err := os.WriteFile(versionOnePath, output.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutateBundle(t, versionOnePath, func(compiled *CompiledProjectArtifact, _ *Manifest) {
+		compiled.Version = 1
+	})
+	root := t.TempDir()
+	if err := ExtractArtifact(versionOnePath, root); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompiledProjectArtifact(root); err == nil || !strings.Contains(err.Error(), "version") {
+		t.Fatalf("version one error = %v", err)
+	}
+
+	missingRuntimePath := filepath.Join(t.TempDir(), "missing-runtime.tar.gz")
+	if err := os.WriteFile(missingRuntimePath, output.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutateBundle(t, missingRuntimePath, func(compiled *CompiledProjectArtifact, _ *Manifest) {
+		compiled.Runtime = projectartifact.RuntimeProjection{}
+	})
+	root = t.TempDir()
+	if err := ExtractArtifact(missingRuntimePath, root); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompiledProjectArtifact(root); err == nil || !strings.Contains(err.Error(), "runtime projection") {
+		t.Fatalf("missing runtime projection error = %v", err)
+	}
+
+	targetStatePath := filepath.Join(t.TempDir(), "target-state.tar.gz")
+	if err := os.WriteFile(targetStatePath, output.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutateBundle(t, targetStatePath, func(compiled *CompiledProjectArtifact, _ *Manifest) {
+		connection := compiled.Manifest.Connections["connection:warehouse"]
+		connection.Path = "/target/path"
+		compiled.Manifest.Connections["connection:warehouse"] = connection
+	})
+	root = t.TempDir()
+	if err := ExtractArtifact(targetStatePath, root); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompiledProjectArtifact(root); err == nil || !strings.Contains(err.Error(), "target-owned state") {
+		t.Fatalf("target state error = %v", err)
+	}
+}
+
 func TestPackProjectPreservesAuthoredSourcesDeterministically(t *testing.T) {
 	project := bundleProject(t)
 	root := t.TempDir()
@@ -109,10 +211,10 @@ func TestPackProjectPreservesAuthoredSourcesDeterministically(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "models"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "sources", "orders.yaml"), []byte("kind: Source\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "sources", "orders.yaml"), []byte("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte("kind: Connection\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte("apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: managed}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("kind: Model\n"), 0o600); err != nil {
@@ -145,8 +247,8 @@ func TestPackProjectIncludesOnlyManifestAndGraphProvenanceFiles(t *testing.T) {
 	projectPath := filepath.Join(root, ProjectFile)
 	files := map[string]string{
 		ProjectFile:                  "apiVersion: leapview.dev/v1\nkind: Project\n",
-		"connections/warehouse.yaml": "kind: Connection\n",
-		"sources/orders.yaml":        "kind: Source\n",
+		"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: managed}\n",
+		"sources/orders.yaml":        "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n",
 		"models/orders.yaml":         "kind: Model\n",
 		"unrelated/other.yaml":       "must not be bundled\n",
 	}

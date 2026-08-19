@@ -30,12 +30,17 @@ type ZoomAnchor = {
 class ReportCanvas extends LitElement {
   @property({ type: Number }) width = 1366
   @property({ type: Number }) height = 768
+  @property({ type: Number }) columns = 0
+  @property({ type: Number }) rowHeight = 0
+  @property({ type: Number }) gap = 0
+  @property({ type: Number }) padding = 0
   @state() private scale = 1
   @state() private layoutMode: LayoutMode = storedLayoutMode()
   @state() private resolvedLayout: ResolvedLayout = resolvedLayoutMode(this.layoutMode)
   @state() private zoomMode: ZoomMode = storedZoomMode()
   @state() private presentationMode: PresentationMode = 'fit-width'
   @state() private contentHeight = this.height
+  @state() private contentWidth = this.width
   private customScale = storedCustomScale()
   private zoomAnchor?: ZoomAnchor
 
@@ -248,7 +253,10 @@ class ReportCanvas extends LitElement {
     this.autoLayoutMediaQuery = window.matchMedia(autoMobileLayoutQuery)
     this.autoLayoutMediaQuery.addEventListener('change', this.onAutoLayoutChange)
     this.syncResolvedLayout()
-    this.resizeObserver = new ResizeObserver(() => this.updateScale())
+    this.resizeObserver = new ResizeObserver(() => {
+      this.positionVisuals()
+      this.updateScale()
+    })
     this.updateComplete.then(() => {
       this.resizeObserver?.observe(this)
       this.positionVisuals()
@@ -275,9 +283,9 @@ class ReportCanvas extends LitElement {
     const viewport = this.viewportElement()
     const availableWidth = Math.max(0, viewport?.clientWidth ?? hostRect.width)
     const availableHeight = Math.max(0, viewport?.clientHeight ?? hostRect.height)
-    if (!availableWidth || !availableHeight || !this.width || !this.contentHeight) return
+    if (!availableWidth || !availableHeight || !this.contentWidth || !this.contentHeight) return
     const nextLayout = resolvedLayoutMode(this.layoutMode, this.autoLayoutMediaQuery?.matches)
-    const widthScale = availableWidth / this.width
+    const widthScale = availableWidth / this.contentWidth
     const heightScale = availableHeight / this.contentHeight
     let nextMode: PresentationMode = this.zoomMode
     let nextScale = 1
@@ -317,28 +325,57 @@ class ReportCanvas extends LitElement {
   private positionVisuals(): void {
     const slot = this.shadowRoot?.querySelector('slot:not([name])') as HTMLSlotElement | null
     const assigned = slot?.assignedElements({ flatten: true }) ?? []
-    let nextContentHeight = this.height
+    const responsive = this.responsiveGrid()
+    const viewport = this.viewportElement()
+    const hostRect = this.getBoundingClientRect()
+    const nextContentWidth = responsive
+      ? Math.max(0, viewport?.clientWidth ?? hostRect.width)
+      : this.width
+    if (nextContentWidth <= 0) return
+    let nextContentHeight = responsive ? this.padding * 2 : this.height
     for (const element of assigned) {
       if (!(element instanceof HTMLElement)) continue
-      this.positionVisual(element as VisualElement)
-      const y = parseCanvasNumber(element.dataset.y, 0)
-      const height = parseCanvasNumber(element.dataset.h, 180)
-      nextContentHeight = Math.max(nextContentHeight, y + height + 16)
+      const geometry = this.positionVisual(element as VisualElement, nextContentWidth, responsive)
+      nextContentHeight = Math.max(nextContentHeight, geometry.y + geometry.height + (responsive ? this.padding : 16))
+    }
+    if (nextContentWidth !== this.contentWidth) {
+      this.contentWidth = nextContentWidth
     }
     if (nextContentHeight !== this.contentHeight) {
       this.contentHeight = nextContentHeight
     }
   }
 
-  private positionVisual(element: VisualElement): void {
-    const x = parseCanvasNumber(element.dataset.x, 0)
-    const y = parseCanvasNumber(element.dataset.y, 0)
-    const width = parseCanvasNumber(element.dataset.w, 280)
-    const height = parseCanvasNumber(element.dataset.h, 180)
+  private positionVisual(element: VisualElement, canvasWidth: number, responsive: boolean): { x: number; y: number; width: number; height: number } {
+    let x = parseCanvasNumber(element.dataset.x, 0)
+    let y = parseCanvasNumber(element.dataset.y, 0)
+    let width = parseCanvasNumber(element.dataset.w, 280)
+    let height = parseCanvasNumber(element.dataset.h, 180)
+    if (responsive) {
+      const col = parseCanvasNumber(element.dataset.col, 0)
+      const row = parseCanvasNumber(element.dataset.row, 0)
+      const colSpan = parseCanvasNumber(element.dataset.colSpan, 0)
+      const rowSpan = parseCanvasNumber(element.dataset.rowSpan, 0)
+      const availableWidth = canvasWidth - this.padding * 2 - this.gap * (this.columns - 1)
+      const columnWidth = availableWidth / this.columns
+      x = this.padding + (col - 1) * (columnWidth + this.gap)
+      y = this.padding + (row - 1) * (this.rowHeight + this.gap)
+      width = colSpan * columnWidth + (colSpan - 1) * this.gap
+      height = rowSpan * this.rowHeight + (rowSpan - 1) * this.gap
+    }
     element.style.left = `${x}px`
     element.style.top = `${y}px`
     element.style.width = `${width}px`
     element.style.height = `${height}px`
+    return { x, y, width, height }
+  }
+
+  private responsiveGrid(): boolean {
+    return this.width <= 0
+      && this.columns > 0
+      && this.rowHeight > 0
+      && this.gap >= 0
+      && this.padding >= 0
   }
 
   private setZoomMode(mode: ZoomMode): void {
@@ -435,7 +472,7 @@ class ReportCanvas extends LitElement {
 
   render() {
     const style = [
-      `--report-canvas-width:${this.width}`,
+      `--report-canvas-width:${this.contentWidth}`,
       `--report-canvas-height:${this.contentHeight}`,
       `--report-canvas-scale:${this.scale}`,
     ].join(';')

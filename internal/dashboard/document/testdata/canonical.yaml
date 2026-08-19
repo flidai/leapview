@@ -1,0 +1,45 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:sales
+  name: sales
+  displayName: Sales
+spec:
+  semanticModel: sales
+  filters:
+    - id: state
+      label: State
+      dimension: state
+      control:
+        type: multiSelect
+      default:
+        type: set
+        operator: in
+        values:
+          - type: string
+            value: CA
+      urlParameter: state
+  visuals:
+    revenue:
+      type: bar
+      title: Revenue
+      query:
+        type: aggregate
+        dimensions:
+          - month
+        metrics:
+          - revenue
+      presentation:
+        type: cartesian
+  pages:
+    - id: overview
+      title: Overview
+      components:
+        - id: revenue-component
+          type: visual
+          visual: revenue
+          placement:
+            column: 1
+            row: 1
+            columnSpan: 12
+            rowSpan: 6

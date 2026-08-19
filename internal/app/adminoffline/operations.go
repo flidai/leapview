@@ -14,7 +14,9 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/config"
+	"github.com/flidai/leapview/internal/app/extensionsupplyloader"
 	"github.com/flidai/leapview/internal/app/gcadapter"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 )
@@ -74,6 +76,14 @@ func (Operations) BootstrapQualificationLocalPhysicalPool(ctx context.Context, o
 	if !cfg.Production || strings.TrimSpace(cfg.Environment) != "evaluation" {
 		return fmt.Errorf("qualification local physical-pool bootstrap requires the production evaluation environment")
 	}
+	var extensionAdmission extension.Admission
+	if strings.TrimSpace(cfg.DuckDBExtensionSupplyPath) != "" {
+		supply, supplyErr := extensionsupplyloader.Load(ctx, cfg)
+		if supplyErr != nil {
+			return fmt.Errorf("load qualification extension supply: %w", supplyErr)
+		}
+		extensionAdmission = supply
+	}
 	store, err := platform.Open(ctx, cfg.DBPath())
 	if err != nil {
 		return err
@@ -100,7 +110,7 @@ func (Operations) BootstrapQualificationLocalPhysicalPool(ctx context.Context, o
 	}
 	probeRoot := filepath.Join(cfg.RuntimeDir(), "qualification-delivery-conformance")
 	defer os.RemoveAll(probeRoot)
-	evidence, err := analyticsducklake.RunLocalPoolConformance(ctx, probeRoot, tuple)
+	evidence, err := analyticsducklake.RunLocalPoolConformance(ctx, probeRoot, tuple, extensionAdmission)
 	if err != nil {
 		return fmt.Errorf("run qualification local physical-pool conformance: %w", err)
 	}
@@ -161,6 +171,14 @@ func newService() (*adminoffline.Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	var extensionAdmission extension.Admission
+	if strings.TrimSpace(cfg.DuckDBExtensionSupplyPath) != "" {
+		supply, supplyErr := extensionsupplyloader.Load(context.Background(), cfg)
+		if supplyErr != nil {
+			return nil, supplyErr
+		}
+		extensionAdmission = supply
+	}
 	normalized := adminoffline.Config{
 		HomeDir:            cfg.HomeDir,
 		DBPath:             cfg.DBPath(),
@@ -185,16 +203,17 @@ func newService() (*adminoffline.Service, error) {
 		Storage: storageCleaner{
 			dbPath: cfg.DBPath(), home: cfg.HomeDir,
 			catalogPath: cfg.DuckLakeCatalogPath(), dataPath: cfg.DuckLakeDataDir(),
+			extensionAdmission: extensionAdmission,
 		},
 		PhysicalPool: physicalPoolBootstrap{dbPath: cfg.DBPath(), s3: gcadapter.S3Config{
 			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
 			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
-			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle,
+			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionAdmission,
 		}},
 		DeliveryRepair: deliveryRepair{dbPath: cfg.DBPath(), home: cfg.HomeDir, stagingRoot: cfg.RuntimeDir(), s3: gcadapter.S3Config{
 			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
 			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
-			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle,
+			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionAdmission,
 		}},
 		Archive: instanceArchive{home: cfg.HomeDir, dbPath: cfg.DBPath()},
 	}), nil

@@ -16,29 +16,36 @@ visuals:
     title: Delivery time vs order revenue
     type: scatter
     query:
+      type: aggregate
       dimensions:
-        order_id: orders.order_id
-        status: orders.status
+      - order_id
+      - status
       metrics:
-        delivery_days: null
-        revenue: null
+      - delivery_days
+      - revenue
       sort:
-        - field: order_id
-          direction: asc
+      - field: order_id
+        direction: asc
       limit: 500
-    point:
+    presentation:
+      type: point
       identity: [order_id]
       x: delivery_days
       y: revenue
       color: status
       tooltip: [order_id, status, delivery_days, revenue]
-      color_scale: {kind: categorical}
-      overplot: {strategy: opacity, opacity: 0.58, large_mode: automatic, large_threshold: 2000}
+      colorScale:
+        kind: categorical
+      overplot:
+        strategy: opacity
+        opacity: 0.58
+        largeMode: automatic
+        largeThreshold: 2000
 ```
 
 ## Bubble chart
 
-Add delivery duration as bubble size and category as color. The explicit pixel range keeps bubble area legible without allowing one outlier to cover the plot.
+Add delivery duration and review score as the two quantitative axes, with category as color. The explicit point identity keeps each order stable.
 
 {{< visual id="delivery_scatter_status" >}}
 
@@ -48,27 +55,34 @@ visuals:
     title: Review, revenue, and delivery bubble chart
     type: scatter
     query:
+      type: aggregate
       dimensions:
-        order_id: orders.order_id
-        category: orders.category
+      - order_id
+      - category
       metrics:
-        delivery_days: null
-        review_score: null
-        revenue: null
+      - delivery_days
+      - review_score
+      - revenue
       sort:
-        - field: order_id
-          direction: asc
+      - field: order_id
+        direction: asc
       limit: 500
-    point:
+    presentation:
+      type: point
       identity: [order_id]
       x: review_score
       y: revenue
       size: delivery_days
       color: category
       tooltip: [order_id, category, review_score, revenue, delivery_days]
-      color_scale: {kind: categorical}
-      size_scale: {minimum_pixels: 7, maximum_pixels: 34}
-      overplot: {strategy: opacity, opacity: 0.52}
+      colorScale:
+        kind: categorical
+      sizeScale:
+        minimumPixels: 7
+        maximumPixels: 34
+      overplot:
+        strategy: opacity
+        opacity: 0.52
 ```
 
 ## Time versus value
@@ -82,26 +96,36 @@ visuals:
   delivery_scatter_labeled:
     title: Labeled revenue by purchase time
     type: scatter
-    presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 16, minimum_spacing: 6, tooltip_fallback: true}
     query:
+      type: aggregate
       dimensions:
-        order_id: orders.order_id
-      time:
-        field: purchase_date
+      - order_id
+      - dimension: purchase_date
         grain: day
         alias: purchase_day
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: purchase_day
-          direction: asc
+      - field: purchase_day
+        direction: asc
       limit: 30
-    point:
+    presentation:
+      type: point
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 16
+        minimumSpacing: 6
+        tooltipFallback: true
       identity: [order_id]
       x: purchase_day
       y: revenue
       label: order_id
       tooltip: [order_id, purchase_day, revenue]
-      overplot: {strategy: show_all, large_mode: never}
+      overplot:
+        strategy: show_all
+        largeMode: never
 ```

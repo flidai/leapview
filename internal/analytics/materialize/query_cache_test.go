@@ -56,7 +56,7 @@ func activatedCacheRuntime(t testing.TB, runtime *Runtime) *Runtime {
 				field = name
 				break
 			}
-			table.Entities = map[string]semanticmodel.ModelEntitySpec{"row": {Type: "primary", Fields: []string{field}}}
+			table.Entities = map[string]semanticmodel.EntityDefinition{"row": {Type: "primary", Fields: []string{field}}}
 			table.GrainEntity = "row"
 		} else if table.GrainEntity == "" {
 			for name, entity := range table.Entities {

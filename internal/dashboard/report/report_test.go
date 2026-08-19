@@ -37,13 +37,13 @@ func (r fakeReportResolver) Resolve(projectgraph.ResourceID) (dashboardresolver.
 
 func TestActivePageResolution(t *testing.T) {
 	page, ok := ActivePage(nil, "")
-	if !ok || page.ID != "overview" || page.Canvas.Width != 1366 {
+	if !ok || page.ID != "overview" || page.Canvas != (dashboard.PageCanvas{}) || page.Grid.Columns != 12 || page.Height != 32 || page.ResponsiveLayout == nil {
 		t.Fatalf("default page = %#v, %v", page, ok)
 	}
 
 	pages := []dashboard.Page{{ID: "a", Title: "A"}, {ID: "b", Title: "B", Canvas: dashboard.PageCanvas{Width: 900}}}
 	page, ok = ActivePage(pages, "b")
-	if !ok || page.ID != "b" || page.Canvas.Width != 900 || page.Canvas.Height != 940 {
+	if !ok || page.ID != "b" || page.Canvas != (dashboard.PageCanvas{}) || page.Width != 0 || page.Height != 0 {
 		t.Fatalf("active page = %#v, %v", page, ok)
 	}
 	if _, ok := ActivePage(pages, "missing"); ok {

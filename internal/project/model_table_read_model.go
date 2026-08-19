@@ -12,18 +12,15 @@ import (
 // Keeping this projection at the read-model boundary prevents the UI from
 // treating a graph resource as if it were the compiled table definition.
 type ModelTableAssetReadModel struct {
-	Source             string                                   `json:"Source,omitempty"`
-	Sources            []string                                 `json:"Sources,omitempty"`
-	SourceReads        map[string][]string                      `json:"SourceReads,omitempty"`
-	Transform          semanticmodel.Transform                  `json:"Transform,omitempty"`
-	Columns            map[string]semanticmodel.ModelColumn     `json:"Columns,omitempty"`
-	Entities           map[string]semanticmodel.ModelEntitySpec `json:"Entities,omitempty"`
-	GrainEntity        string                                   `json:"GrainEntity,omitempty"`
-	Dimensions         map[string]semanticmodel.MetricDimension `json:"Dimensions,omitempty"`
-	Description        string                                   `json:"Description,omitempty"`
-	Schema             semanticmodel.TableSchema                `json:"Schema,omitempty"`
-	SourceDependencies []string                                 `json:"SourceDependencies,omitempty"`
-	ModelDependencies  []string                                 `json:"ModelDependencies,omitempty"`
+	Definition         semanticmodel.ExecutionDefinition         `json:"Definition,omitempty"`
+	Columns            map[string]semanticmodel.ModelColumn      `json:"Columns,omitempty"`
+	Entities           map[string]semanticmodel.EntityDefinition `json:"Entities,omitempty"`
+	GrainEntity        string                                    `json:"GrainEntity,omitempty"`
+	Dimensions         map[string]semanticmodel.MetricDimension  `json:"Dimensions,omitempty"`
+	Description        string                                    `json:"Description,omitempty"`
+	Schema             semanticmodel.TableSchema                 `json:"Schema,omitempty"`
+	SourceDependencies []string                                  `json:"SourceDependencies,omitempty"`
+	ModelDependencies  []string                                  `json:"ModelDependencies,omitempty"`
 }
 
 // ModelTableAssetPayload converts the validated compiled table into the
@@ -32,10 +29,7 @@ type ModelTableAssetReadModel struct {
 // typed until it is encoded for the browser-facing read model.
 func ModelTableAssetPayload(table semanticmodel.Table) map[string]any {
 	projection := ModelTableAssetReadModel{
-		Source:             table.Source,
-		Sources:            append([]string(nil), table.Sources...),
-		SourceReads:        cloneStringSliceMap(table.SourceReads),
-		Transform:          table.Transform,
+		Definition:         table.Execution,
 		Columns:            cloneModelColumns(table.Columns),
 		Entities:           cloneModelEntities(table.Entities),
 		GrainEntity:        table.GrainEntity,
@@ -56,17 +50,6 @@ func ModelTableAssetPayload(table semanticmodel.Table) map[string]any {
 	return payload
 }
 
-func cloneStringSliceMap(input map[string][]string) map[string][]string {
-	if input == nil {
-		return nil
-	}
-	output := make(map[string][]string, len(input))
-	for key, values := range input {
-		output[key] = append([]string(nil), values...)
-	}
-	return output
-}
-
 func cloneModelColumns(input map[string]semanticmodel.ModelColumn) map[string]semanticmodel.ModelColumn {
 	if input == nil {
 		return nil
@@ -78,11 +61,11 @@ func cloneModelColumns(input map[string]semanticmodel.ModelColumn) map[string]se
 	return output
 }
 
-func cloneModelEntities(input map[string]semanticmodel.ModelEntitySpec) map[string]semanticmodel.ModelEntitySpec {
+func cloneModelEntities(input map[string]semanticmodel.EntityDefinition) map[string]semanticmodel.EntityDefinition {
 	if input == nil {
 		return nil
 	}
-	output := make(map[string]semanticmodel.ModelEntitySpec, len(input))
+	output := make(map[string]semanticmodel.EntityDefinition, len(input))
 	for key, value := range input {
 		value.Fields = append([]string(nil), value.Fields...)
 		output[key] = value

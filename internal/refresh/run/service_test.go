@@ -446,12 +446,12 @@ func refreshTestDefinition() *artifact.Definition {
 			Tables: map[string]semanticmodel.Table{
 				"customers": {
 					ModelName: "customers", GrainEntity: "customer_id",
-					Entities:   map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}},
+					Entities:   map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}},
 					Dimensions: map[string]semanticmodel.MetricDimension{"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 				},
 				"orders": {
 					ModelName: "orders", GrainEntity: "order_id", ModelDependencies: []string{"customers"},
-					Entities:   map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+					Entities:   map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
 					Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}},
 				},
 			},

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 )
 
 func deliveryTestDigest(char byte) string {
@@ -45,6 +46,25 @@ func deliveryTestPlan(t *testing.T) DeliveryPlan {
 		t.Fatalf("new plan: %v", err)
 	}
 	return plan
+}
+
+func deliveryTestGateEvidence(t *testing.T, plan DeliveryPlan, outcome release.GateOutcome) *release.GateEvidence {
+	t.Helper()
+	raw := release.GateEvidence{Version: 1, CandidateID: "candidate-1", SourceDigest: plan.SourceDigest, BindingGeneration: deliveryTestDigest('c'), RuntimeVersion: "runtime-1", DuckDBVersion: "duckdb-1", Outcome: outcome, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}
+	if outcome != release.GateSuccess {
+		source := release.GateSourceEvidence{ID: "source-1", Mode: "inferred", SourceDigest: plan.SourceDigest, SchemaOutcome: outcome}
+		if outcome == release.GateUnavailable {
+			source.SchemaFailure = release.GateObservationFailureUnavailable
+		} else if outcome == release.GateTimeout {
+			source.SchemaFailure = release.GateObservationFailureTimeout
+		}
+		raw.Sources = []release.GateSourceEvidence{source}
+	}
+	evidence, err := raw.Canonical()
+	if err != nil {
+		t.Fatalf("canonical gate evidence: %v", err)
+	}
+	return &evidence
 }
 
 func TestDeliveryPlanSeparatesExecutionFromProvenance(t *testing.T) {
@@ -335,30 +355,74 @@ func TestDeliveryPlanRequiresExplicitEvidenceAndCanonicalizesOrder(t *testing.T)
 	}
 }
 
-func TestResolvedBuildInputsEnforcePlannedModesWithoutRawObservedValues(t *testing.T) {
+func TestResolvedBuildInputsRequireObservedEvidenceDigest(t *testing.T) {
 	d := deliveryTestDigest
-	pinned, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{Inputs: []DeliveryResolvedDataInput{{ID: "orders", Mode: DeliveryDataPinned, PlannedRevision: "rev-1", ActualRevision: "rev-1", Explanation: "read immutable revision"}}})
+	plan := deliveryTestPlan(t)
+	gates := deliveryTestGateEvidence(t, plan, release.GateSuccess)
+	pinned, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{GateEvidence: gates, Inputs: []DeliveryResolvedDataInput{{ID: "orders", Mode: DeliveryDataPinned, PlannedRevision: "rev-1", ActualRevision: "rev-1", Explanation: "read immutable revision"}}})
 	if err != nil || pinned.EvidenceDigest == "" {
 		t.Fatalf("pinned evidence=%#v err=%v", pinned, err)
 	}
-	bounded, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{Inputs: []DeliveryResolvedDataInput{{ID: "orders", Mode: DeliveryDataBounded, PlannedBound: "2026-08-17T00:00:00Z", ActualBound: "2026-08-17T00:00:00Z", Explanation: "enforced upper watermark"}}})
+	bounded, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{GateEvidence: gates, Inputs: []DeliveryResolvedDataInput{{ID: "orders", Mode: DeliveryDataBounded, PlannedBound: "2026-08-17T00:00:00Z", ActualBound: "2026-08-17T00:00:00Z", Explanation: "enforced upper watermark"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{Inputs: []DeliveryResolvedDataInput{{ID: "live", Mode: DeliveryDataObserved, ObservedValue: "secret-source-value", ObservationDigest: d('a'), Explanation: "observed"}}}); !errors.Is(err, ErrDeliveryInvalid) {
-		t.Fatalf("raw observed value err=%v", err)
+	if _, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{GateEvidence: gates, Inputs: []DeliveryResolvedDataInput{{ID: "live", Mode: DeliveryDataObserved, Explanation: "observed"}}}); !errors.Is(err, ErrDeliveryInvalid) {
+		t.Fatalf("missing observed digest err=%v", err)
 	}
-	if _, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{Inputs: []DeliveryResolvedDataInput{{ID: "live", Mode: DeliveryDataObserved, ObservationDigest: d('a'), Explanation: "observed"}}}); err != nil {
+	if _, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{GateEvidence: gates, Inputs: []DeliveryResolvedDataInput{{ID: "live", Mode: DeliveryDataObserved, ObservationDigest: d('a'), Explanation: "observed"}}}); err != nil {
 		t.Fatal(err)
 	}
 	_ = bounded
 }
 
+func TestResolvedBuildInputsPersistAndRejectTamperedGateEvidence(t *testing.T) {
+	plan := deliveryTestPlan(t)
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: "candidate-1", SourceDigest: plan.SourceDigest, BindingGeneration: "sha256:" + strings.Repeat("c", 64), RuntimeVersion: "runtime-1", DuckDBVersion: "duckdb-1", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ValidateDeliveryResolvedBuildInputs(plan, DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: &evidence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reloaded DeliveryResolvedBuildInputs
+	if err := json.Unmarshal(encoded, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateDeliveryResolvedBuildInputs(plan, reloaded); err != nil {
+		t.Fatalf("reloaded evidence rejected: %v", err)
+	}
+	reloaded.GateEvidence.Digest = deliveryTestDigest('f')
+	if _, err := ValidateDeliveryResolvedBuildInputs(plan, reloaded); !errors.Is(err, ErrDeliveryConflict) {
+		t.Fatalf("tampered gate evidence error = %v, want conflict", err)
+	}
+}
+
+func TestResolvedBuildInputsRejectFailedGateEvidence(t *testing.T) {
+	plan := deliveryTestPlan(t)
+	for _, outcome := range []release.GateOutcome{release.GateBlocking, release.GateUnavailable, release.GateEmpty, release.GateTimeout} {
+		evidence := deliveryTestGateEvidence(t, plan, outcome)
+		if _, err := NewDeliveryResolvedBuildInputs(DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: evidence}); !errors.Is(err, ErrDeliveryConflict) {
+			t.Errorf("constructor outcome %q error=%v, want conflict", outcome, err)
+		}
+		if _, err := ValidateDeliveryResolvedBuildInputs(plan, DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: evidence}); !errors.Is(err, ErrDeliveryConflict) {
+			t.Errorf("validator outcome %q error=%v, want conflict", outcome, err)
+		}
+	}
+}
+
 func TestResolvedBoundedInputRejectsChangedWatermark(t *testing.T) {
 	plan := deliveryTestPlan(t)
+	gates := deliveryTestGateEvidence(t, plan, release.GateSuccess)
 	plan.Execution.DataInputs = []DeliveryDataInput{{ID: "orders", Mode: DeliveryDataBounded, Bound: "2026-08-17T00:00:00Z"}}
 	valid, err := ValidateDeliveryResolvedBuildInputs(plan, DeliveryResolvedBuildInputs{
 		PolicyDigest: plan.Governance.PolicyDigest,
+		GateEvidence: gates,
 		Inputs:       []DeliveryResolvedDataInput{{ID: "orders", Mode: DeliveryDataBounded, PlannedBound: "2026-08-17T00:00:00Z", ActualBound: "2026-08-17T00:00:00Z", Explanation: "enforced upper watermark"}},
 	})
 	if err != nil || valid.EvidenceDigest == "" {
@@ -366,6 +430,7 @@ func TestResolvedBoundedInputRejectsChangedWatermark(t *testing.T) {
 	}
 	_, err = ValidateDeliveryResolvedBuildInputs(plan, DeliveryResolvedBuildInputs{
 		PolicyDigest: plan.Governance.PolicyDigest,
+		GateEvidence: gates,
 		Inputs:       []DeliveryResolvedDataInput{{ID: "orders", Mode: DeliveryDataBounded, PlannedBound: "2026-08-17T00:00:00Z", ActualBound: "2026-08-18T00:00:00Z", Explanation: "watermark widened"}},
 	})
 	if !errors.Is(err, ErrDeliveryInvalid) {
@@ -375,8 +440,9 @@ func TestResolvedBoundedInputRejectsChangedWatermark(t *testing.T) {
 
 func TestResolvedBuildInputsBindExactlyToPlanDeclarations(t *testing.T) {
 	plan := deliveryTestPlan(t)
+	gates := deliveryTestGateEvidence(t, plan, release.GateSuccess)
 	plan.Execution.DataInputs = []DeliveryDataInput{{ID: "orders", Mode: DeliveryDataPinned, Revision: "rev-1"}, {ID: "events", Mode: DeliveryDataObserved}}
-	valid, err := ValidateDeliveryResolvedBuildInputs(plan, DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, Inputs: []DeliveryResolvedDataInput{
+	valid, err := ValidateDeliveryResolvedBuildInputs(plan, DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: gates, Inputs: []DeliveryResolvedDataInput{
 		{ID: "orders", Mode: DeliveryDataPinned, PlannedRevision: "rev-1", ActualRevision: "rev-1", Explanation: "immutable revision"},
 		{ID: "events", Mode: DeliveryDataObserved, ObservationDigest: deliveryTestDigest('9'), Explanation: "build observation"},
 	}})
@@ -389,19 +455,19 @@ func TestResolvedBuildInputsBindExactlyToPlanDeclarations(t *testing.T) {
 	if _, err := ValidateDeliveryResolvedBuildInputs(plan, missing); !errors.Is(err, ErrDeliveryConflict) {
 		t.Fatalf("missing planned input err=%v, want conflict", err)
 	}
-	mismatch := DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, Inputs: []DeliveryResolvedDataInput{
+	mismatch := DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: gates, Inputs: []DeliveryResolvedDataInput{
 		{ID: "orders", Mode: DeliveryDataBounded, PlannedBound: "watermark", ActualBound: "watermark", Explanation: "wrong mode"},
 		{ID: "events", Mode: DeliveryDataObserved, ObservationDigest: deliveryTestDigest('9'), Explanation: "build observation"},
 	}}
 	if _, err := ValidateDeliveryResolvedBuildInputs(plan, mismatch); !errors.Is(err, ErrDeliveryConflict) {
 		t.Fatalf("mode mismatch err=%v, want conflict", err)
 	}
-	policyMismatch := DeliveryResolvedBuildInputs{PolicyDigest: deliveryTestDigest('8')}
+	policyMismatch := DeliveryResolvedBuildInputs{PolicyDigest: deliveryTestDigest('8'), GateEvidence: gates}
 	if _, err := ValidateDeliveryResolvedBuildInputs(plan, policyMismatch); !errors.Is(err, ErrDeliveryConflict) {
 		t.Fatalf("policy mismatch err=%v, want conflict", err)
 	}
 	emptyPlan := deliveryTestPlan(t)
-	empty, err := ValidateDeliveryResolvedBuildInputs(emptyPlan, DeliveryResolvedBuildInputs{PolicyDigest: emptyPlan.Governance.PolicyDigest})
+	empty, err := ValidateDeliveryResolvedBuildInputs(emptyPlan, DeliveryResolvedBuildInputs{PolicyDigest: emptyPlan.Governance.PolicyDigest, GateEvidence: deliveryTestGateEvidence(t, emptyPlan, release.GateSuccess)})
 	if err != nil || empty.EvidenceDigest == "" {
 		t.Fatalf("empty plan evidence=%#v err=%v, want canonical digest", empty, err)
 	}
@@ -462,6 +528,7 @@ func TestDeliveryBuildSealAndCandidateTransitionsAreChecked(t *testing.T) {
 		ExecutionDigest: plan.ExecutionDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, SealID: seal.ID, CatalogDigest: seal.CatalogDigest,
 		CompatibilityDigest: seal.CompatibilityDigest, CatalogObjectKey: seal.ObjectKey, PhysicalPoolID: seal.PhysicalPoolID, ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateID: "state-contract-1", CreatedAt: now,
+		ResolvedInputs: DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest, GateEvidence: deliveryTestGateEvidence(t, plan, release.GateSuccess)},
 	})
 	if err != nil {
 		t.Fatalf("new candidate: %v", err)

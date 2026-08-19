@@ -16,19 +16,22 @@ visuals:
     title: Orders by month
     type: column
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
+    presentation:
+      type: cartesian
 ```
 
 ## Stacked series
 
-Map status through `query.series` and enable `presentation.stacked` to show both the monthly total and each status contribution.
+Use a second ordered dimension for status and `presentation.stacking: normal` to show both the monthly total and each status contribution.
 
 {{< visual id="orders_by_month_status" >}}
 
@@ -39,24 +42,24 @@ visuals:
     description: Compares monthly order volume split by status.
     type: column
     presentation:
-      stacked: true
+      type: cartesian
+      stacking: normal
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
-      series:
-        field: orders.status
-        alias: status
+      - purchase_month
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 40
 ```
 
 ## Grouped series
 
-Keep the series unstacked to place statuses side by side, and use `presentation.legend` to position the series key above the plot.
+Keep the series unstacked to place statuses side by side, and use `presentation.legend` to position the series key below the plot.
 
 {{< visual id="orders_by_month_status_grouped" >}}
 
@@ -66,17 +69,17 @@ visuals:
     title: Orders by month and status grouped
     type: column
     presentation:
+      type: cartesian
       legend: bottom
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
-      series:
-        field: orders.status
-        alias: status
+      - purchase_month
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 60
 ```

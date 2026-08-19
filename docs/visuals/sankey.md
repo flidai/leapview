@@ -17,19 +17,27 @@ visuals:
     description: Shows flow from order status to delivery-speed bucket.
     type: sankey
     presentation:
+      type: hierarchy
       orientation: horizontal
-      node_gap: 16
-      curveness: 0.36
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
-        delivery_bucket: orders.delivery_bucket
+      - status
+      - delivery_bucket
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
       limit: 40
 ```
 
@@ -45,20 +53,23 @@ visuals:
     title: Category to status flow
     type: sankey
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
       limit: 60
+    presentation:
+      type: hierarchy
 ```
 
 ## Spacious nodes
 
-Increase `presentation.node_gap` when labels or links feel crowded, and tune `curveness` to keep parallel flows visually distinct.
+Increase `presentation.nodeGap` when labels or links feel crowded, and tune `curveness` to keep parallel flows visually distinct.
 
 {{< visual id="category_status_flow_spacious" >}}
 
@@ -68,16 +79,18 @@ visuals:
     title: Spacious category to status flow
     type: sankey
     presentation:
-      node_gap: 18
+      type: hierarchy
+      nodeGap: 18
       curveness: 0.32
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
       limit: 60
 ```

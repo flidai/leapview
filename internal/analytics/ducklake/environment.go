@@ -22,8 +22,11 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
+	"github.com/flidai/leapview/internal/extension"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -65,6 +68,9 @@ type Config struct {
 	TempMaxBytes        int64
 	MaxThreads          int
 	TempDir             string
+	// ExtensionAdmission supplies exact, preverified absolute artifacts. When
+	// present, DuckLake never invokes DuckDB INSTALL or automatic acquisition.
+	ExtensionAdmission extension.Admission
 }
 
 type Layout struct {
@@ -74,31 +80,32 @@ type Layout struct {
 }
 
 type Environment struct {
-	db              *sql.DB
-	layout          Layout
-	physicalPoolID  string
-	sharedPool      bool
-	compatibility   CompatibilityTuple
-	readOnly        bool
-	readConcurrency int
-	extensionMu     sync.Mutex
-	extensions      map[string]*extensionLoad
-	fatalMu         sync.RWMutex
-	fatalErr        error
-	fatalOnce       sync.Once
-	fatal           chan struct{}
-	telemetryMu     sync.RWMutex
-	sourceTotals    map[string]map[string]uint64
-	scopeContention map[string]uint64
-	acquisitions    atomic.Uint64
-	extensionOK     atomic.Uint64
-	extensionFailed atomic.Uint64
-	commitRetries   atomic.Uint64
-	cleanupOK       atomic.Uint64
-	cleanupFailed   atomic.Uint64
-	closed          atomic.Bool
-	closeOnce       sync.Once
-	closeErr        error
+	db                 *sql.DB
+	layout             Layout
+	physicalPoolID     string
+	sharedPool         bool
+	compatibility      CompatibilityTuple
+	extensionAdmission extension.Admission
+	readOnly           bool
+	readConcurrency    int
+	extensionMu        sync.Mutex
+	extensions         map[string]*extensionLoad
+	fatalMu            sync.RWMutex
+	fatalErr           error
+	fatalOnce          sync.Once
+	fatal              chan struct{}
+	telemetryMu        sync.RWMutex
+	sourceTotals       map[string]map[string]uint64
+	scopeContention    map[string]uint64
+	acquisitions       atomic.Uint64
+	extensionOK        atomic.Uint64
+	extensionFailed    atomic.Uint64
+	commitRetries      atomic.Uint64
+	cleanupOK          atomic.Uint64
+	cleanupFailed      atomic.Uint64
+	closed             atomic.Bool
+	closeOnce          sync.Once
+	closeErr           error
 }
 
 type extensionLoad struct {
@@ -106,10 +113,13 @@ type extensionLoad struct {
 	err  error
 }
 
-var approvedExtensions = map[string]struct{}{
-	"ducklake": {}, "httpfs": {}, "azure": {}, "postgres": {}, "mysql": {}, "quack": {},
-	"sqlite": {}, "excel": {}, "delta": {}, "iceberg": {}, "lance": {}, "vortex": {}, "spatial": {},
-}
+var approvedExtensions = func() map[string]struct{} {
+	result := make(map[string]struct{})
+	for _, name := range projectcontracts.RequiredExtensionNames() {
+		result[name] = struct{}{}
+	}
+	return result
+}()
 
 var (
 	ErrUnadmitted          = errors.New("DuckDB access requires workload admission")
@@ -237,6 +247,9 @@ func NewLayout(rootDir string) Layout {
 }
 
 func Open(ctx context.Context, config Config) (*Environment, error) {
+	if config.ExtensionAdmission == nil {
+		return nil, fmt.Errorf("DuckLake extension admission is required")
+	}
 	if !nativeArrowEnabled {
 		return nil, fmt.Errorf("LeapView analytical runtime requires the duckdb_arrow build tag")
 	}
@@ -277,7 +290,7 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	}
 	migrated := false
 	if !config.ReadOnly {
-		migrated, err = migrateLegacySQLiteCatalog(ctx, layout.CatalogPath)
+		migrated, err = migrateLegacySQLiteCatalog(ctx, layout.CatalogPath, config.ExtensionAdmission)
 		if err != nil {
 			return nil, err
 		}
@@ -304,9 +317,22 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	attach := fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (%s)", sqlLiteral(layout.CatalogPath), catalogAlias, attachOptions)
 	var initializeOnce sync.Once
 	var initializeErr error
+	admissionCtx := ctx
+	if admissionCtx == nil {
+		admissionCtx = context.Background()
+	}
 	connector, err := duckdb.NewConnector(":memory:", func(execer driver.ExecerContext) error {
 		initializeOnce.Do(func() {
-			statements := []string{"LOAD ducklake", "SET allow_persistent_secrets = false", "SET ducklake_default_data_inlining_row_limit = 0"}
+			statements := []string{"SET allow_persistent_secrets = false", "SET ducklake_default_data_inlining_row_limit = 0"}
+			admitted, admissionErr := config.ExtensionAdmission.AdmitExtension(admissionCtx, "ducklake")
+			if admissionErr != nil {
+				initializeErr = fmt.Errorf("admit ducklake extension: %w", admissionErr)
+				return
+			}
+			if err := validateAdmittedExtension(admitted, "ducklake"); err != nil {
+				initializeErr = err
+				return
+			}
 			if config.MemoryMaxBytes > 0 {
 				statements = append(statements, fmt.Sprintf("SET memory_limit = '%dB'", config.MemoryMaxBytes))
 			}
@@ -323,6 +349,7 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 				"SET autoinstall_known_extensions = false",
 				"SET autoload_known_extensions = false",
 			)
+			statements = append(statements, "LOAD '"+sqlLiteral(admitted.Path)+"'")
 			for _, statement := range statements {
 				if _, err := execer.ExecContext(context.Background(), statement, nil); err != nil {
 					initializeErr = err
@@ -363,7 +390,7 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	env := &Environment{
 		db: db, layout: layout, readConcurrency: connections,
 		physicalPoolID: strings.TrimSpace(config.PhysicalPoolID), sharedPool: config.SharedPool || strings.TrimSpace(config.PhysicalPoolID) != "", compatibility: config.Compatibility, readOnly: config.ReadOnly,
-		extensions: map[string]*extensionLoad{"ducklake": {done: closedSignal()}}, fatal: make(chan struct{}),
+		extensions: map[string]*extensionLoad{"ducklake": {done: closedSignal()}}, extensionAdmission: config.ExtensionAdmission, fatal: make(chan struct{}),
 		sourceTotals: map[string]map[string]uint64{}, scopeContention: map[string]uint64{},
 	}
 	if err := warmConnections(ctx, db, connections); err != nil {
@@ -420,8 +447,8 @@ func closedSignal() chan struct{} {
 	return done
 }
 
-// EnsureExtension installs and loads only LeapView's fixed official extension
-// allowlist. Concurrent first use is coalesced across projects.
+// EnsureExtension loads only an exact admitted artifact from the target supply.
+// Concurrent first use is coalesced across projects.
 func (e *Environment) EnsureExtension(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if _, ok := approvedExtensions[name]; !ok {
@@ -443,10 +470,18 @@ func (e *Environment) EnsureExtension(ctx context.Context, name string) error {
 
 	session, err := e.Session(ctx)
 	if err == nil {
-		_, err = session.ExecContext(ctx, "INSTALL "+name+" FROM core")
-	}
-	if err == nil {
-		_, err = session.ExecContext(ctx, "LOAD "+name)
+		if e.extensionAdmission != nil {
+			admitted, admissionErr := e.extensionAdmission.AdmitExtension(ctx, name)
+			if admissionErr != nil {
+				err = admissionErr
+			} else if validationErr := validateAdmittedExtension(admitted, name); validationErr != nil {
+				err = validationErr
+			} else {
+				_, err = session.ExecContext(ctx, "LOAD '"+sqlLiteral(admitted.Path)+"'")
+			}
+		} else {
+			err = fmt.Errorf("DuckLake extension admission is required")
+		}
 	}
 	if err != nil {
 		err = fmt.Errorf("initializing approved DuckDB extension %s: %w", name, err)
@@ -462,6 +497,16 @@ func (e *Environment) EnsureExtension(ctx context.Context, name string) error {
 	}
 	e.extensionMu.Unlock()
 	return err
+}
+
+func validateAdmittedExtension(admitted extension.AdmittedExtension, requested string) error {
+	if admitted.Name != requested || admitted.Path == "" || !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(filepath.Base(admitted.Path), ".duckdb_extension") {
+		return fmt.Errorf("admitted extension %q has an invalid immutable path or name", requested)
+	}
+	if platformdigest.ValidateSHA256Identity(admitted.Digest) != nil {
+		return fmt.Errorf("admitted extension %q has an invalid digest", requested)
+	}
+	return nil
 }
 
 // AnalyticalStats is an immutable bounded telemetry snapshot. Connector keys

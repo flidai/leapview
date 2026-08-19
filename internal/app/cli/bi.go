@@ -4,11 +4,14 @@ import (
 	"context"
 
 	dashboardcli "github.com/flidai/leapview/internal/dashboard/cli"
+	projectcli "github.com/flidai/leapview/internal/project/cli"
 	"github.com/spf13/cobra"
 )
 
 func dashboardsCommand(ctx context.Context, opts *rootOptions) *cobra.Command {
-	return dashboardcli.Command(ctx, capabilityAPIClient{})
+	command := dashboardcli.Command(ctx, capabilityAPIClient{})
+	command.AddCommand(projectcli.DashboardExportCommand(ctx))
+	return command
 }
 
 func semanticModelsCommand(ctx context.Context, opts *rootOptions) *cobra.Command {

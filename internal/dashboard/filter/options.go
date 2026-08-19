@@ -28,9 +28,30 @@ type OptionRequest struct {
 type OptionItem struct {
 	Value     Value  `json:"value"`
 	Label     string `json:"label"`
+	Null      bool   `json:"null"`
 	Count     *int64 `json:"count,omitempty"`
 	Selected  bool   `json:"selected"`
 	Available bool   `json:"available"`
+}
+
+// MarshalJSON keeps the wire contract closed over null options: a null
+// option has a stable null identity and no fabricated typed value. The domain
+// field remains a Value for canonicalization and selection code, while the
+// browser signal exposes value as optional.
+func (item OptionItem) MarshalJSON() ([]byte, error) {
+	type optionItemJSON struct {
+		Value     *Value `json:"value,omitempty"`
+		Label     string `json:"label"`
+		Null      bool   `json:"null"`
+		Count     *int64 `json:"count,omitempty"`
+		Selected  bool   `json:"selected"`
+		Available bool   `json:"available"`
+	}
+	var value *Value
+	if !item.Null {
+		value = &item.Value
+	}
+	return json.Marshal(optionItemJSON{Value: value, Label: item.Label, Null: item.Null, Count: item.Count, Selected: item.Selected, Available: item.Available})
 }
 
 type OptionPage struct {
@@ -62,6 +83,7 @@ type OptionQuery struct {
 	Search       string
 	After        string
 	Limit        int
+	IncludeNull  bool
 	ShowCounts   bool
 }
 
@@ -69,6 +91,38 @@ type OptionResult struct {
 	Items    []OptionItem
 	Complete bool
 	Next     string
+}
+
+// CanonicalizeStaticOptions validates, deduplicates and semantically orders a
+// compiled static option list. Equal typed values must carry the same label;
+// conflicting labels are an authoring error rather than an arbitrary map
+// winner.
+func CanonicalizeStaticOptions(options []Option, kind ValueKind) ([]Option, error) {
+	seen := make(map[string]Option, len(options))
+	for index, option := range options {
+		canonical, err := canonicalValue(option.Value, kind)
+		if err != nil {
+			return nil, fmt.Errorf("option %d: %w", index, err)
+		}
+		keyBytes, _ := json.Marshal(canonical)
+		key := string(keyBytes)
+		if previous, ok := seen[key]; ok {
+			if previous.Label != option.Label {
+				return nil, fmt.Errorf("duplicate typed option %q has conflicting labels %q and %q", canonical.Value, previous.Label, option.Label)
+			}
+			continue
+		}
+		option.Value = canonical
+		seen[key] = option
+	}
+	result := make([]Option, 0, len(seen))
+	for _, option := range seen {
+		result = append(result, option)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return compareValues(result[i].Value, result[j].Value) < 0
+	})
+	return result, nil
 }
 
 type OptionQueryFunc func(context.Context, OptionQuery) (OptionResult, error)
@@ -144,7 +198,7 @@ func (engine *OptionEngine) Page(ctx context.Context, optionContext OptionContex
 	query := OptionQuery{
 		Field: optionContext.Definition.Field, Dataset: optionContext.Definition.Dataset,
 		ValueKind: optionContext.Definition.ValueKind, Dependencies: dependencies,
-		Search: search, After: after, Limit: limit,
+		Search: search, After: after, Limit: limit, IncludeNull: optionContext.Definition.Options.IncludeNull,
 	}
 	cacheKey := optionCacheKey(contextKey, after)
 	result, ok := engine.cached(cacheKey)
@@ -159,6 +213,12 @@ func (engine *OptionEngine) Page(ctx context.Context, optionContext OptionContex
 	items, err := canonicalOptionItems(result.Items, optionContext.Definition.ValueKind)
 	if err != nil {
 		return OptionPage{}, err
+	}
+	// Canonical ordering is applied before the post-order page limit. This is
+	// important for typed integers/decimals where lexical order is different
+	// from semantic order, and for null which is always ordered last.
+	if len(items) > limit {
+		items = items[:limit]
 	}
 	items = retainSelectedValues(items, optionContext.State.AppliedControls[request.BindingKey].Expression)
 	nextCursor := ""
@@ -225,7 +285,20 @@ func (engine *OptionEngine) load(ctx context.Context, definition Definition, que
 func canonicalOptionItems(items []OptionItem, kind ValueKind) ([]OptionItem, error) {
 	result := make([]OptionItem, 0, len(items))
 	seen := map[string]struct{}{}
+	sawNull := false
 	for _, item := range items {
+		if item.Null {
+			if sawNull {
+				continue
+			}
+			sawNull = true
+			item.Available = true
+			if item.Label == "" {
+				item.Label = "(null)"
+			}
+			result = append(result, item)
+			continue
+		}
 		value, err := canonicalValue(item.Value, kind)
 		if err != nil {
 			return nil, err
@@ -243,6 +316,15 @@ func canonicalOptionItems(items []OptionItem, kind ValueKind) ([]OptionItem, err
 		}
 		result = append(result, item)
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Null != result[j].Null {
+			return !result[i].Null
+		}
+		if result[i].Null {
+			return result[i].Label < result[j].Label
+		}
+		return compareValues(result[i].Value, result[j].Value) < 0
+	})
 	return result, nil
 }
 
@@ -257,6 +339,9 @@ func retainSelectedValues(items []OptionItem, expression Expression) []OptionIte
 		selected[string(keyBytes)] = value
 	}
 	for index := range items {
+		if items[index].Null {
+			continue
+		}
 		keyBytes, _ := json.Marshal(items[index].Value)
 		key := string(keyBytes)
 		if _, ok := selected[key]; ok {

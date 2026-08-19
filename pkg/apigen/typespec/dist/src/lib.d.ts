@@ -35,6 +35,9 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
     "invalid-operation-kind": {
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
+    "invalid-property-names": {
+        readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
+    };
     "unnamed-schema": {
         readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
     };
@@ -42,7 +45,7 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
         readonly default: "The APIGen emitter option 'output-file' is required.";
     };
 }, Record<string, any>, never>;
-export declare const reportDiagnostic: <C extends "unsupported-type" | "unsupported-response-status" | "unsupported-response-content" | "unsupported-cookie" | "unsupported-shared-route" | "unsupported-auth" | "multiple-services" | "reserved-extension" | "invalid-extension-key" | "invalid-extension-value" | "invalid-command" | "invalid-operation-kind" | "unnamed-schema" | "missing-output-file", M extends keyof {
+export declare const reportDiagnostic: <C extends "unsupported-type" | "unsupported-response-status" | "unsupported-response-content" | "unsupported-cookie" | "unsupported-shared-route" | "unsupported-auth" | "multiple-services" | "reserved-extension" | "invalid-extension-key" | "invalid-extension-value" | "invalid-command" | "invalid-operation-kind" | "invalid-property-names" | "unnamed-schema" | "missing-output-file", M extends keyof {
     "unsupported-type": {
         readonly default: import("@typespec/compiler").CallableMessage<["kind", "context"]>;
     };
@@ -77,6 +80,9 @@ export declare const reportDiagnostic: <C extends "unsupported-type" | "unsuppor
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
     "invalid-operation-kind": {
+        readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
+    };
+    "invalid-property-names": {
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
     "unnamed-schema": {
@@ -120,6 +126,9 @@ export declare const reportDiagnostic: <C extends "unsupported-type" | "unsuppor
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
     "invalid-operation-kind": {
+        readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
+    };
+    "invalid-property-names": {
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
     "unnamed-schema": {

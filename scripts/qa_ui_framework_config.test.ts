@@ -8,6 +8,13 @@ test('UI framework QA gives the managed dev task its full readiness budget', asy
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
 })
 
+test('development startup reuses the bounded CI fixture supply', async () => {
+  const source = await readFile('scripts/dev-server.sh', 'utf8')
+
+  expect(source).toContain('ducklakeprepare --supply-out "$manifest"')
+  expect(source).not.toContain('extensionsupply --out "$root"')
+})
+
 test('development MCP smoke queries an authored semantic metric', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
 

@@ -21,7 +21,6 @@ import (
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -844,7 +843,7 @@ func semanticAggregateRequest(datasetID string, input api.SemanticQueryRequest, 
 		Offset:     offset,
 	}
 	if input.Time != nil {
-		request.Time = dashboardauthoring.QueryTime{Field: input.Time.Field, Grain: input.Time.Grain, Alias: input.Time.Alias}
+		request.Time = reportdef.QueryTime{Field: input.Time.Field, Grain: input.Time.Grain, Alias: input.Time.Alias}
 	}
 	return request, limit, nil
 }
@@ -1049,7 +1048,7 @@ func (h Handler) enrichSemanticQueryResponse(
 	metrics Metrics,
 	modelID string,
 	dimensions, metricFields []reportdef.QueryField,
-	timeRef *dashboardauthoring.QueryTime,
+	timeRef *reportdef.QueryTime,
 	response *api.SemanticQueryResponse,
 ) {
 	if response == nil {
@@ -1077,7 +1076,7 @@ func semanticQueryColumnsCompiled(
 	compiled *semanticquery.CompiledModel,
 	columns []api.QueryColumn,
 	dimensions, metrics []reportdef.QueryField,
-	timeRef *dashboardauthoring.QueryTime,
+	timeRef *reportdef.QueryTime,
 ) []api.QueryColumn {
 	if compiled == nil {
 		return append([]api.QueryColumn(nil), columns...)

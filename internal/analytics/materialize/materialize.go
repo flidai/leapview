@@ -27,6 +27,65 @@ type PreparedSources interface {
 	Close() error
 }
 
+// SourceObservation is captured from the resolved source session before that
+// session (and its credentials) is closed. Runtime gate evaluation consumes
+// this value after detachment; it never re-opens authored paths or relations.
+// For revision freshness, RevisionObserved is the canonical UTC timestamp
+// selected by the authored revision contract; adapters may replace it with
+// target metadata when a connector exposes a stronger equivalent.
+type SourceObservation struct {
+	ID                 string
+	Schema             []semanticmodel.ColumnSchema
+	Revision           string
+	RevisionObserved   time.Time
+	FreshnessObserved  time.Time
+	FreshnessEmpty     bool
+	SchemaFailure      ObservationFailure
+	FreshnessFailure   ObservationFailure
+	ObservationQueries int
+	ObservationRows    int64
+	ObservationMillis  int64
+}
+
+type ObservationFailure string
+
+const (
+	ObservationUnavailable ObservationFailure = "unavailable"
+	ObservationTimeout     ObservationFailure = "timeout"
+	ObservationBounds      ObservationFailure = "bounds"
+)
+
+type observationBudgetKey struct{}
+
+// ObservationBudget limits live source evidence queries. It is carried only
+// through the in-process materialization context and never enters artifacts.
+type ObservationBudget struct {
+	MaxQueries int
+	MaxMillis  int64
+}
+
+func WithObservationBudget(ctx context.Context, budget ObservationBudget) context.Context {
+	return context.WithValue(ctx, observationBudgetKey{}, budget)
+}
+
+func ObservationBudgetFromContext(ctx context.Context) ObservationBudget {
+	if ctx == nil {
+		return ObservationBudget{}
+	}
+	if budget, ok := ctx.Value(observationBudgetKey{}).(ObservationBudget); ok {
+		return budget
+	}
+	return ObservationBudget{}
+}
+
+// SourceObservationProvider is implemented by source preparers that can
+// capture target-owned freshness and schema evidence while their live session
+// is still held. It is optional for test preparers; production source runtime
+// implements it.
+type SourceObservationProvider interface {
+	SourceObservations(context.Context) ([]SourceObservation, error)
+}
+
 type SourcePreparer interface {
 	Prepare(context.Context, *semanticmodel.Model) (PreparedSources, error)
 }

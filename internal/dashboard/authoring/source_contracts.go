@@ -1,6 +1,9 @@
 package authoring
 
-import "github.com/flidai/leapview/internal/project/graph"
+import (
+	"github.com/flidai/leapview/internal/dashboard/document"
+	"github.com/flidai/leapview/internal/project/graph"
+)
 
 // AuthoredDashboardMetadata is the descriptive resource identity retained
 // with an authored dashboard source. It is owned by dashboard authoring so
@@ -21,27 +24,7 @@ type AuthoredDashboardMetadata struct {
 // dashboard projection. Implementations must return detached copies so
 // callers can safely mutate the result.
 type AuthoredDashboardSource struct {
-	Document Dashboard
+	Document document.DashboardDocument
 	Metadata AuthoredDashboardMetadata
 	Path     string
 }
-
-// DashboardExportMetadata is the resource metadata surrounding an authored
-// dashboard export. Name and title fall back to the authored document when
-// omitted; Project is optional in the resource schema.
-type DashboardExportMetadata struct {
-	Name        string
-	Project     graph.ResourceID
-	Title       string
-	Description string
-	Owner       string
-	// Domain is descriptive authored metadata and is not used for auth.
-	Domain string
-	Tags   []string
-}
-
-// DashboardExporter emits a deterministic canonical dashboard resource.
-// Project/compiler owns the production implementation; dashboard authoring
-// receives it as a narrow composition port to keep capability direction
-// explicit.
-type DashboardExporter func(Dashboard, DashboardExportMetadata) ([]byte, error)

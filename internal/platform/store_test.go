@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/flidai/leapview/internal/platform/locking"
 )
 
@@ -1001,14 +1002,13 @@ func TestStoreAndDuckLakeUseSeparateCatalogs(t *testing.T) {
 		t.Fatalf("seed platform setting: %v", err)
 	}
 
+	admission := extensionfixture.New(t, "ducklake")
 	env, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
-		RootDir:     filepath.Dir(catalogPath),
-		CatalogPath: catalogPath,
-		DataPath:    filepath.Join(dir, "ducklake", "data"),
+		RootDir:            filepath.Dir(catalogPath),
+		CatalogPath:        catalogPath,
+		DataPath:           filepath.Join(dir, "ducklake", "data"),
+		ExtensionAdmission: admission.Admission,
 	})
-	if duckLakeExtensionUnavailable(err) {
-		t.Skipf("ducklake extension unavailable: %v", err)
-	}
 	if err != nil {
 		t.Fatalf("open DuckLake on platform catalog: %v", err)
 	}

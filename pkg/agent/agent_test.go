@@ -160,6 +160,12 @@ func TestToolSchemasRequireProviderPortableSubset(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("New with portable schema returned error: %v", err)
 	}
+	if _, err := New(Definition{
+		Name: "composition", SystemPrompt: "x", Model: model,
+		Tools: []ToolDefinition{{Name: "composition", Description: "composition", InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"oneOf":[{"allOf":[{"type":"string","pattern":"^[a-z]+$"}]},{"type":"integer"}]},"labels":{"type":"object","propertyNames":{"pattern":"^[a-z]+$"}}}}`), Handler: noopTool()}},
+	}); err != nil {
+		t.Fatalf("New with closed composition schema returned error: %v", err)
+	}
 
 	tests := []struct {
 		name   string
@@ -187,24 +193,39 @@ func TestToolSchemasRequireProviderPortableSubset(t *testing.T) {
 			want:   "$defs",
 		},
 		{
-			name:   "oneOf",
-			schema: json.RawMessage(`{"type":"object","properties":{"id":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}`),
-			want:   "oneOf",
-		},
-		{
 			name:   "anyOf",
 			schema: json.RawMessage(`{"type":"object","properties":{"id":{"anyOf":[{"type":"string"},{"type":"integer"}]}}}`),
 			want:   "anyOf",
 		},
 		{
-			name:   "allOf",
-			schema: json.RawMessage(`{"type":"object","properties":{"id":{"allOf":[{"type":"string"}]}}}`),
-			want:   "allOf",
+			name:   "empty oneOf",
+			schema: json.RawMessage(`{"type":"object","properties":{"id":{"oneOf":[]}}}`),
+			want:   "oneOf",
+		},
+		{
+			name:   "scalar oneOf branch",
+			schema: json.RawMessage(`{"type":"object","properties":{"id":{"oneOf":[true]}}}`),
+			want:   "oneOf[0]",
+		},
+		{
+			name:   "scalar propertyNames",
+			schema: json.RawMessage(`{"type":"object","properties":{"labels":{"type":"object","propertyNames":true}}}`),
+			want:   "propertyNames",
+		},
+		{
+			name:   "non-string pattern",
+			schema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","pattern":true}}}`),
+			want:   "pattern",
 		},
 		{
 			name:   "patternProperties",
 			schema: json.RawMessage(`{"type":"object","patternProperties":{"^x-":{"type":"string"}}}`),
 			want:   "patternProperties",
+		},
+		{
+			name:   "propertyNames nested const",
+			schema: json.RawMessage(`{"type":"object","properties":{"labels":{"type":"object","propertyNames":{"const":"fixed"}}}}`),
+			want:   "const",
 		},
 		{
 			name:   "not",

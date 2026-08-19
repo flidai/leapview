@@ -131,6 +131,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
       "description": "Stable semantic-model resource ID to query.",
       "maxLength": 200,
       "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
       "type": "string"
     },
     "pageToken": {

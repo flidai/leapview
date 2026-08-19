@@ -5,139 +5,153 @@ metadata:
   name: sales-overview
   displayName: Five-minute Sales Evaluation
   description: Filter a governed dataset and inspect its KPI, chart, and order table.
-  tags: [evaluation, sales]
+  tags:
+  - evaluation
+  - sales
 spec:
   semanticModel: sales
   filters:
-    state:
-      label: State
-      field: state
-      predicates:
-        - kind: set
-          operators: [in, not_in]
+  - id: state
+    label: State
+    dimension: state
+    control:
+      type: multiSelect
       options:
-        kind: static
+        type: static
         values:
-          - value: {kind: string, value: SP}
-            label: SP
-          - value: {kind: string, value: RJ}
-            label: RJ
-          - value: {kind: string, value: MG}
-            label: MG
-          - value: {kind: string, value: PR}
-            label: PR
-    category:
-      label: Category
-      field: category
-      predicates:
-        - kind: comparison
-          operators: [contains, equals, starts_with, not_contains]
-  filter_bindings:
-    state:
-      filter: state
-      default: {kind: unfiltered}
-      selection: {mode: multiple, max_selected_values: 20}
-      url: {param: state, encoding: typed_v1}
-      pane: {visible: true, order: 10}
-    category:
-      filter: category
-      default: {kind: unfiltered}
-      url: {param: category, encoding: typed_v1}
-      pane: {visible: true, order: 20}
-  filter_application: {mode: immediate}
+        - value: {type: string, value: SP}
+          label: SP
+        - value: {type: string, value: RJ}
+          label: RJ
+        - value: {type: string, value: MG}
+          label: MG
+        - value: {type: string, value: PR}
+          label: PR
+    operators:
+    - in
+    - notIn
+    urlParameter: state
+  - id: category
+    label: Category
+    dimension: category
+    control:
+      type: text
+    operators:
+    - contains
+    - equals
+    - startsWith
+    - notContains
+    urlParameter: category
   visuals:
     revenue_kpi:
       type: kpi
       query:
+        type: aggregate
+        dimensions: []
         metrics:
-          revenue:
+        - revenue
       presentation:
+        type: kpi
         note: Governed revenue
         tone: success
     total_orders:
       type: kpi
       query:
+        type: aggregate
+        dimensions: []
         metrics:
-          order_count:
+        - order_count
       presentation:
+        type: kpi
         note: Filtered orders
         tone: ink
     category_revenue:
-      title: Revenue by category
       type: bar
       query:
+        type: aggregate
         dimensions:
-          category: orders.category
+        - category
         metrics:
-          revenue:
+        - revenue
         sort:
-          - field: value
-            direction: desc
+        - field: revenue
+          direction: desc
         limit: 10
+      title: Revenue by category
+      presentation:
+        type: cartesian
     orders_table:
-      title: Governed order rows
       type: table
       query:
+        type: records
         dataset: orders
         fields:
-          - orders.order_id
-          - orders.purchase_date
-          - orders.state
-          - orders.category
-          - orders.status
-          - orders.revenue
-      default_sort:
-        key: purchase_date
-        direction: desc
-      columns:
-        - key: order_id
-          label: Order
-        - key: purchase_date
-          label: Purchased
-        - key: state
-          label: State
-        - key: category
-          label: Category
-        - key: status
-          label: Status
-        - key: revenue
-          label: Revenue
-          align: right
+        - order_id
+        - purchase_date
+        - state
+        - category
+        - status
+        - revenue
+      title: Governed order rows
+      presentation:
+        type: table
+        rowHeight: 32
+        showHeader: true
+        striped: false
   pages:
-    - id: overview
-      title: Overview
-      canvas:
-        width: 1366
-        height: 1200
-      grid:
-        columns: 12
-        row_height: 48
-        gap: 16
-        padding: 16
-      components:
-        - id: state-filter
-          kind: slicer
-          binding: {scope: report, id: state}
-          presentation: {style: dropdown, search: true}
-          placement: {col: 1, row: 1, col_span: 6, row_span: 2}
-        - id: category-filter
-          kind: slicer
-          binding: {scope: report, id: category}
-          presentation: {style: input}
-          placement: {col: 7, row: 1, col_span: 6, row_span: 2}
-        - id: total-orders
-          kind: visual
-          visual: total_orders
-          placement: {col: 1, row: 4, col_span: 6, row_span: 3}
-        - id: revenue
-          kind: visual
-          visual: revenue_kpi
-          placement: {col: 7, row: 4, col_span: 6, row_span: 3}
-        - id: categories
-          kind: visual
-          visual: category_revenue
-          placement: {col: 1, row: 8, col_span: 12, row_span: 6}
-        - id: orders
-          kind: visual
-          visual: orders_table
-          placement: {col: 1, row: 15, col_span: 12, row_span: 8}
+  - id: overview
+    title: Overview
+    components:
+    - id: state-filter
+      placement:
+        column: 1
+        row: 1
+        columnSpan: 6
+        rowSpan: 2
+      type: filter
+      filter: state
+    - id: category-filter
+      placement:
+        column: 7
+        row: 1
+        columnSpan: 6
+        rowSpan: 2
+      type: filter
+      filter: category
+    - id: total-orders
+      placement:
+        column: 1
+        row: 4
+        columnSpan: 6
+        rowSpan: 3
+      type: visual
+      visual: total_orders
+    - id: revenue
+      placement:
+        column: 7
+        row: 4
+        columnSpan: 6
+        rowSpan: 3
+      type: visual
+      visual: revenue_kpi
+    - id: categories
+      placement:
+        column: 1
+        row: 8
+        columnSpan: 12
+        rowSpan: 6
+      type: visual
+      visual: category_revenue
+    - id: orders
+      placement:
+        column: 1
+        row: 15
+        columnSpan: 12
+        rowSpan: 8
+      type: visual
+      visual: orders_table
+  layout:
+    columns: 12
+    rowHeight: 48
+    gap: 16
+    padding: 16

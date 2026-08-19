@@ -130,6 +130,9 @@ func schemaDependencies(schema ir.Schema) []string {
 		if ref.Items != nil {
 			visit(*ref.Items)
 		}
+		if ref.PropertyNames != nil {
+			visit(*ref.PropertyNames)
+		}
 		if ref.AdditionalProperties != nil && ref.AdditionalProperties.Schema != nil {
 			visit(*ref.AdditionalProperties.Schema)
 		}

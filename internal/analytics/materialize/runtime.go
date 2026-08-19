@@ -65,6 +65,7 @@ type Runtime struct {
 	resultLimits       dataquery.ResultLimits
 	requiredExtensions []string
 	lastRefresh        time.Time
+	sourceObservations []SourceObservation
 	snapshotOnly       bool
 	dbOwned            bool
 	closeOnce          sync.Once
@@ -272,10 +273,11 @@ func (r *Runtime) Refresh(ctx context.Context) error {
 		return err
 	}
 	lastRefresh, refreshErr := Refresh(ctx, r.db, prepared, r.model)
+	observations, observationErr := captureSourceObservations(ctx, prepared)
 	// Materialization replaces tables one at a time. A later failure can therefore
 	// leave the database changed even though the refresh did not complete.
 	r.ClearQueryCache()
-	err = errors.Join(refreshErr, prepared.Close())
+	err = errors.Join(refreshErr, observationErr, prepared.Close())
 	if err != nil {
 		return err
 	}
@@ -285,6 +287,7 @@ func (r *Runtime) Refresh(ctx context.Context) error {
 		}
 	}
 	r.lastRefresh = lastRefresh
+	r.sourceObservations = observations
 	return nil
 }
 
@@ -294,10 +297,11 @@ func (r *Runtime) RefreshModelTables(ctx context.Context, tableNames []string) e
 		return err
 	}
 	lastRefresh, refreshErr := RefreshModelTables(ctx, r.db, prepared, r.model, tableNames)
+	observations, observationErr := captureSourceObservations(ctx, prepared)
 	// Selected-table refreshes have the same partial-mutation behavior as full
 	// refreshes, so invalidate before inspecting the terminal error.
 	r.ClearQueryCache()
-	err = errors.Join(refreshErr, prepared.Close())
+	err = errors.Join(refreshErr, observationErr, prepared.Close())
 	if err != nil {
 		return err
 	}
@@ -307,7 +311,31 @@ func (r *Runtime) RefreshModelTables(ctx context.Context, tableNames []string) e
 		}
 	}
 	r.lastRefresh = lastRefresh
+	r.sourceObservations = observations
 	return nil
+}
+
+func captureSourceObservations(ctx context.Context, prepared PreparedSources) ([]SourceObservation, error) {
+	provider, ok := prepared.(SourceObservationProvider)
+	if !ok {
+		return nil, nil
+	}
+	return provider.SourceObservations(ctx)
+}
+
+// SourceObservations returns the immutable source evidence captured during the
+// most recent refresh. It is safe to call after refresh has detached its live
+// source session; no authored source is re-opened here.
+func (r *Runtime) SourceObservations() []SourceObservation {
+	if r == nil {
+		return nil
+	}
+	result := make([]SourceObservation, len(r.sourceObservations))
+	for i, item := range r.sourceObservations {
+		result[i] = item
+		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), item.Schema...)
+	}
+	return result
 }
 
 // VerifySemantic prepares representative governed plans and proves all

@@ -23,6 +23,10 @@ spec:
       operator: equals
       value: comparison_fixture_without_rows
   dimensions:
+    order_id:
+      datatype: String
+      bindings:
+        orders: {field: orders.order_id}
     purchase_date:
       datatype: Date
       bindings:
@@ -35,6 +39,54 @@ spec:
         - week
         - month
         calendar: iso8601
+    purchase_month:
+      datatype: String
+      bindings:
+        orders: {field: orders.purchase_month}
+    status:
+      datatype: String
+      bindings:
+        orders: {field: orders.status}
+    category:
+      datatype: String
+      bindings:
+        orders: {field: orders.category}
+    state:
+      datatype: String
+      bindings:
+        orders: {field: orders.state}
+    delivery_bucket:
+      datatype: String
+      bindings:
+        orders: {field: orders.delivery_bucket}
+    latitude:
+      datatype: Float
+      bindings:
+        orders: {field: orders.latitude}
+    longitude:
+      datatype: Float
+      bindings:
+        orders: {field: orders.longitude}
+    stage:
+      datatype: String
+      bindings:
+        conversion_stages: {field: conversion_stages.stage}
+    month:
+      datatype: String
+      bindings:
+        market_ohlc: {field: market_ohlc.month}
+    component:
+      datatype: String
+      bindings:
+        revenue_bridge: {field: revenue_bridge.component}
+    division:
+      datatype: String
+      bindings:
+        service_teams: {field: service_teams.division}
+    team:
+      datatype: String
+      bindings:
+        service_teams: {field: service_teams.team}
   metrics:
     active_work_items:
       type: aggregate

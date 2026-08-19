@@ -91,7 +91,13 @@ func TestEnvironmentRejectsConflictingNestedAcquire(t *testing.T) {
 }
 
 func TestEnvironmentAdmitsQuackExtension(t *testing.T) {
-	node := openLeaseTestNode(t)
+	node, err := Open(context.Background(), admittedConfig(t, Config{RootDir: t.TempDir(), MaxConnections: 2}, "ducklake", "quack"))
+	if extensionUnavailable(err) {
+		t.Skipf("ducklake extension unavailable: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer node.Close()
 	ctx, releaseWorkload := admittedTestContext(t, workload.Refresh, "sales")
 	defer releaseWorkload()
@@ -192,7 +198,7 @@ func TestFatalAnalyticalHealthIsStickyAndObservable(t *testing.T) {
 
 func openLeaseTestNode(t *testing.T) *Environment {
 	t.Helper()
-	node, err := Open(context.Background(), Config{RootDir: t.TempDir(), MaxConnections: 2})
+	node, err := Open(context.Background(), admittedConfig(t, Config{RootDir: t.TempDir(), MaxConnections: 2}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -220,7 +226,7 @@ func admittedTestContext(t *testing.T, class workload.Class, workspaceID string)
 
 func TestOneNodeServesPinnedReadsWhileRefreshCommits(t *testing.T) {
 	ctx := context.Background()
-	node, err := Open(ctx, Config{RootDir: t.TempDir(), MaxConnections: 3})
+	node, err := Open(ctx, admittedConfig(t, Config{RootDir: t.TempDir(), MaxConnections: 3}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -287,14 +293,14 @@ func TestSnapshotRelationRejectsUnsafeTableNames(t *testing.T) {
 func TestNodeAppliesOneSharedResourceEnvelope(t *testing.T) {
 	ctx := context.Background()
 	tempDir := filepath.Join(t.TempDir(), "temp")
-	node, err := Open(ctx, Config{
+	node, err := Open(ctx, admittedConfig(t, Config{
 		RootDir:        t.TempDir(),
 		MaxConnections: 3,
 		MemoryMaxBytes: 256 << 20,
 		TempMaxBytes:   512 << 20,
 		MaxThreads:     2,
 		TempDir:        tempDir,
-	})
+	}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}

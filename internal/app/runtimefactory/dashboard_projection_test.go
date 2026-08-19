@@ -9,8 +9,8 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -59,7 +59,7 @@ func compiledPlannerTestModel() *semanticmodel.Model {
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
 		Tables: map[string]semanticmodel.Table{"orders": {
 			ModelName: "orders", GrainEntity: "order",
-			Entities:   map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}},
+			Entities:   map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
 			Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "number", Datatype: semanticmodel.DataTypeInteger}},
 		}},
 		Metrics: map[string]semanticmodel.Metric{
@@ -73,9 +73,9 @@ func TestProjectManifestReturnsDetachedCompiledDefinition(t *testing.T) {
 		ID: "project:demo",
 		Models: map[string]semanticmodel.Table{
 			"model:orders": {
-				Entities:    map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
-				GrainEntity: "order_id",
-				Sources:     []string{"orders"},
+				Entities:           map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity:        "order_id",
+				SourceDependencies: []string{"orders"},
 			},
 		},
 	}}
@@ -83,13 +83,13 @@ func TestProjectManifestReturnsDetachedCompiledDefinition(t *testing.T) {
 	first := runtime.ProjectManifest()
 	model := first.Models["model:orders"]
 	model.GrainEntity = "changed"
-	model.Entities["order_id"] = semanticmodel.ModelEntitySpec{Type: "unique", Fields: []string{"changed"}}
-	model.Sources[0] = "changed"
+	model.Entities["order_id"] = semanticmodel.EntityDefinition{Type: "unique", Fields: []string{"changed"}}
+	model.SourceDependencies[0] = "changed"
 	first.Models["model:orders"] = model
 
 	second := runtime.ProjectManifest()
 	model = second.Models["model:orders"]
-	if model.GrainEntity != "order_id" || !slices.Equal(model.GrainFields(), []string{"order_id"}) || model.Sources[0] != "orders" {
+	if model.GrainEntity != "order_id" || !slices.Equal(model.GrainFields(), []string{"order_id"}) || model.SourceDependencies[0] != "orders" {
 		t.Fatalf("project manifest aliases caller mutation: %#v", second.Models["model:orders"])
 	}
 }
@@ -142,7 +142,7 @@ func TestAuthoredDashboardSourcesRetainsDescriptiveDomain(t *testing.T) {
 	sources, err := authoredDashboardSources(projectmanifest.Project{
 		DashboardSources: map[string]projectmanifest.DashboardSource{
 			string(dashboardID): {
-				Document: dashboardauthoring.Dashboard{ID: dashboardID},
+				Document: dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: dashboardID.String(), Name: "sales_dashboard"}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "sales"}},
 				Metadata: projectmanifest.DashboardSourceMetadata{
 					Name: "sales_dashboard", Domain: "revenue", Tags: []string{"finance"},
 				},

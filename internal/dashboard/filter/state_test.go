@@ -25,6 +25,17 @@ func TestMachineImmediateMutationAdvancesOneRevisionAndPreservesOtherBindings(t 
 	}
 }
 
+func TestMachineRejectsClearingRequiredBinding(t *testing.T) {
+	machine := NewMachine(ApplicationImmediate, map[string]BindingSpec{"required": {
+		ValueKind: ValueString, Default: Expression{Kind: ExpressionComparison, Operator: OperatorEquals, Value: &Value{Kind: ValueString, Value: "CA"}}, Required: true, Editable: true,
+		Predicates: []PredicatePolicy{{Kind: ExpressionComparison, Operators: []Operator{OperatorEquals}}},
+	}})
+	_, err := machine.Execute(Command{Kind: CommandMutate, BaseRevision: machine.State().Revision, ClientMutationID: "clear-required", BindingKey: "required", Operation: MutationClear})
+	if !errors.Is(err, ErrFilterRequired) {
+		t.Fatalf("required clear error = %v", err)
+	}
+}
+
 func TestMachineDeferredApplyPromotesAllDraftsInOneRevision(t *testing.T) {
 	machine := newTestMachine(ApplicationDeferred)
 	revision := machine.State().Revision

@@ -6,12 +6,6 @@ metadata:
   displayName: Sales Orders
   description: Order-grain sales table with revenue, category, status, and customer.
 spec:
-  sources:
-  - olist.orders
-  - olist.payments
-  - olist.order_items
-  - olist.products
-  - olist.translations
   fields:
     order_id:
       datatype: String
@@ -37,7 +31,8 @@ spec:
     revenue:
       datatype: Decimal
       label: Revenue
-  transform:
+  definition:
+    type: sql
     sql: |
       WITH revenue AS (
         SELECT order_id, CAST(SUM(try_cast(payment_value AS DECIMAL(38,2))) AS DECIMAL(38,2)) AS revenue

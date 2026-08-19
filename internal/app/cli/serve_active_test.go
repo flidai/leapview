@@ -13,6 +13,7 @@ import (
 
 	"github.com/flidai/leapview/internal/app"
 	"github.com/flidai/leapview/internal/app/config"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -106,7 +107,7 @@ func TestBuildCreatesPrivateStateDirectories(t *testing.T) {
 	home := filepath.Join(parent, "home")
 	oldUmask := syscall.Umask(0)
 	defer syscall.Umask(oldUmask)
-	application, err := app.Build(context.Background(), serveTestConfig(home))
+	application, err := app.Build(context.Background(), serveTestConfig(t, home))
 	if err != nil {
 		t.Fatalf("build development application: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestBuildCreatesPrivateStateDirectories(t *testing.T) {
 
 func TestProductionApplicationAllowsCallbackHostAndRejectsOthers(t *testing.T) {
 	home := t.TempDir()
-	cfg := serveTestConfig(home)
+	cfg := serveTestConfig(t, home)
 	cfg.Production = true
 	cfg.OIDCIssuerURL = "https://issuer.example"
 	cfg.OIDCClientID = "client-id"
@@ -157,7 +158,9 @@ func TestProductionApplicationAllowsCallbackHostAndRejectsOthers(t *testing.T) {
 	}
 }
 
-func serveTestConfig(home string) config.Config {
+func serveTestConfig(t testing.TB, home string) config.Config {
+	t.Helper()
+	fixture := extensionfixture.New(t, "ducklake")
 	return config.Config{
 		HomeDir: home, ManagedDataBackend: "local", ManagedDataDir: filepath.Join(home, "managed-data"),
 		ManagedDataMaxFiles: 100, ManagedDataMaxFileBytes: 1 << 20, ManagedDataMaxRevisionBytes: 10 << 20,
@@ -166,6 +169,9 @@ func serveTestConfig(home string) config.Config {
 		DuckDBNodeMaxThreads: 2, QueryResultMaxRows: 10_000, QueryResultMaxBytes: 32 << 20,
 		QueryCacheRuntimeMaxEntries: 16, QueryCacheRuntimeMaxBytes: 4 << 20,
 		QueryCacheNodeMaxEntries: 64, QueryCacheNodeMaxBytes: 16 << 20,
-		Environment: string(servingstate.DefaultEnvironment),
+		Environment:                 string(servingstate.DefaultEnvironment),
+		DuckDBExtensionSupplyPath:   fixture.SupplyPath,
+		DuckDBExtensionSupplySHA256: fixture.SupplySHA256,
+		DuckDBExtensionCacheDir:     fixture.CacheDir,
 	}
 }

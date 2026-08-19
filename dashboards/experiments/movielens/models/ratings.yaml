@@ -6,8 +6,6 @@ metadata:
   displayName: Ratings
   description: Rating-grain model table from MovieLens 32M ratings.
 spec:
-  sources:
-  - movielens.ratings
   fields:
     rating_id:
       datatype: String
@@ -45,7 +43,8 @@ spec:
       datatype: Integer
       label: Rating year
       description: Calendar year when the rating was applied.
-  transform:
+  definition:
+    type: sql
     sql: |
       SELECT
         concat(
