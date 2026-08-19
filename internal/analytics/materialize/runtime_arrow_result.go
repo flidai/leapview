@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
+	"github.com/flidai/leapview/internal/analytics/arrowdecode"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/query/planir"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 type plannedArrowQuery struct {
@@ -283,7 +284,7 @@ func arrowResultTotal(request dataquery.Query, result *arrowresult.Result, expec
 		return 0, false, err
 	}
 	defer lease.Release()
-	rows, err := arrowresult.DecodeRows(lease)
+	rows, err := arrowdecode.DecodeRows(lease)
 	if err != nil {
 		return 0, false, err
 	}
@@ -298,7 +299,7 @@ func arrowResultTotal(request dataquery.Query, result *arrowresult.Result, expec
 }
 
 func decodeArrowQueryResult(request dataquery.Query, lease *arrowresult.Lease, metadata resultcache.Metadata, summary dataquery.Result) (dataquery.Result, error) {
-	rows, err := arrowresult.DecodeRows(lease)
+	rows, err := arrowdecode.DecodeRows(lease)
 	if err != nil {
 		return dataquery.Result{}, err
 	}

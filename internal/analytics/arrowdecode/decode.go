@@ -1,4 +1,6 @@
-package arrowresult
+// Package arrowdecode converts immutable Arrow result leases into LeapView
+// domain-row values at the analytical data-plane boundary.
+package arrowdecode
 
 import (
 	"fmt"
@@ -6,13 +8,14 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 // DecodeRows is the single boundary conversion from the analytical Arrow data
 // plane into Go domain values. It never mutates or retains the leased records.
-func DecodeRows(lease *Lease) ([]map[string]any, error) {
+func DecodeRows(lease *arrowresult.Lease) ([]map[string]any, error) {
 	if lease == nil || lease.Schema() == nil {
-		return nil, ErrResultReleased
+		return nil, arrowresult.ErrResultReleased
 	}
 	rows := make([]map[string]any, 0, lease.Rows())
 	err := lease.VisitRecords(func(record arrow.RecordBatch) error {

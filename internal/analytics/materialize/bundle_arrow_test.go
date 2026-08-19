@@ -7,8 +7,9 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
+	"github.com/flidai/leapview/internal/analytics/arrowdecode"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 func TestSplitArrowBundleOwnsIndependentProjectedResults(t *testing.T) {
@@ -59,7 +60,7 @@ func TestSplitArrowBundleOwnsIndependentProjectedResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := arrowresult.DecodeRows(first)
+	rows, err := arrowdecode.DecodeRows(first)
 	first.Release()
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +72,7 @@ func TestSplitArrowBundleOwnsIndependentProjectedResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err = arrowresult.DecodeRows(second)
+	rows, err = arrowdecode.DecodeRows(second)
 	second.Release()
 	if err != nil {
 		t.Fatal(err)

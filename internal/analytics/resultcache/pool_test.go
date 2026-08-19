@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
+	"github.com/flidai/leapview/internal/analytics/arrowdecode"
 )
 
 func TestPoolEnforcesRuntimeAndNodeBudgets(t *testing.T) {
@@ -216,7 +216,7 @@ func TestCoalesceArrowReturnsIndependentLeasesAndReleasesFlightHold(t *testing.T
 		t.Fatalf("metadata = (%v, %v)", first.lease.Metadata(), second.lease.Metadata())
 	}
 	first.lease.Release()
-	rows, err := arrowresult.DecodeRows(second.lease.Data())
+	rows, err := arrowdecode.DecodeRows(second.lease.Data())
 	if err != nil {
 		t.Fatal(err)
 	}

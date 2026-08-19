@@ -48,11 +48,14 @@ func TestBuilderRetainsBorrowedRecordsUntilFinalLeaseRelease(t *testing.T) {
 	if got, want := first.Rows(), int64(3); got != want {
 		t.Fatalf("rows = %d, want %d", got, want)
 	}
-	rows, err := DecodeRows(first)
-	if err != nil {
+	var retained int64
+	if err := first.VisitRecords(func(record arrow.RecordBatch) error {
+		retained = record.Column(0).(*array.Int64).Value(2)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := rows[2]["id"]; got != int64(3) {
+	if got := retained; got != int64(3) {
 		t.Fatalf("retained value = %#v", got)
 	}
 	if first.Bytes() <= 0 {
@@ -144,12 +147,19 @@ func TestBuilderOwnsSlicedDictionaryBuffers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := DecodeRows(lease)
-	if err != nil {
+	var labels []string
+	if err := lease.VisitRecords(func(record arrow.RecordBatch) error {
+		dictionary := record.Column(0).(*array.Dictionary)
+		values := dictionary.Dictionary().(*array.String)
+		for index := 0; index < int(record.NumRows()); index++ {
+			labels = append(labels, values.Value(dictionary.GetValueIndex(index)))
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if rows[0]["label"] != "beta" || rows[1]["label"] != "alpha" {
-		t.Fatalf("decoded sliced dictionary = %#v", rows)
+	if labels[0] != "beta" || labels[1] != "alpha" {
+		t.Fatalf("copied sliced dictionary = %#v", labels)
 	}
 	lease.Release()
 }
