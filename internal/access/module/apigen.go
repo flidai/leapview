@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -469,6 +470,7 @@ func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolv
 		}
 		allowed, err := a.authorizeResources(r.Context(), principal.ID, projectID, resources, capability)
 		if err != nil {
+			slog.Default().WarnContext(r.Context(), "generated API resource authorization failed", "capability", capability, "project", projectID, "error", err)
 			if errors.Is(err, errAPIGenResourceNotFound) {
 				http.NotFound(w, r)
 				return
@@ -482,6 +484,7 @@ func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolv
 		}
 		effective, err := a.module.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
 		if err != nil {
+			slog.Default().WarnContext(r.Context(), "generated API effective capability resolution failed", "capability", capability, "project", projectID, "error", err)
 			if errors.Is(err, access.ErrForbidden) {
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
