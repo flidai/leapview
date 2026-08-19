@@ -702,6 +702,45 @@ func TestFlatAccessRejectsWrongKindAndCapability(t *testing.T) {
 	}
 }
 
+func TestFlatAccessRoleBindingReachesCompiledManifestAndPlan(t *testing.T) {
+	files := map[string]string{
+		"access/author-admin.yaml": `apiVersion: leapview.dev/v1
+kind: RoleBinding
+metadata: {id: role-binding:author-admin, name: author-admin}
+spec:
+  role: admin
+  subject: {kind: principal, principalId: principal:author}
+`,
+	}
+	projectYAML := `apiVersion: leapview.dev/v1
+kind: Project
+metadata: {id: project:test, name: test}
+spec:
+  connections: {include: []}
+  sources: {include: []}
+  models: {include: []}
+  semanticModels: {include: []}
+  pipelines: {include: []}
+  dashboards: {include: []}
+  access: {include: [access/*.yaml]}
+`
+	projectPath := writeFlatProjectFixtureWithProject(t, projectYAML, files)
+	compiled, err := LoadProject(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProject() error = %v", err)
+	}
+	if binding, ok := compiled.Manifest.Access.RoleBindings["role-binding:author-admin"]; !ok || binding.Role != "admin" {
+		t.Fatalf("compiled role bindings = %#v, want role-binding:author-admin admin", compiled.Manifest.Access.RoleBindings)
+	}
+	plan, err := PlanProject(projectPath)
+	if err != nil {
+		t.Fatalf("PlanProject() error = %v", err)
+	}
+	if !reflect.DeepEqual(plan.RoleBindings, []string{"role-binding:author-admin"}) {
+		t.Fatalf("plan role bindings = %v, want [role-binding:author-admin]", plan.RoleBindings)
+	}
+}
+
 func TestCompileProjectGraphResolvesStableIDsAndProvenance(t *testing.T) {
 	root := t.TempDir()
 	write := func(name, body string) {

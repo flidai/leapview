@@ -243,7 +243,7 @@ func envelopeResourceID(envelope resourceEnvelope, fallback string) string {
 		"Project": "project:", "Connection": "connection:", "Source": "source:",
 		"Model": "model:", "SemanticModel": "semantic_model:", "Pipeline": "pipeline:",
 		"Dashboard": "dashboard:", "DashboardPublication": "dashboard_publication:",
-		"Group": "group:", "RoleBinding": "role_binding:", "Grant": "grant:", "DataPolicy": "data_policy:",
+		"Group": "group:", "RoleBinding": "rolebinding:", "Grant": "grant:", "DataPolicy": "datapolicy:",
 	}[envelope.Kind]
 	if prefix == "" {
 		return strings.TrimSpace(fallback)
