@@ -82,14 +82,23 @@ func (attempt DeliveryBuildAttempt) Validate() error {
 		if err := ValidateDeliveryID(attempt.BaseGenerationID); err != nil {
 			return fmt.Errorf("base generation: %w", err)
 		}
-		if err := ValidateDeliveryDigest(attempt.BaseCatalogDigest); err != nil {
-			return fmt.Errorf("base catalog: %w", err)
+		// BaseGenerationID is always the publication fence captured by the
+		// plan. The catalog/pool pair is optional: a build may fence against
+		// the active generation while deliberately doing a full refresh rather
+		// than retaining that generation's sealed catalog.
+		if (attempt.BaseCatalogDigest == "") != (attempt.BasePhysicalPoolID == "") {
+			return fmt.Errorf("%w: base catalog and base physical pool must be supplied together", ErrDeliveryInvalid)
 		}
-		if err := ValidateDeliveryID(attempt.BasePhysicalPoolID); err != nil {
-			return fmt.Errorf("base physical pool: %w", err)
-		}
-		if attempt.BasePhysicalPoolID != attempt.PhysicalPoolID {
-			return fmt.Errorf("%w: base catalog reuse cannot cross physical pools", ErrDeliveryConflict)
+		if attempt.BaseCatalogDigest != "" {
+			if err := ValidateDeliveryDigest(attempt.BaseCatalogDigest); err != nil {
+				return fmt.Errorf("base catalog: %w", err)
+			}
+			if err := ValidateDeliveryID(attempt.BasePhysicalPoolID); err != nil {
+				return fmt.Errorf("base physical pool: %w", err)
+			}
+			if attempt.BasePhysicalPoolID != attempt.PhysicalPoolID {
+				return fmt.Errorf("%w: base catalog reuse cannot cross physical pools", ErrDeliveryConflict)
+			}
 		}
 	} else if attempt.BaseCatalogDigest != "" || attempt.BasePhysicalPoolID != "" {
 		return fmt.Errorf("%w: base catalog requires base generation", ErrDeliveryInvalid)

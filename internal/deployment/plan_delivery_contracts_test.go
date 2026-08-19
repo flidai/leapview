@@ -485,6 +485,28 @@ func TestDeliveryBuildSealAndCandidateTransitionsAreChecked(t *testing.T) {
 	}
 }
 
+func TestDeliveryBuildAttemptAllowsGenerationFenceWithoutRetainedCatalog(t *testing.T) {
+	plan := deliveryTestPlan(t)
+	attempt, err := NewDeliveryBuildAttempt(DeliveryBuildAttempt{
+		ID: "attempt-full-refresh", PlanID: plan.ID, PlanDigest: plan.Digest,
+		SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest,
+		BaseGenerationID: plan.BaseGenerationID, PhysicalPoolID: "pool-1",
+		WriterLeaseID: "writer-full-refresh", CreatedAt: plan.CreatedAt,
+	})
+	if err != nil {
+		t.Fatalf("generation fence without retained catalog should be valid: %v", err)
+	}
+	if attempt.BaseCatalogDigest != "" || attempt.BasePhysicalPoolID != "" {
+		t.Fatalf("full-refresh attempt unexpectedly retained base identities: %#v", attempt)
+	}
+
+	invalid := attempt
+	invalid.BasePhysicalPoolID = "pool-1"
+	if err := invalid.Validate(); !errors.Is(err, ErrDeliveryInvalid) {
+		t.Fatalf("half-specified retained base error = %v, want ErrDeliveryInvalid", err)
+	}
+}
+
 func TestDeliveryPublicationLeaseAndGCFencesAreIdempotent(t *testing.T) {
 	plan := deliveryTestPlan(t)
 	now := plan.CreatedAt
