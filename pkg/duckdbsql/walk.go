@@ -32,12 +32,7 @@ func walkStatement(statement Statement, c WalkCallbacks) error {
 	switch s := statement.(type) {
 	case *SelectStatement:
 		for _, cte := range s.CTEs {
-			if c.CTE != nil {
-				if err := c.CTE(cte); err != nil {
-					return err
-				}
-			}
-			if err := walkStatement(cte.Query, c); err != nil {
+			if err := walkCTE(cte, c); err != nil {
 				return err
 			}
 		}
@@ -66,12 +61,7 @@ func walkStatement(statement Statement, c WalkCallbacks) error {
 		}
 	case *SetOperationStatement:
 		for _, cte := range s.CTEs {
-			if c.CTE != nil {
-				if err := c.CTE(cte); err != nil {
-					return err
-				}
-			}
-			if err := walkStatement(cte.Query, c); err != nil {
+			if err := walkCTE(cte, c); err != nil {
 				return err
 			}
 		}
@@ -93,12 +83,7 @@ func walkStatement(statement Statement, c WalkCallbacks) error {
 		}
 	case *RecursiveCTEStatement:
 		for _, cte := range s.CTEs {
-			if c.CTE != nil {
-				if err := c.CTE(cte); err != nil {
-					return err
-				}
-			}
-			if err := walkStatement(cte.Query, c); err != nil {
+			if err := walkCTE(cte, c); err != nil {
 				return err
 			}
 		}
@@ -120,12 +105,7 @@ func walkStatement(statement Statement, c WalkCallbacks) error {
 		}
 	case *CTENodeStatement:
 		for _, cte := range s.CTEs {
-			if c.CTE != nil {
-				if err := c.CTE(cte); err != nil {
-					return err
-				}
-			}
-			if err := walkStatement(cte.Query, c); err != nil {
+			if err := walkCTE(cte, c); err != nil {
 				return err
 			}
 		}
@@ -140,6 +120,23 @@ func walkStatement(statement Statement, c WalkCallbacks) error {
 		return walkStatement(s.Child, c)
 	default:
 		return fmt.Errorf("duckdbsql: unknown statement type %T", statement)
+	}
+	return nil
+}
+
+func walkCTE(cte CTE, c WalkCallbacks) error {
+	if c.CTE != nil {
+		if err := c.CTE(cte); err != nil {
+			return err
+		}
+	}
+	if err := walkStatement(cte.Query, c); err != nil {
+		return err
+	}
+	for _, target := range cte.KeyTargets {
+		if err := walkExpression(target, c); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/flidai/leapview/internal/analytics/duckdb/queryjson"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/modelsql"
 )
 
 // deriveModelSQLDependencies is the compiler-owned SQL boundary. It parses
@@ -28,7 +28,7 @@ func deriveModelSQLDependencies(model *semanticmodel.Model) error {
 		if sqlText == "" {
 			continue
 		}
-		analysis, err := queryjson.AnalyzeSQLText(context.Background(), sqlText)
+		analysis, err := modelsql.Analyze(context.Background(), sqlText)
 		if err != nil {
 			return fmt.Errorf("model table %q SQL: %w", tableName, err)
 		}

@@ -161,6 +161,7 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 		{path: "internal/access/cli", capability: "access", layer: LayerAdapter},
 		{path: "internal/project/devloop", capability: "project", layer: LayerUseCase},
 		{path: "internal/analytics/connectionbinding", capability: "analytics", layer: LayerUseCase},
+		{path: "internal/analytics/modelsql", capability: "analytics", layer: LayerContract},
 		{path: "internal/analytics/infisical", capability: "analytics", layer: LayerAdapter},
 		{path: "internal/analytics/environment", capability: "analytics", layer: LayerAdapter},
 		{path: "internal/analytics/sqlite", capability: "analytics", layer: LayerAdapter},
@@ -1568,6 +1569,17 @@ func TestProductionImportsFollowCapabilityGraph(t *testing.T) {
 			}
 			if violation := CapabilityImportViolation(file.pkgDir, source, packagePath, target); violation != "" {
 				t.Errorf("%s imports %s: %s", file.path, packagePath, violation)
+			}
+		}
+	}
+}
+
+func TestProductionDoesNotImportSupersededDuckDBQueryJSON(t *testing.T) {
+	const superseded = modulePath + "/internal/analytics/duckdb/queryjson"
+	for _, file := range productionGoFiles(t) {
+		for _, imported := range file.imports {
+			if imported == superseded {
+				t.Errorf("%s imports superseded DuckDB SQL analyzer %s", file.path, imported)
 			}
 		}
 	}
@@ -4109,12 +4121,6 @@ func isForbiddenUseCaseImport(imported string) bool {
 	}
 	packagePath := strings.TrimPrefix(imported, modulePath+"/")
 	if rule, ok := ClassifyPackage(packagePath); ok && rule.Layer == LayerPlatform {
-		return false
-	}
-	// Query JSON is a typed analytical contract shared with the compiler. Its
-	// implementation lives below the DuckDB adapter tree, but the contract
-	// package itself is safe for use-case consumers.
-	if packagePath == "internal/analytics/duckdb/queryjson" {
 		return false
 	}
 	for _, segment := range []string{"/sqlite", "/filesystem", "/s3", "/tus", "/duckdb", "/ducklake", "/datastar", "/http", "/openai"} {

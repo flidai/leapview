@@ -30,7 +30,7 @@ customer site.
 | [ADR-0009](0009-separate-control-and-physical-transactions.md) | Separate control state from immutable physical catalogs | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
 | [ADR-0010](0010-adopt-strict-typed-data-resource-contracts.md) | Adopt strict typed data-resource contracts | Accepted | 2026-08-18 | Complete | — |
 | [ADR-0011](0011-adopt-a-canonical-dashboard-document.md) | Adopt a canonical dashboard document | Accepted | 2026-08-18 | Complete | — |
-| [ADR-0012](0012-separate-duckdb-sql-analysis-from-application-policy.md) | Separate DuckDB SQL analysis from application policy | Accepted | 2026-08-19 | In progress (generic package complete; application wiring pending) | — |
+| [ADR-0012](0012-separate-duckdb-sql-analysis-from-application-policy.md) | Separate DuckDB SQL analysis from application policy | Accepted | 2026-08-19 | Complete | — |
 
 ## Companion specifications
 

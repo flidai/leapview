@@ -4,8 +4,7 @@ Status: accepted
 
 Decision date: 2026-08-19
 
-Implementation: in progress (`pkg/duckdbsql` complete; application wiring
-pending ADR-0010 and ADR-0011)
+Implementation: complete
 
 Deciders: LeapView maintainers
 

@@ -86,7 +86,8 @@ Before exposing a table to the semantic layer, confirm:
 - one sentence can describe the grain;
 - the primary entity fields are non-null and unique at the selected grain;
 - field types do not depend on accidental source inference;
-- every source dependency is declared;
+- every source dependency is referenced through the governed SQL namespace and
+  appears in compiler-derived lineage;
 - expensive repeated work is materialized once;
 - the transformation has a bounded and understandable failure mode.
 

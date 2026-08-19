@@ -23,7 +23,7 @@ func TestWalkVisitsQueryNodeBaseChildren(t *testing.T) {
 	column := &ColumnExpression{Names: []string{"limit_value"}}
 	recursive := &RecursiveCTEStatement{
 		Modifiers: []Modifier{&LimitModifier{Limit: column}},
-		CTEs:      []CTE{{Name: "base", Query: &SelectStatement{SelectList: []Expression{&ColumnExpression{Names: []string{"id"}}}, From: &EmptyRelation{}}}},
+		CTEs:      []CTE{{Name: "base", Query: &SelectStatement{SelectList: []Expression{&ColumnExpression{Names: []string{"id"}}}, From: &EmptyRelation{}}, KeyTargets: []Expression{&ColumnExpression{Names: []string{"key"}}}}},
 		Left:      &SelectStatement{From: &BaseTableRelation{Name: "seed"}},
 		Right:     &SelectStatement{From: &BaseTableRelation{Name: "base"}},
 	}
@@ -35,7 +35,7 @@ func TestWalkVisitsQueryNodeBaseChildren(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if statements < 4 || expressions != 2 || ctes != 1 {
+	if statements < 4 || expressions != 3 || ctes != 1 {
 		t.Fatalf("base children not visited: statements=%d expressions=%d ctes=%d", statements, expressions, ctes)
 	}
 }

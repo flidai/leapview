@@ -88,3 +88,18 @@ func TestParsePreservesRelationSamplingOptions(t *testing.T) {
 		t.Fatalf("sample select = %#v", from.Sample)
 	}
 }
+
+func TestParsePreservesDecimalTypeInfo(t *testing.T) {
+	query, err := Parse(context.Background(), `SELECT CAST(0 AS DECIMAL(38,2))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement := query.Statements[0].(*SelectStatement)
+	cast, ok := statement.SelectList[0].(*CastExpression)
+	if !ok {
+		t.Fatalf("select expression = %T", statement.SelectList[0])
+	}
+	if cast.CastType.ID != "DECIMAL" || cast.CastType.Info.Kind != ValueObject {
+		t.Fatalf("cast type = %#v", cast.CastType)
+	}
+}

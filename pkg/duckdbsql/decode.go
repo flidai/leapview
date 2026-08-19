@@ -247,6 +247,13 @@ func (d *decoder) statement(raw json.RawMessage) (Statement, error) {
 			if err != nil {
 				return nil, err
 			}
+			for _, groupSet := range s.GroupSets {
+				for _, index := range groupSet {
+					if index >= len(s.GroupExpressions) {
+						return nil, compatibilityError("group set index exceeds group expression count")
+					}
+				}
+			}
 		}
 		if _, ok := obj["aggregate_handling"]; ok {
 			s.AggregateHandling, err = requiredString(obj, "aggregate_handling")
@@ -466,6 +473,9 @@ func (d *decoder) ctes(raw json.RawMessage) ([]CTE, error) {
 			if err != nil {
 				return nil, malformedError("CTE materialized must be a string", err)
 			}
+			if !validCTEMaterialized(cte.Materialized) {
+				return nil, compatibilityError("unknown CTE materialized mode " + cte.Materialized)
+			}
 		}
 		if raw, ok := value["aliases"]; ok {
 			cte.Aliases, err = d.stringsValue(raw)
@@ -610,11 +620,26 @@ func (d *decoder) relation(raw json.RawMessage) (Relation, error) {
 				return nil, err
 			}
 		}
-		r.DelimFlipped, _ = optionalBool(obj["delim_flipped"])
-		r.IsImplicit, _ = optionalBool(obj["is_implicit"])
-		r.NearestCount, _ = optionalInt64(obj["nearest_count"])
-		r.NearestOrderType, _ = optionalString(obj["nearest_order_type"])
-		r.NearestApprox, _ = optionalBool(obj["nearest_approx"])
+		r.DelimFlipped, err = optionalBool(obj["delim_flipped"])
+		if err != nil {
+			return nil, err
+		}
+		r.IsImplicit, err = optionalBool(obj["is_implicit"])
+		if err != nil {
+			return nil, err
+		}
+		r.NearestCount, err = optionalInt64(obj["nearest_count"])
+		if err != nil {
+			return nil, err
+		}
+		r.NearestOrderType, err = optionalString(obj["nearest_order_type"])
+		if err != nil {
+			return nil, err
+		}
+		r.NearestApprox, err = optionalBool(obj["nearest_approx"])
+		if err != nil {
+			return nil, err
+		}
 		return r, nil
 	case "SUBQUERY":
 		if err := checkKeys(obj, "type", "alias", "sample", "query_location", "query_location_length", "subquery", "column_name_alias"); err != nil {
@@ -647,7 +672,10 @@ func (d *decoder) relation(raw json.RawMessage) (Relation, error) {
 				return nil, err
 			}
 		}
-		r.WithOrdinality, _ = optionalString(obj["with_ordinality"])
+		r.WithOrdinality, err = optionalString(obj["with_ordinality"])
+		if err != nil {
+			return nil, err
+		}
 		return r, nil
 	case "EXPRESSION_LIST":
 		if err := checkKeys(obj, "type", "alias", "sample", "query_location", "query_location_length", "expected_names", "expected_types", "values"); err != nil {
@@ -703,7 +731,10 @@ func (d *decoder) relation(raw json.RawMessage) (Relation, error) {
 				return nil, err
 			}
 		}
-		r.IncludeNulls, _ = optionalBool(obj["include_nulls"])
+		r.IncludeNulls, err = optionalBool(obj["include_nulls"])
+		if err != nil {
+			return nil, err
+		}
 		if raw, ok := obj["pivots"]; ok {
 			r.Pivots, err = d.pivots(raw)
 			if err != nil {
@@ -716,10 +747,22 @@ func (d *decoder) relation(raw json.RawMessage) (Relation, error) {
 			return nil, err
 		}
 		r := &ShowRelation{NodeMeta: meta}
-		r.Name, _ = optionalString(obj["table_name"])
-		r.Schema, _ = optionalString(obj["schema_name"])
-		r.Catalog, _ = optionalString(obj["catalog_name"])
-		r.ShowType, _ = optionalString(obj["show_type"])
+		r.Name, err = optionalString(obj["table_name"])
+		if err != nil {
+			return nil, err
+		}
+		r.Schema, err = optionalString(obj["schema_name"])
+		if err != nil {
+			return nil, err
+		}
+		r.Catalog, err = optionalString(obj["catalog_name"])
+		if err != nil {
+			return nil, err
+		}
+		r.ShowType, err = optionalString(obj["show_type"])
+		if err != nil {
+			return nil, err
+		}
 		if raw, ok := obj["query"]; ok && !isNull(raw) {
 			r.Query, err = d.statementEnvelope(raw)
 		}
@@ -872,7 +915,10 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 			return nil, err
 		}
 		e := &StarExpression{NodeMeta: meta}
-		e.RelationName, _ = optionalString(obj["relation_name"])
+		e.RelationName, err = optionalString(obj["relation_name"])
+		if err != nil {
+			return nil, err
+		}
 		if raw, ok := obj["exclude_list"]; ok {
 			e.ExcludeList, err = d.stringsValue(raw)
 			if err != nil {
@@ -885,8 +931,14 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 				return nil, err
 			}
 		}
-		e.Columns, _ = optionalBool(obj["columns"])
-		e.Unpacked, _ = optionalBool(obj["unpacked"])
+		e.Columns, err = optionalBool(obj["columns"])
+		if err != nil {
+			return nil, err
+		}
+		e.Unpacked, err = optionalBool(obj["unpacked"])
+		if err != nil {
+			return nil, err
+		}
 		if raw, ok := obj["expr"]; ok && !isNull(raw) {
 			e.Expression, err = d.expression(raw)
 			if err != nil {
@@ -915,8 +967,14 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 		if err != nil {
 			return nil, err
 		}
-		e.Schema, _ = optionalString(obj["schema"])
-		e.Catalog, _ = optionalString(obj["catalog"])
+		e.Schema, err = optionalString(obj["schema"])
+		if err != nil {
+			return nil, err
+		}
+		e.Catalog, err = optionalString(obj["catalog"])
+		if err != nil {
+			return nil, err
+		}
 		if raw, ok := obj["children"]; ok {
 			e.Children, err = d.expressions(raw)
 			if err != nil {
@@ -935,9 +993,18 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 				return nil, err
 			}
 		}
-		e.Distinct, _ = optionalBool(obj["distinct"])
-		e.IsOperator, _ = optionalBool(obj["is_operator"])
-		e.ExportState, _ = optionalBool(obj["export_state"])
+		e.Distinct, err = optionalBool(obj["distinct"])
+		if err != nil {
+			return nil, err
+		}
+		e.IsOperator, err = optionalBool(obj["is_operator"])
+		if err != nil {
+			return nil, err
+		}
+		e.ExportState, err = optionalBool(obj["export_state"])
+		if err != nil {
+			return nil, err
+		}
 		return e, nil
 	case "OPERATOR", "CONJUNCTION":
 		if err := checkKeys(obj, "class", "type", "alias", "query_location", "query_location_length", "children"); err != nil {
@@ -970,7 +1037,10 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 		if err != nil {
 			return nil, err
 		}
-		e.TryCast, _ = optionalBool(obj["try_cast"])
+		e.TryCast, err = optionalBool(obj["try_cast"])
+		if err != nil {
+			return nil, err
+		}
 		return e, nil
 	case "CASE":
 		if err := checkKeys(obj, "class", "type", "alias", "query_location", "query_location_length", "case_checks", "else_expr"); err != nil {
@@ -990,9 +1060,18 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 			return nil, err
 		}
 		e := &WindowExpression{NodeMeta: meta}
-		e.FunctionName, _ = optionalString(obj["function_name"])
-		e.Schema, _ = optionalString(obj["schema"])
-		e.Catalog, _ = optionalString(obj["catalog"])
+		e.FunctionName, err = optionalString(obj["function_name"])
+		if err != nil {
+			return nil, err
+		}
+		e.Schema, err = optionalString(obj["schema"])
+		if err != nil {
+			return nil, err
+		}
+		e.Catalog, err = optionalString(obj["catalog"])
+		if err != nil {
+			return nil, err
+		}
 		if raw, ok := obj["partitions"]; ok {
 			e.Partitions, err = d.expressions(raw)
 			if err != nil {
@@ -1005,8 +1084,17 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 				return nil, err
 			}
 		}
-		e.Start, _ = optionalString(obj["start"])
-		e.End, _ = optionalString(obj["end"])
+		e.Start, err = optionalString(obj["start"])
+		if err != nil {
+			return nil, err
+		}
+		e.End, err = optionalString(obj["end"])
+		if err != nil {
+			return nil, err
+		}
+		if !validWindowBoundary(e.Start) || !validWindowBoundary(e.End) {
+			return nil, compatibilityError("unknown window boundary")
+		}
 		if raw, ok := obj["start_expr"]; ok && !isNull(raw) {
 			e.StartExpression, err = d.expression(raw)
 			if err != nil {
@@ -1048,9 +1136,21 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 			}
 			e.Filter = e.FilterExpression
 		}
-		e.Distinct, _ = optionalBool(obj["distinct"])
-		e.IgnoreNulls, _ = optionalBool(obj["ignore_nulls"])
-		e.ExcludeClause, _ = optionalString(obj["exclude_clause"])
+		e.Distinct, err = optionalBool(obj["distinct"])
+		if err != nil {
+			return nil, err
+		}
+		e.IgnoreNulls, err = optionalBool(obj["ignore_nulls"])
+		if err != nil {
+			return nil, err
+		}
+		e.ExcludeClause, err = optionalString(obj["exclude_clause"])
+		if err != nil {
+			return nil, err
+		}
+		if !validWindowExclude(e.ExcludeClause) {
+			return nil, compatibilityError("unknown window exclude mode " + e.ExcludeClause)
+		}
 		if raw, ok := obj["arg_orders"]; ok {
 			e.ArgOrders, err = d.orders(raw)
 		}
@@ -1060,8 +1160,14 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 			return nil, err
 		}
 		e := &SubqueryExpression{NodeMeta: meta}
-		e.SubqueryType, _ = optionalString(obj["subquery_type"])
-		e.ComparisonType, _ = optionalString(obj["comparison_type"])
+		e.SubqueryType, err = optionalString(obj["subquery_type"])
+		if err != nil {
+			return nil, err
+		}
+		e.ComparisonType, err = optionalString(obj["comparison_type"])
+		if err != nil {
+			return nil, err
+		}
 		e.Query, err = d.statementEnvelope(obj["subquery"])
 		if err != nil {
 			return nil, err
@@ -1094,7 +1200,10 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 		if err != nil {
 			return nil, err
 		}
-		e.Collation, _ = optionalString(obj["collation"])
+		e.Collation, err = optionalString(obj["collation"])
+		if err != nil {
+			return nil, err
+		}
 		return e, nil
 	case "DEFAULT":
 		if err := checkKeys(obj, "class", "type", "alias", "query_location", "query_location_length"); err != nil {
@@ -1114,38 +1223,62 @@ func (d *decoder) expression(raw json.RawMessage) (Expression, error) {
 		if err != nil {
 			return nil, err
 		}
-		e.SyntaxType, _ = optionalString(obj["syntax_type"])
+		e.SyntaxType, err = optionalString(obj["syntax_type"])
+		if err != nil {
+			return nil, err
+		}
 		return e, nil
 	case "LAMBDA_REF":
 		if err := checkKeys(obj, "class", "type", "alias", "query_location", "query_location_length", "lambda_idx", "column_name"); err != nil {
 			return nil, err
 		}
 		e := &LambdaRefExpression{NodeMeta: meta}
-		e.LambdaIndex, _ = optionalInt64(obj["lambda_idx"])
-		e.ColumnName, _ = optionalString(obj["column_name"])
+		e.LambdaIndex, err = optionalInt64(obj["lambda_idx"])
+		if err != nil {
+			return nil, err
+		}
+		e.ColumnName, err = optionalString(obj["column_name"])
+		if err != nil {
+			return nil, err
+		}
 		return e, nil
 	case "PARAMETER":
 		if err := checkKeys(obj, "class", "type", "alias", "query_location", "query_location_length", "identifier"); err != nil {
 			return nil, err
 		}
 		e := &ParameterExpression{NodeMeta: meta}
-		e.Identifier, _ = optionalString(obj["identifier"])
+		e.Identifier, err = optionalString(obj["identifier"])
+		if err != nil {
+			return nil, err
+		}
 		return e, nil
 	case "POSITIONAL_REFERENCE":
 		if err := checkKeys(obj, "class", "type", "alias", "query_location", "query_location_length", "index"); err != nil {
 			return nil, err
 		}
 		e := &PositionalReferenceExpression{NodeMeta: meta}
-		e.Index, _ = optionalInt64(obj["index"])
+		e.Index, err = optionalInt64(obj["index"])
+		if err != nil {
+			return nil, err
+		}
 		return e, nil
 	case "TYPE":
 		if err := checkKeys(obj, "class", "type", "alias", "query_location", "query_location_length", "catalog", "schema", "type_name", "children"); err != nil {
 			return nil, err
 		}
 		e := &TypeExpression{NodeMeta: meta}
-		e.Catalog, _ = optionalString(obj["catalog"])
-		e.Schema, _ = optionalString(obj["schema"])
-		e.Name, _ = optionalString(obj["type_name"])
+		e.Catalog, err = optionalString(obj["catalog"])
+		if err != nil {
+			return nil, err
+		}
+		e.Schema, err = optionalString(obj["schema"])
+		if err != nil {
+			return nil, err
+		}
+		e.Name, err = optionalString(obj["type_name"])
+		if err != nil {
+			return nil, err
+		}
 		if raw, ok := obj["children"]; ok {
 			e.Children, err = d.expressions(raw)
 		}
@@ -1524,13 +1657,25 @@ func (d *decoder) orders(raw json.RawMessage) ([]Order, error) {
 			return nil, er
 		}
 		o := Order{Type: "ORDER_DEFAULT", NullOrder: "ORDER_DEFAULT"}
-		o.Type, _ = optionalString(m["type"])
-		o.NullOrder, _ = optionalString(m["null_order"])
+		if raw, ok := m["type"]; ok {
+			o.Type, er = optionalString(raw)
+			if er != nil || !validOrderType(o.Type) {
+				return nil, compatibilityError("unknown order type")
+			}
+		}
+		if raw, ok := m["null_order"]; ok {
+			o.NullOrder, er = optionalString(raw)
+			if er != nil || !validOrderNullType(o.NullOrder) {
+				return nil, compatibilityError("unknown order null type")
+			}
+		}
 		if raw, ok := m["expression"]; ok && !isNull(raw) {
 			o.Expression, er = d.expression(raw)
 			if er != nil {
 				return nil, er
 			}
+		} else {
+			return nil, malformedError("order expression is required", nil)
 		}
 		out = append(out, o)
 	}
@@ -1587,7 +1732,13 @@ func (d *decoder) value(raw json.RawMessage) (Value, error) {
 		if err != nil {
 			return Value{}, err
 		}
-		if _, ok := m["type"]; ok {
+		// Serialized constants carry is_null and/or value alongside their type.
+		// Other supporting objects (for example DECIMAL_TYPE_INFO) also have a
+		// discriminator named type and must remain typed Value objects rather
+		// than being decoded as constants.
+		_, hasNullMarker := m["is_null"]
+		_, hasConstantValue := m["value"]
+		if hasNullMarker || hasConstantValue {
 			return d.constantValue(m)
 		}
 		if len(m) > d.limits.MaxArrayItems {
@@ -1769,7 +1920,11 @@ func optionalString(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 || isNull(raw) {
 		return "", nil
 	}
-	return stringValue(raw)
+	value, err := stringValue(raw)
+	if err != nil {
+		return "", malformedError("optional string field must be a string", err)
+	}
+	return value, nil
 }
 func optionalStringValue(raw json.RawMessage) (string, bool) {
 	if len(raw) == 0 || isNull(raw) {
@@ -1830,13 +1985,21 @@ func optionalBool(raw json.RawMessage) (bool, error) {
 	if len(raw) == 0 || isNull(raw) {
 		return false, nil
 	}
-	return boolValue(raw)
+	value, err := boolValue(raw)
+	if err != nil {
+		return false, malformedError("optional boolean field must be a boolean", err)
+	}
+	return value, nil
 }
 func optionalInt64(raw json.RawMessage) (int64, error) {
 	if len(raw) == 0 || isNull(raw) {
 		return 0, nil
 	}
-	return int64Value(raw)
+	value, err := int64Value(raw)
+	if err != nil {
+		return 0, malformedError("optional integer field must be an integer", err)
+	}
+	return value, nil
 }
 func intValue(raw json.RawMessage) (int, error) {
 	i, e := int64Value(raw)
@@ -1902,6 +2065,41 @@ func validAggregateHandling(v string) bool {
 }
 func validSetOperation(v string) bool {
 	return v == "UNION" || v == "EXCEPT" || v == "INTERSECT" || v == "UNION_BY_NAME"
+}
+
+func validCTEMaterialized(value string) bool {
+	switch value {
+	case "CTE_MATERIALIZE_DEFAULT", "CTE_MATERIALIZE_ALWAYS", "CTE_MATERIALIZE_NEVER":
+		return true
+	default:
+		return false
+	}
+}
+
+func validOrderType(value string) bool {
+	return value == "ORDER_DEFAULT" || value == "ASCENDING" || value == "DESCENDING"
+}
+
+func validOrderNullType(value string) bool {
+	return value == "ORDER_DEFAULT" || value == "NULLS_FIRST" || value == "NULLS_LAST"
+}
+
+func validWindowBoundary(value string) bool {
+	switch value {
+	case "", "UNBOUNDED_PRECEDING", "UNBOUNDED_FOLLOWING", "CURRENT_ROW_RANGE", "CURRENT_ROW_ROWS", "EXPR_PRECEDING_ROWS", "EXPR_FOLLOWING_ROWS", "EXPR_PRECEDING_RANGE", "EXPR_FOLLOWING_RANGE", "CURRENT_ROW_GROUPS", "EXPR_PRECEDING_GROUPS", "EXPR_FOLLOWING_GROUPS":
+		return true
+	default:
+		return false
+	}
+}
+
+func validWindowExclude(value string) bool {
+	switch value {
+	case "", "NO_OTHER", "CURRENT_ROW", "GROUP", "TIES":
+		return true
+	default:
+		return false
+	}
 }
 
 func validExpressionType(class, typ string) bool {
