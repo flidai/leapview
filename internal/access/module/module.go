@@ -352,11 +352,6 @@ func (m *Module) RequestEffectiveCapabilities(ctx context.Context, r *http.Reque
 		return capabilities, nil
 	}
 	if credential.Authoring != nil {
-		logger := m.logger
-		if logger == nil {
-			logger = slog.Default()
-		}
-		logger.WarnContext(ctx, "authoring capability projection", "principal", principalID, "base", capabilities, "scope", credential.Authoring.Scope.Capabilities)
 		activeProjectID, err := m.CurrentProjectID(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("authoring credential active project: %w", err)
