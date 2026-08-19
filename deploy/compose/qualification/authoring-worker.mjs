@@ -93,7 +93,15 @@ const methods = {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     })
-    await administratorPage.getByRole('button', { name: 'Create local user', exact: true }).click()
+    // The admin page is fed by a live Datastar stream. During the initial
+    // principals refresh the toolbar can be re-rendered while Playwright is
+    // checking actionability, which makes a normal click wait for the button
+    // to be geometrically stable until its timeout. The button is already
+    // present and visible here; force the semantic click so the qualification
+    // does not depend on an incidental render frame.
+    await administratorPage
+      .getByRole('button', { name: 'Create local user', exact: true })
+      .click({ force: true })
     await administratorPage.getByLabel('Email', { exact: true }).fill(params.email)
     await administratorPage.getByLabel('Display name', { exact: true }).fill(params.displayName)
     await administratorPage.getByRole('button', { name: 'Create user', exact: true }).click()
