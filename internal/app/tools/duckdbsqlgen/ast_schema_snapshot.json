@@ -1,0 +1,59 @@
+{
+  "statement": {
+    "CTE_NODE": {"discriminator":"CTE_NODE","allowed_fields":["cte_name","query","child","aliases","materialized","type","modifiers","cte_map"],"required_fields":["type"]},
+    "RECURSIVE_CTE_NODE": {"discriminator":"RECURSIVE_CTE_NODE","allowed_fields":["cte_name","union_all","left","right","aliases","key_targets","type","modifiers","cte_map"],"required_fields":["type"]},
+    "SELECT_NODE": {"discriminator":"SELECT_NODE","allowed_fields":["select_list","from_table","where_clause","group_expressions","group_sets","aggregate_handling","having","sample","qualify","type","modifiers","cte_map"],"required_fields":["type"]},
+    "SET_OPERATION_NODE": {"discriminator":"SET_OPERATION_NODE","allowed_fields":["setop_type","left","right","setop_all","children","type","modifiers","cte_map"],"required_fields":["type"]}
+  },
+  "relation": {
+    "BASE_TABLE": {"discriminator":"BASE_TABLE","allowed_fields":["schema_name","table_name","column_name_alias","catalog_name","at_clause","type","alias","sample","query_location"],"required_fields":["type"]},
+    "COLUMN_DATA": {"discriminator":"COLUMN_DATA","allowed_fields":["expected_names","collection","type","alias","sample","query_location"],"required_fields":["type"]},
+    "EMPTY_FROM": {"discriminator":"EMPTY_FROM","allowed_fields":["type","alias","sample","query_location"],"required_fields":["type"]},
+    "EXPRESSION_LIST": {"discriminator":"EXPRESSION_LIST","allowed_fields":["expected_names","expected_types","values","type","alias","sample","query_location"],"required_fields":["type"]},
+    "JOIN": {"discriminator":"JOIN","allowed_fields":["left","right","condition","join_type","ref_type","using_columns","delim_flipped","duplicate_eliminated_columns","is_implicit","type","alias","sample","query_location"],"required_fields":["type"]},
+    "PIVOT": {"discriminator":"PIVOT","allowed_fields":["source","aggregates","unpivot_names","pivots","groups","column_name_alias","include_nulls","type","alias","sample","query_location"],"required_fields":["type"]},
+    "SHOW_REF": {"discriminator":"SHOW_REF","allowed_fields":["table_name","query","show_type","catalog_name","schema_name","type","alias","sample","query_location"],"required_fields":["type"]},
+    "SUBQUERY": {"discriminator":"SUBQUERY","allowed_fields":["subquery","column_name_alias","type","alias","sample","query_location"],"required_fields":["type"]},
+    "TABLE_FUNCTION": {"discriminator":"TABLE_FUNCTION","allowed_fields":["function","column_name_alias","with_ordinality","type","alias","sample","query_location"],"required_fields":["type"]}
+  },
+  "expression": {
+    "BETWEEN": {"discriminator":"BETWEEN","allowed_fields":["input","lower","upper","class","type","alias","query_location"],"required_fields":["type"]},
+    "CASE": {"discriminator":"CASE","allowed_fields":["case_checks","else_expr","class","type","alias","query_location"],"required_fields":["type"]},
+    "CAST": {"discriminator":"CAST","allowed_fields":["child","cast_type","try_cast","class","type","alias","query_location"],"required_fields":["type"]},
+    "COLLATE": {"discriminator":"COLLATE","allowed_fields":["child","collation","class","type","alias","query_location"],"required_fields":["type"]},
+    "COLUMN_REF": {"discriminator":"COLUMN_REF","allowed_fields":["column_names","class","type","alias","query_location"],"required_fields":["type"]},
+    "COMPARISON": {"discriminator":"COMPARISON","allowed_fields":["left","right","class","type","alias","query_location"],"required_fields":["type"]},
+    "CONJUNCTION": {"discriminator":"CONJUNCTION","allowed_fields":["children","class","type","alias","query_location"],"required_fields":["type"]},
+    "CONSTANT": {"discriminator":"CONSTANT","allowed_fields":["value","class","type","alias","query_location"],"required_fields":["type"]},
+    "DEFAULT": {"discriminator":"DEFAULT","allowed_fields":["class","type","alias","query_location"],"required_fields":["type"]},
+    "FUNCTION": {"discriminator":"FUNCTION","allowed_fields":["function_name","schema","children","filter","order_bys","distinct","is_operator","export_state","catalog","class","type","alias","query_location"],"required_fields":["type"]},
+    "LAMBDA": {"discriminator":"LAMBDA","allowed_fields":["lhs","expr","syntax_type","class","type","alias","query_location"],"required_fields":["type"]},
+    "LAMBDA_REF": {"discriminator":"LAMBDA_REF","allowed_fields":["lambda_idx","column_name","class","type","alias","query_location"],"required_fields":["type"]},
+    "OPERATOR": {"discriminator":"OPERATOR","allowed_fields":["children","class","type","alias","query_location"],"required_fields":["type"]},
+    "PARAMETER": {"discriminator":"PARAMETER","allowed_fields":["identifier","class","type","alias","query_location"],"required_fields":["type"]},
+    "POSITIONAL_REFERENCE": {"discriminator":"POSITIONAL_REFERENCE","allowed_fields":["index","class","type","alias","query_location"],"required_fields":["type"]},
+    "STAR": {"discriminator":"STAR","allowed_fields":["relation_name","exclude_list","replace_list","columns","expr","unpacked","qualified_exclude_list","rename_list","class","type","alias","query_location"],"required_fields":["type"]},
+    "SUBQUERY": {"discriminator":"SUBQUERY","allowed_fields":["subquery_type","subquery","child","comparison_type","class","type","alias","query_location"],"required_fields":["type"]},
+    "TYPE": {"discriminator":"TYPE","allowed_fields":["catalog","schema","type_name","children","class","type","alias","query_location"],"required_fields":["type"]},
+    "WINDOW": {"discriminator":"WINDOW","allowed_fields":["function_name","schema","catalog","children","partitions","orders","start","end","start_expr","end_expr","offset_expr","default_expr","ignore_nulls","filter_expr","exclude_clause","distinct","arg_orders","class","type","alias","query_location"],"required_fields":["type"]}
+  },
+  "modifier": {
+    "DISTINCT_MODIFIER": {"discriminator":"DISTINCT_MODIFIER","allowed_fields":["distinct_on_targets","type"],"required_fields":["type"]},
+    "LIMIT_MODIFIER": {"discriminator":"LIMIT_MODIFIER","allowed_fields":["limit","offset","type"],"required_fields":["type"]},
+    "LIMIT_PERCENT_MODIFIER": {"discriminator":"LIMIT_PERCENT_MODIFIER","allowed_fields":["limit","offset","type"],"required_fields":["type"]},
+    "ORDER_MODIFIER": {"discriminator":"ORDER_MODIFIER","allowed_fields":["orders","type"],"required_fields":["type"]}
+  },
+  "supporting": {
+    "AtClause": {"discriminator":"AtClause","allowed_fields":["unit","expr"]},
+    "BoundCaseCheck": {"discriminator":"BoundCaseCheck","allowed_fields":["when_expr","then_expr"]},
+    "BoundOrderByNode": {"discriminator":"BoundOrderByNode","allowed_fields":["type","null_order","expression"]},
+    "CaseCheck": {"discriminator":"CaseCheck","allowed_fields":["when_expr","then_expr"]},
+    "CommonTableExpressionInfo": {"discriminator":"CommonTableExpressionInfo","allowed_fields":["aliases","query","materialized","key_targets"]},
+    "CommonTableExpressionMap": {"discriminator":"CommonTableExpressionMap","allowed_fields":["map"]},
+    "OrderByNode": {"discriminator":"OrderByNode","allowed_fields":["type","null_order","expression"]},
+    "PivotColumn": {"discriminator":"PivotColumn","allowed_fields":["pivot_expressions","unpivot_names","entries","pivot_enum"]},
+    "PivotColumnEntry": {"discriminator":"PivotColumnEntry","allowed_fields":["values","star_expr","alias"]},
+    "SampleOptions": {"discriminator":"SampleOptions","allowed_fields":["sample_size","is_percentage","method","seed"]},
+    "SelectStatement": {"discriminator":"SelectStatement","allowed_fields":["node","named_param_map"]}
+  }
+}

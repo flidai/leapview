@@ -1,0 +1,30 @@
+{
+  "duckdb_version": "v1.5.4",
+  "duckdb_git_commit": "08e34c447bae34eaee3723cac61f2878b6bdf787",
+  "go_module": "github.com/duckdb/duckdb-go/v2",
+  "go_module_version": "v2.10504.0",
+  "bindings_module": "github.com/duckdb/duckdb-go-bindings",
+  "bindings_module_version": "v0.10504.0",
+  "descriptor_root": "src/include/duckdb/storage/serialization",
+  "descriptor_files": {
+    "nodes.json": "47255585249edf3e0dc38dc0c8aecb87696fc1025aaef0618121aa567829cad0",
+    "parsed_expression.json": "0db589a4bc5bea150bae167f0035ce9bac150995ffc281c7d994d494c3ab215d",
+    "query_node.json": "260a0b5d85524fbb24994ee134180ef9b005e95f137bac7a1848a257ef4add35",
+    "result_modifier.json": "679e91d1c4d8420ac91580351954223bcfa6047958e474f6850fc6590e0b5250",
+    "statement.json": "6625d774a91a406457da4730472aab2d82848c165cd0665805651d8d973b08b1",
+    "tableref.json": "15c562d0b5286f6b1459df3b473c87f395d297262aa0a6d57016e8c8351d74c6"
+  },
+  "inventory_columns": {
+    "duckdb_functions": [
+      "database_name", "database_oid", "schema_name", "function_name", "alias_of",
+      "function_type", "description", "comment", "tags", "return_type", "parameters",
+      "parameter_types", "varargs", "macro_definition", "has_side_effects", "internal",
+      "function_oid", "examples", "stability", "categories"
+    ],
+    "duckdb_keywords": ["keyword_name", "keyword_category"],
+    "duckdb_types": [
+      "database_name", "database_oid", "schema_name", "schema_oid", "type_oid", "type_name",
+      "type_size", "logical_type", "type_category", "comment", "tags", "internal", "labels"
+    ]
+  }
+}

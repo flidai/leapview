@@ -235,6 +235,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "desktop/native/windowspolicy", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "internal/extension", Capability: "platform", Layer: LayerContract},
 	{Prefix: "pkg/agent", Capability: "agent", Layer: LayerContract},
+	{Prefix: "pkg/duckdbsql", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/project/graph", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/contracts", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/catalog", Capability: "project", Layer: LayerContract},
