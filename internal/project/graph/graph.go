@@ -8,16 +8,16 @@
 package graph
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/flidai/leapview/pkg/strictjson"
 )
 
 const (
@@ -231,20 +231,9 @@ func Validate(resources []Resource, edges []Edge) error {
 
 // Decode decodes a canonical graph artifact and revalidates its invariants.
 func Decode(data []byte) (ProjectGraph, error) {
-	if err := rejectDuplicateJSONKeys(data); err != nil {
-		return ProjectGraph{}, fmt.Errorf("decode project graph: %w", err)
-	}
 	var wire graphWire
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&wire); err != nil {
+	if err := strictjson.Decode(data, &wire); err != nil {
 		return ProjectGraph{}, fmt.Errorf("decode project graph: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err == nil {
-		return ProjectGraph{}, errors.New("decode project graph: trailing JSON value")
-	} else if !errors.Is(err, io.EOF) {
-		return ProjectGraph{}, fmt.Errorf("decode project graph: trailing data: %w", err)
 	}
 	if wire.Version != GraphVersion {
 		return ProjectGraph{}, UnsupportedVersionError{Contract: "project graph", Version: wire.Version}
@@ -509,20 +498,9 @@ func NewArtifactEnvelope(identity ServingIdentity, graph ProjectGraph) (Artifact
 
 // DecodeArtifactEnvelope decodes and validates a serving-scoped artifact.
 func DecodeArtifactEnvelope(data []byte) (ArtifactEnvelope, error) {
-	if err := rejectDuplicateJSONKeys(data); err != nil {
-		return ArtifactEnvelope{}, fmt.Errorf("decode project artifact: %w", err)
-	}
 	var wire artifactWire
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&wire); err != nil {
+	if err := strictjson.Decode(data, &wire); err != nil {
 		return ArtifactEnvelope{}, fmt.Errorf("decode project artifact: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err == nil {
-		return ArtifactEnvelope{}, errors.New("decode project artifact: trailing JSON value")
-	} else if !errors.Is(err, io.EOF) {
-		return ArtifactEnvelope{}, fmt.Errorf("decode project artifact: trailing data: %w", err)
 	}
 	if wire.Version != ArtifactVersion {
 		return ArtifactEnvelope{}, UnsupportedVersionError{Contract: "project artifact", Version: wire.Version}
@@ -767,70 +745,4 @@ func sortedStrings(values []string) []string {
 	values = append([]string(nil), values...)
 	sort.Strings(values)
 	return values
-}
-
-// rejectDuplicateJSONKeys walks one JSON value before typed decoding. The
-// standard decoder intentionally applies last-key-wins semantics; canonical
-// project artifacts instead reject ambiguity at every nested object level.
-func rejectDuplicateJSONKeys(data []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := walkJSONValue(decoder); err != nil {
-		return err
-	}
-	return nil
-}
-
-func walkJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	switch delimiter := token.(type) {
-	case json.Delim:
-		switch delimiter {
-		case '{':
-			keys := make(map[string]struct{})
-			for decoder.More() {
-				keyToken, err := decoder.Token()
-				if err != nil {
-					return err
-				}
-				key, ok := keyToken.(string)
-				if !ok {
-					return errors.New("JSON object key is not a string")
-				}
-				canonicalKey := strings.ToLower(key)
-				if _, exists := keys[canonicalKey]; exists {
-					return fmt.Errorf("duplicate JSON object key %q", key)
-				}
-				keys[canonicalKey] = struct{}{}
-				if err := walkJSONValue(decoder); err != nil {
-					return err
-				}
-			}
-			end, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			if end != json.Delim('}') {
-				return fmt.Errorf("JSON object ended with %v", end)
-			}
-		case '[':
-			for decoder.More() {
-				if err := walkJSONValue(decoder); err != nil {
-					return err
-				}
-			}
-			end, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			if end != json.Delim(']') {
-				return fmt.Errorf("JSON array ended with %v", end)
-			}
-		default:
-			return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
-		}
-	}
-	return nil
 }
