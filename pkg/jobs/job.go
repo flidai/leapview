@@ -1,4 +1,3 @@
-// Package jobs defines durable, leased background work shared by public API resources.
 package jobs
 
 import (
@@ -9,8 +8,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	"github.com/flidai/leapview/internal/platform/transaction"
 )
 
 var (
@@ -19,6 +16,7 @@ var (
 	ErrUnknownKind = errors.New("async job kind is not registered")
 )
 
+// Status describes the durable lifecycle state of a job.
 type Status string
 
 const (
@@ -29,6 +27,7 @@ const (
 	StatusCancelled Status = "cancelled"
 )
 
+// EnqueueInput is the durable job request written by a producer.
 type EnqueueInput struct {
 	ID                   string
 	Kind                 string
@@ -41,6 +40,7 @@ type EnqueueInput struct {
 	Payload              []byte
 }
 
+// Job is the durable representation returned by a Repository.
 type Job struct {
 	ID, Kind, WorkloadClass, PrincipalID, ResourceKind, ResourceID string
 	GroupIDs                                                       []string
@@ -54,16 +54,11 @@ type Job struct {
 	ErrorJSON                                                      string
 }
 
-// SystemPrincipalID is used for internal work that has no end-user actor.
-// It is deliberately a stable canonical identity rather than a content
-// sentinel or an inferred/fallback value.
-const SystemPrincipalID = "system:durable-jobs"
-
-// CanonicalActor validates the durable actor identity and returns a stable
-// sorted, deduplicated group projection. Identity strings are never trimmed or
+// CanonicalActor validates an actor identity and returns a stable sorted,
+// deduplicated group projection. Identity strings are not trimmed or
 // case-folded: callers must provide the canonical literal.
 func CanonicalActor(principal string, groups []string) ([]string, error) {
-	if principal == "" || principal != strings.TrimSpace(principal) || len(principal) > 256 || strings.IndexFunc(principal, unicode.IsControl) >= 0 {
+	if !canonicalLiteral(principal, 256) {
 		return nil, fmt.Errorf("principal id is not canonical")
 	}
 	return CanonicalGroups(groups)
@@ -74,7 +69,7 @@ func CanonicalActor(principal string, groups []string) ([]string, error) {
 func CanonicalGroups(groups []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(groups))
 	for _, group := range groups {
-		if group == "" || group != strings.TrimSpace(group) || len(group) > 256 || strings.IndexFunc(group, unicode.IsControl) >= 0 {
+		if !canonicalLiteral(group, 256) {
 			return nil, fmt.Errorf("group id is not canonical")
 		}
 		seen[group] = struct{}{}
@@ -87,8 +82,9 @@ func CanonicalGroups(groups []string) ([]string, error) {
 	return canonical, nil
 }
 
-// Fence identifies one exact durable claim. Owner identity is insufficient:
-// a restarted worker can reuse an owner after its former lease was reclaimed.
+// Fence identifies one exact durable claim. Owner identity alone is
+// insufficient because a restarted worker can reuse an owner after its former
+// lease has been reclaimed.
 type Fence struct {
 	Owner      string
 	Generation int64
@@ -96,6 +92,7 @@ type Fence struct {
 
 func (j Job) Fence() Fence { return Fence{Owner: j.LeaseOwner, Generation: j.LeaseGeneration} }
 
+// Event is an append-only resource event.
 type Event struct {
 	ID                    int64
 	ResourceKind          string
@@ -104,6 +101,7 @@ type Event struct {
 	CreatedAt             string
 }
 
+// EventInput describes an event in a WorkflowIntent.
 type EventInput struct {
 	Key          string
 	ResourceKind string
@@ -113,38 +111,35 @@ type EventInput struct {
 }
 
 // WorkflowIntent is the durable consequence of one capability-owned state
-// transition. Event keys and optional job IDs make replay safe after ambiguous
-// commits. Terminal transitions record an event without scheduling more work.
+// transition. Event keys and optional job IDs make replay safe after
+// ambiguous commits. Terminal transitions record an event without scheduling
+// more work.
 type WorkflowIntent struct {
 	Event EventInput
 	Job   EnqueueInput
 }
 
-// WorkflowRecorder writes an event and any required follow-up job using the
-// transaction owned by the capability making the state transition.
-type WorkflowRecorder interface {
-	RecordWorkflow(context.Context, transaction.Transaction, WorkflowIntent) error
-}
-
-// WorkflowCommitter atomically records an event and its optional follow-up job
-// when the caller does not already own a domain transaction.
+// WorkflowCommitter atomically records an event and its optional follow-up
+// job when the caller does not already own a domain transaction.
 type WorkflowCommitter interface {
 	CommitWorkflow(context.Context, WorkflowIntent) error
 }
 
-type WorkflowRecorderFunc func(context.Context, transaction.Transaction, WorkflowIntent) error
+// WorkflowCommitterFunc adapts a function to WorkflowCommitter.
+type WorkflowCommitterFunc func(context.Context, WorkflowIntent) error
 
-func (f WorkflowRecorderFunc) RecordWorkflow(ctx context.Context, tx transaction.Transaction, intent WorkflowIntent) error {
-	return f(ctx, tx, intent)
+func (f WorkflowCommitterFunc) CommitWorkflow(ctx context.Context, intent WorkflowIntent) error {
+	return f(ctx, intent)
 }
 
+// EventAppender is the event-only subset of Repository used by producers.
 type EventAppender interface {
 	AppendEvent(context.Context, string, string, string, []byte) (Event, error)
 }
 
-// Repository is the durable boundary used by async producers, workers, and
-// event consumers. Storage adapters implement it without exposing their
-// database handle to application composition.
+// Repository is the durable boundary used by producers, workers, and event
+// consumers. Storage adapters implement it without exposing their database
+// handle to application composition.
 type Repository interface {
 	Enqueue(context.Context, EnqueueInput) (Job, error)
 	Get(context.Context, string) (Job, error)
@@ -157,4 +152,8 @@ type Repository interface {
 	CancelClaimed(context.Context, string, Fence) error
 	AppendEvent(context.Context, string, string, string, []byte) (Event, error)
 	ListEvents(context.Context, string, string, int64, int) ([]Event, error)
+}
+
+func canonicalLiteral(value string, max int) bool {
+	return value != "" && value == strings.TrimSpace(value) && len(value) <= max && strings.IndexFunc(value, unicode.IsControl) < 0
 }

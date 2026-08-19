@@ -12,18 +12,19 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	platformdb "github.com/flidai/leapview/internal/refresh/internal/db"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type SQLRunRepository struct {
 	db        *sql.DB
 	q         *platformdb.Queries
-	workflow  jobs.WorkflowRecorder
+	workflow  jobplatform.WorkflowRecorder
 	execution RunWorkflowConfig
 }
 
@@ -37,7 +38,7 @@ func NewSQLRunRepository(db *sql.DB) *SQLRunRepository {
 	return &SQLRunRepository{db: db, q: platformdb.New(db)}
 }
 
-func NewSQLRunRepositoryWithWorkflow(db *sql.DB, workflow jobs.WorkflowRecorder, execution RunWorkflowConfig) *SQLRunRepository {
+func NewSQLRunRepositoryWithWorkflow(db *sql.DB, workflow jobplatform.WorkflowRecorder, execution RunWorkflowConfig) *SQLRunRepository {
 	return &SQLRunRepository{db: db, q: platformdb.New(db), workflow: workflow, execution: execution}
 }
 

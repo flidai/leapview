@@ -10,12 +10,12 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type EventStore interface {

@@ -10,21 +10,22 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/platform/digest"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasedb "github.com/flidai/leapview/internal/release/internal/db"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type Repository struct {
 	db       *sql.DB
 	queries  *releasedb.Queries
-	workflow jobs.WorkflowRecorder
+	workflow jobplatform.WorkflowRecorder
 }
 
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, queries: releasedb.New(db)} }
-func NewRepositoryWithWorkflow(db *sql.DB, workflow jobs.WorkflowRecorder) *Repository {
+func NewRepositoryWithWorkflow(db *sql.DB, workflow jobplatform.WorkflowRecorder) *Repository {
 	return &Repository{db: db, queries: releasedb.New(db), workflow: workflow}
 }
 

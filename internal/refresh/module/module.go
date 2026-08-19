@@ -15,7 +15,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
@@ -51,7 +51,7 @@ type Config struct {
 	WorkloadStats       func() workload.Stats
 	RunFinished         func(context.Context, refreshrun.RunRecord)
 	Events              EventStore
-	Workflow            jobs.WorkflowRecorder
+	Workflow            jobplatform.WorkflowRecorder
 	Clock               refreshschedule.Clock
 	EnableDispatcher    bool
 	EnableScheduler     bool

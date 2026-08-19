@@ -6,9 +6,9 @@ import (
 	"fmt"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/release"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type FinalizeJob struct {

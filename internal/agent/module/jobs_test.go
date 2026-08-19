@@ -13,9 +13,10 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type moduleJobFixture struct {
@@ -47,7 +48,7 @@ func newModuleJobFixture(t *testing.T) moduleJobFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return moduleJobFixture{store: store, repo: repo, jobs: queue, mod: &Module{service: service, runWorkloadClass: jobs.WorkloadClassBackground, runExecution: execution}, owner: owner}
+	return moduleJobFixture{store: store, repo: repo, jobs: queue, mod: &Module{service: service, runWorkloadClass: jobplatform.WorkloadClassBackground, runExecution: execution}, owner: owner}
 }
 
 func (f moduleJobFixture) scope() agent.Scope {
@@ -77,11 +78,11 @@ func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversati
 func (f moduleJobFixture) claim(t *testing.T, conv agent.Conversation, run agent.Run) jobs.Job {
 	t.Helper()
 	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: conv.ID, Run: run.ID})
-	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: run.ID, Payload: payload})
+	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: run.ID, Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, ok, err := f.jobs.ClaimByID(context.Background(), job.ID, jobs.WorkloadClassBackground, "worker", time.Minute)
+	claimed, ok, err := f.jobs.ClaimByID(context.Background(), job.ID, jobplatform.WorkloadClassBackground, "worker", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim = %#v ok=%v err=%v", claimed, ok, err)
 	}
@@ -212,7 +213,7 @@ func TestJobHandlerCancellationLeavesClaimRecoverable(t *testing.T) {
 	if _, err := f.store.SQLDB().ExecContext(context.Background(), `UPDATE api_async_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = ?`, job.ID); err != nil {
 		t.Fatal(err)
 	}
-	reclaimed, ok, err := f.jobs.ClaimByID(context.Background(), job.ID, jobs.WorkloadClassBackground, "worker-b", 2*time.Second)
+	reclaimed, ok, err := f.jobs.ClaimByID(context.Background(), job.ID, jobplatform.WorkloadClassBackground, "worker-b", 2*time.Second)
 	if err != nil || !ok {
 		t.Fatalf("reclaim = %#v ok=%v err=%v", reclaimed, ok, err)
 	}
@@ -255,11 +256,11 @@ func TestJobHandlerInvalidPersistedStatusFailsSafely(t *testing.T) {
 func TestJobHandlerMissingRunFailsWithoutDomainEvent(t *testing.T) {
 	f := newModuleJobFixture(t)
 	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: "missing-conversation", Run: "missing-run"})
-	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:missing-run:run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobs.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: "missing-run", Payload: payload})
+	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:missing-run:run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: "missing-run", Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, ok, err := f.jobs.ClaimByID(context.Background(), job.ID, jobs.WorkloadClassBackground, "worker", time.Minute)
+	job, ok, err := f.jobs.ClaimByID(context.Background(), job.ID, jobplatform.WorkloadClassBackground, "worker", time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim = %#v ok=%v err=%v", job, ok, err)
 	}

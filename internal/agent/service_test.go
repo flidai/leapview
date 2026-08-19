@@ -18,9 +18,9 @@ import (
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/project/testing/dashboardfixture"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func toolNames(tools []agentcore.ToolDefinition) []string {

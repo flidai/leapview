@@ -10,9 +10,10 @@ import (
 
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func TestCreateDeploymentRoundTripsAndRejectsConflictingReplay(t *testing.T) {
@@ -71,7 +72,7 @@ func TestCreateDeploymentRollsBackWithReleaseOrWorkflowFailure(t *testing.T) {
 		},
 		{
 			name: "workflow",
-			hooks: ActivationHooks{RecordWorkflow: jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
+			hooks: ActivationHooks{RecordWorkflow: jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
 				return errors.New("workflow failure")
 			})},
 			input: func(t *testing.T) deployment.CreateInput {

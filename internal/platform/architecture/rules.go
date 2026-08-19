@@ -235,6 +235,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "desktop/native/windowspolicy", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "internal/extension", Capability: "platform", Layer: LayerContract},
 	{Prefix: "pkg/agent", Capability: "agent", Layer: LayerContract},
+	{Prefix: "pkg/jobs", Capability: "platform", Layer: LayerPlatform},
 	{Prefix: "pkg/strictjson", Capability: "platform", Layer: LayerPlatform},
 	{Prefix: "pkg/arrowresult", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "pkg/workload", Capability: "workload", Layer: LayerContract},

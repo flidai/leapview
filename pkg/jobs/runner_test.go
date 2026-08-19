@@ -3,33 +3,50 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/flidai/leapview/internal/workload"
 )
 
-func testAdmitter(controller workload.Admitter) Admitter {
-	return AdmitterFunc(func(ctx context.Context, request AdmissionRequest) (AdmissionLease, error) {
-		return controller.Acquire(ctx, workload.Request{
-			Class: workload.Class(request.Class), PrincipalID: request.PrincipalID, GroupIDs: request.GroupIDs,
-			EstimatedMemoryBytes: request.EstimatedMemoryBytes, Operation: request.Operation,
-		})
-	})
+type testAdmissionLease struct{ ctx context.Context }
+
+func (l testAdmissionLease) Context() context.Context { return l.ctx }
+
+func (l testAdmissionLease) Release() {}
+
+type testAdmission struct{}
+
+func (testAdmission) Acquire(ctx context.Context, _ AdmissionRequest) (AdmissionLease, error) {
+	return testAdmissionLease{ctx: ctx}, nil
 }
 
-func TestNewRunnerRejectsDuplicateHandlerKinds(t *testing.T) {
-	controller, err := workload.New(workload.DefaultConfig())
+func TestNewRunnerRejectsMissingClassesAndDuplicateHandlerKinds(t *testing.T) {
+	repository := &runnerTestRepository{}
+	if _, err := NewRunner(RunnerConfig{Repository: repository, Admission: testAdmission{}}); err == nil {
+		t.Fatal("missing classes were accepted")
+	}
+	ownerRunner, err := NewRunner(RunnerConfig{Repository: repository, Admission: testAdmission{}, Classes: []string{"control"}, OwnerID: "owner-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer controller.Close()
-	repository := &runnerTestRepository{}
-	_, err = NewRunner(RunnerConfig{Repository: repository, Admission: testAdmitter(controller), Handlers: []Handler{
+	if got := ownerRunner.ownerFactory(); got != "owner-a" {
+		t.Fatalf("owner id = %q", got)
+	}
+	if _, err := NewRunner(RunnerConfig{Repository: repository, Admission: testAdmission{}, Classes: []string{"control"}, OwnerID: "owner-a", OwnerFactory: func() string { return "owner-b" }}); err == nil {
+		t.Fatal("owner id and owner factory were accepted together")
+	}
+	defaultRunner, err := NewRunner(RunnerConfig{Repository: repository, Admission: testAdmission{}, Classes: []string{"control"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := defaultRunner.candidateLimit; got != DefaultCandidateLimit {
+		t.Fatalf("default candidate limit = %d, want %d", got, DefaultCandidateLimit)
+	}
+	_, err = NewRunner(RunnerConfig{Repository: repository, Admission: testAdmission{}, Classes: []string{"control"}, Handlers: []Handler{
 		HandlerFunc{JobKind: "release.finalize", Run: func(context.Context, Job) error { return nil }},
 		HandlerFunc{JobKind: "release.finalize", Run: func(context.Context, Job) error { return nil }},
 	}})
@@ -38,14 +55,59 @@ func TestNewRunnerRejectsDuplicateHandlerKinds(t *testing.T) {
 	}
 }
 
-func TestRunnerFailsUnknownJobKindExplicitly(t *testing.T) {
-	controller, err := workload.New(workload.DefaultConfig())
+func TestRunnerUsesConfiguredClassesLimitOwnerAndFailureEncoder(t *testing.T) {
+	repository := &candidateRunnerRepository{candidates: []Job{{ID: "job-1", Kind: "success", WorkloadClass: "urgent"}}, started: make(chan struct{}, 4)}
+	var ownerCalls atomic.Int32
+	var encoded atomic.Int32
+	runner, err := NewRunner(RunnerConfig{
+		Repository: repository, Admission: testAdmission{}, Classes: []string{"urgent", "slow"}, CandidateLimit: 7,
+		LeaseTimeout: 20 * time.Millisecond, PollInterval: time.Hour,
+		Handlers: []Handler{HandlerFunc{JobKind: "success", Run: func(context.Context, Job) error { return nil }}},
+		OwnerFactory: func() string {
+			ownerCalls.Add(1)
+			return "worker-a"
+		},
+		FailureEncoder: func(err error) []byte {
+			if err == nil || !strings.Contains(err.Error(), "unsupported") {
+				t.Errorf("unexpected failure: %v", err)
+			}
+			encoded.Add(1)
+			return []byte(`{"custom":"failure"}`)
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer controller.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		runner.Run(ctx)
+	}()
+	select {
+	case <-repository.started:
+	case <-time.After(time.Second):
+		t.Fatal("candidate poll did not start")
+	}
+	cancel()
+	<-finished
+	if got := repository.limit.Load(); got != 7 {
+		t.Fatalf("candidate limit = %d, want 7", got)
+	}
+	if ownerCalls.Load() != 1 {
+		t.Fatalf("owner factory calls = %d, want 1", ownerCalls.Load())
+	}
+	// Exercise the configured encoder directly as well as through polling.
+	runner.executeClaimed(context.Background(), Job{ID: "job-2", Kind: "unknown"})
+	if encoded.Load() != 1 || string(repository.problem) != `{"custom":"failure"}` {
+		t.Fatalf("encoded=%d problem=%s", encoded.Load(), repository.problem)
+	}
+}
+
+func TestRunnerFailsUnknownJobKindExplicitly(t *testing.T) {
 	repository := &recordingRunnerRepository{}
-	runner, err := NewRunner(RunnerConfig{Repository: repository, Admission: testAdmitter(controller)})
+	runner, err := NewRunner(RunnerConfig{Repository: repository, Admission: testAdmission{}, Classes: []string{"control"}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,14 +118,9 @@ func TestRunnerFailsUnknownJobKindExplicitly(t *testing.T) {
 }
 
 func TestRunnerRenewsLeaseDuringLongHandler(t *testing.T) {
-	controller, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer controller.Close()
 	repository := &recordingRunnerRepository{}
 	runner, err := NewRunner(RunnerConfig{
-		Repository: repository, Admission: testAdmitter(controller), LeaseTimeout: 20 * time.Millisecond,
+		Repository: repository, Admission: testAdmission{}, Classes: []string{"background"}, LeaseTimeout: 20 * time.Millisecond,
 		Handlers: []Handler{HandlerFunc{JobKind: "slow", Run: func(context.Context, Job) error {
 			time.Sleep(55 * time.Millisecond)
 			return nil
@@ -81,14 +138,9 @@ func TestRunnerRenewsLeaseDuringLongHandler(t *testing.T) {
 }
 
 func TestRunnerLeavesClaimRecoverableWhenWorkerContextStops(t *testing.T) {
-	controller, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer controller.Close()
 	repository := &recordingRunnerRepository{}
 	started := make(chan struct{})
-	runner, err := NewRunner(RunnerConfig{Repository: repository, Admission: testAdmitter(controller), Handlers: []Handler{
+	runner, err := NewRunner(RunnerConfig{Repository: repository, Admission: testAdmission{}, Classes: []string{"background"}, Handlers: []Handler{
 		HandlerFunc{JobKind: "blocking", Run: func(ctx context.Context, _ Job) error {
 			close(started)
 			<-ctx.Done()
@@ -115,17 +167,11 @@ func TestRunnerLeavesClaimRecoverableWhenWorkerContextStops(t *testing.T) {
 }
 
 func TestRunnerShutdownDoesNotStartOrWarnAboutCandidatePolling(t *testing.T) {
-	controller, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer controller.Close()
 	repository := &countingRunnerRepository{}
 	var logs bytes.Buffer
 	runner, err := NewRunner(RunnerConfig{
-		Repository: repository,
-		Admission:  testAdmitter(controller),
-		Logger:     slog.New(slog.NewTextHandler(&logs, nil)),
+		Repository: repository, Admission: testAdmission{}, Classes: []string{"control", "background"},
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,25 +182,19 @@ func TestRunnerShutdownDoesNotStartOrWarnAboutCandidatePolling(t *testing.T) {
 	runner.Run(ctx)
 
 	if calls := repository.candidateCalls.Load(); calls != 0 {
-		t.Fatalf("candidate polls after shutdown = %d, want 0", calls)
+		t.Fatalf("candidate polls after shutdown = %d", calls)
 	}
 	if output := logs.String(); output != "" {
-		t.Fatalf("shutdown logs = %q, want none", output)
+		t.Fatalf("shutdown logs = %q", output)
 	}
 }
 
 func TestRunnerShutdownDoesNotWarnWhenCandidatePollingIsCanceled(t *testing.T) {
-	controller, err := workload.New(workload.DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer controller.Close()
 	repository := &blockingRunnerRepository{started: make(chan struct{}, 2)}
 	var logs bytes.Buffer
 	runner, err := NewRunner(RunnerConfig{
-		Repository: repository,
-		Admission:  testAdmitter(controller),
-		Logger:     slog.New(slog.NewTextHandler(&logs, nil)),
+		Repository: repository, Admission: testAdmission{}, Classes: []string{"control", "background"},
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -179,9 +219,8 @@ func TestRunnerShutdownDoesNotWarnWhenCandidatePollingIsCanceled(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("runner did not stop after cancellation")
 	}
-
 	if output := logs.String(); output != "" {
-		t.Fatalf("shutdown logs = %q, want none", output)
+		t.Fatalf("shutdown logs = %q", output)
 	}
 }
 
@@ -226,6 +265,32 @@ func (r *blockingRunnerRepository) Candidates(ctx context.Context, _ string, _ i
 	r.started <- struct{}{}
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+type candidateRunnerRepository struct {
+	runnerTestRepository
+	candidates []Job
+	started    chan struct{}
+	limit      atomic.Int64
+	problem    []byte
+}
+
+func (r *candidateRunnerRepository) Candidates(_ context.Context, class string, limit int) ([]Job, error) {
+	r.limit.Store(int64(limit))
+	r.started <- struct{}{}
+	if class != "urgent" {
+		return nil, nil
+	}
+	return append([]Job(nil), r.candidates...), nil
+}
+
+func (r *candidateRunnerRepository) ClaimByID(_ context.Context, id, _, owner string, _ time.Duration) (Job, bool, error) {
+	return Job{ID: id, Kind: "success", LeaseOwner: owner}, true, nil
+}
+
+func (r *candidateRunnerRepository) Fail(_ context.Context, _ string, _ Fence, problem []byte) error {
+	r.problem = append([]byte(nil), problem...)
+	return nil
 }
 
 type recordingRunnerRepository struct {

@@ -6,7 +6,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/agent"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func loadRunExecutionContract() (apigencommand.AsyncExecutionContract, error) {
