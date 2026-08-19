@@ -210,7 +210,7 @@ func TestAcquireCopiesRequestBeforeReturningFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	groups := []string{"z", "a"}
-	_, err = controller.Acquire(context.Background(), Request{Class: "batch", PrincipalID: "p", GroupIDs: groups, Operation: "query", EstimatedMemoryBytes: 1})
+	_, err = controller.Acquire(context.Background(), Request{Class: "batch", PrincipalID: "p", GroupIDs: groups, Operation: "query", EstimatedMemoryBytes: 1000})
 	groups[0] = "changed"
 	var rejection *Rejection
 	if !errors.As(err, &rejection) {
@@ -238,14 +238,16 @@ func TestCurrentReturnsDefensiveAdmissionMetadata(t *testing.T) {
 	}
 }
 
-func TestControllerFailsClosedAndCloseIsIdempotent(t *testing.T) {
+func TestControllerSchedulesAndCloseIsIdempotent(t *testing.T) {
 	controller, err := New(validConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := controller.Acquire(context.Background(), Request{Class: "batch", PrincipalID: "p", Operation: "query", EstimatedMemoryBytes: 1}); !IsReason(err, AdmissionUnavailable) {
-		t.Fatalf("Acquire() error = %v, want admission unavailable", err)
+	lease, err := controller.Acquire(context.Background(), Request{Class: "batch", PrincipalID: "p", Operation: "query", EstimatedMemoryBytes: 1})
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
 	}
+	lease.Release()
 	controller.Close()
 	controller.Close()
 	if _, err := controller.Acquire(context.Background(), Request{Class: "batch", PrincipalID: "p", Operation: "query", EstimatedMemoryBytes: 1}); !IsReason(err, ControllerShutdown) {

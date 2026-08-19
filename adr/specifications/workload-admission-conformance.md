@@ -148,7 +148,8 @@ test, architecture check, generated check, or explicit reviewed deferral.
 - **OBS-02:** Snapshots and events own their slices and maps; observers cannot
   mutate controller state.
 - **OBS-03:** Admission observations distinguish admitted, rejected, canceled,
-  and released outcomes and carry typed rejection reasons where applicable.
+  timed-out, and released outcomes and carry typed rejection reasons where
+  applicable.
 - **OBS-04:** Queue wait and execution durations use the configured clock where
   deterministic time is required.
 - **OBS-05:** Observer callbacks do not run while the scheduler mutex is held
@@ -218,27 +219,32 @@ boundaries.
 
 | Requirement range | Evidence | Status |
 |---|---|---|
-| PKG-01–PKG-08 | LEA-440: `pkg/workload/doc.go`, `pkg/workload/boundary_test.go`, `TestReusableWorkloadPackageContainsOnlyGenericMechanisms`, and `TestReusableWorkloadPackageHasNoProductionConsumersBeforeQualification`; PKG-08 remains a cutover requirement | Partial |
-| CFG-01–CFG-10 | LEA-440: `TestConfigRequiresExplicitOrderedClassesAndPolicies`, `TestConfigRejectsZeroOrNegativeLimitsAndDurations`, `TestConfigReservationSumCannotOverflow`, `TestConfigZeroSemanticsRemainExplicit`, and `TestNewDefensivelyCopiesConfigurationAndStats`; live scheduling enforcement remains in LEA-441 | Partial |
-| REQ-01–REQ-06 | LEA-440: `TestCanonicalizeIdentityAndRequest`, `TestRequestValidationIsTyped`, `TestIdentifierBoundsAreValidated`, `TestAcquireCopiesRequestBeforeReturningFailure`, and `TestCurrentReturnsDefensiveAdmissionMetadata`; configured-class and impossible-memory enforcement remain in LEA-441 | Partial |
-| SCH-01–SCH-12 | Pending deterministic, property, and starvation tests | Pending |
-| LIF-01–LIF-09 | Pending lifecycle and race tests | Pending |
-| OBS-01–OBS-07 | LEA-440 defines defensively copied statistics, events, observers, clocks, and timers; scheduler callback and race evidence remain in LEA-441 and LEA-442 | Partial |
-| COR-01–COR-08 | Pending qualification suites and baselines | Pending |
-| APP-01–APP-10 | LEA-440 architecture checks prohibit LeapView policy in `pkg/workload` and prohibit production consumers before qualification; integration remains pending | Partial |
+| PKG-01–PKG-08 | LEA-440 and LEA-441: `pkg/workload`, `TestPackageDoesNotImportApplicationPrivateCode`, `TestReusableWorkloadPackageContainsOnlyGenericMechanisms`, and `TestReusableWorkloadPackageHasSingleProductionAdapter` | Complete |
+| CFG-01–CFG-10 | LEA-440 and LEA-441: configuration validation and defensive-copy tests in `pkg/workload/workload_test.go`, plus application-owned default mapping in `internal/app/config` | Complete |
+| REQ-01–REQ-06 | LEA-440 and LEA-441: request, identity, mutation, memory-eligibility, and typed-error tests in `pkg/workload` | Complete |
+| SCH-01–SCH-12 | LEA-441 and LEA-442: deterministic scheduler, bounded-model, actor-rotation, head-skipping, and starvation tests | Complete |
+| LIF-01–LIF-09 | LEA-441 and LEA-442: cancellation, timeout, nesting, release, shutdown, nil-timer, and race tests | Complete |
+| OBS-01–OBS-07 | LEA-441 and LEA-442: typed defensive observations, reentrant and panic-isolated observers, injected-clock timing, replacement races, and borrowed-capacity statistics | Complete |
+| COR-01–COR-08 | LEA-442: `test:workload:qualify` normal/race suites, model test, starvation tests, four fuzz targets, five benchmark baselines, and the external-host test | Complete |
+| APP-01–APP-10 | LEA-443–LEA-445: the `internal/workload` adapter and module, application config/telemetry/lifecycle wiring, fail-closed refresh and composition paths, architecture gates, consumer suites, and `task ci` | Complete |
 
-### LEA-440 focused verification
+### Maintained verification
 
-The initial contract and boundary are verified with:
+The generic scheduler, independent qualification, application cutover, and
+repository contract are verified with:
 
 ```sh
 go test ./pkg/workload -count=1
 go vet ./pkg/workload
-go test ./internal/platform/architecture -run '^(TestReusableWorkloadPackageContainsOnlyGenericMechanisms|TestReusableWorkloadPackageHasNoProductionConsumersBeforeQualification|TestEveryProductionPackageHasAnArchitecturalOwner|TestArchitectureDecisionLogIsWellFormed)$' -count=1
+task test:workload:qualify
+go test -race ./internal/workload/... -count=1
+go test ./internal/platform/architecture -run '^(TestReusableWorkloadPackageContainsOnlyGenericMechanisms|TestReusableWorkloadPackageHasSingleProductionAdapter|TestOnlyWorkloadAdaptersAndCompositionDependOnWorkload|TestWorkloadImportsNoProductCapabilities|TestEveryProductionPackageHasAnArchitecturalOwner|TestArchitectureDecisionLogIsWellFormed)$' -count=1
+go test ./internal/platform/jobs/... ./internal/refresh/... ./internal/manageddata/... ./internal/servingstate/... ./internal/dashboard/... ./internal/app/... -count=1
+task ci
 ```
 
-At this stage `Controller.Acquire` deliberately fails closed with
-`AdmissionUnavailable`. The architecture test prohibits production consumers,
-so the scaffold cannot bypass the existing controller. LEA-441 must replace
-this temporary behavior with the qualified scheduler before the package can
-pass its independent adoption gate.
+`task ci:full` includes `test:workload:qualify`, so the maintained full contract
+reruns the normal, race, fuzz, and benchmark qualification lanes. Production
+code has one scheduler implementation in `pkg/workload` and one policy adapter
+in `internal/workload`; application composition rejects a missing admission
+dependency instead of constructing a permissive fallback.

@@ -18,6 +18,17 @@ type recordedLifecycle struct {
 	startErr error
 }
 
+func TestBuildApplicationSurfacesRequiresExplicitWorkloadAdmission(t *testing.T) {
+	_, _, _, _, err := buildApplicationSurfaces(
+		t.Context(), nil,
+		dataAssemblyInputs{}, capabilityAssemblyInputs{}, workflowAssemblyInputs{},
+		runtimeAssemblyInputs{}, httpAssemblyInputs{},
+	)
+	if err == nil || err.Error() != "workload admission is not configured" {
+		t.Fatalf("build error = %v, want explicit workload admission failure", err)
+	}
+}
+
 func (l recordedLifecycle) Start(context.Context) error {
 	*l.events = append(*l.events, "start:"+l.name)
 	return l.startErr

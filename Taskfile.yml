@@ -873,6 +873,17 @@ tasks:
     cmds:
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
 
+  test:workload:qualify:
+    desc: Qualify the reusable workload scheduler independently of LeapView
+    cmds:
+      - go test ./pkg/workload -count=1
+      - go test -race ./pkg/workload -count=1
+      - go test ./pkg/workload -run '^$' -fuzz '^FuzzQualificationConfigValidation$' -fuzztime=3s
+      - go test ./pkg/workload -run '^$' -fuzz '^FuzzQualificationIdentityCanonicalization$' -fuzztime=3s
+      - go test ./pkg/workload -run '^$' -fuzz '^FuzzQualificationRequestValidation$' -fuzztime=3s
+      - go test ./pkg/workload -run '^$' -fuzz '^FuzzQualificationBoundedSchedulerOperation$' -fuzztime=3s
+      - go test ./pkg/workload -run '^$' -bench 'Workload$' -benchmem -benchtime=100ms -count=1
+
   test:go:minio-conformance:
     desc: Run the object-backed candidate-catalog, shared-pool, and GC namespace MinIO conformance tests
     deps:
@@ -981,6 +992,7 @@ tasks:
       - task: desktop:test
       - go vet ./...
       - go test -race ./pkg/... ./internal/access ./internal/runtimehost
+      - task: test:workload:qualify
       - task: qa:ui-framework
       - task: deploy:check
       - task: test:go:minio-conformance

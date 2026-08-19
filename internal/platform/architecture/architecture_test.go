@@ -1949,17 +1949,35 @@ func TestReusableWorkloadPackageContainsOnlyGenericMechanisms(t *testing.T) {
 	}
 }
 
-func TestReusableWorkloadPackageHasNoProductionConsumersBeforeQualification(t *testing.T) {
+func TestReusableWorkloadPackageHasSingleProductionAdapter(t *testing.T) {
 	const reusableWorkload = modulePath + "/pkg/workload"
+	adapterFound := false
+	forbiddenSchedulerSymbols := []string{"type classQueue", "type waiter struct", "scheduleLocked(", "nextClassLocked(", "canGrantLocked("}
 	for _, file := range productionGoFiles(t) {
 		if file.pkgDir == "pkg/workload" || strings.HasPrefix(file.pkgDir, "pkg/workload/") {
 			continue
 		}
+		if file.pkgDir == "internal/workload" {
+			for _, symbol := range forbiddenSchedulerSymbols {
+				if strings.Contains(file.body, symbol) {
+					t.Errorf("%s retains superseded scheduler mechanism %q", file.path, symbol)
+				}
+			}
+			for _, imported := range file.imports {
+				if imported == reusableWorkload || strings.HasPrefix(imported, reusableWorkload+"/") {
+					adapterFound = true
+				}
+			}
+			continue
+		}
 		for _, imported := range file.imports {
 			if imported == reusableWorkload || strings.HasPrefix(imported, reusableWorkload+"/") {
-				t.Errorf("%s consumes pkg/workload before its independent qualification gate", file.path)
+				t.Errorf("%s consumes pkg/workload outside the sole internal/workload adapter", file.path)
 			}
 		}
+	}
+	if !adapterFound {
+		t.Fatal("internal/workload does not adapt the generic pkg/workload scheduler")
 	}
 }
 

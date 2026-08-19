@@ -15,14 +15,20 @@ import (
 type runtimeLifecycle struct {
 	workers   Lifecycle
 	analytics *analyticsmodule.Module
-	workloads interface{ Close() }
-	gc        *gcadapter.Maintenance
-	fatal     chan error
-	stop      sync.Once
-	stopErr   error
+	workloads interface {
+		Close()
+		Drain(context.Context) error
+	}
+	gc      *gcadapter.Maintenance
+	fatal   chan error
+	stop    sync.Once
+	stopErr error
 }
 
-func newRuntimeLifecycle(workers Lifecycle, analytics *analyticsmodule.Module, workloads interface{ Close() }, maintenance ...*gcadapter.Maintenance) *runtimeLifecycle {
+func newRuntimeLifecycle(workers Lifecycle, analytics *analyticsmodule.Module, workloads interface {
+	Close()
+	Drain(context.Context) error
+}, maintenance ...*gcadapter.Maintenance) *runtimeLifecycle {
 	var gcMaintenance *gcadapter.Maintenance
 	if len(maintenance) > 0 {
 		gcMaintenance = maintenance[0]
@@ -86,7 +92,7 @@ func (l *runtimeLifecycle) Stop(ctx context.Context) error {
 			l.stopErr = errors.Join(l.stopErr, l.gc.Stop(ctx))
 		}
 		if l.workloads != nil {
-			l.workloads.Close()
+			l.stopErr = errors.Join(l.stopErr, l.workloads.Drain(ctx))
 		}
 	})
 	return l.stopErr

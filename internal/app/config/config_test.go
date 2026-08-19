@@ -171,6 +171,30 @@ func TestLoadIncludesWorkloadConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadWorkloadConfigRetainsApplicationDefaults(t *testing.T) {
+	for _, setting := range configspec.Settings() {
+		if strings.HasPrefix(setting.Name, "LEAPVIEW_WORKLOAD_") {
+			t.Setenv(setting.Name, "")
+		}
+	}
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, workload.DefaultConfig(), cfg.WorkloadConfig())
+}
+
+func TestWorkloadConfigAppliesLeapViewDefaultsOnlyWhenUnset(t *testing.T) {
+	defaults := (Config{}).WorkloadConfig()
+	require.Equal(t, workload.DefaultConfig(), defaults)
+	if err := defaults.Validate(); err != nil {
+		t.Fatalf("default workload policy is invalid: %v", err)
+	}
+
+	partial := (Config{WorkloadMaxQueued: 1}).WorkloadConfig()
+	if err := partial.Validate(); err == nil {
+		t.Fatal("partially configured zero running limit was replaced by defaults")
+	}
+}
+
 func TestDuckLakeCatalogPathDefaultsOutsidePlatformDB(t *testing.T) {
 	cfg := Config{HomeDir: "/var/lib/leapview"}
 	if got, want := cfg.DBPath(), "/var/lib/leapview/leapview.db"; got != want {
