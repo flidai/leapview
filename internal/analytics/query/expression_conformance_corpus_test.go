@@ -227,7 +227,7 @@ func expressionConformanceSemanticModel(spec expressionConformanceModel) *semant
 	table := semanticmodel.Table{
 		ModelName:   spec.Dataset,
 		GrainEntity: "row",
-		Entities: map[string]semanticmodel.ModelEntitySpec{
+		Entities: map[string]semanticmodel.EntityDefinition{
 			"row": {Type: "primary", Fields: []string{"row_id"}},
 		},
 		Dimensions: fields,

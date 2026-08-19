@@ -13,11 +13,11 @@ const source = `visuals:
     options:
       smooth: false
       step: middle
-      show_symbols: false
-      data_zoom: true`
+      showSymbols: false
+      dataZoom: true`
 
 test('maps generated field paths to their exact YAML source lines', () => {
-  expect(visualExampleHighlightLines(source, ['options.data_zoom', 'options.show_symbols', 'options.step'])).toEqual([12, 13, 14])
+  expect(visualExampleHighlightLines(source, ['options.dataZoom', 'options.showSymbols', 'options.step'])).toEqual([12, 13, 14])
 })
 
 test('includes nested lines when a generated field identifies a YAML collection', () => {

@@ -2,10 +2,14 @@ package duckdb
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,9 +20,166 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	extensionsupply "github.com/flidai/leapview/internal/deployment/extensionsupply"
+	"github.com/flidai/leapview/internal/extension"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/stretchr/testify/require"
 )
+
+type duckdbTestExtensionAdmission struct {
+	admitted map[string]extension.AdmittedExtension
+}
+
+func testPathLocation(format, path string) *projectcontracts.PathSourceLocation {
+	base := projectcontracts.PathSourceLocationBase{Type: "path", Path: path, Format: format}
+	switch format {
+	case "csv":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultCSVReaderOptions()}}
+	case "json":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.JSONPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultJSONReaderOptions()}}
+	case "parquet":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.ParquetPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultParquetReaderOptions()}}
+	case "excel":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.ExcelPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultExcelReaderOptions()}}
+	case "text":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.TextPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultTextReaderOptions()}}
+	case "blob":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.BlobPathSourceLocation{PathSourceLocationBase: base, Format: format, Options: projectcontracts.DefaultBlobReaderOptions()}}
+	case "vortex":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.VortexPathSourceLocation{PathSourceLocationBase: base, Format: format}}
+	case "delta":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.DeltaPathSourceLocation{PathSourceLocationBase: base, Format: format}}
+	case "iceberg":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.IcebergPathSourceLocation{PathSourceLocationBase: base, Format: format}}
+	case "lance":
+		return &projectcontracts.PathSourceLocation{Value: &projectcontracts.LancePathSourceLocation{PathSourceLocationBase: base, Format: format}}
+	default:
+		panic("unsupported test path format " + format)
+	}
+}
+
+func testCSVPathLocationWithHeader(path string, header bool) *projectcontracts.PathSourceLocation {
+	location := testPathLocation("csv", path)
+	location.Value.(*projectcontracts.CSVPathSourceLocation).Options.Header = &header
+	return location
+}
+
+var _ extension.Admission = duckdbTestExtensionAdmission{}
+var _ extension.Preparation = duckdbTestExtensionAdmission{}
+
+func (a duckdbTestExtensionAdmission) AdmitExtension(ctx context.Context, name string) (extension.AdmittedExtension, error) {
+	if err := ctx.Err(); err != nil {
+		return extension.AdmittedExtension{}, err
+	}
+	admitted, ok := a.admitted[name]
+	if !ok {
+		return extension.AdmittedExtension{}, fmt.Errorf("test extension %q was not admitted", name)
+	}
+	return admitted, nil
+}
+
+func (a duckdbTestExtensionAdmission) PrepareExtensions(ctx context.Context, names []string) ([]extension.Evidence, error) {
+	evidence := make([]extension.Evidence, 0, len(names))
+	for _, name := range names {
+		admitted, err := a.AdmitExtension(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, admitted.Evidence())
+	}
+	return evidence, nil
+}
+
+func newDuckDBTestExtensionAdmission(t *testing.T, names ...string) extension.Admission {
+	t.Helper()
+	version, platform := duckdbTestRuntimeTarget(t)
+	setupRoot := t.TempDir()
+	admitted := make(map[string]extension.AdmittedExtension, len(names))
+	for _, name := range names {
+		sourcePath := findDuckDBTestExtension(name, version, platform)
+		if sourcePath == "" {
+			installDuckDBTestExtension(t, name, setupRoot)
+			sourcePath = findDuckDBTestExtensionInRoot(setupRoot, name, version, platform)
+		}
+		if sourcePath == "" {
+			t.Fatalf("reviewed local test extension %q is unavailable for DuckDB %s/%s", name, version, platform)
+		}
+		contents, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("read test extension %q: %v", name, err)
+		}
+		digest := sha256.Sum256(contents)
+		digestValue := "sha256:" + hex.EncodeToString(digest[:])
+		ownedPath := filepath.Join(setupRoot, name+".duckdb_extension")
+		if err := os.WriteFile(ownedPath, contents, 0o600); err != nil {
+			t.Fatalf("stage test extension %q: %v", name, err)
+		}
+		identity := extension.Identity{DuckDBVersion: version, ExtensionVersion: "test-fixture", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, Name: name, Digest: digestValue, SupportProfile: "test-fixture"}
+		canonical, err := identity.Canonical()
+		if err != nil {
+			t.Fatalf("canonicalize test extension %q: %v", name, err)
+		}
+		admitted[name] = extension.AdmittedExtension{Name: name, Identity: canonical, Version: "test-fixture", ExtensionVersion: "test-fixture", DuckDBVersion: version, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform, SupportProfile: "test-fixture", Digest: digestValue, Path: ownedPath, Origin: "reviewed-local-test-fixture", Provenance: "attest:duckdb-test", Signature: "sig:duckdb-test"}
+	}
+	return duckdbTestExtensionAdmission{admitted: admitted}
+}
+
+func duckdbTestRuntimeTarget(t *testing.T) (string, string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open DuckDB runtime probe: %v", err)
+	}
+	defer db.Close()
+	var version, platform string
+	if err := db.QueryRowContext(t.Context(), "SELECT version()").Scan(&version); err != nil {
+		t.Fatalf("read DuckDB runtime version: %v", err)
+	}
+	if err := db.QueryRowContext(t.Context(), "PRAGMA platform").Scan(&platform); err != nil {
+		t.Fatalf("read DuckDB runtime platform: %v", err)
+	}
+	if version != extensionsupply.CurrentDuckDBVersion {
+		t.Fatalf("DuckDB runtime = %q, want pinned %q", version, extensionsupply.CurrentDuckDBVersion)
+	}
+	return strings.TrimSpace(version), strings.TrimSpace(platform)
+}
+
+func findDuckDBTestExtension(name, version, platform string) string {
+	if configured := strings.TrimSpace(os.Getenv("DUCKDB_EXTENSION_DIRECTORY")); configured != "" {
+		return findDuckDBTestExtensionInRoot(configured, name, version, platform)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return findDuckDBTestExtensionInRoot(filepath.Join(home, ".duckdb", "extensions"), name, version, platform)
+	}
+	return ""
+}
+
+func findDuckDBTestExtensionInRoot(root, name, version, platform string) string {
+	filename := name + ".duckdb_extension"
+	platformDir := strings.ReplaceAll(platform, "-", "_")
+	for _, path := range []string{filepath.Join(root, version, platformDir, filename), filepath.Join(root, version, platform, filename)} {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			return filepath.Clean(path)
+		}
+	}
+	return ""
+}
+
+func installDuckDBTestExtension(t *testing.T, name, root string) {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open test extension installer: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("SET extension_directory = '" + strings.ReplaceAll(root, "'", "''") + "'"); err != nil {
+		t.Fatalf("set test extension directory: %v", err)
+	}
+	if _, err := db.Exec("INSTALL " + name + " FROM core"); err != nil {
+		t.Fatalf("install test extension %q: %v", name, err)
+	}
+}
 
 func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 	ctx := context.Background()
@@ -31,17 +192,19 @@ func TestDiscoverSchemasCapturesSourceAndModelColumns(t *testing.T) {
 		DefaultConnection: "local",
 		Connections:       map[string]semanticmodel.Connection{"local": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {
-			Connection: "local",
-			Path:       "orders.csv",
-			Format:     "csv",
+			Connection:            "local",
+			Path:                  "orders.csv",
+			Format:                "csv",
+			EffectivePathLocation: testCSVPathLocationWithHeader("orders.csv", true),
+			SchemaMode:            "compatible",
 			Fields: map[string]semanticmodel.SourceField{
 				"order_id": {Description: "Raw order identifier."},
 			},
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", ModelName: "sales_orders",
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, ModelName: "sales_orders",
+				Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
 					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
@@ -91,16 +254,19 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 			Connections:       map[string]semanticmodel.Connection{"olist": {Kind: "managed"}},
 			Sources: map[string]semanticmodel.Source{"olist_customers": {
 				Connection: "olist", Path: "customers.csv", Format: "csv",
+				EffectivePathLocation: testCSVPathLocationWithHeader("customers.csv", true),
+				SchemaMode:            "compatible",
 				Fields: map[string]semanticmodel.SourceField{
 					"customer_id":    {Description: "Customer identifier."},
 					"customer_state": {Description: "Customer state."},
 				},
 			}},
 			Tables: map[string]semanticmodel.Table{"operations_customers": {
-				ModelName: "olist_customers", Sources: []string{"olist_customers"},
-				Transform:   semanticmodel.Transform{SQL: "SELECT customer_id, customer_state AS state FROM source.olist_customers"},
-				Entities:    map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
-				GrainEntity: "customer",
+				ModelName: "olist_customers", SourceDependencies: []string{"olist_customers"},
+				Execution:           semanticmodel.ExecutionDefinition{SQL: "SELECT customer_id, customer_state AS state FROM source.olist_customers"},
+				SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: []string{"olist_customers"}},
+				Entities:            map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+				GrainEntity:         "customer",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"customer_id": {Datatype: semanticmodel.DataTypeString},
 					"state":       {Datatype: semanticmodel.DataTypeString},
@@ -113,7 +279,8 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 		return model
 	}
 	firstModel := newModel()
-	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+	admission := newDuckDBTestExtensionAdmission(t, "ducklake")
+	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = environment.Close() })
 	controller, err := workload.New(workload.DefaultConfig())
@@ -124,6 +291,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	t.Cleanup(func() { lease.Release() })
 	first, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": firstModel}, Database: environment,
+		ExtensionAdmission: admission,
 	})
 	require.NoError(t, err)
 	snapshotID := first.DuckLakeSnapshotID()
@@ -151,7 +319,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	// admitted lease from the workload context before DESCRIBE.
 	second, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": secondModel}, Database: environment,
-		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver, ExtensionAdmission: admission,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = second.Close() })
@@ -175,7 +343,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	require.NoError(t, err)
 	_, err = OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": badModel}, Database: environment,
-		SnapshotID: snapshotID, SkipInitialRefresh: true, QueryCache: cacheScope,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, QueryCache: cacheScope, ExtensionAdmission: admission,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "snapshot schema discovery")
@@ -197,8 +365,8 @@ func (r *snapshotRejectingConnectionResolver) Resolve(context.Context, string, s
 
 func TestPhysicalProjectModelDeduplicatesDatasetAliases(t *testing.T) {
 	table := semanticmodel.Table{
-		Source: "orders",
-		Entities: map[string]semanticmodel.ModelEntitySpec{
+		Execution: semanticmodel.ExecutionDefinition{Source: "orders"},
+		Entities: map[string]semanticmodel.EntityDefinition{
 			"order_id": {Type: "primary", Fields: []string{"order_id"}},
 		},
 		GrainEntity: "order_id",
@@ -237,8 +405,8 @@ func TestPhysicalProjectModelPreservesCanonicalPhysicalDependencies(t *testing.T
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders":  {ModelName: "sales_orders", Source: "orders", ModelDependencies: nil},
-			"summary": {ModelName: "sales_summary", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
+			"orders":  {ModelName: "sales_orders", Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, ModelDependencies: nil},
+			"summary": {ModelName: "sales_summary", Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
 			"orders":  {Model: "sales_orders"},
@@ -258,8 +426,8 @@ func TestPhysicalProjectModelResolvesDistinctAliasPhysicalDependencies(t *testin
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
-			"orders_alias":  {ModelName: "sales_orders", Source: "orders"},
-			"summary_alias": {ModelName: "sales_summary", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
+			"orders_alias":  {ModelName: "sales_orders", Execution: semanticmodel.ExecutionDefinition{Source: "orders"}},
+			"summary_alias": {ModelName: "sales_summary", Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
 			"orders_alias":  {Model: "sales_orders"},
@@ -288,7 +456,7 @@ func TestPhysicalProjectModelRejectsDatasetAliasAsPhysicalDependency(t *testing.
 		Tables: map[string]semanticmodel.Table{
 			"sales_orders":  {ModelName: "sales_summary"},
 			"orders_alias":  {ModelName: "orders_physical"},
-			"derived_alias": {ModelName: "sales_derived", Transform: semanticmodel.Transform{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
+			"derived_alias": {ModelName: "sales_derived", Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT * FROM model.sales_orders"}, ModelDependencies: []string{"sales_orders"}},
 		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
 			"sales_orders":  {Model: "sales_summary"},
@@ -312,14 +480,16 @@ func TestDiscoverSchemasIgnoresAttachedDatabaseSchemas(t *testing.T) {
 		DefaultConnection: "local",
 		Connections:       map[string]semanticmodel.Connection{"local": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {
-			Connection: "local",
-			Path:       "orders.csv",
-			Format:     "csv",
+			Connection:            "local",
+			Path:                  "orders.csv",
+			Format:                "csv",
+			EffectivePathLocation: testCSVPathLocationWithHeader("orders.csv", true),
+			SchemaMode:            "inferred",
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", ModelName: "orders",
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, ModelName: "orders",
+				Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
 					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
@@ -372,17 +542,19 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 		DefaultConnection: "local",
 		Connections:       map[string]semanticmodel.Connection{"local": {Kind: "managed"}},
 		Sources: map[string]semanticmodel.Source{"orders": {
-			Connection: "local",
-			Path:       "orders.csv",
-			Format:     "csv",
+			Connection:            "local",
+			Path:                  "orders.csv",
+			Format:                "csv",
+			EffectivePathLocation: testCSVPathLocationWithHeader("orders.csv", true),
+			SchemaMode:            "compatible",
 			Fields: map[string]semanticmodel.SourceField{
 				"missing": {Description: "Missing source field."},
 			},
 		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", ModelName: "orders",
-				Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, ModelName: "orders",
+				Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeInteger},
 					"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
@@ -406,13 +578,14 @@ func TestDiscoverSchemasRejectsMissingDocumentedSourceField(t *testing.T) {
 
 func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (context.Context, *analyticsducklake.Environment, *ProjectRuntime) {
 	t.Helper()
-	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+	admission := newDuckDBTestExtensionAdmission(t, "ducklake")
+	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
 	require.NoError(t, err)
 	controller, err := workload.New(workload.DefaultConfig())
 	require.NoError(t, err)
 	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "schema-test", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
-	runtime, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
+	runtime, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment, ExtensionAdmission: admission})
 	if err != nil {
 		lease.Release()
 		controller.Close()
@@ -433,7 +606,8 @@ func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model 
 
 func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (*ProjectRuntime, error) {
 	t.Helper()
-	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+	admission := newDuckDBTestExtensionAdmission(t, "ducklake")
+	environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission})
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +622,7 @@ func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir str
 		return nil, err
 	}
 	defer lease.Release()
-	return OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment})
+	return OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment, ExtensionAdmission: admission})
 }
 
 func TestCompileSourceRelation(t *testing.T) {
@@ -589,6 +763,27 @@ func TestRefreshConnectionResolutionUsesTargetOwnedEndpointAndCredentials(t *tes
 	if model.Connections["crm"].Host != "artifact-host" ||
 		len(model.Connections["crm"].Auth) != 0 {
 		t.Fatalf("target connection leaked into compiled model: %#v", model.Connections["crm"])
+	}
+}
+
+func TestRefreshConnectionResolutionUsesTargetOwnedScopeForPublicConnection(t *testing.T) {
+	model := &semanticmodel.Model{
+		DefaultConnection: "files",
+		Connections: map[string]semanticmodel.Connection{
+			"files": {Kind: "s3", Access: semanticmodel.ConnectionAccessPublic},
+		},
+		Sources: map[string]semanticmodel.Source{
+			"orders": {Connection: "files", Path: "orders.csv", Format: "csv", EffectivePathLocation: testPathLocation("csv", "orders.csv")},
+		},
+	}
+	runtime := NewSourceRuntimeWithConnectionResolver(nil, staticConnectionResolver{
+		connection: semanticmodel.Connection{Kind: "s3", Access: semanticmodel.ConnectionAccessPublic, Scope: "s3://public-target/"},
+	})
+	resolved, err := runtime.resolveCredentials(t.Context(), model)
+	require.NoError(t, err)
+	connection := resolved.Connections[resolved.DefaultConnection]
+	if connection.Scope != "s3://public-target/" || connection.Access != semanticmodel.ConnectionAccessPublic || len(connection.Auth) != 0 {
+		t.Fatalf("resolved public target connection = %#v, want target scope and no auth", connection)
 	}
 }
 
@@ -838,7 +1033,7 @@ func TestCompileDatabaseAttach(t *testing.T) {
 			want:       "ATTACH 'mysql://sales' AS conn_crm (TYPE mysql, READ_ONLY)",
 		},
 		"sqlite_option_path": {
-			connection: semanticmodel.Connection{Kind: "sqlite", Options: map[string]any{"path": "/tmp/source.sqlite"}},
+			connection: semanticmodel.Connection{Kind: "sqlite", RuntimeOptions: semanticmodel.ConnectionRuntimeOptions{Path: "/tmp/source.sqlite"}},
 			want:       "ATTACH '/tmp/source.sqlite' AS conn_crm (TYPE sqlite, READ_ONLY)",
 		},
 		"sqlite_auth_path": {
@@ -895,11 +1090,9 @@ func TestCompileDatabaseAttachUsesTargetEndpointAndTemporaryNamedSecret(t *testi
 
 func TestCompileDuckLakeAttach(t *testing.T) {
 	stmt, err := compileObjectAttach(&semanticmodel.Model{}, "lakehouse", semanticmodel.Connection{
-		Kind: "ducklake",
-		Path: "metadata.ducklake",
-		Options: map[string]any{
-			"data_path": "data_files",
-		},
+		Kind:           "ducklake",
+		Path:           "metadata.ducklake",
+		RuntimeOptions: semanticmodel.ConnectionRuntimeOptions{DataPath: "data_files"},
 	})
 	require.NoError(t, err)
 	want := "ATTACH 'ducklake:metadata.ducklake' AS conn_lakehouse (DATA_PATH 'data_files')"
@@ -908,12 +1101,10 @@ func TestCompileDuckLakeAttach(t *testing.T) {
 	}
 
 	stmt, err = compileObjectAttach(&semanticmodel.Model{}, "lakehouse", semanticmodel.Connection{
-		Kind:  "ducklake",
-		Scope: "s3://analytics-prod/ducklake/",
-		Path:  "metadata.ducklake",
-		Options: map[string]any{
-			"data_path": "data",
-		},
+		Kind:           "ducklake",
+		Scope:          "s3://analytics-prod/ducklake/",
+		Path:           "metadata.ducklake",
+		RuntimeOptions: semanticmodel.ConnectionRuntimeOptions{DataPath: "data"},
 	})
 	require.NoError(t, err)
 	want = "ATTACH 'ducklake:s3://analytics-prod/ducklake/metadata.ducklake' AS conn_lakehouse (DATA_PATH 's3://analytics-prod/ducklake/data')"
@@ -995,24 +1186,22 @@ func TestSourceRelationResolvesSourcePlans(t *testing.T) {
 		DefaultConnection: "local_files",
 		Connections: map[string]semanticmodel.Connection{
 			"local_files": {
-				Kind: "managed",
-				Defaults: semanticmodel.ConnectionDefaults{
-					Options: map[string]any{"header": true},
-				},
+				Kind:           "managed",
+				ReaderDefaults: &projectcontracts.ReaderDefaults{Csv: &projectcontracts.CSVReaderOptions{Header: func() *bool { value := true; return &value }()}},
 			},
 			"prod_lake": {Kind: "s3", Scope: "s3://analytics-prod/", Auth: semanticmodel.ConnectionAuth{"access_key_id": "key", "secret_access_key": "secret"}},
 			"azure":     {Kind: "azure_blob", Scope: "az://warehouse/", Auth: semanticmodel.ConnectionAuth{"connection_string": "DefaultEndpointsProtocol=https;AccountName=warehouse"}},
 			"vectors":   {Kind: "s3", Scope: "s3://analytics-prod/", Auth: semanticmodel.ConnectionAuth{"access_key_id": "key", "secret_access_key": "secret"}},
 		},
 		Sources: map[string]semanticmodel.Source{
-			"orders":     {Path: "orders.csv"},
-			"events":     {Connection: "prod_lake", Path: "events/*", Format: "parquet"},
-			"delta":      {Connection: "azure", Path: "tables/orders", Format: "delta"},
-			"embeddings": {Connection: "vectors", Path: "vectors/products.lance"},
+			"orders":     {Path: "orders.csv", Format: "csv", EffectivePathLocation: testCSVPathLocationWithHeader("orders.csv", true)},
+			"events":     {Connection: "prod_lake", Path: "events/*", Format: "parquet", EffectivePathLocation: testPathLocation("parquet", "events/*")},
+			"delta":      {Connection: "azure", Path: "tables/orders", Format: "delta", EffectivePathLocation: testPathLocation("delta", "tables/orders")},
+			"embeddings": {Connection: "vectors", Path: "vectors/products.lance", Format: "lance", EffectivePathLocation: testPathLocation("lance", "vectors/products.lance")},
 		},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
-				Source: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
 			},
 		},
@@ -1025,14 +1214,14 @@ func TestSourceRelationResolvesSourcePlans(t *testing.T) {
 	bindTestManagedRoot(model, "local_files", filepath.Join(dir, "fixtures"))
 	relation, err := SourceRelation(model, model.Sources["orders"])
 	require.NoError(t, err)
-	wantLocal := "SELECT * FROM read_csv('" + SQLString(filepath.Join(dir, "fixtures", "orders.csv")) + "', header = true)"
+	wantLocal := "SELECT * FROM read_csv('" + SQLString(filepath.Join(dir, "fixtures", "orders.csv")) + "', delim = ',', escape = '\"', header = true, quote = '\"')"
 	if relation != wantLocal {
 		t.Fatalf("local relation = %q, want %q", relation, wantLocal)
 	}
 
 	relation, err = SourceRelation(model, model.Sources["events"])
 	require.NoError(t, err)
-	if want := "SELECT * FROM read_parquet('s3://analytics-prod/events/*')"; relation != want {
+	if want := "SELECT * FROM read_parquet('s3://analytics-prod/events/*', hive_partitioning = false, union_by_name = false)"; relation != want {
 		t.Fatalf("remote relation = %q, want %q", relation, want)
 	}
 
@@ -1063,12 +1252,12 @@ func TestManagedSourceRelationUsesImmutableConnectionRoot(t *testing.T) {
 			"olist": {Kind: "managed", Root: root},
 		},
 		Sources: map[string]semanticmodel.Source{
-			"orders": {Connection: "olist", Path: "orders.csv", Format: "csv"},
+			"orders": {Connection: "olist", Path: "orders.csv", Format: "csv", EffectivePathLocation: testPathLocation("csv", "orders.csv")},
 		},
 	}
 	relation, err := SourceRelation(model, model.Sources["orders"])
 	require.NoError(t, err)
-	want := "SELECT * FROM read_csv('" + SQLString(filepath.Join(root, "orders.csv")) + "')"
+	want := "SELECT * FROM read_csv('" + SQLString(filepath.Join(root, "orders.csv")) + "', delim = ',', escape = '\"', header = false, quote = '\"')"
 	if relation != want {
 		t.Fatalf("managed relation = %q, want %q", relation, want)
 	}

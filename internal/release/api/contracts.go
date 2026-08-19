@@ -65,15 +65,13 @@ type AuthoredConnectionEvidence struct {
 }
 
 type GenerationPlanProvenance struct {
-	Identity            ServingIdentity              `json:"identity"`
-	BaseIdentity        *ServingIdentity             `json:"baseIdentity,omitempty"`
-	TargetID            string                       `json:"targetId"`
-	RuntimeVersion      string                       `json:"runtimeVersion"`
-	PolicyDigest        string                       `json:"policyDigest"`
-	DataRevision        string                       `json:"dataRevision"`
-	// DataMode is reuse_base or refresh_sources for new writes. The historical
-	// reuse_snapshot literal may appear on immutable read/audit responses and
-	// is rejected by strict create/publication validation.
+	Identity       ServingIdentity  `json:"identity"`
+	BaseIdentity   *ServingIdentity `json:"baseIdentity,omitempty"`
+	TargetID       string           `json:"targetId"`
+	RuntimeVersion string           `json:"runtimeVersion"`
+	PolicyDigest   string           `json:"policyDigest"`
+	DataRevision   string           `json:"dataRevision"`
+	// DataMode is reuse_base or refresh_sources.
 	DataMode            string                       `json:"dataMode"`
 	ManagedDataPins     []ManagedDataPin             `json:"managedDataPins"`
 	Bindings            []BindingEvidence            `json:"bindings"`

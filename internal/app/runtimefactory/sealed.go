@@ -31,6 +31,7 @@ import (
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	"github.com/flidai/leapview/internal/deployment/gc"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
 
@@ -145,7 +146,7 @@ func NewSQLiteSealedFactory(config ProductionSealedFactoryConfig) (runtimehost.R
 		}
 		return gcCatalogObjectStore{store: store}, nil
 	}
-	return newSealedFactory(base, resolve, LocalCatalogObjectStore{Root: config.CatalogObjectRoot}, objectsForRoot, credentialBootstrap, leases, authorize, authorizeServing, buildRuntime), nil
+	return newSealedFactory(base, resolve, LocalCatalogObjectStore{Root: config.CatalogObjectRoot}, objectsForRoot, credentialBootstrap, config.PoolS3.ExtensionAdmission, leases, authorize, authorizeServing, buildRuntime), nil
 }
 
 func validateSealedAuthorizationEvidence(artifact sealedcatalog.Artifact, lease catalogartifact.LeaseInput) error {
@@ -162,6 +163,7 @@ type sealedServingFactory struct {
 	objects             sealedcatalog.ObjectStore
 	objectsForRoot      func(context.Context, SealedServingRoot) (sealedcatalog.ObjectStore, error)
 	credentialBootstrap func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error)
+	extensionAdmission  extension.Admission
 	leases              catalogartifact.LeaseRepository
 	authorize           sealedcatalog.Authorization
 	authorizeServing    func(context.Context, runtimehost.RuntimeInput, sealedcatalog.Artifact, catalogartifact.LeaseInput) error
@@ -174,11 +176,11 @@ type sealedServingFactory struct {
 // catalog attach path. It is safe for tests to use an in-memory ObjectStore;
 // production composition supplies a target-owned read-only object adapter.
 func NewSealedFactory(base FactoryConfig, resolve SealedRootResolver, objects sealedcatalog.ObjectStore, leases catalogartifact.LeaseRepository, authorize sealedcatalog.Authorization, buildRuntime SealedDashboardRuntimeBuilder) runtimehost.RuntimeFactory {
-	return newSealedFactory(base, resolve, objects, nil, nil, leases, authorize, nil, buildRuntime)
+	return newSealedFactory(base, resolve, objects, nil, nil, nil, leases, authorize, nil, buildRuntime)
 }
 
-func newSealedFactory(base FactoryConfig, resolve SealedRootResolver, objects sealedcatalog.ObjectStore, objectsForRoot func(context.Context, SealedServingRoot) (sealedcatalog.ObjectStore, error), credentialBootstrap func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error), leases catalogartifact.LeaseRepository, authorize sealedcatalog.Authorization, authorizeServing func(context.Context, runtimehost.RuntimeInput, sealedcatalog.Artifact, catalogartifact.LeaseInput) error, buildRuntime SealedDashboardRuntimeBuilder) runtimehost.RuntimeFactory {
-	return sealedServingFactory{base: servingStateRuntimeFactory{duckDBDir: base.DuckDBDir, runtimeDir: base.RuntimeDir, dashboardRuntime: base.DashboardRuntime}, resolve: resolve, objects: objects, objectsForRoot: objectsForRoot, credentialBootstrap: credentialBootstrap, leases: leases, authorize: authorize, authorizeServing: authorizeServing, buildRuntime: buildRuntime, holder: firstNonEmpty(base.SealedLeaseHolder, "runtimehost"), now: time.Now}
+func newSealedFactory(base FactoryConfig, resolve SealedRootResolver, objects sealedcatalog.ObjectStore, objectsForRoot func(context.Context, SealedServingRoot) (sealedcatalog.ObjectStore, error), credentialBootstrap func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error), extensionAdmission extension.Admission, leases catalogartifact.LeaseRepository, authorize sealedcatalog.Authorization, authorizeServing func(context.Context, runtimehost.RuntimeInput, sealedcatalog.Artifact, catalogartifact.LeaseInput) error, buildRuntime SealedDashboardRuntimeBuilder) runtimehost.RuntimeFactory {
+	return sealedServingFactory{base: servingStateRuntimeFactory{duckDBDir: base.DuckDBDir, runtimeDir: base.RuntimeDir, dashboardRuntime: base.DashboardRuntime}, resolve: resolve, objects: objects, objectsForRoot: objectsForRoot, credentialBootstrap: credentialBootstrap, extensionAdmission: extensionAdmission, leases: leases, authorize: authorize, authorizeServing: authorizeServing, buildRuntime: buildRuntime, holder: firstNonEmpty(base.SealedLeaseHolder, "runtimehost"), now: time.Now}
 }
 
 func (f sealedServingFactory) Prepare(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
@@ -238,7 +240,7 @@ func (f sealedServingFactory) PrepareSealed(ctx context.Context, input runtimeho
 	}
 	reader, err := sealedcatalog.Open(ctx, sealedcatalog.Request{
 		Artifact: sealedcatalog.Artifact{ObjectKey: root.CatalogObjectKey, SealID: root.SealID, CatalogDigest: root.CatalogDigest, SizeBytes: root.CatalogObjectSize, ClosureDigest: root.ClosureDigest, QualificationDigest: root.QualificationDigest, PhysicalPoolID: root.PhysicalPoolID, Compatibility: root.Compatibility, PoolContract: root.PoolContract},
-		Store:    objects, Leases: f.leases, Lease: leaseInput, Authorize: authorize, CredentialBootstrap: credentialBootstrap,
+		Store:    objects, Leases: f.leases, Lease: leaseInput, Authorize: authorize, CredentialBootstrap: credentialBootstrap, ExtensionAdmission: f.extensionAdmission,
 		OnLeaseRenewalFailure: input.OnLeaseRenewalFailure,
 		StagingRoot:           filepath.Join(f.base.runtimeDir, "sealed-catalogs"),
 	})

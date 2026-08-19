@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/flidai/leapview/internal/extension"
 )
 
 const sqliteCatalogHeader = "SQLite format 3\x00"
@@ -16,7 +18,10 @@ const sqliteCatalogHeader = "SQLite format 3\x00"
 // migrateLegacySQLiteCatalog upgrades the previous local SQLite-backed
 // DuckLake metadata catalog before the process-owned DuckDB environment opens
 // its catalog. The source remains as a backup when the target path changed.
-func migrateLegacySQLiteCatalog(ctx context.Context, targetPath string) (bool, error) {
+func migrateLegacySQLiteCatalog(ctx context.Context, targetPath string, admission extension.Admission) (bool, error) {
+	if admission == nil {
+		return false, fmt.Errorf("DuckLake catalog migration requires extension admission")
+	}
 	targetPath = filepath.Clean(strings.TrimSpace(targetPath))
 	if targetPath == "." || targetPath == "" {
 		return false, fmt.Errorf("DuckLake catalog path is required")
@@ -72,7 +77,7 @@ func migrateLegacySQLiteCatalog(ctx context.Context, targetPath string) (bool, e
 	}
 	defer os.Remove(temporaryPath)
 
-	if err := copySQLiteCatalogToDuckDB(ctx, sourcePath, temporaryPath); err != nil {
+	if err := copySQLiteCatalogToDuckDB(ctx, sourcePath, temporaryPath, admission); err != nil {
 		return false, err
 	}
 	if err := os.Chmod(temporaryPath, catalogFileMode); err != nil {
@@ -105,19 +110,34 @@ func migrateLegacySQLiteCatalog(ctx context.Context, targetPath string) (bool, e
 	return true, nil
 }
 
-func copySQLiteCatalogToDuckDB(ctx context.Context, sourcePath, targetPath string) error {
+func copySQLiteCatalogToDuckDB(ctx context.Context, sourcePath, targetPath string, admission extension.Admission) error {
+	if admission == nil {
+		return fmt.Errorf("DuckLake catalog migration requires extension admission")
+	}
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		return err
 	}
 	db.SetMaxOpenConns(1)
-	statements := []string{
-		"LOAD sqlite",
+	statements := make([]string, 0, 4)
+	for _, name := range []string{"sqlite"} {
+		admitted, admitErr := admission.AdmitExtension(ctx, name)
+		if admitErr != nil {
+			_ = db.Close()
+			return fmt.Errorf("admit %s extension for DuckLake catalog migration: %w", name, admitErr)
+		}
+		if err := validateAdmittedExtension(admitted, name); err != nil {
+			_ = db.Close()
+			return fmt.Errorf("validate %s extension for DuckLake catalog migration: %w", name, err)
+		}
+		statements = append(statements, "LOAD '"+sqlLiteral(admitted.Path)+"'")
+	}
+	statements = append(statements,
 		fmt.Sprintf("ATTACH '%s' AS legacy_catalog (TYPE sqlite)", sqlLiteral(sourcePath)),
 		fmt.Sprintf("ATTACH '%s' AS migrated_catalog", sqlLiteral(targetPath)),
 		"COPY FROM DATABASE legacy_catalog TO migrated_catalog",
 		"CHECKPOINT migrated_catalog",
-	}
+	)
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			_ = db.Close()

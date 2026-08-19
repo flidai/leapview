@@ -1,0 +1,527 @@
+import "@yacobolo/apigen";
+
+@apigen.`package`(#{
+  title: "LeapView v1 data-resource contracts",
+  version: "1.0.0",
+  description: "Strict authored Connection, Source, and Model-definition contracts.",
+})
+namespace LeapViewDataResources;
+
+@pattern("^[A-Za-z_][A-Za-z0-9_]*$")
+scalar Identifier extends string;
+
+// Governed relationship checks always name an authored model and field explicitly.
+@pattern("^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*\\.[A-Za-z_][A-Za-z0-9_]*$")
+scalar ModelReference extends string;
+
+@pattern("^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$")
+scalar ResourceName extends string;
+
+@pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+scalar ResourceID extends string;
+
+/**
+ * Portable access is intentionally tiny. Endpoints, credentials, secret
+ * providers, and resolved authentication are target-owned bindings.
+ */
+enum PublicAccess {
+  public: "public";
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "csv", extensions: #[".csv", ".csv.gz"], scanKind: "table_function", scanFunction: "read_csv", defaults: #{ header: false, delimiter: ",", quote: "\"", escape: "\"" } } })
+model CSVReaderOptions {
+  header?: boolean;
+  delimiter?: string;
+  quote?: string;
+  escape?: string;
+  nullString?: string;
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "json", extensions: #[".json", ".jsonl", ".ndjson"], scanKind: "table_function", scanFunction: "read_json", defaults: #{ format: "auto" } } })
+model JSONReaderOptions {
+  format?: "auto" | "array" | "newline_delimited";
+  maximumDepth?: int32;
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "parquet", extensions: #[".parquet"], scanKind: "table_function", scanFunction: "read_parquet", defaults: #{ hivePartitioning: false, unionByName: false } } })
+model ParquetReaderOptions {
+  hivePartitioning?: boolean;
+  unionByName?: boolean;
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "excel", extensions: #[".xlsx"], scanKind: "table_function", scanFunction: "read_xlsx", requiredExtension: "excel", defaults: #{ header: true } } })
+model ExcelReaderOptions {
+  sheet?: string;
+  header?: boolean;
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "text", extensions: #[".txt"], scanKind: "table_function", scanFunction: "read_text", defaults: #{ delimiter: "\t", quote: "\"", header: false } } })
+model TextReaderOptions {
+  delimiter?: string;
+  quote?: string;
+  header?: boolean;
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "blob", extensions: #[".blob"], scanKind: "table_function", scanFunction: "read_blob", defaults: #{ compression: "auto" } } })
+model BlobReaderOptions {
+  compression?: "auto" | "none" | "gzip" | "zstd";
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", defaults: #{} } })
+model VortexReaderOptions {
+  version?: string;
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "delta", extensions: #[], scanKind: "table_function", scanFunction: "delta_scan", requiredExtension: "delta", tableLike: true, defaults: #{} } })
+model DeltaReaderOptions {
+  version?: string;
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "iceberg", extensions: #[], scanKind: "table_function", scanFunction: "iceberg_scan", requiredExtension: "iceberg", tableLike: true, defaults: #{} } })
+model IcebergReaderOptions {
+  snapshot?: string;
+}
+
+/** Connection defaults are closed by reader format; arbitrary option maps are not public. */
+model ReaderDefaults {
+  csv?: CSVReaderOptions;
+  json?: JSONReaderOptions;
+  parquet?: ParquetReaderOptions;
+  excel?: ExcelReaderOptions;
+  text?: TextReaderOptions;
+  blob?: BlobReaderOptions;
+  vortex?: VortexReaderOptions;
+  delta?: DeltaReaderOptions;
+  iceberg?: IcebergReaderOptions;
+}
+
+@discriminator("type")
+model ConnectionSpec {
+  type: string;
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "managed",
+  activationMode: "managed",
+  locationCapabilities: #["path"],
+  approvedExtensions: #[],
+  secretType: "none",
+  supportStatus: "stable",
+  adapterKey: "managed",
+} })
+model ManagedConnection extends ConnectionSpec {
+  type: "managed";
+  access?: PublicAccess;
+  defaults?: ReaderDefaults;
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "s3",
+  activationMode: "target_binding",
+  locationCapabilities: #["path"],
+  approvedExtensions: #["httpfs"],
+  secretType: "s3",
+  supportStatus: "stable",
+  adapterKey: "s3",
+} })
+model S3Connection extends ConnectionSpec {
+  type: "s3";
+  access?: PublicAccess;
+  defaults?: ReaderDefaults;
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "r2",
+  activationMode: "target_binding",
+  locationCapabilities: #["path"],
+  approvedExtensions: #["httpfs"],
+  secretType: "r2",
+  supportStatus: "stable",
+  adapterKey: "r2",
+} })
+model R2Connection extends ConnectionSpec {
+  type: "r2";
+  access?: PublicAccess;
+  defaults?: ReaderDefaults;
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "gcs",
+  activationMode: "target_binding",
+  locationCapabilities: #["path"],
+  approvedExtensions: #["httpfs"],
+  secretType: "gcs",
+  supportStatus: "stable",
+  adapterKey: "gcs",
+} })
+model GCSConnection extends ConnectionSpec {
+  type: "gcs";
+  access?: PublicAccess;
+  defaults?: ReaderDefaults;
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "http",
+  activationMode: "authored",
+  locationCapabilities: #["path"],
+  approvedExtensions: #["httpfs"],
+  secretType: "http",
+  supportStatus: "stable",
+  adapterKey: "http",
+} })
+model HTTPConnection extends ConnectionSpec {
+  type: "http";
+  access?: PublicAccess;
+  defaults?: ReaderDefaults;
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "azure_blob",
+  activationMode: "target_binding",
+  locationCapabilities: #["path"],
+  approvedExtensions: #["azure"],
+  secretType: "azure",
+  supportStatus: "stable",
+  adapterKey: "azure_blob",
+} })
+model AzureBlobConnection extends ConnectionSpec {
+  type: "azure_blob";
+  access?: PublicAccess;
+  defaults?: ReaderDefaults;
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "postgres",
+  activationMode: "target_binding",
+  locationCapabilities: #["relation"],
+  approvedExtensions: #["postgres"],
+  secretType: "postgres",
+  supportStatus: "stable",
+  adapterKey: "postgres",
+} })
+model PostgresConnection extends ConnectionSpec {
+  type: "postgres";
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "mysql",
+  activationMode: "target_binding",
+  locationCapabilities: #["relation"],
+  approvedExtensions: #["mysql"],
+  secretType: "mysql",
+  supportStatus: "stable",
+  adapterKey: "mysql",
+} })
+model MySQLConnection extends ConnectionSpec {
+  type: "mysql";
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "sqlite",
+  activationMode: "target_binding",
+  locationCapabilities: #["relation"],
+  approvedExtensions: #["sqlite"],
+  secretType: "sqlite",
+  supportStatus: "stable",
+  adapterKey: "sqlite",
+} })
+model SQLiteConnection extends ConnectionSpec {
+  type: "sqlite";
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "ducklake",
+  activationMode: "target_binding",
+  locationCapabilities: #["relation"],
+  approvedExtensions: #["ducklake"],
+  secretType: "ducklake",
+  supportStatus: "stable",
+  adapterKey: "ducklake",
+} })
+model DuckLakeConnection extends ConnectionSpec {
+  type: "ducklake";
+}
+
+@apigen.metadata(#{ `x-leapview-connector`: #{
+  key: "quack",
+  activationMode: "target_binding",
+  locationCapabilities: #["relation"],
+  approvedExtensions: #["httpfs", "quack"],
+  secretType: "quack",
+  supportStatus: "experimental",
+  adapterKey: "quack",
+} })
+model QuackConnection extends ConnectionSpec {
+  type: "quack";
+}
+
+model SourceSchemaField {
+  datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
+  nullable?: boolean;
+  description?: string;
+}
+
+model AIContext {
+  instructions?: string;
+  synonyms?: string[];
+  examples?: string[];
+}
+
+model InferredSourceSchema {
+  mode: "inferred";
+}
+
+model CompatibleSourceSchema {
+  mode: "compatible";
+  @apigen.propertyNames(Identifier)
+  fields: Record<SourceSchemaField>;
+}
+
+model StrictSourceSchema {
+  mode: "strict";
+  @apigen.propertyNames(Identifier)
+  fields: Record<SourceSchemaField>;
+}
+
+@discriminated(#{ envelope: "none", discriminatorPropertyName: "mode" })
+union SourceSchema {
+  inferred: InferredSourceSchema,
+  compatible: CompatibleSourceSchema,
+  strict: StrictSourceSchema,
+}
+
+model FreshnessDuration {
+  @minValue(1)
+  amount: int64;
+  unit: "second" | "minute" | "hour" | "day";
+}
+
+model FieldFreshness {
+  basis: "field";
+  field: Identifier;
+  warningAfter?: FreshnessDuration;
+  errorAfter?: FreshnessDuration;
+}
+
+model RevisionFreshness {
+  basis: "revision";
+  revision: utcDateTime;
+  warningAfter?: FreshnessDuration;
+  errorAfter?: FreshnessDuration;
+}
+
+@discriminated(#{ envelope: "none", discriminatorPropertyName: "basis" })
+union SourceFreshness {
+  field: FieldFreshness,
+  revision: RevisionFreshness,
+}
+
+// Path location is a closed union over reader formats. Each variant carries
+// only the options accepted by that reader; a cross-format options bag is not
+// part of the authoring contract. The outer location discriminator is modeled
+// through inheritance so the scalar ADR shape (format plus sibling options)
+// remains intact.
+@discriminator("format")
+model PathSourceLocation {
+  type: "path";
+  path: string;
+  format: string;
+}
+
+model CSVPathSourceLocation extends PathSourceLocation {
+  format: "csv";
+  options?: CSVReaderOptions;
+}
+
+model JSONPathSourceLocation extends PathSourceLocation {
+  format: "json";
+  options?: JSONReaderOptions;
+}
+
+model ParquetPathSourceLocation extends PathSourceLocation {
+  format: "parquet";
+  options?: ParquetReaderOptions;
+}
+
+model ExcelPathSourceLocation extends PathSourceLocation {
+  format: "excel";
+  options?: ExcelReaderOptions;
+}
+
+model TextPathSourceLocation extends PathSourceLocation {
+  format: "text";
+  options?: TextReaderOptions;
+}
+
+model BlobPathSourceLocation extends PathSourceLocation {
+  format: "blob";
+  options?: BlobReaderOptions;
+}
+
+model VortexPathSourceLocation extends PathSourceLocation {
+  format: "vortex";
+  options?: VortexReaderOptions;
+}
+
+model DeltaPathSourceLocation extends PathSourceLocation {
+  format: "delta";
+  options?: DeltaReaderOptions;
+}
+
+model IcebergPathSourceLocation extends PathSourceLocation {
+  format: "iceberg";
+  options?: IcebergReaderOptions;
+}
+
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "lance", extensions: #[".lance"], scanKind: "replacement", requiredExtension: "lance", sourceSecretType: "lance", tableLike: true, allowsOptions: false, defaults: #{} } })
+model LancePathSourceLocation extends PathSourceLocation {
+  format: "lance";
+}
+
+model RelationSourceLocation {
+  type: "relation";
+  catalog?: Identifier;
+  schema?: Identifier;
+  name: Identifier;
+}
+
+@discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
+union SourceLocation {
+  path: PathSourceLocation,
+  relation: RelationSourceLocation,
+}
+
+model SourceSpec {
+  connection: ResourceID;
+  location: SourceLocation;
+  schema?: SourceSchema;
+  freshness?: SourceFreshness;
+}
+
+model DirectModelDefinition extends ModelDefinition {
+  type: "direct";
+  source: ResourceID;
+}
+
+model SQLModelDefinition extends ModelDefinition {
+  type: "sql";
+  sql: string;
+}
+
+@discriminator("type")
+model ModelDefinition {
+  type: string;
+}
+
+model ModelField {
+  datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
+  label?: string;
+  description?: string;
+  aiContext?: AIContext;
+}
+
+model ModelEntity {
+  type: "primary" | "unique" | "foreign" | "natural";
+  fields: Identifier[];
+  description?: string;
+  aiContext?: AIContext;
+}
+
+model ModelGrain {
+  entity: Identifier;
+}
+
+model NonNullModelCheck {
+  type: "non_null";
+  field: Identifier;
+  severity?: "warning" | "error";
+}
+
+model UniqueModelCheck {
+  type: "unique";
+  fields: Identifier[];
+  severity?: "warning" | "error";
+}
+
+model AcceptedValuesModelCheck {
+  type: "accepted_values";
+  field: Identifier;
+  values: string[];
+  severity?: "warning" | "error";
+}
+
+model RelationshipModelCheck {
+  type: "relationship";
+  field: Identifier;
+  to: ModelReference;
+  severity?: "warning" | "error";
+}
+
+model RowCountModelCheck {
+  type: "row_count";
+  minimum?: int64;
+  maximum?: int64;
+  severity?: "warning" | "error";
+}
+
+@discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
+union ModelCheck {
+  non_null: NonNullModelCheck,
+  unique: UniqueModelCheck,
+  accepted_values: AcceptedValuesModelCheck,
+  relationship: RelationshipModelCheck,
+  row_count: RowCountModelCheck,
+}
+
+model ModelSpec {
+  definition: ModelDefinition;
+  @apigen.propertyNames(Identifier)
+  entities: Record<ModelEntity>;
+  grain: ModelGrain;
+  @apigen.propertyNames(Identifier)
+  fields: Record<ModelField>;
+  checks?: ModelCheck[];
+}
+
+model ResourceProvenance {
+  origin?: string;
+  path?: string;
+  source?: string;
+}
+
+model ResourceMetadata {
+  id: ResourceID;
+  name: ResourceName;
+  displayName?: string;
+  description?: string;
+  owner?: string;
+  domain?: string;
+  tags?: string[];
+  documentation?: string;
+  provenance?: ResourceProvenance;
+}
+
+@apigen.contract(#{ kind: "resource", tags: #["connection", "data-resource"] })
+model Connection {
+  apiVersion: "leapview.dev/v1";
+  kind: "Connection";
+  metadata: ResourceMetadata;
+  spec: ConnectionSpec;
+}
+
+@apigen.contract(#{ kind: "resource", tags: #["source", "data-resource"] })
+model Source {
+  apiVersion: "leapview.dev/v1";
+  kind: "Source";
+  metadata: ResourceMetadata;
+  spec: SourceSpec;
+}
+
+@apigen.contract(#{ kind: "resource", tags: #["model", "data-resource"] })
+model Model {
+  apiVersion: "leapview.dev/v1";
+  kind: "Model";
+  metadata: ResourceMetadata;
+  aiContext?: AIContext;
+  spec: ModelSpec;
+}

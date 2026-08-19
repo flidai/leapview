@@ -38,7 +38,7 @@ func (s *FilterService) queryCompiledFilterOptions(ctx context.Context, runtime 
 		if !ok {
 			return dashboardfilter.OptionResult{}, fmt.Errorf("unknown option dependency filter %q", binding.Filter)
 		}
-		dependencyFilters, filterErr := semanticFiltersForExpression(definition, expression)
+		dependencyFilters, filterErr := semanticFiltersForExpressionOnDataset(definition, expression, query.Dataset)
 		if filterErr != nil {
 			return dashboardfilter.OptionResult{}, filterErr
 		}
@@ -50,8 +50,12 @@ func (s *FilterService) queryCompiledFilterOptions(ctx context.Context, runtime 
 	if query.After != "" {
 		filters = append(filters, reportdef.QueryFilter{Field: query.Field, Dataset: query.Dataset, Operator: "greater_than", Values: []any{query.After}})
 	}
+	dataset := query.Dataset
+	if dataset == "" {
+		dataset = tableForField(query.Field)
+	}
 	request := reportAggregateDataQuery(report.SemanticModel, reportdef.AggregateQuery{
-		Dataset: tableForField(query.Field), Dimensions: []reportdef.QueryField{{Field: query.Field, Alias: "value"}},
+		Dataset: dataset, Dimensions: []reportdef.QueryField{{Field: query.Field, Alias: "value"}},
 		Filters: filters, Sort: []reportdef.QuerySort{{Field: "value", Direction: "asc"}}, Limit: query.Limit + 1,
 	})
 	request.Surface = dataquery.SurfaceDashboard
@@ -69,7 +73,13 @@ func (s *FilterService) queryCompiledFilterOptions(ctx context.Context, runtime 
 	next := ""
 	for _, row := range rows {
 		raw, ok := row["value"]
-		if !ok || raw == nil {
+		if !ok {
+			continue
+		}
+		if raw == nil {
+			if query.IncludeNull {
+				items = append(items, dashboardfilter.OptionItem{Null: true, Label: "(null)", Available: true})
+			}
 			continue
 		}
 		value := fmt.Sprint(normalizeDBValue(raw))
@@ -81,6 +91,18 @@ func (s *FilterService) queryCompiledFilterOptions(ctx context.Context, runtime 
 		next = value
 	}
 	return dashboardfilter.OptionResult{Items: items, Complete: complete, Next: next}, nil
+}
+
+// semanticFiltersForExpressionOnDataset keeps dependency predicates governed
+// by their compiled semantic definition while resolving them through the
+// queried option dataset. A dependency's own distinct-option dataset must not
+// silently redirect a dependent option query.
+func semanticFiltersForExpressionOnDataset(definition dashboardfilter.Definition, expression dashboardfilter.Expression, dataset string) ([]reportdef.QueryFilter, error) {
+	if dataset == "" {
+		return semanticFiltersForExpression(definition, expression)
+	}
+	definition.Dataset = dataset
+	return semanticFiltersForExpression(definition, expression)
 }
 
 func (s *FilterService) semanticFilters(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, targetKind, targetID string) ([]reportdef.QueryFilter, error) {

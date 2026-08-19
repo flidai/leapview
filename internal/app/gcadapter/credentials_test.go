@@ -8,9 +8,16 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 type recordingExecer struct{ statements []string }
+
+type staticExtensionAdmission struct{}
+
+func (staticExtensionAdmission) AdmitExtension(context.Context, string) (extension.AdmittedExtension, error) {
+	return extension.AdmittedExtension{Name: "httpfs", Identity: "fixture/httpfs", Version: "fixture", Path: "/opt/leapview/extensions/httpfs.duckdb_extension", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}, nil
+}
 
 func (execer *recordingExecer) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
 	execer.statements = append(execer.statements, query)
@@ -40,7 +47,7 @@ func TestNewPoolStoreS3RequiresTargetKeysBeforeAWSConfig(t *testing.T) {
 
 func TestNewPoolCredentialBootstrapS3IsPerConnection(t *testing.T) {
 	contract := &ducklake.PoolContract{Pool: physicalpool.PhysicalPool{Identity: physicalpool.PoolIdentity{StorageLocation: "s3://bucket/prefix"}}, Tuple: physicalpool.Compatibility{StorageImplementation: "s3"}}
-	bootstrap, err := NewPoolCredentialBootstrap(contract, S3Config{AccessKeyID: "key", SecretAccessKey: "secret", Endpoint: "http://minio:9000", PathStyle: true})
+	bootstrap, err := NewPoolCredentialBootstrap(contract, S3Config{AccessKeyID: "key", SecretAccessKey: "secret", Endpoint: "http://minio:9000", PathStyle: true, ExtensionAdmission: staticExtensionAdmission{}})
 	if err != nil || bootstrap == nil {
 		t.Fatalf("S3 bootstrap = %v/%v", bootstrap, err)
 	}
@@ -48,7 +55,7 @@ func TestNewPoolCredentialBootstrapS3IsPerConnection(t *testing.T) {
 	if err := bootstrap(context.Background(), execer); err != nil {
 		t.Fatal(err)
 	}
-	if len(execer.statements) != 3 || execer.statements[0] != "INSTALL httpfs FROM core" || execer.statements[1] != "LOAD httpfs" || !strings.Contains(execer.statements[2], "CREATE OR REPLACE SECRET") || !strings.Contains(execer.statements[2], "KEY_ID 'key'") {
+	if len(execer.statements) != 2 || execer.statements[0] != "LOAD '/opt/leapview/extensions/httpfs.duckdb_extension'" || !strings.Contains(execer.statements[1], "CREATE OR REPLACE SECRET") || !strings.Contains(execer.statements[1], "KEY_ID 'key'") {
 		t.Fatalf("bootstrap statements = %#v", execer.statements)
 	}
 }

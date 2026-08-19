@@ -3,6 +3,8 @@ package connectionbinding
 import (
 	"context"
 	"fmt"
+	"github.com/flidai/leapview/internal/analytics/connectors"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"sort"
 	"strings"
@@ -105,6 +107,17 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 		if err := leaser.authorize(ctx, request.Actor, binding); err != nil {
 			return nil, ErrUnauthorizedBinding
 		}
+		spec, exists := connectors.LookupConnection(requirement.ConnectorKind)
+		if !exists || (requirement.Access != "" && requirement.Access != semanticmodel.ConnectionAccessPublic) {
+			return nil, ErrIncompatibleBinding
+		}
+		if requirement.Access == semanticmodel.ConnectionAccessPublic {
+			if !spec.AllowPublicAccess || binding.AuthenticationMode != AuthenticationNone {
+				return nil, ErrIncompatibleBinding
+			}
+		} else if binding.AuthenticationMode == AuthenticationNone {
+			return nil, ErrIncompatibleBinding
+		}
 		if _, err := binding.CompatibleEvidence(requirement, true); err != nil {
 			return nil, err
 		}
@@ -113,6 +126,7 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 			return nil, err
 		}
 		persistentEvidence := lease.Evidence()
+		persistentEvidence.Access = requirement.Access
 		evidence := RuntimeBindingEvidence{BindingEvidence: persistentEvidence, Identity: request.Identity}
 		if err := validateRuntimeBindingEvidence(binding, requirement, evidence); err != nil {
 			lease.Release()
@@ -192,6 +206,9 @@ func normalizeRuntimeRequirements(requirements []Requirement) ([]Requirement, er
 		if normalized[index].ConnectorKind != strings.TrimSpace(normalized[index].ConnectorKind) ||
 			normalized[index].ValidatedVersion != strings.TrimSpace(normalized[index].ValidatedVersion) {
 			return nil, fmt.Errorf("%w: runtime requirement identities must be canonical", ErrInvalidBinding)
+		}
+		if normalized[index].Access != "" && normalized[index].Access != semanticmodel.ConnectionAccessPublic {
+			return nil, fmt.Errorf("%w: runtime requirement access policy is unsupported", ErrInvalidBinding)
 		}
 		if normalized[index].ConnectorKind == "" || normalized[index].BindingRevision < 0 {
 			return nil, fmt.Errorf(

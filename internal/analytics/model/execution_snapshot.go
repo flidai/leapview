@@ -1,5 +1,12 @@
 package model
 
+import (
+	"encoding/json"
+	"fmt"
+
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+)
+
 // ExecutionSnapshot returns an isolated, executable copy of the semantic
 // model. Authoring context, sources, and credentials are deliberately omitted
 // because governed planning never needs them. All mutable executable slices
@@ -28,6 +35,148 @@ func (m *Model) ExecutionSnapshot() *Model {
 	return &clone
 }
 
+// RuntimeSnapshot returns a detached model copy for dashboard/runtime
+// projections. Unlike ExecutionSnapshot, it retains the compiled source and
+// connection bindings required to acquire managed data and model execution
+// definitions required to materialize tables. Secrets and authoring context
+// remain excluded from the copy.
+func (m *Model) RuntimeSnapshot() (*Model, error) {
+	clone := m.ExecutionSnapshot()
+	if clone == nil {
+		return nil, nil
+	}
+	connections, err := snapshotConnections(m.Connections)
+	if err != nil {
+		return nil, err
+	}
+	sources, err := snapshotSources(m.Sources)
+	if err != nil {
+		return nil, err
+	}
+	clone.Connections = connections
+	clone.Sources = sources
+	clone.DefaultConnection = m.DefaultConnection
+	return clone, nil
+}
+
+func snapshotConnections(values map[string]Connection) (map[string]Connection, error) {
+	if values == nil {
+		return nil, nil
+	}
+	clone := make(map[string]Connection, len(values))
+	for name, value := range values {
+		// Target binding is injected after this projection is activated. Clear
+		// every endpoint/credential field so target state cannot leak across
+		// serving generations; authored kind/access/defaults remain portable.
+		value.Auth = nil
+		value.Credentials = ConnectionCredentials{}
+		value.Host = ""
+		value.Port = 0
+		value.Database = ""
+		value.Username = ""
+		value.SSLMode = ""
+		value.RuntimeOptions = ConnectionRuntimeOptions{}
+		value.Path = ""
+		value.Root = ""
+		value.Scope = ""
+		var err error
+		value.ReaderDefaults, err = cloneReaderDefaults(value.ReaderDefaults)
+		if err != nil {
+			return nil, fmt.Errorf("connection %q reader defaults: %w", name, err)
+		}
+		clone[name] = value
+	}
+	return clone, nil
+}
+
+func cloneReaderDefaults(value *projectcontracts.ReaderDefaults) (*projectcontracts.ReaderDefaults, error) {
+	if value == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var clone projectcontracts.ReaderDefaults
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		return nil, err
+	}
+	return &clone, nil
+}
+
+func snapshotSources(values map[string]Source) (map[string]Source, error) {
+	if values == nil {
+		return nil, nil
+	}
+	clone := make(map[string]Source, len(values))
+	for name, value := range values {
+		value.Fields = cloneSourceFields(value.Fields)
+		var err error
+		value.PathLocation, err = clonePathLocation(value.PathLocation)
+		if err != nil {
+			return nil, fmt.Errorf("source %q path location: %w", name, err)
+		}
+		value.EffectivePathLocation, err = clonePathLocation(value.EffectivePathLocation)
+		if err != nil {
+			return nil, fmt.Errorf("source %q effective path location: %w", name, err)
+		}
+		value.Freshness = cloneSourceFreshness(value.Freshness)
+		value.Schema.Columns = snapshotColumnSchemas(value.Schema.Columns)
+		clone[name] = value
+	}
+	return clone, nil
+}
+
+func cloneSourceFields(values map[string]SourceField) map[string]SourceField {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]SourceField, len(values))
+	for name, value := range values {
+		if value.Nullable != nil {
+			nullable := *value.Nullable
+			value.Nullable = &nullable
+		}
+		clone[name] = value
+	}
+	return clone
+}
+
+func clonePathLocation(value *projectcontracts.PathSourceLocation) (*projectcontracts.PathSourceLocation, error) {
+	if value == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var clone projectcontracts.PathSourceLocation
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		return nil, err
+	}
+	return &clone, nil
+}
+
+func cloneSourceFreshness(value *SourceFreshnessSpec) *SourceFreshnessSpec {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	if value.RevisionAt != nil {
+		revisionAt := *value.RevisionAt
+		clone.RevisionAt = &revisionAt
+	}
+	if value.WarningAfter != nil {
+		warningAfter := *value.WarningAfter
+		clone.WarningAfter = &warningAfter
+	}
+	if value.ErrorAfter != nil {
+		errorAfter := *value.ErrorAfter
+		clone.ErrorAfter = &errorAfter
+	}
+	return &clone
+}
+
 func snapshotTables(values map[string]Table) map[string]Table {
 	if values == nil {
 		return nil
@@ -36,15 +185,46 @@ func snapshotTables(values map[string]Table) map[string]Table {
 	for name, table := range values {
 		copyTable := table
 		copyTable.AIContext = nil
-		copyTable.Sources = append([]string(nil), table.Sources...)
-		copyTable.SourceReads = snapshotStringSliceMap(table.SourceReads)
 		copyTable.SourceDependencies = append([]string(nil), table.SourceDependencies...)
 		copyTable.ModelDependencies = append([]string(nil), table.ModelDependencies...)
 		copyTable.Dimensions = snapshotMetricDimensions(table.Dimensions)
 		copyTable.Columns = snapshotModelColumns(table.Columns)
 		copyTable.Entities = snapshotEntities(table.Entities)
 		copyTable.Schema.Columns = snapshotColumnSchemas(table.Schema.Columns)
+		copyTable.SQLAnalysisEvidence = snapshotSQLAnalysisEvidence(table.SQLAnalysisEvidence)
+		copyTable.Checks = snapshotModelChecks(table.Checks)
 		clone[name] = copyTable
+	}
+	return clone
+}
+
+func snapshotSQLAnalysisEvidence(value *SQLAnalysisEvidence) *SQLAnalysisEvidence {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	clone.SourceRefs = append([]string(nil), value.SourceRefs...)
+	clone.ModelRefs = append([]string(nil), value.ModelRefs...)
+	return &clone
+}
+
+func snapshotModelChecks(values []ModelCheck) []ModelCheck {
+	if values == nil {
+		return nil
+	}
+	clone := make([]ModelCheck, len(values))
+	for index, value := range values {
+		clone[index] = value
+		clone[index].Fields = append([]string(nil), value.Fields...)
+		clone[index].Values = append([]string(nil), value.Values...)
+		if value.Minimum != nil {
+			minimum := *value.Minimum
+			clone[index].Minimum = &minimum
+		}
+		if value.Maximum != nil {
+			maximum := *value.Maximum
+			clone[index].Maximum = &maximum
+		}
 	}
 	return clone
 }
@@ -195,11 +375,11 @@ func snapshotModelColumns(values map[string]ModelColumn) map[string]ModelColumn 
 	return clone
 }
 
-func snapshotEntities(values map[string]ModelEntitySpec) map[string]ModelEntitySpec {
+func snapshotEntities(values map[string]EntityDefinition) map[string]EntityDefinition {
 	if values == nil {
 		return nil
 	}
-	clone := make(map[string]ModelEntitySpec, len(values))
+	clone := make(map[string]EntityDefinition, len(values))
 	for name, value := range values {
 		value.AIContext = nil
 		value.Fields = append([]string(nil), value.Fields...)

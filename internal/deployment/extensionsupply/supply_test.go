@@ -1,0 +1,282 @@
+package extensionsupply
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/flidai/leapview/internal/extension"
+)
+
+func TestCurrentDuckDBVersionMatchesRuntime(t *testing.T) {
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version string
+	if err := db.QueryRow("SELECT version()").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != CurrentDuckDBVersion {
+		t.Fatalf("CurrentDuckDBVersion = %q, runtime SELECT version() = %q", CurrentDuckDBVersion, version)
+	}
+	var platform string
+	if err := db.QueryRow("PRAGMA platform").Scan(&platform); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("DuckDB PRAGMA platform = %q", platform)
+}
+
+func TestSupplyAdmitsVerifiedArtifactAndOfflineLookup(t *testing.T) {
+	content := []byte("pinned extension bytes")
+	digest := digestFor(content)
+	artifact := testArtifact("httpfs", digest, "linux-amd64")
+	var fetches int
+	supply := newSupply(t, Config{Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}}, Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+		fetches++
+		return io.NopCloser(bytes.NewReader(content)), nil
+	}}}, VerifySignature: verifyOK})
+	admitted, err := supply.AdmitExtension(context.Background(), "httpfs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(admitted.Path) || admitted.Digest != digest || admitted.Origin != "vendor" {
+		t.Fatalf("admitted = %#v", admitted)
+	}
+	if fetches != 1 {
+		t.Fatalf("fetches = %d, want one", fetches)
+	}
+	// A second supply with no fetch adapter can deterministically use the
+	// content-addressed cache while offline.
+	config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: supply.config.CacheDir, Offline: true, Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}}, VerifySignature: verifyOK}
+	config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
+	config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
+	offline, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offlineAdmitted, err := offline.AdmitExtension(context.Background(), "httpfs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offlineAdmitted.Path != admitted.Path {
+		t.Fatalf("offline path = %q, online path = %q", offlineAdmitted.Path, admitted.Path)
+	}
+}
+
+func TestOfflineSupplyAdmitsPackagedReviewedFileOrigin(t *testing.T) {
+	content := []byte("packaged extension bytes")
+	artifact := testArtifact("httpfs", digestFor(content), "linux-amd64")
+	supply := newSupply(t, Config{
+		Offline:  true,
+		Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}},
+		Origins: []Origin{{ID: "vendor", URL: "file:///usr/local/share/leapview/extensions/artifacts", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(content)), nil
+		}}},
+		VerifySignature: verifyOK,
+	})
+	if _, err := supply.AdmitExtension(context.Background(), "httpfs"); err != nil {
+		t.Fatalf("offline packaged file origin admission failed: %v", err)
+	}
+}
+
+func TestSupplyRejectsAdversarialManifestAndBytes(t *testing.T) {
+	content := []byte("correct bytes")
+	digest := digestFor(content)
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   error
+	}{
+		{name: "missing signature", mutate: func(config *Config) { config.Manifest.Artifacts[0].Signature = "" }, want: extension.ErrExtensionUnsigned},
+		{name: "wrong target version", mutate: func(config *Config) { config.Manifest.Artifacts[0].Identity.DuckDBVersion = "v9.9.9" }, want: extension.ErrExtensionUnavailable},
+		{name: "wrong target platform", mutate: func(config *Config) { config.Manifest.Artifacts[0].Identity.Platform = "windows-arm64" }, want: extension.ErrInvalidManifest},
+		{name: "unapproved origin", mutate: func(config *Config) { config.Origins[0].Reviewed = false }, want: extension.ErrExtensionUnapproved},
+		{name: "missing verifier", mutate: func(config *Config) { config.VerifySignature = nil }, want: extension.ErrInvalidManifest},
+		{name: "corrupt bytes", mutate: func(config *Config) {
+			config.Origins[0].Fetch = func(context.Context, Artifact) (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader("tampered")), nil
+			}
+		}, want: extension.ErrExtensionUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: filepath.Join(t.TempDir(), "extensions"), Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{testArtifact("httpfs", digest, "linux-amd64")}}, Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(content)), nil
+			}}}, VerifySignature: verifyOK}
+			config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
+			config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
+			test.mutate(&config)
+			supply, err := New(config)
+			if err != nil {
+				if !errors.Is(err, test.want) {
+					t.Fatalf("New() error = %v, want %v", err, test.want)
+				}
+				return
+			}
+			_, err = supply.AdmitExtension(context.Background(), "httpfs")
+			if !errors.Is(err, test.want) {
+				t.Fatalf("AdmitExtension() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
+func TestSupplyDoesNotLeakConfiguredOriginSecrets(t *testing.T) {
+	secret := "access_key=do-not-leak"
+	content := []byte("bytes")
+	config := Config{DuckDBVersion: "v1.4.0", GOOS: "linux", GOARCH: "amd64", Platform: "linux-amd64", SupportProfile: "stable-v1", CacheDir: filepath.Join(t.TempDir(), "extensions"), Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{testArtifact("httpfs", digestFor(content), "linux-amd64")}}, Origins: []Origin{{ID: "vendor", URL: "https://reviewed.invalid", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) { return nil, errors.New(secret) }}}, VerifySignature: verifyOK}
+	config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
+	config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
+	supply := newSupply(t, config)
+	_, err := supply.AdmitExtension(context.Background(), "httpfs")
+	if err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "reviewed.invalid") {
+		t.Fatalf("error leaked origin details: %v", err)
+	}
+}
+
+func TestSupplyRejectsOversizedCachedArtifact(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "extensions")
+	content := []byte("unused")
+	artifact := testArtifact("httpfs", digestFor(content), "linux-amd64")
+	supply := newSupply(t, Config{CacheDir: root, Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}}, Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(content)), nil
+	}}}, VerifySignature: verifyOK})
+	path, err := supply.cachePath(artifact.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, MaxArtifactBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := supply.AdmitExtension(context.Background(), artifact.Identity.Name); !errors.Is(err, extension.ErrExtensionIntegrity) {
+		t.Fatalf("AdmitExtension() error = %v, want oversized cache integrity error", err)
+	}
+}
+
+func TestSupplyCachePathUsesDuckDBLoaderBasenames(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		want string
+	}{
+		{name: "ducklake", want: "ducklake.duckdb_extension"},
+		{name: "sqlite", want: "sqlite_scanner.duckdb_extension"},
+		{name: "mysql", want: "mysql_scanner.duckdb_extension"},
+		{name: "postgres", want: "postgres_scanner.duckdb_extension"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			artifact := testArtifact(test.name, digestFor([]byte(test.name)), "linux-amd64")
+			supply := newSupply(t, Config{Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}}, VerifySignature: verifyOK})
+			path, err := supply.cachePath(artifact.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := filepath.Base(path); got != test.want {
+				t.Fatalf("cache basename = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSupplySignatureVerifierSeesCanonicalStagingBasename(t *testing.T) {
+	content := []byte("signed extension bytes")
+	artifact := testArtifact("sqlite", digestFor(content), "linux-amd64")
+	var staged string
+	supply := newSupply(t, Config{
+		Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}},
+		Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/sqlite", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(content)), nil
+		}}},
+		VerifySignature: verifyOK,
+		VerifySignatureAtPath: func(_ context.Context, _ Artifact, path string) error {
+			staged = filepath.Base(path)
+			if staged != "sqlite_scanner.duckdb_extension" {
+				return fmt.Errorf("staged basename = %q", staged)
+			}
+			return nil
+		},
+	})
+	if _, err := supply.AdmitExtension(context.Background(), "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	if staged != "sqlite_scanner.duckdb_extension" {
+		t.Fatalf("staged basename = %q", staged)
+	}
+}
+
+func TestSupplyMemoizedAdmissionRechecksCacheIntegrity(t *testing.T) {
+	content := []byte("immutable extension bytes")
+	artifact := testArtifact("httpfs", digestFor(content), "linux-amd64")
+	supply := newSupply(t, Config{
+		Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}},
+		Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(content)), nil
+		}}},
+		VerifySignature: verifyOK,
+	})
+	admitted, err := supply.AdmitExtension(context.Background(), "httpfs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(admitted.Path, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := supply.AdmitExtension(context.Background(), "httpfs"); !errors.Is(err, extension.ErrExtensionIntegrity) {
+		t.Fatalf("memoized AdmitExtension() error = %v, want integrity error", err)
+	}
+}
+
+func newSupply(t *testing.T, config Config) *Supply {
+	t.Helper()
+	if config.DuckDBVersion == "" {
+		config.DuckDBVersion = "v1.4.0"
+	}
+	if config.GOOS == "" {
+		config.GOOS = "linux"
+	}
+	if config.GOARCH == "" {
+		config.GOARCH = "amd64"
+	}
+	if config.Platform == "" {
+		config.Platform = "linux-amd64"
+	}
+	if config.SupportProfile == "" {
+		config.SupportProfile = "stable-v1"
+	}
+	if config.CacheDir == "" {
+		config.CacheDir = filepath.Join(t.TempDir(), "extensions")
+	}
+	config.Manifest.DuckDBVersion, config.Manifest.GOOS, config.Manifest.GOARCH = config.DuckDBVersion, config.GOOS, config.GOARCH
+	config.Manifest.Platform, config.Manifest.SupportProfile = config.Platform, config.SupportProfile
+	supply, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return supply
+}
+
+func testArtifact(name, digest, platform string) Artifact {
+	return Artifact{Identity: extension.Identity{DuckDBVersion: "v1.4.0", ExtensionVersion: "1.0.0", GOOS: "linux", GOARCH: "amd64", Platform: platform, Name: name, Digest: digest, SupportProfile: "stable-v1"}, Origins: []string{"vendor"}, Provenance: "attest:vendor-1", Signature: "sig:vendor-1"}
+}
+
+func digestFor(value []byte) string {
+	return "sha256:" + fmt.Sprintf("%x", sha256.Sum256(value))
+}
+
+func verifyOK(context.Context, Artifact, []byte) error { return nil }

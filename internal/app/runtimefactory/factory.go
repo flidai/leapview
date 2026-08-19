@@ -100,7 +100,7 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 		}
 		dashboards[resourceID] = definition
 	}
-	projectDefinition, err := dashboardruntime.NewProjectDefinition(input.State.ProjectID, compiled.Manifest.Title, compiled.Manifest.Description, models, dashboards)
+	projectDefinition, err := dashboardruntime.NewTargetBoundProjectDefinition(input.State.ProjectID, compiled.Manifest.Title, compiled.Manifest.Description, models, dashboards)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard project definition: %w", err)
 	}
@@ -204,7 +204,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 		}
 		dashboards[resourceID] = definition
 	}
-	projectDefinition, err := dashboardruntime.NewProjectDefinition(input.State.ProjectID, compiled.Manifest.Title, compiled.Manifest.Description, models, dashboards)
+	projectDefinition, err := dashboardruntime.NewTargetBoundProjectDefinition(input.State.ProjectID, compiled.Manifest.Title, compiled.Manifest.Description, models, dashboards)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard project definition: %w", err)
 	}

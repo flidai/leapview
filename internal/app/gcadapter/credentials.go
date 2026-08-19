@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
@@ -24,6 +25,9 @@ func NewPoolCredentialBootstrap(contract *ducklake.PoolContract, config S3Config
 	if strings.TrimSpace(config.AccessKeyID) == "" || strings.TrimSpace(config.SecretAccessKey) == "" {
 		return nil, fmt.Errorf("target-owned S3 access and secret keys are required for DuckLake credential bootstrap")
 	}
+	if config.ExtensionAdmission == nil {
+		return nil, fmt.Errorf("DuckLake credential bootstrap requires httpfs extension admission")
+	}
 	if location := strings.TrimSpace(contract.Pool.Identity.StorageLocation); location == "" {
 		return nil, fmt.Errorf("S3 physical-pool storage location is required for DuckLake credential bootstrap")
 	} else if parsed, err := url.Parse(location); err != nil || parsed.Scheme != "s3" || parsed.Host == "" {
@@ -37,10 +41,14 @@ func NewPoolCredentialBootstrap(contract *ducklake.PoolContract, config S3Config
 	accessKey, secretKey, sessionToken := config.AccessKeyID, config.SecretAccessKey, config.SessionToken
 	pathStyle := config.PathStyle
 	return func(ctx context.Context, execer driver.ExecerContext) error {
-		if _, err := execer.ExecContext(ctx, "INSTALL httpfs FROM core", nil); err != nil {
-			return err
+		admitted, err := config.ExtensionAdmission.AdmitExtension(ctx, "httpfs")
+		if err != nil {
+			return fmt.Errorf("admit httpfs extension: %w", err)
 		}
-		if _, err := execer.ExecContext(ctx, "LOAD httpfs", nil); err != nil {
+		if admitted.Name != "httpfs" || !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(admitted.Path, ".duckdb_extension") {
+			return fmt.Errorf("httpfs extension admission returned an invalid absolute path")
+		}
+		if _, err := execer.ExecContext(ctx, "LOAD '"+sqlLiteral(admitted.Path)+"'", nil); err != nil {
 			return err
 		}
 		parts := []string{
@@ -60,7 +68,7 @@ func NewPoolCredentialBootstrap(contract *ducklake.PoolContract, config S3Config
 		if pathStyle {
 			parts = append(parts, "URL_STYLE 'path'")
 		}
-		_, err := execer.ExecContext(ctx, "CREATE OR REPLACE SECRET leapview_pool ("+strings.Join(parts, ", ")+")", nil)
+		_, err = execer.ExecContext(ctx, "CREATE OR REPLACE SECRET leapview_pool ("+strings.Join(parts, ", ")+")", nil)
 		return err
 	}, nil
 }

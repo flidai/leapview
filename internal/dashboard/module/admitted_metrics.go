@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
@@ -90,6 +91,32 @@ func (m admittedMetrics) QueryDashboardVisualizations(ctx context.Context, dashb
 
 func (m admittedMetrics) QueryVisualization(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
 	return m.Metrics.QueryVisualization(m.readContext(ctx), dashboardID, pageID, filters, visualID)
+}
+
+// QueryVisualizationForDefinition preserves the canonical compiled-definition
+// execution seam through workload admission. Agent-authored visuals must use
+// the same admission boundary as dashboard visual queries.
+func (m admittedMetrics) QueryVisualizationForDefinition(ctx context.Context, definition dashboarddefinition.Definition, pageID string, filters dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
+	provider, ok := m.Metrics.(interface {
+		QueryVisualizationForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, string) (visualizationir.VisualizationEnvelope, error)
+	})
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, errors.New("compiled visualization execution is not supported by this runtime")
+	}
+	return provider.QueryVisualizationForDefinition(m.readContext(ctx), definition, pageID, filters, visualID)
+}
+
+// DefaultFiltersForDefinition forwards authored defaults through the
+// admission decorator so canonical visual queries use the same initial state
+// as dashboard pages.
+func (m admittedMetrics) DefaultFiltersForDefinition(definition dashboarddefinition.Definition) dashboard.Filters {
+	provider, ok := m.Metrics.(interface {
+		DefaultFiltersForDefinition(dashboarddefinition.Definition) dashboard.Filters
+	})
+	if !ok {
+		return dashboard.Filters{}.WithDefaults()
+	}
+	return provider.DefaultFiltersForDefinition(definition)
 }
 
 func (m admittedMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {

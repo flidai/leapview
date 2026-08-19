@@ -2,14 +2,17 @@ package configschema
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 )
@@ -77,9 +80,18 @@ spec:
   pages:
     - id: overview
       title: Overview
-      visuals: []
+      components: []
 `))
 	assertDiagnostic(t, err, "schema.enum", "type")
+}
+
+func TestDashboardFieldPathUsesCamelCaseAndArrayIndexes(t *testing.T) {
+	if got := dashboardFieldPath([]string{"spec", "visuals", "revenue", "dataBudget", "requiredCompleteness"}); got != "spec.visuals.revenue.dataBudget.requiredCompleteness" {
+		t.Fatalf("field path = %q", got)
+	}
+	if got := dashboardFieldPath([]string{"spec", "pages", "0", "components", "1", "visual"}); got != "spec.pages[0].components[1].visual" {
+		t.Fatalf("array field path = %q", got)
+	}
 }
 
 func TestCanonicalModelAndSemanticModelContract(t *testing.T) {
@@ -90,7 +102,9 @@ metadata: {id: model:sales_orders, name: sales_orders}
 aiContext:
   instructions: Use governed order identity.
 spec:
-  source: source:orders
+  definition:
+    type: direct
+    source: source:orders
   entities:
     order: {type: primary, fields: [order_id]}
     customer: {type: foreign, fields: [customer_id]}
@@ -203,7 +217,22 @@ spec:
 	if err == nil {
 		t.Fatal("Model accepted removed top-level spec.sql alias")
 	}
-	assertDiagnostic(t, err, "schema.unknown_field", "sql")
+	assertDiagnostic(t, err, "schema.generated", "definition")
+}
+
+func TestValidateBytesRejectsLegacyModelValidation(t *testing.T) {
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  sources: [source:orders]
+  fields:
+    order_id: {datatype: String}
+`))
+	if err == nil {
+		t.Fatal("ValidateBytes accepted legacy Model source list")
+	}
 }
 
 func TestCanonicalDatasetModelUsesAuthoringName(t *testing.T) {
@@ -270,68 +299,65 @@ metadata:
 spec:
   semanticModel: sales
   filters:
-    state:
+    - id: state
       label: State
-      field: customers.state
-      predicates:
-        - kind: set
-          operators: [in, not_in]
-      options: {kind: distinct, limit: 50}
-  filter_bindings:
-    state:
-      filter: state
-      targets:
-        include: [overview/revenue]
-      default: {kind: unfiltered}
+      dimension: state
+      control: {type: multiSelect}
   visuals:
     revenue:
       type: line
       title: Revenue
       query:
-        dimensions: [orders.purchase_month]
+        type: aggregate
+        dimensions: [purchase_month]
         metrics: [revenue]
+      presentation: {type: cartesian}
     total:
       type: kpi
-      query:
-        metrics: [revenue]
+      query: {type: aggregate, dimensions: [], metrics: [revenue]}
+      presentation: {type: kpi}
     orders:
       type: table
       title: Orders
-      cardinality: bounded
       query:
+        type: records
         dataset: orders
-        fields: [orders.order_id, orders.revenue]
+        fields: [order_id, revenue]
+      presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
     state_status:
       type: matrix
       title: State status
       query:
-        rows: [customers.state]
-        columns: [orders.status]
+        type: pivot
+        rows: [state]
+        columns: [order_status]
         metrics: [order_count]
+      presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
     category_status:
       type: pivot
       title: Category status
       query:
-        rows: [orders.category]
-        columns: [orders.status]
+        type: pivot
+        rows: [category]
+        columns: [status]
         metrics: [order_count]
+      presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
   pages:
     - id: overview
       title: Overview
       components:
         - id: revenue
-          kind: visual
+          type: visual
           visual: revenue
-          placement: {col: 1, row: 1, col_span: 6, row_span: 4}
+          placement: {column: 1, row: 1, columnSpan: 6, rowSpan: 4}
         - id: state
-          kind: slicer
-          binding: {scope: report, id: state}
-          presentation: {style: dropdown}
-          placement: {col: 7, row: 1, col_span: 3, row_span: 2}
+          type: filter
+          filter: state
+          placement: {column: 7, row: 1, columnSpan: 3, rowSpan: 2}
         - id: heading
-          kind: header
+          type: header
           title: Sales
-          placement: {col: 1, row: 5, col_span: 12, row_span: 1}
+          placement: {column: 1, row: 5, columnSpan: 12, rowSpan: 1}
 `))
 	if err != nil {
 		t.Fatalf("ValidateBytes() error = %v", err)
@@ -347,42 +373,20 @@ metadata:
   name: sales
 spec:
   semanticModel: sales
+  filters: []
   visuals:
     revenue:
       type: line
       title: Revenue
       query:
-        dimensions: [orders.purchase_month]
-        series: {field: orders.status, alias: status}
+        type: aggregate
+        dimensions: [purchase_month]
         metrics: [revenue]
       presentation:
-        axes:
-          - {id: x, title: Month, tick_density: sparse}
-          - {id: primary_y, title: Revenue, scale: linear, zero: include, minimum: 0, maximum: 100, unit: USD}
-        reference_lines:
-          - {id: target, axis: primary_y, value: {number: 80}, label: Target, tone: success}
-        reference_bands:
-          - id: healthy
-            axis: primary_y
-            from: {field: value, reducer: minimum}
-            to: {field: value, reducer: maximum}
-            label: Healthy range
-        event_annotations:
-          - {id: launch, axis: x, value: {text: "2026-03-01"}, label: Launch}
-        tooltip: [label, value]
+        type: cartesian
         stacking: percent
-        series_order: [delivered, processing]
-        series_colors: {delivered: success, processing: data_3}
-        conditional_formatting:
-          - id: revenue-health
-            target: mark_fill
-            field: value
-            kind: gradient
-            minimum: 0
-            maximum: 100
-            low: {color: danger}
-            high: {color: success}
-            null: {color: neutral}
+        smooth: true
+        showSymbols: true
   pages:
     - id: overview
       title: Overview
@@ -471,12 +475,12 @@ metadata:
   id: connection:files
   name: files
 spec:
-  kind: local
+  type: local
 `))
-	assertDiagnostic(t, err, "schema.enum", "local")
+	assertDiagnosticMessage(t, err, "schema.generated", "value must be 'managed'")
 }
 
-func TestValidateBytesRejectsInvalidIdentifierKey(t *testing.T) {
+func TestValidateBytesRejectsGeneratedInvalidFieldName(t *testing.T) {
 	err := ValidateBytes(KindModel, "orders.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Model
@@ -484,6 +488,7 @@ metadata:
   id: model:orders
   name: orders
 spec:
+  definition: {type: direct, source: orders}
   entities: {order: {type: primary, fields: [order_id]}}
   grain: {entity: order}
   fields:
@@ -492,7 +497,208 @@ spec:
     order_id:
       datatype: String
 `))
-	assertDiagnostic(t, err, "schema.unknown_field", "invalid-name")
+	if err == nil {
+		t.Fatal("generated Model schema accepted invalid field key")
+	}
+}
+
+func TestValidateBytesRejectsGeneratedMetadataAndMapViolations(t *testing.T) {
+	cases := []struct {
+		name string
+		kind Kind
+		yaml string
+	}{
+		{
+			name: "resource id pattern",
+			kind: KindModel,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: "model:invalid id", name: orders}
+spec:
+  definition: {type: direct, source: orders}
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`,
+		},
+		{
+			name: "source schema map key",
+			kind: KindSource,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: managed:local
+  location: {type: path, path: orders.csv, format: csv}
+  schema:
+    mode: strict
+    fields: {"invalid-name": {datatype: String}}
+`,
+		},
+		{
+			name: "freshness duration lower bound",
+			kind: KindSource,
+			yaml: `
+apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: managed:local
+  location: {type: path, path: orders.csv, format: csv}
+  freshness:
+    basis: field
+    field: order_id
+    warningAfter: {amount: 0, unit: hour}
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateBytes(tc.kind, tc.name+".yaml", []byte(tc.yaml)); err == nil {
+				t.Fatal("ValidateBytes accepted generated contract violation")
+			}
+		})
+	}
+}
+
+func TestGeneratedSchemaDiagnosticsPointToField(t *testing.T) {
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  definition: {type: direct, source: orders}
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+  unexpected: true
+`))
+	diagnostics := Diagnostics(err)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one generated-schema diagnostic", diagnostics)
+	}
+	diagnostic := diagnostics[0]
+	if diagnostic.FieldPath != "spec.unexpected" || diagnostic.Line == 0 || diagnostic.Column == 0 {
+		t.Fatalf("diagnostic = %#v, want spec.unexpected with source position", diagnostic)
+	}
+}
+
+func TestGeneratedSchemaCUEImportFailsClosedForInvalidValue(t *testing.T) {
+	if err := validateGeneratedCUE(KindModel, map[string]any{"kind": "Model"}); err == nil {
+		t.Fatal("generated CUE import accepted an invalid Model value")
+	}
+}
+
+func TestGeneratedPerKindSchemaPreservesAPIGenRootStructure(t *testing.T) {
+	var source map[string]any
+	if err := json.Unmarshal(projectcontracts.DataResourcesSchema, &source); err != nil {
+		t.Fatal(err)
+	}
+	definitions, ok := source["$defs"].(map[string]any)
+	if !ok {
+		t.Fatal("APIGen schema has no $defs")
+	}
+	for _, test := range []struct {
+		kind Kind
+		root string
+	}{
+		{KindConnection, "Connection"}, {KindSource, "Source"}, {KindModel, "Model"},
+	} {
+		t.Run(string(test.kind), func(t *testing.T) {
+			want, ok := definitions[test.root].(map[string]any)
+			if !ok {
+				t.Fatalf("APIGen root %q missing", test.root)
+			}
+			encoded, err := generatedJSONSchema(test.kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(encoded, &got); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"$id", "title", "description", "x-apigen-contracts"} {
+				delete(got, key)
+			}
+			delete(got, "$defs")
+			delete(got, "$schema")
+			want = cloneJSONMap(want)
+			normalizeKindConstraint(want)
+			normalizeKindConstraint(got)
+			if !reflect.DeepEqual(want, got) {
+				t.Fatalf("generated %s root changed APIGen structure\nwant=%s\ngot=%s", test.root, mustJSON(t, want), mustJSON(t, got))
+			}
+		})
+	}
+}
+
+func TestSourceFreshnessOverlayIsContextOnly(t *testing.T) {
+	for _, forbidden := range []string{"basis", "field", "revision", "close"} {
+		if strings.Contains(strings.ToLower(sourceFreshnessConstraint), forbidden) {
+			t.Fatalf("freshness overlay contains structural vocabulary %q: %s", forbidden, sourceFreshnessConstraint)
+		}
+	}
+	if !strings.Contains(sourceFreshnessConstraint, "warningAfter!") || !strings.Contains(sourceFreshnessConstraint, "errorAfter!") {
+		t.Fatalf("freshness overlay does not express threshold disjunction: %s", sourceFreshnessConstraint)
+	}
+}
+
+func TestSourceFreshnessDiagnosticPointsToContextualField(t *testing.T) {
+	err := ValidateBytes(KindSource, "source.yaml", []byte(`
+apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: files
+  location: {type: path, path: orders.csv, format: csv}
+  freshness:
+    basis: field
+    field: updated_at
+`))
+	if err == nil {
+		t.Fatal("source freshness without thresholds was accepted")
+	}
+	diagnostics := Diagnostics(err)
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one contextual freshness diagnostic", diagnostics)
+	}
+	diagnostic := diagnostics[0]
+	if diagnostic.FieldPath != "spec.freshness" || diagnostic.Line == 0 || diagnostic.Column == 0 {
+		t.Fatalf("diagnostic = %#v, want spec.freshness with source position", diagnostic)
+	}
+}
+
+func cloneJSONMap(value map[string]any) map[string]any {
+	encoded, _ := json.Marshal(value)
+	var clone map[string]any
+	_ = json.Unmarshal(encoded, &clone)
+	return clone
+}
+
+func normalizeKindConstraint(schema map[string]any) {
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return
+	}
+	kind, ok := properties["kind"].(map[string]any)
+	if !ok {
+		return
+	}
+	if values, ok := kind["enum"].([]any); ok && len(values) == 1 {
+		kind["const"] = values[0]
+		delete(kind, "enum")
+	}
+}
+
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 func TestValidateBytesRejectsMissingRequiredRootFields(t *testing.T) {
@@ -677,6 +883,20 @@ func TestJSONSchemaFilesAreFresh(t *testing.T) {
 	}
 }
 
+func TestDashboardGeneratedSchemaBytesMatchTrackedContract(t *testing.T) {
+	got, err := JSONSchema(KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("..", "..", "..", "schemas", "json", "dashboard-document.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("embedded Dashboard JSON Schema is stale; regenerate dashboard-document.schema.json")
+	}
+}
+
 func TestProjectContractIsProjectWide(t *testing.T) {
 	valid := []byte(`
 apiVersion: leapview.dev/v1
@@ -729,7 +949,7 @@ metadata:
   id: connection:files
   name: files
 spec:
-  kind: managed
+  type: managed
 `
 	if err := ValidateBytes(KindConnection, "connection.yaml", []byte(base)); err != nil {
 		t.Fatalf("valid metadata rejected: %v", err)

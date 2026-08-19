@@ -17,14 +17,44 @@ visuals:
     description: Ranks product categories by revenue.
     type: bar
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: revenue
+        direction: desc
       limit: 10
+    presentation:
+      type: cartesian
+```
+
+## Stacked series
+
+Use a second ordered dimension for status and `presentation.stacking: normal` to combine each status segment into one category total while preserving its composition.
+
+{{< visual id="categories_by_status_bar" >}}
+
+```yaml visual-example=categories_by_status_bar
+visuals:
+  categories_by_status_bar:
+    title: Category revenue by status
+    type: bar
+    presentation:
+      type: cartesian
+      stacking: normal
+    query:
+      type: aggregate
+      dimensions:
+      - category
+      - status
+      metrics:
+      - revenue
+      sort:
+      - field: revenue
+        direction: desc
+      limit: 60
 ```
 
 ## Alternate metric
@@ -40,38 +70,14 @@ visuals:
     description: Compares order volume across delivery-speed buckets.
     type: bar
     query:
+      type: aggregate
       dimensions:
-        delivery_bucket: orders.delivery_bucket
+      - delivery_bucket
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: delivery_bucket
-          direction: asc
-```
-
-## Stacked series
-
-Use `query.series` for status and `presentation.stacked` to combine each status segment into one category total while preserving its composition.
-
-{{< visual id="categories_by_status_bar" >}}
-
-```yaml visual-example=categories_by_status_bar
-visuals:
-  categories_by_status_bar:
-    title: Category revenue by status
-    type: bar
+      - field: delivery_bucket
+        direction: asc
     presentation:
-      stacked: true
-    query:
-      dimensions:
-        category: orders.category
-      series:
-        field: orders.status
-        alias: status
-      metrics:
-        revenue: null
-      sort:
-        - field: value
-          direction: desc
-      limit: 60
+      type: cartesian
 ```

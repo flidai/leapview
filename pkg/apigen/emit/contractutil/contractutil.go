@@ -112,6 +112,9 @@ func collectRef(ref ir.SchemaRef, seen map[string]struct{}, queue *[]string) {
 	if ref.Items != nil {
 		collectRef(*ref.Items, seen, queue)
 	}
+	if ref.PropertyNames != nil {
+		collectRef(*ref.PropertyNames, seen, queue)
+	}
 	if ref.AdditionalProperties != nil && ref.AdditionalProperties.Schema != nil {
 		collectRef(*ref.AdditionalProperties.Schema, seen, queue)
 	}

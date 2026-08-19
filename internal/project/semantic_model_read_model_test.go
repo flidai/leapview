@@ -15,12 +15,12 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				ModelName: "orders",
-				Entities:  map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+				Entities:  map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"status": {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString},
 				},
 			},
-			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
+			"customers": {ModelName: "customers", Entities: map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, GrainEntity: "customer_id"},
 		},
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Dataset: "orders", Aggregation: "count"},
@@ -67,11 +67,11 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 func TestSemanticModelAssetPayloadRejectsMismatchedCompiledBindings(t *testing.T) {
 	model := &semanticmodel.Model{
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
-		Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
+		Tables:   map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
 	}
 	other := &semanticmodel.Model{
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"customers": {Model: "customers"}},
-		Tables: map[string]semanticmodel.Table{"customers": {ModelName: "customers"}},
+		Tables:   map[string]semanticmodel.Table{"customers": {ModelName: "customers"}},
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(other)
 	if err != nil {

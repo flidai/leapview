@@ -16,14 +16,17 @@ visuals:
     title: Category revenue treemap
     type: treemap
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: revenue
+        direction: desc
       limit: 18
+    presentation:
+      type: hierarchy
 ```
 
 ## Alternate metric
@@ -38,14 +41,17 @@ visuals:
     title: State revenue treemap
     type: treemap
     query:
+      type: aggregate
       dimensions:
-        state: orders.state
+      - state
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: revenue
+        direction: desc
       limit: 18
+    presentation:
+      type: hierarchy
 ```
 
 ## Navigable hierarchy
@@ -60,16 +66,18 @@ visuals:
     title: Navigable category and status treemap
     type: treemap
     presentation:
+      type: hierarchy
       roam: true
       breadcrumb: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: revenue
+        direction: desc
       limit: 80
 ```

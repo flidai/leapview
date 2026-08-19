@@ -77,17 +77,6 @@ append-only delivery event ledger records plan, qualification/approval,
 build/seal, publication, activation, retirement, rollback, lease, and GC
 outcomes with actor and digest evidence.
 
-### Historical `reuse_snapshot` provenance
-
-Provenance written by older releases may contain the historical
-`dataMode: reuse_snapshot` literal. Those immutable records remain readable
-for audit and evidence review, but they are not accepted for a new plan,
-candidate build, or publication. The controlled-rebuild diagnostic identifies
-the record; rebuild and requalify the candidate under the canonical
-`reuse_base` mode before publishing. Never edit the persisted provenance JSON
-or recompute its bound digests in place: retain the historical row and create
-new, canonical evidence through the normal plan → build → publish flow.
-
 No query can select a preparing candidate or an unverified seal. Rows migrated
 from an older schema that lack serving-state identity remain inspectable but
 cannot become ready or active until repaired. Production composition exposes

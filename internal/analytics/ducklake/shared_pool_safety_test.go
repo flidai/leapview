@@ -12,7 +12,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -49,25 +49,6 @@ func TestDataInliningPolicyFailsClosedWhenNoScopeIsRecorded(t *testing.T) {
 	got := (DataInliningPolicy{}).Effective("model", "orders")
 	if got.Limit == 0 {
 		t.Fatalf("unrecorded policy = %#v, want non-zero fail-closed value", got)
-	}
-}
-
-func TestPlanLegacyInlineFlushIsTableScopedAndDeterministic(t *testing.T) {
-	plan, err := PlanLegacyInlineFlush([]InlineTableState{
-		{Schema: "model", Table: "z", InlinedRows: 2},
-		{Schema: "model", Table: "empty"},
-		{Schema: "model", Table: "a", InlinedDeletes: 1},
-		{Schema: "model", Table: "a", InlinedDeletes: 3},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := InlineFlushPlan{Targets: []InlineFlushTarget{{Schema: "model", Table: "a"}, {Schema: "model", Table: "z"}}}
-	if !reflect.DeepEqual(plan, want) {
-		t.Fatalf("plan = %#v, want %#v", plan, want)
-	}
-	if err := ValidateNoLiveInlineData([]InlineTableState{{Schema: "model", Table: "orders", InlinedRows: 1}}); !errors.Is(err, ErrLiveInlineData) {
-		t.Fatalf("ValidateNoLiveInlineData() = %v, want live data rejection", err)
 	}
 }
 
@@ -299,11 +280,7 @@ func TestEnvironmentReportsZeroInliningAcrossRuntimeScopes(t *testing.T) {
 	if err := policy.ValidateZero(); err != nil {
 		t.Fatalf("zero inlining policy rejected: %v", err)
 	}
-	states, err := env.LegacyInlineTables(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateNoLiveInlineData(states); err != nil {
+	if err := env.ValidateNoLiveInlineData(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -361,71 +338,6 @@ func TestCredentialBootstrapRunsForEveryPooledConnector(t *testing.T) {
 	}
 	if got := calls.Load(); got <= beforeReplacement {
 		t.Fatalf("credential bootstrap calls did not increase for replacement: before=%d after=%d", beforeReplacement, got)
-	}
-}
-
-func TestLegacyInlineDataIsDetectedAndFlushedTableByTable(t *testing.T) {
-	ctx := context.Background()
-	env, err := Open(ctx, fixtureConfig(t, Config{RootDir: t.TempDir()}))
-	if extensionUnavailable(err) {
-		t.Skipf("ducklake extension unavailable: %v", err)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer env.Close()
-	if _, err := env.Commit(ctx, "inline-create", nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS model; CREATE TABLE model.inline_orders(id BIGINT, label VARCHAR)")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := env.Exec(ctx, "CALL ducklake_set_option('lake', 'data_inlining_row_limit', 100, schema => 'model', table_name => 'inline_orders')"); err != nil {
-		t.Fatalf("set persisted inline limit: %v", err)
-	}
-	if err := env.Exec(ctx, "CALL ducklake_set_option('lake', 'auto_compact', false, schema => 'model', table_name => 'inline_orders')"); err != nil {
-		t.Fatalf("disable persisted table auto_compact: %v", err)
-	}
-	if _, err := env.Commit(ctx, "inline-insert", nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO model.inline_orders VALUES (1, 'legacy')")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	policy, err := env.DataInliningPolicy(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := policy.ValidateZero(); !errors.Is(err, ErrInliningNotDisabled) {
-		t.Fatalf("inline policy validation = %v, want non-zero persisted rejection", err)
-	}
-	states, err := env.LegacyInlineTables(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(states) != 1 || states[0].InlinedRows == 0 {
-		t.Fatalf("legacy inline states = %#v, want one live inlined table", states)
-	}
-	plan, err := PlanLegacyInlineFlush(states)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := env.FlushLegacyInlineData(ctx, plan); err != nil {
-		t.Fatalf("table-scoped inline flush: %v", err)
-	}
-	flushed, err := env.LegacyInlineTables(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateNoLiveInlineData(flushed); err != nil {
-		t.Fatalf("live inline data after flush: %v (%#v)", err, flushed)
-	}
-	value, present, err := env.TableAutoCompact(ctx, "model", "inline_orders")
-	if err != nil {
-		t.Fatalf("inspect table auto_compact after flush: %v", err)
-	}
-	if !present || value {
-		t.Fatalf("table auto_compact after flush = %t (present=%t), want explicit false", value, present)
 	}
 }
 
@@ -787,9 +699,21 @@ func fixtureConfig(t *testing.T, config Config) Config {
 		storageImplementation = "s3"
 	}
 	config.PoolContract = fixturePoolContractFor(t, storageImplementation, dataPath)
+	if config.ExtensionAdmission == nil {
+		config.ExtensionAdmission = extensionfixture.New(t, "ducklake", "sqlite").Admission
+	}
 	config.SharedPool = true
 	config.PhysicalPoolID = ""
 	config.Compatibility = CompatibilityTuple{}
+	return config
+}
+
+func admittedConfig(t *testing.T, config Config, names ...string) Config {
+	t.Helper()
+	if len(names) == 0 {
+		names = []string{"ducklake"}
+	}
+	config.ExtensionAdmission = extensionfixture.New(t, names...).Admission
 	return config
 }
 

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
@@ -186,6 +188,63 @@ func TestRuntimeBindingLeasesExposeOnlyTheValidatedLogicalPool(t *testing.T) {
 	}
 }
 
+func TestRuntimeBindingLeaserPublicRequiresNoAuthBinding(t *testing.T) {
+	binding, err := NewTargetBinding(TargetBindingInput{
+		ID: "binding_public_s3", TargetID: "target_1", ConnectionID: "public_files", ConnectorKind: "s3",
+		AuthenticationMode: AuthenticationNone,
+		Scope:              BindingScope{ProjectID: "project_1", Environment: "prod"},
+		Endpoint:           EndpointConfig{ObjectScope: "s3://public/"}, Enabled: true, Now: time.Now(),
+	})
+	require.NoError(t, err)
+	directory := &recordingValidatedPoolDirectory{}
+	leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
+		Bindings: &runtimeBindingCatalog{bindings: map[projectgraph.ResourceID]TargetBinding{binding.ConnectionID: binding}},
+		Pools:    directory, Authorize: func(context.Context, string, TargetBinding) error { return nil },
+	})
+	require.NoError(t, err)
+	leases, err := leaser.Acquire(t.Context(), RuntimeBindingRequest{
+		Actor: "author_1", Identity: servingIdentity("project_1", "prod", "generation-1"), TargetID: binding.TargetID,
+		Requirements: []Requirement{{ConnectionID: binding.ConnectionID, ConnectorKind: "s3", Access: semanticmodel.ConnectionAccessPublic}},
+	})
+	require.NoError(t, err)
+	defer leases.Release()
+	if len(directory.acquired) != 1 || leases.Evidence()[0].Access != semanticmodel.ConnectionAccessPublic || leases.Evidence()[0].ValidatedVersion != NoAuthProviderVersion {
+		t.Fatalf("public binding evidence/acquisition = %#v, %#v", directory.acquired, leases.Evidence())
+	}
+	_, err = leaser.Acquire(t.Context(), RuntimeBindingRequest{
+		Actor: "author_1", Identity: servingIdentity("project_1", "prod", "generation-2"), TargetID: binding.TargetID,
+		Requirements: []Requirement{{ConnectionID: binding.ConnectionID, ConnectorKind: "s3"}},
+	})
+	if !errors.Is(err, ErrIncompatibleBinding) {
+		t.Fatalf("private request with no-auth binding error = %v", err)
+	}
+	workload := binding
+	workload.ID = "binding_workload_s3"
+	workload.ConnectionID = "workload_files"
+	workload.AuthenticationMode = AuthenticationWorkload
+	workload.CredentialReference = CredentialReference{}
+	workload.Revision++
+	workload.UpdatedAt = workload.UpdatedAt.Add(time.Second)
+	workload.LastValidatedAt = time.Time{}
+	workload.ValidatedVersion = ""
+	workload.Health = HealthPending
+	workloadCatalog := &runtimeBindingCatalog{bindings: map[projectgraph.ResourceID]TargetBinding{workload.ConnectionID: workload}}
+	workloadLeaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
+		Bindings: workloadCatalog, Pools: &recordingValidatedPoolDirectory{},
+		Authorize: func(context.Context, string, TargetBinding) error { return nil },
+	})
+	require.NoError(t, err)
+	workloadLeases, err := workloadLeaser.Acquire(t.Context(), RuntimeBindingRequest{
+		Actor: "author_1", Identity: servingIdentity("project_1", "prod", "generation-3"), TargetID: workload.TargetID,
+		Requirements: []Requirement{{ConnectionID: workload.ConnectionID, ConnectorKind: workload.ConnectorKind}},
+	})
+	require.NoError(t, err)
+	defer workloadLeases.Release()
+	if got := workloadLeases.Evidence(); len(got) != 1 || got[0].Access != "" {
+		t.Fatalf("workload binding evidence = %#v, want private access policy", got)
+	}
+}
+
 type runtimeBindingCatalog struct {
 	bindings map[projectgraph.ResourceID]TargetBinding
 }
@@ -238,7 +297,11 @@ func (directory *recordingValidatedPoolDirectory) AcquireValidated(
 		return nil, ErrProviderUnavailable
 	}
 	evidence := binding.Evidence()
-	evidence.ValidatedVersion = "provider-v1"
+	if binding.AuthenticationMode == AuthenticationNone {
+		evidence.ValidatedVersion = NoAuthProviderVersion
+	} else {
+		evidence.ValidatedVersion = "provider-v1"
+	}
 	evidence.Health = HealthHealthy
 	pool := directory.pool
 	if pool == nil {

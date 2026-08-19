@@ -8,11 +8,9 @@ import (
 
 func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	table := semanticmodel.Table{
-		Source:             "olist.geolocation",
-		Sources:            []string{"olist.geolocation"},
-		Transform:          semanticmodel.Transform{SQL: "SELECT * FROM source.\"olist.geolocation\""},
+		Execution:          semanticmodel.ExecutionDefinition{Source: "olist.geolocation", SQL: "SELECT * FROM source.\"olist.geolocation\""},
 		Columns:            map[string]semanticmodel.ModelColumn{"zip_prefix": {Type: "string", SourceField: "geolocation_zip_code_prefix"}},
-		Entities:           map[string]semanticmodel.ModelEntitySpec{"location": {Type: "primary", Fields: []string{"zip_prefix", "city"}}},
+		Entities:           map[string]semanticmodel.EntityDefinition{"location": {Type: "primary", Fields: []string{"zip_prefix", "city"}}},
 		GrainEntity:        "location",
 		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix", Type: "string"}},
 		Schema:             semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", Ordinal: 0, PhysicalType: "VARCHAR"}}},
@@ -21,7 +19,8 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	}
 
 	payload := ModelTableAssetPayload(table)
-	if payload["Source"] != "olist.geolocation" || payload["GrainEntity"] != "location" {
+	definition, _ := payload["Definition"].(map[string]any)
+	if definition["Source"] != "olist.geolocation" || payload["GrainEntity"] != "location" {
 		t.Fatalf("payload metadata = %#v", payload)
 	}
 	if _, ok := payload["PrimaryKey"]; ok {
@@ -38,9 +37,9 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	if _, ok := payload["SQL"]; ok {
 		t.Fatalf("payload retains removed top-level SQL alias: %#v", payload)
 	}
-	transform, ok := payload["Transform"].(map[string]any)
-	if !ok || transform["SQL"] != table.Transform.SQL {
-		t.Fatalf("payload transform = %#v, want SQL %q", payload["Transform"], table.Transform.SQL)
+	transform, ok := payload["Definition"].(map[string]any)
+	if !ok || transform["SQL"] != table.Execution.SQL {
+		t.Fatalf("payload definition = %#v, want SQL %q", payload["Definition"], table.Execution.SQL)
 	}
 	if got, ok := payload["SourceDependencies"].([]any); !ok || len(got) != 1 || got[0] != "olist.geolocation" {
 		t.Fatalf("payload source dependencies = %#v", payload["SourceDependencies"])
@@ -65,19 +64,19 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 
 func TestModelTableAssetPayloadDoesNotAliasCompiledMaps(t *testing.T) {
 	table := semanticmodel.Table{
-		SourceReads: map[string][]string{"olist.geolocation": {"zip_prefix"}},
-		Columns:     map[string]semanticmodel.ModelColumn{"zip_prefix": {Type: "string"}},
-		Dimensions:  map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix"}},
+		SourceDependencies: []string{"olist.geolocation"},
+		Columns:            map[string]semanticmodel.ModelColumn{"zip_prefix": {Type: "string"}},
+		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix"}},
 	}
 	payload := ModelTableAssetPayload(table)
 	if payload == nil {
 		t.Fatal("payload is nil")
 	}
-	table.SourceReads["olist.geolocation"][0] = "changed"
+	table.SourceDependencies[0] = "changed"
 	table.Columns["zip_prefix"] = semanticmodel.ModelColumn{Type: "integer"}
 	table.Dimensions["zip_prefix"] = semanticmodel.MetricDimension{Label: "changed"}
-	if got := payload["SourceReads"].(map[string]any)["olist.geolocation"].([]any)[0]; got != "zip_prefix" {
-		t.Fatalf("payload source reads changed with source table: %#v", got)
+	if got := payload["SourceDependencies"].([]any)[0]; got != "olist.geolocation" {
+		t.Fatalf("payload source dependencies changed with source table: %#v", got)
 	}
 	if got := payload["Columns"].(map[string]any)["zip_prefix"].(map[string]any)["Type"]; got != "string" {
 		t.Fatalf("payload columns changed with source table: %#v", got)

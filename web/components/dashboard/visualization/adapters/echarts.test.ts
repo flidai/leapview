@@ -400,6 +400,37 @@ test('ECharts translation preserves combo series marks and axes', () => {
   expect(new Set(reorderedOption.dataset.map((dataset: any) => dataset.id))).toEqual(new Set(option.dataset.map((dataset: any) => dataset.id)))
 })
 
+test('ECharts translation applies combo marks and axes to multi-measure series', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'combo-measures', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
+    spec: {
+      kind: 'cartesian', title: 'Revenue and orders', mark: 'combo',
+      datasets: [{ id: 'primary', fields: [
+        { id: 'month', role: 'dimension', dataType: 'string', nullable: false, label: 'Month' },
+        { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
+        { id: 'order_count', role: 'metric', dataType: 'integer', nullable: false, label: 'Orders' },
+      ] }],
+      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Revenue and orders', description: 'Revenue and orders' }, interactions: [],
+      x: { dataset: 'primary', field: 'month' }, y: [{ dataset: 'primary', field: 'revenue' }, { dataset: 'primary', field: 'order_count' }],
+      presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false, comboSeries: [
+        { seriesValue: 'revenue', mark: 'area', axis: 'primary' },
+        { seriesValue: 'order_count', mark: 'column', axis: 'secondary' },
+      ] },
+    },
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [
+      { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['month', 'revenue', 'order_count'], rows: [['Jan', 10, 2], ['Feb', 12, 3]], completeness: 'complete' },
+    ] },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series.map((series: any) => [series.name, series.type, series.yAxisIndex])).toEqual([
+    ['Revenue', 'line', 0], ['Orders', 'bar', 1],
+  ])
+  expect(option.series[0].areaStyle).toEqual({})
+  expect(option.yAxis).toHaveLength(2)
+})
+
 test('ECharts normalizes stacks and preserves series order and color identity across filters', () => {
   const envelope = cartesianSeriesFixture() as any
   envelope.spec.presentation.stacking = 'percent'

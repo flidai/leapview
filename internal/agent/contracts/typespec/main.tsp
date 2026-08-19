@@ -1,4 +1,5 @@
 import "@yacobolo/apigen";
+import "../../../../api/dashboard/main.tsp";
 
 @doc("Capability-owned model-facing contracts for LeapView's curated governed read and authoring agent tools.")
 @apigen.`package`(#{
@@ -106,231 +107,16 @@ model CatalogRef {
   kind: CatalogType;
 }
 
-enum QueryVisualType {
-  line;
-  area;
-  bar;
-  column;
-  pie;
-  donut;
-  scatter;
-  funnel;
-  treemap;
-  gauge;
-  heatmap;
-  sankey;
-  graph;
-  map;
-  candlestick;
-  boxplot;
-  combo;
-  waterfall;
-  histogram;
-  radar;
-  tree;
-  sunburst;
-  kpi;
-  table;
-  matrix;
-  pivot;
-}
-
-model QueryVisualFieldRef {
-  @doc("Semantic field ID.")
-  @minLength(1)
-  field: string;
-  @doc("Optional output alias.")
-  `alias`?: string;
-}
-
-model QueryVisualSort {
-  @doc("Semantic field ID.")
-  @minLength(1)
-  field: string;
-  @doc("Sort direction.")
-  direction?: "asc" | "desc";
-}
-
-model QueryVisualFilterGroupInput {
-  @doc("Nested governed filters. The next recursive level is validated by the tool provider.")
-  filters: Record<unknown>[];
-}
-
-model QueryVisualFilterInput {
-  @doc("Semantic field ID. Omit only when groups supplies nested filters.")
-  field?: string;
-  @doc("Semantic dataset used to resolve an otherwise ambiguous conformed dimension.")
-  dataset?: string;
-  @doc("Governed comparison operator. Defaults to equals.")
-  operator?: "equals" | "in" | "contains" | "not_contains" | "starts_with" | "greater_than_or_equal" | "less_than" | "is_null" | "is_not_null";
-  @doc("Comparison values. is_null and is_not_null accept no values.")
-  values?: string[];
-  @doc("Nested filter groups.")
-  groups?: QueryVisualFilterGroupInput[];
-}
-
-model QueryVisualTableFormattingRule {
-  kind: string;
-  values?: Record<string>;
-  min?: float64;
-  max?: float64;
-  color?: string;
-  background?: string;
-  lowColor?: string;
-  highColor?: string;
-}
-
-model QueryVisualTableColumn {
-  key: string;
-  label: string;
-  align?: string;
-  role?: string;
-  group?: string;
-  metric?: string;
-  columnValue?: string;
-  width?: int32;
-  format?: string;
-  formatting?: QueryVisualTableFormattingRule[];
-}
-
-model QueryVisualThreshold {
-  value: float64;
-  tone: string;
-}
-
-model QueryVisualLabelPolicy {
-  density?: "hidden" | "automatic" | "dense" | "always";
-  priority?: ("selected" | "anomaly" | "threshold")[];
-  @minValue(4)
-  @maxValue(200)
-  maxCharacters?: int32;
-  @minValue(0)
-  @maxValue(64)
-  minimumSpacing?: int32;
-  tooltipFallback?: boolean;
-}
-
-model QueryVisualPresentation {
-  legend?: "none" | "top" | "right" | "bottom" | "left";
-  showLabels?: boolean;
-  labels?: QueryVisualLabelPolicy;
-  stacked?: boolean;
-  smooth?: boolean;
-  showSymbols?: boolean;
-  dataZoom?: boolean;
-  area?: boolean;
-  step?: boolean;
-  orientation?: "horizontal" | "vertical";
-  labelPosition?: "inside" | "outside" | "top" | "right" | "bottom" | "left" | "center";
-  @minValue(0)
-  symbolSize?: float64;
-  @minValue(5)
-  @maxValue(60)
-  histogramBins?: int32;
-  seriesTypes?: Record<"line" | "area" | "bar" | "column">;
-  dualAxis?: boolean;
-  rose?: boolean;
-  centerLabel?: string;
-  @minValue(0)
-  innerRadius?: float64;
-  @minValue(0)
-  outerRadius?: float64;
-  align?: string;
-  sort?: string;
-  @minValue(0)
-  initialDepth?: int32;
-  basemap?: string;
-  roam?: boolean;
-  layout?: string;
-  breadcrumb?: boolean;
-  @minValue(0)
-  nodeGap?: float64;
-  @minValue(0)
-  @maxValue(1)
-  curveness?: float64;
-  focus?: string;
-  minimum?: float64;
-  maximum?: float64;
-  @minValue(0)
-  progressWidth?: float64;
-  thresholds?: QueryVisualThreshold[];
-  note?: string;
-  tone?: string;
-}
-
-model QueryVisualCalculationOrder {
-  field: string;
-  direction?: "asc" | "desc";
-}
-
-model QueryVisualCalculationLookup {
-  field: string;
-  value: string;
-}
-
-model QueryVisualCalculation {
-  id: string;
-  label?: string;
-  template: "running_total" | "moving_average" | "difference" | "percentage_difference" | "percent_of_parent" | "percent_of_grand_total" | "rank" | "cumulative_contribution" | "lookup";
-  source: string;
-  axis?: "rows" | "columns" | "hierarchy" | "facets";
-  orderBy?: QueryVisualCalculationOrder[];
-  partitionBy?: string[];
-  reset?: "none" | "highest_parent" | "lowest_parent";
-  @minValue(1)
-  window?: int32;
-  @minValue(1)
-  offset?: int32;
-  parent?: string;
-  lookup?: QueryVisualCalculationLookup;
-  hidden?: boolean;
-  format?: "number" | "decimal" | "integer" | "percent" | "compact" | "currency";
-}
-
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["semantic-model", "visual", "query"] })
 model QueryVisualInput {
   @doc("Stable semantic_model resource ID returned by catalog_search/catalog_get.")
   @minLength(1)
   semanticModelId: string;
-  @doc("Semantic dataset ID.")
-  @minLength(1)
-  dataset: string;
-  @doc("Optional display title.")
-  title?: string;
-  @doc("Visual type.")
-  type: QueryVisualType;
-  @doc("Dimension fields for chart grouping.")
-  @maxItems(50)
-  dimensions?: QueryVisualFieldRef[];
-  @doc("Optional series field for split charts.")
-  series?: QueryVisualFieldRef;
-  @doc("Metric fields for chart values.")
-  @maxItems(50)
-  metrics?: QueryVisualFieldRef[];
-  @doc("Fields for table output.")
-  @maxItems(50)
-  fields?: QueryVisualFieldRef[];
-  @doc("Row fields for matrix-style table output.")
-  @maxItems(50)
-  rows?: QueryVisualFieldRef[];
-  @doc("Optional table column display configuration.")
-  @maxItems(50)
-  columns?: QueryVisualTableColumn[];
+  @doc("Canonical generated dashboard visual query and presentation contract.")
+  visual: LeapViewDashboard.DashboardVisual;
   @doc("Governed semantic filters applied before visualization. Inline data and arbitrary expressions are not accepted.")
   @maxItems(100)
-  filters?: QueryVisualFilterInput[];
-  @doc("Sort fields applied to the query result.")
-  @maxItems(50)
-  sort?: QueryVisualSort[];
-  @doc("Maximum result rows.")
-  @minValue(1)
-  @maxValue(50)
-  limit?: int32;
-  @doc("Typed renderer-independent presentation settings.")
-  presentation?: QueryVisualPresentation;
-  @doc("Closed post-aggregation calculations over compiled result-frame aliases.")
-  @maxItems(20)
-  calculations?: QueryVisualCalculation[];
+  filters?: LeapViewDashboard.DashboardFilter[];
 }
 
 model QueryVisualFieldUsage {
@@ -344,13 +130,12 @@ model QueryVisualFieldUsage {
 }
 
 model QueryVisualFilterUsage {
-  operator: "equals" | "in" | "contains" | "not_contains" | "starts_with" | "greater_than_or_equal" | "less_than" | "is_null" | "is_not_null";
   @doc("Filtered semantic field.")
   fieldId: string;
   @doc("Semantic dataset selected to resolve a conformed dimension.")
   resolvedDatasetId?: string;
-  @doc("Comparison values. Omitted for unary operators.")
-  values?: string[];
+  @doc("Canonical applied filter expression, including typed values and range/relative semantics.")
+  expression: LeapViewDashboard.DashboardFilterExpression;
   @doc("Zero-based nested group path. Omitted for a root-level filter.")
   path?: int32[];
 }

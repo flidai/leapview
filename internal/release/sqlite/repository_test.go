@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/jobs"
@@ -99,6 +100,11 @@ func TestReleaseRepositoryRetainsCandidateProvenanceImmutably(t *testing.T) {
 
 	changed := provenance
 	changed.Plan.RuntimeVersion = "runtime:changed"
+	changedGate := *changed.Plan.GateEvidence
+	changedGate.RuntimeVersion = changed.Plan.RuntimeVersion
+	changedGate, err = changedGate.Canonical()
+	require.NoError(t, err)
+	changed.Plan.GateEvidence = &changedGate
 	changed, err = release.NewProvenance(release.ProvenanceInput{Artifact: changed.Artifact, Candidate: changed.Candidate, Plan: changed.Plan})
 	require.NoError(t, err)
 	if _, err := repo.RetainCandidateProvenance(t.Context(), projectID, changed); !errors.Is(err, release.ErrConflict) {
@@ -110,70 +116,6 @@ func TestReleaseRepositoryRetainsCandidateProvenanceImmutably(t *testing.T) {
 	if _, err := repo.CandidateProvenance(t.Context(), projectID, provenance.Candidate.ID, provenance.Candidate.Revision); !errors.Is(err, release.ErrProvenanceInvalid) {
 		t.Fatalf("tampered candidate provenance error = %v", err)
 	}
-}
-
-func TestRepositoryReadsLegacySnapshotProvenanceWithoutRewriting(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	db := store.SQLDB()
-	repo := NewRepository(db)
-
-	identity := testServingIdentity("commerce", "dev", "generation_legacy")
-	insertServingState(t, store, identity)
-	canonical := testReleaseProvenance(t, identity)
-	created, err := repo.Create(t.Context(), release.CreateInput{
-		ID: "rel_legacy_mode", ServingIdentity: identity,
-		ProjectDigest: canonical.Artifact.ProjectDigest, ArtifactDigest: canonical.Artifact.ContentDigest,
-		RequestDigest: testDigest("6"), IdempotencyKey: "legacy-mode", CreatedBy: "principal_1", Provenance: &canonical,
-	})
-	require.NoError(t, err)
-	legacy := legacyStoredProvenance(canonical)
-	legacyJSON, err := json.Marshal(legacy)
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE api_releases SET provenance_json = ? WHERE id = ?`, string(legacyJSON), created.ID)
-	require.NoError(t, err)
-	loaded, err := repo.Get(t.Context(), identity.ProjectID, created.ID)
-	require.NoError(t, err)
-	require.NotNil(t, loaded.Provenance)
-	require.Equal(t, release.GenerationDataReuseSnapshotLegacy, loaded.Provenance.Plan.DataMode)
-	require.ErrorIs(t, loaded.Provenance.Validate(), release.ErrLegacyReuseSnapshot)
-	var persisted string
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT provenance_json FROM api_releases WHERE id = ?`, created.ID).Scan(&persisted))
-	require.Equal(t, string(legacyJSON), persisted, "legacy audit read must not rewrite the immutable row")
-
-	candidate := candidateReleaseProvenance(t)
-	projectID, err := projectgraph.NewResourceID("commerce")
-	require.NoError(t, err)
-	_, err = repo.RetainCandidateProvenance(t.Context(), projectID, candidate)
-	require.NoError(t, err)
-	legacyCandidate := legacyStoredProvenance(candidate)
-	legacyCandidateJSON, err := json.Marshal(legacyCandidate)
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE release_candidate_provenance SET provenance_json = ? WHERE project_id = ? AND candidate_id = ? AND candidate_revision = ?`, string(legacyCandidateJSON), projectID.String(), candidate.Candidate.ID, candidate.Candidate.Revision)
-	require.NoError(t, err)
-	loadedCandidate, err := repo.CandidateProvenance(t.Context(), projectID, candidate.Candidate.ID, candidate.Candidate.Revision)
-	require.NoError(t, err)
-	require.Equal(t, release.GenerationDataReuseSnapshotLegacy, loadedCandidate.Plan.DataMode)
-	require.ErrorIs(t, loadedCandidate.Validate(), release.ErrLegacyReuseSnapshot)
-	var persistedCandidate string
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT provenance_json FROM release_candidate_provenance WHERE project_id = ? AND candidate_id = ? AND candidate_revision = ?`, projectID.String(), candidate.Candidate.ID, candidate.Candidate.Revision).Scan(&persistedCandidate))
-	require.Equal(t, string(legacyCandidateJSON), persistedCandidate, "legacy audit read must not rewrite the immutable candidate row")
-}
-
-func legacyStoredProvenance(value release.Provenance) release.Provenance {
-	value.Plan.DataMode = release.GenerationDataReuseSnapshotLegacy
-	value.PlanDigest = testProvenanceDigest(struct {
-		Candidate      release.CandidateProvenance       `json:"candidate"`
-		SourceRevision *release.SourceRevisionProvenance `json:"sourceRevision,omitempty"`
-		Plan           release.GenerationPlanProvenance  `json:"plan"`
-	}{value.Candidate, value.SourceRevision, value.Plan})
-	value.Digest = testProvenanceDigest(struct {
-		Version                  int    `json:"version"`
-		ArtifactProvenanceDigest string `json:"artifactProvenanceDigest"`
-		PlanDigest               string `json:"planDigest"`
-	}{release.ProvenanceVersion, value.ArtifactProvenanceDigest, value.PlanDigest})
-	return value
 }
 
 func testProvenanceDigest(value any) string {
@@ -394,11 +336,12 @@ func testServingIdentity(project, environment, generation string) projectgraph.S
 
 func testReleaseProvenance(t *testing.T, identity projectgraph.ServingIdentity) release.Provenance {
 	t.Helper()
-	p, err := release.NewProvenance(release.ProvenanceInput{
-		Artifact:  release.ProjectArtifactProvenance{SourceDigest: testDigest("1"), ProjectDigest: testDigest("2"), ContentDigest: testDigest("3"), CompilerVersion: "leapview:test", SchemaVersion: 3},
-		Candidate: release.CandidateProvenance{ID: "cand_1", Revision: 2, OwnerID: "principal_1"},
-		Plan:      release.GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:test", PolicyDigest: testDigest("4"), DataRevision: "snapshot:1", DataMode: release.GenerationDataRefreshSources, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: testDigest("7")}}, Bindings: []release.BindingEvidence{{BindingID: "warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 2, ValidatedVersion: "version-7", EndpointConfigHash: testDigest("8")}}},
-	})
+	input := release.ProvenanceInput{Artifact: release.ProjectArtifactProvenance{SourceDigest: testDigest("1"), ProjectDigest: testDigest("2"), ContentDigest: testDigest("3"), CompilerVersion: "leapview:test", SchemaVersion: 3}, Candidate: release.CandidateProvenance{ID: "cand_1", Revision: 2, OwnerID: "principal_1"}, Plan: release.GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:test", PolicyDigest: testDigest("4"), DataRevision: "snapshot:1", DataMode: release.GenerationDataRefreshSources, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: testDigest("7")}}, Bindings: []release.BindingEvidence{{BindingID: "warehouse", ConnectionID: "warehouse", ConnectorKind: "postgres", Revision: 2, ValidatedVersion: "version-7", EndpointConfigHash: testDigest("8")}}}}
+	binding := release.BindingFingerprint(input.Plan.Bindings)
+	evidence, err := (release.GateEvidence{Version: 1, CandidateID: input.Candidate.ID, SourceDigest: input.Artifact.SourceDigest, BindingGeneration: binding, RuntimeVersion: input.Plan.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()
+	require.NoError(t, err)
+	input.Plan.GateEvidence = &evidence
+	p, err := release.NewProvenance(input)
 	require.NoError(t, err)
 	return p
 }

@@ -407,6 +407,25 @@ jobs:
           tar --extract --gzip --file "$package.tar.gz"
           echo "PACKAGE_ROOT=$PWD/$package" >> "$GITHUB_ENV"
 
+      - name: Verify target-native offline extension supply
+        env:
+          IMAGE_REFERENCE: ${{ env.IMAGE_NAME }}@${{ needs.image.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE_REFERENCE"
+          docker run --rm --entrypoint /bin/sh "$IMAGE_REFERENCE" -ceu '
+            supply=/usr/local/share/leapview/extensions/extension-supply.json
+            digest_file=/usr/local/share/leapview/extensions/extension-supply.json.sha256
+            test -f "$supply" -a -f "$digest_file"
+            artifact_count="$(find /usr/local/share/leapview/extensions/artifacts -type f -name "*.duckdb_extension" | wc -l)"
+            manifest_count="$(grep -c "^[[:space:]]*\"identity\":[[:space:]]*{" "$supply")"
+            test "$manifest_count" -ge 13
+            test "$artifact_count" -eq "$manifest_count"
+            digest="$(awk "NF {print \$1; exit}" "$digest_file")"
+            test "$digest" = "$(sha256sum "$supply" | awk "{print \$1}")"
+            test "${LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH:-}" = "$supply"
+          '
+
       - name: Run installed-candidate journey
         run: |
           cd "$PACKAGE_ROOT"

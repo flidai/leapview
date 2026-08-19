@@ -17,15 +17,17 @@ visuals:
     description: Compares order status counts on a radar chart.
     type: radar
     presentation:
+      type: polar
       area: true
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
       limit: 8
 ```
 
@@ -41,13 +43,16 @@ visuals:
     title: Delivery speed radar
     type: radar
     query:
+      type: aggregate
       dimensions:
-        delivery_bucket: orders.delivery_bucket
+      - delivery_bucket
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: delivery_bucket
-          direction: asc
+      - field: delivery_bucket
+        direction: asc
+    presentation:
+      type: polar
 ```
 
 ## Filled area
@@ -62,14 +67,16 @@ visuals:
     title: State revenue radar
     type: radar
     presentation:
+      type: polar
       area: false
     query:
+      type: aggregate
       dimensions:
-        state: orders.state
+      - state
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: revenue
+        direction: desc
       limit: 8
 ```

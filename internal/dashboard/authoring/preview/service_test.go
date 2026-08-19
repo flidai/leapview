@@ -3,7 +3,7 @@ package preview
 import (
 	"context"
 	"errors"
-	"sync"
+	"reflect"
 	"testing"
 	"time"
 
@@ -12,15 +12,16 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
 type previewFixture struct {
-	repository *fakeRepository
-	authorizer *fakeAuthorizer
-	provider   *fakeProvider
-	runtime    *fakeRuntime
+	repository *previewRepository
+	authorizer *previewAuthorizer
+	provider   *previewProvider
+	runtime    *previewRuntime
 	service    *Service
 	request    PreviewRequest
 	revision   authoring.Revision
@@ -28,250 +29,206 @@ type previewFixture struct {
 
 func newPreviewFixture(t *testing.T) previewFixture {
 	t.Helper()
-	document := previewDocument()
 	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}
-	revision, err := authoring.NewRevision("revision-1", "sales", 1, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), document, provenance)
+	revision, err := authoring.NewRevision("revision-1", "sales", 1, time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC), previewDocument(), provenance)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
-		ProjectID: "project", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales",
-		SemanticModel: "sales_model", Visibility: authoring.VisibilityPrivate,
-		Draft: &authoring.Draft{ID: "draft-1", DashboardID: "sales", Revision: revision.Token(), Provenance: provenance},
-	})
+	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{ProjectID: "project", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales", SemanticModel: "sales_model", Visibility: authoring.VisibilityPrivate, Draft: &authoring.Draft{ID: "draft-1", DashboardID: "sales", Revision: revision.Token(), Provenance: provenance}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := previewModel()
-	runtime := &fakeRuntime{model: model}
+	runtime := &previewRuntime{model: previewModel()}
 	identity, _ := graph.NewServingIdentity("project", "production", "serving-1")
-	provider := &fakeProvider{lease: &fakeLease{runtime: runtime, identity: identity, snapshot: 42}}
-	repository := &fakeRepository{lifecycle: lifecycle, revision: revision}
-	authorizer := &fakeAuthorizer{}
-	service, err := NewService(Options{Repository: repository, Authorizer: authorizer, Provider: provider})
+	provider := &previewProvider{lease: &previewLease{runtime: runtime, identity: identity}}
+	repo := &previewRepository{lifecycle: lifecycle, revision: revision}
+	auth := &previewAuthorizer{}
+	svc, err := NewService(Options{Repository: repo, Authorizer: auth, Provider: provider})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return previewFixture{
-		repository: repository, authorizer: authorizer, provider: provider, runtime: runtime, service: service,
-		request:  PreviewRequest{ProjectID: "project", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"},
-		revision: revision,
-	}
+	return previewFixture{repository: repo, authorizer: auth, provider: provider, runtime: runtime, service: svc, request: PreviewRequest{ProjectID: "project", ActorID: "actor", DashboardID: "sales", DraftID: "draft-1", ExpectedRevision: revision.Token(), PageID: "overview"}, revision: revision}
 }
 
-func previewDocument() authoring.Dashboard {
-	return authoring.Dashboard{
-		ID: "sales", Title: "Sales", SemanticModel: "sales_model",
-		Visuals: authoring.TabularVisualizations("table", map[string]authoring.TableVisual{
-			"orders": {Title: "Orders", Query: authoring.TableQuery{Dataset: "orders", Fields: []string{"orders.status"}, Metrics: []authoring.FieldRef{{Field: "order_count", Alias: "order_count"}}}},
-		}),
-		Pages: []dashboard.Page{{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{{ID: "orders", Kind: "visual", Visual: "orders", Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 4, RowSpan: 4}}}}},
-	}
+func previewDocument() document.DashboardDocument {
+	status, metric := "status", "order_count"
+	return document.DashboardDocument{APIVersion: document.DashboardApiVersionLeapviewDevV1, Kind: document.DashboardResourceKindDashboard, Metadata: document.DashboardMetadata{ID: "sales", Name: "sales", DisplayName: previewStringPtr("Sales")}, Spec: document.DashboardSpec{SemanticModel: "sales_model", Filters: []document.DashboardFilter{}, Visuals: map[string]document.DashboardVisual{"orders": {Type: document.DashboardVisualTypeBar, Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: &status}}, Metrics: []document.DashboardMetricSelection{{String: &metric}}}}, Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{Type: "cartesian"}}}}, Pages: []document.DashboardPage{{ID: "overview", Title: "Overview", Components: []document.DashboardPageComponent{}}}}}
 }
-
+func previewStringPtr(value string) *string { return &value }
 func previewModel() *semanticmodel.Model {
-	return &semanticmodel.Model{
-		Name: "sales_model",
-		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
-			"orders": {Model: "orders"},
-		},
-		Tables: map[string]semanticmodel.Table{
-			"orders": {
-				ModelName:   "orders",
-				GrainEntity: "status",
-				Entities: map[string]semanticmodel.ModelEntitySpec{
-					"status": {Type: "primary", Fields: []string{"status"}},
-				},
-				Dimensions: map[string]semanticmodel.MetricDimension{
-					"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
-				},
-			},
-		},
-		Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}},
+	return &semanticmodel.Model{Name: "sales_model", Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", GrainEntity: "status", Entities: map[string]semanticmodel.EntityDefinition{"status": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}}}
+}
+
+func TestPreviewAuthorizesBeforeRevisionAndRuntimeReads(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.authorizer.err = errors.New("denied")
+	if _, err := f.service.Preview(t.Context(), f.request); !errors.Is(err, f.authorizer.err) {
+		t.Fatalf("error = %v", err)
+	}
+	if f.repository.getRevisionCalls != 0 || f.provider.acquireCalls != 0 {
+		t.Fatalf("reads after denial = revision %d acquire %d", f.repository.getRevisionCalls, f.provider.acquireCalls)
+	}
+	if len(f.authorizer.requests) != 1 || f.authorizer.requests[0].Action != authoring.AuthorizationActionEdit {
+		t.Fatalf("authorization = %#v", f.authorizer.requests)
 	}
 }
 
-func TestPreviewAuthorizesBeforeLoadingRevision(t *testing.T) {
-	fixture := newPreviewFixture(t)
-	fixture.authorizer.err = errors.New("denied")
-	_, err := fixture.service.Preview(context.Background(), fixture.request)
-	if !errors.Is(err, fixture.authorizer.err) {
-		t.Fatalf("Preview() error = %v, want denial", err)
+func TestPreviewRejectsStaleBeforeLeaseAndCompilesThroughOneLease(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.request.ExpectedRevision.Number++
+	if _, err := f.service.Preview(t.Context(), f.request); !errors.Is(err, authoring.ErrStaleRevision) {
+		t.Fatalf("stale error = %v", err)
 	}
-	if fixture.repository.getRevisionCalls != 0 {
-		t.Fatal("revision loaded before edit authorization")
+	if f.provider.acquireCalls != 0 || f.repository.getRevisionCalls != 0 {
+		t.Fatalf("stale touched boundaries: acquire=%d revision=%d", f.provider.acquireCalls, f.repository.getRevisionCalls)
 	}
-	if fixture.provider.acquireCalls != 0 {
-		t.Fatal("runtime acquired before edit authorization")
-	}
-	if got := fixture.authorizer.requests[0].Action; got != authoring.AuthorizationActionEdit {
-		t.Fatalf("authorization action = %q, want edit", got)
-	}
-}
-
-func TestPreviewRejectsStaleRevisionBeforeLoadingOrAcquiring(t *testing.T) {
-	fixture := newPreviewFixture(t)
-	fixture.request.ExpectedRevision.Number++
-	_, err := fixture.service.Preview(context.Background(), fixture.request)
-	if !errors.Is(err, authoring.ErrStaleRevision) {
-		t.Fatalf("Preview() error = %v, want stale revision", err)
-	}
-	if fixture.repository.getRevisionCalls != 0 || fixture.provider.acquireCalls != 0 {
-		t.Fatalf("stale preview touched later boundaries: revision=%d acquire=%d", fixture.repository.getRevisionCalls, fixture.provider.acquireCalls)
-	}
-}
-
-func TestPreviewStrictlyCompilesInvalidDraftWithoutPersistence(t *testing.T) {
-	fixture := newPreviewFixture(t)
-	invalid := fixture.revision
-	invalid.Document.Visuals["orders"] = authoring.TabularVisualizations("table", map[string]authoring.TableVisual{
-		"orders": {Title: "Orders", Query: authoring.TableQuery{Dataset: "missing_table", Fields: []string{"orders.status"}, Metrics: []authoring.FieldRef{{Field: "order_count", Alias: "order_count"}}}},
-	})["orders"]
-	invalid.ContentHash, _ = authoring.DashboardContentHash(invalid.Document)
-	fixture.repository.revision = invalid
-	fixture.repository.lifecycle.Draft.Revision = invalid.Token()
-	fixture.request.ExpectedRevision = invalid.Token()
-	_, err := fixture.service.Preview(context.Background(), fixture.request)
-	if err == nil {
-		t.Fatal("invalid strict draft unexpectedly previewed")
-	}
-	if fixture.provider.acquireCalls != 1 || fixture.provider.lease.releaseCalls != 1 {
-		t.Fatalf("lease lifecycle = acquire %d release %d", fixture.provider.acquireCalls, fixture.provider.lease.releaseCalls)
-	}
-	if fixture.repository.writeCalls != 0 {
-		t.Fatal("preview performed a repository write")
-	}
-}
-
-func TestPreviewUsesOneLeaseForModelAndQueryAndReturnsEvidence(t *testing.T) {
-	fixture := newPreviewFixture(t)
-	result, err := fixture.service.Preview(context.Background(), fixture.request)
+	f = newPreviewFixture(t)
+	result, err := f.service.Preview(t.Context(), f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fixture.provider.acquireCalls != 1 || fixture.provider.lease.releaseCalls != 1 {
-		t.Fatalf("lease lifecycle = acquire %d release %d", fixture.provider.acquireCalls, fixture.provider.lease.releaseCalls)
+	if f.provider.acquireCalls != 1 || f.provider.lease.releases != 1 || f.runtime.projectionCalls != 1 || f.runtime.queryCalls != 1 {
+		t.Fatalf("lease/runtime calls = acquire %d release %d projection %d query %d", f.provider.acquireCalls, f.provider.lease.releases, f.runtime.projectionCalls, f.runtime.queryCalls)
 	}
-	if fixture.runtime.projectionCalls != 1 || fixture.runtime.queryCalls != 1 {
-		t.Fatalf("runtime calls = projection %d query %d", fixture.runtime.projectionCalls, fixture.runtime.queryCalls)
-	}
-	if fixture.runtime.queryRuntime != fixture.runtime {
-		t.Fatal("query did not execute on leased runtime")
-	}
-	if result.Revision != fixture.revision.Token() || result.Definition.ID != "sales" || result.PagePatch.Status.Error != "" {
-		t.Fatalf("unexpected preview result: %#v", result)
-	}
-	if result.SemanticEvidence.Identity.GenerationID != "serving-1" || result.SemanticEvidence.Identity.ProjectID != "project" || result.SemanticEvidence.DuckLakeSnapshotID != 42 {
-		t.Fatalf("semantic evidence = %#v", result.SemanticEvidence)
+	if result.Revision != f.revision.Token() || result.Definition.ID != "sales" || result.SemanticEvidence.Identity.GenerationID != "serving-1" {
+		t.Fatalf("result = %#v", result)
 	}
 }
 
-func TestPreviewRejectsSemanticModelMismatchAndReleasesLease(t *testing.T) {
-	fixture := newPreviewFixture(t)
-	fixture.runtime.model = &semanticmodel.Model{Name: "other_model"}
-	_, err := fixture.service.Preview(context.Background(), fixture.request)
-	if !errors.Is(err, ErrSemanticMismatch) {
-		t.Fatalf("Preview() error = %v, want semantic mismatch", err)
+func TestPreviewSemanticMismatchAndStrictErrorReleaseWithoutPersistence(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.runtime.model = &semanticmodel.Model{Name: "other_model"}
+	if _, err := f.service.Preview(t.Context(), f.request); !errors.Is(err, ErrSemanticMismatch) || f.provider.lease.releases != 1 || f.runtime.queryCalls != 0 {
+		t.Fatalf("mismatch err=%v release=%d query=%d", err, f.provider.lease.releases, f.runtime.queryCalls)
 	}
-	if fixture.provider.lease.releaseCalls != 1 {
-		t.Fatalf("release calls = %d, want one", fixture.provider.lease.releaseCalls)
-	}
-	if fixture.runtime.queryCalls != 0 {
-		t.Fatal("query ran after semantic mismatch")
-	}
-}
-
-func TestPreviewDoesNotMutateBaseRuntimeModel(t *testing.T) {
-	fixture := newPreviewFixture(t)
-	result, err := fixture.service.Preview(context.Background(), fixture.request)
+	f = newPreviewFixture(t)
+	invalidDoc, err := f.revision.Document.Clone()
 	if err != nil {
 		t.Fatal(err)
 	}
-	result.Definition.Pages[0].Visuals[0].ID = "mutated"
-	delete(result.Definition.Visualizations, "orders")
-	projected, ok := fixture.runtime.SemanticModelProjection("sales_model")
-	if !ok || projected.Name != "sales_model" || projected.Tables["orders"].Dimensions["status"].Field != "orders.status" {
-		t.Fatalf("base runtime model changed: %#v", projected)
+	value := invalidDoc.Spec.Visuals["orders"]
+	metric, dimension := "missing_metric", "status"
+	value.Query.Value = &document.AggregateDashboardQuery{Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: &dimension}}, Metrics: []document.DashboardMetricSelection{{String: &metric}}}
+	invalidDoc.Spec.Visuals["orders"] = value
+	invalidRevision, err := authoring.NewRevision("revision-invalid", "sales", 2, time.Date(2026, 8, 18, 1, 0, 0, 0, time.UTC), invalidDoc, f.revision.Provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.repository.revision = invalidRevision
+	f.repository.lifecycle.Draft.Revision = invalidRevision.Token()
+	f.request.ExpectedRevision = invalidRevision.Token()
+	if _, err := f.service.Preview(t.Context(), f.request); err == nil {
+		t.Fatal("invalid draft previewed")
+	}
+	if f.provider.lease.releases != 1 || f.repository.writeCalls != 0 {
+		t.Fatalf("strict preview side effects release=%d writes=%d", f.provider.lease.releases, f.repository.writeCalls)
 	}
 }
 
-type fakeRepository struct {
-	lifecycle        authoring.DashboardLifecycle
-	revision         authoring.Revision
-	getRevisionCalls int
-	writeCalls       int
-	mu               sync.Mutex
+func TestPreviewResultMutationDoesNotMutateRuntimeModel(t *testing.T) {
+	f := newPreviewFixture(t)
+	result, err := f.service.Preview(t.Context(), f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := *f.runtime.model
+	result.Definition.Pages[0].Title = "changed"
+	if !reflect.DeepEqual(*f.runtime.model, before) {
+		t.Fatal("runtime model mutated")
+	}
 }
 
-func (r *fakeRepository) Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+type previewRepository struct {
+	lifecycle                    authoring.DashboardLifecycle
+	revision                     authoring.Revision
+	getRevisionCalls, writeCalls int
+}
+
+func (r *previewRepository) Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
 	return r.lifecycle, nil
 }
-func (r *fakeRepository) GetRevision(context.Context, graph.ResourceID, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error) {
-	r.mu.Lock()
+func (r *previewRepository) GetRevision(context.Context, graph.ResourceID, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error) {
 	r.getRevisionCalls++
-	r.mu.Unlock()
 	return r.revision, nil
 }
+func (r *previewRepository) Create(context.Context, authoring.CreateInput) (authoring.DashboardLifecycle, error) {
+	r.writeCalls++
+	panic("preview write")
+}
+func (r *previewRepository) List(context.Context, graph.ResourceID) ([]authoring.DashboardLifecycle, error) {
+	panic("unused")
+}
+func (r *previewRepository) CountBySemanticModel(context.Context, graph.ResourceID) ([]authoring.SemanticModelUsage, error) {
+	panic("unused")
+}
+func (r *previewRepository) LookupCommandResult(context.Context, graph.ResourceID, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
+	panic("unused")
+}
+func (r *previewRepository) LookupCreateOperation(context.Context, authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
+	panic("unused")
+}
+func (r *previewRepository) AppendDraft(context.Context, authoring.AppendDraftInput) (authoring.Revision, error) {
+	r.writeCalls++
+	panic("preview write")
+}
+func (r *previewRepository) Publish(context.Context, authoring.PublishInput) (authoring.DashboardLifecycle, error) {
+	r.writeCalls++
+	panic("preview write")
+}
+func (r *previewRepository) Archive(context.Context, authoring.ArchiveInput) (authoring.DashboardLifecycle, error) {
+	r.writeCalls++
+	panic("preview write")
+}
+func (r *previewRepository) GetPublishedCompilation(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error) {
+	panic("unused")
+}
 
-type fakeAuthorizer struct {
+type previewAuthorizer struct {
 	requests []authoringservice.AuthorizationRequest
 	err      error
 }
 
-func (a *fakeAuthorizer) Authorize(_ context.Context, request authoringservice.AuthorizationRequest) error {
+func (a *previewAuthorizer) Authorize(_ context.Context, request authoringservice.AuthorizationRequest) error {
 	a.requests = append(a.requests, request)
 	return a.err
 }
 
-type fakeProvider struct {
-	lease        *fakeLease
+type previewProvider struct {
+	lease        *previewLease
 	acquireCalls int
 }
 
-func (p *fakeProvider) Acquire(context.Context) (projectruntime.Lease, error) {
+func (p *previewProvider) Acquire(context.Context) (projectruntime.Lease, error) {
 	p.acquireCalls++
 	return p.lease, nil
 }
 
-type fakeLease struct {
-	runtime      *fakeRuntime
-	identity     graph.ServingIdentity
-	snapshot     int64
-	releaseCalls int
+type previewLease struct {
+	runtime  *previewRuntime
+	identity graph.ServingIdentity
+	releases int
 }
 
-func (l *fakeLease) Runtime() projectruntime.Runtime { return l.runtime }
-func (l *fakeLease) Identity() graph.ServingIdentity { return l.identity }
-func (l *fakeLease) Release()                        { l.releaseCalls++ }
+func (l *previewLease) Runtime() projectruntime.Runtime { return l.runtime }
+func (l *previewLease) Identity() graph.ServingIdentity { return l.identity }
+func (l *previewLease) Release()                        { l.releases++ }
 
-type fakeRuntime struct {
-	model           *semanticmodel.Model
-	projectionCalls int
-	queryCalls      int
-	queryRuntime    *fakeRuntime
+type previewRuntime struct {
+	model                       *semanticmodel.Model
+	projectionCalls, queryCalls int
 }
 
-func (r *fakeRuntime) Close() error              { return nil }
-func (r *fakeRuntime) DuckLakeSnapshotID() int64 { return 42 }
-func (r *fakeRuntime) SemanticModelProjection(id graph.ResourceID) (*semanticmodel.Model, bool) {
+func (r *previewRuntime) Close() error              { return nil }
+func (r *previewRuntime) DuckLakeSnapshotID() int64 { return 42 }
+func (r *previewRuntime) SemanticModelProjection(id graph.ResourceID) (*semanticmodel.Model, bool) {
 	r.projectionCalls++
 	if r.model == nil || r.model.Name != id.String() {
 		return nil, false
 	}
-	encoded := *r.model
-	encoded.Tables = map[string]semanticmodel.Table{}
-	for name, table := range r.model.Tables {
-		copyTable := table
-		copyTable.Dimensions = map[string]semanticmodel.MetricDimension{}
-		for field, dimension := range table.Dimensions {
-			copyTable.Dimensions[field] = dimension
-		}
-		encoded.Tables[name] = copyTable
-	}
-	return &encoded, true
+	copy := *r.model
+	return &copy, true
 }
-func (r *fakeRuntime) QueryDashboardPageForDefinition(_ context.Context, _ definition.Definition, _ string, _ dashboard.Filters) (dashboard.Patch, error) {
+func (r *previewRuntime) QueryDashboardPageForDefinition(context.Context, definition.Definition, string, dashboard.Filters) (dashboard.Patch, error) {
 	r.queryCalls++
-	r.queryRuntime = r
 	return dashboard.EmptyPatch(dashboard.Filters{}, nil), nil
 }

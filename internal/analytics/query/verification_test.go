@@ -13,7 +13,7 @@ func TestPrepareRepresentativePlansCoversMetricDependenciesAndBindings(t *testin
 		Sources: map[string]semanticmodel.Source{"orders_source": {Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "BIGINT"}, {Name: "revenue", PhysicalType: "DECIMAL(12,2)"}}}}},
 		Tables: map[string]semanticmodel.Table{"orders": {
 			GrainEntity: "order",
-			Entities:    map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}},
+			Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
 			Columns: map[string]semanticmodel.ModelColumn{
 				"order_id": {SourceField: "order_id", Datatype: semanticmodel.DataTypeInteger},
 				"revenue":  {SourceField: "revenue", Datatype: semanticmodel.DataTypeDecimal},
@@ -102,11 +102,11 @@ func verificationRouteModel() *semanticmodel.Model {
 	}
 	return &semanticmodel.Model{
 		Tables: map[string]semanticmodel.Table{
-			"orders": {GrainEntity: "order_id", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {GrainEntity: "order_id", Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}, Schema: semanticmodel.TableSchema{Columns: columns("order_id", "customer_id")}},
-			"events": {GrainEntity: "event_id", Entities: map[string]semanticmodel.ModelEntitySpec{"event_id": {Type: "primary", Fields: []string{"event_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"event_id": {Type: "string", Datatype: semanticmodel.DataTypeString}}, Schema: semanticmodel.TableSchema{Columns: columns("event_id")}},
-			"customers": {GrainEntity: "customer_id", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}, "customer_code": {Type: "unique", Fields: []string{"customer_code"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"events": {GrainEntity: "event_id", Entities: map[string]semanticmodel.EntityDefinition{"event_id": {Type: "primary", Fields: []string{"event_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"event_id": {Type: "string", Datatype: semanticmodel.DataTypeString}}, Schema: semanticmodel.TableSchema{Columns: columns("event_id")}},
+			"customers": {GrainEntity: "customer_id", Entities: map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}, "customer_code": {Type: "unique", Fields: []string{"customer_code"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_code": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}, Schema: semanticmodel.TableSchema{Columns: columns("customer_id", "customer_code", "state")}},
 		},

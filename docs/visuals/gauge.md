@@ -16,12 +16,15 @@ visuals:
     title: Average customer review
     type: gauge
     presentation:
+      type: polar
       minimum: 0
       maximum: 5
       target: 4.5
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        review_score: null
+      - review_score
 ```
 
 ## Large-volume domain
@@ -36,17 +39,21 @@ visuals:
     title: Total orders gauge
     type: gauge
     presentation:
+      type: polar
       minimum: 0
       maximum: 120000
       target: 100000
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        order_count: null
+      - order_count
 ```
 
 ## Threshold bands
 
-Declare `min` and `max`, then add ordered `thresholds` to give score ranges semantic tones; `progress_width` controls the arc weight.
+Add ordered `thresholds` to give score ranges semantic tones;
+`progressWidth` controls the arc weight.
 
 {{< visual id="review_gauge_thresholds" >}}
 
@@ -56,18 +63,21 @@ visuals:
     title: Review gauge with thresholds
     type: gauge
     presentation:
+      type: polar
       minimum: 0
       maximum: 5
       target: 4.5
-      progress_width: 16
+      progressWidth: 16
       thresholds:
-        - value: 3
-          tone: danger
-        - value: 4
-          tone: warning
-        - value: 5
-          tone: success
+      - value: 3
+        tone: danger
+      - value: 4
+        tone: warning
+      - value: 5
+        tone: success
     query:
+      type: aggregate
+      dimensions: []
       metrics:
-        review_score: null
+      - review_score
 ```

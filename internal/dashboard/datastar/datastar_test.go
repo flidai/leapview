@@ -7,8 +7,6 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
-	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -17,14 +15,13 @@ import (
 
 func testVisualDefinition(t *testing.T, id string) visualizationdefinition.Definition {
 	t.Helper()
-	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
-		ID: "test", SemanticModel: "model",
-		Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{id: {Type: "bar", Title: id, Query: dashboardauthoring.VisualQuery{Dataset: "table", Metrics: []dashboardauthoring.FieldRef{{Field: "metric"}}}}}),
-	})
+	fields := []visualizationir.VisualizationField{{ID: "label", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "Label"}, {ID: "value", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Label: "Value"}}
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "cartesian", Title: id, Accessibility: visualizationir.VisualizationAccessibility{Title: id, Description: id}, Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 100}}, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkBar, X: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "label"}, Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "value"}}, Presentation: visualizationir.CartesianVisualizationPresentation{VisualizationPresentation: visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionHidden, LabelPolicy: visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, MaxCharacters: 24, TooltipFallback: true}}}}}
+	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, ModelID: "model", DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "table", Metrics: []visualizationdefinition.FieldBinding{{FieldID: "metric", Alias: "value"}}, Limit: 100}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return definitions[id]
+	return definition
 }
 
 func testTableDefinition(t *testing.T, id string, table dashboard.Table) visualizationdefinition.Definition {
@@ -32,21 +29,20 @@ func testTableDefinition(t *testing.T, id string, table dashboard.Table) visuali
 	if len(table.Columns) == 0 {
 		table.Columns = []dashboard.TableColumn{{Key: "value", Label: "Value"}}
 	}
-	fields := make([]string, len(table.Columns))
+	fields := make([]visualizationir.VisualizationField, len(table.Columns))
+	columns := make([]visualizationir.TableVisualizationColumn, len(table.Columns))
+	bindingFields := make([]visualizationdefinition.FieldBinding, len(table.Columns))
 	for index, column := range table.Columns {
-		fields[index] = column.Key
+		fields[index] = visualizationir.VisualizationField{ID: column.Key, Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: column.Label}
+		columns[index] = visualizationir.TableVisualizationColumn{Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: column.Key}, Label: column.Label, Formatting: []visualizationir.TableVisualizationFormattingRule{}}
+		bindingFields[index] = visualizationdefinition.FieldBinding{FieldID: column.Key, Alias: column.Key}
 	}
-	definitions, err := dashboardcompiler.CompileVisualizationDefinitions(&dashboardauthoring.Dashboard{
-		ID: "test", SemanticModel: "model",
-		Visuals: dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{id: {
-			Title: table.Title, Columns: table.Columns, DefaultSort: table.Sort, Style: table.Style,
-			Query: dashboardauthoring.TableQuery{Dataset: "table", Fields: fields},
-		}}),
-	})
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "table", Title: table.Title, Accessibility: visualizationir.VisualizationAccessibility{Title: table.Title, Description: table.Title}, Datasets: []visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: fields}}, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 100}}, Kind: "table", Columns: columns, Presentation: visualizationir.GridVisualizationPresentation{RowHeight: 34, ShowHeader: true}}}
+	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow, ModelID: "model", DatasetID: "primary", Detail: &visualizationdefinition.DetailQueryBinding{TableID: "table", Fields: bindingFields, Limit: 100}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return definitions[id]
+	return definition
 }
 
 func testVisualEnvelope(t *testing.T, id string, dataRevision, generation int64) visualizationir.VisualizationEnvelope {

@@ -26,6 +26,7 @@ type candidateRuntimeBindingEntry struct {
 type CandidateAuthoredConnection struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string
+	Access        semanticmodel.ConnectionAccess
 }
 
 type candidateRuntimeBindingRegistry struct {
@@ -61,11 +62,11 @@ func (module *Module) BindCandidateRuntime(
 	key := candidateRuntimeBindingKey{
 		candidateID: candidateID, projectID: projectID,
 	}
-	authored, err := candidateAuthoredConnectionSet(authoredConnections)
+	authored, authoredAccess, err := candidateAuthoredConnectionSet(authoredConnections)
 	if err != nil {
 		return nil, err
 	}
-	resolver := runtimeBindingConnectionResolver{leases: leases, authored: authored}
+	resolver := runtimeBindingConnectionResolver{leases: leases, authored: authored, authoredAccess: authoredAccess}
 	token := module.candidateRuntimeBindings.register(key, resolver)
 	return &RuntimeBindingRegistration{
 		registry: &module.candidateRuntimeBindings,
@@ -146,8 +147,9 @@ func (module *Module) candidateRuntimeConnectionResolver(
 }
 
 type runtimeBindingConnectionResolver struct {
-	leases   *connectionbinding.RuntimeBindingLeases
-	authored map[string]string
+	leases         *connectionbinding.RuntimeBindingLeases
+	authored       map[string]string
+	authoredAccess map[string]semanticmodel.ConnectionAccess
 }
 
 func (resolver runtimeBindingConnectionResolver) Resolve(
@@ -166,6 +168,15 @@ func (resolver runtimeBindingConnectionResolver) Resolve(
 		}
 		spec, exists := connectors.LookupConnection(logicalKind)
 		if !exists || spec.ActivationMode != connectors.AuthoredActivation {
+			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+		}
+		if logical.Access != "" && logical.Access != semanticmodel.ConnectionAccessPublic {
+			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+		}
+		if logical.Access == semanticmodel.ConnectionAccessPublic && !spec.AllowPublicAccess {
+			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+		}
+		if resolver.authoredAccess[connectionID.String()] != logical.Access {
 			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 		}
 		return logical, nil
@@ -196,8 +207,9 @@ func (resolver runtimeBindingConnectionResolver) Resolve(
 
 func candidateAuthoredConnectionSet(
 	values []CandidateAuthoredConnection,
-) (map[string]string, error) {
+) (map[string]string, map[string]semanticmodel.ConnectionAccess, error) {
 	result := make(map[string]string, len(values))
+	access := make(map[string]semanticmodel.ConnectionAccess, len(values))
 	for _, value := range values {
 		connectionID, err := connectionbinding.ParseConnectionID(
 			strings.TrimSpace(value.ConnectionID.String()),
@@ -206,12 +218,19 @@ func candidateAuthoredConnectionSet(
 		spec, exists := connectors.LookupConnection(kind)
 		if err != nil || kind == "" || !exists ||
 			spec.ActivationMode != connectors.AuthoredActivation {
-			return nil, connectionbinding.ErrIncompatibleBinding
+			return nil, nil, connectionbinding.ErrIncompatibleBinding
+		}
+		if value.Access != "" && value.Access != semanticmodel.ConnectionAccessPublic {
+			return nil, nil, connectionbinding.ErrIncompatibleBinding
+		}
+		if value.Access == semanticmodel.ConnectionAccessPublic && !spec.AllowPublicAccess {
+			return nil, nil, connectionbinding.ErrIncompatibleBinding
 		}
 		if _, duplicate := result[connectionID.String()]; duplicate {
-			return nil, connectionbinding.ErrIncompatibleBinding
+			return nil, nil, connectionbinding.ErrIncompatibleBinding
 		}
 		result[connectionID.String()] = kind
+		access[connectionID.String()] = value.Access
 	}
-	return result, nil
+	return result, access, nil
 }

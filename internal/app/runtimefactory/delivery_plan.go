@@ -197,9 +197,6 @@ func CandidatePlanRequestWithPolicy(input deployment.DeliveryCandidateBuildInput
 // target composition layer supplies this context from the active generation,
 // candidate, and verified seal; the compiler never guesses catalog identity.
 func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy, now time.Time, reuse *deployment.DeliveryReuseInput) (deployment.DeliveryPlanRequest, error) {
-	if artifacts.Generation.DataMode == release.GenerationDataReuseSnapshotLegacy {
-		return deployment.DeliveryPlanRequest{}, fmt.Errorf("candidate plan requires controlled rebuild for legacy data mode: %w", release.ErrLegacyReuseSnapshot)
-	}
 	if input.Candidate.ID == "" || input.Candidate.TargetID == "" || input.ProjectID.Validate() != nil {
 		return deployment.DeliveryPlanRequest{}, fmt.Errorf("candidate plan scope is incomplete")
 	}
@@ -245,10 +242,10 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	// governance digests below.
 	bindingParts := []string{}
 	for _, requirement := range append([]release.CandidateConnectionRequirement(nil), artifacts.Generation.Connections...) {
-		bindingParts = append(bindingParts, requirement.ConnectionID.String()+"\x00"+requirement.ConnectorKind)
+		bindingParts = append(bindingParts, requirement.ConnectionID.String()+"\x00"+requirement.ConnectorKind+"\x00"+string(requirement.Access))
 	}
 	for _, authored := range append([]release.CandidateAuthoredConnection(nil), artifacts.Generation.AuthoredConnections...) {
-		bindingParts = append(bindingParts, authored.ConnectionID.String()+"\x00"+authored.ConnectorKind)
+		bindingParts = append(bindingParts, authored.ConnectionID.String()+"\x00"+authored.ConnectorKind+"\x00"+string(authored.Access))
 	}
 	sort.Strings(bindingParts)
 	bindingDigest := planDigest(strings.Join(bindingParts, "\x00"))

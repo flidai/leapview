@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
@@ -13,14 +14,14 @@ import (
 // only graph metadata; this projection keeps the authored source shape at the
 // runtime read boundary without exposing secrets.
 type SourceAssetReadModel struct {
-	Format      string                               `json:"Format,omitempty"`
-	Description string                               `json:"Description,omitempty"`
-	Path        string                               `json:"Path,omitempty"`
-	Connection  string                               `json:"Connection,omitempty"`
-	Object      string                               `json:"Object,omitempty"`
-	Options     map[string]any                       `json:"Options,omitempty"`
-	Fields      map[string]semanticmodel.SourceField `json:"Fields,omitempty"`
-	Schema      semanticmodel.TableSchema            `json:"Schema,omitempty"`
+	Format       string                               `json:"Format,omitempty"`
+	Description  string                               `json:"Description,omitempty"`
+	Path         string                               `json:"Path,omitempty"`
+	Connection   string                               `json:"Connection,omitempty"`
+	Object       string                               `json:"Object,omitempty"`
+	PathLocation *projectcontracts.PathSourceLocation `json:"PathLocation,omitempty"`
+	Fields       map[string]semanticmodel.SourceField `json:"Fields,omitempty"`
+	Schema       semanticmodel.TableSchema            `json:"Schema,omitempty"`
 }
 
 // ConnectionAssetReadModel is the non-secret connection definition used by
@@ -33,8 +34,7 @@ type ConnectionAssetReadModel struct {
 	Path                  string                           `json:"Path,omitempty"`
 	Root                  string                           `json:"Root,omitempty"`
 	Scope                 string                           `json:"Scope,omitempty"`
-	Options               map[string]any                   `json:"Options,omitempty"`
-	Defaults              semanticmodel.ConnectionDefaults `json:"Defaults,omitempty"`
+	ReaderDefaults        *projectcontracts.ReaderDefaults `json:"ReaderDefaults,omitempty"`
 	CredentialsConfigured bool                             `json:"credentials_configured"`
 	CredentialsRequired   bool                             `json:"credentials_required"`
 }
@@ -59,7 +59,7 @@ type RefreshPipelineAssetReadModel struct {
 func SourceAssetPayload(source semanticmodel.Source) map[string]any {
 	return encodeAssetReadModel(SourceAssetReadModel{
 		Format: source.Format, Description: source.Description, Path: source.Path,
-		Connection: source.Connection, Object: source.Object, Options: source.Options,
+		Connection: source.Connection, Object: source.Object, PathLocation: source.PathLocation,
 		Fields: source.Fields, Schema: source.Schema,
 	})
 }
@@ -67,8 +67,7 @@ func SourceAssetPayload(source semanticmodel.Source) map[string]any {
 func ConnectionAssetPayload(connection semanticmodel.Connection) map[string]any {
 	return encodeAssetReadModel(ConnectionAssetReadModel{
 		Kind: connection.Kind, Description: connection.Description, Path: connection.Path,
-		Root: connection.Root, Scope: connection.Scope, Options: connection.Options,
-		Defaults:              connection.Defaults,
+		Root: connection.Root, Scope: connection.Scope, ReaderDefaults: connection.ReaderDefaults,
 		CredentialsConfigured: semanticmodel.ConnectionCredentialsConfigured(connection),
 		// An omitted provider is intentionally treated as requiring runtime
 		// configuration. Only an explicit `none` provider proves that the

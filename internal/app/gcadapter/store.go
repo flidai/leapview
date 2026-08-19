@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/deployment/gc"
 	"github.com/flidai/leapview/internal/deployment/gcstore"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 // S3Config contains target-owned connection settings for a physical pool.
@@ -21,6 +22,7 @@ type S3Config struct {
 	Region, AccessKeyID, SecretAccessKey, SessionToken string
 	Endpoint                                           string
 	PathStyle                                          bool
+	ExtensionAdmission                                 extension.Admission
 }
 
 // NewPoolStore selects a pool-scoped read/stat/list/delete adapter from the

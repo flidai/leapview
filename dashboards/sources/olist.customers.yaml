@@ -6,9 +6,14 @@ metadata:
   displayName: Customers
 spec:
   connection: olist
-  path: olist_customers_dataset.csv
-  fields:
-    customer_id: {type: string, description: Customer identifier used by orders.}
-    customer_zip_code_prefix: {type: string, description: Five-digit Brazilian ZIP-code prefix used for geographic joins.}
-    customer_city: {type: string, description: Customer city supplied by Olist.}
-    customer_state: {type: string, description: Brazilian state for the customer.}
+  location:
+    type: path
+    path: olist_customers_dataset.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      customer_id: {datatype: String, description: Customer identifier used by orders.}
+      customer_zip_code_prefix: {datatype: String, description: Five-digit Brazilian ZIP-code prefix used for geographic joins.}
+      customer_city: {datatype: String, description: Customer city supplied by Olist.}
+      customer_state: {datatype: String, description: Brazilian state for the customer.}

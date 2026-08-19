@@ -9,313 +9,313 @@ import (
 )
 
 type AgentContextSignal struct {
-	Surface        string                         `json:"surface"`
-	DashboardID    string                         `json:"dashboardId"`
-	DashboardTitle string                         `json:"dashboardTitle"`
-	PageID         string                         `json:"pageId"`
-	PageTitle      string                         `json:"pageTitle"`
-	ModelID        string                         `json:"modelId"`
-	DatasetID      *string                        `json:"datasetId,omitempty"`
-	Exploration    *DataExploreAgentContextSignal `json:"exploration,omitempty"`
-	Generation     int64                          `json:"generation"`
-	Filters        DashboardFilterState           `json:"filters"`
-	ReferenceLimit int32                          `json:"referenceLimit"`
-	References     []AgentReferenceSignal         `json:"references"`
+	Surface        string                         `json:"surface" yaml:"surface"`
+	DashboardID    string                         `json:"dashboardId" yaml:"dashboardId"`
+	DashboardTitle string                         `json:"dashboardTitle" yaml:"dashboardTitle"`
+	PageID         string                         `json:"pageId" yaml:"pageId"`
+	PageTitle      string                         `json:"pageTitle" yaml:"pageTitle"`
+	ModelID        string                         `json:"modelId" yaml:"modelId"`
+	DatasetID      *string                        `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Exploration    *DataExploreAgentContextSignal `json:"exploration,omitempty" yaml:"exploration,omitempty"`
+	Generation     int64                          `json:"generation" yaml:"generation"`
+	Filters        DashboardFilterState           `json:"filters" yaml:"filters"`
+	ReferenceLimit int32                          `json:"referenceLimit" yaml:"referenceLimit"`
+	References     []AgentReferenceSignal         `json:"references" yaml:"references"`
 }
 
 type AgentReferenceKeySignal struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
+	Kind string `json:"kind" yaml:"kind"`
+	ID   string `json:"id" yaml:"id"`
 }
 
 type AgentReferenceLocationSignal struct {
-	DashboardID   *string `json:"dashboardId,omitempty"`
-	DashboardName *string `json:"dashboardName,omitempty"`
-	PageID        *string `json:"pageId,omitempty"`
-	PageName      *string `json:"pageName,omitempty"`
-	Href          string  `json:"href"`
+	DashboardID   *string `json:"dashboardId,omitempty" yaml:"dashboardId,omitempty"`
+	DashboardName *string `json:"dashboardName,omitempty" yaml:"dashboardName,omitempty"`
+	PageID        *string `json:"pageId,omitempty" yaml:"pageId,omitempty"`
+	PageName      *string `json:"pageName,omitempty" yaml:"pageName,omitempty"`
+	Href          string  `json:"href" yaml:"href"`
 }
 
 type AgentReferenceSearchSignal struct {
-	Query     string                 `json:"query"`
-	RequestID int64                  `json:"requestId"`
-	Results   []AgentReferenceSignal `json:"results"`
+	Query     string                 `json:"query" yaml:"query"`
+	RequestID int64                  `json:"requestId" yaml:"requestId"`
+	Results   []AgentReferenceSignal `json:"results" yaml:"results"`
 }
 
 type AgentReferenceSignal struct {
-	Reference   AgentReferenceKeySignal        `json:"reference"`
-	Name        string                         `json:"name"`
-	Description *string                        `json:"description,omitempty"`
-	VisualType  *string                        `json:"visualType,omitempty"`
-	Hierarchy   []string                       `json:"hierarchy"`
-	Href        string                         `json:"href"`
-	Locations   []AgentReferenceLocationSignal `json:"locations"`
-	Context     []string                       `json:"context"`
+	Reference   AgentReferenceKeySignal        `json:"reference" yaml:"reference"`
+	Name        string                         `json:"name" yaml:"name"`
+	Description *string                        `json:"description,omitempty" yaml:"description,omitempty"`
+	VisualType  *string                        `json:"visualType,omitempty" yaml:"visualType,omitempty"`
+	Hierarchy   []string                       `json:"hierarchy" yaml:"hierarchy"`
+	Href        string                         `json:"href" yaml:"href"`
+	Locations   []AgentReferenceLocationSignal `json:"locations" yaml:"locations"`
+	Context     []string                       `json:"context" yaml:"context"`
 }
 
 type AssetLineageEdgeSignal struct {
-	ID     string  `json:"id"`
-	Kind   string  `json:"kind"`
-	Label  *string `json:"label,omitempty"`
-	Source string  `json:"source"`
-	Target string  `json:"target"`
+	ID     string  `json:"id" yaml:"id"`
+	Kind   string  `json:"kind" yaml:"kind"`
+	Label  *string `json:"label,omitempty" yaml:"label,omitempty"`
+	Source string  `json:"source" yaml:"source"`
+	Target string  `json:"target" yaml:"target"`
 }
 
 type AssetLineageGraphSignal struct {
-	Edges []AssetLineageEdgeSignal `json:"edges"`
-	Nodes []AssetLineageNodeSignal `json:"nodes"`
+	Edges []AssetLineageEdgeSignal `json:"edges" yaml:"edges"`
+	Nodes []AssetLineageNodeSignal `json:"nodes" yaml:"nodes"`
 }
 
 type AssetLineageNodeSignal struct {
-	ContainedCount         *int64  `json:"containedCount,omitempty"`
-	ContainedSummary       *string `json:"containedSummary,omitempty"`
-	Href                   *string `json:"href,omitempty"`
-	ID                     string  `json:"id"`
-	Kind                   string  `json:"kind"`
-	Label                  string  `json:"label"`
-	Meta                   *string `json:"meta,omitempty"`
-	Rank                   int64   `json:"rank"`
-	Selected               *bool   `json:"selected,omitempty"`
-	Side                   string  `json:"side"`
-	UsedByCount            *int64  `json:"usedByCount,omitempty"`
-	UsesCount              *int64  `json:"usesCount,omitempty"`
-	VisibleDownstreamCount *int64  `json:"visibleDownstreamCount,omitempty"`
-	VisibleUpstreamCount   *int64  `json:"visibleUpstreamCount,omitempty"`
+	ContainedCount         *int64  `json:"containedCount,omitempty" yaml:"containedCount,omitempty"`
+	ContainedSummary       *string `json:"containedSummary,omitempty" yaml:"containedSummary,omitempty"`
+	Href                   *string `json:"href,omitempty" yaml:"href,omitempty"`
+	ID                     string  `json:"id" yaml:"id"`
+	Kind                   string  `json:"kind" yaml:"kind"`
+	Label                  string  `json:"label" yaml:"label"`
+	Meta                   *string `json:"meta,omitempty" yaml:"meta,omitempty"`
+	Rank                   int64   `json:"rank" yaml:"rank"`
+	Selected               *bool   `json:"selected,omitempty" yaml:"selected,omitempty"`
+	Side                   string  `json:"side" yaml:"side"`
+	UsedByCount            *int64  `json:"usedByCount,omitempty" yaml:"usedByCount,omitempty"`
+	UsesCount              *int64  `json:"usesCount,omitempty" yaml:"usesCount,omitempty"`
+	VisibleDownstreamCount *int64  `json:"visibleDownstreamCount,omitempty" yaml:"visibleDownstreamCount,omitempty"`
+	VisibleUpstreamCount   *int64  `json:"visibleUpstreamCount,omitempty" yaml:"visibleUpstreamCount,omitempty"`
 }
 
 type CatalogDashboardSignal struct {
-	AppearanceColor string           `json:"appearanceColor"`
-	AppearanceIcon  string           `json:"appearanceIcon"`
-	Description     *string          `json:"description,omitempty"`
-	DashboardID     string           `json:"dashboardId"`
-	Href            string           `json:"href"`
-	ID              string           `json:"id"`
-	LastRefreshedAt *string          `json:"lastRefreshedAt,omitempty"`
-	PageCount       int64            `json:"pageCount"`
-	Popularity      *PopularityLevel `json:"popularity,omitempty"`
-	SemanticModel   *string          `json:"semanticModel,omitempty"`
-	Tags            *[]string        `json:"tags,omitempty"`
-	Title           string           `json:"title"`
+	AppearanceColor string           `json:"appearanceColor" yaml:"appearanceColor"`
+	AppearanceIcon  string           `json:"appearanceIcon" yaml:"appearanceIcon"`
+	Description     *string          `json:"description,omitempty" yaml:"description,omitempty"`
+	DashboardID     string           `json:"dashboardId" yaml:"dashboardId"`
+	Href            string           `json:"href" yaml:"href"`
+	ID              string           `json:"id" yaml:"id"`
+	LastRefreshedAt *string          `json:"lastRefreshedAt,omitempty" yaml:"lastRefreshedAt,omitempty"`
+	PageCount       int64            `json:"pageCount" yaml:"pageCount"`
+	Popularity      *PopularityLevel `json:"popularity,omitempty" yaml:"popularity,omitempty"`
+	SemanticModel   *string          `json:"semanticModel,omitempty" yaml:"semanticModel,omitempty"`
+	Tags            *[]string        `json:"tags,omitempty" yaml:"tags,omitempty"`
+	Title           string           `json:"title" yaml:"title"`
 }
 
 type CatalogPageEnvelope struct {
-	Chrome  ChromeSignal       `json:"chrome"`
-	Page    CatalogPageSignal  `json:"page"`
-	Runtime RouteRuntimeSignal `json:"runtime"`
-	Status  DashboardStatus    `json:"status"`
+	Chrome  ChromeSignal       `json:"chrome" yaml:"chrome"`
+	Page    CatalogPageSignal  `json:"page" yaml:"page"`
+	Runtime RouteRuntimeSignal `json:"runtime" yaml:"runtime"`
+	Status  DashboardStatus    `json:"status" yaml:"status"`
 }
 
 type CatalogPageSignal struct {
-	Dashboards  []CatalogDashboardSignal `json:"dashboards"`
-	Description string                   `json:"description"`
-	Kind        RouteKind                `json:"kind"`
-	ListFilter  *string                  `json:"listFilter,omitempty"`
-	ListQuery   *string                  `json:"listQuery,omitempty"`
-	Title       string                   `json:"title"`
+	Dashboards  []CatalogDashboardSignal `json:"dashboards" yaml:"dashboards"`
+	Description string                   `json:"description" yaml:"description"`
+	Kind        RouteKind                `json:"kind" yaml:"kind"`
+	ListFilter  *string                  `json:"listFilter,omitempty" yaml:"listFilter,omitempty"`
+	ListQuery   *string                  `json:"listQuery,omitempty" yaml:"listQuery,omitempty"`
+	Title       string                   `json:"title" yaml:"title"`
 }
 
 type ChatArtifactSignal struct {
-	ID      string  `json:"id"`
-	Type    string  `json:"type"`
-	Summary *string `json:"summary,omitempty"`
+	ID      string  `json:"id" yaml:"id"`
+	Type    string  `json:"type" yaml:"type"`
+	Summary *string `json:"summary,omitempty" yaml:"summary,omitempty"`
 }
 
 type ChatConversationSummary struct {
-	ArchivedAt      *string `json:"archivedAt,omitempty"`
-	CreatedAt       string  `json:"createdAt"`
-	ID              string  `json:"id"`
-	LastMessageText *string `json:"lastMessageText,omitempty"`
-	MessageCount    int64   `json:"messageCount"`
-	PrincipalID     string  `json:"principalId"`
-	Status          string  `json:"status"`
-	Title           string  `json:"title"`
-	TitlePending    *bool   `json:"titlePending,omitempty"`
-	UpdatedAt       string  `json:"updatedAt"`
+	ArchivedAt      *string `json:"archivedAt,omitempty" yaml:"archivedAt,omitempty"`
+	CreatedAt       string  `json:"createdAt" yaml:"createdAt"`
+	ID              string  `json:"id" yaml:"id"`
+	LastMessageText *string `json:"lastMessageText,omitempty" yaml:"lastMessageText,omitempty"`
+	MessageCount    int64   `json:"messageCount" yaml:"messageCount"`
+	PrincipalID     string  `json:"principalId" yaml:"principalId"`
+	Status          string  `json:"status" yaml:"status"`
+	Title           string  `json:"title" yaml:"title"`
+	TitlePending    *bool   `json:"titlePending,omitempty" yaml:"titlePending,omitempty"`
+	UpdatedAt       string  `json:"updatedAt" yaml:"updatedAt"`
 }
 
 type ChatSignal struct {
-	ActiveConversationID string                     `json:"activeConversationId"`
-	Composer             ComposerSignal             `json:"composer"`
-	Conversations        []ChatConversationSummary  `json:"conversations"`
-	Status               ChatStatus                 `json:"status"`
-	Transcript           []ChatTranscriptItemSignal `json:"transcript"`
+	ActiveConversationID string                     `json:"activeConversationId" yaml:"activeConversationId"`
+	Composer             ComposerSignal             `json:"composer" yaml:"composer"`
+	Conversations        []ChatConversationSummary  `json:"conversations" yaml:"conversations"`
+	Status               ChatStatus                 `json:"status" yaml:"status"`
+	Transcript           []ChatTranscriptItemSignal `json:"transcript" yaml:"transcript"`
 }
 
 type ChatStatus struct {
-	Enabled bool    `json:"enabled"`
-	Error   *string `json:"error,omitempty"`
-	Running bool    `json:"running"`
+	Enabled bool    `json:"enabled" yaml:"enabled"`
+	Error   *string `json:"error,omitempty" yaml:"error,omitempty"`
+	Running bool    `json:"running" yaml:"running"`
 }
 
 type ChatTranscriptItemSignal struct {
-	ArgumentsJSON  *string                 `json:"argumentsJson,omitempty"`
-	Artifact       *ChatArtifactSignal     `json:"artifact,omitempty"`
-	ConversationID *string                 `json:"conversationId,omitempty"`
-	CreatedAt      *string                 `json:"createdAt,omitempty"`
-	Error          *string                 `json:"error,omitempty"`
-	ID             string                  `json:"id"`
-	InputFormat    *string                 `json:"inputFormat,omitempty"`
-	InputJSON      *string                 `json:"inputJson,omitempty"`
-	Kind           string                  `json:"kind"`
-	Markdown       *string                 `json:"markdown,omitempty"`
-	Name           *string                 `json:"name,omitempty"`
-	References     *[]AgentReferenceSignal `json:"references,omitempty"`
-	ResultFormat   *string                 `json:"resultFormat,omitempty"`
-	ResultJSON     *string                 `json:"resultJson,omitempty"`
-	ResultSummary  *string                 `json:"resultSummary,omitempty"`
-	RunID          *string                 `json:"runId,omitempty"`
-	Status         *string                 `json:"status,omitempty"`
-	Summary        *string                 `json:"summary,omitempty"`
-	Text           *string                 `json:"text,omitempty"`
-	Title          *string                 `json:"title,omitempty"`
-	ToolCallID     *string                 `json:"toolCallId,omitempty"`
+	ArgumentsJSON  *string                 `json:"argumentsJson,omitempty" yaml:"argumentsJson,omitempty"`
+	Artifact       *ChatArtifactSignal     `json:"artifact,omitempty" yaml:"artifact,omitempty"`
+	ConversationID *string                 `json:"conversationId,omitempty" yaml:"conversationId,omitempty"`
+	CreatedAt      *string                 `json:"createdAt,omitempty" yaml:"createdAt,omitempty"`
+	Error          *string                 `json:"error,omitempty" yaml:"error,omitempty"`
+	ID             string                  `json:"id" yaml:"id"`
+	InputFormat    *string                 `json:"inputFormat,omitempty" yaml:"inputFormat,omitempty"`
+	InputJSON      *string                 `json:"inputJson,omitempty" yaml:"inputJson,omitempty"`
+	Kind           string                  `json:"kind" yaml:"kind"`
+	Markdown       *string                 `json:"markdown,omitempty" yaml:"markdown,omitempty"`
+	Name           *string                 `json:"name,omitempty" yaml:"name,omitempty"`
+	References     *[]AgentReferenceSignal `json:"references,omitempty" yaml:"references,omitempty"`
+	ResultFormat   *string                 `json:"resultFormat,omitempty" yaml:"resultFormat,omitempty"`
+	ResultJSON     *string                 `json:"resultJson,omitempty" yaml:"resultJson,omitempty"`
+	ResultSummary  *string                 `json:"resultSummary,omitempty" yaml:"resultSummary,omitempty"`
+	RunID          *string                 `json:"runId,omitempty" yaml:"runId,omitempty"`
+	Status         *string                 `json:"status,omitempty" yaml:"status,omitempty"`
+	Summary        *string                 `json:"summary,omitempty" yaml:"summary,omitempty"`
+	Text           *string                 `json:"text,omitempty" yaml:"text,omitempty"`
+	Title          *string                 `json:"title,omitempty" yaml:"title,omitempty"`
+	ToolCallID     *string                 `json:"toolCallId,omitempty" yaml:"toolCallId,omitempty"`
 }
 
 type ChromeSignal struct {
-	Sidebar SidebarSignal `json:"sidebar"`
+	Sidebar SidebarSignal `json:"sidebar" yaml:"sidebar"`
 }
 
 type ComposerSignal struct {
-	Disabled    bool   `json:"disabled"`
-	Placeholder string `json:"placeholder"`
-	Value       string `json:"value"`
+	Disabled    bool   `json:"disabled" yaml:"disabled"`
+	Placeholder string `json:"placeholder" yaml:"placeholder"`
+	Value       string `json:"value" yaml:"value"`
 }
 
 type ConnectionAdministrationCommandSignal struct {
-	Action                string `json:"action"`
-	AssetID               string `json:"assetId"`
-	AuthenticationMode    string `json:"authenticationMode"`
-	ConfirmationToken     string `json:"confirmationToken"`
-	ConnectorKind         string `json:"connectorKind"`
-	CredentialEnvironment string `json:"credentialEnvironment"`
-	CredentialProjectID   string `json:"credentialProjectId"`
-	Database              string `json:"database"`
-	ExpectedRevision      int64  `json:"expectedRevision"`
-	Host                  string `json:"host"`
-	LogicalConnection     string `json:"logicalConnection"`
-	ObjectScope           string `json:"objectScope"`
-	Options               string `json:"options"`
-	Port                  string `json:"port"`
-	SecretKey             string `json:"secretKey"`
-	SecretPath            string `json:"secretPath"`
-	SourceIdentity        string `json:"sourceIdentity"`
-	Surface               string `json:"surface"`
-	TLSMode               string `json:"tlsMode"`
+	Action                string `json:"action" yaml:"action"`
+	AssetID               string `json:"assetId" yaml:"assetId"`
+	AuthenticationMode    string `json:"authenticationMode" yaml:"authenticationMode"`
+	ConfirmationToken     string `json:"confirmationToken" yaml:"confirmationToken"`
+	ConnectorKind         string `json:"connectorKind" yaml:"connectorKind"`
+	CredentialEnvironment string `json:"credentialEnvironment" yaml:"credentialEnvironment"`
+	CredentialProjectID   string `json:"credentialProjectId" yaml:"credentialProjectId"`
+	Database              string `json:"database" yaml:"database"`
+	ExpectedRevision      int64  `json:"expectedRevision" yaml:"expectedRevision"`
+	Host                  string `json:"host" yaml:"host"`
+	LogicalConnection     string `json:"logicalConnection" yaml:"logicalConnection"`
+	ObjectScope           string `json:"objectScope" yaml:"objectScope"`
+	Options               string `json:"options" yaml:"options"`
+	Port                  string `json:"port" yaml:"port"`
+	SecretKey             string `json:"secretKey" yaml:"secretKey"`
+	SecretPath            string `json:"secretPath" yaml:"secretPath"`
+	SourceIdentity        string `json:"sourceIdentity" yaml:"sourceIdentity"`
+	Surface               string `json:"surface" yaml:"surface"`
+	TLSMode               string `json:"tlsMode" yaml:"tlsMode"`
 }
 
 type ConnectionAdministrationSignal struct {
-	Command ConnectionAdministrationCommandSignal `json:"command"`
-	Status  ConnectionAdministrationStatusSignal  `json:"status"`
+	Command ConnectionAdministrationCommandSignal `json:"command" yaml:"command"`
+	Status  ConnectionAdministrationStatusSignal  `json:"status" yaml:"status"`
 }
 
 type ConnectionAdministrationStatusSignal struct {
-	Error   string `json:"error"`
-	Loading bool   `json:"loading"`
-	Message string `json:"message"`
+	Error   string `json:"error" yaml:"error"`
+	Loading bool   `json:"loading" yaml:"loading"`
+	Message string `json:"message" yaml:"message"`
 }
 
 type ConnectionLifecycleActionSignal struct {
-	Destructive bool   `json:"destructive"`
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Primary     bool   `json:"primary"`
+	Destructive bool   `json:"destructive" yaml:"destructive"`
+	ID          string `json:"id" yaml:"id"`
+	Label       string `json:"label" yaml:"label"`
+	Primary     bool   `json:"primary" yaml:"primary"`
 }
 
 type ConnectionLifecycleSignal struct {
-	Actions               []ConnectionLifecycleActionSignal `json:"actions"`
-	AssetID               string                            `json:"assetId"`
-	AuthenticationMode    string                            `json:"authenticationMode"`
-	BindingID             string                            `json:"bindingId"`
-	CanManage             bool                              `json:"canManage"`
-	CanTest               bool                              `json:"canTest"`
-	ConnectorKind         string                            `json:"connectorKind"`
-	CredentialEnvironment string                            `json:"credentialEnvironment"`
-	CredentialProjectID   string                            `json:"credentialProjectId"`
-	Database              string                            `json:"database"`
-	DiagnosticCode        string                            `json:"diagnosticCode"`
-	Enabled               bool                              `json:"enabled"`
-	Exists                bool                              `json:"exists"`
-	Health                string                            `json:"health"`
-	Host                  string                            `json:"host"`
-	LastValidatedAt       string                            `json:"lastValidatedAt"`
-	LogicalConnection     string                            `json:"logicalConnection"`
-	ObjectScope           string                            `json:"objectScope"`
-	Options               string                            `json:"options"`
-	Port                  string                            `json:"port"`
-	Revision              int64                             `json:"revision"`
-	SecretKey             string                            `json:"secretKey"`
-	SecretPath            string                            `json:"secretPath"`
-	SourceIdentity        string                            `json:"sourceIdentity"`
-	State                 string                            `json:"state"`
-	StatusLabel           string                            `json:"statusLabel"`
-	TLSMode               string                            `json:"tlsMode"`
-	Tone                  string                            `json:"tone"`
-	ValidatedVersion      string                            `json:"validatedVersion"`
+	Actions               []ConnectionLifecycleActionSignal `json:"actions" yaml:"actions"`
+	AssetID               string                            `json:"assetId" yaml:"assetId"`
+	AuthenticationMode    string                            `json:"authenticationMode" yaml:"authenticationMode"`
+	BindingID             string                            `json:"bindingId" yaml:"bindingId"`
+	CanManage             bool                              `json:"canManage" yaml:"canManage"`
+	CanTest               bool                              `json:"canTest" yaml:"canTest"`
+	ConnectorKind         string                            `json:"connectorKind" yaml:"connectorKind"`
+	CredentialEnvironment string                            `json:"credentialEnvironment" yaml:"credentialEnvironment"`
+	CredentialProjectID   string                            `json:"credentialProjectId" yaml:"credentialProjectId"`
+	Database              string                            `json:"database" yaml:"database"`
+	DiagnosticCode        string                            `json:"diagnosticCode" yaml:"diagnosticCode"`
+	Enabled               bool                              `json:"enabled" yaml:"enabled"`
+	Exists                bool                              `json:"exists" yaml:"exists"`
+	Health                string                            `json:"health" yaml:"health"`
+	Host                  string                            `json:"host" yaml:"host"`
+	LastValidatedAt       string                            `json:"lastValidatedAt" yaml:"lastValidatedAt"`
+	LogicalConnection     string                            `json:"logicalConnection" yaml:"logicalConnection"`
+	ObjectScope           string                            `json:"objectScope" yaml:"objectScope"`
+	Options               string                            `json:"options" yaml:"options"`
+	Port                  string                            `json:"port" yaml:"port"`
+	Revision              int64                             `json:"revision" yaml:"revision"`
+	SecretKey             string                            `json:"secretKey" yaml:"secretKey"`
+	SecretPath            string                            `json:"secretPath" yaml:"secretPath"`
+	SourceIdentity        string                            `json:"sourceIdentity" yaml:"sourceIdentity"`
+	State                 string                            `json:"state" yaml:"state"`
+	StatusLabel           string                            `json:"statusLabel" yaml:"statusLabel"`
+	TLSMode               string                            `json:"tlsMode" yaml:"tlsMode"`
+	Tone                  string                            `json:"tone" yaml:"tone"`
+	ValidatedVersion      string                            `json:"validatedVersion" yaml:"validatedVersion"`
 }
 
 type ConnectionSummarySignal struct {
-	CredentialStatus string                    `json:"credentialStatus"`
-	Description      *string                   `json:"description,omitempty"`
-	DetailHref       string                    `json:"detailHref"`
-	ID               string                    `json:"id"`
-	Kind             string                    `json:"kind"`
-	Lifecycle        ConnectionLifecycleSignal `json:"lifecycle"`
-	Scope            string                    `json:"scope"`
-	SourceCount      int64                     `json:"sourceCount"`
-	Title            string                    `json:"title"`
+	CredentialStatus string                    `json:"credentialStatus" yaml:"credentialStatus"`
+	Description      *string                   `json:"description,omitempty" yaml:"description,omitempty"`
+	DetailHref       string                    `json:"detailHref" yaml:"detailHref"`
+	ID               string                    `json:"id" yaml:"id"`
+	Kind             string                    `json:"kind" yaml:"kind"`
+	Lifecycle        ConnectionLifecycleSignal `json:"lifecycle" yaml:"lifecycle"`
+	Scope            string                    `json:"scope" yaml:"scope"`
+	SourceCount      int64                     `json:"sourceCount" yaml:"sourceCount"`
+	Title            string                    `json:"title" yaml:"title"`
 }
 
 type ConnectionsPageEnvelope struct {
-	Chrome          ChromeSignal                   `json:"chrome"`
-	ConnectionAdmin ConnectionAdministrationSignal `json:"connectionAdmin"`
-	Page            ConnectionsPageSignal          `json:"page"`
-	Runtime         RouteRuntimeSignal             `json:"runtime"`
-	Status          DashboardStatus                `json:"status"`
+	Chrome          ChromeSignal                   `json:"chrome" yaml:"chrome"`
+	ConnectionAdmin ConnectionAdministrationSignal `json:"connectionAdmin" yaml:"connectionAdmin"`
+	Page            ConnectionsPageSignal          `json:"page" yaml:"page"`
+	Runtime         RouteRuntimeSignal             `json:"runtime" yaml:"runtime"`
+	Status          DashboardStatus                `json:"status" yaml:"status"`
 }
 
 type ConnectionsPageSignal struct {
-	Connections []ConnectionSummarySignal `json:"connections"`
-	Description *string                   `json:"description,omitempty"`
-	Environment *string                   `json:"environment,omitempty"`
-	Kind        RouteKind                 `json:"kind"`
-	Query       *string                   `json:"query,omitempty"`
-	Title       string                    `json:"title"`
+	Connections []ConnectionSummarySignal `json:"connections" yaml:"connections"`
+	Description *string                   `json:"description,omitempty" yaml:"description,omitempty"`
+	Environment *string                   `json:"environment,omitempty" yaml:"environment,omitempty"`
+	Kind        RouteKind                 `json:"kind" yaml:"kind"`
+	Query       *string                   `json:"query,omitempty" yaml:"query,omitempty"`
+	Title       string                    `json:"title" yaml:"title"`
 }
 
 type DashboardAppliedFilterState struct {
-	Expression         DashboardFilterExpression `json:"expression"`
-	ResolvedExpression DashboardFilterExpression `json:"resolvedExpression"`
-	EvaluatedAt        *string                   `json:"evaluatedAt,omitempty"`
+	Expression         DashboardFilterExpression `json:"expression" yaml:"expression"`
+	ResolvedExpression DashboardFilterExpression `json:"resolvedExpression" yaml:"resolvedExpression"`
+	EvaluatedAt        *string                   `json:"evaluatedAt,omitempty" yaml:"evaluatedAt,omitempty"`
 }
 
 type DashboardBooleanFilterValue struct {
 	DashboardFilterValueBase
-	Kind  string `json:"kind"`
-	Value bool   `json:"value"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Value bool   `json:"value" yaml:"value"`
 }
 
 type DashboardComparisonExpression struct {
 	DashboardFilterExpressionBase
-	Kind     string               `json:"kind"`
-	Operator string               `json:"operator"`
-	Value    DashboardFilterValue `json:"value"`
+	Kind     string               `json:"kind" yaml:"kind"`
+	Operator string               `json:"operator" yaml:"operator"`
+	Value    DashboardFilterValue `json:"value" yaml:"value"`
 }
 
 type DashboardDateFilterValue struct {
 	DashboardFilterValueBase
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Value string `json:"value" yaml:"value"`
 }
 
 type DashboardDecimalFilterValue struct {
 	DashboardFilterValueBase
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Value string `json:"value" yaml:"value"`
 }
 
 type DashboardFilterBound struct {
-	Value     DashboardFilterValue `json:"value"`
-	Inclusive bool                 `json:"inclusive"`
+	Value     DashboardFilterValue `json:"value" yaml:"value"`
+	Inclusive bool                 `json:"inclusive" yaml:"inclusive"`
 }
 
 type DashboardFilterExpressionVariant interface {
@@ -624,15 +624,15 @@ func (value *DashboardFilterExpression) Base() (*DashboardFilterExpressionBase, 
 }
 
 type DashboardFilterExpressionBase struct {
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type DashboardFilterState struct {
-	Revision         int64                                  `json:"revision"`
-	AppliedControls  map[string]DashboardAppliedFilterState `json:"appliedControls"`
-	DraftControls    map[string]DashboardFilterExpression   `json:"draftControls"`
-	DirtyBindings    []string                               `json:"dirtyBindings"`
-	DefaultsRevision string                                 `json:"defaultsRevision"`
+	Revision         int64                                  `json:"revision" yaml:"revision"`
+	AppliedControls  map[string]DashboardAppliedFilterState `json:"appliedControls" yaml:"appliedControls"`
+	DraftControls    map[string]DashboardFilterExpression   `json:"draftControls" yaml:"draftControls"`
+	DirtyBindings    []string                               `json:"dirtyBindings" yaml:"dirtyBindings"`
+	DefaultsRevision string                                 `json:"defaultsRevision" yaml:"defaultsRevision"`
 }
 
 type DashboardFilterValueVariant interface {
@@ -929,374 +929,374 @@ func (value *DashboardFilterValue) Base() (*DashboardFilterValueBase, error) {
 }
 
 type DashboardFilterValueBase struct {
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type DashboardIntegerFilterValue struct {
 	DashboardFilterValueBase
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Value string `json:"value" yaml:"value"`
 }
 
 type DashboardNullCheckExpression struct {
 	DashboardFilterExpressionBase
-	Kind     string `json:"kind"`
-	Operator string `json:"operator"`
+	Kind     string `json:"kind" yaml:"kind"`
+	Operator string `json:"operator" yaml:"operator"`
 }
 
 type DashboardRangeExpression struct {
 	DashboardFilterExpressionBase
-	Kind  string                `json:"kind"`
-	Lower *DashboardFilterBound `json:"lower,omitempty"`
-	Upper *DashboardFilterBound `json:"upper,omitempty"`
+	Kind  string                `json:"kind" yaml:"kind"`
+	Lower *DashboardFilterBound `json:"lower,omitempty" yaml:"lower,omitempty"`
+	Upper *DashboardFilterBound `json:"upper,omitempty" yaml:"upper,omitempty"`
 }
 
 type DashboardRelativePeriodExpression struct {
 	DashboardFilterExpressionBase
-	Kind           string                `json:"kind"`
-	Direction      string                `json:"direction"`
-	Count          int32                 `json:"count"`
-	Unit           string                `json:"unit"`
-	IncludeCurrent bool                  `json:"includeCurrent"`
-	Anchor         string                `json:"anchor"`
-	AnchorValue    *DashboardFilterValue `json:"anchorValue,omitempty"`
+	Kind           string                `json:"kind" yaml:"kind"`
+	Direction      string                `json:"direction" yaml:"direction"`
+	Count          int32                 `json:"count" yaml:"count"`
+	Unit           string                `json:"unit" yaml:"unit"`
+	IncludeCurrent bool                  `json:"includeCurrent" yaml:"includeCurrent"`
+	Anchor         string                `json:"anchor" yaml:"anchor"`
+	AnchorValue    *DashboardFilterValue `json:"anchorValue,omitempty" yaml:"anchorValue,omitempty"`
 }
 
 type DashboardSetExpression struct {
 	DashboardFilterExpressionBase
-	Kind     string                 `json:"kind"`
-	Operator string                 `json:"operator"`
-	Values   []DashboardFilterValue `json:"values"`
+	Kind     string                 `json:"kind" yaml:"kind"`
+	Operator string                 `json:"operator" yaml:"operator"`
+	Values   []DashboardFilterValue `json:"values" yaml:"values"`
 }
 
 type DashboardStatus struct {
-	Error           string  `json:"error"`
-	Generation      int64   `json:"generation"`
-	LastUpdated     string  `json:"lastUpdated"`
-	Loading         bool    `json:"loading"`
-	ProgressPercent float64 `json:"progressPercent"`
-	RefreshID       string  `json:"refreshId"`
-	SetupRequired   bool    `json:"setupRequired"`
+	Error           string  `json:"error" yaml:"error"`
+	Generation      int64   `json:"generation" yaml:"generation"`
+	LastUpdated     string  `json:"lastUpdated" yaml:"lastUpdated"`
+	Loading         bool    `json:"loading" yaml:"loading"`
+	ProgressPercent float64 `json:"progressPercent" yaml:"progressPercent"`
+	RefreshID       string  `json:"refreshId" yaml:"refreshId"`
+	SetupRequired   bool    `json:"setupRequired" yaml:"setupRequired"`
 }
 
 type DashboardStringFilterValue struct {
 	DashboardFilterValueBase
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Value string `json:"value" yaml:"value"`
 }
 
 type DashboardTimestampFilterValue struct {
 	DashboardFilterValueBase
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Kind  string `json:"kind" yaml:"kind"`
+	Value string `json:"value" yaml:"value"`
 }
 
 type DashboardUnfilteredExpression struct {
 	DashboardFilterExpressionBase
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type DataExploreAgentContextSignal struct {
-	Dimensions []string                  `json:"dimensions"`
-	Filters    []DataExploreFilterSignal `json:"filters"`
-	Limit      int64                     `json:"limit"`
-	Metrics    []string                  `json:"metrics"`
-	Sort       []DataExploreSortSignal   `json:"sort"`
-	Time       *DataExploreTimeSignal    `json:"time,omitempty"`
+	Dimensions []string                  `json:"dimensions" yaml:"dimensions"`
+	Filters    []DataExploreFilterSignal `json:"filters" yaml:"filters"`
+	Limit      int64                     `json:"limit" yaml:"limit"`
+	Metrics    []string                  `json:"metrics" yaml:"metrics"`
+	Sort       []DataExploreSortSignal   `json:"sort" yaml:"sort"`
+	Time       *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
 }
 
 type DataExploreCommand struct {
-	ColumnWidths *map[string]float64       `json:"columnWidths,omitempty"`
-	DatasetID    *string                   `json:"datasetId,omitempty"`
-	Dimensions   []string                  `json:"dimensions"`
-	Filters      []DataExploreFilterSignal `json:"filters"`
-	Limit        int64                     `json:"limit"`
-	Metrics      []string                  `json:"metrics"`
-	ModelID      *string                   `json:"modelId,omitempty"`
-	RequestSeq   int64                     `json:"requestSeq"`
-	ResetVersion int64                     `json:"resetVersion"`
-	Sort         []DataExploreSortSignal   `json:"sort"`
-	Time         *DataExploreTimeSignal    `json:"time,omitempty"`
+	ColumnWidths *map[string]float64       `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
+	DatasetID    *string                   `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Dimensions   []string                  `json:"dimensions" yaml:"dimensions"`
+	Filters      []DataExploreFilterSignal `json:"filters" yaml:"filters"`
+	Limit        int64                     `json:"limit" yaml:"limit"`
+	Metrics      []string                  `json:"metrics" yaml:"metrics"`
+	ModelID      *string                   `json:"modelId,omitempty" yaml:"modelId,omitempty"`
+	RequestSeq   int64                     `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion int64                     `json:"resetVersion" yaml:"resetVersion"`
+	Sort         []DataExploreSortSignal   `json:"sort" yaml:"sort"`
+	Time         *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
 }
 
 type DataExploreDatasetSignal struct {
-	Description *string                          `json:"description,omitempty"`
-	Entities    []SemanticModelGraphEntitySignal `json:"entities"`
-	FieldCount  int64                            `json:"fieldCount"`
-	GrainEntity string                           `json:"grainEntity"`
-	GrainFields []string                         `json:"grainFields"`
-	ID          string                           `json:"id"`
-	Title       string                           `json:"title"`
+	Description *string                          `json:"description,omitempty" yaml:"description,omitempty"`
+	Entities    []SemanticModelGraphEntitySignal `json:"entities" yaml:"entities"`
+	FieldCount  int64                            `json:"fieldCount" yaml:"fieldCount"`
+	GrainEntity string                           `json:"grainEntity" yaml:"grainEntity"`
+	GrainFields []string                         `json:"grainFields" yaml:"grainFields"`
+	ID          string                           `json:"id" yaml:"id"`
+	Title       string                           `json:"title" yaml:"title"`
 }
 
 type DataExploreFieldSignal struct {
-	Compatible          bool      `json:"compatible"`
-	CompatibilityReason *string   `json:"compatibilityReason,omitempty"`
-	Description         *string   `json:"description,omitempty"`
-	Dataset             *string   `json:"dataset,omitempty"`
-	ID                  string    `json:"id"`
-	Kind                string    `json:"kind"`
-	Label               string    `json:"label"`
-	ModelTable          string    `json:"modelTable"`
-	RebaseDatasetID     *string   `json:"rebaseDatasetId,omitempty"`
-	RelationshipPath    *[]string `json:"relationshipPath,omitempty"`
-	Selected            bool      `json:"selected"`
-	Type                *string   `json:"type,omitempty"`
+	Compatible          bool      `json:"compatible" yaml:"compatible"`
+	CompatibilityReason *string   `json:"compatibilityReason,omitempty" yaml:"compatibilityReason,omitempty"`
+	Description         *string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Dataset             *string   `json:"dataset,omitempty" yaml:"dataset,omitempty"`
+	ID                  string    `json:"id" yaml:"id"`
+	Kind                string    `json:"kind" yaml:"kind"`
+	Label               string    `json:"label" yaml:"label"`
+	ModelTable          string    `json:"modelTable" yaml:"modelTable"`
+	RebaseDatasetID     *string   `json:"rebaseDatasetId,omitempty" yaml:"rebaseDatasetId,omitempty"`
+	RelationshipPath    *[]string `json:"relationshipPath,omitempty" yaml:"relationshipPath,omitempty"`
+	Selected            bool      `json:"selected" yaml:"selected"`
+	Type                *string   `json:"type,omitempty" yaml:"type,omitempty"`
 }
 
 type DataExploreFilterSignal struct {
-	Dataset  *string  `json:"dataset,omitempty"`
-	Field    string   `json:"field"`
-	Operator string   `json:"operator"`
-	Values   []string `json:"values"`
+	Dataset  *string  `json:"dataset,omitempty" yaml:"dataset,omitempty"`
+	Field    string   `json:"field" yaml:"field"`
+	Operator string   `json:"operator" yaml:"operator"`
+	Values   []string `json:"values" yaml:"values"`
 }
 
 type DataExploreModelSignal struct {
-	Datasets    []DataExploreDatasetSignal `json:"datasets"`
-	Description *string                    `json:"description,omitempty"`
-	ID          string                     `json:"id"`
-	Title       string                     `json:"title"`
+	Datasets    []DataExploreDatasetSignal `json:"datasets" yaml:"datasets"`
+	Description *string                    `json:"description,omitempty" yaml:"description,omitempty"`
+	ID          string                     `json:"id" yaml:"id"`
+	Title       string                     `json:"title" yaml:"title"`
 }
 
 type DataExploreResultSignal struct {
-	Columns      []DataPreviewColumnSignal `json:"columns"`
-	DurationMS   int64                     `json:"durationMs"`
-	Error        *string                   `json:"error,omitempty"`
-	Plan         *string                   `json:"plan,omitempty"`
-	RequestSeq   int64                     `json:"requestSeq"`
-	Rows         []map[string]any          `json:"rows"`
-	RowsReturned int64                     `json:"rowsReturned"`
-	SQL          *string                   `json:"sql,omitempty"`
-	Truncated    bool                      `json:"truncated"`
-	Warnings     []string                  `json:"warnings"`
+	Columns      []DataPreviewColumnSignal `json:"columns" yaml:"columns"`
+	DurationMS   int64                     `json:"durationMs" yaml:"durationMs"`
+	Error        *string                   `json:"error,omitempty" yaml:"error,omitempty"`
+	Plan         *string                   `json:"plan,omitempty" yaml:"plan,omitempty"`
+	RequestSeq   int64                     `json:"requestSeq" yaml:"requestSeq"`
+	Rows         []map[string]any          `json:"rows" yaml:"rows"`
+	RowsReturned int64                     `json:"rowsReturned" yaml:"rowsReturned"`
+	SQL          *string                   `json:"sql,omitempty" yaml:"sql,omitempty"`
+	Truncated    bool                      `json:"truncated" yaml:"truncated"`
+	Warnings     []string                  `json:"warnings" yaml:"warnings"`
 }
 
 type DataExploreSignal struct {
-	Command         DataExploreCommand         `json:"command"`
-	Datasets        []DataExploreDatasetSignal `json:"datasets"`
-	Fields          []DataExploreFieldSignal   `json:"fields"`
-	Models          []DataExploreModelSignal   `json:"models"`
-	Result          DataExploreResultSignal    `json:"result"`
-	SelectedDataset *DataExploreDatasetSignal  `json:"selectedDataset,omitempty"`
-	SelectedModel   *DataExploreModelSignal    `json:"selectedModel,omitempty"`
+	Command         DataExploreCommand         `json:"command" yaml:"command"`
+	Datasets        []DataExploreDatasetSignal `json:"datasets" yaml:"datasets"`
+	Fields          []DataExploreFieldSignal   `json:"fields" yaml:"fields"`
+	Models          []DataExploreModelSignal   `json:"models" yaml:"models"`
+	Result          DataExploreResultSignal    `json:"result" yaml:"result"`
+	SelectedDataset *DataExploreDatasetSignal  `json:"selectedDataset,omitempty" yaml:"selectedDataset,omitempty"`
+	SelectedModel   *DataExploreModelSignal    `json:"selectedModel,omitempty" yaml:"selectedModel,omitempty"`
 }
 
 type DataExploreSortSignal struct {
-	Direction string `json:"direction"`
-	Field     string `json:"field"`
+	Direction string `json:"direction" yaml:"direction"`
+	Field     string `json:"field" yaml:"field"`
 }
 
 type DataExploreTimeSignal struct {
-	Alias *string `json:"alias,omitempty"`
-	Field string  `json:"field"`
-	Grain string  `json:"grain"`
+	Alias *string `json:"alias,omitempty" yaml:"alias,omitempty"`
+	Field string  `json:"field" yaml:"field"`
+	Grain string  `json:"grain" yaml:"grain"`
 }
 
 type DataExplorerCommand struct {
-	Explore        *DataExploreCommand   `json:"explore,omitempty"`
-	Mode           *string               `json:"mode,omitempty"`
-	Block          *string               `json:"block,omitempty"`
-	ColumnWidths   *map[string]float64   `json:"columnWidths,omitempty"`
-	Count          int64                 `json:"count"`
-	Limit          int64                 `json:"limit"`
-	ObjectKey      *string               `json:"objectKey,omitempty"`
-	Offset         int64                 `json:"offset"`
-	RequestSeq     int64                 `json:"requestSeq"`
-	ResetVersion   int64                 `json:"resetVersion"`
-	Sort           DataPreviewSortSignal `json:"sort"`
-	Start          int64                 `json:"start"`
-	VisibleColumns *[]string             `json:"visibleColumns,omitempty"`
+	Explore        *DataExploreCommand   `json:"explore,omitempty" yaml:"explore,omitempty"`
+	Mode           *string               `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Block          *string               `json:"block,omitempty" yaml:"block,omitempty"`
+	ColumnWidths   *map[string]float64   `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
+	Count          int64                 `json:"count" yaml:"count"`
+	Limit          int64                 `json:"limit" yaml:"limit"`
+	ObjectKey      *string               `json:"objectKey,omitempty" yaml:"objectKey,omitempty"`
+	Offset         int64                 `json:"offset" yaml:"offset"`
+	RequestSeq     int64                 `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion   int64                 `json:"resetVersion" yaml:"resetVersion"`
+	Sort           DataPreviewSortSignal `json:"sort" yaml:"sort"`
+	Start          int64                 `json:"start" yaml:"start"`
+	VisibleColumns *[]string             `json:"visibleColumns,omitempty" yaml:"visibleColumns,omitempty"`
 }
 
 type DataExplorerContextSignal struct {
-	Active       bool    `json:"active"`
-	Environment  string  `json:"environment"`
-	GenerationID string  `json:"generationId"`
-	ObjectCount  int64   `json:"objectCount"`
-	ProjectID    string  `json:"projectId"`
-	ProjectTitle *string `json:"projectTitle,omitempty"`
+	Active       bool    `json:"active" yaml:"active"`
+	Environment  string  `json:"environment" yaml:"environment"`
+	GenerationID string  `json:"generationId" yaml:"generationId"`
+	ObjectCount  int64   `json:"objectCount" yaml:"objectCount"`
+	ProjectID    string  `json:"projectId" yaml:"projectId"`
+	ProjectTitle *string `json:"projectTitle,omitempty" yaml:"projectTitle,omitempty"`
 }
 
 type DataExplorerObjectSignal struct {
-	AssetID       *string                    `json:"assetId,omitempty"`
-	ColumnCount   int64                      `json:"columnCount"`
-	Columns       *[]DataPreviewColumnSignal `json:"columns,omitempty"`
-	Description   *string                    `json:"description,omitempty"`
-	DetailHref    *string                    `json:"detailHref,omitempty"`
-	Grain         *string                    `json:"grain,omitempty"`
-	Key           string                     `json:"key"`
-	Layer         string                     `json:"layer"`
-	ModelID       *string                    `json:"modelId,omitempty"`
-	RowCountLabel *string                    `json:"rowCountLabel,omitempty"`
-	Source        *string                    `json:"source,omitempty"`
-	Table         *string                    `json:"table,omitempty"`
-	Title         string                     `json:"title"`
-	ResourceID    string                     `json:"resourceId"`
+	AssetID       *string                    `json:"assetId,omitempty" yaml:"assetId,omitempty"`
+	ColumnCount   int64                      `json:"columnCount" yaml:"columnCount"`
+	Columns       *[]DataPreviewColumnSignal `json:"columns,omitempty" yaml:"columns,omitempty"`
+	Description   *string                    `json:"description,omitempty" yaml:"description,omitempty"`
+	DetailHref    *string                    `json:"detailHref,omitempty" yaml:"detailHref,omitempty"`
+	Grain         *string                    `json:"grain,omitempty" yaml:"grain,omitempty"`
+	Key           string                     `json:"key" yaml:"key"`
+	Layer         string                     `json:"layer" yaml:"layer"`
+	ModelID       *string                    `json:"modelId,omitempty" yaml:"modelId,omitempty"`
+	RowCountLabel *string                    `json:"rowCountLabel,omitempty" yaml:"rowCountLabel,omitempty"`
+	Source        *string                    `json:"source,omitempty" yaml:"source,omitempty"`
+	Table         *string                    `json:"table,omitempty" yaml:"table,omitempty"`
+	Title         string                     `json:"title" yaml:"title"`
+	ResourceID    string                     `json:"resourceId" yaml:"resourceId"`
 }
 
 type DataExplorerPageEnvelope struct {
-	Agent                ChatSignal                                       `json:"agent"`
-	AgentContext         AgentContextSignal                               `json:"agentContext"`
-	AgentReferenceSearch AgentReferenceSearchSignal                       `json:"agentReferenceSearch"`
-	AgentVisuals         map[string]visualizationir.VisualizationEnvelope `json:"agentVisuals"`
-	Chrome               ChromeSignal                                     `json:"chrome"`
-	DataExplorer         DataExplorerSignal                               `json:"dataExplorer"`
-	Page                 DataExplorerPageSignal                           `json:"page"`
-	Runtime              RouteRuntimeSignal                               `json:"runtime"`
-	Status               DashboardStatus                                  `json:"status"`
+	Agent                ChatSignal                                       `json:"agent" yaml:"agent"`
+	AgentContext         AgentContextSignal                               `json:"agentContext" yaml:"agentContext"`
+	AgentReferenceSearch AgentReferenceSearchSignal                       `json:"agentReferenceSearch" yaml:"agentReferenceSearch"`
+	AgentVisuals         map[string]visualizationir.VisualizationEnvelope `json:"agentVisuals" yaml:"agentVisuals"`
+	Chrome               ChromeSignal                                     `json:"chrome" yaml:"chrome"`
+	DataExplorer         DataExplorerSignal                               `json:"dataExplorer" yaml:"dataExplorer"`
+	Page                 DataExplorerPageSignal                           `json:"page" yaml:"page"`
+	Runtime              RouteRuntimeSignal                               `json:"runtime" yaml:"runtime"`
+	Status               DashboardStatus                                  `json:"status" yaml:"status"`
 }
 
 type DataExplorerPageSignal struct {
-	Description    *string                   `json:"description,omitempty"`
-	Kind           RouteKind                 `json:"kind"`
-	SelectedObject *string                   `json:"selectedObject,omitempty"`
-	Tabs           []ResourceTabSignal       `json:"tabs"`
-	Title          string                    `json:"title"`
-	Context        DataExplorerContextSignal `json:"context"`
+	Description    *string                   `json:"description,omitempty" yaml:"description,omitempty"`
+	Kind           RouteKind                 `json:"kind" yaml:"kind"`
+	SelectedObject *string                   `json:"selectedObject,omitempty" yaml:"selectedObject,omitempty"`
+	Tabs           []ResourceTabSignal       `json:"tabs" yaml:"tabs"`
+	Title          string                    `json:"title" yaml:"title"`
+	Context        DataExplorerContextSignal `json:"context" yaml:"context"`
 }
 
 type DataExplorerSignal struct {
-	Command        DataExplorerCommand        `json:"command"`
-	Explore        DataExploreSignal          `json:"explore"`
-	Objects        []DataExplorerObjectSignal `json:"objects"`
-	Preview        DataPreviewSignal          `json:"preview"`
-	SelectedKey    *string                    `json:"selectedKey,omitempty"`
-	SelectedObject *DataExplorerObjectSignal  `json:"selectedObject,omitempty"`
-	Warnings       *[]string                  `json:"warnings,omitempty"`
+	Command        DataExplorerCommand        `json:"command" yaml:"command"`
+	Explore        DataExploreSignal          `json:"explore" yaml:"explore"`
+	Objects        []DataExplorerObjectSignal `json:"objects" yaml:"objects"`
+	Preview        DataPreviewSignal          `json:"preview" yaml:"preview"`
+	SelectedKey    *string                    `json:"selectedKey,omitempty" yaml:"selectedKey,omitempty"`
+	SelectedObject *DataExplorerObjectSignal  `json:"selectedObject,omitempty" yaml:"selectedObject,omitempty"`
+	Warnings       *[]string                  `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 }
 
 type DataPreviewBlockSignal struct {
-	RequestSeq   int64                 `json:"requestSeq"`
-	ResetVersion int64                 `json:"resetVersion"`
-	Rows         []map[string]any      `json:"rows"`
-	Sort         DataPreviewSortSignal `json:"sort"`
-	Start        int64                 `json:"start"`
+	RequestSeq   int64                 `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion int64                 `json:"resetVersion" yaml:"resetVersion"`
+	Rows         []map[string]any      `json:"rows" yaml:"rows"`
+	Sort         DataPreviewSortSignal `json:"sort" yaml:"sort"`
+	Start        int64                 `json:"start" yaml:"start"`
 }
 
 type DataPreviewColumnSignal struct {
-	DefaultValue *string `json:"defaultValue,omitempty"`
-	Description  *string `json:"description,omitempty"`
-	Key          string  `json:"key"`
-	Label        string  `json:"label"`
-	Nullable     *bool   `json:"nullable,omitempty"`
-	PrimaryKey   *bool   `json:"primaryKey,omitempty"`
-	Type         *string `json:"type,omitempty"`
+	DefaultValue *string `json:"defaultValue,omitempty" yaml:"defaultValue,omitempty"`
+	Description  *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Key          string  `json:"key" yaml:"key"`
+	Label        string  `json:"label" yaml:"label"`
+	Nullable     *bool   `json:"nullable,omitempty" yaml:"nullable,omitempty"`
+	PrimaryKey   *bool   `json:"primaryKey,omitempty" yaml:"primaryKey,omitempty"`
+	Type         *string `json:"type,omitempty" yaml:"type,omitempty"`
 }
 
 type DataPreviewSignal struct {
-	AvailableRows int64                             `json:"availableRows"`
-	Blocks        map[string]DataPreviewBlockSignal `json:"blocks"`
-	ChunkSize     int64                             `json:"chunkSize"`
-	Columns       []DataPreviewColumnSignal         `json:"columns"`
-	Error         *string                           `json:"error,omitempty"`
-	LoadingBlock  *string                           `json:"loadingBlock,omitempty"`
-	ResetVersion  int64                             `json:"resetVersion"`
-	RowHeight     int64                             `json:"rowHeight"`
-	Sort          DataPreviewSortSignal             `json:"sort"`
-	SQL           *string                           `json:"sql,omitempty"`
-	TotalRowLabel *string                           `json:"totalRowLabel,omitempty"`
-	TotalRows     int64                             `json:"totalRows"`
+	AvailableRows int64                             `json:"availableRows" yaml:"availableRows"`
+	Blocks        map[string]DataPreviewBlockSignal `json:"blocks" yaml:"blocks"`
+	ChunkSize     int64                             `json:"chunkSize" yaml:"chunkSize"`
+	Columns       []DataPreviewColumnSignal         `json:"columns" yaml:"columns"`
+	Error         *string                           `json:"error,omitempty" yaml:"error,omitempty"`
+	LoadingBlock  *string                           `json:"loadingBlock,omitempty" yaml:"loadingBlock,omitempty"`
+	ResetVersion  int64                             `json:"resetVersion" yaml:"resetVersion"`
+	RowHeight     int64                             `json:"rowHeight" yaml:"rowHeight"`
+	Sort          DataPreviewSortSignal             `json:"sort" yaml:"sort"`
+	SQL           *string                           `json:"sql,omitempty" yaml:"sql,omitempty"`
+	TotalRowLabel *string                           `json:"totalRowLabel,omitempty" yaml:"totalRowLabel,omitempty"`
+	TotalRows     int64                             `json:"totalRows" yaml:"totalRows"`
 }
 
 type DataPreviewSortSignal struct {
-	Column    *string `json:"column,omitempty"`
-	Direction *string `json:"direction,omitempty"`
+	Column    *string `json:"column,omitempty" yaml:"column,omitempty"`
+	Direction *string `json:"direction,omitempty" yaml:"direction,omitempty"`
 }
 
 type DefinitionFactSignal struct {
-	Code  *bool  `json:"code,omitempty"`
-	Label string `json:"label"`
-	Value string `json:"value"`
-	Wide  *bool  `json:"wide,omitempty"`
+	Code  *bool  `json:"code,omitempty" yaml:"code,omitempty"`
+	Label string `json:"label" yaml:"label"`
+	Value string `json:"value" yaml:"value"`
+	Wide  *bool  `json:"wide,omitempty" yaml:"wide,omitempty"`
 }
 
 type FilterMenuCommand struct {
-	Action   *string   `json:"action,omitempty"`
-	MenuID   *string   `json:"menuId,omitempty"`
-	Search   *string   `json:"search,omitempty"`
-	Selected *[]string `json:"selected,omitempty"`
-	Value    *string   `json:"value,omitempty"`
+	Action   *string   `json:"action,omitempty" yaml:"action,omitempty"`
+	MenuID   *string   `json:"menuId,omitempty" yaml:"menuId,omitempty"`
+	Search   *string   `json:"search,omitempty" yaml:"search,omitempty"`
+	Selected *[]string `json:"selected,omitempty" yaml:"selected,omitempty"`
+	Value    *string   `json:"value,omitempty" yaml:"value,omitempty"`
 }
 
 type FilterMenuOptionSignal struct {
-	CountLabel  *string `json:"countLabel,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Disabled    bool    `json:"disabled"`
-	Icon        *string `json:"icon,omitempty"`
-	Label       string  `json:"label"`
-	Selected    bool    `json:"selected"`
-	Value       string  `json:"value"`
+	CountLabel  *string `json:"countLabel,omitempty" yaml:"countLabel,omitempty"`
+	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Disabled    bool    `json:"disabled" yaml:"disabled"`
+	Icon        *string `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Label       string  `json:"label" yaml:"label"`
+	Selected    bool    `json:"selected" yaml:"selected"`
+	Value       string  `json:"value" yaml:"value"`
 }
 
 type FilterMenuSignal struct {
-	EmptyLabel   *string                   `json:"emptyLabel,omitempty"`
-	Error        *string                   `json:"error,omitempty"`
-	ID           string                    `json:"id"`
-	Label        string                    `json:"label"`
-	Loading      bool                      `json:"loading"`
-	Mode         *string                   `json:"mode,omitempty"`
-	Options      *[]FilterMenuOptionSignal `json:"options,omitempty"`
-	Placeholder  *string                   `json:"placeholder,omitempty"`
-	Search       *string                   `json:"search,omitempty"`
-	Selected     *[]string                 `json:"selected,omitempty"`
-	SummaryLabel *string                   `json:"summaryLabel,omitempty"`
+	EmptyLabel   *string                   `json:"emptyLabel,omitempty" yaml:"emptyLabel,omitempty"`
+	Error        *string                   `json:"error,omitempty" yaml:"error,omitempty"`
+	ID           string                    `json:"id" yaml:"id"`
+	Label        string                    `json:"label" yaml:"label"`
+	Loading      bool                      `json:"loading" yaml:"loading"`
+	Mode         *string                   `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Options      *[]FilterMenuOptionSignal `json:"options,omitempty" yaml:"options,omitempty"`
+	Placeholder  *string                   `json:"placeholder,omitempty" yaml:"placeholder,omitempty"`
+	Search       *string                   `json:"search,omitempty" yaml:"search,omitempty"`
+	Selected     *[]string                 `json:"selected,omitempty" yaml:"selected,omitempty"`
+	SummaryLabel *string                   `json:"summaryLabel,omitempty" yaml:"summaryLabel,omitempty"`
 }
 
 type PipelineCommandSignal struct {
-	Action     string `json:"action"`
-	AssetID    string `json:"assetId"`
-	PipelineID string `json:"pipelineId"`
-	RunID      string `json:"runId"`
+	Action     string `json:"action" yaml:"action"`
+	AssetID    string `json:"assetId" yaml:"assetId"`
+	PipelineID string `json:"pipelineId" yaml:"pipelineId"`
+	RunID      string `json:"runId" yaml:"runId"`
 }
 
 type PipelineCommandStatusSignal struct {
-	Error   string `json:"error"`
-	Loading bool   `json:"loading"`
-	Message string `json:"message"`
+	Error   string `json:"error" yaml:"error"`
+	Loading bool   `json:"loading" yaml:"loading"`
+	Message string `json:"message" yaml:"message"`
 }
 
 type PipelineListItemSignal struct {
-	AssetID        string  `json:"assetId"`
-	CanRun         bool    `json:"canRun"`
-	Description    *string `json:"description,omitempty"`
-	Duration       *string `json:"duration,omitempty"`
-	Href           string  `json:"href"`
-	ID             string  `json:"id"`
-	LastSuccessful *string `json:"lastSuccessful,omitempty"`
-	NextRun        *string `json:"nextRun,omitempty"`
-	PipelineID     string  `json:"pipelineId"`
-	Running        bool    `json:"running"`
-	Schedule       string  `json:"schedule"`
-	SemanticModel  string  `json:"semanticModel"`
-	Status         string  `json:"status"`
-	Title          string  `json:"title"`
+	AssetID        string  `json:"assetId" yaml:"assetId"`
+	CanRun         bool    `json:"canRun" yaml:"canRun"`
+	Description    *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Duration       *string `json:"duration,omitempty" yaml:"duration,omitempty"`
+	Href           string  `json:"href" yaml:"href"`
+	ID             string  `json:"id" yaml:"id"`
+	LastSuccessful *string `json:"lastSuccessful,omitempty" yaml:"lastSuccessful,omitempty"`
+	NextRun        *string `json:"nextRun,omitempty" yaml:"nextRun,omitempty"`
+	PipelineID     string  `json:"pipelineId" yaml:"pipelineId"`
+	Running        bool    `json:"running" yaml:"running"`
+	Schedule       string  `json:"schedule" yaml:"schedule"`
+	SemanticModel  string  `json:"semanticModel" yaml:"semanticModel"`
+	Status         string  `json:"status" yaml:"status"`
+	Title          string  `json:"title" yaml:"title"`
 }
 
 type PipelineMetricSignal struct {
-	Detail *string `json:"detail,omitempty"`
-	Label  string  `json:"label"`
-	Tone   *string `json:"tone,omitempty"`
-	Value  string  `json:"value"`
+	Detail *string `json:"detail,omitempty" yaml:"detail,omitempty"`
+	Label  string  `json:"label" yaml:"label"`
+	Tone   *string `json:"tone,omitempty" yaml:"tone,omitempty"`
+	Value  string  `json:"value" yaml:"value"`
 }
 
 type PipelinePageEnvelope struct {
-	Chrome                ChromeSignal                `json:"chrome"`
-	Page                  PipelinePageSignal          `json:"page"`
-	PipelineCommand       PipelineCommandSignal       `json:"pipelineCommand"`
-	PipelineCommandStatus PipelineCommandStatusSignal `json:"pipelineCommandStatus"`
-	Runtime               RouteRuntimeSignal          `json:"runtime"`
-	Status                DashboardStatus             `json:"status"`
+	Chrome                ChromeSignal                `json:"chrome" yaml:"chrome"`
+	Page                  PipelinePageSignal          `json:"page" yaml:"page"`
+	PipelineCommand       PipelineCommandSignal       `json:"pipelineCommand" yaml:"pipelineCommand"`
+	PipelineCommandStatus PipelineCommandStatusSignal `json:"pipelineCommandStatus" yaml:"pipelineCommandStatus"`
+	Runtime               RouteRuntimeSignal          `json:"runtime" yaml:"runtime"`
+	Status                DashboardStatus             `json:"status" yaml:"status"`
 }
 
 type PipelinePageSignal struct {
-	ActiveTab   string                   `json:"activeTab"`
-	Description string                   `json:"description"`
-	Environment string                   `json:"environment"`
-	Kind        RouteKind                `json:"kind"`
-	Metrics     []PipelineMetricSignal   `json:"metrics"`
-	Pipelines   []PipelineListItemSignal `json:"pipelines"`
-	RunsTable   RecordTableSignal        `json:"runsTable"`
-	Title       string                   `json:"title"`
+	ActiveTab   string                   `json:"activeTab" yaml:"activeTab"`
+	Description string                   `json:"description" yaml:"description"`
+	Environment string                   `json:"environment" yaml:"environment"`
+	Kind        RouteKind                `json:"kind" yaml:"kind"`
+	Metrics     []PipelineMetricSignal   `json:"metrics" yaml:"metrics"`
+	Pipelines   []PipelineListItemSignal `json:"pipelines" yaml:"pipelines"`
+	RunsTable   RecordTableSignal        `json:"runsTable" yaml:"runsTable"`
+	Title       string                   `json:"title" yaml:"title"`
 }
 
 type PopularityLevel string
@@ -1308,162 +1308,162 @@ const (
 )
 
 type RecordTableBadgeSignal struct {
-	Label string  `json:"label"`
-	Tone  *string `json:"tone,omitempty"`
+	Label string  `json:"label" yaml:"label"`
+	Tone  *string `json:"tone,omitempty" yaml:"tone,omitempty"`
 }
 
 type RecordTableColumnSelector struct {
-	DefaultColumns *[]string `json:"defaultColumns,omitempty"`
-	Enabled        bool      `json:"enabled"`
-	Label          *string   `json:"label,omitempty"`
-	StorageKey     *string   `json:"storageKey,omitempty"`
+	DefaultColumns *[]string `json:"defaultColumns,omitempty" yaml:"defaultColumns,omitempty"`
+	Enabled        bool      `json:"enabled" yaml:"enabled"`
+	Label          *string   `json:"label,omitempty" yaml:"label,omitempty"`
+	StorageKey     *string   `json:"storageKey,omitempty" yaml:"storageKey,omitempty"`
 }
 
 type RecordTableColumnSignal struct {
-	Align      *string `json:"align,omitempty"`
-	Header     string  `json:"header"`
-	HrefKey    *string `json:"hrefKey,omitempty"`
-	ID         string  `json:"id"`
-	Kind       *string `json:"kind,omitempty"`
-	Toggleable *bool   `json:"toggleable,omitempty"`
-	Width      *string `json:"width,omitempty"`
+	Align      *string `json:"align,omitempty" yaml:"align,omitempty"`
+	Header     string  `json:"header" yaml:"header"`
+	HrefKey    *string `json:"hrefKey,omitempty" yaml:"hrefKey,omitempty"`
+	ID         string  `json:"id" yaml:"id"`
+	Kind       *string `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Toggleable *bool   `json:"toggleable,omitempty" yaml:"toggleable,omitempty"`
+	Width      *string `json:"width,omitempty" yaml:"width,omitempty"`
 }
 
 type RecordTableSignal struct {
-	ColumnSelector *RecordTableColumnSelector `json:"columnSelector,omitempty"`
-	Columns        []RecordTableColumnSignal  `json:"columns"`
-	Density        *string                    `json:"density,omitempty"`
-	Empty          string                     `json:"empty"`
-	MinWidth       *string                    `json:"minWidth,omitempty"`
-	RowAction      *string                    `json:"rowAction,omitempty"`
-	Rows           []map[string]any           `json:"rows"`
+	ColumnSelector *RecordTableColumnSelector `json:"columnSelector,omitempty" yaml:"columnSelector,omitempty"`
+	Columns        []RecordTableColumnSignal  `json:"columns" yaml:"columns"`
+	Density        *string                    `json:"density,omitempty" yaml:"density,omitempty"`
+	Empty          string                     `json:"empty" yaml:"empty"`
+	MinWidth       *string                    `json:"minWidth,omitempty" yaml:"minWidth,omitempty"`
+	RowAction      *string                    `json:"rowAction,omitempty" yaml:"rowAction,omitempty"`
+	Rows           []map[string]any           `json:"rows" yaml:"rows"`
 }
 
 type ResourceActionSignal struct {
-	Command  *string `json:"command,omitempty"`
-	Disabled *bool   `json:"disabled,omitempty"`
-	Href     *string `json:"href,omitempty"`
-	Icon     *string `json:"icon,omitempty"`
-	Label    string  `json:"label"`
+	Command  *string `json:"command,omitempty" yaml:"command,omitempty"`
+	Disabled *bool   `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+	Href     *string `json:"href,omitempty" yaml:"href,omitempty"`
+	Icon     *string `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Label    string  `json:"label" yaml:"label"`
 }
 
 type ResourceAssetDetailsSignal struct {
-	Overview           []DefinitionFactSignal        `json:"overview"`
-	Sections           []ResourceDetailSectionSignal `json:"sections"`
-	SemanticModelGraph *SemanticModelGraphSignal     `json:"semanticModelGraph,omitempty"`
+	Overview           []DefinitionFactSignal        `json:"overview" yaml:"overview"`
+	Sections           []ResourceDetailSectionSignal `json:"sections" yaml:"sections"`
+	SemanticModelGraph *SemanticModelGraphSignal     `json:"semanticModelGraph,omitempty" yaml:"semanticModelGraph,omitempty"`
 }
 
 type ResourceAssetLineageSignal struct {
-	Count       int64                   `json:"count"`
-	Graph       AssetLineageGraphSignal `json:"graph"`
-	UsedByTable RecordTableSignal       `json:"usedByTable"`
-	UsesTable   RecordTableSignal       `json:"usesTable"`
+	Count       int64                   `json:"count" yaml:"count"`
+	Graph       AssetLineageGraphSignal `json:"graph" yaml:"graph"`
+	UsedByTable RecordTableSignal       `json:"usedByTable" yaml:"usedByTable"`
+	UsesTable   RecordTableSignal       `json:"usesTable" yaml:"usesTable"`
 }
 
 type ResourceAssetListSignal struct {
-	ActiveType *string                      `json:"activeType,omitempty"`
-	Assets     []ResourceAssetSummarySignal `json:"assets"`
-	Empty      string                       `json:"empty"`
-	Query      *string                      `json:"query,omitempty"`
-	SearchHref string                       `json:"searchHref"`
-	Tabs       []ResourceTabSignal          `json:"tabs"`
+	ActiveType *string                      `json:"activeType,omitempty" yaml:"activeType,omitempty"`
+	Assets     []ResourceAssetSummarySignal `json:"assets" yaml:"assets"`
+	Empty      string                       `json:"empty" yaml:"empty"`
+	Query      *string                      `json:"query,omitempty" yaml:"query,omitempty"`
+	SearchHref string                       `json:"searchHref" yaml:"searchHref"`
+	Tabs       []ResourceTabSignal          `json:"tabs" yaml:"tabs"`
 }
 
 type ResourceAssetPageEnvelope struct {
-	Chrome          ChromeSignal                    `json:"chrome"`
-	ConnectionAdmin *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty"`
-	Page            ResourceAssetPageSignal         `json:"page"`
-	Runtime         RouteRuntimeSignal              `json:"runtime"`
-	Status          DashboardStatus                 `json:"status"`
+	Chrome          ChromeSignal                    `json:"chrome" yaml:"chrome"`
+	ConnectionAdmin *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty" yaml:"connectionAdmin,omitempty"`
+	Page            ResourceAssetPageSignal         `json:"page" yaml:"page"`
+	Runtime         RouteRuntimeSignal              `json:"runtime" yaml:"runtime"`
+	Status          DashboardStatus                 `json:"status" yaml:"status"`
 }
 
 type ResourceAssetPageSignal struct {
-	Actions             *[]ResourceActionSignal      `json:"actions,omitempty"`
-	ActiveSection       string                       `json:"activeSection"`
-	Asset               ResourceAssetSummarySignal   `json:"asset"`
-	AssetID             string                       `json:"assetId"`
-	Breadcrumbs         []ResourceBreadcrumbSignal   `json:"breadcrumbs"`
-	ConnectionLifecycle *ConnectionLifecycleSignal   `json:"connectionLifecycle,omitempty"`
-	Details             *ResourceAssetDetailsSignal  `json:"details,omitempty"`
-	DrawerParent        *ResourceAssetPageSignal     `json:"drawerParent,omitempty"`
-	Environment         *string                      `json:"environment,omitempty"`
-	Kind                RouteKind                    `json:"kind"`
-	Lineage             *ResourceAssetLineageSignal  `json:"lineage,omitempty"`
-	Refresh             *ResourceAssetRefreshSignal  `json:"refresh,omitempty"`
-	Tabs                []ResourceTabSignal          `json:"tabs"`
-	Title               string                       `json:"title"`
-	Versions            *ResourceAssetVersionsSignal `json:"versions,omitempty"`
+	Actions             *[]ResourceActionSignal      `json:"actions,omitempty" yaml:"actions,omitempty"`
+	ActiveSection       string                       `json:"activeSection" yaml:"activeSection"`
+	Asset               ResourceAssetSummarySignal   `json:"asset" yaml:"asset"`
+	AssetID             string                       `json:"assetId" yaml:"assetId"`
+	Breadcrumbs         []ResourceBreadcrumbSignal   `json:"breadcrumbs" yaml:"breadcrumbs"`
+	ConnectionLifecycle *ConnectionLifecycleSignal   `json:"connectionLifecycle,omitempty" yaml:"connectionLifecycle,omitempty"`
+	Details             *ResourceAssetDetailsSignal  `json:"details,omitempty" yaml:"details,omitempty"`
+	DrawerParent        *ResourceAssetPageSignal     `json:"drawerParent,omitempty" yaml:"drawerParent,omitempty"`
+	Environment         *string                      `json:"environment,omitempty" yaml:"environment,omitempty"`
+	Kind                RouteKind                    `json:"kind" yaml:"kind"`
+	Lineage             *ResourceAssetLineageSignal  `json:"lineage,omitempty" yaml:"lineage,omitempty"`
+	Refresh             *ResourceAssetRefreshSignal  `json:"refresh,omitempty" yaml:"refresh,omitempty"`
+	Tabs                []ResourceTabSignal          `json:"tabs" yaml:"tabs"`
+	Title               string                       `json:"title" yaml:"title"`
+	Versions            *ResourceAssetVersionsSignal `json:"versions,omitempty" yaml:"versions,omitempty"`
 }
 
 type ResourceAssetRefreshSignal struct {
-	LastSuccessful string             `json:"lastSuccessful"`
-	Running        bool               `json:"running"`
-	RunsTable      *RecordTableSignal `json:"runsTable,omitempty"`
-	Status         string             `json:"status"`
+	LastSuccessful string             `json:"lastSuccessful" yaml:"lastSuccessful"`
+	Running        bool               `json:"running" yaml:"running"`
+	RunsTable      *RecordTableSignal `json:"runsTable,omitempty" yaml:"runsTable,omitempty"`
+	Status         string             `json:"status" yaml:"status"`
 }
 
 type ResourceAssetSummarySignal struct {
-	Description *string `json:"description,omitempty"`
-	DetailHref  string  `json:"detailHref"`
-	ID          string  `json:"id"`
-	Key         string  `json:"key"`
-	OpenHref    string  `json:"openHref"`
-	ParentHref  *string `json:"parentHref,omitempty"`
-	ParentTitle *string `json:"parentTitle,omitempty"`
-	Title       string  `json:"title"`
-	Type        string  `json:"type"`
-	TypeLabel   string  `json:"typeLabel"`
+	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	DetailHref  string  `json:"detailHref" yaml:"detailHref"`
+	ID          string  `json:"id" yaml:"id"`
+	Key         string  `json:"key" yaml:"key"`
+	OpenHref    string  `json:"openHref" yaml:"openHref"`
+	ParentHref  *string `json:"parentHref,omitempty" yaml:"parentHref,omitempty"`
+	ParentTitle *string `json:"parentTitle,omitempty" yaml:"parentTitle,omitempty"`
+	Title       string  `json:"title" yaml:"title"`
+	Type        string  `json:"type" yaml:"type"`
+	TypeLabel   string  `json:"typeLabel" yaml:"typeLabel"`
 }
 
 type ResourceAssetVersionsSignal struct {
-	CurrentContentHash string            `json:"currentContentHash"`
-	Table              RecordTableSignal `json:"table"`
+	CurrentContentHash string            `json:"currentContentHash" yaml:"currentContentHash"`
+	Table              RecordTableSignal `json:"table" yaml:"table"`
 }
 
 type ResourceBreadcrumbSignal struct {
-	Current *bool   `json:"current,omitempty"`
-	Href    *string `json:"href,omitempty"`
-	Label   string  `json:"label"`
+	Current *bool   `json:"current,omitempty" yaml:"current,omitempty"`
+	Href    *string `json:"href,omitempty" yaml:"href,omitempty"`
+	Label   string  `json:"label" yaml:"label"`
 }
 
 type ResourceCatalogItemSignal struct {
-	Description string `json:"description"`
-	Href        string `json:"href"`
-	ID          string `json:"id"`
-	Title       string `json:"title"`
+	Description string `json:"description" yaml:"description"`
+	Href        string `json:"href" yaml:"href"`
+	ID          string `json:"id" yaml:"id"`
+	Title       string `json:"title" yaml:"title"`
 }
 
 type ResourceDetailSectionSignal struct {
-	Code  *string                 `json:"code,omitempty"`
-	Facts *[]DefinitionFactSignal `json:"facts,omitempty"`
-	Lang  *string                 `json:"lang,omitempty"`
-	Table *RecordTableSignal      `json:"table,omitempty"`
-	Title string                  `json:"title"`
+	Code  *string                 `json:"code,omitempty" yaml:"code,omitempty"`
+	Facts *[]DefinitionFactSignal `json:"facts,omitempty" yaml:"facts,omitempty"`
+	Lang  *string                 `json:"lang,omitempty" yaml:"lang,omitempty"`
+	Table *RecordTableSignal      `json:"table,omitempty" yaml:"table,omitempty"`
+	Title string                  `json:"title" yaml:"title"`
 }
 
 type ResourcePageEnvelope struct {
-	Chrome  ChromeSignal       `json:"chrome"`
-	Page    ResourcePageSignal `json:"page"`
-	Runtime RouteRuntimeSignal `json:"runtime"`
-	Status  DashboardStatus    `json:"status"`
+	Chrome  ChromeSignal       `json:"chrome" yaml:"chrome"`
+	Page    ResourcePageSignal `json:"page" yaml:"page"`
+	Runtime RouteRuntimeSignal `json:"runtime" yaml:"runtime"`
+	Status  DashboardStatus    `json:"status" yaml:"status"`
 }
 
 type ResourcePageSignal struct {
-	AssetList   *ResourceAssetListSignal `json:"assetList,omitempty"`
-	Description *string                  `json:"description,omitempty"`
-	Environment *string                  `json:"environment,omitempty"`
-	Kind        RouteKind                `json:"kind"`
-	ListFilter  *string                  `json:"listFilter,omitempty"`
-	ListQuery   *string                  `json:"listQuery,omitempty"`
-	Title       string                   `json:"title"`
+	AssetList   *ResourceAssetListSignal `json:"assetList,omitempty" yaml:"assetList,omitempty"`
+	Description *string                  `json:"description,omitempty" yaml:"description,omitempty"`
+	Environment *string                  `json:"environment,omitempty" yaml:"environment,omitempty"`
+	Kind        RouteKind                `json:"kind" yaml:"kind"`
+	ListFilter  *string                  `json:"listFilter,omitempty" yaml:"listFilter,omitempty"`
+	ListQuery   *string                  `json:"listQuery,omitempty" yaml:"listQuery,omitempty"`
+	Title       string                   `json:"title" yaml:"title"`
 }
 
 type ResourceTabSignal struct {
-	Active bool   `json:"active"`
-	Count  *int64 `json:"count,omitempty"`
-	Href   string `json:"href"`
-	ID     string `json:"id"`
-	Label  string `json:"label"`
+	Active bool   `json:"active" yaml:"active"`
+	Count  *int64 `json:"count,omitempty" yaml:"count,omitempty"`
+	Href   string `json:"href" yaml:"href"`
+	ID     string `json:"id" yaml:"id"`
+	Label  string `json:"label" yaml:"label"`
 }
 
 type RouteKind string
@@ -1482,139 +1482,139 @@ const (
 )
 
 type RouteRuntimeSignal struct {
-	ClientID         *string   `json:"clientId,omitempty"`
-	DashboardID      *string   `json:"dashboardId,omitempty"`
-	Kind             RouteKind `json:"kind"`
-	ModelID          *string   `json:"modelId,omitempty"`
-	PageID           *string   `json:"pageId,omitempty"`
-	StreamInstanceID *string   `json:"streamInstanceId,omitempty"`
-	ServingStateID   *string   `json:"servingStateId,omitempty"`
-	ProjectID        *string   `json:"projectId,omitempty"`
+	ClientID         *string   `json:"clientId,omitempty" yaml:"clientId,omitempty"`
+	DashboardID      *string   `json:"dashboardId,omitempty" yaml:"dashboardId,omitempty"`
+	Kind             RouteKind `json:"kind" yaml:"kind"`
+	ModelID          *string   `json:"modelId,omitempty" yaml:"modelId,omitempty"`
+	PageID           *string   `json:"pageId,omitempty" yaml:"pageId,omitempty"`
+	StreamInstanceID *string   `json:"streamInstanceId,omitempty" yaml:"streamInstanceId,omitempty"`
+	ServingStateID   *string   `json:"servingStateId,omitempty" yaml:"servingStateId,omitempty"`
+	ProjectID        *string   `json:"projectId,omitempty" yaml:"projectId,omitempty"`
 }
 
 type SemanticModelGraphEdgeSignal struct {
-	Cardinality string `json:"cardinality"`
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Source      string `json:"source"`
-	SourceField string `json:"sourceField"`
-	Target      string `json:"target"`
-	TargetField string `json:"targetField"`
+	Cardinality string `json:"cardinality" yaml:"cardinality"`
+	ID          string `json:"id" yaml:"id"`
+	Label       string `json:"label" yaml:"label"`
+	Source      string `json:"source" yaml:"source"`
+	SourceField string `json:"sourceField" yaml:"sourceField"`
+	Target      string `json:"target" yaml:"target"`
+	TargetField string `json:"targetField" yaml:"targetField"`
 }
 
 type SemanticModelGraphEntitySignal struct {
-	Fields []string `json:"fields"`
-	Grain  *bool    `json:"grain,omitempty"`
-	Name   string   `json:"name"`
-	Type   string   `json:"type"`
+	Fields []string `json:"fields" yaml:"fields"`
+	Grain  *bool    `json:"grain,omitempty" yaml:"grain,omitempty"`
+	Name   string   `json:"name" yaml:"name"`
+	Type   string   `json:"type" yaml:"type"`
 }
 
 type SemanticModelGraphFieldSignal struct {
-	Entities      *[]string `json:"entities,omitempty"`
-	Grain         *bool     `json:"grain,omitempty"`
-	Join          *bool     `json:"join,omitempty"`
-	Label         *string   `json:"label,omitempty"`
-	Name          string    `json:"name"`
-	Relationships *[]string `json:"relationships,omitempty"`
-	Type          *string   `json:"type,omitempty"`
+	Entities      *[]string `json:"entities,omitempty" yaml:"entities,omitempty"`
+	Grain         *bool     `json:"grain,omitempty" yaml:"grain,omitempty"`
+	Join          *bool     `json:"join,omitempty" yaml:"join,omitempty"`
+	Label         *string   `json:"label,omitempty" yaml:"label,omitempty"`
+	Name          string    `json:"name" yaml:"name"`
+	Relationships *[]string `json:"relationships,omitempty" yaml:"relationships,omitempty"`
+	Type          *string   `json:"type,omitempty" yaml:"type,omitempty"`
 }
 
 type SemanticModelGraphNodeSignal struct {
-	Badges      *[]string                         `json:"badges,omitempty"`
-	Description *string                           `json:"description,omitempty"`
-	Entities    *[]SemanticModelGraphEntitySignal `json:"entities,omitempty"`
-	Fields      []SemanticModelGraphFieldSignal   `json:"fields"`
-	GrainEntity *string                           `json:"grainEntity,omitempty"`
-	ID          string                            `json:"id"`
-	Title       string                            `json:"title"`
+	Badges      *[]string                         `json:"badges,omitempty" yaml:"badges,omitempty"`
+	Description *string                           `json:"description,omitempty" yaml:"description,omitempty"`
+	Entities    *[]SemanticModelGraphEntitySignal `json:"entities,omitempty" yaml:"entities,omitempty"`
+	Fields      []SemanticModelGraphFieldSignal   `json:"fields" yaml:"fields"`
+	GrainEntity *string                           `json:"grainEntity,omitempty" yaml:"grainEntity,omitempty"`
+	ID          string                            `json:"id" yaml:"id"`
+	Title       string                            `json:"title" yaml:"title"`
 }
 
 type SemanticModelGraphSignal struct {
-	Edges    []SemanticModelGraphEdgeSignal `json:"edges"`
-	Datasets *[]string                      `json:"datasets,omitempty"`
-	Nodes    []SemanticModelGraphNodeSignal `json:"nodes"`
+	Edges    []SemanticModelGraphEdgeSignal `json:"edges" yaml:"edges"`
+	Datasets *[]string                      `json:"datasets,omitempty" yaml:"datasets,omitempty"`
+	Nodes    []SemanticModelGraphNodeSignal `json:"nodes" yaml:"nodes"`
 }
 
 type SidebarActionSignal struct {
-	Href  string `json:"href"`
-	Icon  string `json:"icon"`
-	Label string `json:"label"`
+	Href  string `json:"href" yaml:"href"`
+	Icon  string `json:"icon" yaml:"icon"`
+	Label string `json:"label" yaml:"label"`
 }
 
 type SidebarAreaSignal struct {
-	Href  string `json:"href"`
-	Icon  string `json:"icon"`
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	Href  string `json:"href" yaml:"href"`
+	Icon  string `json:"icon" yaml:"icon"`
+	ID    string `json:"id" yaml:"id"`
+	Label string `json:"label" yaml:"label"`
 }
 
 type SidebarGroupSignal struct {
-	Items []SidebarItemSignal `json:"items"`
-	Label string              `json:"label"`
+	Items []SidebarItemSignal `json:"items" yaml:"items"`
+	Label string              `json:"label" yaml:"label"`
 }
 
 type SidebarHistoryItemSignal struct {
-	Active  bool   `json:"active"`
-	Href    string `json:"href"`
-	ID      string `json:"id"`
-	Pending *bool  `json:"pending,omitempty"`
-	Title   string `json:"title"`
+	Active  bool   `json:"active" yaml:"active"`
+	Href    string `json:"href" yaml:"href"`
+	ID      string `json:"id" yaml:"id"`
+	Pending *bool  `json:"pending,omitempty" yaml:"pending,omitempty"`
+	Title   string `json:"title" yaml:"title"`
 }
 
 type SidebarHistorySignal struct {
-	EmptyText *string                    `json:"emptyText,omitempty"`
-	Items     []SidebarHistoryItemSignal `json:"items"`
-	Label     string                     `json:"label"`
+	EmptyText *string                    `json:"emptyText,omitempty" yaml:"emptyText,omitempty"`
+	Items     []SidebarHistoryItemSignal `json:"items" yaml:"items"`
+	Label     string                     `json:"label" yaml:"label"`
 }
 
 type SidebarItemSignal struct {
-	Active *bool   `json:"active,omitempty"`
-	Href   string  `json:"href"`
-	Icon   string  `json:"icon"`
-	ID     string  `json:"id"`
-	Label  string  `json:"label"`
-	Meta   *string `json:"meta,omitempty"`
+	Active *bool   `json:"active,omitempty" yaml:"active,omitempty"`
+	Href   string  `json:"href" yaml:"href"`
+	Icon   string  `json:"icon" yaml:"icon"`
+	ID     string  `json:"id" yaml:"id"`
+	Label  string  `json:"label" yaml:"label"`
+	Meta   *string `json:"meta,omitempty" yaml:"meta,omitempty"`
 }
 
 type SidebarSignal struct {
-	Active           string                `json:"active"`
-	Admin            *bool                 `json:"admin,omitempty"`
-	Area             *string               `json:"area,omitempty"`
-	Areas            *[]SidebarAreaSignal  `json:"areas,omitempty"`
-	Compact          bool                  `json:"compact"`
-	DashboardID      *string               `json:"dashboardId,omitempty"`
-	DashboardTitle   string                `json:"dashboardTitle"`
-	Groups           []SidebarGroupSignal  `json:"groups"`
-	History          *SidebarHistorySignal `json:"history,omitempty"`
-	ModelID          *string               `json:"modelId,omitempty"`
-	ModelTitle       *string               `json:"modelTitle,omitempty"`
-	PageTitle        string                `json:"pageTitle"`
-	PrimaryAction    *SidebarActionSignal  `json:"primaryAction,omitempty"`
-	ProductLogoURL   *string               `json:"productLogoUrl,omitempty"`
-	ProductName      string                `json:"productName"`
-	UserAvatarURL    *string               `json:"userAvatarUrl,omitempty"`
-	UserName         *string               `json:"userName,omitempty"`
-	UserRole         *string               `json:"userRole,omitempty"`
-	UserSettingsHref string                `json:"userSettingsHref"`
+	Active           string                `json:"active" yaml:"active"`
+	Admin            *bool                 `json:"admin,omitempty" yaml:"admin,omitempty"`
+	Area             *string               `json:"area,omitempty" yaml:"area,omitempty"`
+	Areas            *[]SidebarAreaSignal  `json:"areas,omitempty" yaml:"areas,omitempty"`
+	Compact          bool                  `json:"compact" yaml:"compact"`
+	DashboardID      *string               `json:"dashboardId,omitempty" yaml:"dashboardId,omitempty"`
+	DashboardTitle   string                `json:"dashboardTitle" yaml:"dashboardTitle"`
+	Groups           []SidebarGroupSignal  `json:"groups" yaml:"groups"`
+	History          *SidebarHistorySignal `json:"history,omitempty" yaml:"history,omitempty"`
+	ModelID          *string               `json:"modelId,omitempty" yaml:"modelId,omitempty"`
+	ModelTitle       *string               `json:"modelTitle,omitempty" yaml:"modelTitle,omitempty"`
+	PageTitle        string                `json:"pageTitle" yaml:"pageTitle"`
+	PrimaryAction    *SidebarActionSignal  `json:"primaryAction,omitempty" yaml:"primaryAction,omitempty"`
+	ProductLogoURL   *string               `json:"productLogoUrl,omitempty" yaml:"productLogoUrl,omitempty"`
+	ProductName      string                `json:"productName" yaml:"productName"`
+	UserAvatarURL    *string               `json:"userAvatarUrl,omitempty" yaml:"userAvatarUrl,omitempty"`
+	UserName         *string               `json:"userName,omitempty" yaml:"userName,omitempty"`
+	UserRole         *string               `json:"userRole,omitempty" yaml:"userRole,omitempty"`
+	UserSettingsHref string                `json:"userSettingsHref" yaml:"userSettingsHref"`
 }
 
 type SubSidebarItemSignal struct {
-	Active  bool   `json:"active"`
-	Href    string `json:"href"`
-	ID      string `json:"id"`
-	Pending *bool  `json:"pending,omitempty"`
-	Title   string `json:"title"`
+	Active  bool   `json:"active" yaml:"active"`
+	Href    string `json:"href" yaml:"href"`
+	ID      string `json:"id" yaml:"id"`
+	Pending *bool  `json:"pending,omitempty" yaml:"pending,omitempty"`
+	Title   string `json:"title" yaml:"title"`
 }
 
 type SubSidebarSignal struct {
-	ActiveID    string                 `json:"activeId"`
-	AriaLabel   string                 `json:"ariaLabel"`
-	Collapsible bool                   `json:"collapsible"`
-	Disabled    *bool                  `json:"disabled,omitempty"`
-	EmptyText   *string                `json:"emptyText,omitempty"`
-	Items       []SubSidebarItemSignal `json:"items"`
-	Label       string                 `json:"label"`
-	Numbered    bool                   `json:"numbered"`
-	RailLabel   string                 `json:"railLabel"`
-	StorageKey  string                 `json:"storageKey"`
+	ActiveID    string                 `json:"activeId" yaml:"activeId"`
+	AriaLabel   string                 `json:"ariaLabel" yaml:"ariaLabel"`
+	Collapsible bool                   `json:"collapsible" yaml:"collapsible"`
+	Disabled    *bool                  `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+	EmptyText   *string                `json:"emptyText,omitempty" yaml:"emptyText,omitempty"`
+	Items       []SubSidebarItemSignal `json:"items" yaml:"items"`
+	Label       string                 `json:"label" yaml:"label"`
+	Numbered    bool                   `json:"numbered" yaml:"numbered"`
+	RailLabel   string                 `json:"railLabel" yaml:"railLabel"`
+	StorageKey  string                 `json:"storageKey" yaml:"storageKey"`
 }

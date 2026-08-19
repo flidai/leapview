@@ -12,25 +12,25 @@ filter state, revisions, target planning, and clear behavior.
 
 ## Label density and collision policy
 
-Supported built-in ECharts visuals compile `presentation.labels` into one deterministic policy. `hidden` suppresses rendered labels while retaining full tooltip and a bounded accessibility summary; `automatic` shows labels and suppresses collisions; `dense` uses tighter spacing and type for compact matrices; and `always` deliberately disables collision suppression. The legacy `show_labels: true` shorthand compiles to `automatic`. Policies that may suppress labels require `tooltip_fallback: true`; unsupported surfaces such as radar indicators fail compilation instead of silently ignoring the policy.
+Supported built-in ECharts visuals compile `presentation.labels` into one deterministic policy. `hidden` suppresses rendered labels while retaining full tooltip and a bounded accessibility summary; `automatic` shows labels and suppresses collisions; `dense` uses tighter spacing and type for compact matrices; and `always` deliberately disables collision suppression. Policies that may suppress labels require `tooltipFallback: true`; unsupported surfaces such as radar indicators fail compilation instead of silently ignoring the policy.
 
 ## Display units
 
-Summary values use `presentation.display_units: auto` by default. LeapView selects one shared unit for the complete KPI or numeric-axis scope, renders at most three significant digits, and removes insignificant trailing zeros. The scale never changes independently per tick or mark. Currency, percent, duration, and authored semantic units remain intact; raw values and exact semantic formatting remain available in tooltips, tables, drill detail, exports, and accessibility detail.
+Summary values use `presentation.displayUnits: auto` by default. LeapView selects one shared unit for the complete KPI or numeric-axis scope, renders at most three significant digits, and removes insignificant trailing zeros. The scale never changes independently per tick or mark. Currency, percent, duration, and authored semantic units remain intact; raw values and exact semantic formatting remain available in tooltips, tables, drill detail, exports, and accessibility detail.
 
-Authors can set `display_units` to `none`, `thousands`, `millions`, `billions`, or `trillions`. `none` uses the semantic field's canonical unscaled format. A numeric axis can override the visual policy; an omitted axis value inherits `presentation.display_units`:
+Authors can set `displayUnits` to `none`, `thousands`, `millions`, `billions`, or `trillions`. `none` uses the semantic field's canonical unscaled format. A numeric axis can override the visual policy; an omitted axis value inherits `presentation.displayUnits`:
 
 ```yaml
 presentation:
-  display_units: auto
+  displayUnits: auto
   axes:
     - id: primary_y
-      display_units: millions
+      displayUnits: millions
 ```
 
 Fixed units remain fixed even when the current filtered values are smaller or larger. Use them when comparable visuals must retain the same scale; otherwise prefer `auto`. Label visibility is a separate explicit choice and is never inferred from number formatting.
 
-Policies also bound label length by Unicode grapheme, set minimum collision spacing, and declare whether selected, anomalous, or threshold-crossing data should win a collision. The same frame, locale, dimensions, and policy always produce the same label decision. Full untruncated values remain in governed tooltips when `tooltip_fallback` is enabled.
+Policies also bound label length by Unicode grapheme, set minimum collision spacing, and declare whether selected, anomalous, or threshold-crossing data should win a collision. The same frame, locale, dimensions, and policy always produce the same label decision. Full untruncated values remain in governed tooltips when `tooltipFallback` is enabled.
 
 ## Decision-context capability matrix
 

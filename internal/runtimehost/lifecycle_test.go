@@ -632,6 +632,61 @@ func TestPrepareOrDurableActivationFailureKeepsPriorGeneration(t *testing.T) {
 	lease.Release()
 }
 
+func TestFailedCandidateGatePreservesActiveReaderAndGeneration(t *testing.T) {
+	digest1 := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	digest2 := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	repo := &lifecycleRepo{state: servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: digest1}, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: "generation_1", Digest: digest1}}
+	factory := &lifecycleFactory{}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: "project_demo", Environment: "prod", Factory: factory, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+	first, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(first, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := registry.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Release()
+	oldRuntime := factory.last()
+
+	repo.state = servingstate.State{ID: "generation_2", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: digest2}
+	repo.artifact = servingstate.Artifact{ID: "artifact_2", ServingStateID: "generation_2", Digest: digest2}
+	second, err := registry.PrepareServingState(t.Context(), "generation_2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRuntime := factory.last()
+	gateErr := errors.New("candidate gate blocked")
+	if err := registry.ActivatePrepared(second, func() error { return gateErr }); !errors.Is(err, gateErr) {
+		t.Fatalf("failed candidate activation error = %v, want %v", err, gateErr)
+	}
+	if got := reader.Identity().GenerationID; got != "generation_1" {
+		t.Fatalf("active reader generation = %s, want generation_1", got)
+	}
+	select {
+	case <-oldRuntime.closed:
+		t.Fatal("active runtime closed while reader lease was held")
+	default:
+	}
+	select {
+	case <-newRuntime.closed:
+	default:
+		t.Fatal("failed candidate runtime was not closed")
+	}
+	current, err := registry.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := current.Identity().GenerationID; got != "generation_1" {
+		t.Fatalf("active generation after failed candidate gate = %s, want generation_1", got)
+	}
+	current.Release()
+}
+
 func TestRetiredRuntimeDrainsAfterReaderRelease(t *testing.T) {
 	repo := &lifecycleRepo{state: servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: "generation_1", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 	factory := &lifecycleFactory{}

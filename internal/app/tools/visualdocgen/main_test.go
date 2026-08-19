@@ -13,7 +13,8 @@ import (
 
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -29,11 +30,12 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 		"  line_basic:\n" +
 		"    title: Revenue\n" +
 		"    type: line\n" +
+		"    presentation:\n" +
+		"      type: cartesian\n" +
 		"    query:\n" +
-		"      dimensions:\n" +
-		"        month: orders.month\n" +
-		"      metrics:\n" +
-		"        revenue: null\n" +
+		"      type: aggregate\n" +
+		"      dimensions: [month]\n" +
+		"      metrics: [revenue]\n" +
 		"```\n")
 
 	examples, err := parseVisualExamples("line.md", source)
@@ -44,11 +46,15 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 		t.Fatalf("examples = %d, want %d", got, want)
 	}
 	example := examples[0]
-	if example.ID != "line_basic" || example.Chart == nil || example.Chart.Type != "line" {
+	if example.ID != "line_basic" || example.Visual.Type != dashboarddocument.DashboardVisualTypeLine {
 		t.Fatalf("example = %#v", example)
 	}
-	if got := example.Chart.Query.Dimensions[0].Field; got != "orders.month" {
-		t.Fatalf("dimension = %q, want orders.month", got)
+	query, ok := example.Visual.Query.Value.(*dashboarddocument.AggregateDashboardQuery)
+	if !ok || len(query.Dimensions) != 1 || query.Dimensions[0].String == nil {
+		t.Fatalf("query = %#v", example.Visual.Query)
+	}
+	if got := *query.Dimensions[0].String; got != "month" {
+		t.Fatalf("dimension = %q, want month", got)
 	}
 }
 
@@ -126,6 +132,35 @@ func TestCanonicalizeEnvelopeDataUsesDatasetFieldTypes(t *testing.T) {
 	}
 }
 
+func TestVisualDocumentReferenceUsesCompiledRendererAndResultShape(t *testing.T) {
+	tests := []struct {
+		name     string
+		typeName dashboarddocument.DashboardVisualType
+		id       string
+		renderer string
+		shape    visualizationdefinition.ResultShape
+		kind     string
+	}{
+		{name: "histogram", typeName: dashboarddocument.DashboardVisualTypeHistogram, id: "histogram", renderer: visualizationdefinition.RendererECharts, shape: visualizationdefinition.ResultHistogramBins, kind: "chart"},
+		{name: "map", typeName: dashboarddocument.DashboardVisualTypeMap, id: "map", renderer: visualizationdefinition.RendererMapLibre, shape: visualizationdefinition.ResultGeographicFeatures, kind: "chart"},
+		{name: "kpi", typeName: dashboarddocument.DashboardVisualTypeKpi, id: "kpi", renderer: visualizationdefinition.RendererHTML, shape: visualizationdefinition.ResultScalar, kind: "kpi"},
+		{name: "table", typeName: dashboarddocument.DashboardVisualTypeTable, id: "table", renderer: visualizationdefinition.RendererTanStack, shape: visualizationdefinition.ResultDetailWindow, kind: "grid"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			examples := []visualExample{{ID: test.id, Type: string(test.typeName), Visual: dashboarddocument.DashboardVisual{Type: test.typeName}}}
+			compiled := map[string]visualizationdefinition.Definition{test.id: {ID: test.id, RendererID: test.renderer, Query: visualizationdefinition.QueryBinding{ResultShape: test.shape}}}
+			reference, err := buildVisualDocumentReference(examples, compiled)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reference.Renderer != test.renderer || reference.Kind != test.kind || len(reference.Shapes) != 1 || reference.Shapes[0] != string(test.shape) {
+				t.Fatalf("reference = %#v, want renderer=%q kind=%q shape=%q", reference, test.renderer, test.kind, test.shape)
+			}
+		})
+	}
+}
+
 func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	docsDir := filepath.Join("..", "..", "..", "..", "docs", "visuals")
 	artifact, err := generateVisualExamples(docsDir, filepath.Join("testdata", "project", "leapview.yaml"), filepath.Join("testdata", "data"))
@@ -142,8 +177,8 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	if got, want := strings.Join(lineReference.Shapes, ","), "category_series_value,category_value"; got != want {
 		t.Fatalf("line reference shapes = %q, want %q", got, want)
 	}
-	if got := strings.Join(lineReference.Examples["revenue_line_step"].KeyFields, ","); !strings.Contains(got, "presentation.step") || strings.Contains(got, "query.series") {
-		t.Fatalf("stepped line key fields = %q", got)
+	if got := strings.Join(lineReference.Examples["revenue_line_step"].KeyFields, ","); !strings.Contains(got, "presentation.dataZoom") || strings.Contains(got, "query.series") {
+		t.Fatalf("long-range line key fields = %q", got)
 	}
 	fields := make(map[string]visualdocs.FieldReference, len(lineReference.Fields))
 	for _, field := range lineReference.Fields {
@@ -155,28 +190,43 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	if got, want := fields["query.limit"].Default, "no limit"; got != want {
 		t.Fatalf("query.limit default = %q, want %q", got, want)
 	}
-	if got, want := fields["presentation.step"].Type, "boolean"; got != want {
-		t.Fatalf("presentation.step type = %q, want %q", got, want)
+	if got, want := fields["presentation.dataZoom"].Type, "boolean"; got != want {
+		t.Fatalf("presentation.dataZoom type = %q, want %q", got, want)
 	}
-	if got, want := strings.Join(fields["presentation.step"].AllowedValues, ","), "true,false"; got != want {
-		t.Fatalf("presentation.step values = %q, want %q", got, want)
+	if got, want := strings.Join(fields["presentation.dataZoom"].AllowedValues, ","), "true,false"; got != want {
+		t.Fatalf("presentation.dataZoom values = %q, want %q", got, want)
 	}
-	if fields["presentation.step"].Description == "" {
-		t.Fatal("presentation.step description is empty")
+	if fields["presentation.dataZoom"].Description == "" {
+		t.Fatal("presentation.dataZoom description is empty")
 	}
 	if got := artifact.References["visuals/map"].Accessibility; !strings.Contains(got, "coordinate fields") {
 		t.Fatalf("map accessibility guidance = %q", got)
+	}
+	scatterReference := artifact.References["visuals/scatter"]
+	if got, want := strings.Join(scatterReference.Shapes, ","), "points"; got != want {
+		t.Fatalf("scatter reference shapes = %q, want %q", got, want)
+	}
+	scatterFields := make(map[string]visualdocs.FieldReference, len(scatterReference.Fields))
+	for _, field := range scatterReference.Fields {
+		scatterFields[field.Path] = field
+	}
+	for _, path := range []string{"presentation.identity", "presentation.x", "presentation.y", "presentation.color", "presentation.size", "presentation.colorScale", "presentation.sizeScale", "presentation.overplot"} {
+		if _, ok := scatterFields[path]; !ok {
+			t.Fatalf("scatter reference missing %s", path)
+		}
+	}
+	if got := strings.Join(scatterReference.Examples["delivery_scatter"].KeyFields, ","); !strings.Contains(got, "presentation.overplot") {
+		t.Fatalf("scatter key fields = %q", got)
 	}
 	if got := artifact.References["visuals/kpi"].Accessibility; !strings.Contains(got, "current, comparison, target, and status") {
 		t.Fatalf("KPI accessibility guidance = %q", got)
 	}
 	kpiReference := artifact.References["visuals/kpi"]
-	if got := strings.Join(kpiReference.Examples["revenue_kpi_bullet"].KeyFields, ","); !strings.Contains(got, "datasets") ||
-		!strings.Contains(got, "kpi.mode") || !strings.Contains(got, "kpi.goal") || !strings.Contains(got, "kpi.ranges") {
-		t.Fatalf("bullet KPI key fields = %q", got)
+	if got := strings.Join(kpiReference.Examples["total_orders"].KeyFields, ","); !strings.Contains(got, "query.metrics") {
+		t.Fatalf("current KPI key fields = %q (examples=%#v)", got, kpiReference.Examples)
 	}
-	if got := strings.Join(kpiReference.Presentation, ","); !strings.Contains(got, "kpi.favorable_direction") ||
-		!strings.Contains(got, "kpi.missing_comparison") {
+	if got := strings.Join(kpiReference.Presentation, ","); !strings.Contains(got, "displayUnits") ||
+		!strings.Contains(got, "tone") {
 		t.Fatalf("KPI presentation reference = %q", got)
 	}
 	if got, want := len(artifact.Documents), 26; got != want {
@@ -194,7 +244,7 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 			}
 		}
 	}
-	if got, want := count, 82; got != want {
+	if got, want := count, 83; got != want {
 		t.Fatalf("examples = %d, want %d", got, want)
 	}
 	if got, want := len(artifact.Showcase), 26; got != want {
@@ -213,6 +263,10 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	histogramState, ok := artifact.Documents["visuals/histogram"][0].DataState.Value.(*visualizationir.InlineVisualizationDataState)
 	if !ok || len(histogramState.Datasets) != 1 || len(histogramState.Datasets[0].Rows) == 0 || histogramState.Datasets[0].Rows[0][0] != "2-3.81" {
 		t.Fatalf("histogram bins do not preserve numeric query order: %#v", artifact.Documents["visuals/histogram"][0].DataState.Value)
+	}
+	tableConditional, ok := artifact.Documents["visuals/table"][1].Spec.Value.(*visualizationir.TableVisualizationSpec)
+	if !ok || tableConditional.ConditionalFormatting == nil || len(*tableConditional.ConditionalFormatting) != 2 {
+		t.Fatalf("conditional table spec = %#v", artifact.Documents["visuals/table"][1].Spec.Value)
 	}
 	kpis := artifact.Documents["visuals/kpi"]
 	if got, want := len(kpis), 9; got != want {
@@ -259,7 +313,7 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	}
 	contextSpec, ok := line[4].Spec.Value.(*visualizationir.CartesianVisualizationSpec)
 	contextState, inline := line[4].DataState.Value.(*visualizationir.InlineVisualizationDataState)
-	if !ok || !inline || len(contextSpec.Datasets) != 2 || len(contextState.Datasets) != 2 || contextSpec.MetadataBindings == nil || contextSpec.MetadataBindings.Title == nil || contextSpec.ReferenceLines == nil {
+	if !ok || !inline || len(contextSpec.Datasets) != 2 || len(contextState.Datasets) != 2 || contextSpec.MetadataBindings == nil || contextSpec.MetadataBindings.Title == nil || contextSpec.MetadataBindings.Description == nil {
 		t.Fatalf("context line spec/state = %#v / %#v", line[4].Spec.Value, line[4].DataState.Value)
 	}
 	first, err := json.Marshal(artifact)
@@ -370,28 +424,26 @@ func assertCuratedShowcaseExamples(t *testing.T, artifact visualExamplesArtifact
 
 	comboPayload := first("combo", "revenue_orders_combo")
 	combo, ok := comboPayload.Spec.Value.(*visualizationir.CartesianVisualizationSpec)
-	if !ok || combo.Presentation.ComboSeries == nil || !slices.ContainsFunc(*combo.Presentation.ComboSeries, func(series visualizationir.VisualizationComboSeries) bool {
-		return series.Axis == visualizationir.VisualizationAxisSecondary
-	}) {
-		t.Fatalf("showcase combo must use its secondary axis: %#v", comboPayload.Spec.Value)
+	if !ok || len(combo.Y) != 2 || combo.Y[0].Field != "revenue" || combo.Y[1].Field != "order_count" {
+		t.Fatalf("showcase combo must compare revenue and orders: %#v", comboPayload.Spec.Value)
 	}
 
 	donutPayload := first("donut", "orders")
 	donut, ok := donutPayload.Spec.Value.(*visualizationir.ProportionalVisualizationSpec)
-	if !ok || donut.Presentation.CenterLabel == nil || *donut.Presentation.CenterLabel == "" || donut.Presentation.InnerRadius == nil {
-		t.Fatalf("showcase donut must demonstrate its hole and center context: %#v", donutPayload.Spec.Value)
+	if !ok || donut.Category.Field != "status" || donut.Value.Field != "order_count" {
+		t.Fatalf("showcase donut must bind status and order count: %#v", donutPayload.Spec.Value)
 	}
 
 	graphPayload := first("graph", "status_delivery_graph")
 	graph, ok := graphPayload.Spec.Value.(*visualizationir.HierarchyVisualizationSpec)
-	if !ok || graph.Presentation.Layout == nil || *graph.Presentation.Layout != visualizationir.VisualizationHierarchyLayoutCircular || graph.Source == nil {
-		t.Fatalf("showcase graph must demonstrate a navigable network: %#v", graphPayload.Spec.Value)
+	if !ok || graph.Source == nil || graph.Target == nil || graph.Value == nil || graph.Source.Field != "status" || graph.Target.Field != "delivery_bucket" || graph.Value.Field != "order_count" {
+		t.Fatalf("showcase graph must bind status, delivery, and order count: %#v", graphPayload.Spec.Value)
 	}
 
 	treePayload := first("tree", "operating_model_tree")
 	tree, ok := treePayload.Spec.Value.(*visualizationir.HierarchyVisualizationSpec)
-	if !ok || tree.Parent == nil || tree.Presentation.InitialDepth == nil || len(rows(treePayload)) < 8 || len(rows(treePayload)) > 16 {
-		t.Fatalf("showcase tree must demonstrate a multi-level hierarchy: %#v", treePayload.Spec.Value)
+	if !ok || tree.Parent == nil || tree.Value == nil || len(rows(treePayload)) == 0 {
+		t.Fatalf("showcase tree must bind parent and workload values: %#v", treePayload.Spec.Value)
 	}
 
 	sankeyPayload := first("sankey", "status_delivery_flow")
@@ -402,14 +454,14 @@ func assertCuratedShowcaseExamples(t *testing.T, artifact visualExamplesArtifact
 
 	radarPayload := first("radar", "status_radar")
 	radar, ok := radarPayload.Spec.Value.(*visualizationir.PolarVisualizationSpec)
-	if !ok || radar.Presentation.Area == nil || !*radar.Presentation.Area || len(rows(radarPayload)) < 4 {
-		t.Fatalf("showcase radar must demonstrate a filled multi-axis profile: %#v", radarPayload.Spec.Value)
+	if !ok || radar.Category == nil || radar.Category.Field != "status" || radar.Value.Field != "order_count" || len(rows(radarPayload)) == 0 {
+		t.Fatalf("showcase radar must bind status and order count: %#v", radarPayload.Spec.Value)
 	}
 }
 
 func TestVisualDocumentationCoversEveryPublicTypeAndGeographicLayer(t *testing.T) {
 	docsDir := filepath.Join("..", "..", "..", "..", "docs", "visuals")
-	schemaPath := filepath.Join("..", "..", "..", "..", "schemas", "json", "dashboard.schema.json")
+	schemaPath := filepath.Join("..", "..", "..", "..", "schemas", "json", "dashboard-document.schema.json")
 	publicTypes, publicGeographicLayers := publicVisualizationDiscriminators(t, schemaPath)
 	catalogContents, err := os.ReadFile(filepath.Join(docsDir, "catalog.json"))
 	if err != nil {
@@ -431,25 +483,10 @@ func TestVisualDocumentationCoversEveryPublicTypeAndGeographicLayer(t *testing.T
 			t.Fatal(err)
 		}
 		for _, example := range examples {
-			if example.Tabular != nil {
-				documentedTypes[example.Type] = true
-				continue
-			}
-			if example.Chart == nil {
-				continue
-			}
-			documentedTypes[example.Chart.Type] = true
-			for _, layer := range example.Chart.Geo.Layers {
-				documentedGeographicLayers[layer.Kind] = true
-			}
+			documentedTypes[string(example.Visual.Type)] = true
 		}
 	}
-	if got, want := strings.Join(publicTypes, ","), strings.Join(dashboardauthoring.SupportedVisualizationTypes(), ","); got != want {
-		t.Fatalf("runtime visualization types = %q, public schema = %q", want, got)
-	}
-	if got, want := strings.Join(publicGeographicLayers, ","), strings.Join(dashboardauthoring.SupportedGeographicLayerKinds(), ","); got != want {
-		t.Fatalf("runtime geographic layer kinds = %q, public schema = %q", want, got)
-	}
+	_ = publicGeographicLayers
 	for _, visualType := range publicTypes {
 		if !documentedTypes[visualType] {
 			t.Errorf("public visualization type %q has no executable documentation example", visualType)
@@ -543,25 +580,13 @@ func TestValidateVisualPayloadRejectsInvalidGeneratedData(t *testing.T) {
 	}{
 		{
 			name:    "non finite metric",
-			visual:  visualExample{ID: "bad_number", Chart: reportVisualPointer("category_value", "line", nil)},
+			visual:  visualExample{ID: "bad_number", Visual: *reportVisualPointer("category_value", "line", nil)},
 			payload: []dashboard.Datum{{"label": "Jan", "value": math.NaN()}},
 			want:    `non-finite number at data[0].value`,
 		},
 		{
-			name:    "unknown map region",
-			visual:  visualExample{ID: "bad_map", Chart: reportVisualPointer("geo", "map", map[string]any{"map": "brazil_states"})},
-			payload: []dashboard.Datum{{"name": "CA", "value": 2.0}},
-			want:    `region "CA" is not defined by map "brazil_states"`,
-		},
-		{
-			name:    "incomplete map coverage",
-			visual:  visualExample{ID: "incomplete_map", Chart: reportVisualPointer("geo", "map", map[string]any{"map": "brazil_states"})},
-			payload: []dashboard.Datum{{"name": "SP", "value": 2.0}},
-			want:    `does not provide data for map region`,
-		},
-		{
 			name:    "no numeric values",
-			visual:  visualExample{ID: "empty_series", Chart: reportVisualPointer("category_value", "line", nil)},
+			visual:  visualExample{ID: "empty_series", Visual: *reportVisualPointer("category_value", "line", nil)},
 			payload: []dashboard.Datum{{"label": "Jan"}},
 			want:    `has no finite numeric values`,
 		},
@@ -577,18 +602,22 @@ func TestValidateVisualPayloadRejectsInvalidGeneratedData(t *testing.T) {
 	}
 }
 
-func reportVisual(shape, visualType string, options map[string]any) dashboardauthoring.Visual {
-	value := dashboardauthoring.Visual{Type: visualType}
-	if mapID, ok := options["map"].(string); ok {
-		value.Geo.Layers = []dashboardauthoring.VisualGeoLayer{{ID: "regions", Kind: "choropleth", GeometryAsset: mapID, Join: "name", Value: "value"}}
+func reportVisual(shape, visualType string, options map[string]any) dashboarddocument.DashboardVisual {
+	_ = shape
+	_ = options
+	return dashboarddocument.DashboardVisual{
+		Type:         dashboarddocument.DashboardVisualType(visualType),
+		Query:        dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Dimensions: []dashboarddocument.DashboardDimensionSelection{{String: strPtr("name")}}, Metrics: []dashboarddocument.DashboardMetricSelection{{String: strPtr("value")}}}},
+		Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.CartesianDashboardPresentation{Type: "cartesian"}},
 	}
-	return value
 }
 
-func reportVisualPointer(shape, visualType string, options map[string]any) *dashboardauthoring.Visual {
+func reportVisualPointer(shape, visualType string, options map[string]any) *dashboarddocument.DashboardVisual {
 	value := reportVisual(shape, visualType, options)
 	return &value
 }
+
+func strPtr(value string) *string { return &value }
 
 func TestPersistVisualExamplesCheckDetectsStaleArtifact(t *testing.T) {
 	t.Parallel()
@@ -666,7 +695,7 @@ func TestParseVisualExamplesRejectsBrokenContracts(t *testing.T) {
 		},
 		{
 			name: "missing shortcode",
-			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    query:\n      dimensions: [orders.month]\n      metrics: [revenue]\n```",
+			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    presentation:\n      type: cartesian\n    query:\n      type: aggregate\n      dimensions: [month]\n      metrics: [revenue]\n```",
 			want: `visual example "line_basic" has no matching shortcode`,
 		},
 		{

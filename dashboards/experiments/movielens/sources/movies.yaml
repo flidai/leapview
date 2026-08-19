@@ -6,8 +6,13 @@ metadata:
   displayName: Movies
 spec:
   connection: movielens
-  path: movies.csv
-  fields:
-    movieId: {type: integer, description: MovieLens movie identifier.}
-    title: {type: string, description: Movie title with release year suffix when available.}
-    genres: {type: string, description: Pipe-separated genre list.}
+  location:
+    type: path
+    path: movies.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      movieId: {datatype: Integer, description: MovieLens movie identifier.}
+      title: {datatype: String, description: Movie title with release year suffix when available.}
+      genres: {datatype: String, description: Pipe-separated genre list.}

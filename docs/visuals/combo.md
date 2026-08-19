@@ -17,26 +17,37 @@ visuals:
     description: Compares monthly revenue and order volume together.
     type: combo
     presentation:
-      labels: {density: hidden, priority: [], max_characters: 24, minimum_spacing: 0, tooltip_fallback: true}
-      dual_axis: true
-      series_types:
-        Revenue: line
-        Orders: column
+      type: cartesian
+      series:
+      - field: revenue
+        mark: line
+        axis: primary
+      - field: order_count
+        mark: column
+        axis: secondary
+      labels:
+        density: hidden
+        priority: []
+        maxCharacters: 24
+        minimumSpacing: 0
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue: null
-        order_count: null
+      - revenue
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 30
 ```
 
 ## Per-series renderers
 
-Use `presentation.series_types` to render review score as a line and delivery days as columns while retaining one shared status axis.
+Use typed `presentation.series` entries to render review score as a line and
+delivery days as columns while retaining one shared status axis.
 
 {{< visual id="review_delivery_combo" >}}
 
@@ -46,23 +57,30 @@ visuals:
     title: Review and delivery by status
     type: combo
     presentation:
-      series_types:
-        Review: line
-        Delivery days: column
+      type: cartesian
+      series:
+      - field: review_score
+        mark: line
+        axis: primary
+      - field: delivery_days
+        mark: column
+        axis: primary
     query:
+      type: aggregate
       dimensions:
-        status: orders.status
+      - status
       metrics:
-        review_score: null
-        delivery_days: null
+      - review_score
+      - delivery_days
       sort:
-        - field: status
-          direction: asc
+      - field: status
+        direction: asc
 ```
 
 ## Dual axes
 
-Enable `presentation.dual_axis` when the metrics use different scales, then assign line and column marks explicitly with `series_types`.
+Assign a series to the secondary axis when metrics use different scales, and
+declare each line or column mark explicitly.
 
 {{< visual id="revenue_orders_dual_axis_combo" >}}
 
@@ -72,18 +90,23 @@ visuals:
     title: Revenue and orders dual-axis combo
     type: combo
     presentation:
-      dual_axis: true
-      series_types:
-        Revenue: column
-        Orders: line
+      type: cartesian
+      series:
+      - field: revenue
+        mark: column
+        axis: primary
+      - field: order_count
+        mark: line
+        axis: secondary
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        revenue: null
-        order_count: null
+      - revenue
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 60
 ```

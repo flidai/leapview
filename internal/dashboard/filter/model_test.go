@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -92,6 +93,69 @@ func TestTypedV1URLRoundTripUsesCanonicalExpression(t *testing.T) {
 	}
 	if len(got.Values) != 2 || got.Values[0].Value != "CA" || got.Values[1].Value != "WA" {
 		t.Fatalf("decoded canonical expression = %#v", got)
+	}
+}
+
+func TestSharedLinkCodecLifecycleSupportsDecodeAfterDeprecationButNotEncode(t *testing.T) {
+	registry := NewSharedLinkRegistry()
+	if err := registry.SetStatus(URLEncodingTypedV1, SharedLinkCodecDeprecated); err != nil {
+		t.Fatal(err)
+	}
+	expression := Expression{Kind: ExpressionSet, Operator: OperatorIn, Values: []Value{{Kind: ValueString, Value: "CA"}}}
+	encoded, err := EncodeTypedV1(expression, ValueString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Encode(URLEncodingTypedV1, expression, ValueString); err == nil {
+		t.Fatal("deprecated codec remained enabled for new links")
+	}
+	if _, err := registry.Decode(URLEncodingTypedV1, encoded, ValueString); err != nil {
+		t.Fatalf("deprecated codec no longer decodes existing links: %v", err)
+	}
+	if err := registry.SetStatus(URLEncodingTypedV1, SharedLinkCodecRetired); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Decode(URLEncodingTypedV1, encoded, ValueString); err == nil {
+		t.Fatal("retired codec decoded a shared link")
+	}
+}
+
+func TestSharedLinkDefaultLifecycleUsesActiveCodecAndReadsDeprecatedCodec(t *testing.T) {
+	registry := NewSharedLinkRegistry()
+	if err := registry.SetStatus(URLEncodingTypedV1, SharedLinkCodecDeprecated); err != nil {
+		t.Fatal(err)
+	}
+	const next URLEncoding = "typed_v2_test"
+	if err := registry.Register(SharedLinkCodec{
+		Encoding: next,
+		Status:   SharedLinkCodecActive,
+		Encode: func(expression Expression, kind ValueKind) (string, error) {
+			return "v2:" + fmt.Sprint(expression.Values[0].Value), nil
+		},
+		Decode: func(encoded string, kind ValueKind) (Expression, error) {
+			if !strings.HasPrefix(encoded, "v2:") {
+				return Expression{}, fmt.Errorf("not v2")
+			}
+			return Expression{Kind: ExpressionSet, Operator: OperatorIn, Values: []Value{{Kind: kind, Value: strings.TrimPrefix(encoded, "v2:")}}}, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expression := Expression{Kind: ExpressionSet, Operator: OperatorIn, Values: []Value{{Kind: ValueString, Value: "CA"}}}
+	encoded, err := registry.EncodeDefault(expression, ValueString)
+	if err != nil || encoded != "v2:CA" {
+		t.Fatalf("EncodeDefault() = %q, %v", encoded, err)
+	}
+	decoded, err := registry.DecodeDefault(encoded, ValueString)
+	if err != nil || decoded.Values[0].Value != "CA" {
+		t.Fatalf("DecodeDefault() = %#v, %v", decoded, err)
+	}
+	legacy, err := EncodeTypedV1(expression, ValueString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.DecodeDefault(legacy, ValueString); err != nil {
+		t.Fatalf("DecodeDefault() did not read deprecated codec: %v", err)
 	}
 }
 

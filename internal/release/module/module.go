@@ -10,6 +10,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -21,16 +22,17 @@ import (
 )
 
 type Module struct {
-	service            *release.Service
-	candidateArtifacts *candidateArtifactService
-	catalog            release.CatalogRepository
-	searchCatalog      projectcatalogSearcher
-	deployments        release.DeploymentLinkage
-	servingProvenance  release.ServingStateProvenanceRepository
-	environment        string
-	api                APIConfig
-	logger             *slog.Logger
-	finalizeExecution  apigencommand.AsyncExecutionContract
+	service              *release.Service
+	candidateArtifacts   *candidateArtifactService
+	catalog              release.CatalogRepository
+	searchCatalog        projectcatalogSearcher
+	deployments          release.DeploymentLinkage
+	servingProvenance    release.ServingStateProvenanceRepository
+	environment          string
+	api                  APIConfig
+	logger               *slog.Logger
+	extensionPreparation extension.Preparation
+	finalizeExecution    apigencommand.AsyncExecutionContract
 }
 
 // candidateArtifactPhases is the complete phase-aware artifact surface used
@@ -49,14 +51,15 @@ var (
 )
 
 type Config struct {
-	Database          *sql.DB
-	States            ServingStateRepository
-	ManagedDataPins   ManagedDataPins
-	ManagedDataHook   validate.Hook
-	ArtifactDirectory string
-	Environment       servingstate.Environment
-	API               APIConfig
-	Logger            *slog.Logger
+	Database             *sql.DB
+	States               ServingStateRepository
+	ManagedDataPins      ManagedDataPins
+	ManagedDataHook      validate.Hook
+	ArtifactDirectory    string
+	Environment          servingstate.Environment
+	API                  APIConfig
+	Logger               *slog.Logger
+	ExtensionPreparation extension.Preparation
 }
 
 type ServingStateRepository interface {
@@ -127,8 +130,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		candidateArtifacts: &candidateArtifactService{
 			states:    config.States,
 			artifacts: store, validator: validator,
-			environment: environment,
-			pins:        config.ManagedDataPins, provenance: servingProvenance,
+			environment:          environment,
+			extensionPreparation: config.ExtensionPreparation,
+			pins:                 config.ManagedDataPins, provenance: servingProvenance,
 		},
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
 		searchCatalog: config.API.ProjectSearchCatalog,

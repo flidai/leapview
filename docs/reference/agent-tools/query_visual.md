@@ -19,669 +19,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
 
 ## Input schema
 
-```json
-{
-  "additionalProperties": false,
-  "properties": {
-    "calculations": {
-      "description": "Closed post-aggregation calculations over compiled result-frame aliases.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "axis": {
-            "enum": [
-              "rows",
-              "columns",
-              "hierarchy",
-              "facets"
-            ],
-            "type": "string"
-          },
-          "format": {
-            "enum": [
-              "number",
-              "decimal",
-              "integer",
-              "percent",
-              "compact",
-              "currency"
-            ],
-            "type": "string"
-          },
-          "hidden": {
-            "type": "boolean"
-          },
-          "id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "lookup": {
-            "additionalProperties": false,
-            "properties": {
-              "field": {
-                "type": "string"
-              },
-              "value": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "field",
-              "value"
-            ],
-            "type": "object"
-          },
-          "offset": {
-            "minimum": 1,
-            "type": "integer"
-          },
-          "orderBy": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "direction": {
-                  "enum": [
-                    "asc",
-                    "desc"
-                  ],
-                  "type": "string"
-                },
-                "field": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "field"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "parent": {
-            "type": "string"
-          },
-          "partitionBy": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "reset": {
-            "enum": [
-              "none",
-              "highest_parent",
-              "lowest_parent"
-            ],
-            "type": "string"
-          },
-          "source": {
-            "type": "string"
-          },
-          "template": {
-            "enum": [
-              "running_total",
-              "moving_average",
-              "difference",
-              "percentage_difference",
-              "percent_of_parent",
-              "percent_of_grand_total",
-              "rank",
-              "cumulative_contribution",
-              "lookup"
-            ],
-            "type": "string"
-          },
-          "window": {
-            "minimum": 1,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "source",
-          "template"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "columns": {
-      "description": "Optional table column display configuration.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "align": {
-            "type": "string"
-          },
-          "columnValue": {
-            "type": "string"
-          },
-          "format": {
-            "type": "string"
-          },
-          "formatting": {
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "background": {
-                  "type": "string"
-                },
-                "color": {
-                  "type": "string"
-                },
-                "highColor": {
-                  "type": "string"
-                },
-                "kind": {
-                  "type": "string"
-                },
-                "lowColor": {
-                  "type": "string"
-                },
-                "max": {
-                  "type": "number"
-                },
-                "min": {
-                  "type": "number"
-                },
-                "values": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object"
-                }
-              },
-              "required": [
-                "kind"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "group": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "metric": {
-            "type": "string"
-          },
-          "role": {
-            "type": "string"
-          },
-          "width": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "key",
-          "label"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "dataset": {
-      "description": "Semantic dataset ID.",
-      "minLength": 1,
-      "type": "string"
-    },
-    "dimensions": {
-      "description": "Dimension fields for chart grouping.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "alias": {
-            "description": "Optional output alias.",
-            "type": "string"
-          },
-          "field": {
-            "description": "Semantic field ID.",
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "field"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "fields": {
-      "description": "Fields for table output.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "alias": {
-            "description": "Optional output alias.",
-            "type": "string"
-          },
-          "field": {
-            "description": "Semantic field ID.",
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "field"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "filters": {
-      "description": "Governed semantic filters applied before visualization. Inline data and arbitrary expressions are not accepted.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "dataset": {
-            "description": "Semantic dataset used to resolve an otherwise ambiguous conformed dimension.",
-            "type": "string"
-          },
-          "field": {
-            "description": "Semantic field ID. Omit only when groups supplies nested filters.",
-            "type": "string"
-          },
-          "groups": {
-            "description": "Nested filter groups.",
-            "items": {
-              "additionalProperties": false,
-              "properties": {
-                "filters": {
-                  "description": "Nested governed filters. The next recursive level is validated by the tool provider.",
-                  "items": {
-                    "additionalProperties": {},
-                    "type": "object"
-                  },
-                  "type": "array"
-                }
-              },
-              "required": [
-                "filters"
-              ],
-              "type": "object"
-            },
-            "type": "array"
-          },
-          "operator": {
-            "description": "Governed comparison operator. Defaults to equals.",
-            "enum": [
-              "equals",
-              "in",
-              "contains",
-              "not_contains",
-              "starts_with",
-              "greater_than_or_equal",
-              "less_than",
-              "is_null",
-              "is_not_null"
-            ],
-            "type": "string"
-          },
-          "values": {
-            "description": "Comparison values. is_null and is_not_null accept no values.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "limit": {
-      "description": "Maximum result rows.",
-      "maximum": 50,
-      "minimum": 1,
-      "type": "integer"
-    },
-    "metrics": {
-      "description": "Metric fields for chart values.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "alias": {
-            "description": "Optional output alias.",
-            "type": "string"
-          },
-          "field": {
-            "description": "Semantic field ID.",
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "field"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "presentation": {
-      "additionalProperties": false,
-      "properties": {
-        "align": {
-          "type": "string"
-        },
-        "area": {
-          "type": "boolean"
-        },
-        "basemap": {
-          "type": "string"
-        },
-        "breadcrumb": {
-          "type": "boolean"
-        },
-        "centerLabel": {
-          "type": "string"
-        },
-        "curveness": {
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
-        },
-        "dataZoom": {
-          "type": "boolean"
-        },
-        "dualAxis": {
-          "type": "boolean"
-        },
-        "focus": {
-          "type": "string"
-        },
-        "histogramBins": {
-          "maximum": 60,
-          "minimum": 5,
-          "type": "integer"
-        },
-        "initialDepth": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "innerRadius": {
-          "minimum": 0,
-          "type": "number"
-        },
-        "labelPosition": {
-          "enum": [
-            "inside",
-            "outside",
-            "top",
-            "right",
-            "bottom",
-            "left",
-            "center"
-          ],
-          "type": "string"
-        },
-        "labels": {
-          "additionalProperties": false,
-          "properties": {
-            "density": {
-              "enum": [
-                "hidden",
-                "automatic",
-                "dense",
-                "always"
-              ],
-              "type": "string"
-            },
-            "maxCharacters": {
-              "maximum": 200,
-              "minimum": 4,
-              "type": "integer"
-            },
-            "minimumSpacing": {
-              "maximum": 64,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "priority": {
-              "items": {
-                "enum": [
-                  "selected",
-                  "anomaly",
-                  "threshold"
-                ],
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "tooltipFallback": {
-              "type": "boolean"
-            }
-          },
-          "type": "object"
-        },
-        "layout": {
-          "type": "string"
-        },
-        "legend": {
-          "enum": [
-            "none",
-            "top",
-            "right",
-            "bottom",
-            "left"
-          ],
-          "type": "string"
-        },
-        "maximum": {
-          "type": "number"
-        },
-        "minimum": {
-          "type": "number"
-        },
-        "nodeGap": {
-          "minimum": 0,
-          "type": "number"
-        },
-        "note": {
-          "type": "string"
-        },
-        "orientation": {
-          "enum": [
-            "horizontal",
-            "vertical"
-          ],
-          "type": "string"
-        },
-        "outerRadius": {
-          "minimum": 0,
-          "type": "number"
-        },
-        "progressWidth": {
-          "minimum": 0,
-          "type": "number"
-        },
-        "roam": {
-          "type": "boolean"
-        },
-        "rose": {
-          "type": "boolean"
-        },
-        "seriesTypes": {
-          "additionalProperties": {
-            "enum": [
-              "line",
-              "area",
-              "bar",
-              "column"
-            ],
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "showLabels": {
-          "type": "boolean"
-        },
-        "showSymbols": {
-          "type": "boolean"
-        },
-        "smooth": {
-          "type": "boolean"
-        },
-        "sort": {
-          "type": "string"
-        },
-        "stacked": {
-          "type": "boolean"
-        },
-        "step": {
-          "type": "boolean"
-        },
-        "symbolSize": {
-          "minimum": 0,
-          "type": "number"
-        },
-        "thresholds": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "tone": {
-                "type": "string"
-              },
-              "value": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "tone",
-              "value"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "tone": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "rows": {
-      "description": "Row fields for matrix-style table output.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "alias": {
-            "description": "Optional output alias.",
-            "type": "string"
-          },
-          "field": {
-            "description": "Semantic field ID.",
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "field"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "semanticModelId": {
-      "description": "Stable semantic_model resource ID returned by catalog_search/catalog_get.",
-      "minLength": 1,
-      "type": "string"
-    },
-    "series": {
-      "additionalProperties": false,
-      "properties": {
-        "alias": {
-          "description": "Optional output alias.",
-          "type": "string"
-        },
-        "field": {
-          "description": "Semantic field ID.",
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "field"
-      ],
-      "type": "object"
-    },
-    "sort": {
-      "description": "Sort fields applied to the query result.",
-      "items": {
-        "additionalProperties": false,
-        "properties": {
-          "direction": {
-            "description": "Sort direction.",
-            "enum": [
-              "asc",
-              "desc"
-            ],
-            "type": "string"
-          },
-          "field": {
-            "description": "Semantic field ID.",
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "field"
-        ],
-        "type": "object"
-      },
-      "type": "array"
-    },
-    "title": {
-      "description": "Optional display title.",
-      "type": "string"
-    },
-    "type": {
-      "enum": [
-        "line",
-        "area",
-        "bar",
-        "column",
-        "pie",
-        "donut",
-        "scatter",
-        "funnel",
-        "treemap",
-        "gauge",
-        "heatmap",
-        "sankey",
-        "graph",
-        "map",
-        "candlestick",
-        "boxplot",
-        "combo",
-        "waterfall",
-        "histogram",
-        "radar",
-        "tree",
-        "sunburst",
-        "kpi",
-        "table",
-        "matrix",
-        "pivot"
-      ],
-      "type": "string"
-    }
-  },
-  "required": [
-    "dataset",
-    "semanticModelId",
-    "type"
-  ],
-  "type": "object"
-}
-```
+This closed schema is too large to inline usefully. Read the exact generated schema in the [focused JSON contract](/docs/agent-tools/tools/query_visual.json).
 
 ## Output schema
 
@@ -794,22 +132,1301 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
       "items": {
         "additionalProperties": false,
         "properties": {
+          "expression": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "unfiltered"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "properties": {
+                  "operator": {
+                    "enum": [
+                      "isNull",
+                      "isNotNull",
+                      "in",
+                      "notIn",
+                      "equals",
+                      "notEquals",
+                      "contains",
+                      "notContains",
+                      "startsWith",
+                      "endsWith",
+                      "greaterThan",
+                      "greaterThanOrEqual",
+                      "lessThan",
+                      "lessThanOrEqual"
+                    ],
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "nullCheck"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "operator",
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "properties": {
+                  "operator": {
+                    "enum": [
+                      "isNull",
+                      "isNotNull",
+                      "in",
+                      "notIn",
+                      "equals",
+                      "notEquals",
+                      "contains",
+                      "notContains",
+                      "startsWith",
+                      "endsWith",
+                      "greaterThan",
+                      "greaterThanOrEqual",
+                      "lessThan",
+                      "lessThanOrEqual"
+                    ],
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "set"
+                    ],
+                    "type": "string"
+                  },
+                  "values": {
+                    "items": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "allOf": [
+                            {
+                              "properties": {
+                                "type": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            }
+                          ],
+                          "properties": {
+                            "type": {
+                              "enum": [
+                                "string"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "allOf": [
+                            {
+                              "properties": {
+                                "type": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            }
+                          ],
+                          "properties": {
+                            "type": {
+                              "enum": [
+                                "boolean"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "allOf": [
+                            {
+                              "properties": {
+                                "type": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            }
+                          ],
+                          "properties": {
+                            "type": {
+                              "enum": [
+                                "integer"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "description": "Precision-safe integer representation.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "allOf": [
+                            {
+                              "properties": {
+                                "type": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            }
+                          ],
+                          "properties": {
+                            "type": {
+                              "enum": [
+                                "decimal"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "description": "Canonical decimal representation.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "allOf": [
+                            {
+                              "properties": {
+                                "type": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            }
+                          ],
+                          "properties": {
+                            "type": {
+                              "enum": [
+                                "date"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "allOf": [
+                            {
+                              "properties": {
+                                "type": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            }
+                          ],
+                          "properties": {
+                            "type": {
+                              "enum": [
+                                "timestamp"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "operator",
+                  "type",
+                  "values"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "properties": {
+                  "operator": {
+                    "enum": [
+                      "isNull",
+                      "isNotNull",
+                      "in",
+                      "notIn",
+                      "equals",
+                      "notEquals",
+                      "contains",
+                      "notContains",
+                      "startsWith",
+                      "endsWith",
+                      "greaterThan",
+                      "greaterThanOrEqual",
+                      "lessThan",
+                      "lessThanOrEqual"
+                    ],
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "comparison"
+                    ],
+                    "type": "string"
+                  },
+                  "value": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "string"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "boolean"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "integer"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "Precision-safe integer representation.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "decimal"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "Canonical decimal representation.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "date"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "timestamp"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "operator",
+                  "type",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "properties": {
+                  "lower": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "inclusive": {
+                        "type": "boolean"
+                      },
+                      "value": {
+                        "oneOf": [
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "string"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "boolean"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "integer"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "description": "Precision-safe integer representation.",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "decimal"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "description": "Canonical decimal representation.",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "date"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "timestamp"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "inclusive",
+                      "value"
+                    ],
+                    "type": "object"
+                  },
+                  "type": {
+                    "enum": [
+                      "range"
+                    ],
+                    "type": "string"
+                  },
+                  "upper": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "inclusive": {
+                        "type": "boolean"
+                      },
+                      "value": {
+                        "oneOf": [
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "string"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "boolean"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "integer"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "description": "Precision-safe integer representation.",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "decimal"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "description": "Canonical decimal representation.",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "date"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "allOf": [
+                              {
+                                "properties": {
+                                  "type": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type"
+                                ],
+                                "type": "object"
+                              }
+                            ],
+                            "properties": {
+                              "type": {
+                                "enum": [
+                                  "timestamp"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "type": "object"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "inclusive",
+                      "value"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "allOf": [
+                  {
+                    "properties": {
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "properties": {
+                  "anchor": {
+                    "enum": [
+                      "currentTime",
+                      "firstAvailable",
+                      "lastAvailable",
+                      "fixed"
+                    ],
+                    "type": "string"
+                  },
+                  "anchorValue": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "string"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "boolean"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "integer"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "Precision-safe integer representation.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "decimal"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "description": "Canonical decimal representation.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "date"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type"
+                            ],
+                            "type": "object"
+                          }
+                        ],
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "timestamp"
+                            ],
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "count": {
+                    "type": "integer"
+                  },
+                  "direction": {
+                    "enum": [
+                      "previous",
+                      "current",
+                      "next"
+                    ],
+                    "type": "string"
+                  },
+                  "includeCurrent": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "enum": [
+                      "relativePeriod"
+                    ],
+                    "type": "string"
+                  },
+                  "unit": {
+                    "enum": [
+                      "minute",
+                      "hour",
+                      "day",
+                      "week",
+                      "month",
+                      "quarter",
+                      "year"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "anchor",
+                  "count",
+                  "direction",
+                  "includeCurrent",
+                  "type",
+                  "unit"
+                ],
+                "type": "object"
+              }
+            ]
+          },
           "fieldId": {
             "description": "Filtered semantic field.",
-            "type": "string"
-          },
-          "operator": {
-            "enum": [
-              "equals",
-              "in",
-              "contains",
-              "not_contains",
-              "starts_with",
-              "greater_than_or_equal",
-              "less_than",
-              "is_null",
-              "is_not_null"
-            ],
             "type": "string"
           },
           "path": {
@@ -822,18 +1439,11 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
           "resolvedDatasetId": {
             "description": "Semantic dataset selected to resolve a conformed dimension.",
             "type": "string"
-          },
-          "values": {
-            "description": "Comparison values. Omitted for unary operators.",
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
           }
         },
         "required": [
-          "fieldId",
-          "operator"
+          "expression",
+          "fieldId"
         ],
         "type": "object"
       },
@@ -895,6 +1505,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_visual.json) · [
         "id": {
           "maxLength": 256,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
         },
         "kind": {

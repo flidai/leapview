@@ -10,17 +10,22 @@ spec:
     placeholder:
       type: kpi
       query:
+        type: aggregate
+        dimensions: []
         metrics:
-          order_count: null
+        - order_count
+      presentation:
+        type: kpi
   pages:
   - id: placeholder
     title: Placeholder
     components:
     - id: placeholder
-      kind: visual
-      visual: placeholder
       placement:
-        col: 1
+        column: 1
         row: 1
-        col_span: 3
-        row_span: 2
+        columnSpan: 3
+        rowSpan: 2
+      type: visual
+      visual: placeholder
+  filters: []

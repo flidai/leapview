@@ -97,6 +97,17 @@ type DeliveryBuildFailureReleaser interface {
 	MarkBuildFailedAndReleaseLease(context.Context, string, int64, DeliveryWriterLease, string, time.Time) (DeliveryBuildAttempt, error)
 }
 
+// DeliveryBuildGateEvidenceRecorder persists non-secret gate evidence even
+// when qualification fails. Implementations must not make this evidence
+// eligible for sealing or activation.
+type DeliveryBuildGateEvidenceRecorder interface {
+	RecordFailedBuildGateEvidence(context.Context, string, *release.GateEvidence) error
+}
+
+type DeliveryBuildGateEvidenceReader interface {
+	FailedBuildGateEvidence(context.Context, string) (*release.GateEvidence, error)
+}
+
 // DeliveryWriterLeaseReleaser is the compatibility fallback for repositories
 // which predate the atomic failure operation. It is still exact/fenced, but a
 // terminal-release adapter is preferred whenever available.
@@ -139,6 +150,7 @@ type DeliveryBuildOutput struct {
 	// input. It is persisted with the ready candidate and is never inferred
 	// from the planning declaration after physical work begins.
 	ResolvedInputs DeliveryResolvedBuildInputs
+	GateEvidence   *release.GateEvidence
 	ObjectStore    catalogseal.ObjectStore
 	SealRepository catalogseal.SealRepository
 	RemoteVerifier catalogseal.RemoteVerifier
@@ -204,8 +216,9 @@ type DeliveryBuildRequest struct {
 }
 
 type DeliveryBuildResult struct {
-	Attempt    DeliveryBuildAttempt
-	Completion catalogseal.Completion
+	Attempt      DeliveryBuildAttempt
+	Completion   catalogseal.Completion
+	GateEvidence *release.GateEvidence
 }
 
 // DeliveryLifecycle is the canonical target lifecycle used by module, API,
@@ -266,6 +279,21 @@ func (l *DeliveryLifecycle) markBuildFailed(ctx context.Context, attempt Deliver
 		}
 	}
 	return nil
+}
+
+func (l *DeliveryLifecycle) recordFailedGateEvidence(ctx context.Context, attempt DeliveryBuildAttempt, evidence *release.GateEvidence) error {
+	if evidence == nil || l == nil || l.Store == nil {
+		return nil
+	}
+	recorder, ok := l.Store.(DeliveryBuildGateEvidenceRecorder)
+	if !ok {
+		return fmt.Errorf("durable failed gate evidence recorder is unavailable")
+	}
+	canonical, err := evidence.Canonical()
+	if err != nil {
+		return err
+	}
+	return recorder.RecordFailedBuildGateEvidence(ctx, attempt.ID, &canonical)
 }
 
 func failBuildPreparation(l *DeliveryLifecycle, ctx context.Context, attempt DeliveryBuildAttempt, lease DeliveryWriterLease, cause error) error {
@@ -541,6 +569,9 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 		validating = current
 		output, err = request.PhasedRunner.Qualify(ctx, input, phase)
 		if err != nil {
+			if evidenceErr := l.recordFailedGateEvidence(ctx, current, output.GateEvidence); evidenceErr != nil {
+				err = errors.Join(err, fmt.Errorf("record failed gate evidence: %w", evidenceErr))
+			}
 			return DeliveryBuildResult{}, fail(current, "QUALIFY_FAILED", err)
 		}
 	} else {
@@ -553,11 +584,51 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 			if normalizing.ID != "" {
 				failureAttempt = normalizing
 			}
+			if evidenceErr := l.recordFailedGateEvidence(ctx, failureAttempt, output.GateEvidence); evidenceErr != nil {
+				err = errors.Join(err, fmt.Errorf("record failed gate evidence: %w", evidenceErr))
+			}
 			return DeliveryBuildResult{}, fail(failureAttempt, "BUILD_FAILED", err)
 		}
 	}
 	if output.Cleanup != nil {
 		defer output.Cleanup()
+	}
+	if output.GateEvidence == nil {
+		failureAttempt := validating
+		if failureAttempt.ID == "" {
+			failureAttempt = normalizing
+		}
+		return DeliveryBuildResult{}, fail(failureAttempt, "GATE_EVIDENCE_INVALID", fmt.Errorf("%w: candidate gate evidence is required", ErrDeliveryInvalid))
+	}
+	if output.GateEvidence != nil {
+		canonical, gateErr := output.GateEvidence.Canonical()
+		if gateErr != nil {
+			failureAttempt := validating
+			if failureAttempt.ID == "" {
+				failureAttempt = normalizing
+			}
+			return DeliveryBuildResult{}, fail(failureAttempt, "GATE_EVIDENCE_INVALID", gateErr)
+		}
+		if canonical.CandidateID != request.CandidateID || canonical.SourceDigest != plan.SourceDigest || canonical.BindingGeneration == "" || canonical.RuntimeVersion == "" {
+			failureAttempt := validating
+			if failureAttempt.ID == "" {
+				failureAttempt = normalizing
+			}
+			return DeliveryBuildResult{}, fail(failureAttempt, "GATE_EVIDENCE_INVALID", fmt.Errorf("%w: gate evidence is not bound to candidate, source, runtime, or acquired bindings", ErrDeliveryConflict))
+		}
+		if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+			failureAttempt := validating
+			if failureAttempt.ID == "" {
+				failureAttempt = normalizing
+			}
+			gateFailure := fmt.Errorf("%w: candidate gate outcome %q cannot qualify or seal", ErrDeliveryInvalid, canonical.Outcome)
+			if evidenceErr := l.recordFailedGateEvidence(ctx, failureAttempt, &canonical); evidenceErr != nil {
+				gateFailure = errors.Join(gateFailure, fmt.Errorf("record failed gate evidence: %w", evidenceErr))
+			}
+			return DeliveryBuildResult{}, fail(failureAttempt, "GATE_BLOCKED", gateFailure)
+		}
+		output.GateEvidence = &canonical
+		output.ResolvedInputs.GateEvidence = &canonical
 	}
 	resolvedInputs, resolvedErr := ValidateDeliveryResolvedBuildInputs(plan, output.ResolvedInputs)
 	if resolvedErr != nil {
@@ -576,6 +647,20 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 		return DeliveryBuildResult{}, fail(failureAttempt, "RESOLVED_INPUTS_INVALID", resolvedJSONErr)
 	}
 	output.ResolvedInputs = resolvedInputs
+	if resolvedInputs.GateEvidence != nil {
+		if resolvedInputs.GateEvidence.Outcome != release.GateSuccess && resolvedInputs.GateEvidence.Outcome != release.GateWarning {
+			failureAttempt := validating
+			if failureAttempt.ID == "" {
+				failureAttempt = normalizing
+			}
+			gateFailure := fmt.Errorf("%w: resolved candidate gate outcome %q cannot qualify or seal", ErrDeliveryInvalid, resolvedInputs.GateEvidence.Outcome)
+			if evidenceErr := l.recordFailedGateEvidence(ctx, failureAttempt, resolvedInputs.GateEvidence); evidenceErr != nil {
+				gateFailure = errors.Join(gateFailure, fmt.Errorf("record failed gate evidence: %w", evidenceErr))
+			}
+			return DeliveryBuildResult{}, fail(failureAttempt, "GATE_BLOCKED", gateFailure)
+		}
+		output.GateEvidence = resolvedInputs.GateEvidence
+	}
 	if output.Catalog == nil || output.ObjectStore == nil || output.SealRepository == nil || output.RemoteVerifier == nil {
 		failureAttempt := validating
 		if failureAttempt.ID == "" {
@@ -596,7 +681,17 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 			return DeliveryBuildResult{}, fail(validating, "SEALING_TRANSITION_FAILED", err)
 		}
 	}
-	identity := catalogseal.SealIdentity{SealID: request.SealID, Attempt: catalogseal.AttemptIdentity{ID: sealing.ID, WriterLeaseID: sealing.WriterLeaseID}, Plan: catalogseal.PlanIdentity{ID: plan.ID, Digest: plan.Digest, ExecutionDigest: plan.ExecutionDigest}, Pool: catalogseal.PoolIdentity{ID: request.PhysicalPoolID, CompatibilityDigest: output.CompatibilityDigest}, Qualification: catalogseal.QualificationIdentity{Digest: output.QualificationDigest}, Closure: catalogseal.ClosureIdentity{Digest: output.ClosureDigest}, Candidate: catalogseal.CandidateIdentity{ID: request.CandidateID, ServingArtifactID: request.ServingArtifactID, ServingArtifactDigest: request.ServingArtifactDigest, ServingStateID: request.ServingStateID}}
+	qualificationDigest := output.QualificationDigest
+	if output.GateEvidence != nil {
+		qualificationDigest, err = canonicalJSONDigest(struct {
+			Qualification string `json:"qualification"`
+			GateEvidence  string `json:"gateEvidence"`
+		}{Qualification: qualificationDigest, GateEvidence: output.GateEvidence.Digest})
+		if err != nil {
+			return DeliveryBuildResult{}, fail(sealing, "QUALIFICATION_INVALID", err)
+		}
+	}
+	identity := catalogseal.SealIdentity{SealID: request.SealID, Attempt: catalogseal.AttemptIdentity{ID: sealing.ID, WriterLeaseID: sealing.WriterLeaseID}, Plan: catalogseal.PlanIdentity{ID: plan.ID, Digest: plan.Digest, ExecutionDigest: plan.ExecutionDigest}, Pool: catalogseal.PoolIdentity{ID: request.PhysicalPoolID, CompatibilityDigest: output.CompatibilityDigest}, Qualification: catalogseal.QualificationIdentity{Digest: qualificationDigest}, Closure: catalogseal.ClosureIdentity{Digest: output.ClosureDigest}, Candidate: catalogseal.CandidateIdentity{ID: request.CandidateID, ServingArtifactID: request.ServingArtifactID, ServingArtifactDigest: request.ServingArtifactDigest, ServingStateID: request.ServingStateID}}
 	completion, err := catalogseal.Seal(ctx, catalogseal.Request{SealID: request.SealID, Attempt: identity.Attempt, Plan: identity.Plan, Pool: identity.Pool, Qualification: identity.Qualification, Closure: identity.Closure, Candidate: identity.Candidate, Catalog: output.Catalog, Store: output.ObjectStore, Repository: output.SealRepository, Verifier: output.RemoteVerifier, ResolvedInputsJSON: string(resolvedJSON), ResolvedInputsDigest: resolvedInputs.EvidenceDigest})
 	if err != nil {
 		// Keep any preparing/uploaded remote root for reconciliation; only the
@@ -611,5 +706,5 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 	if err != nil {
 		return DeliveryBuildResult{}, err
 	}
-	return DeliveryBuildResult{Attempt: finalAttempt, Completion: completion}, nil
+	return DeliveryBuildResult{Attempt: finalAttempt, Completion: completion, GateEvidence: output.GateEvidence}, nil
 }

@@ -1120,15 +1120,44 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 		}
 		if schema.Discriminator == nil {
 			seenVariants := make(map[string]struct{}, len(schema.OneOf))
+			scalarCount := 0
+			objectCount := 0
 			for idx, variant := range schema.OneOf {
-				if !isScalarUnionVariant(variant) {
+				if isScalarUnionVariant(variant) {
+					scalarCount++
+				} else if variant.Ref == "" {
 					return fmt.Errorf("schema %q union one_of[%d] must be an inline scalar when discriminator is omitted", name, idx)
+				} else {
+					objectCount++
+					variantName, ok := NormalizedSchemaRefName(variant)
+					if !ok {
+						return fmt.Errorf("schema %q union one_of[%d] object branch must be a named schema ref", name, idx)
+					}
+					variantSchema, ok := doc.Schemas[variantName]
+					if !ok || variantSchema.Type != "object" {
+						return fmt.Errorf("schema %q union one_of[%d] object branch %q must reference an object schema", name, idx, variantName)
+					}
 				}
-				key := fmt.Sprintf("%s:%s:%v", variant.Type, variant.Format, variant.Enum)
+				key := variant.Ref
+				if key == "" {
+					key = fmt.Sprintf("%s:%s:%v", variant.Type, variant.Format, variant.Enum)
+				}
 				if _, exists := seenVariants[key]; exists {
-					return fmt.Errorf("schema %q union has duplicate scalar one_of variant %q", name, variant.Type)
+					return fmt.Errorf("schema %q union has duplicate one_of variant %q", name, key)
 				}
 				seenVariants[key] = struct{}{}
+			}
+			// Pure scalar unions retain the existing untagged scalar behavior. A
+			// mixed scalar/object union is intentionally narrower: compact authored
+			// references have exactly one scalar and one closed object branch.
+			if objectCount == 0 {
+				if scalarCount == 0 {
+					return fmt.Errorf("schema %q union one_of[0] must be an inline scalar when discriminator is omitted", name)
+				}
+				return nil
+			}
+			if scalarCount != 1 || objectCount != 1 {
+				return fmt.Errorf("schema %q untagged union must contain exactly one scalar branch and exactly one object branch", name)
 			}
 			return nil
 		}
@@ -1293,6 +1322,11 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 	}
 	if schemaRef.Items != nil {
 		if err := validateSchemaRefExists(doc, *schemaRef.Items, context+" items"); err != nil {
+			return err
+		}
+	}
+	if schemaRef.PropertyNames != nil {
+		if err := validateSchemaRefExists(doc, *schemaRef.PropertyNames, context+" property_names"); err != nil {
 			return err
 		}
 	}

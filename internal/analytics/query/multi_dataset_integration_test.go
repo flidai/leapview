@@ -261,16 +261,16 @@ func executableMultiDatasetModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Name: "executable",
 		Tables: map[string]semanticmodel.Table{
-			"orders": {GrainEntity: "order_id", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {GrainEntity: "order_id", Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string", Datatype: semanticmodel.DataTypeString}, "amount": {Type: "number", Datatype: semanticmodel.DataTypeDecimal},
 			}},
-			"tags": {GrainEntity: "tag_id", Entities: map[string]semanticmodel.ModelEntitySpec{"tag_id": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"tags": {GrainEntity: "tag_id", Entities: map[string]semanticmodel.EntityDefinition{"tag_id": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"tag_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string", Datatype: semanticmodel.DataTypeString}, "tag": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
-			"clicks": {GrainEntity: "click_id", Entities: map[string]semanticmodel.ModelEntitySpec{"click_id": {Type: "primary", Fields: []string{"click_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"clicks": {GrainEntity: "click_id", Entities: map[string]semanticmodel.EntityDefinition{"click_id": {Type: "primary", Fields: []string{"click_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"click_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "segment": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
-			"customers": {GrainEntity: "customer_id", Entities: map[string]semanticmodel.ModelEntitySpec{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"customers": {GrainEntity: "customer_id", Entities: map[string]semanticmodel.EntityDefinition{"customer_id": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"customer_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
 		},

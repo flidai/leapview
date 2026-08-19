@@ -13,6 +13,7 @@ import (
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -120,12 +121,22 @@ func ResolveSourcePlan(model *semanticmodel.Model, source semanticmodel.Source) 
 		format:     source.Format,
 		connection: source.Connection,
 		object:     source.Object,
-		options:    source.Options,
+		options:    map[string]any{},
 	}
 	if connection, ok := model.Connections[source.Connection]; ok {
 		plan.connectionConfig = connection
 		if spec, ok := connectors.LookupConnection(connection.Kind); ok {
 			plan.connectionSpec = spec
+		}
+		if source.Kind() == connectors.KindPath {
+			if source.EffectivePathLocation == nil {
+				return plan, fmt.Errorf("source %q is missing compiled effective options", source.Connection)
+			}
+			options, err := duckDBPathOptions(source.EffectivePathLocation)
+			if err != nil {
+				return plan, fmt.Errorf("source %q options: %w", source.Connection, err)
+			}
+			plan.options = options
 		}
 	}
 	if source.Path == "" {
@@ -137,6 +148,115 @@ func ResolveSourcePlan(model *semanticmodel.Model, source semanticmodel.Source) 
 	}
 	plan.path = path
 	return plan, nil
+}
+
+// duckDBPathOptions is the final typed-to-engine boundary. Public contract
+// names are deliberately translated to the exact DuckDB named arguments here;
+// callers never infer engine spelling from JSON/YAML keys.
+func duckDBPathOptions(value *projectcontracts.PathSourceLocation) (map[string]any, error) {
+	options := map[string]any{}
+	if value == nil {
+		return nil, fmt.Errorf("path source location is required")
+	}
+	putString := func(name string, pointer *string) {
+		if pointer != nil {
+			options[name] = *pointer
+		}
+	}
+	putBool := func(name string, pointer *bool) {
+		if pointer != nil {
+			options[name] = *pointer
+		}
+	}
+	putInt32 := func(name string, pointer *int32) {
+		if pointer != nil {
+			options[name] = int(*pointer)
+		}
+	}
+	switch variant := value.Value.(type) {
+	case *projectcontracts.CSVPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("csv path variant is nil")
+		}
+		if variant.Options != nil {
+			putBool("header", variant.Options.Header)
+			putString("delim", variant.Options.Delimiter)
+			putString("quote", variant.Options.Quote)
+			putString("escape", variant.Options.Escape)
+			putString("nullstr", variant.Options.NullString)
+		}
+	case *projectcontracts.JSONPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("json path variant is nil")
+		}
+		if variant.Options != nil {
+			putString("format", variant.Options.Format)
+			putInt32("maximum_depth", variant.Options.MaximumDepth)
+		}
+	case *projectcontracts.ParquetPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("parquet path variant is nil")
+		}
+		if variant.Options != nil {
+			putBool("hive_partitioning", variant.Options.HivePartitioning)
+			putBool("union_by_name", variant.Options.UnionByName)
+		}
+	case *projectcontracts.ExcelPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("excel path variant is nil")
+		}
+		if variant.Options != nil {
+			putString("sheet", variant.Options.Sheet)
+			putBool("header", variant.Options.Header)
+		}
+	case *projectcontracts.TextPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("text path variant is nil")
+		}
+		if variant.Options != nil {
+			putString("delim", variant.Options.Delimiter)
+			putString("quote", variant.Options.Quote)
+			putBool("header", variant.Options.Header)
+		}
+	case *projectcontracts.BlobPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("blob path variant is nil")
+		}
+		if variant.Options != nil {
+			putString("compression", variant.Options.Compression)
+		}
+	case *projectcontracts.VortexPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("vortex path variant is nil")
+		}
+		if variant.Options != nil {
+			putString("version", variant.Options.Version)
+		}
+	case *projectcontracts.DeltaPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("delta path variant is nil")
+		}
+		if variant.Options != nil {
+			putString("version", variant.Options.Version)
+		}
+	case *projectcontracts.IcebergPathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("iceberg path variant is nil")
+		}
+		if variant.Options != nil {
+			putString("snapshot", variant.Options.Snapshot)
+		}
+	case *projectcontracts.LancePathSourceLocation:
+		if variant == nil {
+			return nil, fmt.Errorf("lance path variant is nil")
+		}
+	default:
+		if value.Value == nil {
+			return nil, fmt.Errorf("path variant is required")
+		}
+		return nil, fmt.Errorf("unsupported path variant %T", value.Value)
+	}
+	return options, nil
 }
 
 func ResolveSourcePath(model *semanticmodel.Model, source semanticmodel.Source) (string, error) {
@@ -326,11 +446,28 @@ func sqlOptions(options map[string]any) (string, error) {
 	var builder strings.Builder
 	for _, key := range keys {
 		builder.WriteString(", ")
-		builder.WriteString(key)
+		builder.WriteString(duckDBOptionName(key))
 		builder.WriteString(" = ")
 		builder.WriteString(sqlLiteral(options[key]))
 	}
 	return builder.String(), nil
+}
+
+func duckDBOptionName(key string) string {
+	switch key {
+	case "delimiter":
+		return "delim"
+	case "nullString":
+		return "nullstr"
+	case "hivePartitioning":
+		return "hive_partitioning"
+	case "unionByName":
+		return "union_by_name"
+	case "maximumDepth":
+		return "maximum_depth"
+	default:
+		return key
+	}
 }
 
 func sqlLiteral(value any) string {
@@ -398,8 +535,8 @@ func RequiredExtensions(model *semanticmodel.Model) []string {
 		connection := model.Connections[name]
 		addConnection(connection.Kind)
 		addPath(connection.Path)
-		if dataPath, ok := connection.Options["data_path"]; ok {
-			addPath(fmt.Sprint(dataPath))
+		if connection.RuntimeOptions.DataPath != "" {
+			addPath(connection.RuntimeOptions.DataPath)
 		}
 	}
 	for _, name := range sortedKeys(model.Sources) {
@@ -656,8 +793,8 @@ func compileDuckLakeAttach(model *semanticmodel.Model, connectionName string, co
 		attachPath = "ducklake:" + attachPath
 	}
 	parts := []string{}
-	if dataPath, ok := connection.Options["data_path"]; ok {
-		resolved, err := resolvePathInConnectionScope(model, connection, fmt.Sprint(dataPath))
+	if connection.RuntimeOptions.DataPath != "" {
+		resolved, err := resolvePathInConnectionScope(model, connection, connection.RuntimeOptions.DataPath)
 		if err != nil {
 			return "", err
 		}
@@ -715,12 +852,6 @@ func connectionSecretName(name string) (string, error) {
 }
 
 func connectionStringOption(connection semanticmodel.Connection) (string, error) {
-	for key := range connection.Options {
-		connectionSpec, _ := connectors.LookupConnection(connection.Kind)
-		if !connectionAllowsOption(connectionSpec, key) {
-			return "", fmt.Errorf("unsupported database connection option %q", key)
-		}
-	}
 	auth, err := semanticmodel.ResolveConnectionAuth(connection)
 	if err != nil {
 		return "", err
@@ -737,8 +868,8 @@ func connectionStringOption(connection semanticmodel.Connection) (string, error)
 		return "", nil
 	}
 	if connection.Kind == "sqlite" {
-		if value, ok := connection.Options["path"]; ok {
-			return fmt.Sprint(value), nil
+		if connection.RuntimeOptions.Path != "" {
+			return connection.RuntimeOptions.Path, nil
 		}
 	}
 	return "", nil

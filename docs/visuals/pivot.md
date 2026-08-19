@@ -10,10 +10,16 @@ visuals:
     type: pivot
     title: Order count by category and status
     query:
+      type: pivot
       rows:
-        category: orders.category
+      - category
       columns:
-        status: orders.status
+      - status
       metrics:
-        order_count: null
+      - order_count
+    presentation:
+      type: table
+      rowHeight: 32
+      showHeader: true
+      striped: false
 ```

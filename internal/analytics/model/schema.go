@@ -170,25 +170,91 @@ func (m *Model) ValidateDiscoveredSourceSchemas() error {
 	sort.Strings(sourceNames)
 	for _, sourceName := range sourceNames {
 		source := m.Sources[sourceName]
-		columns := map[string]struct{}{}
+		columns := map[string]ColumnSchema{}
 		for _, column := range source.Schema.Columns {
-			columns[column.Name] = struct{}{}
+			columns[column.Name] = column
 		}
 		if len(columns) == 0 {
 			return fmt.Errorf("source %q has no discovered schema", sourceName)
 		}
-		fields := make([]string, 0, len(source.Fields))
-		for field := range source.Fields {
-			fields = append(fields, field)
+		if source.Freshness != nil && source.Freshness.Basis == "field" {
+			if _, ok := columns[source.Freshness.Field]; !ok {
+				return fmt.Errorf("source %q freshness field %q is not in discovered schema", sourceName, source.Freshness.Field)
+			}
 		}
-		sort.Strings(fields)
-		for _, field := range fields {
-			if _, ok := columns[field]; !ok {
+		mode := strings.ToLower(strings.TrimSpace(source.SchemaMode))
+		if mode == "" {
+			mode = "inferred"
+		}
+		if mode != "inferred" && mode != "compatible" && mode != "strict" {
+			return fmt.Errorf("source %q has unsupported schema mode %q", sourceName, source.SchemaMode)
+		}
+		if mode == "inferred" {
+			continue
+		}
+		for field, declaration := range source.Fields {
+			column, ok := columns[field]
+			if !ok {
 				return fmt.Errorf("source %q field %q is not in discovered schema", sourceName, field)
+			}
+			declared := declaration.Datatype
+			if declared == "" {
+				declared = canonicalSourceDatatype(LogicalDataType(strings.TrimSpace(declaration.Type)))
+			}
+			if declared != "" {
+				observed := LogicalDataTypeFromPhysicalType(column.PhysicalType)
+				if declared != observed || observed == DataTypeOpaque && declared != DataTypeOpaque {
+					return fmt.Errorf("source %q field %q datatype %q is incompatible with discovered physical type %q (mapped to %q)", sourceName, field, declared, column.PhysicalType, observed)
+				}
+			}
+			if declaration.Nullable != nil {
+				if column.Nullable == nil {
+					return fmt.Errorf("source %q field %q nullability could not be established from discovered schema", sourceName, field)
+				}
+				if !*declaration.Nullable && *column.Nullable {
+					return fmt.Errorf("source %q field %q nullability is incompatible: declared non-null but discovered nullable", sourceName, field)
+				}
+			}
+		}
+		if mode == "strict" {
+			if len(source.Fields) != len(columns) {
+				return fmt.Errorf("source %q strict schema has %d declared fields but discovered %d", sourceName, len(source.Fields), len(columns))
+			}
+			for field := range columns {
+				if _, ok := source.Fields[field]; !ok {
+					return fmt.Errorf("source %q strict schema has undeclared discovered field %q", sourceName, field)
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func canonicalSourceDatatype(value LogicalDataType) LogicalDataType {
+	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case "string":
+		return DataTypeString
+	case "integer", "int":
+		return DataTypeInteger
+	case "decimal", "number":
+		return DataTypeDecimal
+	case "float", "double":
+		return DataTypeFloat
+	case "boolean", "bool":
+		return DataTypeBoolean
+	case "date":
+		return DataTypeDate
+	case "time":
+		return DataTypeTime
+	case "datetime", "timestamp":
+		return DataTypeDateTime
+	case "datetimetz", "timestamptz":
+		return DataTypeDateTimeTZ
+	case "opaque":
+		return DataTypeOpaque
+	default:
+		return value
+	}
 }
 
 func ExpressionFieldRefs(expression string) []string {

@@ -817,7 +817,7 @@ func exampleStringForFormat(format string) string {
 }
 
 func isPureRef(ref ir.SchemaRef) bool {
-	return ref.Ref != "" && ref.Type == "" && ref.Format == "" && len(ref.Enum) == 0 && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil && ref.Items == nil && ref.AdditionalProperties == nil
+	return ref.Ref != "" && ref.Type == "" && ref.Format == "" && len(ref.Enum) == 0 && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil && ref.Pattern == "" && ref.Items == nil && ref.AdditionalProperties == nil && ref.PropertyNames == nil
 }
 
 func cloneExampleValue(value any) any {
@@ -847,7 +847,7 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 		appendKeyValue(node, "$ref", stringNode("#/components/schemas/"+ref.Ref))
 		return node
 	}
-	if ref.Ref == "" && ref.Type == "" && ref.Format == "" && ref.Items == nil && ref.AdditionalProperties == nil {
+	if ref.Ref == "" && ref.Type == "" && ref.Format == "" && ref.Pattern == "" && ref.Items == nil && ref.AdditionalProperties == nil && ref.PropertyNames == nil {
 		return mappingNode()
 	}
 
@@ -880,11 +880,17 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 	if ref.MaxLength != nil {
 		appendKeyValue(node, "maxLength", intNode(*ref.MaxLength))
 	}
+	if ref.Pattern != "" {
+		appendKeyValue(node, "pattern", stringNode(ref.Pattern))
+	}
 	if ref.Items != nil {
 		appendKeyValue(node, "items", schemaRefNode(*ref.Items))
 	}
 	if ref.AdditionalProperties != nil {
 		appendKeyValue(node, "additionalProperties", additionalPropertiesNode(*ref.AdditionalProperties))
+	}
+	if ref.PropertyNames != nil {
+		appendKeyValue(node, "propertyNames", schemaRefNode(*ref.PropertyNames))
 	}
 	return node
 }

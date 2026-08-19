@@ -59,6 +59,18 @@ type PoolManager struct {
 	retired      bool
 }
 
+// NoAuthProviderVersion is the canonical non-secret evidence version for a
+// public connection binding. It intentionally has no credential snapshot.
+const NoAuthProviderVersion = "public-no-auth:v1"
+
+// NoAuthCredentialResolver satisfies the pool manager's infrastructure
+// boundary without consulting a target credential provider.
+type NoAuthCredentialResolver struct{}
+
+func (NoAuthCredentialResolver) Resolve(_ context.Context, _ CredentialReference) (CredentialSnapshot, error) {
+	return NewNoAuthCredentialSnapshot(time.Now()), nil
+}
+
 type poolGeneration struct {
 	pool            RuntimePool
 	version         string
@@ -151,7 +163,13 @@ func (manager *PoolManager) refresh(ctx context.Context, request RefreshRequest)
 	binding := manager.binding
 	manager.mu.Unlock()
 
-	snapshot, err := manager.resolver.Resolve(ctx, binding.CredentialReference)
+	var snapshot CredentialSnapshot
+	var err error
+	if binding.AuthenticationMode == AuthenticationNone {
+		snapshot = NewNoAuthCredentialSnapshot(now)
+	} else {
+		snapshot, err = manager.resolver.Resolve(ctx, binding.CredentialReference)
+	}
 	if err != nil {
 		manager.recordRefresh(now)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

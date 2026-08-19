@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	dashboarddb "github.com/flidai/leapview/internal/dashboard/internal/db"
 	"github.com/flidai/leapview/internal/project/graph"
 )
@@ -45,10 +46,10 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 	if input.Revision.DashboardID != input.Lifecycle.ID {
 		return authoring.DashboardLifecycle{}, fmt.Errorf("%w: revision belongs to dashboard %q", authoring.ErrInvalidAuthoring, input.Revision.DashboardID)
 	}
-	if input.Lifecycle.SemanticModel != input.Revision.Document.SemanticModel {
+	if input.Lifecycle.SemanticModel.String() != input.Revision.Document.Spec.SemanticModel {
 		return authoring.DashboardLifecycle{}, fmt.Errorf("%w: lifecycle semantic model does not match initial revision", authoring.ErrInvalidAuthoring)
 	}
-	if input.Lifecycle.Title != input.Revision.Document.Title {
+	if input.Lifecycle.Title != canonicalDocumentTitle(input.Revision.Document) {
 		return authoring.DashboardLifecycle{}, fmt.Errorf("%w: lifecycle title does not match initial revision", authoring.ErrInvalidAuthoring)
 	}
 	if !lifecycleReferencesRevision(input.Lifecycle, input.Revision.Token()) {
@@ -636,10 +637,10 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	if !sameToken(revision.Token(), target) {
 		return authoring.DashboardLifecycle{}, conflict("published revision token does not match immutable revision")
 	}
-	if lifecycle.SemanticModel != revision.Document.SemanticModel || lifecycle.Title != revision.Document.Title {
+	if lifecycle.SemanticModel.String() != revision.Document.Spec.SemanticModel || lifecycle.Title != canonicalDocumentTitle(revision.Document) {
 		return authoring.DashboardLifecycle{}, fmt.Errorf("%w: lifecycle metadata does not match published revision", authoring.ErrInvalidAuthoring)
 	}
-	if compilation.Definition.ID != revision.Document.ID.String() || compilation.Definition.Title != revision.Document.Title || compilation.Definition.SemanticModel != revision.Document.SemanticModel.String() || compilation.Definition.SemanticModel != lifecycle.SemanticModel.String() {
+	if compilation.Definition.ID != revision.Document.Metadata.ID || compilation.Definition.Title != canonicalDocumentTitle(revision.Document) || compilation.Definition.SemanticModel != revision.Document.Spec.SemanticModel || compilation.Definition.SemanticModel != lifecycle.SemanticModel.String() {
 		return authoring.DashboardLifecycle{}, fmt.Errorf("%w: compiled definition metadata does not match published revision", authoring.ErrInvalidAuthoring)
 	}
 	definitionJSON, err := json.Marshal(compilation.Definition)
@@ -884,7 +885,7 @@ func getRevision(ctx context.Context, q *dashboarddb.Queries, projectID string, 
 	if err != nil {
 		return authoring.Revision{}, err
 	}
-	var document authoring.Dashboard
+	var document document.DashboardDocument
 	if err := json.Unmarshal([]byte(row.DocumentJson), &document); err != nil {
 		return authoring.Revision{}, fmt.Errorf("decode dashboard revision document: %w", err)
 	}
@@ -1035,6 +1036,13 @@ func lifecycleReferencesRevision(lifecycle authoring.DashboardLifecycle, token a
 		(lifecycle.Published != nil && sameToken(lifecycle.Published.Revision, token))
 }
 
+func canonicalDocumentTitle(value document.DashboardDocument) string {
+	if value.Metadata.DisplayName != nil {
+		return *value.Metadata.DisplayName
+	}
+	return value.Metadata.Name
+}
+
 func validateNextLifecycle(current, next authoring.DashboardLifecycle, revision authoring.RevisionToken) error {
 	if err := next.Validate(); err != nil {
 		return err
@@ -1087,10 +1095,10 @@ func validateAppendInput(input authoring.AppendDraftInput) (string, error) {
 	if input.Next.ID != input.DashboardID || input.Next.Draft == nil || !sameToken(input.Next.Draft.Revision, input.Revision.Token()) {
 		return "", fmt.Errorf("%w: append requires a next lifecycle pointing at the appended revision", authoring.ErrInvalidAuthoring)
 	}
-	if input.Next.SemanticModel != input.Revision.Document.SemanticModel {
+	if input.Next.SemanticModel.String() != input.Revision.Document.Spec.SemanticModel {
 		return "", fmt.Errorf("%w: lifecycle semantic model does not match appended revision", authoring.ErrInvalidAuthoring)
 	}
-	if input.Next.Title != input.Revision.Document.Title {
+	if input.Next.Title != canonicalDocumentTitle(input.Revision.Document) {
 		return "", fmt.Errorf("%w: lifecycle title does not match appended revision", authoring.ErrInvalidAuthoring)
 	}
 	return projectID, nil

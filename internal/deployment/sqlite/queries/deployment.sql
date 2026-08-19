@@ -804,6 +804,7 @@ SELECT physical_pool_id,'build' AS root_kind,id AS source_id,'' AS candidate_id,
 FROM delivery_catalog_seals WHERE delivery_catalog_seals.physical_pool_id=? AND status IN ('preparing','uploaded','verified') AND NOT EXISTS (SELECT 1 FROM delivery_candidates WHERE seal_id=delivery_catalog_seals.id)
 AND EXISTS (SELECT 1 FROM delivery_build_attempts a JOIN delivery_writer_leases l ON l.id=a.writer_lease_id AND l.attempt_id=a.id AND l.physical_pool_id=a.physical_pool_id WHERE a.id=delivery_catalog_seals.attempt_id AND a.physical_pool_id=delivery_catalog_seals.physical_pool_id AND l.status='active' AND julianday(l.expires_at)>julianday(?))
 UNION ALL SELECT c.physical_pool_id,'candidate',c.id,c.id,'','',c.catalog_digest,c.catalog_object_key,'active',c.created_at,NULL FROM delivery_candidates c WHERE c.physical_pool_id=? AND c.status IN ('preparing','ready')
+AND NOT EXISTS (SELECT 1 FROM delivery_publications p WHERE p.candidate_id=c.id AND p.status='committed')
 UNION ALL SELECT g.physical_pool_id,'published',g.id,'',g.id,'',g.catalog_digest,g.catalog_object_key,'active',g.created_at,NULL FROM delivery_generations g WHERE g.physical_pool_id=? AND g.status IN ('prepared','active')
 UNION ALL SELECT g.physical_pool_id,'rollback',g.id,'',g.id,'',g.catalog_digest,g.catalog_object_key,'active',g.created_at,g.rollback_until FROM delivery_generations g WHERE g.physical_pool_id=? AND g.status='retired' AND g.rollback_until IS NOT NULL AND julianday(g.rollback_until)>julianday(?)
 UNION ALL SELECT c.physical_pool_id,'published',p.id,p.candidate_id,p.generation_id,'',g.catalog_digest,g.catalog_object_key,'active',p.created_at,NULL FROM delivery_publications p JOIN delivery_candidates c ON c.id=p.candidate_id JOIN delivery_generations g ON g.id=p.generation_id WHERE c.physical_pool_id=? AND p.status IN ('pending','indeterminate')
@@ -813,6 +814,23 @@ UNION ALL SELECT r.physical_pool_id,r.root_kind,r.source_id,COALESCE(r.candidate
 
 -- Append-only delivery lifecycle evidence. The unique request/object key makes
 -- a crash-replayed command resolve to the original event without rewriting it.
+
+-- name: GetFailedGateEvidenceDigest :one
+SELECT evidence_digest
+FROM delivery_failed_gate_evidence
+WHERE attempt_id = ?;
+
+-- name: InsertFailedGateEvidence :execresult
+INSERT INTO delivery_failed_gate_evidence
+  (attempt_id, evidence_json, evidence_digest, created_at)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(attempt_id) DO NOTHING;
+
+-- name: GetFailedGateEvidence :one
+SELECT evidence_json, evidence_digest
+FROM delivery_failed_gate_evidence
+WHERE attempt_id = ?;
+
 -- name: AppendDeliveryEvent :execresult
 INSERT INTO delivery_events
  (id, target_id, project_id, environment, actor_id, event_kind, object_kind,

@@ -9,6 +9,12 @@ import (
 type Field struct {
 	Field string
 	Alias string
+	// Grain is an optional temporal grain for a semantic dimension. It is
+	// carried on the dimension reference itself so a request can contain more
+	// than one grained temporal dimension. Request.Time remains an internal
+	// compatibility input for older callers; canonical dashboard lowering uses
+	// this field exclusively.
+	Grain string
 }
 
 type resolvedAggregateMetric struct {
@@ -189,6 +195,36 @@ type RawValueRequest struct {
 	Sort        []Sort
 	ColumnMasks []ColumnMask
 	Limit       int
+	// IncludeNull retains null metric inputs for an explicit statistical null
+	// policy. The default false preserves the governed numeric-only behavior.
+	IncludeNull bool
+}
+
+type HistogramDomain struct {
+	Minimum float64
+	Maximum float64
+}
+
+type HistogramOptions struct {
+	Domain        *HistogramDomain
+	NullPolicy    string
+	Approximation string
+}
+
+type DistributionWhiskers struct {
+	Lower float64
+	Upper float64
+}
+
+type DistributionOptions struct {
+	Quantiles []float64
+	// Whiskers are inclusive lower/upper population probabilities (not Tukey
+	// multipliers). When Outliers is omit, observations outside those quantile
+	// fences are excluded before every reported statistic; include retains them
+	// while still materializing the governed whisker bounds.
+	Whiskers      *DistributionWhiskers
+	Outliers      string
+	Approximation string
 }
 
 type CountRequest struct {

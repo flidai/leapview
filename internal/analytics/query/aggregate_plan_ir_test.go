@@ -257,11 +257,11 @@ func planIRTestModel() *semanticmodel.Model {
 			"orders": {Model: "orders"}, "tags": {Model: "tags"},
 		},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id": {Datatype: semanticmodel.DataTypeInteger},
 				"revenue":  {Datatype: semanticmodel.DataTypeDecimal},
 			}},
-			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.ModelEntitySpec{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.EntityDefinition{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"tag_id": {Datatype: semanticmodel.DataTypeInteger},
 			}},
 		},
@@ -281,14 +281,14 @@ func planIRFilteredModel() *semanticmodel.Model {
 			"orders": {Model: "orders"}, "customers": {Model: "customers"},
 		},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id":    {Datatype: semanticmodel.DataTypeInteger},
 				"customer_id": {Datatype: semanticmodel.DataTypeInteger},
 			}},
 			"customers": {GrainEntity: "customer", Dimensions: map[string]semanticmodel.MetricDimension{
 				"customer_id": {Datatype: semanticmodel.DataTypeInteger},
 				"state":       {Datatype: semanticmodel.DataTypeString},
-			}, Entities: map[string]semanticmodel.ModelEntitySpec{
+			}, Entities: map[string]semanticmodel.EntityDefinition{
 				"customer": {Type: "primary", Fields: []string{"customer_id"}},
 			}},
 		},
@@ -311,14 +311,14 @@ func planIRRolePlayingModel() *semanticmodel.Model {
 			"orders": {Model: "orders"}, "dates": {Model: "dates"},
 		},
 		Tables: map[string]semanticmodel.Table{
-			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id":        {Datatype: semanticmodel.DataTypeInteger},
 				"ordered_date_id": {Datatype: semanticmodel.DataTypeInteger},
 				"shipped_date_id": {Datatype: semanticmodel.DataTypeInteger},
 			}},
 			"dates": {GrainEntity: "date", Dimensions: map[string]semanticmodel.MetricDimension{
 				"date_id": {Datatype: semanticmodel.DataTypeInteger}, "date_value": {Datatype: semanticmodel.DataTypeDate},
-			}, Entities: map[string]semanticmodel.ModelEntitySpec{"date": {Type: "primary", Fields: []string{"date_id"}}}},
+			}, Entities: map[string]semanticmodel.EntityDefinition{"date": {Type: "primary", Fields: []string{"date_id"}}}},
 		},
 		Relationships: []semanticmodel.Relationship{
 			{ID: "orders_order_date", FromDataset: "orders", FromFields: []string{"ordered_date_id"}, ToDataset: "dates", ToFields: []string{"date_id"}, Cardinality: "many_to_one"},

@@ -129,16 +129,27 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   }
   const values = orderedY(spec)
   const normalized = stack === 'percent' ? normalizedMeasureDataset(envelope, spec, values) : undefined
+  // A canonical combo visual binds each authored series entry to a result
+  // field. Category-series combos are handled above by splitCartesianSeries;
+  // this lookup is deliberately keyed by measure field for multi-measure
+  // combos so mark and axis policies are not silently dropped.
+  const comboByField = spec.mark === 'combo'
+    ? new Map((spec.presentation.comboSeries ?? []).map((item) => [String(item.seriesValue), item]))
+    : new Map<string, NonNullable<CartesianSpec['presentation']['comboSeries']>[number]>()
+  const hasSecondaryComboAxis = spec.mark === 'combo' && values.some((value) => comboByField.get(value.field)?.axis === 'secondary')
   const series = values.map((value) => {
     const normalizedField = normalized?.dimensions.get(value.field)
+    const combo = comboByField.get(value.field)
+    const mark = combo?.mark ?? (spec.mark === 'combo' ? 'line' : spec.mark)
     const fill = conditionalItemColor(envelope, value, 'mark_fill', context) ?? conditionalItemColor(envelope, value, 'series_color', context)
     const stroke = conditionalItemColor(envelope, value, 'mark_stroke', context)
     const intent = spec.presentation.seriesIntent?.find((candidate) => candidate.value === value.field)?.color
     return {
-      id: seriesID(value.dataset, value.field), type: cartesianSeriesType(spec.mark), name: fieldLabel(envelope, value),
+      id: seriesID(value.dataset, value.field), type: cartesianSeriesType(mark), name: fieldLabel(envelope, value),
+      yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
       encode: horizontal ? { x: normalizedField ?? value.field, y: spec.x.field } : { x: spec.x.field, y: normalizedField ?? value.field },
       smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none', symbolSize: spec.presentation.symbolSize,
-      stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || spec.mark === 'area' ? {} : undefined,
+      stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
       itemStyle: {
         color: fill ?? (intent === undefined && values.length === 1
           ? context.colors.data[0] ?? context.colors.accent
@@ -149,12 +160,15 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       step: spec.presentation.step ? 'middle' : false,
       ...(normalizedField
         ? percentLabel(envelope, spec, context, normalized?.columnIndices.get(value.field))
-        : chartLabel(envelope, value, spec, context)),
+        : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y')),
     }
   })
   return {
     ...axes,
     ...(normalized ? { dataset: { id: `dataset:${normalized.datasetID}`, source: normalized.source } } : {}),
+    yAxis: hasSecondaryComboAxis
+      ? [yAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)]
+      : yAxis,
     legend: legend(spec.presentation.legend, context), dataZoom,
     series: [...series, ...interactionHitSeries(envelope, spec, series)],
   }

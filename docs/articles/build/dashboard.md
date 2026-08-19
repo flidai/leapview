@@ -1,13 +1,13 @@
 # Create a dashboard
 
-A dashboard chooses one project semantic model and composes reusable filters, visual queries, tabular queries, and report pages. Build the smallest useful page first, verify its query behavior, and add interactions only after the standalone results are correct.
+A dashboard chooses one project semantic model and composes reusable filters, visual queries, tabular queries, and report pages. Build the smallest useful page first, verify its query behavior, and add interactions only after standalone results are correct.
 
 > [!TIP]
-> Use this guide for the authoring workflow and representative configuration. Use [Dashboard configuration](/docs/config/dashboard) and [Visual types](/docs/visuals/overview) when you need the complete accepted field contract.
+> Use this guide for the authoring workflow and representative configuration. Use [Dashboard configuration](/docs/config/dashboard-document) and [Visual types](/docs/visuals/overview) for the complete accepted field contract.
 
 ## Before you begin
 
-Verify the semantic model with direct queries and choose a small decision-oriented page to build first. Prepare expected values for each initial visual at an unfiltered state and at least one filtered state.
+Verify the semantic model with direct queries and choose a small decision-oriented page. Prepare expected values for each initial visual at an unfiltered state and at least one filtered state.
 
 Use this sequence:
 
@@ -34,68 +34,82 @@ metadata:
   tags: [sales, revenue]
 spec:
   semanticModel: sales
+  layout:
+    columns: 12
+    rowHeight: 48
+    gap: 16
+    padding: 16
+  filters: []
   visuals:
-    revenue_by_month:
+    revenue-by-month:
       title: Revenue by month
       type: area
       query:
-        dimensions:
-          purchase_month: orders.purchase_month
-        metrics:
-          revenue:
+        type: aggregate
+        dimensions: [purchase_month]
+        metrics: [revenue]
         sort:
           - field: purchase_month
             direction: asc
         limit: 30
+      presentation:
+        type: cartesian
+    total-revenue:
+      title: Total revenue
+      type: kpi
+      query:
+        type: aggregate
+        dimensions: []
+        metrics: [revenue]
+      presentation:
+        type: kpi
+        displayUnits: auto
   pages:
     - id: overview
       title: Overview
-      grid:
-        columns: 12
-        row_height: 48
-        gap: 16
-        padding: 16
       components:
         - id: revenue-trend
-          kind: visual
-          visual: revenue_by_month
-          placement: {col: 1, row: 1, col_span: 12, row_span: 8}
+          type: visual
+          visual: revenue-by-month
+          placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 8}
+        - id: revenue-kpi
+          type: visual
+          visual: total-revenue
+          placement: {column: 1, row: 10, columnSpan: 3, rowSpan: 3}
 ```
 
-The visual definition owns semantic query and presentation settings. The page entry references it by stable ID and owns placement. This separation keeps layout edits from rewriting data logic.
+The visual definition owns the semantic query and presentation. The page entry references it by stable ID and owns placement. This separation keeps layout edits from rewriting data logic.
 
 ### Design the query result
 
-Names on the left of `dimensions` and `metrics` are stable field IDs compiled into the visualization specification. Values on the right refer to semantic fields. Choose clear aliases and keep them stable when typed presentation or interactions depend on them.
+Dimension and metric selections are ordered sequences of semantic members. The names delivered to a result frame are the member names unless an explicit typed alias is used. Sort fields address those result names, never source expressions.
 
-Every chart query should have a bounded limit and deterministic sort. For time series, sort the time field ascending. For ranked bars, sort the value descending and choose a limit that users can read. Do not rely on database default order.
+Every chart query should have a bounded limit and deterministic sort. For time series, sort the time field ascending. For ranked bars, sort the value descending and choose a limit readers can scan. Do not rely on database default order.
 
 ### Add a KPI
 
-KPI visuals use one metric and typed KPI presentation:
+KPI visuals use one metric and a typed KPI presentation:
 
 ```yaml
 visuals:
-  total_revenue:
+  total-orders:
     type: kpi
     query:
-      metrics:
-        revenue:
+      type: aggregate
+      dimensions: []
+      metrics: [order_count]
     presentation:
-      display_units: auto
-      note: Filtered order revenue
-      tone: success
+      type: kpi
+      displayUnits: auto
 ```
 
-Place it on the page with `kind: visual` and `visual: total_revenue`. Its `type: kpi` selects the KPI renderer. `display_units: auto` is the default and chooses one shared magnitude with at most three significant digits for the complete KPI context. Use `none` for canonical unscaled semantic formatting or force `thousands`, `millions`, `billions`, or `trillions` when comparable cards must retain a fixed scale. Tooltips and detail surfaces keep exact values.
+`displayUnits: auto` chooses one shared magnitude for the complete KPI context. Use `none` for canonical unscaled semantic formatting or a fixed unit when comparable cards must retain a shared scale. Tooltips and detail surfaces keep exact values.
 
 ### Add filters after the base query works
 
-Define filters against semantic fields and place filter-card components on the page. Exercise each filter independently before combining several. Use stable URL parameters when users should share filtered links.
+Define filters against semantic fields and place typed filter components on the page. Exercise each filter independently before combining several. Use stable URL parameters when users should share filtered links.
 
 ## Validate the dashboard
-
-### Discover and validate
 
 Ensure the project manifest includes dashboard files, then run:
 
@@ -104,9 +118,7 @@ leapview validate --project dashboards/leapview.yaml
 leapview plan dashboards/leapview.yaml
 ```
 
-Validation checks contract shape and references. The plan shows target-owned
-impact and source-attestation evidence. Build the reviewed plan and verify the
-rendered page with representative data before publishing the sealed candidate.
+Validation checks contract shape and references. The plan shows target-owned impact and source-attestation evidence. Build the reviewed plan and verify the rendered page with representative data before publishing the sealed candidate.
 
 ## Verify the rendered page
 
@@ -126,4 +138,4 @@ If a visual is empty, first run its semantic query without dashboard filters, th
 
 ## Next steps
 
-Continue with [Pages and layout](/docs/guides/build/pages-layout), [Filters and interactions](/docs/guides/build/filters-interactions), and [Tables, matrices, and pivots](/docs/guides/build/tables). Use [Dashboard configuration](/docs/config/dashboard) and [Visual types](/docs/visuals/overview) for exact contracts.
+Continue with [Pages and layout](/docs/guides/build/pages-layout), [Filters and interactions](/docs/guides/build/filters-interactions), and [Tables, matrices, and pivots](/docs/guides/build/tables). Use [Dashboard configuration](/docs/config/dashboard-document) and [Visual types](/docs/visuals/overview) for exact contracts.

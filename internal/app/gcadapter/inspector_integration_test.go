@@ -12,6 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/gcstore"
 )
@@ -49,11 +50,12 @@ func integrationContract(t *testing.T, dataPath string) *ducklake.PoolContract {
 
 func TestInspectorRealCatalogEnumeratesDataAndDeleteFiles(t *testing.T) {
 	ctx := context.Background()
+	admission := extensionfixture.New(t, "ducklake")
 	root := t.TempDir()
 	dataPath := filepath.Join(root, "data")
 	contract := integrationContract(t, dataPath)
 	writerRoot := t.TempDir()
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: writerRoot, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract})
+	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: writerRoot, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ExtensionAdmission: admission.Admission})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,14 +103,14 @@ func TestInspectorRealCatalogEnumeratesDataAndDeleteFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inspector := Inspector{Store: store, PoolContract: contract, StagingRoot: t.TempDir()}
+	inspector := Inspector{Store: store, PoolContract: contract, StagingRoot: t.TempDir(), ExtensionAdmission: admission.Admission}
 	initialRoot := deployment.DeliveryRoot{PhysicalPoolID: contract.Pool.ID.String(), Kind: "published", SourceID: "generation", CatalogDigest: testDigest(bytes), ObjectKey: "catalog.duckdb"}
 	if _, err := inspector.Inspect(ctx, initialRoot); err == nil {
 		t.Fatal("inspector accepted unnormalized multi-snapshot catalog")
 	}
 	// Reopen the private catalog and retain only its latest snapshot, matching
 	// the candidate qualification/normalization contract.
-	env, err = ducklake.Open(ctx, ducklake.Config{RootDir: writerRoot, CatalogPath: catalogPath, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract})
+	env, err = ducklake.Open(ctx, ducklake.Config{RootDir: writerRoot, CatalogPath: catalogPath, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ExtensionAdmission: admission.Admission})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +143,7 @@ func TestInspectorRealCatalogEnumeratesDataAndDeleteFiles(t *testing.T) {
 
 func TestInspectorRejectsCorruptCatalogDigest(t *testing.T) {
 	root := t.TempDir()
+	admission := extensionfixture.New(t, "ducklake")
 	dataPath := filepath.Join(root, "data")
 	contract := integrationContract(t, dataPath)
 	if err := os.MkdirAll(dataPath, 0o700); err != nil {
@@ -153,7 +156,7 @@ func TestInspectorRejectsCorruptCatalogDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = (Inspector{Store: store, PoolContract: contract, StagingRoot: t.TempDir()}).Inspect(context.Background(), deployment.DeliveryRoot{PhysicalPoolID: contract.Pool.ID.String(), Kind: "published", SourceID: "generation", CatalogDigest: testDigest([]byte("different")), ObjectKey: "catalog.duckdb"})
+	_, err = (Inspector{Store: store, PoolContract: contract, StagingRoot: t.TempDir(), ExtensionAdmission: admission.Admission}).Inspect(context.Background(), deployment.DeliveryRoot{PhysicalPoolID: contract.Pool.ID.String(), Kind: "published", SourceID: "generation", CatalogDigest: testDigest([]byte("different")), ObjectKey: "catalog.duckdb"})
 	if err == nil {
 		t.Fatal("corrupt rooted catalog accepted")
 	}
@@ -161,11 +164,12 @@ func TestInspectorRejectsCorruptCatalogDigest(t *testing.T) {
 
 func TestInspectorRejectsWrongPoolAndNonZeroInlining(t *testing.T) {
 	ctx := context.Background()
+	admission := extensionfixture.New(t, "ducklake")
 	root := t.TempDir()
 	dataPath := filepath.Join(root, "data")
 	contract := integrationContract(t, dataPath)
 	writerRoot := t.TempDir()
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: writerRoot, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract})
+	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: writerRoot, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ExtensionAdmission: admission.Admission})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +197,7 @@ func TestInspectorRejectsWrongPoolAndNonZeroInlining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inspector := Inspector{Store: store, PoolContract: contract, StagingRoot: t.TempDir()}
+	inspector := Inspector{Store: store, PoolContract: contract, StagingRoot: t.TempDir(), ExtensionAdmission: admission.Admission}
 	rootRecord := deployment.DeliveryRoot{PhysicalPoolID: contract.Pool.ID.String(), Kind: "published", SourceID: "generation", CatalogDigest: testDigest(bytes), ObjectKey: "catalog.duckdb"}
 	if _, err := inspector.Inspect(ctx, rootRecord); err == nil {
 		t.Fatal("non-zero data inlining policy accepted")

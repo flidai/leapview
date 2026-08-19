@@ -14,7 +14,7 @@ Filters expose semantic fields as page controls. A filter definition chooses a c
 
 Selected values become server-owned query state. Relevant KPI, chart, table, and filter-option queries are recomputed from the same canonical values. URL parameter names make useful report state shareable; change them carefully because saved links may depend on them.
 
-Date ranges, multi-selects, and text filters have different value and operator contracts. Use the generated [Dashboard configuration](/docs/config/dashboard) rather than assuming options are interchangeable between types.
+Date ranges, multi-selects, and text filters have different value and operator contracts. Use the generated [Dashboard configuration](/docs/config/dashboard-document) rather than assuming options are interchangeable between types.
 
 ## Visual definitions
 

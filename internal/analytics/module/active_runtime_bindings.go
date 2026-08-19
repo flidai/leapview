@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	"github.com/flidai/leapview/internal/analytics/connectors"
@@ -23,6 +24,7 @@ type ActiveRuntimeBindingEvidence struct {
 	Revision           int64
 	ValidatedVersion   string
 	EndpointConfigHash string
+	Access             semanticmodel.ConnectionAccess
 }
 
 type ActiveRuntimeBindingEvidenceSource interface {
@@ -59,6 +61,12 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 	if !ok {
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
+	if logical.Access != "" && logical.Access != semanticmodel.ConnectionAccessPublic {
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+	}
+	if logical.Access == semanticmodel.ConnectionAccessPublic && !spec.AllowPublicAccess {
+		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+	}
 	switch spec.ActivationMode {
 	case connectors.AuthoredActivation:
 		return logical, nil
@@ -86,24 +94,35 @@ func (r *activeRuntimeConnectionResolver) Resolve(
 	if !binding.Enabled || binding.ID != evidence.BindingID ||
 		binding.ConnectionID != evidence.ConnectionID ||
 		binding.ConnectorKind != evidence.ConnectorKind || binding.Revision < evidence.Revision ||
-		actual.EndpointConfigHash != evidence.EndpointConfigHash ||
+		actual.EndpointConfigHash != evidence.EndpointConfigHash || evidence.Access != logical.Access ||
 		strings.TrimSpace(evidence.ValidatedVersion) == "" {
 		return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
 	}
-	resolver, err := connectionbinding.SelectResolver(connectionbinding.ResolverSelection{
-		TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
-		TargetClass: r.module.targetClass, Kind: r.module.connectionResolverKind(),
-	}, r.module.targetResolvers)
-	if err != nil {
-		return semanticmodel.Connection{}, err
-	}
-	versioned, ok := resolver.(connectionbinding.VersionedCredentialResolver)
-	if !ok {
-		return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
-	}
-	snapshot, err := versioned.ResolveVersion(ctx, binding.CredentialReference, evidence.ValidatedVersion)
-	if err != nil {
-		return semanticmodel.Connection{}, err
+	var snapshot connectionbinding.CredentialSnapshot
+	if logical.Access == semanticmodel.ConnectionAccessPublic {
+		if binding.AuthenticationMode != connectionbinding.AuthenticationNone {
+			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+		}
+		snapshot = connectionbinding.NewNoAuthCredentialSnapshot(time.Now())
+	} else {
+		if binding.AuthenticationMode == connectionbinding.AuthenticationNone {
+			return semanticmodel.Connection{}, connectionbinding.ErrIncompatibleBinding
+		}
+		resolver, resolverErr := connectionbinding.SelectResolver(connectionbinding.ResolverSelection{
+			TargetID: binding.TargetID, ProjectID: binding.Scope.ProjectID, Environment: binding.Scope.Environment,
+			TargetClass: r.module.targetClass, Kind: r.module.connectionResolverKind(),
+		}, r.module.targetResolvers)
+		if resolverErr != nil {
+			return semanticmodel.Connection{}, resolverErr
+		}
+		versioned, ok := resolver.(connectionbinding.VersionedCredentialResolver)
+		if !ok {
+			return semanticmodel.Connection{}, connectionbinding.ErrProviderUnavailable
+		}
+		snapshot, err = versioned.ResolveVersion(ctx, binding.CredentialReference, evidence.ValidatedVersion)
+		if err != nil {
+			return semanticmodel.Connection{}, err
+		}
 	}
 	defer snapshot.Destroy()
 	pool, err := r.module.connectionFactory.Prepare(ctx, binding, snapshot)
@@ -153,6 +172,12 @@ func (r *activeRuntimeConnectionResolver) evidenceFor(
 				platformdigest.ValidateSHA256Identity(value.EndpointConfigHash) != nil {
 				return ActiveRuntimeBindingEvidence{}, fmt.Errorf(
 					"%w: active binding evidence is invalid",
+					connectionbinding.ErrIncompatibleBinding,
+				)
+			}
+			if value.Access != "" && value.Access != semanticmodel.ConnectionAccessPublic {
+				return ActiveRuntimeBindingEvidence{}, fmt.Errorf(
+					"%w: active binding evidence has unsupported access policy",
 					connectionbinding.ErrIncompatibleBinding,
 				)
 			}

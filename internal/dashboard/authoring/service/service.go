@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	dashboardmodel "github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -44,7 +44,7 @@ type Compilation struct {
 }
 
 type Compiler interface {
-	Compile(context.Context, graph.ResourceID, graph.ResourceID, authoring.Dashboard) (Compilation, error)
+	Compile(context.Context, graph.ResourceID, graph.ResourceID, document.DashboardDocument) (Compilation, error)
 }
 
 // Options wires the service's required ports. IDs and time are supplied by
@@ -145,7 +145,7 @@ type CreateFromDocumentRequest struct {
 	ProjectID            graph.ResourceID
 	ActorID              string
 	OwnerPrincipalID     string
-	Document             authoring.Dashboard
+	Document             document.DashboardDocument
 	Title                string
 	Slug                 string
 	Origin               authoring.Origin
@@ -266,7 +266,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 	if sourceRevision.DashboardID != source.ID || !sameToken(sourceRevision.Token(), publishedToken) {
 		return Result{}, fmt.Errorf("%w: published revision pointer does not match retained source revision", authoring.ErrStaleRevision)
 	}
-	if sourceRevision.Document.SemanticModel != source.SemanticModel {
+	if sourceRevision.Document.Spec.SemanticModel != source.SemanticModel.String() {
 		return Result{}, fmt.Errorf("%w: source revision semantic model does not match lifecycle", authoring.ErrInvalidAuthoring)
 	}
 	title := strings.TrimSpace(input.Title)
@@ -320,8 +320,9 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	document.ID = targetID
-	document.Title = title
+	document.Metadata.ID = targetID.String()
+	document.Metadata.DisplayName = &title
+	document.Metadata.Name = slug
 	// SemanticModel is intentionally left untouched: a dashboard fork never
 	// forks the governed semantic model or its underlying data/schema.
 	revision, err := authoring.NewRevision(revisionID, targetID, 1, now, document, provenance)
@@ -384,12 +385,18 @@ func (s *Service) Create(ctx context.Context, input CreateRequest) (Result, erro
 	if err := visibility.Validate(); err != nil {
 		return Result{}, err
 	}
-	defaultPage := dashboardmodel.Page{ID: "overview", Title: "Overview", Canvas: dashboardmodel.PageCanvas{Width: 1366, Height: 940}, Grid: dashboardmodel.PageGrid{Columns: 12, RowHeight: 48, Gap: 16}}.WithDefaults()
+	defaultPage := document.DashboardPage{ID: "overview", Title: "Overview", Components: []document.DashboardPageComponent{}}
+	dashboardDocument := document.DashboardDocument{
+		APIVersion: document.DashboardApiVersionLeapviewDevV1,
+		Kind:       document.DashboardResourceKindDashboard,
+		Metadata:   document.DashboardMetadata{ID: input.DashboardID.String(), Name: slugForTitle(title), DisplayName: &title},
+		Spec:       document.DashboardSpec{SemanticModel: semanticModel.String(), Filters: []document.DashboardFilter{}, Visuals: map[string]document.DashboardVisual{}, Pages: []document.DashboardPage{defaultPage}},
+	}
 	return s.createDraft(ctx, createDraftInput{
 		ProjectID: input.ProjectID, ActorID: input.ActorID, OwnerPrincipalID: input.OwnerPrincipalID,
 		DashboardID:          input.DashboardID,
 		RequestedDashboardID: input.DashboardID,
-		Document:             authoring.Dashboard{ID: input.DashboardID, Title: title, SemanticModel: semanticModel, Visuals: map[string]authoring.AuthoringVisualization{}, Pages: []dashboardmodel.Page{defaultPage}},
+		Document:             dashboardDocument,
 		Title:                title, Slug: input.Slug, Visibility: visibility, Origin: input.Origin, Source: input.Source,
 		ConversationID: input.ConversationID, ToolCallID: input.ToolCallID, BaseSemanticIdentity: input.BaseSemanticIdentity,
 		IdempotencyKey: input.IdempotencyKey, OperationKind: "create",
@@ -402,7 +409,7 @@ type createDraftInput struct {
 	OwnerPrincipalID     string
 	DashboardID          authoring.DashboardID
 	RequestedDashboardID authoring.DashboardID
-	Document             authoring.Dashboard
+	Document             document.DashboardDocument
 	Title                string
 	Slug                 string
 	Visibility           authoring.Visibility
@@ -431,13 +438,15 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 	if ownerID == "" {
 		ownerID = actorID
 	}
-	semanticModel := input.Document.SemanticModel
+	semanticModel := graph.ResourceID(input.Document.Spec.SemanticModel)
 	if semanticModel == "" {
 		return Result{}, fmt.Errorf("semantic model is required")
 	}
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
-		title = strings.TrimSpace(input.Document.Title)
+		if input.Document.Metadata.DisplayName != nil {
+			title = strings.TrimSpace(*input.Document.Metadata.DisplayName)
+		}
 	}
 	if title == "" {
 		return Result{}, fmt.Errorf("dashboard title is required")
@@ -475,11 +484,14 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	if strings.TrimSpace(payloadDocument.ID.String()) == "" {
-		payloadDocument.ID = graph.ResourceID("pending-dashboard")
+	if strings.TrimSpace(payloadDocument.Metadata.ID) == "" {
+		payloadDocument.Metadata.ID = "pending-dashboard"
 	}
-	payloadDocument.Title = title
-	if err := payloadDocument.ValidateDraftStructure(); err != nil {
+	payloadDocument.Metadata.DisplayName = &title
+	if payloadDocument.Metadata.Name == "" {
+		payloadDocument.Metadata.Name = slug
+	}
+	if err := authoring.ValidateCanonicalDocument(payloadDocument); err != nil {
 		return Result{}, err
 	}
 	normalized := inputWithNormalizedCreateFields(input, projectID, actorID, ownerID, input.DashboardID, title, slug, visibility, origin, payloadDocument)
@@ -523,8 +535,11 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 	if err != nil {
 		return Result{}, err
 	}
-	document.ID = targetID
-	document.Title = title
+	document.Metadata.ID = targetID.String()
+	document.Metadata.DisplayName = &title
+	if document.Metadata.Name == "" {
+		document.Metadata.Name = slug
+	}
 	revision, err := authoring.NewRevision(revisionID, targetID, 1, now, document, provenance)
 	if err != nil {
 		return Result{}, err
@@ -606,10 +621,10 @@ func (s *Service) authorizeReplay(ctx context.Context, actorID string, lifecycle
 	return s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, ProjectID: lifecycle.ProjectID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: authoring.AuthorizationActionEdit})
 }
 
-func inputWithNormalizedCreateFields(input createDraftInput, projectID graph.ResourceID, actorID, ownerID string, dashboardID authoring.DashboardID, title, slug string, visibility authoring.Visibility, origin authoring.Origin, document authoring.Dashboard) createDraftInput {
+func inputWithNormalizedCreateFields(input createDraftInput, projectID graph.ResourceID, actorID, ownerID string, dashboardID authoring.DashboardID, title, slug string, visibility authoring.Visibility, origin authoring.Origin, authoredDocument document.DashboardDocument) createDraftInput {
 	input.ProjectID, input.ActorID, input.OwnerPrincipalID = projectID, actorID, ownerID
 	input.DashboardID, input.Title, input.Slug, input.Visibility, input.Origin = dashboardID, title, slug, visibility, origin
-	input.Document = document
+	input.Document = authoredDocument
 	return input
 }
 
@@ -630,26 +645,26 @@ func (s *Service) createOperation(input createDraftInput) (authoring.CreateOpera
 	if input.RequestedDashboardID != "" {
 		requestedID = input.RequestedDashboardID.String()
 	}
-	document := input.Document
+	authoredDocument := input.Document
 	// Generated target IDs are not request payload. Source/fork evidence still
 	// binds the exact source identity where applicable.
-	document.ID = ""
+	authoredDocument.Metadata.ID = ""
 	payload := struct {
-		Kind                 string                    `json:"kind"`
-		DashboardID          string                    `json:"dashboardId,omitempty"`
-		OwnerPrincipalID     string                    `json:"ownerPrincipalId"`
-		Title                string                    `json:"title"`
-		Slug                 string                    `json:"slug"`
-		SemanticModel        graph.ResourceID          `json:"semanticModel"`
-		Visibility           authoring.Visibility      `json:"visibility"`
-		Origin               authoring.Origin          `json:"origin"`
-		Source               *authoring.SourceMetadata `json:"source,omitempty"`
-		ForkedFrom           *authoring.ForkEvidence   `json:"forkedFrom,omitempty"`
-		ConversationID       string                    `json:"conversationId,omitempty"`
-		ToolCallID           string                    `json:"toolCallId,omitempty"`
-		BaseSemanticIdentity graph.ServingIdentity     `json:"baseSemanticIdentity,omitempty"`
-		Document             authoring.Dashboard       `json:"document"`
-	}{Kind: kind, DashboardID: requestedID, OwnerPrincipalID: strings.TrimSpace(input.OwnerPrincipalID), Title: strings.TrimSpace(input.Title), Slug: strings.TrimSpace(input.Slug), SemanticModel: input.Document.SemanticModel, Visibility: input.Visibility, Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticIdentity: input.BaseSemanticIdentity, Document: document}
+		Kind                 string                     `json:"kind"`
+		DashboardID          string                     `json:"dashboardId,omitempty"`
+		OwnerPrincipalID     string                     `json:"ownerPrincipalId"`
+		Title                string                     `json:"title"`
+		Slug                 string                     `json:"slug"`
+		SemanticModel        string                     `json:"semanticModel"`
+		Visibility           authoring.Visibility       `json:"visibility"`
+		Origin               authoring.Origin           `json:"origin"`
+		Source               *authoring.SourceMetadata  `json:"source,omitempty"`
+		ForkedFrom           *authoring.ForkEvidence    `json:"forkedFrom,omitempty"`
+		ConversationID       string                     `json:"conversationId,omitempty"`
+		ToolCallID           string                     `json:"toolCallId,omitempty"`
+		BaseSemanticIdentity graph.ServingIdentity      `json:"baseSemanticIdentity,omitempty"`
+		Document             document.DashboardDocument `json:"document"`
+	}{Kind: kind, DashboardID: requestedID, OwnerPrincipalID: strings.TrimSpace(input.OwnerPrincipalID), Title: strings.TrimSpace(input.Title), Slug: strings.TrimSpace(input.Slug), SemanticModel: input.Document.Spec.SemanticModel, Visibility: input.Visibility, Origin: input.Origin, Source: input.Source, ForkedFrom: input.ForkedFrom, ConversationID: strings.TrimSpace(input.ConversationID), ToolCallID: strings.TrimSpace(input.ToolCallID), BaseSemanticIdentity: input.BaseSemanticIdentity, Document: authoredDocument}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return authoring.CreateOperation{}, fmt.Errorf("encode create operation payload: %w", err)
@@ -826,10 +841,10 @@ func (s *Service) publish(ctx context.Context, projectID graph.ResourceID, comma
 	if err != nil {
 		return Result{}, err
 	}
-	if compilation.Definition.ID != current.Document.ID.String() || compilation.Definition.Title != current.Document.Title {
+	if compilation.Definition.ID != current.Document.Metadata.ID || compilation.Definition.Title != valueOrDocumentTitle(current.Document) {
 		return Result{}, fmt.Errorf("%w: compiler definition identity does not match authored dashboard", authoring.ErrInvalidAuthoring)
 	}
-	if compilation.Definition.SemanticModel != lifecycle.SemanticModel.String() || compilation.Definition.SemanticModel != current.Document.SemanticModel.String() {
+	if compilation.Definition.SemanticModel != lifecycle.SemanticModel.String() || compilation.Definition.SemanticModel != current.Document.Spec.SemanticModel {
 		return Result{}, fmt.Errorf("%w: compiler semantic model does not match authored lifecycle", authoring.ErrInvalidAuthoring)
 	}
 	if err := compilation.SemanticIdentity.Validate(); err != nil {
@@ -874,6 +889,13 @@ func currentToken(lifecycle authoring.DashboardLifecycle) authoring.RevisionToke
 		return lifecycle.Published.Revision
 	}
 	return authoring.RevisionToken{}
+}
+
+func valueOrDocumentTitle(value document.DashboardDocument) string {
+	if value.Metadata.DisplayName != nil {
+		return *value.Metadata.DisplayName
+	}
+	return value.Metadata.Name
 }
 
 func sameToken(left, right authoring.RevisionToken) bool {

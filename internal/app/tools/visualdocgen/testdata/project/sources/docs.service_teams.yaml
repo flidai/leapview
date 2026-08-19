@@ -6,8 +6,5 @@ metadata:
   displayName: Documentation service teams
 spec:
   connection: docs
-  path: service_teams.csv
-  fields:
-    division: {type: string}
-    team: {type: string}
-    active_work_items: {type: number}
+  location: {type: path, path: service_teams.csv, format: csv, options: {header: true}}
+  schema: {mode: inferred}

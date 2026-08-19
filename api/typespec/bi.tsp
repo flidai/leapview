@@ -125,7 +125,7 @@ model DashboardFilterPredicatePolicy {
 }
 
 model DashboardFilterStaticOption {
-  value: DashboardFilterValue;
+  value: SemanticDashboardFilterValue;
   label: string;
 }
 
@@ -162,12 +162,11 @@ model DashboardCompiledFilterBinding {
   filter: string;
   scope: "report" | "page";
   pageID?: string;
-  default: DashboardFilterExpression;
+  default: SemanticDashboardFilterExpression;
   selectionMode: "single" | "multiple";
   maxSelectedValues: int32;
   readerEditable: boolean;
   urlParam?: string;
-  urlEncoding?: "typed_v1";
   paneVisible: boolean;
   paneOrder: int32;
   paneLabel?: string;
@@ -508,90 +507,90 @@ model SemanticModelDescriptionResponse {
 }
 
 @discriminator("kind")
-model DashboardFilterValue {
+model SemanticDashboardFilterValue {
   kind: string;
 }
 
-model DashboardStringFilterValue extends DashboardFilterValue {
+model SemanticDashboardStringFilterValue extends SemanticDashboardFilterValue {
   kind: "string";
   value: string;
 }
 
-model DashboardBooleanFilterValue extends DashboardFilterValue {
+model SemanticDashboardBooleanFilterValue extends SemanticDashboardFilterValue {
   kind: "boolean";
   value: boolean;
 }
 
-model DashboardIntegerFilterValue extends DashboardFilterValue {
+model SemanticDashboardIntegerFilterValue extends SemanticDashboardFilterValue {
   kind: "integer";
   value: string;
 }
 
-model DashboardDecimalFilterValue extends DashboardFilterValue {
+model SemanticDashboardDecimalFilterValue extends SemanticDashboardFilterValue {
   kind: "decimal";
   value: string;
 }
 
-model DashboardDateFilterValue extends DashboardFilterValue {
+model SemanticDashboardDateFilterValue extends SemanticDashboardFilterValue {
   kind: "date";
   value: string;
 }
 
-model DashboardTimestampFilterValue extends DashboardFilterValue {
+model SemanticDashboardTimestampFilterValue extends SemanticDashboardFilterValue {
   kind: "timestamp";
   value: string;
 }
 
-model DashboardFilterBound {
-  value: DashboardFilterValue;
+model SemanticDashboardFilterBound {
+  value: SemanticDashboardFilterValue;
   inclusive: boolean;
 }
 
 @discriminator("kind")
-model DashboardFilterExpression {
+model SemanticDashboardFilterExpression {
   kind: string;
 }
 
-model DashboardUnfilteredExpression extends DashboardFilterExpression {
+model SemanticDashboardUnfilteredExpression extends SemanticDashboardFilterExpression {
   kind: "unfiltered";
 }
 
-model DashboardNullCheckExpression extends DashboardFilterExpression {
+model SemanticDashboardNullCheckExpression extends SemanticDashboardFilterExpression {
   kind: "null_check";
   operator: "is_null" | "is_not_null";
 }
 
-model DashboardSetExpression extends DashboardFilterExpression {
+model SemanticDashboardSetExpression extends SemanticDashboardFilterExpression {
   kind: "set";
   operator: "in" | "not_in";
-  values: DashboardFilterValue[];
+  values: SemanticDashboardFilterValue[];
 }
 
-model DashboardComparisonExpression extends DashboardFilterExpression {
+model SemanticDashboardComparisonExpression extends SemanticDashboardFilterExpression {
   kind: "comparison";
   operator: "equals" | "not_equals" | "contains" | "not_contains" | "starts_with" | "ends_with" | "greater_than" | "greater_than_or_equal" | "less_than" | "less_than_or_equal";
-  value: DashboardFilterValue;
+  value: SemanticDashboardFilterValue;
 }
 
-model DashboardRangeExpression extends DashboardFilterExpression {
+model SemanticDashboardRangeExpression extends SemanticDashboardFilterExpression {
   kind: "range";
-  lower?: DashboardFilterBound;
-  upper?: DashboardFilterBound;
+  lower?: SemanticDashboardFilterBound;
+  upper?: SemanticDashboardFilterBound;
 }
 
-model DashboardRelativePeriodExpression extends DashboardFilterExpression {
+model SemanticDashboardRelativePeriodExpression extends SemanticDashboardFilterExpression {
   kind: "relative_period";
   direction: "previous" | "current" | "next";
   count: int32;
   unit: "minute" | "hour" | "day" | "week" | "month" | "quarter" | "year";
   includeCurrent: boolean;
   anchor: "current_time" | "first_available" | "last_available" | "fixed";
-  anchorValue?: DashboardFilterValue;
+  anchorValue?: SemanticDashboardFilterValue;
 }
 
 model DashboardAppliedFilterInput {
   version: "typed_v1";
-  controls: Record<DashboardFilterExpression>;
+  controls: Record<SemanticDashboardFilterExpression>;
 }
 
 model DashboardSpatialInteractionSelection {

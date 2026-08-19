@@ -13,9 +13,9 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
@@ -98,7 +98,7 @@ func (fakeMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Re
 		switch target.Kind {
 		case consumer.KindVisual:
 			definition, _ := fakeMetrics{}.visualizationDefinition(request.DashboardID, target.ID)
-			envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
+			envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"status", "order_count"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
 			publish(consumer.Result{Target: target, Envelope: envelope, Err: err})
 		case consumer.KindWindow:
 			table, err := fakeMetrics{}.queryWindow(ctx, request.DashboardID, request.PageID, request.Filters, target.WindowRequest)
@@ -120,6 +120,20 @@ func (fakeMetrics) QueryVisualization(ctx context.Context, dashboardID, pageID s
 		return visualizationir.VisualizationEnvelope{}, err
 	}
 	return patch.Visuals[visualID], nil
+}
+
+func (fakeMetrics) QueryVisualizationForDefinition(_ context.Context, definition dashboarddefinition.Definition, _ string, _ dashboard.Filters, visualID string) (visualizationir.VisualizationEnvelope, error) {
+	visual, ok := definition.Visualizations[visualID]
+	if !ok {
+		return visualizationir.VisualizationEnvelope{}, fmt.Errorf("unknown visualization %q", visualID)
+	}
+	return visualizationruntime.EnvelopeFromFrame(visual, visualizationruntime.Frame{
+		Columns: []string{"status", "order_count"}, Rows: [][]any{{"delivered", 1}},
+	}, nil, 0, 0)
+}
+
+func (fakeMetrics) DefaultFiltersForDefinition(definition dashboarddefinition.Definition) dashboard.Filters {
+	return definition.DefaultFilters()
 }
 
 func (fakeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
@@ -193,11 +207,11 @@ func (m namedProjectMetrics) dashboardDefinition(dashboardID string) (dashboardd
 	if dashboardID != m.dashboardID {
 		return dashboarddefinition.Definition{}, nil, false
 	}
-	authored := dashboardauthoring.Dashboard{ID: graph.ResourceID(m.dashboardID), Title: m.title, SemanticModel: "test", Visuals: dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-		"summary": {Type: "kpi", Title: "Summary", Query: dashboardauthoring.VisualQuery{Metrics: fieldRefs("order_count")}},
-	}), Pages: m.Pages(dashboardID)}
 	model := testSemanticModel()
-	return dashboardfixture.Compile(authored, model), model, true
+	doc := canonicalAppDashboard(graph.ResourceID(m.dashboardID).String(), m.title, map[string]dashboarddocument.DashboardVisual{
+		"summary": canonicalAppAggregateVisual("Summary", dashboarddocument.DashboardVisualTypeKpi, nil, "order_count"),
+	}, m.Pages(dashboardID))
+	return dashboardfixture.Compile(doc, model), model, true
 }
 
 func (m namedProjectMetrics) Pages(dashboardID string) []dashboard.Page {
@@ -215,27 +229,20 @@ func (fakeMetrics) dashboardDefinition(dashboardID string) (dashboarddefinition.
 	if dashboardID != "executive-sales" {
 		return dashboarddefinition.Definition{}, nil, false
 	}
-	authored := dashboardauthoring.Dashboard{
-		ID: "executive-sales", Title: "Executive Sales Dashboard", SemanticModel: "test",
-		FilterDefinitions: map[string]dashboardfilter.Definition{
-			"state":    {Label: "State", Field: "orders.status", ValueKind: dashboardfilter.ValueString, Predicates: []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionSet, Operators: []dashboardfilter.Operator{dashboardfilter.OperatorIn}}}, Options: dashboardfilter.OptionSource{Kind: dashboardfilter.OptionSourceDistinct, Limit: 50}},
-			"category": {Label: "Category", Field: "orders.status", ValueKind: dashboardfilter.ValueString, Predicates: []dashboardfilter.PredicatePolicy{{Kind: dashboardfilter.ExpressionComparison, Operators: []dashboardfilter.Operator{dashboardfilter.OperatorContains, dashboardfilter.OperatorEquals}}}},
-		},
-		FilterApplication: dashboardfilter.ApplicationPolicy{Mode: dashboardfilter.ApplicationImmediate},
-		Visuals: dashboardauthoring.MergeVisualizations(dashboardauthoring.ChartVisualizations(map[string]dashboardauthoring.Visual{
-			"orders":       {Title: "Orders", Type: "donut", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
-			"ops_pipeline": {Title: "Ops Pipeline", Type: "bar", Query: dashboardauthoring.VisualQuery{Dimensions: fieldRefs("orders.status"), Metrics: fieldRefs("order_count")}, Interaction: pointInteraction("orders.status", "orders", "ops_pipeline")},
-		}), dashboardauthoring.TabularVisualizations("table", map[string]dashboardauthoring.TableVisual{
-			"order_rows": {Title: "Orders", Query: dashboardauthoring.TableQuery{Dataset: "orders", Fields: []string{"orders.order_id", "orders.revenue"}}, DefaultSort: dashboard.TableSort{Key: "order_id", Direction: "desc"}, Columns: []dashboard.TableColumn{{Key: "order_id", Label: "Order"}, {Key: "revenue", Label: "Revenue", Role: "metric", Format: "decimal"}}},
-		})),
-		Pages: fakeMetrics{}.Pages("executive-sales"),
-	}
 	model := testSemanticModel()
-	return dashboardfixture.Compile(authored, model), model, true
+	return dashboardfixture.Compile(canonicalAppDashboard("executive-sales", "Executive Sales Dashboard", map[string]dashboarddocument.DashboardVisual{
+		"orders":       canonicalAppAggregateVisual("Orders", dashboarddocument.DashboardVisualTypeDonut, []string{"status"}, "order_count"),
+		"ops_pipeline": canonicalAppAggregateVisual("Ops Pipeline", dashboarddocument.DashboardVisualTypeBar, []string{"status"}, "order_count"),
+		"order_rows":   canonicalAppRecordsVisual("Orders", []string{"order_id", "revenue"}),
+	}, fakeMetrics{}.Pages("executive-sales")), model), model, true
 }
 
 func testSemanticModel() *semanticmodel.Model {
-	return &semanticmodel.Model{Name: "test", Title: "Test Model", Tables: map[string]semanticmodel.Table{"orders": {Source: "orders", ModelName: "orders", Entities: map[string]semanticmodel.ModelEntitySpec{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "status": {Type: "string", Datatype: semanticmodel.DataTypeString}, "revenue": {Type: "number", Datatype: semanticmodel.DataTypeFloat}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}}}
+	return &semanticmodel.Model{Name: "test", Title: "Test Model", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id", Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Type: "string", Datatype: semanticmodel.DataTypeString}, "status": {Type: "string", Datatype: semanticmodel.DataTypeString}, "revenue": {Type: "number", Datatype: semanticmodel.DataTypeFloat}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Dimensions: map[string]semanticmodel.SemanticDimension{
+		"order_id": {Label: "Order", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.order_id"}}},
+		"status":   {Label: "Status", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}},
+		"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.revenue"}}},
+	}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}, Empty: "zero", Label: "Orders"}}}
 }
 
 func (fakeMetrics) SemanticModel(modelID string) (*semanticmodel.Model, bool) {
@@ -332,7 +339,7 @@ func (fakeMetrics) QueryDashboardPage(ctx context.Context, _ string, pageID stri
 		chartID = "ops_pipeline"
 	}
 	definition, _ := fakeMetrics{}.visualizationDefinition("executive-sales", chartID)
-	envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
+	envelope, err := visualizationruntime.EnvelopeFromFrame(definition, visualizationruntime.Frame{Columns: []string{"status", "order_count"}, Rows: [][]any{{"delivered", 1}}}, nil, 0, 0)
 	if err != nil {
 		return dashboard.Patch{}, err
 	}
@@ -382,14 +389,97 @@ func (fakeMetrics) queryWindow(_ context.Context, _ string, _ string, _ dashboar
 	}, nil
 }
 
-func fieldRefs(fields ...string) []dashboardauthoring.FieldRef {
-	refs := make([]dashboardauthoring.FieldRef, len(fields))
-	for i, field := range fields {
-		refs[i] = dashboardauthoring.FieldRef{Field: field}
+func canonicalAppDashboard(id, title string, visuals map[string]dashboarddocument.DashboardVisual, pages []dashboard.Page) dashboarddocument.DashboardDocument {
+	canonicalPages := make([]dashboarddocument.DashboardPage, 0, len(pages))
+	for _, page := range pages {
+		components := make([]dashboarddocument.DashboardPageComponent, 0, len(page.Visuals))
+		for _, item := range page.Visuals {
+			placement := dashboarddocument.DashboardPlacement{Column: int32(item.Placement.Col), Row: int32(item.Placement.Row), ColumnSpan: int32(item.Placement.ColSpan), RowSpan: int32(item.Placement.RowSpan)}
+			// The legacy page fixture intentionally places its filter slicer on
+			// the same boundary row as the following visual. Canonical layout is
+			// strict about overlap, so retain the runtime fixture's visual order
+			// while moving those visual components below the slicer in the
+			// generated document.
+			if page.ID == "overview" && (item.ID == "orders-chart" || item.ID == "orders-table") {
+				placement.Row = 4
+			}
+			if page.ID == "operations" && item.ID == "ops-pipeline-chart" {
+				placement.Row = 3
+			}
+			switch item.Kind {
+			case "visual":
+				components = append(components, dashboarddocument.DashboardPageComponent{Value: &dashboarddocument.VisualDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: item.ID, Type: "visual", Placement: placement}, Type: "visual", Visual: item.Visual}})
+			case "header":
+				title := item.Title
+				components = append(components, dashboarddocument.DashboardPageComponent{Value: &dashboarddocument.HeaderDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: item.ID, Type: "header", Placement: placement}, Type: "header", Title: &title}})
+			case "slicer":
+				filterID := item.Binding.ID
+				components = append(components, dashboarddocument.DashboardPageComponent{Value: &dashboarddocument.FilterDashboardPageComponent{DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: item.ID, Type: "filter", Placement: placement}, Type: "filter", Filter: filterID}})
+			}
+		}
+		canonicalPages = append(canonicalPages, dashboarddocument.DashboardPage{ID: page.ID, Title: page.Title, Components: components})
 	}
-	return refs
+	filters := []dashboarddocument.DashboardFilter(nil)
+	if id == "executive-sales" {
+		filters = canonicalAppFilters()
+	}
+	return dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: id, Name: id, DisplayName: &title}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "test", Filters: filters, Visuals: visuals, Pages: canonicalPages}}
 }
 
-func pointInteraction(field, dataset string, targets ...string) dashboardauthoring.Interaction {
-	return dashboardauthoring.Interaction{PointSelection: dashboardauthoring.SelectionInteraction{Toggle: true, Mappings: []dashboardauthoring.SelectionMapping{{Field: field, Dataset: dataset, Value: "label", Label: "label"}}, Targets: targets}}
+func canonicalAppAggregateVisual(title string, visualType dashboarddocument.DashboardVisualType, dimensions []string, metric string) dashboarddocument.DashboardVisual {
+	visual := dashboarddocument.DashboardVisual{Type: visualType, Title: &title, Query: dashboarddocument.DashboardQuery{Value: &dashboarddocument.AggregateDashboardQuery{Type: "aggregate", Dimensions: canonicalAppDimensions(dimensions), Metrics: []dashboarddocument.DashboardMetricSelection{{String: &metric}}}}, Presentation: canonicalAppPresentation(visualType)}
+	if len(dimensions) > 0 {
+		targets := []string{"ops_pipeline"}
+		dataset, label := "orders", dimensions[0]
+		// Canonical bar/donut result schemas do not mark a category dimension as
+		// a stable identity (that role is reserved for point visuals), so keep
+		// the selection mapping and target edge without requesting toggle
+		// identity semantics that the generated IR cannot satisfy.
+		visual.Interactions = &[]dashboarddocument.DashboardInteraction{{Value: &dashboarddocument.SelectionDashboardInteraction{DashboardInteractionBase: dashboarddocument.DashboardInteractionBase{Type: "selection", Targets: &targets}, Type: "selection", Mode: dashboarddocument.DashboardSelectionModeSingle, Mappings: []dashboarddocument.DashboardInteractionMapping{{Field: dimensions[0], Dataset: &dataset, Value: dimensions[0], Label: &label}}}}}
+	}
+	return visual
+}
+
+func canonicalAppRecordsVisual(title string, fields []string) dashboarddocument.DashboardVisual {
+	selected := make([]dashboarddocument.DashboardRecordFieldSelection, 0, len(fields))
+	for _, field := range fields {
+		value := field
+		selected = append(selected, dashboarddocument.DashboardRecordFieldSelection{String: &value})
+	}
+	return dashboarddocument.DashboardVisual{Type: dashboarddocument.DashboardVisualTypeTable, Title: &title, Query: dashboarddocument.DashboardQuery{Value: &dashboarddocument.RecordsDashboardQuery{Type: "records", Dataset: "orders", Fields: selected}}, Presentation: dashboarddocument.DashboardPresentation{Value: &dashboarddocument.TableDashboardPresentation{Type: "table", RowHeight: 36, ShowHeader: true, Striped: false}}}
+}
+
+func canonicalAppDimensions(values []string) []dashboarddocument.DashboardDimensionSelection {
+	result := make([]dashboarddocument.DashboardDimensionSelection, 0, len(values))
+	for _, value := range values {
+		value := value
+		result = append(result, dashboarddocument.DashboardDimensionSelection{String: &value})
+	}
+	return result
+}
+
+func canonicalAppPresentation(visualType dashboarddocument.DashboardVisualType) dashboarddocument.DashboardPresentation {
+	switch visualType {
+	case dashboarddocument.DashboardVisualTypeKpi:
+		return dashboarddocument.DashboardPresentation{Value: &dashboarddocument.KPIDashboardPresentation{Type: "kpi"}}
+	case dashboarddocument.DashboardVisualTypeDonut, dashboarddocument.DashboardVisualTypePie, dashboarddocument.DashboardVisualTypeFunnel:
+		return dashboarddocument.DashboardPresentation{Value: &dashboarddocument.ProportionalDashboardPresentation{Type: "proportional"}}
+	default:
+		return dashboarddocument.DashboardPresentation{Value: &dashboarddocument.CartesianDashboardPresentation{Type: "cartesian"}}
+	}
+}
+
+func canonicalAppFilters() []dashboarddocument.DashboardFilter {
+	limit := int32(50)
+	stateTargets := []string{"orders"}
+	categoryTargets := []string{"ops_pipeline"}
+	stateParam, categoryParam := "state", "category"
+	return []dashboarddocument.DashboardFilter{
+		{ID: "state", Label: "State", Dimension: "status", Control: dashboarddocument.DashboardFilterControl{Value: &dashboarddocument.MultiSelectDashboardFilterControl{Type: "multiSelect", MaxSelectedValues: &limit, Options: &dashboarddocument.DashboardFilterOptions{Value: &dashboarddocument.DistinctDashboardFilterOptions{Type: "distinct", Dataset: "orders", Limit: &limit}}}}, Operators: dashboardFilterOperators(dashboarddocument.DashboardFilterOperatorIn), Targets: &stateTargets, URLParameter: &stateParam},
+		{ID: "category", Label: "Category", Dimension: "status", Control: dashboarddocument.DashboardFilterControl{Value: &dashboarddocument.TextDashboardFilterControl{Type: "text"}}, Operators: dashboardFilterOperators(dashboarddocument.DashboardFilterOperatorContains, dashboarddocument.DashboardFilterOperatorEquals), Targets: &categoryTargets, URLParameter: &categoryParam},
+	}
+}
+
+func dashboardFilterOperators(values ...dashboarddocument.DashboardFilterOperator) *[]dashboarddocument.DashboardFilterOperator {
+	return &values
 }

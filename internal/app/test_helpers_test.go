@@ -2,9 +2,18 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
@@ -16,6 +25,7 @@ import (
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	"github.com/flidai/leapview/internal/extension"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
@@ -30,6 +40,200 @@ import (
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
+
+// testExactExtensionAdmission is the explicit fixture boundary for app tests
+// that open a real DuckDB extension. It resolves reviewed local artifacts once
+// and returns their exact immutable paths; production composition uses the
+// packaged deployment supply instead.
+type testExactExtensionAdmission struct {
+	paths map[string]extension.AdmittedExtension
+}
+
+var _ extension.Admission = testExactExtensionAdmission{}
+var _ extension.Preparation = testExactExtensionAdmission{}
+
+func newTestExactExtensionAdmission(t *testing.T, names ...string) testExactExtensionAdmission {
+	t.Helper()
+	duckDBVersion, duckDBPlatform, err := runtimeTarget(t.Context())
+	if err != nil {
+		t.Fatalf("probe test DuckDB runtime: %v", err)
+	}
+	stagingDir := t.TempDir()
+	paths := make(map[string]extension.AdmittedExtension, len(names))
+	for _, name := range names {
+		sourcePath, sourceErr := findInstalledTestExtension(name, duckDBVersion, duckDBPlatform)
+		if sourceErr != nil {
+			sourcePath = installTestExtension(t, name, stagingDir)
+		}
+		contents, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("read test DuckDB extension %q: %v", name, err)
+		}
+		digest := sha256.Sum256(contents)
+		digestValue := "sha256:" + hex.EncodeToString(digest[:])
+		identity := extension.Identity{
+			DuckDBVersion: duckDBVersion, ExtensionVersion: "test-fixture", GOOS: runtime.GOOS,
+			GOARCH: runtime.GOARCH, Platform: duckDBPlatform, Name: name, Digest: digestValue,
+			SupportProfile: "test-fixture",
+		}
+		canonicalIdentity, err := identity.Canonical()
+		if err != nil {
+			t.Fatalf("canonicalize test DuckDB extension %q: %v", name, err)
+		}
+		path := filepath.Join(stagingDir, name+".duckdb_extension")
+		if err := os.WriteFile(path, contents, 0o600); err != nil {
+			t.Fatalf("stage test DuckDB extension %q: %v", name, err)
+		}
+		paths[name] = extension.AdmittedExtension{
+			Name: name, Identity: canonicalIdentity, Version: "test-fixture", DuckDBVersion: duckDBVersion,
+			ExtensionVersion: "test-fixture", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: duckDBPlatform,
+			SupportProfile: "test-fixture", Digest: digestValue, Path: path,
+			Origin: "reviewed-local-test-fixture", Provenance: "attest:test-fixture", Signature: "sig:test-fixture",
+		}
+	}
+	return testExactExtensionAdmission{paths: paths}
+}
+
+func (a testExactExtensionAdmission) AdmitExtension(ctx context.Context, name string) (extension.AdmittedExtension, error) {
+	if err := ctx.Err(); err != nil {
+		return extension.AdmittedExtension{}, err
+	}
+	admitted, ok := a.paths[name]
+	if !ok {
+		return extension.AdmittedExtension{}, fmt.Errorf("test extension %q was not admitted", name)
+	}
+	return admitted, nil
+}
+
+func (a testExactExtensionAdmission) PrepareExtensions(ctx context.Context, names []string) ([]extension.Evidence, error) {
+	evidence := make([]extension.Evidence, 0, len(names))
+	for _, name := range names {
+		admitted, err := a.AdmitExtension(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, admitted.Evidence())
+	}
+	return evidence, nil
+}
+
+func findInstalledTestExtension(name, duckDBVersion, duckDBPlatform string, extraRoots ...string) (string, error) {
+	filename := name + ".duckdb_extension"
+	if name == "sqlite" {
+		filename = "sqlite_scanner.duckdb_extension"
+	}
+	roots := append([]string(nil), extraRoots...)
+	if configured := strings.TrimSpace(os.Getenv("DUCKDB_EXTENSION_DIRECTORY")); configured != "" {
+		roots = append(roots, configured)
+	} else if home, err := os.UserHomeDir(); err == nil && home != "" {
+		roots = append(roots, filepath.Join(home, ".duckdb", "extensions"))
+	}
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		info, err := os.Lstat(root)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		candidates := make([]string, 0, 4)
+		for _, candidate := range []string{
+			filepath.Join(root, duckDBVersion, strings.ReplaceAll(duckDBPlatform, "-", "_"), filename),
+			filepath.Join(root, duckDBVersion, duckDBPlatform, filename),
+			filepath.Join(root, runtime.GOOS+"_"+runtime.GOARCH, filename),
+			filepath.Join(root, filename),
+		} {
+			if candidateInfo, candidateErr := os.Stat(candidate); candidateErr == nil && candidateInfo.Mode().IsRegular() {
+				candidates = append(candidates, candidate)
+			}
+		}
+		if len(candidates) == 0 {
+			_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.Type()&os.ModeSymlink != 0 {
+					if entry.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if entry.IsDir() || entry.Name() != filename {
+					return nil
+				}
+				pathSlash := filepath.ToSlash(path)
+				if !strings.Contains(pathSlash, "/"+duckDBVersion+"/") || (!strings.Contains(pathSlash, "/"+duckDBPlatform+"/") && !strings.Contains(pathSlash, "/"+strings.ReplaceAll(duckDBPlatform, "-", "_")+"/")) {
+					return nil
+				}
+				if entry.Type().IsRegular() {
+					candidates = append(candidates, path)
+				}
+				return nil
+			})
+		}
+		if len(candidates) > 0 {
+			sort.Strings(candidates)
+			return filepath.Abs(candidates[0])
+		}
+	}
+	return "", fmt.Errorf("reviewed local extension %q is not installed; set DUCKDB_EXTENSION_DIRECTORY", name)
+}
+
+func installTestExtension(t *testing.T, name, stagingDir string) string {
+	t.Helper()
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatalf("open DuckDB test extension installer: %v", err)
+	}
+	defer db.Close()
+	sqlPath := strings.ReplaceAll(stagingDir, "'", "''")
+	if _, err := db.Exec("SET extension_directory = '" + sqlPath + "'"); err != nil {
+		t.Fatalf("set test extension directory: %v", err)
+	}
+	if _, err := db.Exec("INSTALL " + name + " FROM core"); err != nil {
+		t.Fatalf("install test extension %q: %v", name, err)
+	}
+	version, platform, err := runtimeTarget(t.Context())
+	if err != nil {
+		t.Fatalf("probe installed test DuckDB runtime: %v", err)
+	}
+	path, err := findInstalledTestExtension(name, version, platform, stagingDir)
+	if err != nil {
+		t.Fatalf("resolve installed test extension %q: %v", name, err)
+	}
+	return path
+}
+
+func loadTestExtension(t *testing.T, db *sql.DB, admission extension.Admission, name string) {
+	t.Helper()
+	admitted, err := admission.AdmitExtension(t.Context(), name)
+	if err != nil {
+		t.Fatalf("admit test DuckDB extension %q: %v", name, err)
+	}
+	if _, err := db.Exec("LOAD '" + strings.ReplaceAll(admitted.Path, "'", "''") + "'"); err != nil {
+		t.Fatalf("load test DuckDB extension %q: %v", name, err)
+	}
+}
+
+func TestTestExactExtensionAdmissionStagesOwnedArtifactWithCleanCache(t *testing.T) {
+	cleanDirectory := t.TempDir()
+	t.Setenv("DUCKDB_EXTENSION_DIRECTORY", cleanDirectory)
+	admission := newTestExactExtensionAdmission(t, "ducklake")
+	admitted, err := admission.AdmitExtension(t.Context(), "ducklake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(filepath.Clean(admitted.Path), filepath.Clean(cleanDirectory)+string(filepath.Separator)) {
+		t.Fatalf("admitted extension escaped test-owned staging setup: %q", admitted.Path)
+	}
+	if _, err := os.Stat(admitted.Path); err != nil {
+		t.Fatalf("staged extension path: %v", err)
+	}
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	loadTestExtension(t, db, admission, "ducklake")
+}
 
 // assemblyConfig is deliberately test-only. Focused capability tests use it
 // while they are moved beside their owners; production has no general

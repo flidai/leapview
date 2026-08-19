@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	analyticsgates "github.com/flidai/leapview/internal/analytics/gates"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/gcadapter"
 	"github.com/flidai/leapview/internal/deployment"
@@ -25,8 +26,8 @@ func TestNewCatalogObjectStoreS3RequiresTargetKeysBeforeAWSConfig(t *testing.T) 
 func TestBuildRequestFactoryS3RequiresCredentialBootstrapBeforeBuild(t *testing.T) {
 	factory := BuildRequestFactory(CandidateCatalogRunnerConfig{
 		PoolContract: deliveryCredentialTestContract(t),
-		Materialize: func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet, string) error {
-			return nil
+		Materialize: func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet, string) ([]analyticsgates.SourceInput, error) {
+			return nil, nil
 		},
 		Connections:    deliveryCredentialConnections{},
 		ObjectStore:    deliveryCredentialObjectStore{},

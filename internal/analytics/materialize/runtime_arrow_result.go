@@ -203,9 +203,26 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 			}
 		}
 	case dataquery.KindSemanticHistogram:
-		planned.plan, err = planner.PlanHistogram(semanticquery.RawValueRequest{Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metric: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, request.BinCount)
+		histogramOptions := semanticquery.HistogramOptions{}
+		if request.Histogram != nil {
+			histogramOptions.NullPolicy = request.Histogram.NullPolicy
+			histogramOptions.Approximation = request.Histogram.Approximation
+			if request.Histogram.DomainMinimum != nil && request.Histogram.DomainMaximum != nil {
+				histogramOptions.Domain = &semanticquery.HistogramDomain{Minimum: *request.Histogram.DomainMinimum, Maximum: *request.Histogram.DomainMaximum}
+			}
+		}
+		planned.plan, err = planner.PlanHistogram(semanticquery.RawValueRequest{Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metric: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, request.BinCount, histogramOptions)
 	case dataquery.KindSemanticDistribution:
-		planned.plan, err = planner.PlanDistribution(semanticquery.RawValueRequest{Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metric: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, dataQuerySorts(request.Sort), request.Limit)
+		distributionOptions := semanticquery.DistributionOptions{}
+		if request.Distribution != nil {
+			distributionOptions.Quantiles = append([]float64(nil), request.Distribution.Quantiles...)
+			distributionOptions.Outliers = request.Distribution.Outliers
+			distributionOptions.Approximation = request.Distribution.Approximation
+			if request.Distribution.WhiskerLower != nil && request.Distribution.WhiskerUpper != nil {
+				distributionOptions.Whiskers = &semanticquery.DistributionWhiskers{Lower: *request.Distribution.WhiskerLower, Upper: *request.Distribution.WhiskerUpper}
+			}
+		}
+		planned.plan, err = planner.PlanDistribution(semanticquery.RawValueRequest{Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metric: dataQueryFields([]dataquery.Field{request.Value})[0], Filters: dataQueryFilters(request.Filters), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks)}, dataQuerySorts(request.Sort), request.Limit, distributionOptions)
 	case dataquery.KindSemanticSpatialTile:
 		if request.SpatialTile == nil {
 			err = fmt.Errorf("semantic spatial tile query requires tile coordinates")

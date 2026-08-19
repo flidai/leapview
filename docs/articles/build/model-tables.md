@@ -35,6 +35,14 @@ metadata:
   displayName: Sales orders
   description: One row per order with normalized purchase date and revenue.
 spec:
+  definition:
+    type: sql
+    sql: |
+      SELECT order_id, customer_id,
+        try_cast(purchased_at AS DATE) AS purchase_date,
+        coalesce(try_cast(amount AS DECIMAL(38, 2)), CAST(0 AS DECIMAL(38, 2))) AS revenue
+      FROM source."commerce.orders"
+      WHERE order_id IS NOT NULL
   entities:
     order:
       type: primary
@@ -44,25 +52,14 @@ spec:
       fields: [customer_id]
   grain:
     entity: order
-  sources:
-    - commerce.orders
   fields:
     order_id: {datatype: String, label: Order ID, description: Stable order identifier.}
     customer_id: {datatype: String, label: Customer ID}
     purchase_date: {datatype: Date, label: Purchase date}
     revenue: {datatype: Decimal, label: Revenue}
-  transform:
-    sql: |
-      SELECT
-        order_id,
-        customer_id,
-        try_cast(purchased_at AS DATE) AS purchase_date,
-        coalesce(try_cast(amount AS DECIMAL(38, 2)), CAST(0 AS DECIMAL(38, 2))) AS revenue
-      FROM source."commerce.orders"
-      WHERE order_id IS NOT NULL
 ```
 
-The quoted source name is important because logical source IDs can contain dots. `spec.sources` declares lineage and bounds what the transformation may read. `spec.fields` documents the output; it is not a substitute for selecting those columns in SQL.
+The quoted source name is important because logical source IDs can contain dots. The compiler derives lineage from the governed SQL definition. `spec.fields` documents the output; it is not a substitute for selecting those columns in SQL.
 
 ### Normalize deliberately
 

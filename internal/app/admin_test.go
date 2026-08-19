@@ -23,6 +23,7 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -699,8 +700,9 @@ func TestAdminStorageLoadsSummariesAndTableFilesSeparately(t *testing.T) {
 	dir := t.TempDir()
 	catalogPath := filepath.Join(dir, "catalog.duckdb")
 	dataPath := filepath.Join(dir, "data")
-	seedAdminStorageDuckLakeAt(t, catalogPath, dataPath)
-	environment := adminStorageEnvironment(t, catalogPath, dataPath)
+	admission := newTestExactExtensionAdmission(t, "ducklake")
+	seedAdminStorageDuckLakeAt(t, catalogPath, dataPath, admission)
+	environment := adminStorageEnvironment(t, catalogPath, dataPath, admission)
 	server := assembleRuntime(fakeMetrics{}, assemblyConfig{
 		DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath,
 		AnalyticsModule: analyticsmodule.NewSurface(environment, nil),
@@ -733,8 +735,9 @@ func TestAdminStorageTableRouteRendersCanonicalDetail(t *testing.T) {
 	dir := t.TempDir()
 	catalogPath := filepath.Join(dir, "catalog.duckdb")
 	dataPath := filepath.Join(dir, "data")
-	seedAdminStorageDuckLakeAt(t, catalogPath, dataPath)
-	environment := adminStorageEnvironment(t, catalogPath, dataPath)
+	admission := newTestExactExtensionAdmission(t, "ducklake")
+	seedAdminStorageDuckLakeAt(t, catalogPath, dataPath, admission)
+	environment := adminStorageEnvironment(t, catalogPath, dataPath, admission)
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 		Auth: auth, DuckLakeCatalogPath: catalogPath, DuckLakeDataPath: dataPath,
 		AnalyticsModule: analyticsmodule.NewSurface(environment, nil),
@@ -848,17 +851,16 @@ func TestAdminStorageRendersEmptyStateWithoutDuckDBFiles(t *testing.T) {
 	}
 }
 
-func latestAdminStorageDuckLakeSnapshot(t *testing.T, catalogPath string) int64 {
+func latestAdminStorageDuckLakeSnapshot(t *testing.T, catalogPath string, admission extension.Admission) int64 {
 	t.Helper()
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite catalog: %v", err)
 	}
 	defer db.Close()
-	for _, statement := range []string{"LOAD ducklake", "ATTACH 'ducklake:" + strings.ReplaceAll(catalogPath, "'", "''") + "' AS lake"} {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatal(err)
-		}
+	loadTestExtension(t, db, admission, "ducklake")
+	if _, err := db.Exec("ATTACH 'ducklake:" + strings.ReplaceAll(catalogPath, "'", "''") + "' AS lake"); err != nil {
+		t.Fatal(err)
 	}
 	var snapshotID int64
 	if err := db.QueryRow(`SELECT max(snapshot_id) FROM __ducklake_metadata_lake.ducklake_snapshot`).Scan(&snapshotID); err != nil {
@@ -867,15 +869,15 @@ func latestAdminStorageDuckLakeSnapshot(t *testing.T, catalogPath string) int64 
 	return snapshotID
 }
 
-func seedAdminStorageDuckLakeAt(t *testing.T, catalogPath, dataPath string) {
+func seedAdminStorageDuckLakeAt(t *testing.T, catalogPath, dataPath string, admission extension.Admission) {
 	t.Helper()
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		t.Fatalf("open duckdb: %v", err)
 	}
 	defer db.Close()
+	loadTestExtension(t, db, admission, "ducklake")
 	for _, stmt := range []string{
-		"LOAD ducklake",
 		"ATTACH 'ducklake:" + strings.ReplaceAll(catalogPath, "'", "''") + "' AS lake (DATA_PATH '" + strings.ReplaceAll(dataPath, "'", "''") + "')",
 		"USE lake",
 		"CREATE SCHEMA model",
@@ -889,10 +891,11 @@ func seedAdminStorageDuckLakeAt(t *testing.T, catalogPath, dataPath string) {
 	}
 }
 
-func adminStorageEnvironment(t *testing.T, catalogPath, dataPath string) *analyticsducklake.Environment {
+func adminStorageEnvironment(t *testing.T, catalogPath, dataPath string, admission extension.Admission) *analyticsducklake.Environment {
 	t.Helper()
 	environment, err := analyticsducklake.Open(t.Context(), analyticsducklake.Config{
 		RootDir: filepath.Dir(catalogPath), CatalogPath: catalogPath, DataPath: dataPath, MaxConnections: 2,
+		ExtensionAdmission: admission,
 	})
 	if err != nil {
 		t.Fatal(err)

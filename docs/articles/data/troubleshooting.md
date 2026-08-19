@@ -59,7 +59,7 @@ Use `leapview data revisions list` to confirm the revision is staged and `curren
 
 If a refresh run cannot resolve inputs:
 
-- confirm each model lists every source under `spec.sources`;
+- confirm the compiler-derived source/model dependencies resolve from each model `spec.definition`;
 - confirm the active deployment pins required managed connections;
 - verify external connection credentials and network reachability;
 - check that model files and source IDs match the active artifact, not only the working tree;
@@ -69,13 +69,13 @@ Troubleshoot the active deployed configuration. A locally fixed file has no effe
 
 ## Model-table SQL fails
 
-Inspect the first failing table and its declared source dependencies. Common causes include:
+Inspect the first failing table and its compiler-derived dependency graph. Common causes include:
 
 - renamed or missing source fields;
 - invalid casts after source values changed;
 - SQL dialect assumptions unsupported by DuckDB;
 - unquoted logical source names containing dots;
-- a join or expression referencing an undeclared source;
+- a join or expression referencing a source outside the governed dependency graph;
 - out-of-disk or temporary-storage exhaustion.
 
 Reproduce with the same source revision in development. Add defensive casts only when null-on-failure is acceptable; otherwise correct the source contract or reject malformed input.

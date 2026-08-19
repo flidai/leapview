@@ -1029,6 +1029,7 @@ model DashboardFilterPredicatePolicy {
 model DashboardFilterOptionSource {
   `kind`: "none" | "static" | "distinct";
   `limit`: int32;
+  `includeNull`: boolean;
   `values`: DashboardFilterStaticOption[];
 }
 
@@ -1062,9 +1063,9 @@ model DashboardCompiledFilterBinding {
   `default`: DashboardFilterExpression;
   `selectionMode`: "single" | "multiple";
   `maxSelectedValues`: int32;
+  `required`: boolean;
   `readerEditable`: boolean;
   `urlParam`?: string;
-  `urlEncoding`?: "typed_v1";
   `paneVisible`: boolean;
   `paneOrder`: int32;
   `paneLabel`?: string;
@@ -1079,8 +1080,9 @@ model DashboardFilterContract {
 }
 
 model DashboardFilterOptionItem {
-  `value`: DashboardFilterValue;
+  `value`?: DashboardFilterValue;
   `label`: string;
+  `null`: boolean;
   `count`?: int64;
   `selected`: boolean;
   `available`: boolean;

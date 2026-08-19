@@ -24,6 +24,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 var (
@@ -179,25 +180,6 @@ func cloneQualificationClosure(closure CatalogClosure) CatalogClosure {
 	return clone
 }
 
-func sameInliningScopes(before, after ducklake.DataInliningPolicy) error {
-	for _, expected := range before.Persisted {
-		found := false
-		for _, actual := range after.Persisted {
-			if expected.Scope == actual.Scope && strings.EqualFold(strings.TrimSpace(expected.Entry), strings.TrimSpace(actual.Entry)) {
-				if actual.Limit != 0 {
-					return fmt.Errorf("%s option for %q is %d", actual.Scope, actual.Entry, actual.Limit)
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("%s option for %q is missing", expected.Scope, expected.Entry)
-		}
-	}
-	return nil
-}
-
 // NormalizationResult is evidence produced while the handle is writable.  It
 // is useful to diagnostics and is included (in canonical form) in the
 // qualification input, but it is not itself a candidate or ready state.
@@ -206,7 +188,6 @@ type NormalizationResult struct {
 	ExpiredSnapshots []int64                     `json:"expiredSnapshots"`
 	Snapshots        []ducklake.Snapshot         `json:"snapshots"`
 	InliningPolicy   ducklake.DataInliningPolicy `json:"inliningPolicy"`
-	InlineTables     []ducklake.InlineTableState `json:"inlineTables"`
 	Tables           []CatalogTable              `json:"tables"`
 	Closure          CatalogClosure              `json:"closure"`
 }
@@ -257,9 +238,10 @@ type QualifiedCatalog struct {
 	DetachedCatalog
 	Record QualificationRecord
 
-	contract  *ducklake.PoolContract
-	probe     ObjectProbe
-	bootstrap ducklake.CredentialBootstrap
+	contract           *ducklake.PoolContract
+	probe              ObjectProbe
+	extensionAdmission extension.Admission
+	bootstrap          ducklake.CredentialBootstrap
 }
 
 // Qualification returns a copy of the immutable qualification record.
@@ -286,9 +268,12 @@ type PreviewCatalog struct {
 // mutation capability. It is used by seal verification after remote upload.
 // Object-backed pools require the target-owned per-connector bootstrap so
 // DuckDB cannot resolve ambient process credentials.
-func OpenReadOnlyCatalog(ctx context.Context, rootDir, catalogPath string, contract *ducklake.PoolContract, bootstrap ducklake.CredentialBootstrap) (*PreviewCatalog, error) {
+func OpenReadOnlyCatalog(ctx context.Context, rootDir, catalogPath string, contract *ducklake.PoolContract, admission extension.Admission, bootstrap ducklake.CredentialBootstrap) (*PreviewCatalog, error) {
 	if contract == nil || contract.Validate() != nil || strings.TrimSpace(catalogPath) == "" {
 		return nil, ErrQualifiedCatalogRequired
+	}
+	if admission == nil {
+		return nil, fmt.Errorf("exact DuckDB extension admission is required for read-only catalog verification")
 	}
 	if strings.EqualFold(strings.TrimSpace(contract.Tuple.StorageImplementation), "s3") && bootstrap == nil {
 		return nil, fmt.Errorf("target-owned S3 credential bootstrap is required for read-only catalog verification")
@@ -297,7 +282,7 @@ func OpenReadOnlyCatalog(ctx context.Context, rootDir, catalogPath string, contr
 	if err != nil {
 		return nil, err
 	}
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: rootDir, CatalogPath: catalogPath, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ReadOnly: true, CredentialBootstrap: bootstrap})
+	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: rootDir, CatalogPath: catalogPath, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ExtensionAdmission: admission, ReadOnly: true, CredentialBootstrap: bootstrap})
 	if err != nil {
 		return nil, err
 	}
@@ -339,11 +324,11 @@ func (p *PreviewCatalog) DataInliningPolicy(ctx context.Context) (ducklake.DataI
 	return p.env.DataInliningPolicy(ctx)
 }
 
-func (p *PreviewCatalog) LegacyInlineTables(ctx context.Context) ([]ducklake.InlineTableState, error) {
+func (p *PreviewCatalog) ValidateNoLiveInlineData(ctx context.Context) error {
 	if p == nil || p.env == nil {
-		return nil, ErrClosed
+		return ErrClosed
 	}
-	return p.env.LegacyInlineTables(ctx)
+	return p.env.ValidateNoLiveInlineData(ctx)
 }
 
 func (p *PreviewCatalog) VisibleTables(ctx context.Context) ([]CatalogTable, error) {
@@ -373,53 +358,6 @@ func (w *WorkingCatalog) DataInliningPolicy(ctx context.Context) (ducklake.DataI
 	return w.env.DataInliningPolicy(ctx)
 }
 
-// DisableDataInlining clears inherited global/schema/table overrides in the
-// private catalog, then returns the freshly re-read zero-valued policy. The
-// operation is lease-checked because it mutates catalog metadata.
-func (w *WorkingCatalog) DisableDataInlining(ctx context.Context) (ducklake.DataInliningPolicy, error) {
-	if err := w.checkOpen(); err != nil {
-		return ducklake.DataInliningPolicy{}, err
-	}
-	if err := verifyLease(ctx, w.request); err != nil {
-		return ducklake.DataInliningPolicy{}, err
-	}
-	policy, err := w.env.DisableDataInlining(ctx)
-	if err != nil {
-		return ducklake.DataInliningPolicy{}, err
-	}
-	if err := verifyLease(ctx, w.request); err != nil {
-		return ducklake.DataInliningPolicy{}, err
-	}
-	return policy, nil
-}
-
-// LegacyInlineTables returns current live inline rows/deletes for every
-// visible table. It is intentionally a read-only, narrow wrapper.
-func (w *WorkingCatalog) LegacyInlineTables(ctx context.Context) ([]ducklake.InlineTableState, error) {
-	if err := w.checkOpen(); err != nil {
-		return nil, err
-	}
-	if err := verifyLease(ctx, w.request); err != nil {
-		return nil, err
-	}
-	return w.env.LegacyInlineTables(ctx)
-}
-
-// FlushLegacyInlineData applies an explicit table-scoped flush plan. No
-// global auto-compaction or physical maintenance operation is reachable.
-func (w *WorkingCatalog) FlushLegacyInlineData(ctx context.Context, plan ducklake.InlineFlushPlan) error {
-	if err := w.checkOpen(); err != nil {
-		return err
-	}
-	if err := verifyLease(ctx, w.request); err != nil {
-		return err
-	}
-	if err := w.env.FlushLegacyInlineData(ctx, plan); err != nil {
-		return err
-	}
-	return verifyLease(ctx, w.request)
-}
-
 // ExpireSnapshots expires only the supplied historical snapshot IDs. This
 // wrapper intentionally has no dry-run or cleanup capability.
 func (w *WorkingCatalog) ExpireSnapshots(ctx context.Context, versions []int64) error {
@@ -447,9 +385,9 @@ func (w *WorkingCatalog) VisibleTables(ctx context.Context) ([]CatalogTable, err
 	return visibleTables(ctx, w)
 }
 
-// Normalize performs metadata-only snapshot normalization, explicit legacy
-// inline flushing, and complete current closure enumeration. It leaves the
-// WorkingCatalog open so the caller can run policy checks or retry before
+// Normalize validates immutable catalog safety and performs metadata-only
+// snapshot normalization and complete current closure enumeration. It leaves
+// the WorkingCatalog open so the caller can run policy checks or retry before
 // detaching.
 func (w *WorkingCatalog) Normalize(ctx context.Context) (NormalizationResult, error) {
 	if err := w.checkOpen(); err != nil {
@@ -458,55 +396,24 @@ func (w *WorkingCatalog) Normalize(ctx context.Context) (NormalizationResult, er
 	if err := verifyLease(ctx, w.request); err != nil {
 		return NormalizationResult{}, err
 	}
-	policy, err := w.DisableDataInlining(ctx)
+	policy, err := w.DataInliningPolicy(ctx)
 	if err != nil {
 		return NormalizationResult{}, fmt.Errorf("%w: normalize data-inlining policy: %v", ErrNormalizationFailed, err)
 	}
 	if err := policy.ValidateZero(); err != nil {
-		return NormalizationResult{}, fmt.Errorf("%w: %v", ErrNormalizationFailed, err)
+		return NormalizationResult{}, fmt.Errorf("%w: %w", ErrNormalizationFailed, err)
 	}
-	inline, err := w.LegacyInlineTables(ctx)
-	if err != nil {
-		return NormalizationResult{}, fmt.Errorf("%w: inspect legacy inline data: %v", ErrNormalizationFailed, err)
+	if err := w.env.ValidateNoLiveInlineData(ctx); err != nil {
+		return NormalizationResult{}, fmt.Errorf("%w: %w", ErrNormalizationFailed, err)
 	}
-	flush, err := ducklake.PlanLegacyInlineFlush(inline)
-	if err != nil {
-		return NormalizationResult{}, fmt.Errorf("%w: plan legacy inline flush: %v", ErrNormalizationFailed, err)
-	}
-	if len(flush.Targets) > 0 {
-		if err := verifyLease(ctx, w.request); err != nil {
-			return NormalizationResult{}, err
-		}
-		if err := w.FlushLegacyInlineData(ctx, flush); err != nil {
-			return NormalizationResult{}, fmt.Errorf("%w: flush legacy inline data: %v", ErrNormalizationFailed, err)
-		}
-		if err := verifyLease(ctx, w.request); err != nil {
-			return NormalizationResult{}, err
-		}
-		inline, err = w.LegacyInlineTables(ctx)
-		if err != nil {
-			return NormalizationResult{}, fmt.Errorf("%w: verify legacy inline flush: %v", ErrNormalizationFailed, err)
-		}
-	}
-	// Flushing inline rows does not alter option precedence, but re-read the
-	// persisted scopes after all metadata writes and verify every one remains
-	// explicitly zero. This catches an extension that silently drops or
-	// rewrites an inherited option while flushing.
 	verifiedPolicy, policyErr := w.DataInliningPolicy(ctx)
 	if policyErr != nil {
 		return NormalizationResult{}, fmt.Errorf("%w: re-read data-inlining policy: %v", ErrNormalizationFailed, policyErr)
 	}
 	if err := verifiedPolicy.ValidateZero(); err != nil {
-		return NormalizationResult{}, fmt.Errorf("%w: verify data-inlining policy: %v", ErrNormalizationFailed, err)
-	}
-	if err := sameInliningScopes(policy, verifiedPolicy); err != nil {
-		return NormalizationResult{}, fmt.Errorf("%w: verify persisted data-inlining scopes: %v", ErrNormalizationFailed, err)
+		return NormalizationResult{}, fmt.Errorf("%w: verify data-inlining policy: %w", ErrNormalizationFailed, err)
 	}
 	policy = verifiedPolicy
-	if err := ducklake.ValidateNoLiveInlineData(inline); err != nil {
-		return NormalizationResult{}, fmt.Errorf("%w: %v", ErrNormalizationFailed, err)
-	}
-
 	snapshots, err := w.env.Snapshots(ctx)
 	if err != nil {
 		return NormalizationResult{}, fmt.Errorf("%w: enumerate snapshots: %v", ErrNormalizationFailed, err)
@@ -552,7 +459,7 @@ func (w *WorkingCatalog) Normalize(ctx context.Context) (NormalizationResult, er
 	if err != nil {
 		return NormalizationResult{}, fmt.Errorf("%w: enumerate current file closure: %v", ErrNormalizationFailed, err)
 	}
-	return NormalizationResult{CurrentSnapshot: current, ExpiredSnapshots: append([]int64(nil), expire...), Snapshots: after, InliningPolicy: policy, InlineTables: inline, Tables: tables, Closure: closure}, nil
+	return NormalizationResult{CurrentSnapshot: current, ExpiredSnapshots: append([]int64(nil), expire...), Snapshots: after, InliningPolicy: policy, Tables: tables, Closure: closure}, nil
 }
 
 // NormalizeAndQualify is the complete private-candidate protocol. Any error
@@ -621,7 +528,7 @@ func NormalizeAndQualify(ctx context.Context, working *WorkingCatalog, request Q
 			return QualifiedCatalog{}, fmt.Errorf("%w: policy callback: %v", ErrQualificationFailed, err)
 		}
 	}
-	qualified := QualifiedCatalog{DetachedCatalog: detached, Record: record, contract: working.request.PoolContract, probe: request.Probe, bootstrap: request.CredentialBootstrap}
+	qualified := QualifiedCatalog{DetachedCatalog: detached, Record: record, contract: working.request.PoolContract, probe: request.Probe, extensionAdmission: working.request.ExtensionAdmission, bootstrap: request.CredentialBootstrap}
 	// Prove the exact artifact through the same read-only attach path used by
 	// serving before returning a qualified result.
 	preview, previewErr := OpenQualifiedPreview(ctx, qualified)
@@ -721,7 +628,7 @@ func OpenQualifiedPreview(ctx context.Context, qualified QualifiedCatalog) (*Pre
 	if size != qualified.Record.CatalogSize {
 		return nil, ErrCatalogSize
 	}
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: qualified.StagingPath(), CatalogPath: qualified.CatalogPath(), DataPath: dataPath, PhysicalPoolID: qualified.contract.Pool.ID.String(), SharedPool: true, Compatibility: qualified.contract.Tuple, PoolContract: qualified.contract, ReadOnly: true, CredentialBootstrap: qualified.bootstrap})
+	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: qualified.StagingPath(), CatalogPath: qualified.CatalogPath(), DataPath: dataPath, PhysicalPoolID: qualified.contract.Pool.ID.String(), SharedPool: true, Compatibility: qualified.contract.Tuple, PoolContract: qualified.contract, ExtensionAdmission: qualified.extensionAdmission, ReadOnly: true, CredentialBootstrap: qualified.bootstrap})
 	if err != nil {
 		return nil, err
 	}
@@ -731,11 +638,6 @@ func OpenQualifiedPreview(ctx context.Context, qualified QualifiedCatalog) (*Pre
 		return nil, err
 	}
 	return preview, nil
-}
-
-// OpenPreview is a descriptive alias for OpenQualifiedPreview.
-func OpenPreview(ctx context.Context, qualified QualifiedCatalog) (*PreviewCatalog, error) {
-	return OpenQualifiedPreview(ctx, qualified)
 }
 
 func currentSnapshot(ctx context.Context, w *WorkingCatalog) (int64, error) {

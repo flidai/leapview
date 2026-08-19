@@ -8,12 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/project/graph"
+	configschema "github.com/flidai/leapview/internal/project/schema"
 )
 
 // These IDs are intentionally distinct: a dashboard ID is stable across
@@ -41,17 +42,18 @@ var (
 	ErrCommandReuse      = errors.New("dashboard authoring command id was reused with a different request")
 )
 
-var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
+// lifecycleIdentifierPattern is reserved for opaque authoring records such as
+// revision, draft, command, actor, and provenance identifiers. It is not the
+// grammar for identifiers embedded in a canonical DashboardDocument.
+var lifecycleIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
-// canonicalIdentifierPattern matches the stricter identifier contract used by
-// dashboard spec maps and visual references. Authoring identifiers remain
-// backwards-compatible with the broader pattern above, but server-generated
-// defaults must be safe to export without requiring a caller-provided rename.
-var canonicalIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// canonicalObjectIDPattern is the generated DashboardDocument #ObjectID
+// grammar used by page, visual, filter, and component identities.
+var canonicalObjectIDPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,127}$`)
 var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 
 func validateIdentifier(kind, value string) error {
-	if !identifierPattern.MatchString(value) {
+	if !lifecycleIdentifierPattern.MatchString(value) {
 		return fmt.Errorf("%w: %s %q", ErrInvalidIdentifier, kind, value)
 	}
 	return nil
@@ -299,7 +301,7 @@ func validateProvenanceIdentifier(kind, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("%w: provenance actor id is required", ErrInvalidAuthoring)
 	}
-	if value != strings.TrimSpace(value) || !identifierPattern.MatchString(value) {
+	if value != strings.TrimSpace(value) || !lifecycleIdentifierPattern.MatchString(value) {
 		return fmt.Errorf("%w: invalid %s %q", ErrInvalidAuthoring, kind, value)
 	}
 	return nil
@@ -362,29 +364,29 @@ func (t RevisionToken) ValidateComplete() error {
 // Revision owns a complete authored document copy. Draft and Published below
 // only point at this immutable value.
 type Revision struct {
-	ID          RevisionID  `json:"id"`
-	DashboardID DashboardID `json:"dashboardId"`
-	Number      uint64      `json:"number"`
-	Document    Dashboard   `json:"document"`
-	ContentHash string      `json:"contentHash"`
-	Provenance  Provenance  `json:"provenance"`
-	CreatedAt   time.Time   `json:"createdAt,omitempty"`
+	ID          RevisionID                 `json:"id"`
+	DashboardID DashboardID                `json:"dashboardId"`
+	Number      uint64                     `json:"number"`
+	Document    document.DashboardDocument `json:"document"`
+	ContentHash string                     `json:"contentHash"`
+	Provenance  Provenance                 `json:"provenance"`
+	CreatedAt   time.Time                  `json:"createdAt,omitempty"`
 }
 
-func NewRevision(id RevisionID, dashboardID DashboardID, number uint64, createdAt time.Time, document Dashboard, provenance Provenance) (Revision, error) {
+func NewRevision(id RevisionID, dashboardID DashboardID, number uint64, createdAt time.Time, authored document.DashboardDocument, provenance Provenance) (Revision, error) {
 	if err := id.Validate(); err != nil {
 		return Revision{}, err
 	}
 	if err := dashboardID.Validate(); err != nil {
 		return Revision{}, err
 	}
-	if document.ID != dashboardID {
-		return Revision{}, fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, document.ID, dashboardID)
+	if authored.Metadata.ID != dashboardID.String() {
+		return Revision{}, fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, authored.Metadata.ID, dashboardID)
 	}
 	if err := provenance.Validate(); err != nil {
 		return Revision{}, err
 	}
-	if err := document.ValidateDraftStructure(); err != nil {
+	if err := ValidateCanonicalDocument(authored); err != nil {
 		return Revision{}, fmt.Errorf("%w: revision dashboard structure: %v", ErrInvalidAuthoring, err)
 	}
 	if number == 0 {
@@ -393,11 +395,11 @@ func NewRevision(id RevisionID, dashboardID DashboardID, number uint64, createdA
 	if createdAt.IsZero() || createdAt.Location() != time.UTC {
 		return Revision{}, fmt.Errorf("%w: revision created_at must be a non-zero UTC timestamp", ErrInvalidAuthoring)
 	}
-	hash, err := DashboardContentHash(document)
+	hash, err := DashboardContentHash(authored)
 	if err != nil {
 		return Revision{}, err
 	}
-	cloned, err := document.Clone()
+	cloned, err := authored.Clone()
 	if err != nil {
 		return Revision{}, err
 	}
@@ -411,8 +413,8 @@ func (r Revision) Validate() error {
 	if err := validateDashboardID(r.DashboardID); err != nil {
 		return err
 	}
-	if r.Document.ID != r.DashboardID {
-		return fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, r.Document.ID, r.DashboardID)
+	if r.Document.Metadata.ID != r.DashboardID.String() {
+		return fmt.Errorf("%w: dashboard document id %q does not match revision dashboard id %q", ErrInvalidAuthoring, r.Document.Metadata.ID, r.DashboardID)
 	}
 	if r.Number == 0 {
 		return fmt.Errorf("%w: revision number is required", ErrInvalidAuthoring)
@@ -427,7 +429,7 @@ func (r Revision) Validate() error {
 	if err != nil || hash != r.ContentHash {
 		return fmt.Errorf("%w: revision content hash does not match document", ErrInvalidAuthoring)
 	}
-	if err := r.Document.ValidateDraftStructure(); err != nil {
+	if err := ValidateCanonicalDocument(r.Document); err != nil {
 		return fmt.Errorf("%w: revision dashboard structure: %v", ErrInvalidAuthoring, err)
 	}
 	return r.Provenance.Validate()
@@ -642,7 +644,7 @@ func validateRequiredLifecycleValue(kind, value string) error {
 	if value != strings.TrimSpace(value) {
 		return fmt.Errorf("%w: %s cannot have surrounding whitespace", ErrInvalidAuthoring, kind)
 	}
-	if !identifierPattern.MatchString(value) {
+	if !lifecycleIdentifierPattern.MatchString(value) {
 		return fmt.Errorf("%w: invalid %s %q", ErrInvalidAuthoring, kind, value)
 	}
 	return nil
@@ -690,7 +692,7 @@ func digestValue(value any) string {
 	return "sha256:" + hex.EncodeToString(hash[:])
 }
 
-func DashboardContentHash(document Dashboard) (string, error) {
+func DashboardContentHash(document document.DashboardDocument) (string, error) {
 	encoded, err := json.Marshal(document)
 	if err != nil {
 		return "", fmt.Errorf("%w: dashboard document: %v", ErrInvalidAuthoring, err)
@@ -699,119 +701,15 @@ func DashboardContentHash(document Dashboard) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash[:]), nil
 }
 
-// Clone performs a typed deep copy and surfaces unsupported reference values
-// rather than dropping authored fields or changing concrete interface values.
-func (d Dashboard) Clone() (Dashboard, error) {
-	cloned, err := cloneValue(reflect.ValueOf(d), "dashboard")
+// ValidateCanonicalDocument checks the generated dashboard document against
+// the public JSON Schema before it is retained in an authored revision.
+func ValidateCanonicalDocument(value document.DashboardDocument) error {
+	encoded, err := json.Marshal(value)
 	if err != nil {
-		return Dashboard{}, fmt.Errorf("%w: clone dashboard document: %v", ErrInvalidAuthoring, err)
+		return fmt.Errorf("%w: encode canonical dashboard: %v", ErrInvalidAuthoring, err)
 	}
-	return cloned.Interface().(Dashboard), nil
-}
-
-func cloneValue(value reflect.Value, path string) (reflect.Value, error) {
-	if !value.IsValid() {
-		return value, nil
+	if err := configschema.ValidateBytes(configschema.KindDashboard, "dashboard.json", encoded); err != nil {
+		return fmt.Errorf("%w: canonical dashboard schema: %v", ErrInvalidAuthoring, err)
 	}
-	switch value.Kind() {
-	case reflect.Interface:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		cloned, err := cloneValue(value.Elem(), path)
-		if err != nil {
-			return reflect.Value{}, err
-		}
-		out := reflect.New(value.Type()).Elem()
-		if cloned.Type().AssignableTo(value.Type()) {
-			out.Set(cloned)
-		} else if cloned.Type().Implements(value.Type()) {
-			out.Set(cloned)
-		} else {
-			return reflect.Value{}, fmt.Errorf("%s has non-assignable interface value %s", path, cloned.Type())
-		}
-		return out, nil
-	case reflect.Pointer:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		cloned, err := cloneValue(value.Elem(), path+".*")
-		if err != nil {
-			return reflect.Value{}, err
-		}
-		out := reflect.New(value.Type().Elem())
-		out.Elem().Set(cloned)
-		return out, nil
-	case reflect.Struct:
-		out := reflect.New(value.Type()).Elem()
-		out.Set(value)
-		for i := 0; i < value.NumField(); i++ {
-			field := out.Field(i)
-			// Unexported fields are copied as part of the struct value. Authored
-			// documents contain no mutable unexported fields; this also preserves
-			// opaque values such as time.Time without unsafe operations.
-			if !field.CanSet() || !value.Field(i).CanInterface() {
-				continue
-			}
-			cloned, err := cloneValue(value.Field(i), fmt.Sprintf("%s.%s", path, value.Type().Field(i).Name))
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			field.Set(cloned)
-		}
-		return out, nil
-	case reflect.Map:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		out := reflect.MakeMapWithSize(value.Type(), value.Len())
-		iter := value.MapRange()
-		for iter.Next() {
-			key, err := cloneValue(iter.Key(), path+".key")
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			item, err := cloneValue(iter.Value(), path+"[value]")
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			out.SetMapIndex(key, item)
-		}
-		return out, nil
-	case reflect.Slice:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		out := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
-		for i := 0; i < value.Len(); i++ {
-			cloned, err := cloneValue(value.Index(i), fmt.Sprintf("%s[%d]", path, i))
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			out.Index(i).Set(cloned)
-		}
-		return out, nil
-	case reflect.Array:
-		out := reflect.New(value.Type()).Elem()
-		for i := 0; i < value.Len(); i++ {
-			cloned, err := cloneValue(value.Index(i), fmt.Sprintf("%s[%d]", path, i))
-			if err != nil {
-				return reflect.Value{}, err
-			}
-			out.Index(i).Set(cloned)
-		}
-		return out, nil
-	case reflect.Func, reflect.Chan:
-		if value.IsNil() {
-			return reflect.Zero(value.Type()), nil
-		}
-		return reflect.Value{}, fmt.Errorf("%s contains unsupported %s", path, value.Kind())
-	case reflect.UnsafePointer:
-		if value.Pointer() == 0 {
-			return reflect.Zero(value.Type()), nil
-		}
-		return reflect.Value{}, fmt.Errorf("%s contains unsupported %s", path, value.Kind())
-	default:
-		return value, nil
-	}
+	return nil
 }

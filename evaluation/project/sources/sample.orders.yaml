@@ -6,11 +6,11 @@ metadata:
   displayName: Evaluation orders
 spec:
   connection: sample
-  path: orders.csv
-  fields:
-    order_id: {type: string, description: Synthetic order identifier.}
-    purchased_at: {type: string, description: Synthetic order timestamp.}
-    state: {type: string, description: Synthetic customer state.}
-    category: {type: string, description: Synthetic product category.}
-    status: {type: string, description: Synthetic order status.}
-    revenue: {type: number, description: Synthetic order revenue.}
+  location:
+    type: path
+    path: orders.csv
+    format: csv
+    options:
+      header: true
+  schema:
+    mode: inferred

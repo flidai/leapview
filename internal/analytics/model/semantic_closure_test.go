@@ -9,7 +9,7 @@ func TestSemanticGraphRejectsUnboundExecutionTableDeterministically(t *testing.T
 	m := strictClosureModel()
 	m.Tables["orphan"] = Table{
 		GrainEntity: "orphan",
-		Entities:    map[string]ModelEntitySpec{"orphan": {Type: "primary", Fields: []string{"id"}}},
+		Entities:    map[string]EntityDefinition{"orphan": {Type: "primary", Fields: []string{"id"}}},
 		Dimensions:  map[string]MetricDimension{"id": {Datatype: DataTypeInteger}},
 	}
 	err := m.ValidateSemanticGraph()
@@ -35,7 +35,7 @@ func TestSemanticGraphRejectsInvalidEntityAndGrainContracts(t *testing.T) {
 	}{
 		{"missing entity field", func(m *Model) {
 			table := m.Tables["orders"]
-			table.Entities["order"] = ModelEntitySpec{Type: "primary", Fields: []string{"missing"}}
+			table.Entities["order"] = EntityDefinition{Type: "primary", Fields: []string{"missing"}}
 			m.Tables["orders"] = table
 		}, `model table "orders" entity "order" field "missing" is not declared`},
 		{"grain points to foreign", func(m *Model) {
@@ -45,7 +45,7 @@ func TestSemanticGraphRejectsInvalidEntityAndGrainContracts(t *testing.T) {
 		}, `model table "orders" grain.entity "customer_ref" must be primary or unique`},
 		{"invalid entity type", func(m *Model) {
 			table := m.Tables["orders"]
-			table.Entities["bad"] = ModelEntitySpec{Type: "unknown", Fields: []string{"order_id"}}
+			table.Entities["bad"] = EntityDefinition{Type: "unknown", Fields: []string{"order_id"}}
 			m.Tables["orders"] = table
 		}, `model table "orders" entity "bad" has unsupported type "unknown"`},
 	}
@@ -129,7 +129,7 @@ func strictClosureModel() *Model {
 		Tables: map[string]Table{
 			"orders": {
 				GrainEntity: "order",
-				Entities: map[string]ModelEntitySpec{
+				Entities: map[string]EntityDefinition{
 					"order":        {Type: "primary", Fields: []string{"order_id"}},
 					"customer_ref": {Type: "foreign", Fields: []string{"customer_id"}},
 				},
@@ -140,7 +140,7 @@ func strictClosureModel() *Model {
 			},
 			"customers": {
 				GrainEntity: "customer",
-				Entities:    map[string]ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
+				Entities:    map[string]EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}},
 				Dimensions:  map[string]MetricDimension{"customer_id": {Datatype: DataTypeInteger}, "state": {Datatype: DataTypeString}},
 			},
 		},

@@ -6,10 +6,5 @@ metadata:
   displayName: Documentation market OHLC
 spec:
   connection: docs
-  path: market_ohlc.csv
-  fields:
-    month: {type: string}
-    open: {type: number}
-    close: {type: number}
-    low: {type: number}
-    high: {type: number}
+  location: {type: path, path: market_ohlc.csv, format: csv, options: {header: true}}
+  schema: {mode: inferred}

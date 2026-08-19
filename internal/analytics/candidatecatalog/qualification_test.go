@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ import (
 func TestNormalizeAndQualifyRetainsOneSnapshotAndProbesClosure(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -105,10 +106,10 @@ func TestNormalizeAndQualifyRetainsOneSnapshotAndProbesClosure(t *testing.T) {
 	}
 }
 
-func TestNormalizeClearsInheritedInliningAndFlushesRowsAndDeletes(t *testing.T) {
+func TestNormalizeRejectsLiveInlineDataWithoutRepair(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -116,90 +117,132 @@ func TestNormalizeClearsInheritedInliningAndFlushesRowsAndDeletes(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer working.Close()
-	if _, err := working.Commit(ctx, "inherited-inline", nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS model; CREATE TABLE model.inline_migrate(id INTEGER, label VARCHAR); CREATE TABLE model.file_migrate AS SELECT range AS id FROM range(0, 2000)")
+	if _, err := working.Commit(ctx, "inline-create", nil, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS model; CREATE TABLE model.inline_reject(id INTEGER, label VARCHAR)")
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Persist all supported override scopes, then create both live inline rows
-	// and a delete against the inlined table. Normalize must migrate the
-	// inherited options to explicit zero before flushing the legacy state.
-	for _, statement := range []string{
-		"CALL ducklake_set_option('lake', 'data_inlining_row_limit', 100)",
-		"CALL ducklake_set_option('lake', 'data_inlining_row_limit', 100, schema => 'model')",
-		"CALL ducklake_set_option('lake', 'data_inlining_row_limit', 100, schema => 'model', table_name => 'inline_migrate')",
-		"CALL ducklake_set_option('lake', 'data_inlining_row_limit', 100, schema => 'model', table_name => 'file_migrate')",
-	} {
-		if err := working.Exec(ctx, statement); err != nil {
-			t.Fatalf("set inherited inline option (%s): %v", statement, err)
-		}
+	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'data_inlining_row_limit', 100, schema => 'model', table_name => 'inline_reject')"); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := working.Commit(ctx, "inline-insert", nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO model.file_migrate VALUES (2001), (2002)")
+		_, err := tx.ExecContext(ctx, "INSERT INTO model.inline_reject VALUES (1, 'reject')")
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'rewrite_delete_threshold', 1.0, schema => 'model', table_name => 'file_migrate')"); err != nil {
+	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'data_inlining_row_limit', 0, schema => 'model', table_name => 'inline_reject')"); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := working.Commit(ctx, "inline-delete", nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "UPDATE model.file_migrate SET id = 3001 WHERE id = 1")
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// The pinned DuckLake flush implementation consults auto_compact even for
-	// an explicit table. Keep the persisted default disabled so Normalize must
-	// opt in only for this exact table and restore the safe value afterward.
-	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'auto_compact', false, schema => 'model', table_name => 'file_migrate')"); err != nil {
-		t.Fatalf("disable table auto_compact before normalization: %v", err)
 	}
 	before, err := working.DataInliningPolicy(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var inherited bool
-	for _, option := range before.Persisted {
-		if option.Limit != 0 {
-			inherited = true
+	if err := before.ValidateZero(); err != nil {
+		t.Fatalf("persisted inlining policy = %#v, want explicit zero options: %v", before, err)
+	}
+	if _, err := working.Normalize(ctx); !errors.Is(err, ducklake.ErrLiveInlineData) {
+		t.Fatalf("Normalize() error = %v, want live inline data rejection", err)
+	}
+	after, err := working.DataInliningPolicy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := after.ValidateZero(); err != nil {
+		t.Fatalf("normalization changed inlining policy after rejection: %#v: %v", after, err)
+	}
+}
+
+func TestNormalizeRejectsNonZeroInliningPolicyWithoutRepair(t *testing.T) {
+	ctx := context.Background()
+	contract := testPoolContract(t, t.TempDir())
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
+	if extensionUnavailableForTest(err) {
+		t.Skipf("ducklake extension unavailable: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer working.Close()
+	if _, err := working.Commit(ctx, "policy-create", nil, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS model; CREATE TABLE model.policy_target(id INTEGER)")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"CALL ducklake_set_option('lake', 'data_inlining_row_limit', 101)",
+		"CALL ducklake_set_option('lake', 'data_inlining_row_limit', 202, schema => 'model')",
+		"CALL ducklake_set_option('lake', 'data_inlining_row_limit', 303, schema => 'model', table_name => 'policy_target')",
+	} {
+		if err := working.Exec(ctx, statement); err != nil {
+			t.Fatalf("persist inlining policy (%s): %v", statement, err)
 		}
 	}
-	if !inherited {
-		t.Fatalf("persisted inlining policy = %#v, want inherited non-zero option", before)
-	}
-	inline, err := working.LegacyInlineTables(ctx)
+	before, err := working.DataInliningPolicy(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var hadRows, hadDeletes bool
-	for _, state := range inline {
-		hadRows = hadRows || state.InlinedRows > 0
-		hadDeletes = hadDeletes || state.InlinedDeletes > 0
+	if err := before.ValidateZero(); !errors.Is(err, ducklake.ErrInliningNotDisabled) {
+		t.Fatalf("persisted inlining policy = %#v, validation error = %v", before, err)
 	}
-	if !hadRows || !hadDeletes {
-		t.Fatalf("inline state before normalization = %#v, want live rows and deletes", inline)
+	if _, err := working.Normalize(ctx); !errors.Is(err, ErrNormalizationFailed) || !errors.Is(err, ducklake.ErrInliningNotDisabled) {
+		t.Fatalf("Normalize() error = %v, want normalization and nonzero-policy rejection", err)
 	}
-	normalized, err := working.Normalize(ctx)
+	after, err := working.DataInliningPolicy(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := normalized.InliningPolicy.ValidateZero(); err != nil {
-		t.Fatalf("normalized inlining policy = %#v: %v", normalized.InliningPolicy, err)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("normalization rewrote persisted inlining policy: before=%#v after=%#v", before, after)
 	}
-	if err := ducklake.ValidateNoLiveInlineData(normalized.InlineTables); err != nil {
-		t.Fatalf("normalized inline state = %#v: %v", normalized.InlineTables, err)
+}
+
+func TestNormalizeRejectsLiveInlineDeletesWithoutRepair(t *testing.T) {
+	ctx := context.Background()
+	contract := testPoolContract(t, t.TempDir())
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
+	if extensionUnavailableForTest(err) {
+		t.Skipf("ducklake extension unavailable: %v", err)
 	}
-	if len(normalized.InliningPolicy.Persisted) == 0 {
-		t.Fatal("normalization dropped inherited option scopes instead of zeroing them")
-	}
-	autoCompact, present, err := working.env.TableAutoCompact(ctx, "model", "file_migrate")
 	if err != nil {
-		t.Fatalf("inspect table auto_compact after normalization: %v", err)
+		t.Fatal(err)
 	}
-	if !present || autoCompact {
-		t.Fatalf("table auto_compact after normalization = %t (present=%t), want explicit false", autoCompact, present)
+	defer working.Close()
+	if _, err := working.Commit(ctx, "delete-create", nil, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS model; CREATE TABLE model.inline_delete (id INTEGER)")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"CALL ducklake_set_option('lake', 'data_inlining_row_limit', 100, schema => 'model', table_name => 'inline_delete')",
+		"CALL ducklake_set_option('lake', 'rewrite_delete_threshold', 1.0, schema => 'model', table_name => 'inline_delete')",
+	} {
+		if err := working.Exec(ctx, statement); err != nil {
+			t.Fatalf("persist delete policy (%s): %v", statement, err)
+		}
+	}
+	if _, err := working.Commit(ctx, "delete-seed", nil, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO model.inline_delete SELECT range FROM range(0, 2000)")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := working.Commit(ctx, "delete-update", nil, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM model.inline_delete WHERE id = 1")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'data_inlining_row_limit', 0, schema => 'model', table_name => 'inline_delete')"); err != nil {
+		t.Fatal(err)
+	}
+	err = nil
+	_, err = working.Normalize(ctx)
+	if !errors.Is(err, ducklake.ErrLiveInlineData) || !strings.Contains(err.Error(), "live inlined deletes") {
+		t.Fatalf("Normalize() error = %v, want live delete rejection", err)
 	}
 }
 
@@ -259,7 +302,7 @@ func TestRemotePoolRequiresTargetObjectProbe(t *testing.T) {
 func TestQualificationFailureRemovesWorkingStaging(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -288,7 +331,7 @@ func TestQualificationFailureRemovesWorkingStaging(t *testing.T) {
 func TestHistoricalFileReferenceIsAbsentFromCurrentUnionBeforeNormalization(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -328,7 +371,7 @@ func TestHistoricalFileReferenceIsAbsentFromCurrentUnionBeforeNormalization(t *t
 func TestNormalizeAndQualifyObjectProbeReceivesCanonicalReferences(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}

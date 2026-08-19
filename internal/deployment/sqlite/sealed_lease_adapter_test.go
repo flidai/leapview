@@ -112,7 +112,7 @@ func createAdapterArtifact(t *testing.T, repo *Repository, plan deployment.Deliv
 			return ""
 		}
 		return pool
-	}(), SealID: seal.ID, CatalogDigest: seal.CatalogDigest, CompatibilityDigest: seal.CompatibilityDigest, CatalogObjectKey: seal.ObjectKey, PhysicalPoolID: pool, ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateID: "state-" + candidateID, CreatedAt: now}, seal, now.Add(5*time.Minute))
+	}(), SealID: seal.ID, CatalogDigest: seal.CatalogDigest, CompatibilityDigest: seal.CompatibilityDigest, CatalogObjectKey: seal.ObjectKey, PhysicalPoolID: pool, ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateID: "state-" + candidateID, CreatedAt: now, ResolvedInputs: sqliteResolvedInputs(t, plan, candidateID)}, seal, now.Add(5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}

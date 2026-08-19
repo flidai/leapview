@@ -10,7 +10,6 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/flidai/leapview/internal/dashboard/reportmodel"
@@ -41,6 +40,16 @@ func newVisualPlan(definition visualizationdefinition.Definition) (visualPlan, e
 			return visualPlan{}, fmt.Errorf("visualization %q has no aggregate binding", definition.ID)
 		}
 		plan.Table, plan.Dimensions, plan.Series, plan.Metrics, plan.Time, plan.Sort, plan.Limit = query.TableID, query.Dimensions, query.Series, query.Metrics, query.Time, query.Sort, int(query.Limit)
+		// Histogram and distribution operands own their metric identity in the
+		// explicit statistical contract.  Do not require a duplicate generic
+		// aggregate metric just to build the runtime plan.
+		if len(plan.Metrics) == 0 {
+			if query.Histogram != nil {
+				plan.Metrics = []visualizationdefinition.FieldBinding{query.Histogram.Metric}
+			} else if query.Distribution != nil {
+				plan.Metrics = []visualizationdefinition.FieldBinding{query.Distribution.Metric}
+			}
+		}
 	case visualizationdefinition.QuerySpatial:
 		query := definition.Query.Spatial
 		if query == nil {
@@ -112,38 +121,21 @@ func queryFieldRef(ref visualizationdefinition.FieldBinding, alias string) repor
 	}
 }
 
-func queryDimensionFields(dimensions []visualizationdefinition.FieldBinding) []string {
-	fields := make([]string, len(dimensions))
-	for i, dimension := range dimensions {
-		fields[i] = dimension.FieldID
-	}
-	return fields
-}
-
-func displayField(field string) string {
-	parts := strings.Split(field, ".")
-	return parts[len(parts)-1]
-}
-
 func visualSorts(visual visualPlan) []reportdef.QuerySort {
 	if len(visual.Sort) == 0 {
-		return []reportdef.QuerySort{{Field: defaultSortColumn(visual), Direction: "asc"}}
+		if len(visual.Dimensions) > 0 {
+			return []reportdef.QuerySort{{Field: visual.Dimensions[0].Alias, Direction: "asc"}}
+		}
+		return nil
 	}
 	sorts := make([]reportdef.QuerySort, 0, len(visual.Sort))
 	for _, sort := range visual.Sort {
 		field := sort.FieldID
 		if field == "" {
-			field = defaultSortColumn(visual)
-		}
-		if field != "value" && field != "series" {
-			for index, dimension := range visual.Dimensions {
-				if field == dimension.FieldID || field == dimension.Alias || field == displayField(dimension.FieldID) {
-					field = dimensionSortColumn(visual.ResultShape(), index)
-					break
-				}
-			}
-			if visual.Series != nil && (field == visual.Series.FieldID || field == visual.Series.Alias || field == displayField(visual.Series.FieldID)) {
-				field = "series"
+			if len(visual.Dimensions) > 0 {
+				field = visual.Dimensions[0].Alias
+			} else if len(visual.Metrics) > 0 {
+				field = visual.Metrics[0].Alias
 			}
 		}
 		sorts = append(sorts, reportdef.QuerySort{Field: field, Direction: sort.Direction})
@@ -269,79 +261,12 @@ func distributionSorts(visual visualPlan) []reportdef.QuerySort {
 	}
 	sorts := make([]reportdef.QuerySort, 0, len(visual.Sort))
 	for _, sortSpec := range visual.Sort {
-		field := sortSpec.FieldID
-		if field == "" {
-			field = "label"
+		if strings.TrimSpace(sortSpec.FieldID) == "" {
+			continue
 		}
-		if field != "label" && field != "min" && field != "q1" && field != "median" && field != "q3" && field != "max" {
-			field = "label"
-		}
-		sorts = append(sorts, reportdef.QuerySort{Field: field, Direction: sortSpec.Direction})
+		sorts = append(sorts, reportdef.QuerySort{Field: sortSpec.FieldID, Direction: sortSpec.Direction})
 	}
 	return sorts
-}
-
-func defaultSortColumn(visual visualPlan) string {
-	switch visual.ResultShape() {
-	case visualizationdefinition.ResultMatrixCells:
-		return "row"
-	case visualizationdefinition.ResultGraphEdges:
-		return "source"
-	case visualizationdefinition.ResultGeographicFeatures:
-		return "name"
-	case visualizationdefinition.ResultHierarchyNodes:
-		return "value"
-	default:
-		return "label"
-	}
-}
-
-func dimensionSortColumn(shape visualizationdefinition.ResultShape, index int) string {
-	switch shape {
-	case visualizationdefinition.ResultMatrixCells:
-		if index == 1 {
-			return "chart_column"
-		}
-		return "row"
-	case visualizationdefinition.ResultGraphEdges:
-		if index == 1 {
-			return "target"
-		}
-		return "source"
-	case visualizationdefinition.ResultGeographicFeatures:
-		return "name"
-	case visualizationdefinition.ResultHierarchyNodes:
-		return fmt.Sprintf("level_%d", index)
-	default:
-		return "label"
-	}
-}
-
-func visualInteractionConfig(selection dashboardauthoring.SelectionInteraction) dashboard.InteractionConfig {
-	return interactionConfig("point_selection", selection)
-}
-
-func tableInteractionConfig(selection dashboardauthoring.SelectionInteraction) dashboard.InteractionConfig {
-	return interactionConfig("row_selection", selection)
-}
-
-func interactionConfig(kind string, selection dashboardauthoring.SelectionInteraction) dashboard.InteractionConfig {
-	mappings := make([]dashboard.InteractionConfigMapping, 0, len(selection.Mappings))
-	for _, mapping := range selection.Mappings {
-		mappings = append(mappings, dashboard.InteractionConfigMapping{
-			Field:   mapping.Field,
-			Dataset: mapping.Dataset,
-			Grain:   mapping.Grain,
-			Value:   mapping.Value,
-			Label:   mapping.Label,
-		})
-	}
-	return dashboard.InteractionConfig{
-		Kind:     kind,
-		Toggle:   selection.Toggle,
-		Mappings: mappings,
-		Targets:  append([]string{}, selection.Targets...),
-	}
 }
 
 func compiledInteractionConfig(interaction visualizationir.VisualizationInteraction) dashboard.InteractionConfig {

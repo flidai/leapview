@@ -1,12 +1,12 @@
 # Heatmap
 
-Use a heatmap to show values at the intersections of two categorical dimensions.
+Use a heatmap to show a metric across two categorical dimensions.
 
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
 
 ## Basic matrix
 
-Provide two dimensions for the row and column axes and one metric for cell intensity, creating a compact comparison across both categories.
+Provide row and column dimensions plus one metric for compact categorical intensity.
 
 {{< visual id="state_status_heatmap" >}}
 
@@ -17,17 +17,18 @@ visuals:
     description: Shows order status concentration by customer state.
     type: heatmap
     query:
+      type: aggregate
       dimensions:
-        state: orders.state
-        status: orders.status
+      - state
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: state
-          direction: asc
-        - field: status
-          direction: asc
+      - field: state
+        direction: asc
       limit: 120
+    presentation:
+      type: cartesian
 ```
 
 ## Alternate dimensions
@@ -42,15 +43,18 @@ visuals:
     title: Category by order status
     type: heatmap
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
       limit: 120
+    presentation:
+      type: cartesian
 ```
 
 ## Cell labels
@@ -65,15 +69,22 @@ visuals:
     title: Labeled category status heatmap
     type: heatmap
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 12, minimum_spacing: 4, tooltip_fallback: true}
+      type: cartesian
+      labels:
+        density: automatic
+        priority: [selected, anomaly, threshold]
+        maxCharacters: 12
+        minimumSpacing: 4
+        tooltipFallback: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
-        status: orders.status
+      - category
+      - status
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: value
-          direction: desc
+      - field: order_count
+        direction: desc
       limit: 80
 ```

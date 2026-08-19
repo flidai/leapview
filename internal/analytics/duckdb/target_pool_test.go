@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,8 +12,55 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/stretchr/testify/require"
 )
+
+// targetPoolTestExtensionAdmission supplies canonical, platform-independent
+// evidence to a recording session. The fake session never opens these paths;
+// real-load coverage uses newDuckDBTestExtensionAdmission in source tests.
+type targetPoolTestExtensionAdmission struct{}
+
+var _ extension.Admission = targetPoolTestExtensionAdmission{}
+var _ extension.Preparation = targetPoolTestExtensionAdmission{}
+
+func (targetPoolTestExtensionAdmission) AdmitExtension(ctx context.Context, name string) (extension.AdmittedExtension, error) {
+	if err := ctx.Err(); err != nil {
+		return extension.AdmittedExtension{}, err
+	}
+	switch name {
+	case "postgres", "httpfs", "quack":
+		digest := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+		identity, err := (extension.Identity{
+			DuckDBVersion: "test-runtime", ExtensionVersion: "test-fixture", GOOS: "test", GOARCH: "test",
+			Platform: "test-test", Name: name, Digest: digest, SupportProfile: "test-fixture",
+		}).Canonical()
+		if err != nil {
+			return extension.AdmittedExtension{}, err
+		}
+		return extension.AdmittedExtension{
+			Name: name, Identity: identity, Version: "test-fixture", ExtensionVersion: "test-fixture",
+			DuckDBVersion: "test-runtime", GOOS: "test", GOARCH: "test", Platform: "test-test",
+			SupportProfile: "test-fixture", Digest: digest,
+			Path: "/test/extensions/" + extension.ArtifactFilenameStem(name) + ".duckdb_extension", Origin: "reviewed-local-test-fixture",
+			Provenance: "attest:target-pool-test", Signature: "sig:target-pool-test",
+		}, nil
+	default:
+		return extension.AdmittedExtension{}, fmt.Errorf("test extension %q was not admitted", name)
+	}
+}
+
+func (a targetPoolTestExtensionAdmission) PrepareExtensions(ctx context.Context, names []string) ([]extension.Evidence, error) {
+	evidence := make([]extension.Evidence, 0, len(names))
+	for _, name := range names {
+		admitted, err := a.AdmitExtension(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		evidence = append(evidence, admitted.Evidence())
+	}
+	return evidence, nil
+}
 
 func TestTargetRuntimePoolFactoryPreparesOnlyConnectorOwnedReadOnlyProbe(t *testing.T) {
 	session := &recordingTargetSession{}
@@ -21,7 +69,7 @@ func TestTargetRuntimePoolFactoryPreparesOnlyConnectorOwnedReadOnlyProbe(t *test
 		Limits: TargetRuntimeLimits{
 			MemoryMaxBytes: 64 << 20, TempMaxBytes: 16 << 20, MaxThreads: 1,
 		},
-		RequireTLS: true,
+		RequireTLS: true, ExtensionAdmission: targetPoolTestExtensionAdmission{},
 	})
 	require.NoError(t, err)
 	binding := testDuckDBTargetBinding(t)
@@ -43,8 +91,7 @@ func TestTargetRuntimePoolFactoryPreparesOnlyConnectorOwnedReadOnlyProbe(t *test
 		"SET memory_limit = '67108864B'",
 		"SET max_temp_directory_size = '16777216B'",
 		"SET threads = 1",
-		"INSTALL postgres FROM core",
-		"LOAD postgres",
+		loadExtensionStatement("/test/extensions/" + extension.ArtifactFilenameStem("postgres") + ".duckdb_extension"),
 		"CREATE OR REPLACE TEMPORARY SECRET leapview_warehouse",
 		"HOST 'warehouse.internal'",
 		"PASSWORD 'source-secret'",
@@ -76,7 +123,7 @@ func TestTargetRuntimePoolFactoryPreparesScopedQuackProbe(t *testing.T) {
 		Limits: TargetRuntimeLimits{
 			MemoryMaxBytes: 64 << 20, TempMaxBytes: 16 << 20, MaxThreads: 1,
 		},
-		RequireTLS: true,
+		RequireTLS: true, ExtensionAdmission: targetPoolTestExtensionAdmission{},
 	})
 	require.NoError(t, err)
 	snapshot, err := connectionbinding.NewCredentialSnapshot(
@@ -90,10 +137,8 @@ func TestTargetRuntimePoolFactoryPreparesScopedQuackProbe(t *testing.T) {
 
 	joined := strings.Join(session.statements, "\n")
 	for _, required := range []string{
-		"INSTALL httpfs FROM core",
-		"LOAD httpfs",
-		"INSTALL quack FROM core",
-		"LOAD quack",
+		"LOAD '/test/extensions/httpfs.duckdb_extension'",
+		"LOAD '/test/extensions/quack.duckdb_extension'",
 		"CREATE OR REPLACE TEMPORARY SECRET leapview_lakehouse (TYPE quack, TOKEN 'source-secret', SCOPE 'quack:quack.example.com:443')",
 		"FROM quack_query('quack:quack.example.com:443', 'SELECT 1')",
 		"SET lock_configuration = true",
@@ -124,7 +169,7 @@ func TestTargetRuntimePoolFactoryRejectsUnboundedOrUnsupportedEndpointsBeforeOpe
 			return &recordingTargetSession{}, nil
 		},
 		Limits:     TargetRuntimeLimits{MemoryMaxBytes: 1, TempMaxBytes: 1, MaxThreads: 1},
-		RequireTLS: true,
+		RequireTLS: true, ExtensionAdmission: targetPoolTestExtensionAdmission{},
 	})
 	require.NoError(t, err)
 	snapshot, err := connectionbinding.NewCredentialSnapshot(
@@ -169,7 +214,7 @@ func TestTargetRuntimePoolResolvesTargetOwnedConnectionAfterProviderSnapshotIsDe
 			return &recordingTargetSession{}, nil
 		},
 		Limits:     TargetRuntimeLimits{MemoryMaxBytes: 1, TempMaxBytes: 1, MaxThreads: 1},
-		RequireTLS: true,
+		RequireTLS: true, ExtensionAdmission: targetPoolTestExtensionAdmission{},
 	})
 	require.NoError(t, err)
 	snapshot, err := connectionbinding.NewCredentialSnapshot(
@@ -213,7 +258,7 @@ func TestTargetRuntimePoolHealthAndCloseAreIdempotentAndPropagateOnlyInternally(
 	factory, err := NewTargetRuntimePoolFactory(TargetRuntimePoolFactoryConfig{
 		Open:       func(context.Context) (TargetRuntimeSession, error) { return session, nil },
 		Limits:     TargetRuntimeLimits{MemoryMaxBytes: 1, TempMaxBytes: 1, MaxThreads: 1},
-		RequireTLS: true,
+		RequireTLS: true, ExtensionAdmission: targetPoolTestExtensionAdmission{},
 	})
 	require.NoError(t, err)
 	snapshot, err := connectionbinding.NewCredentialSnapshot(

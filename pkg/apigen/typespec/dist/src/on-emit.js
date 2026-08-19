@@ -1,7 +1,7 @@
-import { emitFile, getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxLength, getMaxValue, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
+import { emitFile, getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxLength, getMaxValue, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getPattern, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
 import { getAllHttpServices, getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo } from "@typespec/openapi";
-import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getNamedFailures, getPackages, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
+import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getNamedFailures, getPackages, getPropertyNames, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
 class IRBuilder {
     program;
@@ -224,6 +224,21 @@ class IRBuilder {
                 one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
             };
         }
+        // A compact authored reference may intentionally be either a JSON scalar
+        // (for example an unaliased metric name) or a closed object carrying the
+        // additional reference fields. This is still a structural union: it has
+        // no discriminator because the scalar branch has no object properties.
+        // Keep the variants explicit in the IR so JSON Schema and TypeScript
+        // projections retain the exact authored shape. Go's model projection emits
+        // a strict scalar/object wrapper; contextual visual/query compatibility
+        // remains compiler-owned.
+        if (scalarVariants.some((variant) => isJSONScalarType(variant.type))) {
+            return {
+                type: "union",
+                namespace: namespaceName(type.namespace),
+                one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
+            };
+        }
         const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
         this.program.reportDiagnostics(diagnostics);
         if (!union || !type.name) {
@@ -287,8 +302,13 @@ class IRBuilder {
         return schema;
     }
     schemaProperty(property) {
+        const schema = withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`));
+        const propertyNames = getPropertyNames({ program: this.program }, property);
+        if (propertyNames) {
+            schema.property_names = this.schemaRef(propertyNames, `${property.name} key`);
+        }
         const schemaProperty = {
-            schema: withSchemaConstraints(this.program, property, this.schemaRef(property.type, `property ${property.name}`)),
+            schema,
         };
         const doc = getDoc(this.program, property);
         if (doc) {
@@ -1602,12 +1622,14 @@ function withSchemaConstraints(program, target, schema) {
     const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
     const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
     const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
+    const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
     return prune({
         ...schema,
         minimum,
         maximum,
         min_length: minLength,
         max_length: maxLength,
+        pattern,
     });
 }
 function schemaConstraintCandidates(target) {

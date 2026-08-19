@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -102,6 +103,11 @@ func TestDeliveryMaterializationDeltaSelectsOnlyImpactedTables(t *testing.T) {
 
 func materializationDeltaFixture(t *testing.T) projectartifact.Project {
 	t.Helper()
+	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
+		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "orders.csv", Format: "csv"},
+		Format:                 "csv",
+		Options:                projectcontracts.DefaultCSVReaderOptions(),
+	}}
 	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "project:delta", Kind: projectgraph.KindProject, Name: "delta"},
 		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
@@ -117,13 +123,13 @@ func materializationDeltaFixture(t *testing.T) projectartifact.Project {
 	artifact, err := projectartifact.NewProject(graphValue, projectmanifest.Project{
 		ID:          "project:delta",
 		Connections: map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
-		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv"}},
+		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}},
 		Models: map[string]semanticmodel.Table{
-			"model:orders":    {Source: "source:orders"},
-			"model:customers": {Source: "source:orders"},
-			"model:legacy":    {Source: "source:orders"},
+			"model:orders":    {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
+			"model:customers": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
+			"model:legacy":    {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}},
 		},
-		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Source: "orders"}, "customers": {Source: "customers"}}}},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}, "customers": {Execution: semanticmodel.ExecutionDefinition{Source: "customers"}}}}},
 	})
 	if err != nil {
 		t.Fatal(err)

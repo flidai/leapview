@@ -12,6 +12,39 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
+func TestPlannerHonorsGrainOnEveryDimensionReference(t *testing.T) {
+	model := testModel()
+	populateFixtureTableModelNames(model)
+	model.Dimensions["ship_date"] = semanticmodel.SemanticDimension{
+		Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ, NativeGrain: "day", Grains: []string{"day", "month"},
+		Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.ordered_at"}},
+	}
+	plan, err := mustNewCompiledPlanner(t, model).Plan(Request{
+		Dimensions: []Field{{Field: "activity_date", Alias: "purchase_month", Grain: "month"}, {Field: "ship_date", Alias: "ship_day", Grain: "day"}},
+		Metrics:    []Field{{Field: "order_count", Alias: "orders"}}, Limit: 20,
+	})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Columns) < 3 || plan.Columns[0] != "purchase_month" || plan.Columns[1] != "ship_day" {
+		t.Fatalf("plan columns = %#v", plan.Columns)
+	}
+	if !strings.Contains(plan.SQL, "DATE_TRUNC('month'") || !strings.Contains(plan.SQL, "DATE_TRUNC('day'") {
+		t.Fatalf("plan SQL does not preserve independent grains: %s", plan.SQL)
+	}
+}
+
+func TestPlannerRejectsUnsupportedPerDimensionGrain(t *testing.T) {
+	model := testModel()
+	populateFixtureTableModelNames(model)
+	_, err := mustNewCompiledPlanner(t, model).Plan(Request{
+		Dimensions: []Field{{Field: "activity_date", Grain: "year"}}, Metrics: []Field{{Field: "order_count"}}, Limit: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), `semantic dimension "activity_date" does not support grain "year"`) {
+		t.Fatalf("error = %v, want unsupported grain diagnostic", err)
+	}
+}
+
 func TestPlannerScalarMultiDatasetAggregatesDatasetsIndependently(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{Metrics: []Field{
 		{Field: "revenue", Alias: "revenue"},
@@ -539,16 +572,16 @@ func testModel() *semanticmodel.Model {
 	return &semanticmodel.Model{
 		Name: "commerce",
 		Tables: map[string]semanticmodel.Table{
-			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.ModelEntitySpec{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"order_id": {Datatype: semanticmodel.DataTypeInteger}, "customer_id": {Datatype: semanticmodel.DataTypeInteger},
 				"ordered_at": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ}, "revenue": {Type: "number", Datatype: semanticmodel.DataTypeDecimal},
 				"status": {Type: "string", Datatype: semanticmodel.DataTypeString}, "latitude": {Type: "number", Datatype: semanticmodel.DataTypeFloat}, "longitude": {Type: "number", Datatype: semanticmodel.DataTypeFloat},
 			}},
-			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.ModelEntitySpec{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"tags": {GrainEntity: "tag", Entities: map[string]semanticmodel.EntityDefinition{"tag": {Type: "primary", Fields: []string{"tag_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"tag_id": {Datatype: semanticmodel.DataTypeInteger}, "customer_id": {Datatype: semanticmodel.DataTypeInteger},
 				"tagged_at": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
 			}},
-			"customers": {GrainEntity: "customer", Entities: map[string]semanticmodel.ModelEntitySpec{"customer": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+			"customers": {GrainEntity: "customer", Entities: map[string]semanticmodel.EntityDefinition{"customer": {Type: "primary", Fields: []string{"customer_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"customer_id": {Datatype: semanticmodel.DataTypeInteger}, "state": {Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
 		},
@@ -584,7 +617,7 @@ func rolePlayingDateModel() *semanticmodel.Model {
 	orders.Dimensions["shipped_date_id"] = semanticmodel.MetricDimension{Datatype: semanticmodel.DataTypeInteger}
 	model.Tables["orders"] = orders
 	model.Datasets["dates"] = semanticmodel.SemanticDatasetSpec{Model: "dates"}
-	model.Tables["dates"] = semanticmodel.Table{GrainEntity: "date", Entities: map[string]semanticmodel.ModelEntitySpec{"date": {Type: "primary", Fields: []string{"date_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
+	model.Tables["dates"] = semanticmodel.Table{GrainEntity: "date", Entities: map[string]semanticmodel.EntityDefinition{"date": {Type: "primary", Fields: []string{"date_id"}}}, Dimensions: map[string]semanticmodel.MetricDimension{
 		"date_id":    {Datatype: semanticmodel.DataTypeInteger},
 		"date_value": {Type: "date", Datatype: semanticmodel.DataTypeDate},
 	}}

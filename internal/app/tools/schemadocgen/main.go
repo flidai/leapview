@@ -68,7 +68,7 @@ func generate(schemaDir, exampleDir, outDir string) error {
 		if err := json.Unmarshal(contents, &value); err != nil {
 			return fmt.Errorf("decode %s: %w", entry.Name(), err)
 		}
-		kind := stringValue(value["properties"], "kind", "const")
+		kind := schemaKind(value)
 		if kind == "" {
 			return fmt.Errorf("schema %s has no kind", entry.Name())
 		}
@@ -292,6 +292,85 @@ func stringValue(raw any, keys ...string) string {
 	}
 	result, _ := value.(string)
 	return result
+}
+
+// schemaKind resolves both the legacy CUE object root and APIGen's sealed
+// contract root. APIGen emits an anyOf/contract reference around the actual
+// resource model, so the kind literal lives below $defs rather than directly
+// under properties.
+func schemaKind(value schema) string {
+	return schemaKindAt(value, value)
+}
+
+func schemaKindAt(root schema, value schema) string {
+	if kind := stringValue(value["properties"], "kind", "const"); kind != "" {
+		return kind
+	}
+	if values, ok := value["properties"].(map[string]any); ok {
+		if kind, ok := values["kind"].(map[string]any); ok {
+			if literal := schemaLiteral(root, kind); literal != "" {
+				return literal
+			}
+		}
+	}
+	for _, unionName := range []string{"anyOf", "oneOf"} {
+		alternatives, _ := value[unionName].([]any)
+		for _, alternative := range alternatives {
+			ref, _ := alternative.(map[string]any)
+			if reference, ok := ref["$ref"].(string); ok {
+				if definition, ok := resolveDefinition(root, reference); ok {
+					if kind := schemaKindAt(root, definition); kind != "" {
+						return kind
+					}
+				}
+			}
+		}
+	}
+	if contracts, ok := value["x-apigen-contracts"].([]any); ok {
+		for _, rawContract := range contracts {
+			contract, _ := rawContract.(map[string]any)
+			if contractSchema, ok := contract["schema"].(map[string]any); ok {
+				if reference, ok := contractSchema["$ref"].(string); ok {
+					if definition, ok := resolveDefinition(root, reference); ok {
+						if kind := schemaKindAt(root, definition); kind != "" {
+							return kind
+						}
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func schemaLiteral(root schema, value map[string]any) string {
+	if literal, ok := value["const"].(string); ok {
+		return literal
+	}
+	if enum, ok := value["enum"].([]any); ok && len(enum) > 0 {
+		literal, _ := enum[0].(string)
+		return literal
+	}
+	if reference, ok := value["$ref"].(string); ok {
+		if definition, ok := resolveDefinition(root, reference); ok {
+			return schemaLiteral(root, definition)
+		}
+	}
+	return ""
+}
+
+func resolveDefinition(root schema, reference string) (schema, bool) {
+	const prefix = "#/$defs/"
+	if !strings.HasPrefix(reference, prefix) {
+		return nil, false
+	}
+	name, err := url.PathUnescape(strings.TrimPrefix(reference, prefix))
+	if err != nil {
+		return nil, false
+	}
+	definitions, _ := root["$defs"].(map[string]any)
+	definition, ok := definitions[name].(map[string]any)
+	return definition, ok
 }
 
 func requiredFields(value schema) map[string]bool {

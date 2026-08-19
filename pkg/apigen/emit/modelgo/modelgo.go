@@ -59,7 +59,9 @@ func Emit(doc ir.Document, opts Options) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("contract schema %q is missing", name)
 		}
-		emitSchema(&b, doc, name, schema, resolveName)
+		if err := emitSchema(&b, doc, name, schema, resolveName); err != nil {
+			return nil, err
+		}
 	}
 	return []byte(b.String()), nil
 }
@@ -71,12 +73,18 @@ func packageName(opts Options) string {
 	return opts.PackageName
 }
 
-func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, resolveName func(string) string) {
+func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, resolveName func(string) string) error {
 	typeName := exportedName(name)
 	switch schema.Type {
 	case "union":
 		if schema.Discriminator == nil {
-			b.WriteString("type " + typeName + " = any\n\n")
+			if hasNonScalarUnionVariant(schema) {
+				if err := gounion.EmitScalarObject(b, doc, name, schema, resolveName); err != nil {
+					return err
+				}
+			} else {
+				b.WriteString("type " + typeName + " = any\n\n")
+			}
 		} else {
 			gounion.Emit(b, doc, name, schema, resolveName)
 		}
@@ -93,19 +101,20 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 		for _, propertyName := range contractutil.OrderedProperties(schema) {
 			property := schema.Properties[propertyName]
 			fieldType := gotype.Ref(property.Schema, resolveName)
+			optional := ""
 			if _, ok := required[propertyName]; !ok {
 				fieldType = "*" + fieldType
+				optional = ",omitempty"
 			}
 			b.WriteString("\t")
 			b.WriteString(fieldName(propertyName))
 			b.WriteString(" ")
 			b.WriteString(fieldType)
-			b.WriteString(" `json:\"")
-			b.WriteString(propertyName)
-			if _, ok := required[propertyName]; !ok {
-				b.WriteString(",omitempty")
-			}
-			b.WriteString("\"`\n")
+			b.WriteString(" `json:")
+			b.WriteString(quotedGoString(propertyName + optional))
+			b.WriteString(" yaml:")
+			b.WriteString(quotedGoString(propertyName + optional))
+			b.WriteString("`\n")
 		}
 		b.WriteString("}\n\n")
 	case "array":
@@ -126,6 +135,7 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 		b.WriteString("\n\n")
 		emitEnumConstants(b, typeName, schema.Enum)
 	}
+	return nil
 }
 
 func dependencyNames(doc ir.Document, imports contractimport.Bindings) ([]string, []string) {
@@ -158,11 +168,35 @@ func emitImports(b *strings.Builder, values map[string]string) {
 
 func hasUnion(doc ir.Document, names []string) bool {
 	for _, name := range names {
-		if doc.Schemas[name].Type == "union" && doc.Schemas[name].Discriminator != nil {
+		if doc.Schemas[name].Type == "union" && (doc.Schemas[name].Discriminator != nil || hasNonScalarUnionVariant(doc.Schemas[name])) {
 			return true
 		}
 	}
 	return false
+}
+
+func hasNonScalarUnionVariant(schema ir.Schema) bool {
+	if schema.Type != "union" || schema.Discriminator != nil {
+		return false
+	}
+	for _, variant := range schema.OneOf {
+		if !isKnownScalarUnionVariant(variant) {
+			return true
+		}
+	}
+	return false
+}
+
+func isKnownScalarUnionVariant(variant ir.SchemaRef) bool {
+	if variant.Ref != "" || variant.Items != nil || variant.AdditionalProperties != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(variant.Type)) {
+	case "boolean", "integer", "number", "string", "null":
+		return true
+	default:
+		return false
+	}
 }
 
 func schemaRefGoType(ref ir.SchemaRef) string {

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
@@ -24,11 +26,13 @@ var (
 type CandidateConnectionRequirement struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string
+	Access        semanticmodel.ConnectionAccess
 }
 
 type CandidateAuthoredConnection struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string
+	Access        semanticmodel.ConnectionAccess
 }
 
 type CandidateRestriction struct {
@@ -60,6 +64,10 @@ type CandidateGenerationArtifact struct {
 	Connections         []CandidateConnectionRequirement
 	AuthoredConnections []CandidateAuthoredConnection
 	Restrictions        []CandidateRestriction
+	// BaseGateEvidence is the sealed base's source/check evidence. Reuse paths
+	// may use its observed schema/timestamps only after current identity checks
+	// and must still re-evaluate freshness at candidate evaluation time.
+	BaseGateEvidence *GateEvidence
 }
 
 type CandidateArtifactRequest struct {
@@ -80,7 +88,10 @@ type CandidateArtifactIdentity struct {
 }
 
 type CandidateArtifactSet struct {
-	Artifact                 ProjectArtifactProvenance
+	Artifact ProjectArtifactProvenance
+	// Extensions is target-side, non-secret evidence for exact extension
+	// artifacts admitted during bounded candidate preparation.
+	Extensions               []extension.Evidence
 	AuthorizationFingerprint string
 	Generation               CandidateGenerationArtifact
 	// Compiler is the exact immutable compiler evidence used to produce the

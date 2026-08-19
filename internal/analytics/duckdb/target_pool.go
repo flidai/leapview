@@ -52,15 +52,17 @@ type TargetRuntimeLimits struct {
 }
 
 type TargetRuntimePoolFactoryConfig struct {
-	Open       TargetRuntimeSessionOpener
-	Limits     TargetRuntimeLimits
-	RequireTLS bool
+	Open               TargetRuntimeSessionOpener
+	Limits             TargetRuntimeLimits
+	RequireTLS         bool
+	ExtensionAdmission ExtensionAdmission
 }
 
 type TargetRuntimePoolFactory struct {
-	open       TargetRuntimeSessionOpener
-	limits     TargetRuntimeLimits
-	requireTLS bool
+	open               TargetRuntimeSessionOpener
+	limits             TargetRuntimeLimits
+	requireTLS         bool
+	extensionAdmission ExtensionAdmission
 }
 
 var _ connectionbinding.RuntimePoolFactory = (*TargetRuntimePoolFactory)(nil)
@@ -74,7 +76,7 @@ func NewTargetRuntimePoolFactory(config TargetRuntimePoolFactoryConfig) (*Target
 		)
 	}
 	return &TargetRuntimePoolFactory{
-		open: config.Open, limits: config.Limits, requireTLS: config.RequireTLS,
+		open: config.Open, limits: config.Limits, requireTLS: config.RequireTLS, extensionAdmission: config.ExtensionAdmission,
 	}, nil
 }
 
@@ -89,8 +91,12 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 	if err := validateTargetProbeBinding(binding, factory.requireTLS); err != nil {
 		return nil, err
 	}
+	logical := semanticmodel.Connection{Kind: binding.ConnectorKind}
+	if binding.AuthenticationMode == connectionbinding.AuthenticationNone {
+		logical.Access = semanticmodel.ConnectionAccessPublic
+	}
 	connection, err := ApplyTargetBinding(
-		semanticmodel.Connection{Kind: binding.ConnectorKind},
+		logical,
 		binding,
 		snapshot,
 	)
@@ -121,7 +127,9 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		healthStatement = fmt.Sprintf("SELECT * FROM quack_query('%s', 'SELECT 1')", sqlString(uri))
 		activationStatements = append(activationStatements, healthStatement)
 	default:
-		return nil, connectionbinding.ErrInvalidBinding
+		// Path-backed target bindings still use the isolated pool as a
+		// bounded activation/health gate. Source reads happen later through
+		// the governed relation compiler, so there is no attach statement.
 	}
 	session, err := factory.open(ctx)
 	if err != nil {
@@ -142,7 +150,17 @@ func (factory *TargetRuntimePoolFactory) Prepare(
 		"SET threads = " + strconv.Itoa(factory.limits.MaxThreads),
 	}
 	for _, extension := range spec.RequiredExtensions {
-		statements = append(statements, "INSTALL "+extension+" FROM core", "LOAD "+extension)
+		if factory.extensionAdmission == nil {
+			return nil, fmt.Errorf("extension %s is required but has no admission", extension)
+		}
+		admitted, err := factory.extensionAdmission.AdmitExtension(ctx, extension)
+		if err != nil {
+			return nil, fmt.Errorf("extension %s was not admitted: %w", extension, err)
+		}
+		if err := validateAdmittedExtension(extension, admitted); err != nil {
+			return nil, err
+		}
+		statements = append(statements, loadExtensionStatement(admitted.Path))
 	}
 	statements = append(statements, secret)
 	statements = append(statements, activationStatements...)
@@ -307,12 +325,12 @@ func (pool *targetRuntimePool) Resolve(
 	resolved.SSLMode = pool.connection.SSLMode
 	resolved.Scope = pool.connection.Scope
 	resolved.Credentials = semanticmodel.ConnectionCredentials{}
-	resolved.Options = maps.Clone(logical.Options)
-	if resolved.Options == nil && len(pool.connection.Options) > 0 {
-		resolved.Options = make(map[string]any, len(pool.connection.Options))
+	resolved.RuntimeOptions = logical.RuntimeOptions
+	if pool.connection.RuntimeOptions.Path != "" {
+		resolved.RuntimeOptions.Path = pool.connection.RuntimeOptions.Path
 	}
-	for key, value := range pool.connection.Options {
-		resolved.Options[key] = value
+	if pool.connection.RuntimeOptions.DataPath != "" {
+		resolved.RuntimeOptions.DataPath = pool.connection.RuntimeOptions.DataPath
 	}
 	resolved.Auth = maps.Clone(pool.connection.Auth)
 	validated, err := resolved.Validate(strings.TrimSpace(name))
@@ -342,7 +360,5 @@ func (pool *targetRuntimePool) Close() error {
 
 func cloneTargetConnection(connection semanticmodel.Connection) semanticmodel.Connection {
 	connection.Auth = maps.Clone(connection.Auth)
-	connection.Options = maps.Clone(connection.Options)
-	connection.Defaults.Options = maps.Clone(connection.Defaults.Options)
 	return connection
 }

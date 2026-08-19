@@ -1049,7 +1049,14 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
             ${this.renderFilterValidation()}
             ${this.renderFilterDock()}
             <div class="canvas-wrap">
-              <lv-report-canvas width=${page.canvas.width} height=${page.canvas.height}>
+              <lv-report-canvas
+                .width=${page.canvas.width}
+                .height=${page.canvas.height}
+                .columns=${page.grid.columns}
+                .rowHeight=${page.grid.rowHeight}
+                .gap=${page.grid.gap}
+                .padding=${page.grid.padding}
+              >
                 ${page.components.map((component) => this.renderCanvasComponent(component))}
               </lv-report-canvas>
             </div>
@@ -1264,6 +1271,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         data-y=${component.y}
         data-w=${component.width}
         data-h=${component.height}
+        data-col=${component.placement?.col ?? 0}
+        data-row=${component.placement?.row ?? 0}
+        data-col-span=${component.placement?.colSpan ?? 0}
+        data-row-span=${component.placement?.rowSpan ?? 0}
         .transparent=${component.kind === 'header'}
 		?data-agent-referenced=${referenced}
 		@lv-agent-reference=${this.handleAgentReference}

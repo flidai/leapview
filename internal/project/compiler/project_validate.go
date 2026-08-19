@@ -5,8 +5,6 @@ import (
 	"net"
 	"net/url"
 	"strings"
-
-	"github.com/flidai/leapview/internal/analytics/connectors"
 )
 
 func validateProject(project Project) error {
@@ -17,11 +15,14 @@ func validateProject(project Project) error {
 	}
 	for sourceName, source := range project.Sources {
 		if source.Path != "" && source.Format == "" {
-			format, ok := connectors.InferFormat(source.Path)
-			if !ok {
-				return resourceError(project.SourcePaths[sourceName], project.SourceIDs[sourceName], "spec.format", "Source %q path %q requires format", sourceName, source.Path)
+			return resourceError(project.SourcePaths[sourceName], project.SourceIDs[sourceName], "spec.location.format", "Source %q path requires explicit format", sourceName)
+		}
+		if connection, ok := project.Connections[source.Connection]; ok && source.Path != "" {
+			effective, err := ResolveEffectivePathLocation(source, connection)
+			if err != nil {
+				return resourceError(project.SourcePaths[sourceName], project.SourceIDs[sourceName], "spec.location.options", "Source %q: %s", sourceName, err)
 			}
-			source.Format = format
+			source.EffectivePathLocation = effective
 			project.Sources[sourceName] = source
 		}
 		if err := source.Validate(localSourceName(sourceName), project.Connections); err != nil {

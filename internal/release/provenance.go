@@ -1,6 +1,7 @@
 package release
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"unicode"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	ocidigest "github.com/opencontainers/go-digest"
@@ -20,10 +23,6 @@ const ProvenanceVersion = 4
 
 var (
 	ErrProvenanceInvalid = errors.New("release provenance invalid")
-	// ErrLegacyReuseSnapshot identifies immutable rows that predate the
-	// sealed-base reuse literal. Operators must rebuild/re-publish them under
-	// reuse_base; callers must not reinterpret or rewrite their digest.
-	ErrLegacyReuseSnapshot = errors.New("legacy reuse_snapshot provenance requires controlled rebuild")
 )
 
 type CandidateProvenance struct {
@@ -45,18 +44,43 @@ type ManagedDataPin struct {
 }
 
 type BindingEvidence struct {
-	BindingID          string `json:"bindingId"`
-	ConnectionID       string `json:"connectionId"`
-	ConnectorKind      string `json:"connectorKind"`
-	Revision           int64  `json:"revision"`
-	ValidatedVersion   string `json:"validatedVersion"`
-	EndpointConfigHash string `json:"endpointConfigHash"`
+	BindingID          string                         `json:"bindingId"`
+	ConnectionID       string                         `json:"connectionId"`
+	ConnectorKind      string                         `json:"connectorKind"`
+	Revision           int64                          `json:"revision"`
+	ValidatedVersion   string                         `json:"validatedVersion"`
+	EndpointConfigHash string                         `json:"endpointConfigHash"`
+	Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+}
+
+// BindingFingerprint returns the canonical hash of target-acquired binding
+// evidence. It excludes raw endpoint/credential material by construction.
+func BindingFingerprint(values []BindingEvidence) string {
+	values = append([]BindingEvidence(nil), values...)
+	sort.Slice(values, func(i, j int) bool { return values[i].BindingID < values[j].BindingID })
+	type input struct {
+		BindingID          string                         `json:"bindingId"`
+		ConnectionID       string                         `json:"connectionId"`
+		ConnectorKind      string                         `json:"connectorKind"`
+		Revision           int64                          `json:"revision"`
+		ProviderVersion    string                         `json:"providerVersion"`
+		EndpointConfigHash string                         `json:"endpointConfigHash"`
+		Access             semanticmodel.ConnectionAccess `json:"access,omitempty"`
+	}
+	preimage := make([]input, len(values))
+	for i, value := range values {
+		preimage[i] = input{value.BindingID, value.ConnectionID, value.ConnectorKind, value.Revision, value.ValidatedVersion, value.EndpointConfigHash, value.Access}
+	}
+	encoded, _ := json.Marshal(preimage)
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + fmt.Sprintf("%x", sum)
 }
 
 type AuthoredConnectionEvidence struct {
-	ConnectionID  string `json:"connectionId"`
-	ConnectorKind string `json:"connectorKind"`
-	DisplayName   string `json:"displayName,omitempty"`
+	ConnectionID  string                         `json:"connectionId"`
+	ConnectorKind string                         `json:"connectorKind"`
+	DisplayName   string                         `json:"displayName,omitempty"`
+	Access        semanticmodel.ConnectionAccess `json:"access,omitempty"`
 }
 
 type GenerationDataMode string
@@ -65,18 +89,8 @@ const (
 	// GenerationDataReuseBase is the canonical mode for retaining references
 	// from an exact sealed serving base. It is deliberately independent of a
 	// DuckLake snapshot number; sealed generations may have no snapshot ID.
-	GenerationDataReuseBase GenerationDataMode = "reuse_base"
-	// GenerationDataReuseSnapshot remains a source-compatible alias for callers
-	// compiled against the pre-sealed-base name. New production code must use
-	// GenerationDataReuseBase.
-	GenerationDataReuseSnapshot GenerationDataMode = GenerationDataReuseBase
-	// GenerationDataReuseSnapshotLegacy is the historical persisted literal
-	// emitted before sealed-base reuse became canonical. It is retained only so
-	// immutable provenance can be read and audited across the migration; new
-	// provenance and every physical-use path must reject it and require a
-	// controlled rebuild.
-	GenerationDataReuseSnapshotLegacy GenerationDataMode = "reuse_snapshot"
-	GenerationDataRefreshSources      GenerationDataMode = "refresh_sources"
+	GenerationDataReuseBase      GenerationDataMode = "reuse_base"
+	GenerationDataRefreshSources GenerationDataMode = "refresh_sources"
 )
 
 // ProjectArtifactProvenance identifies one complete project artifact. There
@@ -102,6 +116,14 @@ type GenerationPlanProvenance struct {
 	ManagedDataPins     []ManagedDataPin              `json:"managedDataPins"`
 	Bindings            []BindingEvidence             `json:"bindings"`
 	AuthoredConnections []AuthoredConnectionEvidence  `json:"authoredConnections"`
+	// Extensions is non-secret target evidence for exact DuckDB extension
+	// artifacts admitted while preparing this candidate. It is optional for
+	// historical releases and canonicalized when present.
+	Extensions []extension.Evidence `json:"extensions,omitempty"`
+	// GateEvidence is required for every v1 provenance row. Projects without
+	// authored checks still persist a canonical success record with empty
+	// components, so nil cannot represent a current candidate.
+	GateEvidence *GateEvidence `json:"gateEvidence,omitempty"`
 }
 
 type ProvenanceInput struct {
@@ -123,13 +145,11 @@ type Provenance struct {
 }
 
 func NewProvenance(input ProvenanceInput) (Provenance, error) {
-	return newProvenance(input, false)
+	return newProvenance(input)
 }
 
-// newProvenance canonicalizes and digests provenance. allowLegacy is reserved
-// for validating immutable historical rows without changing their bytes; it
-// must never be enabled for newly-created or physically-used provenance.
-func newProvenance(input ProvenanceInput, allowLegacy bool) (Provenance, error) {
+// newProvenance canonicalizes and digests provenance.
+func newProvenance(input ProvenanceInput) (Provenance, error) {
 	artifact, err := normalizeProjectArtifactProvenance(input.Artifact)
 	if err != nil {
 		return Provenance{}, err
@@ -142,9 +162,12 @@ func newProvenance(input ProvenanceInput, allowLegacy bool) (Provenance, error) 
 	if err != nil {
 		return Provenance{}, err
 	}
-	plan, err := normalizeGenerationPlanProvenance(input.Plan, artifact, allowLegacy)
+	plan, err := normalizeGenerationPlanProvenance(input.Plan, artifact)
 	if err != nil {
 		return Provenance{}, err
+	}
+	if plan.GateEvidence == nil || plan.GateEvidence.CandidateID != candidate.ID {
+		return Provenance{}, provenanceInvalid(errors.New("gate evidence is not bound to candidate identity"))
 	}
 	artifactDigest, err := canonicalDigest(artifact)
 	if err != nil {
@@ -170,27 +193,14 @@ func newProvenance(input ProvenanceInput, allowLegacy bool) (Provenance, error) 
 }
 
 func (p Provenance) Validate() error {
-	if p.Plan.DataMode == GenerationDataReuseSnapshotLegacy {
-		return provenanceInvalid(ErrLegacyReuseSnapshot)
-	}
-	return p.validate(false)
+	return p.validate()
 }
 
-// ValidateStored verifies an immutable persisted provenance row, including
-// the historical reuse_snapshot literal. It deliberately does not rewrite or
-// recalculate the stored digest and is intended only for read/audit paths.
-func (p Provenance) ValidateStored() error {
-	return p.validate(true)
-}
-
-func (p Provenance) validate(allowLegacy bool) error {
+func (p Provenance) validate() error {
 	if p.Version != ProvenanceVersion {
 		return provenanceInvalid(fmt.Errorf("version = %d, want %d", p.Version, ProvenanceVersion))
 	}
-	if !allowLegacy && p.Plan.DataMode == GenerationDataReuseSnapshotLegacy {
-		return provenanceInvalid(ErrLegacyReuseSnapshot)
-	}
-	expected, err := newProvenance(ProvenanceInput{Artifact: p.Artifact, Candidate: p.Candidate, SourceRevision: p.SourceRevision, Plan: p.Plan}, allowLegacy)
+	expected, err := newProvenance(ProvenanceInput{Artifact: p.Artifact, Candidate: p.Candidate, SourceRevision: p.SourceRevision, Plan: p.Plan})
 	if err != nil {
 		return err
 	}
@@ -242,7 +252,7 @@ func normalizeCandidateProvenance(c CandidateProvenance) (CandidateProvenance, e
 	return c, nil
 }
 
-func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact ProjectArtifactProvenance, allowLegacy bool) (GenerationPlanProvenance, error) {
+func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact ProjectArtifactProvenance) (GenerationPlanProvenance, error) {
 	if err := p.Identity.Validate(); err != nil {
 		return GenerationPlanProvenance{}, provenanceInvalid(err)
 	}
@@ -264,10 +274,7 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	if validateOperationalID(p.TargetID) != nil || p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ContentDigest == "" {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("runtime, policy, data, and artifact evidence are required"))
 	}
-	if p.DataMode == GenerationDataReuseSnapshotLegacy && !allowLegacy {
-		return GenerationPlanProvenance{}, provenanceInvalid(ErrLegacyReuseSnapshot)
-	}
-	if p.DataMode != GenerationDataReuseBase && p.DataMode != GenerationDataRefreshSources && (!allowLegacy || p.DataMode != GenerationDataReuseSnapshotLegacy) {
+	if p.DataMode != GenerationDataReuseBase && p.DataMode != GenerationDataRefreshSources {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("data mode is invalid"))
 	}
 	var err error
@@ -283,13 +290,75 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 	if err != nil {
 		return GenerationPlanProvenance{}, err
 	}
-	if (p.DataMode == GenerationDataReuseBase || p.DataMode == GenerationDataReuseSnapshotLegacy) && len(p.AuthoredConnections) != 0 {
+	p.Extensions, err = normalizeExtensionEvidence(p.Extensions)
+	if err != nil {
+		return GenerationPlanProvenance{}, err
+	}
+	if p.GateEvidence == nil {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("gate evidence is required for v1 provenance"))
+	}
+	canonical, gateErr := p.GateEvidence.Canonical()
+	if gateErr != nil {
+		return GenerationPlanProvenance{}, provenanceInvalid(gateErr)
+	}
+	if canonical.SourceDigest != artifact.SourceDigest || canonical.RuntimeVersion != p.RuntimeVersion || canonical.BindingGeneration != BindingFingerprint(p.Bindings) {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("gate evidence is not bound to artifact, runtime, or generation identity"))
+	}
+	if canonical.Outcome != GateSuccess && canonical.Outcome != GateWarning {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("failed gate evidence cannot be sealed into generation provenance"))
+	}
+	p.GateEvidence = &canonical
+	if p.DataMode == GenerationDataReuseBase && len(p.AuthoredConnections) != 0 {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("snapshot reuse cannot retain authored refresh connection evidence"))
 	}
 	if p.DataMode == GenerationDataRefreshSources && len(p.Bindings) == 0 && len(p.ManagedDataPins) == 0 && len(p.AuthoredConnections) == 0 {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("source refresh requires connection evidence"))
 	}
 	return p, nil
+}
+
+func normalizeExtensionEvidence(values []extension.Evidence) ([]extension.Evidence, error) {
+	values = append([]extension.Evidence(nil), values...)
+	for i := range values {
+		value := &values[i]
+		if value.Name != strings.TrimSpace(value.Name) || value.Identity != strings.TrimSpace(value.Identity) || value.Digest != strings.TrimSpace(value.Digest) || value.DuckDBVersion != strings.TrimSpace(value.DuckDBVersion) || value.ExtensionVersion != strings.TrimSpace(value.ExtensionVersion) || value.GOOS != strings.TrimSpace(value.GOOS) || value.GOARCH != strings.TrimSpace(value.GOARCH) || value.Platform != strings.TrimSpace(value.Platform) || value.SupportProfile != strings.TrimSpace(value.SupportProfile) {
+			return nil, provenanceInvalid(errors.New("extension evidence identity must be canonical"))
+		}
+		if value.Name == "" || value.Identity == "" || value.Digest == "" || value.DuckDBVersion == "" || value.ExtensionVersion == "" || value.GOOS == "" || value.GOARCH == "" || value.Platform == "" || value.SupportProfile == "" || platformdigest.ValidateSHA256Identity(value.Identity) != nil || platformdigest.ValidateSHA256Identity(value.Digest) != nil {
+			return nil, provenanceInvalid(errors.New("extension evidence identity is invalid"))
+		}
+		if !extensionEvidenceReference(value.Origin, false) || !extensionEvidenceReference(value.Provenance, true) || !extensionEvidenceReference(value.Signature, true) {
+			return nil, provenanceInvalid(errors.New("extension evidence contains an unsafe reference"))
+		}
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].Name < values[j].Name })
+	for i := 1; i < len(values); i++ {
+		if values[i-1].Name == values[i].Name {
+			return nil, provenanceInvalid(errors.New("duplicate extension evidence"))
+		}
+	}
+	return values, nil
+}
+
+func extensionEvidenceReference(value string, typed bool) bool {
+	if value == "" || value != strings.TrimSpace(value) || strings.Contains(value, "://") || strings.ContainsAny(value, `/\\`) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return false
+	}
+	if !typed {
+		return true
+	}
+	if strings.HasPrefix(value, "sha256:") {
+		return platformdigest.ValidateSHA256Identity(value) == nil
+	}
+	if !strings.HasPrefix(value, "sig:") && !strings.HasPrefix(value, "attest:") {
+		return false
+	}
+	for _, r := range value {
+		if !(r == ':' || r == '-' || r == '_' || r == '.' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeAuthoredConnectionEvidence(values []AuthoredConnectionEvidence) ([]AuthoredConnectionEvidence, error) {

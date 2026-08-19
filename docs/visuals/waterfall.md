@@ -17,16 +17,25 @@ visuals:
     description: Explains positive and negative contributions to net revenue growth.
     type: waterfall
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
+      type: cartesian
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
     query:
-      dataset: revenue_bridge
+      type: aggregate
       dimensions:
-        component: revenue_bridge.component
+      - component
       metrics:
-        revenue_impact: null
+      - revenue_impact
       sort:
-        - field: component
-          direction: asc
+      - field: component
+        direction: asc
 ```
 
 ## Alternate metric
@@ -41,19 +50,22 @@ visuals:
     title: Monthly order contribution
     type: waterfall
     query:
+      type: aggregate
       dimensions:
-        purchase_month: orders.purchase_month
+      - purchase_month
       metrics:
-        order_count: null
+      - order_count
       sort:
-        - field: purchase_month
-          direction: asc
+      - field: purchase_month
+        direction: asc
       limit: 18
+    presentation:
+      type: cartesian
 ```
 
 ## Labels and zoom
 
-Use `presentation.labels` for exact contributions and `data_zoom` when many categories make the running sequence dense. Automatic collision handling keeps compact cards readable.
+Use `presentation.labels` for exact contributions and `dataZoom` when many categories make the running sequence dense. Automatic collision handling keeps compact cards readable.
 
 {{< visual id="revenue_waterfall_labeled" >}}
 
@@ -63,15 +75,25 @@ visuals:
     title: Labeled revenue waterfall
     type: waterfall
     presentation:
-      labels: {density: automatic, priority: [selected, anomaly, threshold], max_characters: 18, minimum_spacing: 6, tooltip_fallback: true}
-      data_zoom: true
+      type: cartesian
+      labels:
+        density: automatic
+        priority:
+        - selected
+        - anomaly
+        - threshold
+        maxCharacters: 18
+        minimumSpacing: 6
+        tooltipFallback: true
+      dataZoom: true
     query:
+      type: aggregate
       dimensions:
-        category: orders.category
+      - category
       metrics:
-        revenue: null
+      - revenue
       sort:
-        - field: value
-          direction: desc
+      - field: revenue
+        direction: desc
       limit: 12
 ```

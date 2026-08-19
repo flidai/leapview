@@ -89,7 +89,7 @@ func TestCandidateSourcesDataRevisionChangesWhenManagedDataPinChanges(t *testing
 func TestCandidateArtifactSetCarriesOneGenerationIdentity(t *testing.T) {
 	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_1")
 	require.NoError(t, err)
-	set := release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{Identity: identity, ArtifactDigest: "sha256:artifact", DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseSnapshot}}
+	set := release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{Identity: identity, ArtifactDigest: "sha256:artifact", DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseBase}}
 	require.Equal(t, identity, set.Generation.Identity)
 	require.Empty(t, set.Generation.AuthoredConnections)
 }
@@ -118,7 +118,7 @@ func TestCandidateRelationContextScopesPinChangesToDependentRelation(t *testing.
 		t.Fatal("unrelated customers relation changed when orders pin changed")
 	}
 	changedManifest := artifact.Manifest()
-	changedManifest.Connections["connection:orders"] = semanticmodel.Connection{Kind: "managed", Options: map[string]any{"region": "eu-west-1"}}
+	changedManifest.Connections["connection:orders"] = semanticmodel.Connection{Kind: "managed", Description: "eu-west-1"}
 	changedArtifact, err := projectartifact.NewProject(artifact.Graph(), changedManifest)
 	require.NoError(t, err)
 	changedContexts, err := candidateRelationContexts(map[string]string{"connection:orders": "revision-a", "connection:customers": "revision-a"}, changedArtifact)
@@ -169,7 +169,7 @@ func relationContextFixture(t *testing.T) projectartifact.Project {
 		ID:          "project:context",
 		Connections: map[string]semanticmodel.Connection{"connection:orders": {Kind: "managed"}, "connection:customers": {Kind: "managed"}},
 		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:orders", Format: "csv"}, "source:customers": {Connection: "connection:customers", Format: "csv"}},
-		Models:      map[string]semanticmodel.Table{"model:orders": {Source: "source:orders"}, "model:customers": {Source: "source:customers"}, "model:summary": {ModelDependencies: []string{"model:orders"}}},
+		Models:      map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, SourceDependencies: []string{"source:orders"}}, "model:customers": {Execution: semanticmodel.ExecutionDefinition{Source: "source:customers"}, SourceDependencies: []string{"source:customers"}}, "model:summary": {Execution: semanticmodel.ExecutionDefinition{SQL: "select * from model.orders"}, ModelDependencies: []string{"model:orders"}}},
 	})
 	require.NoError(t, err)
 	return artifact

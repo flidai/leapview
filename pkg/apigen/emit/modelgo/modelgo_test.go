@@ -19,11 +19,11 @@ func TestEmit_GeneratesContractRootsAndDependencies(t *testing.T) {
 
 	require.Contains(t, content, "package contracts")
 	require.Contains(t, content, "type DashboardEnvelope struct")
-	require.Contains(t, content, "Page DashboardPageSignal `json:\"page\"`")
-	require.Contains(t, content, "Visuals map[string]DashboardVisual `json:\"visuals\"`")
+	require.Contains(t, content, "Page DashboardPageSignal `json:\"page\" yaml:\"page\"`")
+	require.Contains(t, content, "Visuals map[string]DashboardVisual `json:\"visuals\" yaml:\"visuals\"`")
 	require.Contains(t, content, "type DashboardVisual struct")
-	require.Contains(t, content, "Data map[string]any `json:\"data\"`")
-	require.Contains(t, content, "Note *string `json:\"note,omitempty\"`")
+	require.Contains(t, content, "Data map[string]any `json:\"data\" yaml:\"data\"`")
+	require.Contains(t, content, "Note *string `json:\"note,omitempty\" yaml:\"note,omitempty\"`")
 }
 
 func TestEmit_PreservesGoInitialismsInJSONFieldNames(t *testing.T) {
@@ -70,10 +70,140 @@ func TestEmit_GeneratesStrictDiscriminatedUnion(t *testing.T) {
 	require.Contains(t, content, "func (value *Visual) Base() (*VisualBase, error)")
 	require.Contains(t, content, "func (value *Visual) Shape() (string, error)")
 	require.Contains(t, content, "func (value *Visual) UnmarshalJSON")
+	require.NotContains(t, content, "UnmarshalYAML")
 	require.Contains(t, content, "decoder.DisallowUnknownFields()")
 	require.Contains(t, content, `case "chart":`)
 	require.Contains(t, content, `if _, ok := fields["points"]; !ok`)
 	require.Contains(t, content, `required property points is missing`)
+}
+
+func TestEmit_GeneratesStrictScalarObjectUnion(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Dashboard"},
+		Schemas: map[string]ir.Schema{
+			"Selection": {Type: "union", OneOf: []ir.SchemaRef{{Type: "string"}, {Ref: "Reference"}}},
+			"Reference": {Type: "object", Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"name"}},
+		},
+		Contracts: []ir.Contract{{Name: "selection", Schema: ir.SchemaRef{Ref: "Selection"}}},
+	}
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type Selection struct {")
+	require.Contains(t, content, "String *string")
+	require.Contains(t, content, "Reference *Reference")
+	require.Contains(t, content, "func (value Selection) MarshalJSON()")
+	require.Contains(t, content, "expected a string or object")
+	require.NotContains(t, content, "type Selection = any")
+}
+
+func TestEmit_RejectsUnsupportedScalarObjectUnions(t *testing.T) {
+	tests := []struct {
+		name   string
+		oneOf  []ir.SchemaRef
+		schema map[string]ir.Schema
+		want   string
+	}{
+		{
+			name:  "multiple object branches",
+			oneOf: []ir.SchemaRef{{Type: "string"}, {Ref: "FirstReference"}, {Ref: "SecondReference"}},
+			schema: map[string]ir.Schema{
+				"FirstReference":  {Type: "object"},
+				"SecondReference": {Type: "object"},
+			},
+			want: "exactly one object-model branch",
+		},
+		{
+			name:  "multiple scalar branches",
+			oneOf: []ir.SchemaRef{{Type: "integer"}, {Type: "number"}, {Ref: "Reference"}},
+			schema: map[string]ir.Schema{
+				"Reference": {Type: "object"},
+			},
+			want: "exactly one scalar branch",
+		},
+		{
+			name:  "reference is not object",
+			oneOf: []ir.SchemaRef{{Type: "string"}, {Ref: "Reference"}},
+			schema: map[string]ir.Schema{
+				"Reference": {Type: "string"},
+			},
+			want: "object-model schema",
+		},
+		{
+			name:   "inline object branch",
+			oneOf:  []ir.SchemaRef{{Type: "string"}, {Type: "object"}},
+			schema: map[string]ir.Schema{},
+			want:   "scalar or named object-model ref",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.schema["Selection"] = ir.Schema{Type: "union", OneOf: test.oneOf}
+			doc := ir.Document{Info: ir.Info{Namespace: "Dashboard"}, Schemas: test.schema, Contracts: []ir.Contract{{Name: "selection", Schema: ir.SchemaRef{Ref: "Selection"}}}}
+			_, err := Emit(doc, Options{})
+			require.Error(t, err)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestEmit_GeneratedScalarObjectUnionRuntime(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Dashboard"},
+		Schemas: map[string]ir.Schema{
+			"Selection": {Type: "union", OneOf: []ir.SchemaRef{{Type: "string"}, {Ref: "Reference"}}},
+			"Reference": {Type: "object", Properties: map[string]ir.SchemaProperty{"name": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"name"}},
+		},
+		Contracts: []ir.Contract{{Name: "selection", Schema: ir.SchemaRef{Ref: "Selection"}}},
+	}
+	generated, err := Emit(doc, Options{PackageName: "generated"})
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/generated\n\ngo 1.24\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models.gen.go"), generated, 0o600))
+	testSource := `package generated
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestScalarObjectUnionRuntime(t *testing.T) {
+	var scalar Selection
+	if err := json.Unmarshal([]byte("month"), &scalar); err == nil { t.Fatal("unquoted scalar unexpectedly decoded") }
+	if err := json.Unmarshal([]byte(` + "`\"month\"`" + `), &scalar); err != nil { t.Fatal(err) }
+	if scalar.String == nil || *scalar.String != "month" || scalar.Reference != nil { t.Fatalf("scalar variant = %#v", scalar) }
+	encoded, err := json.Marshal(scalar)
+	if err != nil || string(encoded) != ` + "`\"month\"`" + ` { t.Fatalf("scalar marshal = %s, %v", encoded, err) }
+
+	var object Selection
+	if err := json.Unmarshal([]byte(` + "`{\"name\":\"month\"}`" + `), &object); err != nil { t.Fatal(err) }
+	if object.Reference == nil || object.Reference.Name != "month" || object.String != nil { t.Fatalf("object variant = %#v", object) }
+	encoded, err = json.Marshal(object)
+	if err != nil || string(encoded) != ` + "`{\"name\":\"month\"}`" + ` { t.Fatalf("object marshal = %s, %v", encoded, err) }
+
+	for _, input := range []string{"true", "null", "1", "[]"} {
+		var rejected Selection
+		if err := json.Unmarshal([]byte(input), &rejected); err == nil { t.Errorf("wrong scalar kind %s accepted", input) }
+	}
+	for _, input := range []string{` + "`{}`" + `, ` + "`{\"name\":\"month\",\"extra\":true}`" + `} {
+		var rejected Selection
+		if err := json.Unmarshal([]byte(input), &rejected); err == nil { t.Errorf("invalid object %s accepted", input) }
+	}
+	name := "month"
+	if _, err := json.Marshal(Selection{String: &name, Reference: &Reference{Name: name}}); err == nil { t.Fatal("multiple set variants accepted") }
+	if _, err := json.Marshal(Selection{}); err == nil { t.Fatal("empty union accepted") }
+	if err := json.Unmarshal([]byte(` + "`{\"name\":\"month\"} trailing`" + `), &Selection{}); err == nil { t.Fatal("trailing object data accepted") }
+	if !strings.Contains(string(encoded), "name") { t.Fatal("object output lost required field") }
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models_test.go"), []byte(testSource), 0o600))
+	command := exec.Command("go", "test", "./...")
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 func TestEmit_ReferencesImportedContractNamespaceWithoutRegeneratingIt(t *testing.T) {
@@ -127,6 +257,103 @@ func TestEmit_ImportedProducerAndConsumerPackagesCompile(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, "signals", "models.gen.go"), generated, 0o600))
 	command := exec.Command("go", "test", "./...")
 	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func TestEmit_GeneratedModelsCompileAndRoundTripJSONAndYAML(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "LeapViewSignals"},
+		Schemas: map[string]ir.Schema{
+			"Visual": {
+				Type:  "union",
+				OneOf: []ir.SchemaRef{{Ref: "ChartVisual"}, {Ref: "TextVisual"}},
+				Discriminator: &ir.Discriminator{PropertyName: "shape", Mapping: map[string]string{
+					"chart": "ChartVisual",
+					"text":  "TextVisual",
+				}},
+			},
+			"VisualBase": {
+				Type:       "object",
+				Properties: map[string]ir.SchemaProperty{"visualId": {Schema: ir.SchemaRef{Type: "string"}}},
+				Required:   []string{"visualId"},
+			},
+			"ChartVisual": {
+				Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"},
+				Properties: map[string]ir.SchemaProperty{
+					"shape":       {Schema: ir.SchemaRef{Type: "string", Enum: []string{"chart"}}},
+					"points":      {Schema: ir.SchemaRef{Type: "array", Items: &ir.SchemaRef{Type: "integer"}}},
+					"displayMode": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"shape", "points"},
+			},
+			"TextVisual": {
+				Type: "object", Base: &ir.SchemaRef{Ref: "VisualBase"},
+				Properties: map[string]ir.SchemaProperty{
+					"shape": {Schema: ir.SchemaRef{Type: "string", Enum: []string{"text"}}},
+					"title": {Schema: ir.SchemaRef{Type: "string"}},
+				},
+				Required: []string{"shape", "title"},
+			},
+		},
+		Contracts: []ir.Contract{{Name: "visual", Schema: ir.SchemaRef{Ref: "Visual"}}},
+	}
+
+	generated, err := Emit(doc, Options{PackageName: "generated"})
+	require.NoError(t, err)
+	require.NotContains(t, string(generated), "UnmarshalYAML")
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/generated\n\ngo 1.25.8\n\nrequire go.yaml.in/yaml/v4 v4.0.0-rc.4\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models.gen.go"), generated, 0o600))
+	testSource := `package generated
+
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+
+	"go.yaml.in/yaml/v4"
+)
+
+func TestGeneratedRoundTrip(t *testing.T) {
+	displayMode := "compact"
+	original := ChartVisual{
+		VisualBase:  VisualBase{VisualID: "v-1"},
+		Shape:       "chart",
+		Points:      []int32{1, 2},
+		DisplayMode: &displayMode,
+	}
+	jsonBytes, err := json.Marshal(original)
+	if err != nil { t.Fatal(err) }
+	yamlBytes, err := yaml.Marshal(original)
+	if err != nil { t.Fatal(err) }
+	var jsonFields map[string]any
+	if err := json.Unmarshal(jsonBytes, &jsonFields); err != nil { t.Fatal(err) }
+	if _, ok := jsonFields["displayMode"]; !ok { t.Fatalf("JSON omitted camelCase key: %s", jsonBytes) }
+	if _, ok := jsonFields["displaymode"]; ok { t.Fatalf("JSON used non-camelCase key: %s", jsonBytes) }
+	var yamlFields map[string]any
+	if err := yaml.Unmarshal(yamlBytes, &yamlFields); err != nil { t.Fatal(err) }
+	if _, ok := yamlFields["displayMode"]; !ok { t.Fatalf("YAML omitted camelCase key: %s", yamlBytes) }
+	if _, ok := yamlFields["displaymode"]; ok { t.Fatalf("YAML used non-camelCase key: %s", yamlBytes) }
+	var fromJSON, fromYAML ChartVisual
+	if err := json.Unmarshal(jsonBytes, &fromJSON); err != nil { t.Fatal(err) }
+	if err := yaml.Unmarshal(yamlBytes, &fromYAML); err != nil { t.Fatal(err) }
+	if !reflect.DeepEqual(original, fromJSON) || !reflect.DeepEqual(original, fromYAML) {
+		t.Fatalf("round-trip mismatch: original=%#v json=%#v yaml=%#v", original, fromJSON, fromYAML)
+	}
+
+	var union Visual
+	if err := json.Unmarshal([]byte("{\"visualId\":\"v-1\",\"shape\":\"chart\",\"points\":[1]}"), &union); err != nil { t.Fatal(err) }
+	if _, ok := union.Value.(*ChartVisual); !ok { t.Fatalf("decoded union has type %T", union.Value) }
+	if err := json.Unmarshal([]byte("{\"visualId\":\"v-1\",\"shape\":\"other\",\"points\":[1]}"), &Visual{}); err == nil { t.Fatal("unknown discriminator accepted") }
+	if err := json.Unmarshal([]byte("{\"visualId\":\"v-1\",\"shape\":\"chart\",\"points\":[1],\"title\":\"wrong variant\"}"), &Visual{}); err == nil { t.Fatal("foreign variant field accepted") }
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "models_test.go"), []byte(testSource), 0o600))
+	command := exec.Command("go", "test", "./...")
+	command.Dir = root
+	command.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 }

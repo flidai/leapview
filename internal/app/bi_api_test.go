@@ -48,7 +48,7 @@ func dashboardAPISetFilterBody(t *testing.T, pageID, bindingID string, values ..
 	body := map[string]any{"filterState": map[string]any{
 		"version": "typed_v1",
 		"controls": map[string]any{
-			dashboardfilter.BindingKey("executive-sales", dashboardfilter.ScopePage, pageID, bindingID): dashboardfilter.Expression{
+			dashboardfilter.BindingKey("executive-sales", dashboardfilter.ScopeReport, "", bindingID): dashboardfilter.Expression{
 				Kind: dashboardfilter.ExpressionSet, Operator: dashboardfilter.OperatorIn, Values: typed,
 			},
 		},

@@ -19,19 +19,32 @@ func PlanModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	return planModelTable(ctx, runtimeDB, model, tableName, table, nil)
 }
 
-func planModelTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]string) (analyticsmaterialize.ModelTablePlan, error) {
+type stagedRelationKind uint8
+
+const (
+	stagedRelationTable stagedRelationKind = iota + 1
+	stagedRelationQuery
+)
+
+// stagedRelation keeps the relation boundary explicit. Prepared source
+// sessions use either a temporary table identifier or a generated SELECT
+// query; treating both as raw SQL text lets a query be emitted as `FROM
+// SELECT ...`, which DuckDB rejects.
+type stagedRelation struct {
+	value string
+	kind  stagedRelationKind
+}
+
+func planModelTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]stagedRelation) (analyticsmaterialize.ModelTablePlan, error) {
 	if err := validateIdentifier(tableName); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	sqlText := strings.TrimSpace(table.Transform.SQL)
-	if table.Source != "" && sqlText == "" {
+	sqlText := strings.TrimSpace(table.Execution.SQL)
+	if table.Execution.Source != "" && sqlText == "" {
 		return planDirectSourceTable(ctx, runtimeDB, model, tableName, table, staged)
 	}
 	if sqlText == "" {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q requires source or transform.sql", tableName)
-	}
-	if len(table.SourceDependencies) == 0 {
-		return materializationPlan(analyticsmaterialize.PlanModeModelSQL, tableName, sqlText), nil
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q requires a direct source binding or definition.sql", tableName)
 	}
 	plannerDB, err := sql.Open("duckdb", "")
 	if err != nil {
@@ -50,6 +63,32 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	if err := validateSQLAnalysis(tableName, table, sqlAnalysis); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
+	if evidence := table.SQLAnalysisEvidence; evidence != nil {
+		if !evidence.Validated || !sameStringSet(sortedStrings(evidence.SourceRefs), sortedStrings(sqlAnalysis.SourceRefs)) || !sameStringSet(sortedStrings(evidence.ModelRefs), sortedStrings(sqlAnalysis.ModelRefs)) {
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q SQL AST analysis does not match compiled evidence", tableName)
+		}
+		table.SourceDependencies = append([]string(nil), evidence.SourceRefs...)
+		table.ModelDependencies = append([]string(nil), evidence.ModelRefs...)
+	} else {
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q has no compiled SQL analysis evidence", tableName)
+	}
+	for _, dependency := range table.ModelDependencies {
+		if dependency == tableName {
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q cannot read itself", tableName)
+		}
+		if _, ok := model.Tables[dependency]; !ok {
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q SQL references unknown model %q", tableName, dependency)
+		}
+	}
+	if len(table.SourceDependencies) == 0 && len(table.ModelDependencies) == 0 {
+		if err := preparePlanningDatabase(ctx, plannerDB, nil, nil); err != nil {
+			return analyticsmaterialize.ModelTablePlan{}, err
+		}
+		if err := validateModelOutput(ctx, plannerDB, tableName, table, sqlText); err != nil {
+			return analyticsmaterialize.ModelTablePlan{}, err
+		}
+		return materializationPlan(analyticsmaterialize.PlanModeModelSQL, tableName, sqlText), nil
+	}
 	sourceSchemas, err := discoverPlanningSourceSchemas(ctx, runtimeDB, model, table.SourceDependencies)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
@@ -59,6 +98,9 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
 	if err := preparePlanningDatabase(ctx, plannerDB, sourceSchemas, modelSchemas); err != nil {
+		return analyticsmaterialize.ModelTablePlan{}, err
+	}
+	if err := validateModelOutput(ctx, plannerDB, tableName, table, sqlText); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
 	explainAnalysis, err := explainSQLWithDuckDB(ctx, plannerDB, sqlText)
@@ -80,20 +122,20 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	return materializationPlan(analyticsmaterialize.PlanModeProjectedSourceInline, tableName, rewritten), nil
 }
 
-func planDirectSourceTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]string) (analyticsmaterialize.ModelTablePlan, error) {
-	source, ok := model.Sources[table.Source]
+func planDirectSourceTable(ctx context.Context, runtimeDB queryContext, model *semanticmodel.Model, tableName string, table semanticmodel.Table, staged map[string]stagedRelation) (analyticsmaterialize.ModelTablePlan, error) {
+	source, ok := model.Sources[table.Execution.Source]
 	if !ok {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("unknown source %q", table.Source)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("unknown source %q", table.Execution.Source)
 	}
 	if len(source.Schema.Columns) == 0 {
 		if columns, err := discoverSourceSchema(ctx, runtimeDB, model, source); err != nil {
-			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("discovering source %s schema: %w", table.Source, err)
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("discovering source %s schema: %w", table.Execution.Source, err)
 		} else if len(columns) > 0 {
 			source.Schema = semanticmodel.TableSchema{Columns: columns}
-			model.Sources[table.Source] = source
+			model.Sources[table.Execution.Source] = source
 		}
 	}
-	relation, err := sourceReadRelation(model, table.Source, source, nil, modelTableReadColumns(table), false, staged)
+	relation, err := sourceReadRelation(model, table.Execution.Source, source, nil, modelTableReadColumns(table), false, staged)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
@@ -198,9 +240,6 @@ func modelColumnsAsSchema(table semanticmodel.Table) []semanticmodel.ColumnSchem
 }
 
 func preparePlanningDatabase(ctx context.Context, db *sql.DB, sourceSchemas map[string][]semanticmodel.ColumnSchema, modelSchemas map[string][]semanticmodel.ColumnSchema) error {
-	if err := prepareSQLAnalysisDatabase(ctx, db); err != nil {
-		return err
-	}
 	if _, err := db.ExecContext(ctx, "CREATE SCHEMA source"); err != nil {
 		return err
 	}
@@ -221,8 +260,17 @@ func preparePlanningDatabase(ctx context.Context, db *sql.DB, sourceSchemas map[
 }
 
 func prepareSQLAnalysisDatabase(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, "LOAD json"); err != nil {
-		return fmt.Errorf("loading DuckDB json extension: %w", err)
+	for _, statement := range []string{
+		"LOAD json",
+		"SET allow_persistent_secrets = false",
+		"SET autoinstall_known_extensions = false",
+		"SET autoload_known_extensions = false",
+		"SET enable_external_access = false",
+		"SET lock_configuration = true",
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("configure DuckDB SQL analysis database (%s): %w", statement, err)
+		}
 	}
 	return nil
 }
@@ -293,9 +341,6 @@ func analyzeSQLWithDuckDB(ctx context.Context, db *sql.DB, sqlText string) (quer
 }
 
 func explainSQLWithDuckDB(ctx context.Context, db *sql.DB, sqlText string) (queryjson.ExplainAnalysis, error) {
-	if _, err := db.ExecContext(ctx, "SET disabled_optimizers = 'filter_pushdown'"); err != nil {
-		return queryjson.ExplainAnalysis{}, err
-	}
 	rows, err := db.QueryContext(ctx, "EXPLAIN (FORMAT json) "+sqlText)
 	if err != nil {
 		return queryjson.ExplainAnalysis{}, err
@@ -340,15 +385,58 @@ func singleStringResult(rows *sql.Rows, preferredColumn string) (string, error) 
 	return values[index].String, nil
 }
 
-func validateSQLAnalysis(tableName string, table semanticmodel.Table, analysis queryjson.SQLAnalysis) error {
-	if len(analysis.RawRefs) > 0 {
-		return fmt.Errorf("model table %q model SQL must reference sources through source.<name>; raw.<name> is internal", tableName)
+func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, table semanticmodel.Table, sqlText string) error {
+	if len(table.Columns) == 0 {
+		return nil
 	}
+	rows, err := db.QueryContext(ctx, "DESCRIBE "+sqlText)
+	if err != nil {
+		return fmt.Errorf("describing model table %q output: %w", tableName, err)
+	}
+	defer rows.Close()
+	type describedColumn struct{ Name, Type string }
+	columns := make([]describedColumn, 0, len(table.Columns))
+	for rows.Next() {
+		var column describedColumn
+		var nullable, key, defaultValue, extra sql.NullString
+		if err := rows.Scan(&column.Name, &column.Type, &nullable, &key, &defaultValue, &extra); err != nil {
+			return fmt.Errorf("reading model table %q output schema: %w", tableName, err)
+		}
+		columns = append(columns, column)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	declared := make(map[string]semanticmodel.ModelColumn, len(table.Columns))
+	for name, column := range table.Columns {
+		declared[name] = column
+	}
+	seen := make(map[string]struct{}, len(columns))
+	for _, column := range columns {
+		if _, duplicate := seen[column.Name]; duplicate {
+			return fmt.Errorf("model table %q output contains duplicate field %q", tableName, column.Name)
+		}
+		seen[column.Name] = struct{}{}
+		declaration, ok := declared[column.Name]
+		if !ok {
+			return fmt.Errorf("model table %q output exposes undeclared field %q", tableName, column.Name)
+		}
+		if declaration.Datatype != "" {
+			actual := semanticmodel.LogicalDataTypeFromPhysicalType(column.Type)
+			if actual != declaration.Datatype {
+				return fmt.Errorf("model table %q field %q output type %q is incompatible with declared datatype %q", tableName, column.Name, column.Type, declaration.Datatype)
+			}
+		}
+	}
+	if len(columns) != len(declared) {
+		return fmt.Errorf("model table %q output fields do not exactly match declared fields", tableName)
+	}
+	return nil
+}
+
+func validateSQLAnalysis(tableName string, table semanticmodel.Table, analysis queryjson.SQLAnalysis) error {
 	if len(analysis.QualifiedSourceColumnRefs) > 0 {
 		return fmt.Errorf("model table %q column reference %q must use a table alias; source.<name> is only valid in FROM/JOIN relations", tableName, analysis.QualifiedSourceColumnRefs[0])
-	}
-	if !sameStringSet(sortedStrings(table.SourceDependencies), analysis.SourceRefs) {
-		return fmt.Errorf("model table %q SQL source references %v do not match declared sources %v", tableName, analysis.SourceRefs, sortedStrings(table.SourceDependencies))
 	}
 	return nil
 }
@@ -369,7 +457,7 @@ func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sou
 			continue
 		}
 		if _, ok := declared[scan.Table]; !ok {
-			return nil, fmt.Errorf("model table %q SQL plan scanned undeclared source %q", tableName, scan.Table)
+			return nil, fmt.Errorf("model table %q SQL plan scanned source %q outside governed dependencies", tableName, scan.Table)
 		}
 		current := accumulators[scan.Table]
 		if len(scan.Projections) == 0 {
@@ -384,7 +472,7 @@ func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sou
 	for _, source := range sortedStrings(table.SourceDependencies) {
 		current := accumulators[source]
 		if current == nil {
-			return nil, fmt.Errorf("model table %q SQL plan did not scan declared source %q", tableName, source)
+			return nil, fmt.Errorf("model table %q SQL plan did not scan governed source dependency %q", tableName, source)
 		}
 		fields := sortedSet(current.fields)
 		if len(fields) == 0 && !current.rowPresenceOnly {
@@ -402,7 +490,7 @@ func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sou
 	return plans, nil
 }
 
-func inlineSourceReplacements(model *semanticmodel.Model, plans []sourceReadPlan, staged map[string]string) (map[string]string, error) {
+func inlineSourceReplacements(model *semanticmodel.Model, plans []sourceReadPlan, staged map[string]stagedRelation) (map[string]string, error) {
 	replacements := map[string]string{}
 	for _, plan := range plans {
 		source, ok := model.Sources[plan.Source]
@@ -418,9 +506,18 @@ func inlineSourceReplacements(model *semanticmodel.Model, plans []sourceReadPlan
 	return replacements, nil
 }
 
-func sourceReadRelation(model *semanticmodel.Model, sourceName string, source semanticmodel.Source, fields []string, columns []sourceReadColumn, rowPresenceOnly bool, staged map[string]string) (string, error) {
-	if relation := staged[sourceName]; relation != "" {
-		return projectedRelation(relation, fields, columns, rowPresenceOnly)
+func sourceReadRelation(model *semanticmodel.Model, sourceName string, source semanticmodel.Source, fields []string, columns []sourceReadColumn, rowPresenceOnly bool, staged map[string]stagedRelation) (string, error) {
+	if relation, ok := staged[sourceName]; ok {
+		if strings.TrimSpace(relation.value) == "" {
+			return "", fmt.Errorf("staged source %q has an empty relation", sourceName)
+		}
+		sourceRelation := relation.value
+		if relation.kind == stagedRelationQuery {
+			sourceRelation = "(" + sourceRelation + ")"
+		} else if relation.kind != stagedRelationTable {
+			return "", fmt.Errorf("staged source %q has unknown relation kind", sourceName)
+		}
+		return projectedRelation(sourceRelation, fields, columns, rowPresenceOnly)
 	}
 	return SourceReadRelation(model, source, fields, columns, rowPresenceOnly)
 }

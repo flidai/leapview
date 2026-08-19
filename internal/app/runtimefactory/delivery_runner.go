@@ -20,9 +20,12 @@ import (
 	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	analyticsgates "github.com/flidai/leapview/internal/analytics/gates"
 	"github.com/flidai/leapview/internal/app/gcadapter"
 	"github.com/flidai/leapview/internal/deployment"
+	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -78,9 +81,10 @@ func NewCatalogObjectStore(ctx context.Context, contract *ducklake.PoolContract,
 type CandidateCatalogRunnerConfig struct {
 	PoolContract        *ducklake.PoolContract
 	StagingRoot         string
+	ExtensionAdmission  extension.Admission
 	CredentialBootstrap ducklake.CredentialBootstrap
 	Base                func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error)
-	Materialize         func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet, string) error
+	Materialize         func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet, string) ([]analyticsgates.SourceInput, error)
 	// Connections is acquired only around candidate catalog construction. The
 	// lease registers the candidate resolver used by governed materialization;
 	// it is always closed before normalization/sealing begins.
@@ -93,6 +97,12 @@ type CandidateCatalogRunnerConfig struct {
 	RemoteVerifier       catalogseal.RemoteVerifier
 	RequestTemplate      deployment.DeliveryBuildRequest
 	VerifyLease          candidatecatalog.LeaseVerifier
+	// Gates runs typed source/model checks against the same lease-checked
+	// candidate catalog immediately before qualification/seal. A nil value
+	// uses the compiler-evidence evaluator below.
+	Gates          func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet) (release.GateEvidence, error)
+	GateBounds     analyticsgates.Bounds
+	RuntimeVersion string
 }
 
 // CandidateObjectStore adapts catalogseal's metadata-bearing object store to
@@ -177,14 +187,14 @@ func SQLiteWriterLeaseVerifier(repository interface {
 // writer lease can reach physical work.
 func BuildRequestFactory(config CandidateCatalogRunnerConfig) func(context.Context, deployment.DeliveryCandidateBuildInput, release.CandidateArtifactSet) (deployment.DeliveryBuildRequest, error) {
 	return func(ctx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet) (deployment.DeliveryBuildRequest, error) {
-		if artifacts.Generation.DataMode == release.GenerationDataReuseSnapshotLegacy {
-			return deployment.DeliveryBuildRequest{}, fmt.Errorf("candidate build requires controlled rebuild for legacy data mode: %w", release.ErrLegacyReuseSnapshot)
-		}
 		if config.PoolContract == nil || config.PoolContract.Validate() != nil || config.Materialize == nil || config.Connections == nil || config.ObjectStore == nil || config.SealRepository == nil || config.RemoteVerifier == nil || config.VerifyLease == nil || input.Plan == nil {
 			return deployment.DeliveryBuildRequest{}, fmt.Errorf("candidate delivery physical-pool admission and materialization adapters are required")
 		}
 		if strings.EqualFold(strings.TrimSpace(config.PoolContract.Tuple.StorageImplementation), "s3") && config.CredentialBootstrap == nil {
 			return deployment.DeliveryBuildRequest{}, fmt.Errorf("target-owned S3 credential bootstrap is required for candidate build")
+		}
+		if config.ExtensionAdmission == nil {
+			return deployment.DeliveryBuildRequest{}, fmt.Errorf("exact DuckDB extension admission is required for candidate build")
 		}
 		runner := &candidateCatalogRunner{config: config, input: input, artifacts: artifacts}
 		request := config.RequestTemplate
@@ -244,10 +254,12 @@ func BuildRequestFactory(config CandidateCatalogRunnerConfig) func(context.Conte
 
 // candidateCatalogRunner is scoped to one exact source/artifact input.
 type candidateCatalogRunner struct {
-	config    CandidateCatalogRunnerConfig
-	input     deployment.DeliveryCandidateBuildInput
-	artifacts release.CandidateArtifactSet
-	working   *candidatecatalog.WorkingCatalog
+	config             CandidateCatalogRunnerConfig
+	input              deployment.DeliveryCandidateBuildInput
+	artifacts          release.CandidateArtifactSet
+	working            *candidatecatalog.WorkingCatalog
+	sourceInputs       []analyticsgates.SourceInput
+	bindingFingerprint string
 }
 
 // SetCandidateArtifacts installs the exact inspected/materialized artifact
@@ -269,7 +281,7 @@ func (r *candidateCatalogRunner) SetCandidateArtifacts(value any) error {
 func candidateConnectionRequirements(values []release.CandidateConnectionRequirement) []deployment.CandidateConnectionRequirement {
 	result := make([]deployment.CandidateConnectionRequirement, len(values))
 	for i, value := range values {
-		result[i] = deployment.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+		result[i] = deployment.CandidateConnectionRequirement{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind, Access: value.Access}
 	}
 	return result
 }
@@ -277,7 +289,7 @@ func candidateConnectionRequirements(values []release.CandidateConnectionRequire
 func candidateAuthoredConnections(values []release.CandidateAuthoredConnection) []deployment.CandidateAuthoredConnection {
 	result := make([]deployment.CandidateAuthoredConnection, len(values))
 	for i, value := range values {
-		result[i] = deployment.CandidateAuthoredConnection{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind}
+		result[i] = deployment.CandidateAuthoredConnection{ConnectionID: value.ConnectionID, ConnectorKind: value.ConnectorKind, Access: value.Access}
 	}
 	return result
 }
@@ -367,9 +379,6 @@ func validateReuseEvidenceCoverage(plan *deployment.DeliveryPlan, artifacts rele
 }
 
 func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deployment.DeliveryBuildInput) (any, error) {
-	if r.artifacts.Generation.DataMode == release.GenerationDataReuseSnapshotLegacy {
-		return nil, fmt.Errorf("candidate build requires controlled rebuild for legacy data mode: %w", release.ErrLegacyReuseSnapshot)
-	}
 	var base *candidatecatalog.SealedArtifact
 	var err error
 	if err := validateReuseEvidenceCoverage(&buildInput.Plan, r.artifacts, r.input.Candidate.ID); err != nil {
@@ -398,6 +407,10 @@ func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deplo
 	if r.config.Materialize == nil {
 		return nil, fmt.Errorf("candidate materialization adapter is required")
 	}
+	r.bindingFingerprint, err = deployment.BindingFingerprint(nil)
+	if err != nil {
+		return nil, err
+	}
 	// Candidate connection leases are deliberately scoped to materialization.
 	// Qualification and sealing operate solely on the detached catalog and
 	// never retain target credentials or resolver registrations.
@@ -415,10 +428,29 @@ func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deplo
 		if connections == nil {
 			return nil, fmt.Errorf("candidate materialization connections unavailable")
 		}
+		fingerprint, fingerprintErr := deployment.BindingFingerprint(connections.Evidence())
+		if fingerprintErr != nil {
+			return nil, fingerprintErr
+		}
+		r.bindingFingerprint = fingerprint
 		defer connections.Close()
 	}
-	working, err := candidatecatalog.Build(ctx, candidatecatalog.Request{AttemptID: buildInput.Attempt.ID, StagingRoot: r.config.StagingRoot, PoolContract: r.config.PoolContract, CredentialBootstrap: r.config.CredentialBootstrap, VerifyLease: r.config.VerifyLease, Lease: candidatecatalog.WriterLease{ID: buildInput.Lease.ID, AttemptID: buildInput.Attempt.ID, PhysicalPoolID: buildInput.Lease.PhysicalPoolID, HolderID: buildInput.Lease.OwnerID, Epoch: buildInput.Lease.Epoch, ExpiresAt: buildInput.Lease.ExpiresAt, Status: candidatecatalog.LeaseActive}, Base: base}, func(ctx context.Context, catalog *candidatecatalog.WorkingCatalog) error {
-		return r.config.Materialize(ctx, catalog, buildInput, r.artifacts, r.input.Candidate.ID)
+	if r.artifacts.Generation.DataMode == release.GenerationDataReuseBase {
+		baseEvidence := r.artifacts.Generation.BaseGateEvidence
+		if baseEvidence == nil {
+			return nil, fmt.Errorf("reuse-base candidate requires sealed base gate evidence")
+		}
+		if baseEvidence.SourceDigest != r.artifacts.Artifact.SourceDigest || baseEvidence.BindingGeneration != r.bindingFingerprint || baseEvidence.RuntimeVersion != r.config.RuntimeVersion || baseEvidence.DuckDBVersion != extensionsupply.CurrentDuckDBVersion {
+			return nil, fmt.Errorf("reuse-base candidate gate evidence does not match current source, runtime, duckdb, and binding identities")
+		}
+	}
+	working, err := candidatecatalog.Build(ctx, candidatecatalog.Request{AttemptID: buildInput.Attempt.ID, StagingRoot: r.config.StagingRoot, PoolContract: r.config.PoolContract, ExtensionAdmission: r.config.ExtensionAdmission, CredentialBootstrap: r.config.CredentialBootstrap, VerifyLease: r.config.VerifyLease, Lease: candidatecatalog.WriterLease{ID: buildInput.Lease.ID, AttemptID: buildInput.Attempt.ID, PhysicalPoolID: buildInput.Lease.PhysicalPoolID, HolderID: buildInput.Lease.OwnerID, Epoch: buildInput.Lease.Epoch, ExpiresAt: buildInput.Lease.ExpiresAt, Status: candidatecatalog.LeaseActive}, Base: base}, func(ctx context.Context, catalog *candidatecatalog.WorkingCatalog) error {
+		inputs, err := r.config.Materialize(ctx, catalog, buildInput, r.artifacts, r.input.Candidate.ID)
+		if err != nil {
+			return err
+		}
+		r.sourceInputs = inputs
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -452,6 +484,32 @@ func (r *candidateCatalogRunner) Qualify(ctx context.Context, buildInput deploym
 		qualification.Checks.ReviewerAuthorization = func(ctx context.Context, _ candidatecatalog.QualificationInput) error {
 			return r.config.ReviewerAuthorize(ctx, r.input.OwnerID)
 		}
+	}
+	var gateEvidence *release.GateEvidence
+	gateEvaluator := r.config.Gates
+	if gateEvaluator == nil {
+		gateEvaluator = func(ctx context.Context, working *candidatecatalog.WorkingCatalog, buildInput deployment.DeliveryBuildInput, artifacts release.CandidateArtifactSet) (release.GateEvidence, error) {
+			return evaluateCompiledGates(ctx, working, buildInput, artifacts, r.input.Candidate.ID, r.bindingFingerprint, r.config.RuntimeVersion, r.config.GateBounds, r.sourceInputs)
+		}
+	}
+	if gateEvaluator != nil {
+		evidence, gateErr := gateEvaluator(ctx, working, buildInput, r.artifacts)
+		if gateErr != nil {
+			var evaluationErr *analyticsgates.EvaluationError
+			if errors.As(gateErr, &evaluationErr) && evaluationErr.Evidence.CandidateID != "" {
+				failedEvidence := evaluationErr.Evidence
+				return deployment.DeliveryBuildOutput{GateEvidence: &failedEvidence}, gateErr
+			}
+			return deployment.DeliveryBuildOutput{}, gateErr
+		}
+		canonical, gateErr := evidence.Canonical()
+		if gateErr != nil {
+			return deployment.DeliveryBuildOutput{}, gateErr
+		}
+		if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+			return deployment.DeliveryBuildOutput{GateEvidence: &canonical}, fmt.Errorf("candidate gate outcome %q cannot qualify or seal", canonical.Outcome)
+		}
+		gateEvidence = &canonical
 	}
 	qualified, err := candidatecatalog.NormalizeAndQualify(ctx, working, qualification)
 	if err != nil {
@@ -493,7 +551,58 @@ func (r *candidateCatalogRunner) Qualify(ctx context.Context, buildInput deploym
 		}
 		resolved.Inputs = append(resolved.Inputs, item)
 	}
-	return deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: qualified.CatalogPath()}, QualificationDigest: qualified.Record.Digest, ClosureDigest: qualified.Record.Closure.Digest, CompatibilityDigest: compatibilityDigest, ResolvedInputs: resolved, ObjectStore: r.config.ObjectStore, SealRepository: r.config.SealRepository, RemoteVerifier: r.config.RemoteVerifier, Cleanup: qualified.Remove}, nil
+	return deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: qualified.CatalogPath()}, QualificationDigest: qualified.Record.Digest, ClosureDigest: qualified.Record.Closure.Digest, CompatibilityDigest: compatibilityDigest, ResolvedInputs: resolved, GateEvidence: gateEvidence, ObjectStore: r.config.ObjectStore, SealRepository: r.config.SealRepository, RemoteVerifier: r.config.RemoteVerifier, Cleanup: qualified.Remove}, nil
+}
+
+// evaluateCompiledGates lowers only compiler-owned manifest resources into the
+// closed gate evaluator. Relation names are validated component-by-component
+// before being quoted; no authored SQL is accepted at this boundary.
+func evaluateCompiledGates(ctx context.Context, working *candidatecatalog.WorkingCatalog, buildInput deployment.DeliveryBuildInput, artifacts release.CandidateArtifactSet, candidateID, bindingFingerprint, runtimeVersion string, bounds analyticsgates.Bounds, sources []analyticsgates.SourceInput) (release.GateEvidence, error) {
+	if working == nil {
+		return release.GateEvidence{}, fmt.Errorf("candidate gate catalog is unavailable")
+	}
+	if bounds.MaxRows <= 0 || bounds.MaxQueries <= 0 || bounds.MaxMillis <= 0 {
+		bounds = analyticsgates.Bounds{MaxRows: 10000, MaxQueries: 128, MaxMillis: 5000}
+	}
+	if strings.TrimSpace(runtimeVersion) == "" {
+		return release.GateEvidence{}, fmt.Errorf("exact runtime version is required for candidate gates")
+	}
+	duckdbVersion := extensionsupply.CurrentDuckDBVersion
+	if strings.TrimSpace(bindingFingerprint) == "" {
+		return release.GateEvidence{}, fmt.Errorf("exact acquired connection binding fingerprint is required")
+	}
+	input := analyticsgates.Input{CandidateID: candidateID, SourceDigest: artifacts.Artifact.SourceDigest, BindingGeneration: bindingFingerprint, RuntimeVersion: runtimeVersion, DuckDBVersion: duckdbVersion, Bounds: bounds, Query: working.Query}
+	manifest := artifacts.Compiler.Manifest
+	input.Sources = append(input.Sources, sources...)
+	for _, source := range input.Sources {
+		if source.ObservationQueries < 0 || source.ObservationRows < 0 || source.ObservationMillis < 0 {
+			return release.GateEvidence{}, fmt.Errorf("candidate source observation metrics are invalid")
+		}
+		input.PreflightQueries += source.ObservationQueries
+		input.PreflightRows += source.ObservationRows
+		input.PreflightMillis += source.ObservationMillis
+	}
+	seenSources := make(map[string]struct{}, len(input.Sources))
+	for _, source := range input.Sources {
+		if _, duplicate := seenSources[source.ID]; duplicate {
+			return release.GateEvidence{}, fmt.Errorf("candidate source observations contain duplicate %q", source.ID)
+		}
+		if _, known := manifest.Sources[source.ID]; !known {
+			return release.GateEvidence{}, fmt.Errorf("candidate source observations contain unknown %q", source.ID)
+		}
+		seenSources[source.ID] = struct{}{}
+	}
+	if len(seenSources) != len(manifest.Sources) {
+		return release.GateEvidence{}, fmt.Errorf("candidate source schema observations are incomplete")
+	}
+	for id, table := range manifest.Models {
+		if len(table.Checks) == 0 && len(table.Entities) == 0 && table.GrainEntity == "" {
+			continue
+		}
+		input.Models = append(input.Models, analyticsgates.ModelInput{ID: id, Model: table})
+	}
+	input.Now = time.Now().UTC()
+	return analyticsgates.Evaluate(ctx, input)
 }
 
 // ReadOnlyCatalogVerifier is a minimal remote verifier for providers whose
@@ -503,6 +612,7 @@ type ReadOnlyCatalogVerifier struct {
 	PoolContract        *ducklake.PoolContract
 	StagingRoot         string
 	ObjectStore         catalogseal.ObjectStore
+	ExtensionAdmission  extension.Admission
 	CredentialBootstrap ducklake.CredentialBootstrap
 }
 
@@ -516,6 +626,9 @@ func (v ReadOnlyCatalogVerifier) verify(ctx context.Context, verification catalo
 	}
 	if strings.EqualFold(strings.TrimSpace(v.PoolContract.Tuple.StorageImplementation), "s3") && v.CredentialBootstrap == nil {
 		return fmt.Errorf("remote verifier requires target-owned S3 credential bootstrap")
+	}
+	if v.ExtensionAdmission == nil {
+		return fmt.Errorf("remote verifier requires exact DuckDB extension admission")
 	}
 	object, err := verification.Open(ctx)
 	if err != nil {
@@ -570,7 +683,7 @@ func (v ReadOnlyCatalogVerifier) verify(ctx context.Context, verification catalo
 	if err != nil {
 		return err
 	}
-	preview, err := candidatecatalog.OpenReadOnlyCatalog(ctx, root, path, v.PoolContract, v.CredentialBootstrap)
+	preview, err := candidatecatalog.OpenReadOnlyCatalog(ctx, root, path, v.PoolContract, v.ExtensionAdmission, v.CredentialBootstrap)
 	if err != nil {
 		return err
 	}
@@ -589,11 +702,7 @@ func (v ReadOnlyCatalogVerifier) verify(ctx context.Context, verification catalo
 	if err := policy.ValidateZero(); err != nil {
 		return fmt.Errorf("remote catalog data inlining policy is not zero: %w", err)
 	}
-	inline, err := preview.LegacyInlineTables(ctx)
-	if err != nil {
-		return err
-	}
-	if err := ducklake.ValidateNoLiveInlineData(inline); err != nil {
+	if err := preview.ValidateNoLiveInlineData(ctx); err != nil {
 		return fmt.Errorf("remote catalog has live inline data: %w", err)
 	}
 	closure, err := preview.CurrentClosure(ctx, v.PoolContract.Pool.ID.String())

@@ -38,8 +38,10 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 		"typespec_entrypoint: typespec/main.tsp",
 		"typespec_entrypoint: signals/main.tsp",
 		"typespec_entrypoint: visualization/main.tsp",
+		"typespec_entrypoint: dashboard/main.tsp",
+		"typespec_entrypoint: data-resources/main.tsp",
 		"typespec_entrypoint: desktop-discovery/main.tsp",
-		"typespec_dir: ../internal/agent/contracts",
+		"typespec_entrypoint: internal/agent/contracts/typespec/main.tsp",
 	} {
 		if !strings.Contains(manifestText, source) {
 			t.Fatalf("manifest should select TypeSpec source %q, got:\n%s", source, manifestText)
@@ -93,7 +95,7 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 			}
 		}
 	}
-	assertAPIGenCommands("Taskfile.yml", taskText, []string{"leapview-v1", "agent-tool-contracts", "desktop-discovery-contracts", "ui-signals", "visualization-ir"})
+	assertAPIGenCommands("Taskfile.yml", taskText, []string{"leapview-v1", "agent-tool-contracts", "data-resource-contracts", "desktop-discovery-contracts", "ui-signals", "visualization-ir", "dashboard-contracts"})
 	if !strings.Contains(taskText, "go -C pkg/apigen test ./...") {
 		t.Fatal("Taskfile.yml missing APIGen module test command")
 	}
@@ -106,7 +108,7 @@ func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read container source-generation script: %v", err)
 	}
-	assertAPIGenCommands("container source-generation script", string(buildSources), []string{"leapview-v1", "ui-signals", "desktop-discovery-contracts", "visualization-ir"})
+	assertAPIGenCommands("container source-generation script", string(buildSources), []string{"leapview-v1", "data-resource-contracts", "ui-signals", "desktop-discovery-contracts", "visualization-ir"})
 	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
 		t.Fatalf("read go.mod: %v", err)
@@ -660,6 +662,7 @@ func TestAPIGenIRAssignsCapabilityNamespaces(t *testing.T) {
 		"LeapViewAPI.Protocol":    {},
 		"LeapViewAPI.Refresh":     {},
 		"LeapViewAPI.Release":     {},
+		"LeapViewDashboard":       {},
 		"LeapViewVisualization":   {},
 	}
 	for name, schema := range document.Schemas {

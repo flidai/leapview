@@ -206,10 +206,10 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if revision.DashboardID != request.DashboardID || !sameRevision(revision.Token(), lifecycle.Draft.Revision) {
 		return Preview{}, fmt.Errorf("%w: retained draft revision does not match lifecycle pointer", ErrStaleRevision)
 	}
-	if revision.Document.ID != request.DashboardID {
+	if revision.Document.Metadata.ID != request.DashboardID.String() {
 		return Preview{}, fmt.Errorf("dashboard preview document identity does not match lifecycle")
 	}
-	if revision.Document.SemanticModel != lifecycle.SemanticModel {
+	if revision.Document.Spec.SemanticModel != lifecycle.SemanticModel.String() {
 		return Preview{}, fmt.Errorf("%w: draft semantic model does not match lifecycle", ErrSemanticMismatch)
 	}
 
@@ -240,14 +240,14 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		return Preview{}, fmt.Errorf("%w: runtime semantic model %q does not match lifecycle %q", ErrSemanticMismatch, model.Name, lifecycle.SemanticModel)
 	}
 
-	compiled, err := compiler.Compile(revision.Document, map[string]*semanticmodel.Model{lifecycle.SemanticModel.String(): model})
+	compiled, err := compiler.CompileDocument(revision.Document, map[string]*semanticmodel.Model{lifecycle.SemanticModel.String(): model})
 	if err != nil {
 		return Preview{}, fmt.Errorf("strictly compile dashboard draft: %w", err)
 	}
-	if compiled.Definition.ID != request.DashboardID.String() || compiled.Definition.ID != revision.Document.ID.String() {
+	if compiled.Definition.ID != request.DashboardID.String() || compiled.Definition.ID != revision.Document.Metadata.ID {
 		return Preview{}, fmt.Errorf("dashboard preview compiled definition identity does not match lifecycle")
 	}
-	if compiled.Definition.SemanticModel != lifecycle.SemanticModel.String() || compiled.Definition.SemanticModel != revision.Document.SemanticModel.String() {
+	if compiled.Definition.SemanticModel != lifecycle.SemanticModel.String() || compiled.Definition.SemanticModel != revision.Document.Spec.SemanticModel {
 		return Preview{}, fmt.Errorf("%w: compiled semantic model does not match lifecycle", ErrSemanticMismatch)
 	}
 	snapshotID := int64(0)

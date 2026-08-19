@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
@@ -147,10 +148,10 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if revision.DashboardID != request.DashboardID || !sameRevision(revision.Token(), lifecycle.Draft.Revision) {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder draft revision does not match lifecycle pointer")
 	}
-	if revision.Document.ID != request.DashboardID {
+	if revision.Document.Metadata.ID != request.DashboardID.String() {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder document identity does not match request")
 	}
-	if revision.Document.SemanticModel != lifecycle.SemanticModel {
+	if revision.Document.Spec.SemanticModel != lifecycle.SemanticModel.String() {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("dashboard builder semantic model does not match lifecycle")
 	}
 
@@ -260,40 +261,46 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 	return signal, nil
 }
 
-func projectPages(document authoring.Dashboard, requestedPageID, requestedVisualID string) ([]uisignals.DashboardBuilderPageSignal, []uisignals.DashboardBuilderDiagnosticSignal, string, string, error) {
-	if len(document.Pages) > maxPages {
+func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID, requestedVisualID string) ([]uisignals.DashboardBuilderPageSignal, []uisignals.DashboardBuilderDiagnosticSignal, string, string, error) {
+	if len(authored.Spec.Pages) > maxPages {
 		return nil, nil, "", "", fmt.Errorf("dashboard builder pages exceed bounded limit")
 	}
-	pages := append([]dashboard.Page(nil), document.Pages...)
+	pages := append([]dashboarddocument.DashboardPage(nil), authored.Spec.Pages...)
 	sort.SliceStable(pages, func(i, j int) bool { return pages[i].ID < pages[j].ID })
 	result := make([]uisignals.DashboardBuilderPageSignal, 0, len(pages))
 	diagnostics := make([]uisignals.DashboardBuilderDiagnosticSignal, 0)
 	visualTotal := 0
 	for _, page := range pages {
-		page = page.WithDefaults()
-		components := append([]dashboard.PageVisual(nil), page.Visuals...)
+		components := append([]dashboarddocument.DashboardPageComponent(nil), page.Components...)
 		sort.SliceStable(components, func(i, j int) bool {
-			if components[i].Visual == components[j].Visual {
-				return components[i].ID < components[j].ID
+			left, _ := components[i].Base()
+			right, _ := components[j].Base()
+			if left == nil || right == nil {
+				return i < j
 			}
-			return components[i].Visual < components[j].Visual
+			return left.ID < right.ID
 		})
 		visuals := make([]uisignals.DashboardBuilderVisualSignal, 0, len(components))
 		seenVisualIDs := make(map[string]struct{}, len(components))
 		for _, component := range components {
-			if component.Kind != "visual" || strings.TrimSpace(component.Visual) == "" {
+			visualComponent, ok := component.Value.(*dashboarddocument.VisualDashboardPageComponent)
+			if !ok || strings.TrimSpace(visualComponent.Visual) == "" {
 				continue
+			}
+			base, err := component.Base()
+			if err != nil {
+				return nil, nil, "", "", err
 			}
 			visualTotal++
 			if visualTotal > maxVisuals {
 				return nil, nil, "", "", fmt.Errorf("dashboard builder visuals exceed bounded limit")
 			}
-			authored, ok := document.Visuals[component.Visual]
+			authored, ok := authored.Spec.Visuals[visualComponent.Visual]
 			if !ok {
-				diagnostics = append(diagnostics, diagnostic("error", "VISUAL_MISSING", fmt.Sprintf("Visual %q is missing from the authored document.", component.Visual), component.Visual))
+				diagnostics = append(diagnostics, diagnostic("error", "VISUAL_MISSING", fmt.Sprintf("Visual %q is missing from the authored document.", visualComponent.Visual), visualComponent.Visual))
 				continue
 			}
-			visual, err := projectVisual(component, authored)
+			visual, err := projectCanonicalVisual(base, visualComponent, authored)
 			if err != nil {
 				return nil, nil, "", "", err
 			}
@@ -302,9 +309,9 @@ func projectPages(document authoring.Dashboard, requestedPageID, requestedVisual
 			// signal identity must be the component identity. This also keeps
 			// selection deterministic when two placements reference one
 			// authored visualization.
-			visual.ID = component.ID
+			visual.ID = base.ID
 			if strings.TrimSpace(visual.ID) == "" {
-				visual.ID = component.Visual
+				visual.ID = visualComponent.Visual
 			}
 			if _, exists := seenVisualIDs[visual.ID]; exists {
 				// Draft validation rejects duplicate component IDs, but retain a
@@ -321,71 +328,97 @@ func projectPages(document authoring.Dashboard, requestedPageID, requestedVisual
 			seenVisualIDs[visual.ID] = struct{}{}
 			visuals = append(visuals, visual)
 		}
-		result = append(result, uisignals.DashboardBuilderPageSignal{ID: page.ID, Title: display(page.Title, page.ID), Canvas: uisignals.DashboardPageCanvasFromDashboard(page.Canvas), Grid: uisignals.DashboardPageGridFromDashboard(page.Grid), Visuals: visuals})
+		result = append(result, uisignals.DashboardBuilderPageSignal{ID: page.ID, Title: display(page.Title, page.ID), Visuals: visuals})
 	}
 	selectedPageID := choosePage(result, strings.TrimSpace(requestedPageID))
 	selectedVisualID := chooseVisual(result, selectedPageID, strings.TrimSpace(requestedVisualID))
 	return result, diagnostics, selectedPageID, selectedVisualID, nil
 }
 
-func projectVisual(component dashboard.PageVisual, authored authoring.AuthoringVisualization) (uisignals.DashboardBuilderVisualSignal, error) {
-	visualType := strings.TrimSpace(authored.Type)
-	title := strings.TrimSpace(component.Title)
-	if authored.Chart != nil {
-		if title == "" {
-			title = authored.Chart.Title
-		}
-		slots, err := chartSlots(authored.Chart.Query)
-		if err != nil {
-			return uisignals.DashboardBuilderVisualSignal{}, err
-		}
-		return uisignals.DashboardBuilderVisualSignal{ID: component.Visual, VisualID: component.Visual, Title: display(title, component.Visual), Type: visualType, Placement: uisignals.DashboardPagePlacementFromDashboard(component.Placement), Slots: slots, Filters: []string{}}, nil
+func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, component *dashboarddocument.VisualDashboardPageComponent, authored dashboarddocument.DashboardVisual) (uisignals.DashboardBuilderVisualSignal, error) {
+	if base == nil || component == nil {
+		return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("visual component is required")
 	}
-	if authored.Tabular != nil {
-		if title == "" {
-			title = authored.Tabular.Title
-		}
-		slots, err := tableSlots(authored.Tabular.Query)
-		if err != nil {
-			return uisignals.DashboardBuilderVisualSignal{}, err
-		}
-		return uisignals.DashboardBuilderVisualSignal{ID: component.Visual, VisualID: component.Visual, Title: display(title, component.Visual), Type: visualType, Placement: uisignals.DashboardPagePlacementFromDashboard(component.Placement), Slots: slots, Filters: []string{}}, nil
+	title := ""
+	if authored.Title != nil {
+		title = *authored.Title
 	}
-	return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("visual %q has no authoring variant", component.Visual)
+	slots, err := canonicalSlots(authored.Query)
+	if err != nil {
+		return uisignals.DashboardBuilderVisualSignal{}, err
+	}
+	placement := dashboard.PagePlacement{Col: int(base.Placement.Column), Row: int(base.Placement.Row), ColSpan: int(base.Placement.ColumnSpan), RowSpan: int(base.Placement.RowSpan)}
+	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), Type: string(authored.Type), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}}, nil
 }
 
-func chartSlots(query authoring.VisualQuery) ([]uisignals.DashboardBuilderVisualSlotSignal, error) {
-	slots := make([]uisignals.DashboardBuilderVisualSlotSignal, 0, len(query.Dimensions)+len(query.Metrics)+2)
-	for index, field := range query.Dimensions {
-		slots = append(slots, slot(fmt.Sprintf("dimension-%d", index), display(field.Alias, field.Field), "dimension", field.Field, true))
-	}
-	if query.Series.Field != "" {
-		slots = append(slots, slot("series", display(query.Series.Alias, query.Series.Field), "category", query.Series.Field, false))
-	}
-	if query.Time.Field != "" {
-		slots = append(slots, slot("time", display(query.Time.Alias, query.Time.Field), "category", query.Time.Field, false))
-	}
-	for index, field := range query.Metrics {
-		slots = append(slots, slot(fmt.Sprintf("metric-%d", index), display(field.Alias, field.Field), "metric", field.Field, true))
+func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.DashboardBuilderVisualSlotSignal, error) {
+	slots := make([]uisignals.DashboardBuilderVisualSlotSignal, 0)
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		for index, field := range value.Dimensions {
+			id, label := canonicalDimension(field)
+			slots = append(slots, slot(fmt.Sprintf("dimension-%d", index), label, "dimension", id, true))
+		}
+		for index, field := range value.Metrics {
+			id, label := canonicalMetric(field)
+			slots = append(slots, slot(fmt.Sprintf("metric-%d", index), label, "metric", id, true))
+		}
+	case *dashboarddocument.RecordsDashboardQuery:
+		for index, field := range value.Fields {
+			id, label := canonicalRecordField(field)
+			slots = append(slots, slot(fmt.Sprintf("field-%d", index), label, "detail", id, false))
+		}
+	case *dashboarddocument.PivotDashboardQuery:
+		for index, field := range value.Rows {
+			id, label := canonicalDimension(field)
+			slots = append(slots, slot(fmt.Sprintf("row-%d", index), label, "dimension", id, true))
+		}
+		for index, field := range value.Metrics {
+			id, label := canonicalMetric(field)
+			slots = append(slots, slot(fmt.Sprintf("metric-%d", index), label, "metric", id, true))
+		}
 	}
 	return boundSlots(slots)
 }
 
-func tableSlots(query authoring.TableQuery) ([]uisignals.DashboardBuilderVisualSlotSignal, error) {
-	slots := make([]uisignals.DashboardBuilderVisualSlotSignal, 0, len(query.Columns)+len(query.Rows)+len(query.Metrics))
-	for index, field := range query.Columns {
-		slots = append(slots, slot(fmt.Sprintf("column-%d", index), display(field.Alias, field.Field), "dimension", field.Field, true))
+func canonicalDimension(value dashboarddocument.DashboardDimensionSelection) (string, string) {
+	if value.String != nil {
+		return *value.String, *value.String
 	}
-	for index, field := range query.Rows {
-		slots = append(slots, slot(fmt.Sprintf("row-%d", index), display(field.Alias, field.Field), "detail", field.Field, false))
+	if value.Reference != nil {
+		id := value.Reference.Dimension
+		if value.Reference.Alias != nil {
+			return id, *value.Reference.Alias
+		}
+		return id, id
 	}
-	for index, field := range query.Metrics {
-		slots = append(slots, slot(fmt.Sprintf("metric-%d", index), display(field.Alias, field.Field), "metric", field.Field, true))
+	return "", ""
+}
+func canonicalMetric(value dashboarddocument.DashboardMetricSelection) (string, string) {
+	if value.String != nil {
+		return *value.String, *value.String
 	}
-	for index, field := range query.Fields {
-		slots = append(slots, slot(fmt.Sprintf("field-%d", index), field, "detail", field, false))
+	if value.Reference != nil {
+		id := value.Reference.Metric
+		if value.Reference.Alias != nil {
+			return id, *value.Reference.Alias
+		}
+		return id, id
 	}
-	return boundSlots(slots)
+	return "", ""
+}
+func canonicalRecordField(value dashboarddocument.DashboardRecordFieldSelection) (string, string) {
+	if value.String != nil {
+		return *value.String, *value.String
+	}
+	if value.Reference != nil {
+		id := value.Reference.Field
+		if value.Reference.Alias != nil {
+			return id, *value.Reference.Alias
+		}
+		return id, id
+	}
+	return "", ""
 }
 
 func boundSlots(slots []uisignals.DashboardBuilderVisualSlotSignal) ([]uisignals.DashboardBuilderVisualSlotSignal, error) {

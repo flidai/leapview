@@ -40,7 +40,6 @@ type AuthoringConfig struct {
 	Database          *sql.DB
 	AuthorizeResource AuthorizeResource
 	AcquireRuntime    func(context.Context) (runtimehost.Lease, error)
-	ExportDashboard   authoring.DashboardExporter
 }
 
 // BuildAuthoring constructs the complete dashboard authoring application and
@@ -55,10 +54,6 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	if config.AcquireRuntime == nil {
 		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
 	}
-	if config.ExportDashboard == nil {
-		return nil, fmt.Errorf("dashboard authoring exporter is required")
-	}
-
 	repository := authoringsqlite.NewRepository(config.Database)
 	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.AuthorizeResource(config.AuthorizeResource))
 	if err != nil {
@@ -88,12 +83,11 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 		return nil, fmt.Errorf("build dashboard authoring service: %w", err)
 	}
 	application, err := authoringapplication.New(authoringapplication.Options{
-		Authoring:       service,
-		Repository:      repository,
-		Authorizer:      authorizer,
-		Compiler:        compiler,
-		AcquireRuntime:  config.AcquireRuntime,
-		ExportDashboard: config.ExportDashboard,
+		Authoring:      service,
+		Repository:     repository,
+		Authorizer:     authorizer,
+		Compiler:       compiler,
+		AcquireRuntime: config.AcquireRuntime,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring application: %w", err)

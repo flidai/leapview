@@ -6,9 +6,6 @@ metadata:
   displayName: Visual Customers
   description: Customer model table with stable BI-facing customer fields.
 spec:
-  description: Customer model table with stable BI-facing customer fields.
-  sources:
-  - olist.customers
   fields:
     customer_id:
       datatype: String
@@ -34,7 +31,8 @@ spec:
       datatype: Float
       label: Longitude
       description: Canonical longitude joined from the Olist ZIP geolocation dataset.
-  transform:
+  definition:
+    type: sql
     sql: |
       SELECT
         c.customer_id,

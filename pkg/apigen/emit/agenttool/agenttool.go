@@ -285,6 +285,9 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
 	}
+	if ref.Pattern != "" {
+		out["pattern"] = ref.Pattern
+	}
 	if ref.Items != nil {
 		out["items"] = schemaRefJSON(doc, *ref.Items, seen)
 	}
@@ -294,6 +297,9 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 		} else {
 			out["additionalProperties"] = ref.AdditionalProperties.Any
 		}
+	}
+	if ref.PropertyNames != nil {
+		out["propertyNames"] = schemaRefJSON(doc, *ref.PropertyNames, seen)
 	}
 	return out
 }

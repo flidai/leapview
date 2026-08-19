@@ -6,9 +6,14 @@ metadata:
   displayName: Ratings
 spec:
   connection: movielens
-  path: ratings.csv
-  fields:
-    userId: {type: integer, description: Anonymized MovieLens user identifier.}
-    movieId: {type: integer, description: MovieLens movie identifier.}
-    rating: {type: double, description: Five-star rating in half-star increments.}
-    timestamp: {type: integer, description: Rating timestamp as Unix epoch seconds.}
+  location:
+    type: path
+    path: ratings.csv
+    format: csv
+  schema:
+    mode: compatible
+    fields:
+      userId: {datatype: Integer, description: Anonymized MovieLens user identifier.}
+      movieId: {datatype: Integer, description: MovieLens movie identifier.}
+      rating: {datatype: Float, description: Five-star rating in half-star increments.}
+      timestamp: {datatype: Integer, description: Rating timestamp as Unix epoch seconds.}

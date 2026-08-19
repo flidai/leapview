@@ -61,8 +61,26 @@ func TestEmit_GeneratesDiscriminatedUnion(t *testing.T) {
 	require.NoError(t, err)
 	content := string(b)
 	require.Contains(t, content, "export type Visual = ChartVisual | TextVisual")
-	require.Contains(t, content, "export interface ChartVisual extends VisualBase")
+	require.Contains(t, content, "export type ChartVisual = VisualBase & {")
+	require.NotContains(t, content, "export interface ChartVisual extends VisualBase")
 	require.Contains(t, content, "shape: 'chart'")
+}
+
+func TestEmit_UsesIntersectionForUnionBase(t *testing.T) {
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"PathSourceLocation":        {Type: "union", OneOf: []ir.SchemaRef{{Ref: "CSVPathSourceLocation"}, {Ref: "JSONPathSourceLocation"}}},
+			"CSVPathSourceLocation":     {Type: "object", Properties: map[string]ir.SchemaProperty{"type": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"type"}},
+			"JSONPathSourceLocation":    {Type: "object", Properties: map[string]ir.SchemaProperty{"type": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"type"}},
+			"SourceLocationPathVariant": {Type: "object", Base: &ir.SchemaRef{Ref: "PathSourceLocation"}, Properties: map[string]ir.SchemaProperty{"path": {Schema: ir.SchemaRef{Type: "string"}}}, Required: []string{"path"}},
+		},
+		Contracts: []ir.Contract{{Name: "SourceLocationPathVariant", Schema: ir.SchemaRef{Ref: "SourceLocationPathVariant"}}},
+	}
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "export type SourceLocationPathVariant = PathSourceLocation & {")
+	require.NotContains(t, content, "export interface SourceLocationPathVariant extends PathSourceLocation")
 }
 
 func TestEmit_ReferencesImportedContractNamespaceWithoutRegeneratingIt(t *testing.T) {

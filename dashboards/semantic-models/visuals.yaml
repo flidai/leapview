@@ -70,6 +70,21 @@ spec:
         - week
         - month
         calendar: iso8601
+    purchase_month:
+      datatype: String
+      bindings:
+        orders:
+          field: orders.purchase_month
+    delivery_bucket:
+      datatype: String
+      bindings:
+        orders:
+          field: orders.delivery_bucket
+    order_id:
+      datatype: String
+      bindings:
+        orders:
+          field: orders.order_id
     state:
       datatype: String
       bindings:
@@ -82,6 +97,70 @@ spec:
           path:
           - delivery_routes_orders
           - orders_customers
+        spatial_load_points:
+          field: spatial_load_points.state
+    zip_prefix:
+      datatype: String
+      bindings:
+        orders:
+          field: customers.zip_prefix
+          path:
+          - orders_customers
+        spatial_load_points:
+          field: spatial_load_points.point_id
+    city:
+      datatype: String
+      bindings:
+        orders:
+          field: customers.city
+          path:
+          - orders_customers
+        delivery_routes:
+          field: delivery_routes.route_label
+        spatial_load_points:
+          field: spatial_load_points.city
+    latitude:
+      datatype: Float
+      bindings:
+        orders:
+          field: customers.latitude
+          path:
+          - orders_customers
+        delivery_routes:
+          field: delivery_routes.latitude
+        spatial_load_points:
+          field: spatial_load_points.latitude
+    longitude:
+      datatype: Float
+      bindings:
+        orders:
+          field: customers.longitude
+          path:
+          - orders_customers
+        delivery_routes:
+          field: delivery_routes.longitude
+        spatial_load_points:
+          field: spatial_load_points.longitude
+    point_id:
+      datatype: String
+      bindings:
+        spatial_load_points:
+          field: spatial_load_points.point_id
+    route_id:
+      datatype: String
+      bindings:
+        delivery_routes:
+          field: delivery_routes.route_id
+    point_order:
+      datatype: String
+      bindings:
+        delivery_routes:
+          field: delivery_routes.point_order
+    route_label:
+      datatype: String
+      bindings:
+        delivery_routes:
+          field: delivery_routes.route_label
     order_status:
       datatype: String
       bindings:
@@ -137,7 +216,7 @@ spec:
       empty: zero
       label: Revenue
       description: Total payment revenue.
-      unit: R$
+      unit: BRL
       format: currency
     revenue_min:
       type: aggregate
@@ -148,7 +227,7 @@ spec:
       empty: 'null'
       label: Revenue min
       description: Minimum order revenue.
-      unit: R$
+      unit: BRL
       format: currency
     revenue_max:
       type: aggregate
@@ -159,7 +238,7 @@ spec:
       empty: 'null'
       label: Revenue max
       description: Maximum order revenue.
-      unit: R$
+      unit: BRL
       format: currency
     missing_revenue:
       type: aggregate
@@ -172,7 +251,7 @@ spec:
       empty: 'null'
       label: Missing revenue comparison
       description: Documentation-only comparison metric with no matching rows.
-      unit: R$
+      unit: BRL
       format: currency
     review_score:
       type: aggregate
@@ -233,7 +312,7 @@ spec:
       empty: zero
       label: Route revenue
       description: Seller-allocated revenue for actual order delivery routes.
-      unit: R$
+      unit: BRL
       format: currency
     aov:
       type: ratio
@@ -241,35 +320,35 @@ spec:
       denominator: order_count
       label: AOV
       description: Average order value.
-      unit: R$
+      unit: BRL
       format: currency
     revenue_baseline:
       type: derived
       label: Revenue baseline
       description: Filter-aligned baseline used by KPI comparison examples.
       expression: ${revenue} * 0.9
-      unit: R$
+      unit: BRL
       format: currency
     revenue_target:
       type: derived
       label: Revenue target
       description: Filter-aligned target used by KPI goal examples.
       expression: ${revenue} * 1.1
-      unit: R$
+      unit: BRL
       format: currency
     revenue_q1:
       type: derived
       label: Revenue lower bound
       description: Minimum order revenue used as the lower showcase bound.
       expression: ${revenue_min}
-      unit: R$
+      unit: BRL
       format: currency
     revenue_q3:
       type: derived
       label: Revenue upper bound
       description: Maximum order revenue used as the upper showcase bound.
       expression: ${revenue_max}
-      unit: R$
+      unit: BRL
       format: currency
     delivery_days_q1:
       type: derived

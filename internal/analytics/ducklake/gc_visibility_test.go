@@ -16,7 +16,7 @@ import (
 // could not safely read this snapshot after sweep.
 func TestCurrentFileClosureIncludesEveryRetainedDeleteFile(t *testing.T) {
 	ctx := context.Background()
-	env, err := Open(ctx, Config{RootDir: t.TempDir(), MaxConnections: 1})
+	env, err := Open(ctx, admittedConfig(t, Config{RootDir: t.TempDir(), MaxConnections: 1}))
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}

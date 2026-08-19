@@ -23,6 +23,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
 	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
@@ -34,6 +35,7 @@ import (
 // changed while an untouched table retains the exact inherited references.
 func TestCandidateCatalogMinIOSealedBaseRetainsUnchangedRefs(t *testing.T) {
 	ctx := context.Background()
+	admission := extensionfixture.New(t, "ducklake")
 	endpoint := startCandidateMinIO(t, ctx)
 	const bucket = "leapview-candidatecatalog"
 	const accessKey = "leapview"
@@ -62,7 +64,7 @@ func TestCandidateCatalogMinIOSealedBaseRetainsUnchangedRefs(t *testing.T) {
 	contract := candidateMinIOPoolContract(t, bucket, prefix)
 
 	baseRoot := t.TempDir()
-	base, err := ducklake.Open(ctx, ducklake.Config{RootDir: baseRoot, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, CredentialBootstrap: bootstrap})
+	base, err := ducklake.Open(ctx, ducklake.Config{RootDir: baseRoot, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ExtensionAdmission: admission.Admission, CredentialBootstrap: bootstrap})
 	if extensionUnavailableCandidate(err) {
 		if minioConformanceGateRequired() {
 			t.Fatalf("ducklake extension unavailable in required MinIO conformance gate: %v", err)
@@ -95,7 +97,7 @@ func TestCandidateCatalogMinIOSealedBaseRetainsUnchangedRefs(t *testing.T) {
 
 	now := time.Now().UTC()
 	working, err := Open(ctx, Request{
-		AttemptID: "attempt-minio", StagingRoot: t.TempDir(), PoolContract: contract, CredentialBootstrap: bootstrap,
+		AttemptID: "attempt-minio", StagingRoot: t.TempDir(), PoolContract: contract, ExtensionAdmission: admission.Admission, CredentialBootstrap: bootstrap,
 		Lease:       WriterLease{ID: "lease-minio", AttemptID: "attempt-minio", PhysicalPoolID: contract.Pool.ID.String(), Epoch: 1, ExpiresAt: now.Add(time.Hour), Status: LeaseActive},
 		VerifyLease: func(context.Context, WriterLease) error { return nil },
 		Base:        &SealedArtifact{ObjectKey: catalogKey, Digest: baseDigest, SizeBytes: int64(len(baseBytes)), PhysicalPoolID: contract.Pool.ID.String(), Compatibility: contract.Tuple, Reader: ObjectReader{Store: candidateMinIOObjectStore{client: client, bucket: bucket}, Key: catalogKey}},

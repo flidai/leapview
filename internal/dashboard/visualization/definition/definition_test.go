@@ -1,6 +1,7 @@
 package definition
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -161,6 +162,47 @@ func TestQueryBindingValidatesEveryMatrixField(t *testing.T) {
 	}
 	if err := binding.Validate(); err == nil {
 		t.Fatal("invalid matrix row binding passed validation")
+	}
+}
+
+func TestQueryBindingSeparatesPivotOnlyState(t *testing.T) {
+	t.Parallel()
+
+	// Matrix is intentionally the smaller, legacy cross-tab contract. Pivot-only
+	// controls must stay structurally unavailable on Matrix rather than being
+	// accepted and ignored by validation/runtime code.
+	matrixType := reflect.TypeOf(MatrixQueryBinding{})
+	for _, fieldName := range []string{"Sort", "Offset", "Totals"} {
+		if _, ok := matrixType.FieldByName(fieldName); ok {
+			t.Fatalf("matrix query binding unexpectedly exposes pivot-only field %q", fieldName)
+		}
+	}
+	matrix := QueryBinding{
+		Kind: QueryMatrix, ResultShape: ResultMatrixWindow, ModelID: "sales", DatasetID: "primary",
+		Matrix: &MatrixQueryBinding{
+			TableID: "orders",
+			Rows:    []FieldBinding{{FieldID: "orders.state", Alias: "state"}},
+			Columns: []FieldBinding{{FieldID: "orders.channel", Alias: "channel"}},
+			Metrics: []FieldBinding{{FieldID: "orders.revenue", Alias: "revenue"}},
+			Limit:   100,
+		},
+	}
+	if err := matrix.Validate(); err != nil {
+		t.Fatalf("valid matrix binding rejected: %v", err)
+	}
+
+	pivot := QueryBinding{
+		Kind: QueryPivot, ResultShape: ResultPivotWindow, ModelID: "sales", DatasetID: "primary",
+		Pivot: &PivotQueryBinding{
+			TableID: "orders",
+			Rows:    []FieldBinding{{FieldID: "orders.state", Alias: "state"}},
+			Metrics: []FieldBinding{{FieldID: "orders.revenue", Alias: "revenue"}},
+			Offset:  -1,
+			Limit:   100,
+		},
+	}
+	if err := pivot.Validate(); err == nil {
+		t.Fatal("negative pivot offset passed validation")
 	}
 }
 

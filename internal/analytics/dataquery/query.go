@@ -54,6 +54,8 @@ type Query struct {
 	Offset              int
 	Limit               int
 	BinCount            int
+	Histogram           *HistogramOptions
+	Distribution        *DistributionOptions
 	IncludeTotal        bool
 	SpatialTile         *SpatialTile
 	SpatialTileBudget   *SpatialTileBudget
@@ -112,6 +114,25 @@ type Time struct {
 	Field string
 	Grain string
 	Alias string
+}
+
+// HistogramOptions and DistributionOptions are part of the governed query
+// identity. They mirror the semantic planner's statistical operands so cache,
+// authorization, and execution layers cannot silently fall back to chart
+// presentation defaults.
+type HistogramOptions struct {
+	DomainMinimum *float64
+	DomainMaximum *float64
+	NullPolicy    string
+	Approximation string
+}
+
+type DistributionOptions struct {
+	Quantiles     []float64
+	WhiskerLower  *float64
+	WhiskerUpper  *float64
+	Outliers      string
+	Approximation string
 }
 
 type Filter struct {
