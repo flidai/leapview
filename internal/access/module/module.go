@@ -255,7 +255,16 @@ func (m *Module) AuthorizeBootstrapRequest(ctx context.Context, r *http.Request,
 	if err != nil {
 		return false, err
 	}
-	return isAdmin && containsCapability(credential.Token.Capabilities, required), nil
+	return isAdmin && bootstrapTokenAllowsCapability(credential.Token.Capabilities, required), nil
+}
+
+// bootstrapTokenAllowsCapability preserves the project-admin hierarchy used
+// by the canonical policy. A token explicitly scoped to PROJECT_ADMIN may
+// perform project-scoped resource operations during bootstrap; narrower
+// tokens must carry the exact operation capability.
+func bootstrapTokenAllowsCapability(capabilities []access.Capability, required access.Capability) bool {
+	return containsCapability(capabilities, required) ||
+		(required != access.CapabilityProjectAdmin && containsCapability(capabilities, access.CapabilityProjectAdmin))
 }
 
 func (m *Module) requestCredential(r *http.Request) (access.APICredential, bool) {
