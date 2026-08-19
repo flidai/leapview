@@ -15,13 +15,14 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/flidai/leapview/internal/analytics/arrowdecode"
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/pkg/arrowresult"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,7 +154,7 @@ func (c *queryResultCache) get(key string) (dataquery.Result, bool) {
 		return dataquery.Result{}, false
 	}
 	defer entry.Release()
-	rows, err := arrowresult.DecodeRows(entry.Data())
+	rows, err := arrowdecode.DecodeRows(entry.Data())
 	if err != nil {
 		return dataquery.Result{}, false
 	}
