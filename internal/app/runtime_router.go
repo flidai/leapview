@@ -1567,12 +1567,20 @@ func bootstrapAPIGenDecision(
 	targets deliveryTargetReader,
 	targetID string,
 ) (accessmodule.APIGenBootstrapDecision, error) {
-	active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
-	if err != nil {
-		return accessmodule.APIGenBootstrapDecision{}, err
-	}
-	if active {
-		return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+	// Deployment status/event reads are control-plane operations. Their
+	// project-scoped RESOURCE_READ contract cannot be evaluated against the
+	// project graph (projects intentionally only support PROJECT_ADMIN), and
+	// the sealed delivery pointer advances before the in-process runtime cutover.
+	// Keep these reads on the durable, exact-claim bootstrap path through that
+	// marker-to-runtime warm-up window.
+	if !bootstrapControlPlaneRead(operationID) {
+		active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
+		if err != nil {
+			return accessmodule.APIGenBootstrapDecision{}, err
+		}
+		if active {
+			return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+		}
 	}
 	if err := projectID.Validate(); err != nil || projectID.String() != strings.TrimSpace(projectID.String()) {
 		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
@@ -1593,11 +1601,21 @@ func bootstrapAPIGenDecision(
 	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowed(operationID)}, nil
 }
 
+func bootstrapControlPlaneRead(operationID string) bool {
+	switch operationID {
+	case "listDeployments", "getDeployment", "listDeploymentEvents":
+		return true
+	default:
+		return false
+	}
+}
+
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
 	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"listDeployments", "getDeployment", "listDeploymentEvents":
 		return true
 	case "managedDataTusTransport":
 		return true

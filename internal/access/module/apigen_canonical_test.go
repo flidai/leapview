@@ -869,6 +869,11 @@ func TestAPIGenBootstrapAllowlistIncludesCandidateSourceAndManagedDataStaging(t 
 			t.Errorf("unrelated operation %q is bootstrap-authorized", operation)
 		}
 	}
+	for _, operation := range []string{"listDeployments", "getDeployment", "listDeploymentEvents"} {
+		if !isBootstrapAPIGenOperation(operation) {
+			t.Errorf("deployment status operation %q is not bootstrap-authorized", operation)
+		}
+	}
 }
 
 func TestAPIGenAuthenticatedOperationUsesPrincipalAuthentication(t *testing.T) {
