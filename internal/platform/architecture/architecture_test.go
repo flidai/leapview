@@ -1858,6 +1858,111 @@ func TestWorkloadImportsNoProductCapabilities(t *testing.T) {
 	}
 }
 
+func TestReusableWorkloadPackageContainsOnlyGenericMechanisms(t *testing.T) {
+	root := repoRoot(t)
+	if !packageDirExists(root, "pkg/workload") {
+		t.Fatal("reusable workload contract package does not exist")
+	}
+	packageRoot := filepath.Join(root, "pkg", "workload")
+	err := filepath.WalkDir(packageRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && entry.Name() == "go.mod" {
+			t.Errorf("%s creates a nested module; pkg/workload must remain in the root Go module", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("inspect pkg/workload module boundary: %v", err)
+	}
+	rule, ok := ClassifyPackage("pkg/workload")
+	if !ok || rule.Capability != "workload" || rule.Layer != LayerContract {
+		t.Fatalf("pkg/workload classification = %#v, want workload contract", rule)
+	}
+
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir != "pkg/workload" && !strings.HasPrefix(file.pkgDir, "pkg/workload/") {
+			continue
+		}
+		for _, imported := range file.imports {
+			if strings.HasPrefix(imported, modulePath+"/internal/") {
+				t.Errorf("%s imports application-private package %s", file.path, imported)
+			}
+		}
+
+		parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, filepath.FromSlash(file.path)), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", file.path, err)
+		}
+		forbiddenDeclarations := map[string]struct{}{
+			"Interactive":   {},
+			"Background":    {},
+			"Refresh":       {},
+			"Control":       {},
+			"Maintenance":   {},
+			"DefaultConfig": {},
+		}
+		forbiddenClassValues := map[string]struct{}{
+			"interactive": {},
+			"background":  {},
+			"refresh":     {},
+			"control":     {},
+			"maintenance": {},
+		}
+		for _, declaration := range parsed.Decls {
+			switch value := declaration.(type) {
+			case *ast.FuncDecl:
+				if _, forbidden := forbiddenDeclarations[value.Name.Name]; forbidden {
+					t.Errorf("%s declares LeapView workload policy identifier %s", file.path, value.Name.Name)
+				}
+			case *ast.GenDecl:
+				for _, specification := range value.Specs {
+					switch item := specification.(type) {
+					case *ast.TypeSpec:
+						if _, forbidden := forbiddenDeclarations[item.Name.Name]; forbidden {
+							t.Errorf("%s declares LeapView workload policy identifier %s", file.path, item.Name.Name)
+						}
+					case *ast.ValueSpec:
+						for _, name := range item.Names {
+							if _, forbidden := forbiddenDeclarations[name.Name]; forbidden {
+								t.Errorf("%s declares LeapView workload policy identifier %s", file.path, name.Name)
+							}
+						}
+					}
+				}
+			}
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			literal, ok := node.(*ast.BasicLit)
+			if !ok || literal.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(literal.Value)
+			if err == nil {
+				if _, forbidden := forbiddenClassValues[value]; forbidden {
+					t.Errorf("%s embeds LeapView workload class value %q", file.path, value)
+				}
+			}
+			return true
+		})
+	}
+}
+
+func TestReusableWorkloadPackageHasNoProductionConsumersBeforeQualification(t *testing.T) {
+	const reusableWorkload = modulePath + "/pkg/workload"
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir == "pkg/workload" || strings.HasPrefix(file.pkgDir, "pkg/workload/") {
+			continue
+		}
+		for _, imported := range file.imports {
+			if imported == reusableWorkload || strings.HasPrefix(imported, reusableWorkload+"/") {
+				t.Errorf("%s consumes pkg/workload before its independent qualification gate", file.path)
+			}
+		}
+	}
+}
+
 func TestOnlyWorkloadAdaptersAndCompositionDependOnWorkload(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {
