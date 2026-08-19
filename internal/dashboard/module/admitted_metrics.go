@@ -25,7 +25,7 @@ type admittedMetrics struct {
 }
 
 func WithAdmission(metrics Metrics, admitter workload.Admitter) Metrics {
-	if metrics == nil {
+	if metrics == nil || admitter == nil {
 		return nil
 	}
 	return admittedMetrics{Metrics: metrics, admitter: admitter}
@@ -152,7 +152,7 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 		return dataquery.Result{}, fmt.Errorf("project ID: %w", err)
 	}
 	if m.admitter == nil {
-		return m.Metrics.ExecuteDataQuery(ctx, request)
+		return dataquery.Result{ExecutionState: dataquery.ExecutionRejected}, errors.New("workload admission is not configured")
 	}
 	class := workload.Interactive
 	if request.Surface == dataquery.SurfaceAgent {
@@ -205,7 +205,7 @@ func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request data
 		return dataquery.Result{}, errors.New("query metrics do not support native Arrow execution")
 	}
 	if m.admitter == nil {
-		return executor.ExecuteDataQueryArrow(ctx, request, sink)
+		return dataquery.Result{ExecutionState: dataquery.ExecutionRejected}, errors.New("workload admission is not configured")
 	}
 	class := workload.Interactive
 	if request.Surface == dataquery.SurfaceAgent {

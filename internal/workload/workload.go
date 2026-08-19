@@ -6,10 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
-	"unicode"
+
+	genericworkload "github.com/flidai/leapview/pkg/workload"
 )
 
 type Class string
@@ -79,53 +78,11 @@ func DefaultConfig() Config {
 }
 
 func (c Config) Validate() error {
-	if c.MaxRunning < 0 || c.MaximumQueued < 0 || c.MaximumMemoryBytes < 0 ||
-		c.MaximumRunningPerPrincipal < 0 || c.MaximumQueuedPerPrincipal < 0 || c.MaximumMemoryBytesPerPrincipal < 0 ||
-		c.MaximumRunningPerGroup < 0 || c.MaximumQueuedPerGroup < 0 || c.MaximumMemoryBytesPerGroup < 0 {
-		return fmt.Errorf("workload limits must not be negative")
+	genericConfig, err := toGenericConfig(cloneConfig(c))
+	if err != nil {
+		return err
 	}
-	if c.MaximumRunningPerPrincipal > c.MaxRunning && c.MaximumRunningPerPrincipal != 0 {
-		return fmt.Errorf("principal running limit exceeds instance maximum")
-	}
-	if c.MaximumQueuedPerPrincipal > c.MaximumQueued && c.MaximumQueuedPerPrincipal != 0 {
-		return fmt.Errorf("principal queue limit exceeds instance maximum")
-	}
-	if c.MaximumRunningPerGroup > c.MaxRunning && c.MaximumRunningPerGroup != 0 {
-		return fmt.Errorf("group running limit exceeds instance maximum")
-	}
-	if c.MaximumQueuedPerGroup > c.MaximumQueued && c.MaximumQueuedPerGroup != 0 {
-		return fmt.Errorf("group queue limit exceeds instance maximum")
-	}
-	if c.MaximumMemoryBytes > 0 && c.MaximumMemoryBytesPerPrincipal > c.MaximumMemoryBytes {
-		return fmt.Errorf("principal memory limit exceeds instance maximum")
-	}
-	if c.MaximumMemoryBytes > 0 && c.MaximumMemoryBytesPerGroup > c.MaximumMemoryBytes {
-		return fmt.Errorf("group memory limit exceeds instance maximum")
-	}
-	reserved := 0
-	for _, class := range classOrder {
-		policy := c.Classes[class]
-		if policy.ReservedRunning < 0 || policy.MaximumRunning < 0 || policy.MaximumQueued < 0 || policy.MaximumMemoryBytes < 0 || policy.QueueTimeout < 0 || policy.ExecutionTimeout < 0 {
-			return fmt.Errorf("workload %s limits must not be negative", class)
-		}
-		if policy.ReservedRunning > policy.MaximumRunning {
-			return fmt.Errorf("workload %s reserved running exceeds maximum running", class)
-		}
-		if policy.MaximumRunning > c.MaxRunning {
-			return fmt.Errorf("workload %s maximum running exceeds instance maximum", class)
-		}
-		if policy.MaximumQueued > c.MaximumQueued {
-			return fmt.Errorf("workload %s maximum queue exceeds instance maximum", class)
-		}
-		if c.MaximumMemoryBytes > 0 && policy.MaximumMemoryBytes > c.MaximumMemoryBytes {
-			return fmt.Errorf("workload %s memory limit exceeds instance maximum", class)
-		}
-		reserved += policy.ReservedRunning
-	}
-	if reserved > c.MaxRunning {
-		return fmt.Errorf("workload reservations exceed instance capacity")
-	}
-	return nil
+	return genericConfig.Validate()
 }
 
 type RejectionReason string
@@ -205,14 +162,11 @@ func FromContext(ctx context.Context) (Admitter, bool) {
 
 // Current returns the currently admitted class and explicit principal.
 func Current(ctx context.Context) (Class, string, bool) {
-	if ctx == nil {
+	request, ok := genericworkload.Current(ctx)
+	if !ok {
 		return "", "", false
 	}
-	active, ok := ctx.Value(admissionContextKey{}).(*admissionContext)
-	if !ok || active == nil {
-		return "", "", false
-	}
-	return active.class, active.principal, true
+	return Class(request.Class), request.PrincipalID, true
 }
 
 type ActorStats struct {
@@ -273,18 +227,10 @@ type Option func(*Controller)
 func WithObserver(observer Observer) Option { return func(c *Controller) { c.observer = observer } }
 func WithClock(clock Clock) Option          { return func(c *Controller) { c.clock = clock } }
 
-func normalizeGroups(groups []string) ([]string, error) {
-	seen := make(map[string]struct{}, len(groups))
-	for _, raw := range groups {
-		if raw == "" || raw != strings.TrimSpace(raw) || strings.IndexFunc(raw, unicode.IsControl) >= 0 {
-			return nil, fmt.Errorf("group id contains control characters")
-		}
-		seen[raw] = struct{}{}
+func clonePolicies(source map[Class]Policy) map[Class]Policy {
+	result := make(map[Class]Policy, len(source))
+	for class, policy := range source {
+		result[class] = policy
 	}
-	result := make([]string, 0, len(seen))
-	for group := range seen {
-		result = append(result, group)
-	}
-	sort.Strings(result)
-	return result, nil
+	return result
 }

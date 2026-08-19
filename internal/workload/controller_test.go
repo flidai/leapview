@@ -14,8 +14,8 @@ func TestConfigValidationAndFiniteDefaults(t *testing.T) {
 	if defaults.MaximumMemoryBytes <= 0 || defaults.MaximumQueued <= 0 || defaults.MaximumRunningPerPrincipal <= 0 || defaults.MaximumQueuedPerPrincipal <= 0 {
 		t.Fatal("default workload limits must be finite")
 	}
-	if _, err := New(Config{}); err != nil {
-		t.Fatal(err)
+	if _, err := New(Config{}); err == nil {
+		t.Fatal("empty workload configuration unexpectedly accepted")
 	}
 	invalid := defaults
 	invalid.MaxRunning = -1
@@ -135,7 +135,7 @@ func TestQueueAndMemoryRejections(t *testing.T) {
 	_, err := c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "p2", GroupIDs: []string{"team"}, Operation: "query", EstimatedMemoryBytes: 1})
 	assertReason(t, err, InstanceQueueFull)
 	_, err = c.Acquire(context.Background(), Request{Class: Interactive, PrincipalID: "p2", Operation: "query", EstimatedMemoryBytes: 101})
-	assertReason(t, err, InstanceMemoryLimit)
+	assertReason(t, err, ClassMemoryLimit)
 	running.Release()
 	receiveLease(t, queued).Release()
 }

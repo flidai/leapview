@@ -99,3 +99,12 @@ func (m *Module) Close() {
 		m.stop.Do(m.controller.Close)
 	}
 }
+
+// Drain closes admission and waits for all admitted work to release. It is
+// the lifecycle boundary used before dependent analytics resources close.
+func (m *Module) Drain(ctx context.Context) error {
+	if m == nil || m.controller == nil {
+		return nil
+	}
+	return m.controller.Drain(ctx)
+}

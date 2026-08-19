@@ -64,6 +64,7 @@ func Load() (Config, error) {
 	if err := env.Parse(&cfg); err != nil {
 		return Config{}, configurationError(err)
 	}
+	cfg.workloadLoaded = true
 	if strings.TrimSpace(cfg.ManagedDataDir) == "" {
 		cfg.ManagedDataDir = filepath.Join(cfg.HomeDir, "managed-data")
 	}
@@ -277,7 +278,7 @@ func (c Config) ValidateProductionAuth() error {
 }
 
 func (c Config) WorkloadConfig() workload.Config {
-	return workload.Config{
+	configured := workload.Config{
 		MaxRunning:    c.WorkloadMaxRunning,
 		MaximumQueued: c.WorkloadMaxQueued,
 		Classes: map[workload.Class]workload.Policy{
@@ -288,6 +289,42 @@ func (c Config) WorkloadConfig() workload.Config {
 			workload.Maintenance: workloadPolicy(c.WorkloadMaintenanceReservedRunning, c.WorkloadMaintenanceMaxRunning, c.WorkloadMaintenanceMaxQueued, c.WorkloadMaintenanceQueueTimeout, c.WorkloadMaintenanceExecutionTimeout),
 		},
 	}
+	if c.workloadLoaded {
+		return mergeWorkloadDefaults(configured)
+	}
+	if configured.MaxRunning == 0 && configured.MaximumQueued == 0 {
+		unset := true
+		for _, policy := range configured.Classes {
+			if policy != (workload.Policy{}) {
+				unset = false
+				break
+			}
+		}
+		if unset {
+			return workload.DefaultConfig()
+		}
+	}
+	return configured
+}
+
+// mergeWorkloadDefaults applies the environment-visible workload overrides to
+// LeapView's complete application policy. Memory and actor limits are not
+// process-global environment settings, so they remain at their reviewed
+// application defaults when Config was loaded from the environment.
+func mergeWorkloadDefaults(configured workload.Config) workload.Config {
+	defaults := workload.DefaultConfig()
+	defaults.MaxRunning = configured.MaxRunning
+	defaults.MaximumQueued = configured.MaximumQueued
+	for class, policy := range configured.Classes {
+		defaultPolicy := defaults.Classes[class]
+		defaultPolicy.ReservedRunning = policy.ReservedRunning
+		defaultPolicy.MaximumRunning = policy.MaximumRunning
+		defaultPolicy.MaximumQueued = policy.MaximumQueued
+		defaultPolicy.QueueTimeout = policy.QueueTimeout
+		defaultPolicy.ExecutionTimeout = policy.ExecutionTimeout
+		defaults.Classes[class] = defaultPolicy
+	}
+	return defaults
 }
 
 func workloadPolicy(reserved, running, queued int, queueTimeout, executionTimeout time.Duration) workload.Policy {

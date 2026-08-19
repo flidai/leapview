@@ -39,6 +39,7 @@ import (
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
+	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 )
 
 // testExactExtensionAdmission is the explicit fixture boundary for app tests
@@ -382,6 +383,13 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		if err != nil {
 			return nil, err
 		}
+	}
+	if options.Workload == nil {
+		controller, err := workloadmodule.Build(ctx, workloadmodule.Config{Policy: workloadmodule.DefaultConfig()})
+		if err != nil {
+			return nil, fmt.Errorf("build test workload admission: %w", err)
+		}
+		options.Workload = controller
 	}
 	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
 		catalog, err := projectcatalog.NewService(
