@@ -44,6 +44,7 @@ type DeliveryBuildAttempt struct {
 	Status                DeliveryBuildAttemptStatus `json:"status"`
 	SealID                string                     `json:"sealId,omitempty"`
 	CandidateID           string                     `json:"candidateId,omitempty"`
+	QualifiedSnapshotID   int64                      `json:"qualifiedSnapshotId,omitempty"`
 	FailureCode           string                     `json:"failureCode,omitempty"`
 	CreatedAt             time.Time                  `json:"createdAt"`
 	UpdatedAt             time.Time                  `json:"updatedAt"`
@@ -105,6 +106,9 @@ func (attempt DeliveryBuildAttempt) Validate() error {
 	}
 	if attempt.Revision < 1 {
 		return fmt.Errorf("%w: build revision must be positive", ErrDeliveryInvalid)
+	}
+	if attempt.QualifiedSnapshotID < 0 {
+		return fmt.Errorf("%w: qualified snapshot must not be negative", ErrDeliveryInvalid)
 	}
 	if err := validateDeliveryTime("build created at", attempt.CreatedAt, true); err != nil {
 		return err

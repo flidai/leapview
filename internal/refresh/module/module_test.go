@@ -207,6 +207,42 @@ func TestReconcileRejectsMultipleActiveServingScopes(t *testing.T) {
 	}
 }
 
+func TestDataVersionUsesCanonicalRuntimeIdentity(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES
+  ('state-old', 'sales', 'prod', 'superseded'),
+  ('state-new', 'sales', 'prod', 'active');
+INSERT INTO semantic_model_data_versions (
+  project_id, environment, semantic_model_id, snapshot_id, generation_id, refreshed_at, source
+) VALUES
+  ('sales', 'prod', 'orders', 41, 'state-old', '2026-08-18T00:00:00Z', 'publish'),
+  ('sales', 'prod', 'orders', 84, 'state-new', '2026-08-19T00:00:00Z', 'refresh');`); err != nil {
+		t.Fatal(err)
+	}
+	module, err := Build(t.Context(), Config{
+		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {
+			return projectgraph.ServingIdentity{ProjectID: "sales", Environment: "prod", GenerationID: "state-new"}, nil
+		},
+		Service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{ID: "state-old", ProjectID: "sales", Environment: "prod"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, found, err := module.DataVersion(t.Context(), "sales", "prod", "orders")
+	if err != nil || !found {
+		t.Fatalf("DataVersion() = %#v, %t, %v", version, found, err)
+	}
+	if version.SnapshotID != 84 || version.ServingStateID != "state-new" || version.Source != refreshschedule.DataVersionSourceRefresh {
+		t.Fatalf("DataVersion() = %#v, want canonical runtime version", version)
+	}
+}
+
 type reconciliationStates struct {
 	state    servingstate.State
 	artifact servingstate.Artifact

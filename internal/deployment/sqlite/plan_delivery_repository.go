@@ -135,8 +135,13 @@ func (r *Repository) CreatePlan(ctx context.Context, input deployment.DeliveryPl
 		actor = "delivery"
 	}
 	plan.ActorID = actor
+	sourceOwnerID := plan.SourceOwnerID
+	if sourceOwnerID == "" {
+		sourceOwnerID = actor
+	}
+	plan.SourceOwnerID = sourceOwnerID
 	err = deploydb.New(tx).CreateDeliveryPlan(ctx, deploydb.CreateDeliveryPlanParams{
-		ID: plan.ID, TargetID: plan.TargetID, ProjectID: plan.ProjectID.String(), Environment: plan.Environment, ActorID: actor,
+		ID: plan.ID, TargetID: plan.TargetID, ProjectID: plan.ProjectID.String(), Environment: plan.Environment, ActorID: actor, SourceOwnerID: sourceOwnerID,
 		OperationKind: string(plan.Operation), SourceDigest: plan.SourceDigest, NULLIF: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest, ExecutionInputsJson: string(executionJSON),
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, ProvenanceJson: string(provenanceJSON),
@@ -242,7 +247,7 @@ func deliveryPlanByIDTx(ctx context.Context, q deploydb.DBTX, id string) (deploy
 	if err != nil {
 		return deployment.DeliveryPlan{}, err
 	}
-	plan.ID, plan.TargetID, plan.ProjectID, plan.Environment, plan.ActorID = row.ID, row.TargetID, projectID, row.Environment, row.ActorID
+	plan.ID, plan.TargetID, plan.ProjectID, plan.Environment, plan.ActorID, plan.SourceOwnerID = row.ID, row.TargetID, projectID, row.Environment, row.ActorID, row.SourceOwnerID
 	plan.Operation, plan.SourceDigest, plan.BaseTargetRevision = deployment.DeliveryOperationKind(row.OperationKind), row.SourceDigest, row.BaseTargetRevision
 	if row.BaseGenerationID.Valid {
 		plan.BaseGenerationID = row.BaseGenerationID.String
@@ -787,12 +792,62 @@ func (r *Repository) BindDeliveryBuildArtifacts(ctx context.Context, attemptID s
 	return attempt, attempt.Validate()
 }
 
+// BindDeliveryBuildSnapshot records qualified data-version evidence on the
+// build attempt without pinning the sealed serving state to a DuckLake
+// snapshot. Replays converge only on the same immutable snapshot.
+func (r *Repository) BindDeliveryBuildSnapshot(ctx context.Context, attemptID string, expectedRevision, snapshotID int64, now time.Time) (deployment.DeliveryBuildAttempt, error) {
+	if snapshotID <= 0 || now.IsZero() || now.Location() != time.UTC {
+		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("%w: qualified snapshot binding is invalid", deployment.ErrDeliveryInvalid)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return deployment.DeliveryBuildAttempt{}, err
+	}
+	defer tx.Rollback()
+	attempt, err := deliveryBuildAttemptByIDTx(ctx, tx, attemptID)
+	if err != nil {
+		return deployment.DeliveryBuildAttempt{}, err
+	}
+	if attempt.Revision != expectedRevision {
+		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("%w: build snapshot binding revision changed", deployment.ErrDeliveryConflict)
+	}
+	if attempt.QualifiedSnapshotID != 0 {
+		if attempt.QualifiedSnapshotID != snapshotID {
+			return deployment.DeliveryBuildAttempt{}, fmt.Errorf("%w: qualified snapshot identity changed", deployment.ErrDeliveryConflict)
+		}
+		if err := tx.Commit(); err != nil {
+			return deployment.DeliveryBuildAttempt{}, err
+		}
+		return attempt, nil
+	}
+	result, err := deploydb.New(tx).BindDeliveryBuildSnapshot(ctx, deploydb.BindDeliveryBuildSnapshotParams{
+		QualifiedSnapshotID: snapshotID,
+		UpdatedAt:           deliveryTime(now),
+		ID:                  attemptID,
+		Revision:            expectedRevision,
+	})
+	if err != nil {
+		return deployment.DeliveryBuildAttempt{}, err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("%w: build snapshot binding changed", deployment.ErrDeliveryConflict)
+	}
+	attempt, err = deliveryBuildAttemptByIDTx(ctx, tx, attemptID)
+	if err != nil {
+		return deployment.DeliveryBuildAttempt{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return deployment.DeliveryBuildAttempt{}, err
+	}
+	return attempt, nil
+}
+
 func deliveryBuildAttemptByIDTx(ctx context.Context, q deploydb.DBTX, id string) (deployment.DeliveryBuildAttempt, error) {
 	row, err := deploydb.New(q).GetDeliveryBuildAttempt(ctx, id)
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
 	}
-	a := deployment.DeliveryBuildAttempt{ID: row.ID, PlanID: row.PlanID, IdempotencyKey: row.IdempotencyKey, PlanDigest: row.PlanDigest, SourceDigest: row.SourceDigest, ExecutionDigest: row.ExecutionDigest, PhysicalPoolID: row.PhysicalPoolID, WriterLeaseID: row.WriterLeaseID, Status: deployment.DeliveryBuildAttemptStatus(row.Status), Revision: row.Revision, FailureCode: row.FailureCode}
+	a := deployment.DeliveryBuildAttempt{ID: row.ID, PlanID: row.PlanID, IdempotencyKey: row.IdempotencyKey, PlanDigest: row.PlanDigest, SourceDigest: row.SourceDigest, ExecutionDigest: row.ExecutionDigest, PhysicalPoolID: row.PhysicalPoolID, WriterLeaseID: row.WriterLeaseID, Status: deployment.DeliveryBuildAttemptStatus(row.Status), Revision: row.Revision, QualifiedSnapshotID: row.QualifiedSnapshotID, FailureCode: row.FailureCode}
 	if row.BaseGenerationID.Valid {
 		a.BaseGenerationID = row.BaseGenerationID.String
 	}

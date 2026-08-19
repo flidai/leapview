@@ -166,7 +166,7 @@ type workflowInputs struct {
 	managedDataResolver      runtimehostmodule.ManagedDataResolver
 	refreshPipelineClock     refreshmodule.Clock
 	refreshMaterializer      refreshrun.Materializer
-	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) error
+	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
 	enableRefreshDispatcher  bool
 	agent                    *agentmodule.Service
 	agentConfig              agentmodule.ModelConfig
@@ -251,7 +251,7 @@ type workflowAssemblyInputs struct {
 	DeploymentConfig         deploymentmodule.Config
 	RefreshPipelineClock     refreshmodule.Clock
 	RefreshMaterializer      refreshrun.Materializer
-	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) error
+	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
 	EnableRefreshDispatcher  bool
 	QueryAudit               *analyticsmodule.QueryAuditSurface
 }
@@ -1508,7 +1508,7 @@ func writeProductCommandFailure(ctx context.Context, w http.ResponseWriter, r *h
 
 func hasActiveBootstrapServingState(
 	ctx context.Context,
-	_ *runtimehostmodule.Module,
+	_ canonicalRuntimeHost,
 	states servingStateRepository,
 	environment string,
 	targets deliveryTargetReader,
@@ -1560,6 +1560,29 @@ func hasActiveBootstrapServingState(
 	return false, nil
 }
 
+// hasActiveBootstrapRuntime reports whether the process-local immutable
+// serving generation is ready to authorize requests. The durable delivery
+// pointer may advance before runtime cutover, so deployment status reads use
+// this check to distinguish that marker-to-runtime warm-up window from the
+// normal active snapshot path. An unavailable runtime is intentionally
+// treated as not ready here; the caller then applies the exact durable claim
+// bootstrap policy, which remains fail-closed for missing or mismatched
+// claims.
+func hasActiveBootstrapRuntime(ctx context.Context, runtimeHost canonicalRuntimeHost) (bool, error) {
+	if runtimeHost == nil {
+		return false, nil
+	}
+	lease, err := runtimeHost.Acquire(ctx)
+	if err != nil {
+		return false, nil
+	}
+	if lease == nil {
+		return false, errors.New("runtime host returned a nil lease")
+	}
+	lease.Release()
+	return true, nil
+}
+
 // bootstrapAPIGenDecision is deliberately a read-only seam. It distinguishes
 // a typed empty active-generation pointer from a serving-state store failure,
 // then evaluates only the durable singleton claim and the explicit candidate
@@ -1568,7 +1591,7 @@ func hasActiveBootstrapServingState(
 // never here.
 func bootstrapAPIGenDecision(
 	ctx context.Context,
-	runtimeHost *runtimehostmodule.Module,
+	runtimeHost canonicalRuntimeHost,
 	states servingStateRepository,
 	claims deploymentmodule.ProjectClaimReader,
 	environment, operationID string,
@@ -1583,7 +1606,15 @@ func bootstrapAPIGenDecision(
 	// pointer advances before the in-process runtime cutover. Keep these
 	// operations on the durable, exact-claim bootstrap path through that
 	// marker-to-runtime warm-up window.
-	if !bootstrapControlPlaneOperation(operationID) {
+	if bootstrapControlPlaneOperation(operationID) {
+		active, err := hasActiveBootstrapRuntime(ctx, runtimeHost)
+		if err != nil {
+			return accessmodule.APIGenBootstrapDecision{}, err
+		}
+		if active {
+			return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+		}
+	} else {
 		active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
 		if err != nil {
 			return accessmodule.APIGenBootstrapDecision{}, err

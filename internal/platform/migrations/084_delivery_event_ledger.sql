@@ -25,7 +25,7 @@ CREATE TABLE delivery_events (
   event_kind TEXT NOT NULL CHECK (event_kind IN (
     'plan_created', 'plan_expired', 'build_started', 'build_transitioned', 'build_artifact_bound',
     'candidate_qualified', 'candidate_sealed', 'candidate_retired',
-    'approval_requested', 'approval_granted', 'approval_rejected',
+    'approval_requested', 'approval_granted', 'approval_rejected', 'approval_revoked',
     'restatement_requested', 'publish_requested',
     'publish_committed', 'publish_rejected', 'publish_indeterminate',
     'activation_committed', 'rollback_requested', 'rollback_committed',

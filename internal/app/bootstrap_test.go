@@ -161,3 +161,54 @@ func TestBootstrapAPIGenDecisionUsesCanonicalTargetPointer(t *testing.T) {
 		t.Fatalf("bootstrap decision = %#v, want active canonical target to close bootstrap", got)
 	}
 }
+
+func TestBootstrapAPIGenDecisionDeploymentReadsUseActiveRuntimeWhenReady(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	runtime := tusRuntime{project: project, lease: tusLease{}}
+	claims := bootstrapClaimStoreFake{err: errors.New("claim must not be read while runtime is active")}
+	for _, operation := range []string{"listDeployments", "getDeployment", "listDeploymentEvents"} {
+		t.Run(operation, func(t *testing.T) {
+			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
+			if err != nil {
+				t.Fatalf("bootstrapAPIGenDecision() error = %v", err)
+			}
+			if got != (accessmodule.APIGenBootstrapDecision{Handled: false}) {
+				t.Fatalf("bootstrapAPIGenDecision() = %#v, want active runtime to close bootstrap", got)
+			}
+		})
+	}
+}
+
+func TestBootstrapAPIGenDecisionDeploymentReadsUseExactClaimDuringRuntimeWarmup(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	runtime := tusRuntime{project: project, err: errors.New("runtime is still warming up")}
+	claims := bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: "prod"}}
+	for _, operation := range []string{"listDeployments", "getDeployment", "listDeploymentEvents"} {
+		t.Run(operation, func(t *testing.T) {
+			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
+			if err != nil {
+				t.Fatalf("bootstrapAPIGenDecision() error = %v", err)
+			}
+			if got != (accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}) {
+				t.Fatalf("bootstrapAPIGenDecision() = %#v, want exact claim bootstrap during warm-up", got)
+			}
+		})
+	}
+}
+
+func TestBootstrapAPIGenDecisionDeploymentReadsRemainFailClosedWithoutClaim(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	runtime := tusRuntime{project: project, err: errors.New("runtime is still warming up")}
+	claims := bootstrapClaimStoreFake{err: deployment.ErrProjectClaimNotFound}
+	for _, operation := range []string{"listDeployments", "getDeployment", "listDeploymentEvents"} {
+		t.Run(operation, func(t *testing.T) {
+			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
+			if err != nil {
+				t.Fatalf("bootstrapAPIGenDecision() error = %v", err)
+			}
+			if got != (accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}) {
+				t.Fatalf("bootstrapAPIGenDecision() = %#v, want fail-closed bootstrap decision", got)
+			}
+		})
+	}
+}

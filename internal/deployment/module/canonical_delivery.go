@@ -12,6 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/project"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -52,6 +53,14 @@ type candidateArtifactRehydrator interface {
 	HydrateCandidateArtifacts(context.Context, release.CandidateArtifactRequest, release.CandidateArtifactSet, release.CandidateArtifactIdentity) (release.CandidateArtifactSet, error)
 }
 
+// CanonicalDeliveryPlanID returns the stable plan identity bound to one target,
+// project, environment, operation, and caller idempotency key. Recovery paths
+// use the same identity to distinguish their own committed restatement from an
+// unrelated publication that advanced the target concurrently.
+func CanonicalDeliveryPlanID(targetID string, projectID projectgraph.ResourceID, environment string, operation deployment.DeliveryOperationKind, idempotencyKey string) string {
+	return "plan-" + digestID(strings.Join([]string{targetID, projectID.String(), environment, string(operation), idempotencyKey}, "\x00"))
+}
+
 func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent DeliveryPlanIntent, idempotencyKey string) (deployment.DeliveryPlan, error) {
 	if m == nil || m.Lifecycle == nil || m.Sources == nil {
 		return deployment.DeliveryPlan{}, fmt.Errorf("canonical delivery plan coordinator is unavailable")
@@ -60,10 +69,14 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	if !ok {
 		return deployment.DeliveryPlan{}, fmt.Errorf("target source attestation reader is unavailable")
 	}
-	if intent.ProjectID.Validate() != nil || intent.PrincipalID == "" || intent.TargetID == "" || intent.SourceDigest == "" || intent.SourceAttestationDigest == "" {
+	sourceOwnerID := strings.TrimSpace(intent.SourceOwnerID)
+	if sourceOwnerID == "" {
+		sourceOwnerID = strings.TrimSpace(intent.PrincipalID)
+	}
+	if intent.ProjectID.Validate() != nil || intent.PrincipalID == "" || sourceOwnerID == "" || intent.TargetID == "" || intent.SourceDigest == "" || intent.SourceAttestationDigest == "" {
 		return deployment.DeliveryPlan{}, fmt.Errorf("%w: delivery plan intent is incomplete", deployment.ErrDeliveryInvalid)
 	}
-	source, err := reader.SnapshotAttestation(ctx, project.CandidateSourceScope{ProjectID: intent.ProjectID, OwnerID: intent.PrincipalID}, intent.SourceDigest, intent.SourceAttestationDigest)
+	source, err := reader.SnapshotAttestation(ctx, project.CandidateSourceScope{ProjectID: intent.ProjectID, OwnerID: sourceOwnerID}, intent.SourceDigest, intent.SourceAttestationDigest)
 	if err != nil {
 		return deployment.DeliveryPlan{}, fmt.Errorf("verify retained source attestation: %w", err)
 	}
@@ -88,9 +101,9 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	if err != nil {
 		return deployment.DeliveryPlan{}, err
 	}
-	planID := "plan-" + digestID(strings.Join([]string{intent.TargetID, intent.ProjectID.String(), intent.Environment, string(operation), idempotencyKey}, "\x00"))
+	planID := CanonicalDeliveryPlanID(intent.TargetID, intent.ProjectID, intent.Environment, operation, idempotencyKey)
 	if existing, readErr := m.Lifecycle.Store.PlanByID(ctx, planID); readErr == nil {
-		if existing.TargetID != intent.TargetID || existing.ProjectID != intent.ProjectID || existing.Environment != intent.Environment || existing.Operation != operation || existing.SourceDigest != intent.SourceDigest || existing.ActorID != intent.PrincipalID || existing.Provenance.AttestationDigest != intent.SourceAttestationDigest {
+		if existing.TargetID != intent.TargetID || existing.ProjectID != intent.ProjectID || existing.Environment != intent.Environment || existing.Operation != operation || existing.SourceDigest != intent.SourceDigest || existing.ActorID != intent.PrincipalID || existing.SourceOwnerID != sourceOwnerID || existing.Provenance.AttestationDigest != intent.SourceAttestationDigest {
 			return deployment.DeliveryPlan{}, fmt.Errorf("%w: idempotency key is bound to a different immutable plan", deployment.ErrDeliveryConflict)
 		}
 		return existing, nil
@@ -101,16 +114,17 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	if m.Lifecycle.Now != nil {
 		now = m.Lifecycle.Now().UTC()
 	}
-	candidate := deployment.Candidate{ID: strings.TrimPrefix(planID, "plan-"), Key: planID, TargetID: intent.TargetID, OwnerID: intent.PrincipalID, ArtifactDigest: intent.SourceDigest, Scope: deployment.CandidateScope{ProjectID: intent.ProjectID, Environment: intent.Environment, BaseGenerationID: target.ActiveGenerationID}, Revision: 1, CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
-	inspected, err := inspector.InspectCandidateArtifacts(ctx, release.CandidateArtifactRequest{CandidateID: planID, Scope: candidate.Scope, OwnerID: intent.PrincipalID, ArtifactDigest: intent.SourceDigest, Source: source})
+	candidate := deployment.Candidate{ID: strings.TrimPrefix(planID, "plan-"), Key: planID, TargetID: intent.TargetID, OwnerID: sourceOwnerID, ArtifactDigest: intent.SourceDigest, Scope: deployment.CandidateScope{ProjectID: intent.ProjectID, Environment: intent.Environment, BaseGenerationID: target.ActiveGenerationID}, Revision: 1, CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	inspected, err := inspector.InspectCandidateArtifacts(ctx, release.CandidateArtifactRequest{CandidateID: planID, Scope: candidate.Scope, OwnerID: sourceOwnerID, ArtifactDigest: intent.SourceDigest, Source: source})
 	if err != nil {
 		return deployment.DeliveryPlan{}, err
 	}
-	planned, err := m.Plan(ctx, deployment.DeliveryCandidateBuildInput{ProjectID: intent.ProjectID, OwnerID: intent.PrincipalID, ArtifactDigest: intent.SourceDigest, Operation: operation, CandidateKey: planID, Candidate: candidate, Source: source}, inspected)
+	planned, err := m.Plan(ctx, deployment.DeliveryCandidateBuildInput{ProjectID: intent.ProjectID, OwnerID: sourceOwnerID, ArtifactDigest: intent.SourceDigest, Operation: operation, CandidateKey: planID, Candidate: candidate, Source: source}, inspected)
 	if err != nil {
 		return deployment.DeliveryPlan{}, err
 	}
 	planned.ActorID = intent.PrincipalID
+	planned.SourceOwnerID = sourceOwnerID
 	if planned.ID != planID || planned.Provenance.AttestationDigest != intent.SourceAttestationDigest {
 		return deployment.DeliveryPlan{}, fmt.Errorf("compiler plan omitted source attestation binding")
 	}
@@ -132,14 +146,12 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	if !ok {
 		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("target source attestation reader is unavailable")
 	}
-	// The retained source owner is part of the durable plan's authenticated
-	// author evidence. A reviewer/builder may differ from that author; never
-	// substitute the caller's principal here or a valid plan becomes
-	// unbuildable by a separate delivery role.
-	if strings.TrimSpace(plan.ActorID) == "" {
+	// The retained source owner is independent from the command actor. A
+	// scheduler/reviewer may initiate a restatement of an author-owned source.
+	if strings.TrimSpace(plan.SourceOwnerID) == "" {
 		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("%w: durable plan source owner is missing", deployment.ErrDeliveryConflict)
 	}
-	source, err := reader.SnapshotAttestation(ctx, project.CandidateSourceScope{ProjectID: plan.ProjectID, OwnerID: plan.ActorID}, plan.SourceDigest, plan.Provenance.AttestationDigest)
+	source, err := reader.SnapshotAttestation(ctx, project.CandidateSourceScope{ProjectID: plan.ProjectID, OwnerID: plan.SourceOwnerID}, plan.SourceDigest, plan.Provenance.AttestationDigest)
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
 	}
@@ -153,7 +165,7 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	now := time.Now().UTC()
 	candidateID := "candidate-" + digestID(plan.ID+"\x00"+idempotencyKey)
 	candidate, err := deployment.NewCandidate(deployment.CandidateStartInput{
-		ID: candidateID, Key: candidateID, TargetID: plan.TargetID, OwnerID: plan.ActorID,
+		ID: candidateID, Key: candidateID, TargetID: plan.TargetID, OwnerID: plan.SourceOwnerID,
 		ArtifactDigest: plan.SourceDigest,
 		Scope:          deployment.CandidateScope{ProjectID: plan.ProjectID, Environment: plan.Environment, BaseGenerationID: plan.BaseGenerationID},
 		Now:            now, ExpiresAt: now.Add(time.Hour),
@@ -161,7 +173,7 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
 	}
-	request := release.CandidateArtifactRequest{CandidateID: candidateID, Scope: candidate.Scope, OwnerID: principalID, ArtifactDigest: plan.SourceDigest, Source: source}
+	request := release.CandidateArtifactRequest{CandidateID: candidateID, Scope: candidate.Scope, OwnerID: plan.SourceOwnerID, ArtifactDigest: plan.SourceDigest, Source: source}
 	inspector, inspectOK := m.Artifacts.(candidateArtifactInspector)
 	if !inspectOK {
 		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("compiler evidence inspector is unavailable")
@@ -170,7 +182,7 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
 	}
-	buildInput := deployment.DeliveryCandidateBuildInput{ProjectID: plan.ProjectID, OwnerID: principalID, ArtifactDigest: plan.SourceDigest, Operation: plan.Operation, CandidateKey: plan.ID, Candidate: candidate, Source: source, Plan: &plan}
+	buildInput := deployment.DeliveryCandidateBuildInput{ProjectID: plan.ProjectID, OwnerID: plan.SourceOwnerID, ArtifactDigest: plan.SourceDigest, Operation: plan.Operation, CandidateKey: plan.ID, Candidate: candidate, Source: source, Plan: &plan}
 	planningInput := buildInput
 	planningInput.Candidate.ID = strings.TrimPrefix(plan.ID, "plan-")
 	if err := m.verifyPlanEvidence(ctx, plan, planningInput, inspected); err != nil {

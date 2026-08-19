@@ -108,6 +108,14 @@ type DeliveryBuildGateEvidenceReader interface {
 	FailedBuildGateEvidence(context.Context, string) (*release.GateEvidence, error)
 }
 
+// DeliveryBuildSnapshotBinder durably binds the private catalog snapshot
+// selected by qualification to its exact build attempt. Sealed serving
+// states deliberately do not pin DuckLake snapshots; refresh completion reads
+// this attempt evidence to advance semantic-model data versions.
+type DeliveryBuildSnapshotBinder interface {
+	BindDeliveryBuildSnapshot(context.Context, string, int64, int64, time.Time) (DeliveryBuildAttempt, error)
+}
+
 // DeliveryWriterLeaseReleaser is the compatibility fallback for repositories
 // which predate the atomic failure operation. It is still exact/fenced, but a
 // terminal-release adapter is preferred whenever available.
@@ -121,6 +129,13 @@ type DeliveryWriterLeaseReleaser interface {
 // without seal/object/artifact evidence.
 type DeliveryCompletionReader interface {
 	CompletedDelivery(ctx context.Context, attemptID, candidateID string) (catalogseal.Completion, error)
+}
+
+// DeliveryCompletionEvidenceReader rehydrates the immutable successful gate
+// evidence stored with a sealed candidate. Ready-candidate recovery needs the
+// full evidence, not only its digest, after a process restart.
+type DeliveryCompletionEvidenceReader interface {
+	CompletedDeliveryGateEvidence(context.Context, string) (*release.GateEvidence, error)
 }
 
 // DeliveryPlanResult records whether a durable row was written. Keeping this
@@ -142,7 +157,12 @@ type DeliveryBuildInput struct {
 // DeliveryBuildOutput is the only physical result accepted by Build. The
 // detached catalog is still private until catalogseal.Seal completes.
 type DeliveryBuildOutput struct {
-	Catalog             catalogseal.DetachedCatalog
+	Catalog catalogseal.DetachedCatalog
+	// SnapshotID is the immutable DuckLake snapshot selected by the qualified
+	// private catalog. It is carried alongside the seal so serving-state
+	// metadata can be bound before publication; the delivery target pointer
+	// remains the only serving-root mutation performed by publication.
+	SnapshotID          int64
 	QualificationDigest string
 	ClosureDigest       string
 	CompatibilityDigest string
@@ -219,6 +239,7 @@ type DeliveryBuildResult struct {
 	Attempt      DeliveryBuildAttempt
 	Completion   catalogseal.Completion
 	GateEvidence *release.GateEvidence
+	SnapshotID   int64
 }
 
 // DeliveryLifecycle is the canonical target lifecycle used by module, API,
@@ -459,7 +480,15 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 		if readErr != nil {
 			return DeliveryBuildResult{}, readErr
 		}
-		return DeliveryBuildResult{Attempt: attempt, Completion: completion}, nil
+		evidenceReader, ok := l.Store.(DeliveryCompletionEvidenceReader)
+		if !ok {
+			return DeliveryBuildResult{}, fmt.Errorf("%w: sealed attempt gate evidence is unavailable", ErrDeliveryConflict)
+		}
+		gateEvidence, readErr := evidenceReader.CompletedDeliveryGateEvidence(ctx, request.CandidateID)
+		if readErr != nil {
+			return DeliveryBuildResult{}, readErr
+		}
+		return DeliveryBuildResult{Attempt: attempt, Completion: completion, GateEvidence: gateEvidence, SnapshotID: attempt.QualifiedSnapshotID}, nil
 	}
 	// The initial plan read and lease transaction are intentionally separate.
 	// A target revision can advance between them, so reject-stale policy gets a
@@ -674,6 +703,17 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 			return DeliveryBuildResult{}, fail(normalizing, "VALIDATING_TRANSITION_FAILED", err)
 		}
 	}
+	if output.SnapshotID > 0 {
+		binder, ok := l.Store.(DeliveryBuildSnapshotBinder)
+		if !ok {
+			return DeliveryBuildResult{}, fail(validating, "SNAPSHOT_BINDING_UNAVAILABLE", fmt.Errorf("qualified DuckLake snapshot recorder is required"))
+		}
+		bound, bindErr := binder.BindDeliveryBuildSnapshot(ctx, validating.ID, validating.Revision, output.SnapshotID, l.now())
+		if bindErr != nil {
+			return DeliveryBuildResult{}, fail(validating, "SNAPSHOT_BINDING_FAILED", bindErr)
+		}
+		validating = bound
+	}
 	sealing := validating
 	if validating.Status != DeliveryBuildSealing {
 		sealing, err = l.Store.TransitionBuildAttempt(ctx, attempt.ID, validating.Revision, DeliveryBuildSealing, l.now())
@@ -706,5 +746,5 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 	if err != nil {
 		return DeliveryBuildResult{}, err
 	}
-	return DeliveryBuildResult{Attempt: finalAttempt, Completion: completion, GateEvidence: output.GateEvidence}, nil
+	return DeliveryBuildResult{Attempt: finalAttempt, Completion: completion, GateEvidence: output.GateEvidence, SnapshotID: finalAttempt.QualifiedSnapshotID}, nil
 }

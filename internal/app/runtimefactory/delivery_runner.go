@@ -560,7 +560,7 @@ func (r *candidateCatalogRunner) Qualify(ctx context.Context, buildInput deploym
 		}
 		resolved.Inputs = append(resolved.Inputs, item)
 	}
-	return deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: qualified.CatalogPath()}, QualificationDigest: qualified.Record.Digest, ClosureDigest: qualified.Record.Closure.Digest, CompatibilityDigest: compatibilityDigest, ResolvedInputs: resolved, GateEvidence: gateEvidence, ObjectStore: r.config.ObjectStore, SealRepository: r.config.SealRepository, RemoteVerifier: r.config.RemoteVerifier, Cleanup: qualified.Remove}, nil
+	return deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: qualified.CatalogPath()}, SnapshotID: qualified.Record.CurrentSnapshot, QualificationDigest: qualified.Record.Digest, ClosureDigest: qualified.Record.Closure.Digest, CompatibilityDigest: compatibilityDigest, ResolvedInputs: resolved, GateEvidence: gateEvidence, ObjectStore: r.config.ObjectStore, SealRepository: r.config.SealRepository, RemoteVerifier: r.config.RemoteVerifier, Cleanup: qualified.Remove}, nil
 }
 
 // evaluateCompiledGates lowers only compiler-owned manifest resources into the

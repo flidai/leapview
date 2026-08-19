@@ -931,6 +931,129 @@ func TestAPIGenActiveProjectScopedResourceCapabilityUsesRoleBinding(t *testing.T
 	}
 }
 
+func TestAPIGenDeploymentStatusUsesActiveSnapshotForSessionAndProjectToken(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: projectID, Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{
+		ID: "binding_admin", Subject: subject, Role: access.ProjectRoleAdmin,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := browserGuardModule(browserGuardRepository{}, Principal{ID: "admin"}, true)
+	module.SetCurrentEffectiveCapabilities(func(context.Context, string) ([]access.Capability, error) {
+		return snapshot.EffectiveCapabilities([]access.SubjectRef{subject})
+	})
+	runtime := apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: snapshot}}
+	operations := map[string]APIGenOperationContract{
+		"listDeployments": {
+			OperationID: "listDeployments", Method: http.MethodGet, Path: "/api/v1/projects/{project}/deployments",
+			Protected: true, AuthzMode: "privilege",
+			Extensions: map[string]any{apiGenObjectScopeExtension: "project", "x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"}},
+		},
+		"getDeployment": {
+			OperationID: "getDeployment", Method: http.MethodGet, Path: "/api/v1/projects/{project}/deployments/{deployment}",
+			Protected: true, AuthzMode: "privilege",
+			Extensions: map[string]any{apiGenObjectScopeExtension: "project", "x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"}},
+		},
+		"listDeploymentEvents": {
+			OperationID: "listDeploymentEvents", Method: http.MethodGet, Path: "/api/v1/projects/{project}/deployments/{deployment}/events",
+			Protected: true, AuthzMode: "privilege",
+			Extensions: map[string]any{apiGenObjectScopeExtension: "project", "x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"}},
+		},
+	}
+	authorizer, err := module.APIGenAuthorizer(runtime, operations, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapCalls := 0
+	authorizer.SetBootstrapAuthorizer(func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error) {
+		bootstrapCalls++
+		return APIGenBootstrapDecision{Handled: false}, nil
+	})
+	for operationID, contract := range operations {
+		t.Run(operationID+"/session", func(t *testing.T) {
+			protected, ok := authorizer.Protect(operationID, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			if !ok || protected == nil {
+				t.Fatal("deployment status authorizer was not created")
+			}
+			request := apigenRequest(http.MethodGet, contract.Path, map[string]string{"project": projectID.String(), "deployment": "deployment_1"})
+			recorder := httptest.NewRecorder()
+			protected.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusNoContent {
+				t.Fatalf("active session status = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusNoContent)
+			}
+		})
+		t.Run(operationID+"/project-token", func(t *testing.T) {
+			protected, ok := authorizer.Protect(operationID, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+			if !ok || protected == nil {
+				t.Fatal("deployment status authorizer was not created")
+			}
+			credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_project_read", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
+			request := apigenRequest(http.MethodGet, contract.Path, map[string]string{"project": projectID.String(), "deployment": "deployment_1"})
+			request = request.WithContext(WithAPICredential(request.Context(), credential))
+			recorder := httptest.NewRecorder()
+			protected.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusNoContent {
+				t.Fatalf("active project token status = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusNoContent)
+			}
+		})
+	}
+	if bootstrapCalls != len(operations)*2 {
+		t.Fatalf("bootstrap decision calls = %d, want one active-runtime decision per request (%d)", bootstrapCalls, len(operations)*2)
+	}
+}
+
+func TestAPIGenDeploymentStatusBootstrapRemainsFailClosed(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	module := browserGuardModule(browserGuardRepository{admin: false}, Principal{ID: "admin"}, true)
+	contract := APIGenOperationContract{
+		OperationID: "getDeployment", Method: http.MethodGet, Path: "/api/v1/projects/{project}/deployments/{deployment}",
+		Protected: true, AuthzMode: "privilege",
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project", "x-authz": map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"}},
+	}
+	authorizer, err := module.APIGenAuthorizer(apigenRuntimeFake{project: projectID, err: errors.New("runtime warm-up")}, map[string]APIGenOperationContract{"getDeployment": contract}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer.SetBootstrapAuthorizer(func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error) {
+		return APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
+	})
+	protected, ok := authorizer.Protect("getDeployment", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	if !ok || protected == nil {
+		t.Fatal("deployment status authorizer was not created")
+	}
+	request := apigenRequest(http.MethodGet, contract.Path, map[string]string{"project": projectID.String(), "deployment": "deployment_1"})
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("bootstrap session status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	credential := access.APICredential{Principal: access.Principal{ID: "admin"}, Token: access.APIToken{ID: "token_project_read", PrincipalID: "admin", Capabilities: []access.Capability{access.CapabilityResourceRead}}}
+	request = request.WithContext(WithAPICredential(request.Context(), credential))
+	request.Header.Set("Authorization", "Bearer test-token")
+	recorder = httptest.NewRecorder()
+	protected.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("bootstrap non-admin token status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
 func TestAPIGenBootstrapAllowlistIncludesCandidateSourceAndManagedDataStaging(t *testing.T) {
 	if !isBootstrapAPIGenOperation("retainProjectCandidateSource") {
 		t.Fatal("source retention operation is not bootstrap-authorized")

@@ -87,13 +87,23 @@ type PublicationUnitOfWork interface {
 }
 
 type CanonicalPublicationUnitOfWork interface {
-	CompleteCanonicalRefresh(context.Context, JobRecord) error
+	CompleteCanonicalRefresh(context.Context, JobRecord, CanonicalRefreshResult) error
+}
+
+// CanonicalRefreshResult is the exact committed delivery identity produced by
+// a refresh restatement. The old job identity remains the workflow/lease
+// fence; this result identifies the new immutable serving generation whose
+// data-version metadata must be committed with workflow completion.
+type CanonicalRefreshResult struct {
+	PlanID         string
+	ServingStateID string
+	SnapshotID     int64
 }
 
 type Service struct {
 	ServingStates            ServingStateRepository
 	ResolveActive            func(context.Context, projectgraph.ServingIdentity) (ServingState, error)
-	CanonicalExecutor        func(context.Context, JobRecord) error
+	CanonicalExecutor        func(context.Context, JobRecord) (CanonicalRefreshResult, error)
 	Runs                     WorkflowRepository
 	Artifacts                ArtifactLoader
 	Materializer             Materializer
@@ -264,7 +274,8 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 		if _, err := s.Runs.MarkRunPrepared(ctx, job); err != nil {
 			return err
 		}
-		if err := s.CanonicalExecutor(ctx, job); err != nil {
+		result, err := s.CanonicalExecutor(ctx, job)
+		if err != nil {
 			_ = markRunFailedForWorker(ctx, s.Runs, job, err.Error())
 			return err
 		}
@@ -272,7 +283,7 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 		if !ok {
 			return fmt.Errorf("canonical refresh publication unit of work is required")
 		}
-		if err := publication.CompleteCanonicalRefresh(ctx, job); err != nil {
+		if err := publication.CompleteCanonicalRefresh(ctx, job, result); err != nil {
 			return err
 		}
 		s.publish(ctx, job.Identity, job.TargetType, job.TargetID)

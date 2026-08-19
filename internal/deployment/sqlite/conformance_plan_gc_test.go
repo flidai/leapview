@@ -104,8 +104,8 @@ func TestPlanToGCLifecycleConformance(t *testing.T) {
 			if err != nil {
 				t.Fatalf("sealed build restart reconciliation: %v", err)
 			}
-			if retry.Completion.CandidateID != build1.Completion.CandidateID || restarted.constructed {
-				t.Fatalf("restart completion=%#v runnerConstructed=%v", retry.Completion, restarted.constructed)
+			if retry.Completion.CandidateID != build1.Completion.CandidateID || retry.SnapshotID != 42 || retry.GateEvidence == nil || build1.GateEvidence == nil || retry.GateEvidence.Digest != build1.GateEvidence.Digest || restarted.constructed {
+				t.Fatalf("restart completion=%#v gateEvidence=%#v runnerConstructed=%v", retry.Completion, retry.GateEvidence, restarted.constructed)
 			}
 
 			verified1 := verifiedSealFromCompletion(build1.Completion)
@@ -340,7 +340,7 @@ func conformanceBuild(t *testing.T, ctx context.Context, lifecycle *deployment.D
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: path}, QualificationDigest: repoDeliveryDigest('8'), ClosureDigest: repoDeliveryDigest('9'), CompatibilityDigest: repoDeliveryDigest('a'), GateEvidence: &evidence, ResolvedInputs: conformanceResolvedInputs(plan, mode), ObjectStore: &conformanceCatalogStore{objects: objects, ambiguous: objects.ambiguous, createdAt: created}, SealRepository: repo, RemoteVerifier: conformanceVerifier{objects: objects}}
+	output := deployment.DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: path}, SnapshotID: 42, QualificationDigest: repoDeliveryDigest('8'), ClosureDigest: repoDeliveryDigest('9'), CompatibilityDigest: repoDeliveryDigest('a'), GateEvidence: &evidence, ResolvedInputs: conformanceResolvedInputs(plan, mode), ObjectStore: &conformanceCatalogStore{objects: objects, ambiguous: objects.ambiguous, createdAt: created}, SealRepository: repo, RemoteVerifier: conformanceVerifier{objects: objects}}
 	runner := &conformancePhase{t: t, output: output}
 	request := conformanceBuildRequest(plan, attemptID, candidateID, created, runner)
 	// The pool identity is derived from the target and must match the pool row;

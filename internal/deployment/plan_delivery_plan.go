@@ -24,7 +24,11 @@ type DeliveryPlan struct {
 	// ActorID is authenticated command evidence. It is intentionally excluded
 	// from the plan content digest so retries/replays do not alter execution
 	// identity, but repositories retain it in the append-only event ledger.
-	ActorID            string                  `json:"actorId,omitempty"`
+	ActorID string `json:"actorId,omitempty"`
+	// SourceOwnerID is the retained-source namespace used to rehydrate the
+	// exact attestation during later builds. It may differ from ActorID for
+	// scheduler- or reviewer-initiated restatements.
+	SourceOwnerID      string                  `json:"sourceOwnerId,omitempty"`
 	TargetID           string                  `json:"targetId"`
 	ProjectID          graph.ResourceID        `json:"projectId"`
 	Environment        string                  `json:"environment"`
@@ -114,6 +118,11 @@ func (plan DeliveryPlan) validateWithoutDigests() error {
 	if plan.ActorID != "" {
 		if err := ValidateDeliveryID(plan.ActorID); err != nil {
 			return fmt.Errorf("plan actor id: %w", err)
+		}
+	}
+	if plan.SourceOwnerID != "" {
+		if err := ValidateDeliveryID(plan.SourceOwnerID); err != nil {
+			return fmt.Errorf("plan source owner id: %w", err)
 		}
 	}
 	if err := ValidateDeliveryID(plan.TargetID); err != nil {
@@ -215,7 +224,7 @@ func (plan DeliveryPlan) Validate() error {
 // retries can cross a second and derive different CreatedAt/ExpiresAt values,
 // but must still converge on the first durable plan for one idempotency key.
 func (plan DeliveryPlan) SameCanonicalIntent(other DeliveryPlan) bool {
-	if plan.ID != other.ID || plan.TargetID != other.TargetID || plan.ProjectID != other.ProjectID ||
+	if plan.ID != other.ID || plan.SourceOwnerID != other.SourceOwnerID || plan.TargetID != other.TargetID || plan.ProjectID != other.ProjectID ||
 		plan.Environment != other.Environment || plan.Operation != other.Operation ||
 		plan.SourceDigest != other.SourceDigest || plan.BaseGenerationID != other.BaseGenerationID ||
 		plan.BaseTargetRevision != other.BaseTargetRevision {

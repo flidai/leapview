@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -18,32 +21,48 @@ func canonicalRefreshExecutor(
 	mutations deploymentmodule.DeliveryMutationPort,
 	reader canonicalRefreshDeliveryReader,
 	targetID string,
-) func(context.Context, refreshrun.JobRecord) error {
-	return func(ctx context.Context, job refreshrun.JobRecord) error {
+) func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error) {
+	return func(ctx context.Context, job refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error) {
 		if mutations == nil || reader == nil || targetID == "" {
-			return fmt.Errorf("canonical refresh delivery is unavailable")
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh delivery is unavailable")
+		}
+		planKey := "refresh-plan-" + job.RunID
+		expectedPlanID := deploymentmodule.CanonicalDeliveryPlanID(
+			targetID, job.Identity.ProjectID, job.Identity.Environment,
+			deployment.DeliveryOperationRestatement, planKey,
+		)
+		candidateID := "candidate-" + strings.TrimPrefix(deployment.CanonicalDeliveryDigest([]byte(expectedPlanID+"\x00refresh-build-"+job.RunID)), "sha256:")
+		publicationID := "publication-" + strings.TrimPrefix(deployment.CanonicalDeliveryDigest([]byte("candidate-publication:"+candidateID)), "sha256:")
+		if recovered, found, recoverErr := recoverCanonicalRefreshPublication(ctx, reader, job, targetID, expectedPlanID, candidateID, publicationID); recoverErr != nil {
+			return refreshrun.CanonicalRefreshResult{}, recoverErr
+		} else if found {
+			return recovered, nil
 		}
 		active, err := reader.ActiveDeliveryGenerationForTarget(
 			ctx, targetID, job.Identity.ProjectID.String(), job.Identity.Environment,
 		)
 		if err != nil {
-			return fmt.Errorf("resolve canonical refresh base: %w", err)
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("resolve canonical refresh base: %w", err)
 		}
 		if active.ServingStateID != job.Identity.GenerationID {
-			return fmt.Errorf("canonical refresh base changed before execution: %w", refreshrun.ErrLeaseLost)
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh base changed before execution: %w", refreshrun.ErrLeaseLost)
 		}
 		candidate, err := reader.DeliveryCandidateByID(ctx, active.CandidateID)
 		if err != nil {
-			return fmt.Errorf("resolve canonical refresh candidate: %w", err)
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("resolve canonical refresh candidate: %w", err)
 		}
 		basePlan, err := reader.PlanByID(ctx, candidate.PlanID)
 		if err != nil {
-			return fmt.Errorf("resolve canonical refresh plan: %w", err)
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("resolve canonical refresh plan: %w", err)
 		}
-		planKey := "refresh-plan-" + job.RunID
+		sourceOwnerID := basePlan.SourceOwnerID
+		if sourceOwnerID == "" {
+			sourceOwnerID = basePlan.ActorID
+		}
 		plan, err := mutations.CreatePlan(ctx, deploymentmodule.DeliveryPlanIntent{
 			ProjectID:               job.Identity.ProjectID,
 			PrincipalID:             job.PrincipalID,
+			SourceOwnerID:           sourceOwnerID,
 			Environment:             job.Identity.Environment,
 			TargetID:                targetID,
 			Operation:               deployment.DeliveryOperationRestatement,
@@ -51,26 +70,96 @@ func canonicalRefreshExecutor(
 			SourceAttestationDigest: basePlan.Provenance.AttestationDigest,
 		}, planKey)
 		if err != nil {
-			return fmt.Errorf("plan canonical refresh: %w", err)
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("plan canonical refresh: %w", err)
+		}
+		if plan.ID != expectedPlanID {
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh plan identity changed")
+		}
+		if plan.BaseGenerationID != active.ID {
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh base changed during planning: %w", refreshrun.ErrLeaseLost)
 		}
 		attempt, err := mutations.BuildPlan(
 			ctx, job.Identity.ProjectID.String(), plan.ID, job.PrincipalID, "refresh-build-"+job.RunID,
 		)
 		if err != nil {
-			return fmt.Errorf("build canonical refresh: %w", err)
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("build canonical refresh: %w", err)
 		}
 		if attempt.CandidateID == "" || attempt.Status != deployment.DeliveryBuildSealed {
-			return fmt.Errorf("canonical refresh build did not produce a sealed candidate")
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh build did not produce a sealed candidate")
+		}
+		if attempt.QualifiedSnapshotID <= 0 {
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh build omitted qualified snapshot evidence")
 		}
 		publication, err := mutations.PublishCandidate(
 			ctx, job.Identity.ProjectID.String(), attempt.CandidateID, job.PrincipalID, "refresh-publish-"+job.RunID,
 		)
 		if err != nil {
-			return fmt.Errorf("publish canonical refresh: %w", err)
+			// Publication can be durably committed before the prepared-runtime
+			// acknowledgement returns (for example, a lease/transport failure
+			// after the target CAS). Treat that outcome as success so the refresh
+			// workflow can converge through its idempotent completion path.
+			if publication.Status != deployment.DeliveryPublicationCommitted {
+				return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("publish canonical refresh: %w", err)
+			}
 		}
 		if publication.Status != deployment.DeliveryPublicationCommitted {
-			return fmt.Errorf("canonical refresh publication ended in %q", publication.Status)
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh publication ended in %q", publication.Status)
 		}
-		return nil
+		generation, err := reader.DeliveryGenerationByID(ctx, publication.GenerationID)
+		if err != nil {
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("resolve canonical refresh publication generation: %w", err)
+		}
+		if generation.PlanID != plan.ID || generation.ServingStateID == "" {
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh publication generation identity changed")
+		}
+		return refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: generation.ServingStateID, SnapshotID: attempt.QualifiedSnapshotID}, nil
 	}
+}
+
+func recoverCanonicalRefreshPublication(
+	ctx context.Context,
+	reader canonicalRefreshDeliveryReader,
+	job refreshrun.JobRecord,
+	targetID, planID, candidateID, publicationID string,
+) (refreshrun.CanonicalRefreshResult, bool, error) {
+	publication, err := reader.DeliveryPublicationByID(ctx, publicationID)
+	if errors.Is(err, deployment.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
+		return refreshrun.CanonicalRefreshResult{}, false, nil
+	}
+	if err != nil {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("resolve canonical refresh publication: %w", err)
+	}
+	if publication.Status != deployment.DeliveryPublicationCommitted {
+		return refreshrun.CanonicalRefreshResult{}, false, nil
+	}
+	if publication.ID != publicationID || publication.TargetID != targetID || publication.ProjectID != job.Identity.ProjectID || publication.Environment != job.Identity.Environment || publication.PlanID != planID || publication.CandidateID != candidateID {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("canonical refresh publication identity changed: %w", refreshrun.ErrLeaseLost)
+	}
+	base, err := reader.DeliveryGenerationByID(ctx, publication.ExpectedBaseGenerationID)
+	if err != nil {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("resolve canonical refresh publication base: %w", err)
+	}
+	generation, err := reader.DeliveryGenerationByID(ctx, publication.GenerationID)
+	if err != nil {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("resolve canonical refresh publication generation: %w", err)
+	}
+	if base.ServingStateID != job.Identity.GenerationID || generation.ID != publication.GenerationID || generation.PlanID != planID || generation.CandidateID != candidateID || generation.ServingStateID == "" {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("canonical refresh publication generation identity changed: %w", refreshrun.ErrLeaseLost)
+	}
+	candidate, err := reader.DeliveryCandidateByID(ctx, candidateID)
+	if err != nil {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("resolve canonical refresh publication candidate: %w", err)
+	}
+	seal, err := reader.DeliveryCatalogSealByID(ctx, candidate.SealID)
+	if err != nil {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("resolve canonical refresh publication seal: %w", err)
+	}
+	attempt, err := reader.DeliveryBuildAttemptByID(ctx, seal.AttemptID)
+	if err != nil {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("resolve canonical refresh publication build: %w", err)
+	}
+	if candidate.ID != candidateID || candidate.PlanID != planID || candidate.Status != deployment.DeliveryCandidateReady || seal.ID != candidate.SealID || seal.AttemptID == "" || attempt.ID != seal.AttemptID || attempt.PlanID != planID || attempt.CandidateID != candidateID || attempt.Status != deployment.DeliveryBuildSealed || attempt.QualifiedSnapshotID <= 0 {
+		return refreshrun.CanonicalRefreshResult{}, false, fmt.Errorf("canonical refresh publication snapshot evidence changed: %w", refreshrun.ErrLeaseLost)
+	}
+	return refreshrun.CanonicalRefreshResult{PlanID: planID, ServingStateID: generation.ServingStateID, SnapshotID: attempt.QualifiedSnapshotID}, true, nil
 }

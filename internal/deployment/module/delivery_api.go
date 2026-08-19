@@ -107,6 +107,7 @@ type DeliveryMutationPort interface {
 type DeliveryPlanIntent struct {
 	ProjectID               projectgraph.ResourceID
 	PrincipalID             string
+	SourceOwnerID           string
 	Environment             string
 	TargetID                string
 	Operation               deployment.DeliveryOperationKind
@@ -119,7 +120,7 @@ func decodePlanIntent(project, environment, principalID string, body deploymentg
 	if err != nil {
 		return DeliveryPlanIntent{}, fmt.Errorf("%w: project", deployment.ErrDeliveryInvalid)
 	}
-	return DeliveryPlanIntent{ProjectID: projectID, PrincipalID: principalID, Environment: environment, TargetID: body.TargetId, Operation: deployment.DeliveryOperationKind(body.Operation), SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest}, nil
+	return DeliveryPlanIntent{ProjectID: projectID, PrincipalID: principalID, SourceOwnerID: principalID, Environment: environment, TargetID: body.TargetId, Operation: deployment.DeliveryOperationKind(body.Operation), SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest}, nil
 }
 
 func (m *Module) deliveryReadReady(w http.ResponseWriter, r *http.Request, project string) bool {

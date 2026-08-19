@@ -874,8 +874,12 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	{
 		var gcErr error
 		gcMaintenance, gcErr = gcadapter.NewMaintenance(func(gcCtx context.Context) error {
+			gcProjectID, err := resolveCurrentProjectID(gcCtx)
+			if err != nil {
+				return fmt.Errorf("resolve physical-pool GC project: %w", err)
+			}
 			return appruntimefactory.RunSQLiteProductionGC(gcCtx, appruntimefactory.ProductionGCRunConfig{
-				Database: store.SQLDB(), TargetID: instanceID, ProjectID: projectID.String(), Environment: string(environment), OwnerID: instanceID, HolderID: instanceID,
+				Database: store.SQLDB(), TargetID: instanceID, ProjectID: gcProjectID.String(), Environment: string(environment), OwnerID: instanceID, HolderID: instanceID,
 				StagingRoot:   filepath.Join(cfg.RuntimeDir(), "gc"),
 				PoolS3:        gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
 				LeaseDuration: 15 * time.Minute, BuildGrace: time.Hour, OrphanGrace: time.Hour, ReaderGrace: 30 * time.Minute,
@@ -1353,7 +1357,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if poolErr != nil || poolContract == nil {
 				return deployment.DeliveryBuildRequest{}, fmt.Errorf("%w: candidate physical-pool admission unavailable", deployment.ErrCandidateUnavailable)
 			}
-			return buildFactory(buildCtx, input, artifacts)
+			request, err := buildFactory(buildCtx, input, artifacts)
+			if err != nil {
+				return deployment.DeliveryBuildRequest{}, err
+			}
+			return request, nil
 		}, ReadyCandidate: func(readyCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, build deployment.DeliveryBuildResult) (deployment.Candidate, error) {
 			if build.GateEvidence == nil {
 				return deployment.Candidate{}, fmt.Errorf("%w: candidate gate evidence is required", deployment.ErrCandidateInvalid)

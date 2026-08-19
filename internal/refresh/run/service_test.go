@@ -187,12 +187,12 @@ func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
 	executed := false
 	service := Service{
 		Runs: repo,
-		CanonicalExecutor: func(_ context.Context, job JobRecord) error {
+		CanonicalExecutor: func(_ context.Context, job JobRecord) (CanonicalRefreshResult, error) {
 			executed = true
 			if job.RunID != "run_root" {
 				t.Fatalf("canonical run = %q, want run_root", job.RunID)
 			}
-			return nil
+			return CanonicalRefreshResult{PlanID: "plan-refresh", ServingStateID: "generation-refresh"}, nil
 		},
 		Publication: fakePublication{repo: repo},
 	}
@@ -271,8 +271,8 @@ func TestServiceQueuePipelineRefreshDefersCandidateToCanonicalExecutor(t *testin
 	identity.GenerationID = string(repo.activeDeployment.ID)
 	service := Service{
 		ServingStates: repo,
-		CanonicalExecutor: func(context.Context, JobRecord) error {
-			return nil
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{}, nil
 		},
 		Runs:      repo,
 		Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()},
@@ -644,7 +644,7 @@ func (p fakePublication) Publish(ctx context.Context, identity projectgraph.Serv
 	return err
 }
 
-func (p fakePublication) CompleteCanonicalRefresh(_ context.Context, _ JobRecord) error {
+func (p fakePublication) CompleteCanonicalRefresh(_ context.Context, _ JobRecord, _ CanonicalRefreshResult) error {
 	p.repo.runStatuses["run_root"] = RunStatusSucceeded
 	p.repo.runStatuses["run_child"] = RunStatusSucceeded
 	return nil

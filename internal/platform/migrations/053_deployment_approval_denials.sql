@@ -9,7 +9,10 @@ ALTER TABLE deployment_approvals RENAME TO deployment_approvals_v052;
 CREATE TABLE deployment_approvals (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
-  deployment_id TEXT NOT NULL REFERENCES project_deployments(id) ON DELETE CASCADE,
+  -- Approval parents are polymorphic: the legacy project deployment or the
+  -- canonical delivery publication. Migration 089 installs exact-scope parent
+  -- and cascade triggers after both parent tables exist.
+  deployment_id TEXT NOT NULL,
   environment TEXT NOT NULL,
   request_digest TEXT NOT NULL,
   release_id TEXT NOT NULL,

@@ -34,7 +34,7 @@ func TestMaintenanceRunsAndSurfacesDegradedError(t *testing.T) {
 	}
 }
 
-func TestMaintenanceWaitsForFirstInterval(t *testing.T) {
+func TestMaintenanceRunsOnceDuringStartup(t *testing.T) {
 	called := make(chan struct{}, 1)
 	m, err := NewMaintenance(func(context.Context) error {
 		called <- struct{}{}
@@ -50,7 +50,7 @@ func TestMaintenanceWaitsForFirstInterval(t *testing.T) {
 
 	select {
 	case <-called:
-		t.Fatal("maintenance ran during process startup")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(time.Second):
+		t.Fatal("maintenance did not run during process startup")
 	}
 }
