@@ -6,8 +6,9 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type Config struct {
@@ -50,11 +51,11 @@ func DefaultConfig() workload.Config {
 }
 
 func MaintenanceRequest(operation string) Request {
-	return Request{Class: MaintenanceClass, PrincipalID: jobs.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: maintenanceMemoryEstimate}
+	return Request{Class: MaintenanceClass, PrincipalID: jobplatform.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: maintenanceMemoryEstimate}
 }
 
 func ControlRequest(operation string) Request {
-	return Request{Class: ControlClass, PrincipalID: jobs.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: controlMemoryEstimate}
+	return Request{Class: ControlClass, PrincipalID: jobplatform.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: controlMemoryEstimate}
 }
 
 type Module struct {
@@ -98,4 +99,13 @@ func (m *Module) Close() {
 	if m != nil && m.controller != nil {
 		m.stop.Do(m.controller.Close)
 	}
+}
+
+// Drain closes admission and waits for all admitted work to release. It is
+// the lifecycle boundary used before dependent analytics resources close.
+func (m *Module) Drain(ctx context.Context) error {
+	if m == nil || m.controller == nil {
+		return nil
+	}
+	return m.controller.Drain(ctx)
 }

@@ -7,7 +7,7 @@ import (
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 )
 
@@ -28,7 +28,7 @@ func newPersistence(
 	database *sql.DB,
 	hooks ActivationHooks,
 	releases ReleasePort,
-	workflow jobs.WorkflowRecorder,
+	workflow jobplatform.WorkflowRecorder,
 ) (
 	deployment.Repository,
 	deployment.ActivationUnitOfWork,

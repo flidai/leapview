@@ -58,6 +58,18 @@ func TestCleanupStackContinuesAfterCancellationAndErrors(t *testing.T) {
 type orderedWorkload struct{ events *[]string }
 
 func (w orderedWorkload) Close() { *w.events = append(*w.events, "workload") }
+func (w orderedWorkload) Drain(context.Context) error {
+	w.Close()
+	return nil
+}
+
+type orderedDrainingWorkload struct{ events *[]string }
+
+func (w orderedDrainingWorkload) Close() { *w.events = append(*w.events, "workload:close") }
+func (w orderedDrainingWorkload) Drain(context.Context) error {
+	*w.events = append(*w.events, "workload:drain")
+	return nil
+}
 
 func TestRuntimeLifecycleStopsWorkersBeforeAdmission(t *testing.T) {
 	events := []string{}
@@ -70,6 +82,21 @@ func TestRuntimeLifecycleStopsWorkersBeforeAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := []string{"start:workers", "stop:workers", "workload"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("lifecycle events = %v, want %v", events, want)
+	}
+}
+
+func TestRuntimeLifecycleDrainsAdmissionAfterWorkers(t *testing.T) {
+	events := []string{}
+	workers := recordedLifecycle{name: "workers", events: &events}
+	lifecycle := newRuntimeLifecycle(workers, nil, orderedDrainingWorkload{events: &events})
+	if err := lifecycle.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"start:workers", "stop:workers", "workload:drain"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("lifecycle events = %v, want %v", events, want)
 	}
 }

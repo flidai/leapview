@@ -3,7 +3,7 @@ package module
 import (
 	"testing"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/stretchr/testify/require"
 )
 

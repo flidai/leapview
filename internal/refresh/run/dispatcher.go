@@ -36,7 +36,10 @@ func (d Dispatcher) Run(ctx context.Context) {
 		return
 	}
 	if d.Admitter == nil {
-		d.Admitter, _ = workload.New(workload.DefaultConfig())
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "refresh dispatcher workload admitter is unavailable")
+		}
+		return
 	}
 	if d.ResolveIdentity == nil {
 		if d.Logger != nil {
@@ -96,7 +99,14 @@ func (d Dispatcher) dispatchCandidate(ctx context.Context, owner string, candida
 		}
 		return false
 	}
-	lease, err := d.admitter().Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: candidate.PrincipalID, GroupIDs: append([]string(nil), candidate.GroupIDs...), Operation: "materialization.refresh", EstimatedMemoryBytes: candidate.EstimatedMemoryBytes})
+	admitter := d.admitter()
+	if admitter == nil {
+		if d.Logger != nil {
+			d.Logger.WarnContext(ctx, "refresh dispatcher workload admitter is unavailable")
+		}
+		return false
+	}
+	lease, err := admitter.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: candidate.PrincipalID, GroupIDs: append([]string(nil), candidate.GroupIDs...), Operation: "materialization.refresh", EstimatedMemoryBytes: candidate.EstimatedMemoryBytes})
 	if err != nil {
 		if d.Logger != nil {
 			d.Logger.InfoContext(ctx, "refresh admission deferred", "project", candidate.Identity.ProjectID, "generation", candidate.Identity.GenerationID, "run", candidate.RunID, "error", err)
@@ -191,11 +201,7 @@ func (d Dispatcher) renewJobLease(ctx context.Context, job JobRecord, cancel con
 }
 
 func (d Dispatcher) admitter() workload.Admitter {
-	if d.Admitter != nil {
-		return d.Admitter
-	}
-	controller, _ := workload.New(workload.DefaultConfig())
-	return controller
+	return d.Admitter
 }
 
 func (d Dispatcher) leaseTimeout() time.Duration {
