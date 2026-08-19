@@ -678,6 +678,7 @@ model VisualizationInteractionTarget {
 }
 
 model VisualizationInteraction {
+  @doc("Stable compiler-owned interaction identity. Commands and persisted selections must reference this exact value.")
   `id`: string;
   `kind`: VisualizationInteractionKind;
   `mappings`: VisualizationInteractionMapping[];

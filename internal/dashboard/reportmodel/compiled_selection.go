@@ -11,7 +11,7 @@ import (
 
 // ResolveCompiledSelectionInteraction resolves the semantic types of the
 // compiler-owned IR mappings without reconstructing authoring dashboard models.
-func ResolveCompiledSelectionInteraction(definition *dashboarddefinition.Definition, model *semanticmodel.Model, sourceKind, sourceID string) (ResolvedSelectionInteraction, error) {
+func ResolveCompiledSelectionInteraction(definition *dashboarddefinition.Definition, model *semanticmodel.Model, sourceKind, sourceID, interactionID string) (ResolvedSelectionInteraction, error) {
 	if sourceKind != "visual" {
 		return ResolvedSelectionInteraction{}, fmt.Errorf("unknown source kind %q", sourceKind)
 	}
@@ -23,10 +23,16 @@ func ResolveCompiledSelectionInteraction(definition *dashboarddefinition.Definit
 	if err != nil {
 		return ResolvedSelectionInteraction{}, err
 	}
-	if len(base.Interactions) == 0 {
-		return ResolvedSelectionInteraction{}, fmt.Errorf("visualization %q has no selection interaction", sourceID)
+	var interaction *visualizationir.VisualizationInteraction
+	for index := range base.Interactions {
+		if base.Interactions[index].ID == interactionID {
+			interaction = &base.Interactions[index]
+			break
+		}
 	}
-	interaction := base.Interactions[0]
+	if interaction == nil || interaction.Kind != visualizationir.VisualizationInteractionKindSelect {
+		return ResolvedSelectionInteraction{}, fmt.Errorf("visualization %q has no selection interaction %q", sourceID, interactionID)
+	}
 	resolved := ResolvedSelectionInteraction{Mappings: make([]ResolvedSelectionMapping, 0, len(interaction.Mappings))}
 	for index, mapping := range interaction.Mappings {
 		item, err := resolveCompiledMapping(model, mapping)

@@ -64,7 +64,7 @@ func canonicalSelectionVisual(id, field, dataset, targetField, grain, target str
 		if target != "" {
 			targets = append(targets, visualizationir.VisualizationInteractionTarget{VisualID: target, Effect: visualizationir.VisualizationInteractionEffectFilter})
 		}
-		base.Interactions = []visualizationir.VisualizationInteraction{{ID: "point_selection", Kind: visualizationir.VisualizationInteractionKindSelect, Mode: visualizationir.VisualizationSelectionModeSingle, RequiresStableIdentity: false, Mappings: []visualizationir.VisualizationInteractionMapping{mapping}, Targets: targets}}
+		base.Interactions = []visualizationir.VisualizationInteraction{{ID: "interaction-0", Kind: visualizationir.VisualizationInteractionKindSelect, Mode: visualizationir.VisualizationSelectionModeSingle, RequiresStableIdentity: false, Mappings: []visualizationir.VisualizationInteractionMapping{mapping}, Targets: targets}}
 	}
 	if len(refs) == 0 {
 		refs = []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "value"}}
@@ -79,7 +79,7 @@ func canonicalSelectionVisual(id, field, dataset, targetField, grain, target str
 }
 
 func canonicalFilterSelection(source string, mapping dashboard.InteractionSelectionMapping) dashboard.InteractionSelection {
-	return dashboard.InteractionSelection{SourceKind: "visual", SourceID: source, InteractionKind: "point_selection", Entries: []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{mapping}}}}
+	return dashboard.InteractionSelection{SourceKind: "visual", SourceID: source, InteractionKind: "interaction-0", Entries: []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{mapping}}}}
 }
 
 func TestCanonicalSemanticFiltersTranslateConformedAndDatasetLocalSelections(t *testing.T) {
@@ -151,10 +151,20 @@ func TestCanonicalSemanticFiltersIgnoreUIOnlyRowSelections(t *testing.T) {
 	}
 }
 
+func TestCanonicalSemanticFiltersRejectSelectionWhoseIDDoesNotMatchCompiledInteraction(t *testing.T) {
+	report, model := canonicalSelectionFixture()
+	selection := canonicalFilterSelection("decades", dashboard.InteractionSelectionMapping{Field: "release_decade", Value: "1990s"})
+	selection.InteractionKind = "point_selection"
+	_, err := (&FilterService{}).semanticFilters(context.Background(), &modelRuntime{model: model}, report, dashboard.Filters{Selections: []dashboard.InteractionSelection{selection}}, "visual", "cross")
+	if err == nil || !strings.Contains(err.Error(), `has no selection interaction "point_selection"`) {
+		t.Fatalf("error = %v, want compiled interaction ID rejection", err)
+	}
+}
+
 func TestCanonicalSemanticFiltersRejectStoredSelectionWithOmittedJSONValue(t *testing.T) {
 	report, model := canonicalSelectionFixture()
 	var selection dashboard.InteractionSelection
-	if err := json.Unmarshal([]byte(`{"sourceKind":"visual","sourceId":"decades","interactionKind":"point_selection","entries":[{"mappings":[{"field":"release_decade"}]}]}`), &selection); err != nil {
+	if err := json.Unmarshal([]byte(`{"sourceKind":"visual","sourceId":"decades","interactionKind":"interaction-0","entries":[{"mappings":[{"field":"release_decade"}]}]}`), &selection); err != nil {
 		t.Fatal(err)
 	}
 	_, err := (&FilterService{}).semanticFilters(context.Background(), &modelRuntime{model: model}, report, dashboard.Filters{Selections: []dashboard.InteractionSelection{selection}}, "visual", "cross")

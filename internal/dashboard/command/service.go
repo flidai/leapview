@@ -137,9 +137,10 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 		return dashboard.InteractionCommand{}, fmt.Errorf("dashboard %q is not published", dashboardID)
 	}
 	definition, model := resolved.Definition, resolved.Model
-	wantKind := "point_selection"
+	wantInteractionID := "point_selection"
 	var toggle bool
 	semanticMappingCount := 0
+	uiOnlyRowSelection := false
 	switch command.SourceKind {
 	case "visual":
 		source, ok := definition.Visualizations[command.SourceID]
@@ -149,19 +150,20 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 		if err := validateInteractionRevisions(filters, source, command.SpecRevision, command.DataRevision, command.ServingStateID, command.FilterRevision, command.InteractionRevision); err != nil {
 			return dashboard.InteractionCommand{}, fmt.Errorf("source visual %q: %w", command.SourceID, err)
 		}
-		if isGridVisualization(source) {
-			wantKind = "row_selection"
-		}
 		interaction, hasInteraction := compiledInteraction(source)
 		if hasInteraction {
+			wantInteractionID = interaction.ID
 			toggle = interaction.Mode == visualizationir.VisualizationSelectionModeMultiple
 			semanticMappingCount = len(interaction.Mappings)
+		} else if isGridVisualization(source) {
+			wantInteractionID = "row_selection"
+			uiOnlyRowSelection = true
 		}
 	default:
 		return dashboard.InteractionCommand{}, fmt.Errorf("unknown source kind %q", command.SourceKind)
 	}
-	if command.InteractionKind != wantKind {
-		return dashboard.InteractionCommand{}, fmt.Errorf("source %s %q requires interaction kind %q", command.SourceKind, command.SourceID, wantKind)
+	if command.InteractionKind != wantInteractionID {
+		return dashboard.InteractionCommand{}, fmt.Errorf("source %s %q requires interaction ID %q", command.SourceKind, command.SourceID, wantInteractionID)
 	}
 	if command.Action != "set" && command.Action != "replace" && command.Action != "clear" {
 		return dashboard.InteractionCommand{}, fmt.Errorf("unsupported selection action %q", command.Action)
@@ -171,7 +173,7 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 		command.Mappings = nil
 		return command, nil
 	}
-	if wantKind == "row_selection" && semanticMappingCount == 0 {
+	if uiOnlyRowSelection {
 		if len(command.Mappings) != 1 || command.Mappings[0].Field != dashboard.UIRowSelectionField || command.Mappings[0].Dataset != "" || command.Mappings[0].Grain != "" || !dashboard.IsInteractionSelectionScalar(command.Mappings[0].Value) {
 			return dashboard.InteractionCommand{}, fmt.Errorf("table %q without semantic selection mappings accepts only the UI row key", command.SourceID)
 		}
@@ -180,7 +182,7 @@ func canonicalInteractionCommand(metrics Metrics, dashboardID string, filters da
 	if semanticMappingCount == 0 {
 		return dashboard.InteractionCommand{}, fmt.Errorf("%s %q has no semantic selection mappings", command.SourceKind, command.SourceID)
 	}
-	interaction, err := reportmodel.ResolveCompiledSelectionInteraction(&definition, model, command.SourceKind, command.SourceID)
+	interaction, err := reportmodel.ResolveCompiledSelectionInteraction(&definition, model, command.SourceKind, command.SourceID, command.InteractionKind)
 	if err != nil {
 		return dashboard.InteractionCommand{}, err
 	}
