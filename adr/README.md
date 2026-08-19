@@ -28,8 +28,8 @@ customer site.
 | [ADR-0007](0007-adopt-plan-driven-project-delivery.md) | Adopt plan-driven project delivery | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
 | [ADR-0008](0008-isolate-ducklake-candidate-physical-state.md) | Use one immutable DuckLake catalog per candidate | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
 | [ADR-0009](0009-separate-control-and-physical-transactions.md) | Separate control state from immutable physical catalogs | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
-| [ADR-0010](0010-adopt-strict-typed-data-resource-contracts.md) | Adopt strict typed data-resource contracts | Accepted | 2026-08-18 | Pending | — |
-| [ADR-0011](0011-adopt-a-canonical-dashboard-document.md) | Adopt a canonical dashboard document | Accepted | 2026-08-18 | Pending | — |
+| [ADR-0010](0010-adopt-strict-typed-data-resource-contracts.md) | Adopt strict typed data-resource contracts | Accepted | 2026-08-18 | Complete | — |
+| [ADR-0011](0011-adopt-a-canonical-dashboard-document.md) | Adopt a canonical dashboard document | Accepted | 2026-08-18 | Complete | — |
 
 ## Companion specifications
 
