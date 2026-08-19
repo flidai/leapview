@@ -532,6 +532,35 @@ func TestDuckDBRendererBindsMaliciousPredicateLiteral(t *testing.T) {
 	}
 }
 
+func TestDuckDBRendererOrdersFilterArgumentsBeforeDerivedMetricArguments(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	derivedMeta := aggregate.NodeMeta
+	derivedMeta.NodeID = "derived"
+	derivedMeta.FilterPhase = FilterPhasePostAggregate
+	derivedMeta.AvailableMetrics = append(append([]Metric(nil), aggregate.AvailableMetrics...), Metric{Name: "revenue_baseline", Type: "decimal"})
+	graph.Nodes["derived"] = ComputeDerived{
+		NodeMeta: derivedMeta,
+		Input:    "aggregate",
+		Output:   "revenue_baseline",
+		Expression: ScalarExpr{Kind: ScalarMul, Children: []ScalarExpr{
+			{Kind: ScalarMetricRef, Metric: "revenue"},
+			{Kind: ScalarLiteral, Literal: Literal{Kind: LiteralNumber, NumberKind: NumberDecimal, NumberText: "0.9"}},
+		}},
+	}
+	graph.Output = "derived"
+	graph.NodeMeta = derivedMeta
+
+	rendered, err := RenderDuckDB(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []any{"paid", "0.9"}
+	if !reflect.DeepEqual(rendered.Args, wantArgs) {
+		t.Fatalf("Args = %#v, want SQL placeholder order %#v\nSQL: %s", rendered.Args, wantArgs, rendered.SQL)
+	}
+}
+
 func TestCountRequiresTypedInput(t *testing.T) {
 	graph := validPlan()
 	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)

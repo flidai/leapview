@@ -230,11 +230,17 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		if err != nil {
 			return "", nil, err
 		}
+		// Render the child first so its predicate arguments precede literals in
+		// this derived expression, matching the emitted CTE placeholder order.
+		child, columns, err := r.renderNode(n.Input)
+		if err != nil {
+			return "", nil, err
+		}
 		expr, err := renderScalarWithResolverAndTypes(n.Expression, &r.args, func(name string) (string, error) { return quoteName(name), nil }, metricTypes)
 		if err != nil {
 			return "", nil, err
 		}
-		return r.renderCompute(id, n.Input, n.Output, expr)
+		return r.renderComputed(id, child, columns, n.Output, expr)
 	case SortLimit, *SortLimit:
 		n, ok := asSortLimit(value)
 		if !ok {
@@ -761,6 +767,10 @@ func (r *duckRenderer) renderCompute(id, input, output, expression string) (stri
 	if err != nil {
 		return "", nil, err
 	}
+	return r.renderComputed(id, child, columns, output, expression)
+}
+
+func (r *duckRenderer) renderComputed(id, child string, columns []string, output, expression string) (string, []string, error) {
 	name := r.cteName(id)
 	r.ctes = append(r.ctes, name+" AS (SELECT *, "+expression+" AS "+quoteName(output)+" FROM "+quoteName(child)+")")
 	r.names[id] = name
