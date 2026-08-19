@@ -33,6 +33,7 @@ try {
   await verifySidebarCollapseToggle()
   await verifyEChartsFirstNavigation()
   await verifyDashboardCommandDoesNotReopenUpdates()
+  await verifyTableShowcase()
   await verifyFilterShowcase()
   await verifySpatialShowcaseMaps()
   await verifySpatialMapWindowing()
@@ -488,6 +489,42 @@ async function verifyFilterShowcase(): Promise<void> {
     }
     if ([...actualURLParams.keys()].some((key) => !(key in canonicalURLParams))) {
       throw new Error(`${path}: URL contains parameters outside canonical state: ${page.url()}`)
+    }
+    assertNoBlockingConsoleMessages(path, messages)
+  } finally {
+    await page.close()
+  }
+}
+
+async function verifyTableShowcase(): Promise<void> {
+  const path = '/dashboards/dashboard:visual-showcase/pages/tables'
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } })
+  const messages = collectBlockingConsoleMessages(page)
+
+  try {
+    const response = await page.goto(new URL(path, baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`${path}: status ${response?.status() ?? 'unknown'}`)
+    await page.waitForSelector('lv-dashboard-page')
+    try {
+      await page.waitForFunction(() => {
+        const dashboard = document.querySelector('lv-dashboard-page') as any
+        const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+        return dashboard?.status?.loading === false
+          && hosts.length === 9
+          && hosts.every((host) => host.envelope?.status?.kind === 'ready')
+      }, undefined, { timeout: 30_000 })
+    } catch (error) {
+      const state = await page.evaluate(() => {
+        const dashboard = document.querySelector('lv-dashboard-page') as any
+        return {
+          status: dashboard?.status,
+          visuals: Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []).map((host: any) => ({
+            visualID: host.envelope?.visualID,
+            status: host.envelope?.status,
+          })),
+        }
+      })
+      throw new Error(`${path}: table showcase did not become ready: ${JSON.stringify(state)}; ${String(error)}`)
     }
     assertNoBlockingConsoleMessages(path, messages)
   } finally {

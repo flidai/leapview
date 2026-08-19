@@ -137,10 +137,17 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		if !ok {
 			return "", nil, fmt.Errorf("aggregate node %q is nil", id)
 		}
+		argStart := len(r.args)
 		ctx, err := r.source(n.Input)
 		if err != nil {
 			return "", nil, err
 		}
+		// Source predicates are emitted after metric-local FILTER expressions in
+		// the aggregate SQL, even though the source must be rendered first to
+		// resolve fields and relationship aliases. Hold their arguments aside so
+		// the final argument slice follows textual placeholder order.
+		sourceArgs := append([]any(nil), r.args[argStart:]...)
+		r.args = r.args[:argStart]
 		parts := make([]string, 0, len(n.GroupBy)+len(n.Metrics))
 		for _, field := range n.GroupBy {
 			expr, err := r.fieldExpr(field, ctx)
@@ -171,6 +178,7 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		if len(parts) == 0 {
 			return "", nil, fmt.Errorf("aggregate node %q has no projection", id)
 		}
+		r.args = append(r.args, sourceArgs...)
 		from := ctx.from
 		if len(ctx.where) > 0 {
 			from += " WHERE " + strings.Join(ctx.where, " AND ")

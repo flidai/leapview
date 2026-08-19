@@ -883,6 +883,17 @@ func TestCompileProjectGraphShowcase(t *testing.T) {
 	if len(envelope.Selection) != 1 || envelope.Selection[0].Datum.Identity["category"] != "books" {
 		t.Fatalf("project selected categories envelope selection = %#v", envelope.Selection)
 	}
+	formattedMatrix, ok := showcase.Visualizations["state_status_matrix_formatted"]
+	if !ok {
+		t.Fatal("compiled showcase omitted formatted matrix visual")
+	}
+	formattedMatrixBase, err := visualizationir.SpecificationBase(formattedMatrix.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := formattedMatrixBase.DataBudget.MaxRows; got != 5000 {
+		t.Fatalf("compiled formatted matrix maxRows = %d, want 5000", got)
+	}
 }
 
 func TestCompileProjectGraphAcceptsCanonicalReferenceIDs(t *testing.T) {

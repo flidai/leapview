@@ -561,6 +561,33 @@ func TestDuckDBRendererOrdersFilterArgumentsBeforeDerivedMetricArguments(t *test
 	}
 }
 
+func TestDuckDBRendererOrdersAggregateFilterArgumentsBeforeSourceFilterArguments(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.Metrics[0].Filters = []AggregateFilter{{
+		Source: FilterSourceNamed,
+		Name:   "refunded_orders",
+		Phase:  FilterPhaseScan,
+		Fields: []string{"status"},
+		Predicate: Predicate{
+			Kind:     PredicateCompare,
+			Field:    "status",
+			Operator: "=",
+			Value:    Literal{Kind: LiteralString, String: "refunded"},
+		},
+	}}
+	graph.Nodes["aggregate"] = aggregate
+
+	rendered, err := RenderDuckDB(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []any{"refunded", "paid"}
+	if !reflect.DeepEqual(rendered.Args, wantArgs) {
+		t.Fatalf("Args = %#v, want SQL placeholder order %#v\nSQL: %s", rendered.Args, wantArgs, rendered.SQL)
+	}
+}
+
 func TestCountRequiresTypedInput(t *testing.T) {
 	graph := validPlan()
 	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
