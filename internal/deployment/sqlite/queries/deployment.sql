@@ -180,7 +180,7 @@ WHERE owner_principal_id = ?
   AND status IN ('preparing', 'ready', 'failed');
 
 -- name: GetActiveProjectCandidateBaseGeneration :one
-SELECT id
+SELECT generation_id
 FROM project_deployments
 WHERE project_id = ?
   AND environment = ?

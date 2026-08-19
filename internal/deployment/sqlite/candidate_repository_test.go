@@ -271,6 +271,38 @@ func TestCandidateRepositoryNeverChangesActiveServingState(t *testing.T) {
 	}
 }
 
+func TestActiveCandidateBaseScopeUsesServingGenerationID(t *testing.T) {
+	ctx, db, repository := testRepository(t)
+	insertCandidatePrincipal(t, ctx, db, "principal_1")
+	generationID := "finance_generation"
+	deploymentID := "deployment_active"
+	digest := "sha256:" + strings.Repeat("d", 64)
+	if _, err := db.ExecContext(ctx, `INSERT INTO serving_states (id, project_id, environment, status, source, digest) VALUES (?, 'finance', 'prod', 'active', 'publish', ?)`, generationID, digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO project_deployments (id, project_id, environment, generation_id, artifact_digest, request_digest, status, created_by, activated_at) VALUES (?, 'finance', 'prod', ?, ?, ?, 'active', 'publisher', CURRENT_TIMESTAMP)`, deploymentID, generationID, digest, digest); err != nil {
+		t.Fatal(err)
+	}
+
+	scope, err := repository.ActiveCandidateBaseScope(ctx, "finance", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.BaseGenerationID != generationID {
+		t.Fatalf("active candidate base generation = %q, want serving generation %q", scope.BaseGenerationID, generationID)
+	}
+
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	candidate := candidateRecord(t, now, "cand_generation", "finance", "principal_1", "sha256:"+strings.Repeat("a", 64))
+	started, _, err := repository.StartCandidate(ctx, candidate, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Scope.BaseGenerationID != generationID {
+		t.Fatalf("started candidate base generation = %q, want serving generation %q", started.Scope.BaseGenerationID, generationID)
+	}
+}
+
 func TestCandidateRepositoryRejectsReadyCandidateWithoutReleaseProvenance(t *testing.T) {
 	ctx, db, repository := testRepository(t)
 	insertCandidatePrincipal(t, ctx, db, "principal_1")
