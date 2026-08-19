@@ -950,7 +950,7 @@ tasks:
       - task: site:build
 
   ci:extensions:prepare:
-    desc: Provision the pinned DuckLake artifact used by CI documentation fixtures
+    desc: Provision the pinned DuckLake and spatial artifacts used by CI documentation fixtures
     cmds:
       - go run ./internal/app/tools/ducklakeprepare
 

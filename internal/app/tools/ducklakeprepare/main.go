@@ -1,4 +1,4 @@
-// Command ducklakeprepare provisions the pinned DuckLake extension used by
+// Command ducklakeprepare provisions the pinned extension set used by
 // deterministic documentation and CI fixtures. It is build tooling only: the
 // application runtime never installs extensions.
 package main
@@ -21,7 +21,9 @@ import (
 
 const fixtureCacheSuffix = ".cache/leapview/ci-duckdb-extensions"
 
-type installer func(context.Context, string, string) error
+var fixtureExtensions = [...]string{"ducklake", "spatial"}
+
+type installer func(context.Context, string, string, string) error
 
 func main() {
 	root := flag.String("root", "", "private DuckDB extension fixture cache")
@@ -29,25 +31,29 @@ func main() {
 
 	resolved, err := fixtureRoot(*root)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "prepare DuckLake fixture extension: %v\n", err)
+		fmt.Fprintf(os.Stderr, "prepare DuckDB fixture extensions: %v\n", err)
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	version, platform, err := runtimeTarget(ctx)
-	var path string
-	if err == nil {
-		path, err = prepare(ctx, resolved, version, platform, installDuckLake)
-	}
-	var digest string
-	if err == nil {
-		digest, err = verifyDuckLake(ctx, path)
-	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "prepare DuckLake fixture extension: %v\n", err)
+		fmt.Fprintf(os.Stderr, "prepare DuckDB fixture extensions: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("prepared DuckLake fixture %s sha256:%s\n", path, digest)
+	for _, name := range fixtureExtensions {
+		path, prepareErr := prepare(ctx, resolved, version, platform, name, installExtension)
+		if prepareErr != nil {
+			fmt.Fprintf(os.Stderr, "prepare DuckDB fixture extension %s: %v\n", name, prepareErr)
+			os.Exit(1)
+		}
+		digest, verifyErr := verifyExtension(ctx, name, path)
+		if verifyErr != nil {
+			fmt.Fprintf(os.Stderr, "prepare DuckDB fixture extension %s: %v\n", name, verifyErr)
+			os.Exit(1)
+		}
+		fmt.Printf("prepared DuckDB fixture %s %s sha256:%s\n", name, path, digest)
+	}
 }
 
 func fixtureRoot(configured string) (string, error) {
@@ -92,22 +98,25 @@ func runtimeTarget(ctx context.Context) (string, string, error) {
 	return version, platform, nil
 }
 
-func prepare(ctx context.Context, root, version, platform string, install installer) (string, error) {
+func prepare(ctx context.Context, root, version, platform, name string, install installer) (string, error) {
+	if !isFixtureExtension(name) {
+		return "", fmt.Errorf("fixture extension %q is not approved", name)
+	}
 	if err := ensurePrivateRoot(root); err != nil {
 		return "", err
 	}
-	if path, err := locateArtifact(root, version, platform); err == nil {
+	if path, err := locateArtifact(root, version, platform, name); err == nil {
 		return path, nil
 	}
 	if install == nil {
-		return "", fmt.Errorf("DuckLake fixture installer is required")
+		return "", fmt.Errorf("%s fixture installer is required", name)
 	}
-	if err := install(ctx, root, platform); err != nil {
+	if err := install(ctx, root, platform, name); err != nil {
 		return "", err
 	}
-	path, err := locateArtifact(root, version, platform)
+	path, err := locateArtifact(root, version, platform, name)
 	if err != nil {
-		return "", fmt.Errorf("installed DuckLake artifact: %w", err)
+		return "", fmt.Errorf("installed %s artifact: %w", name, err)
 	}
 	return path, nil
 }
@@ -133,22 +142,22 @@ func ensurePrivateRoot(root string) error {
 	return os.Chmod(root, 0o700)
 }
 
-func locateArtifact(root, version, platform string) (string, error) {
-	path := filepath.Join(root, version, platform, "ducklake.duckdb_extension")
+func locateArtifact(root, version, platform, name string) (string, error) {
+	path := filepath.Join(root, version, platform, name+".duckdb_extension")
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", fmt.Errorf("DuckLake artifact is unavailable")
+		return "", fmt.Errorf("%s artifact is unavailable", name)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() == 0 {
-		return "", fmt.Errorf("DuckLake artifact must be a non-empty regular non-symlink file")
+		return "", fmt.Errorf("%s artifact must be a non-empty regular non-symlink file", name)
 	}
 	return path, nil
 }
 
-func verifyDuckLake(ctx context.Context, path string) (string, error) {
+func verifyExtension(ctx context.Context, name, path string) (string, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read DuckLake artifact: %w", err)
+		return "", fmt.Errorf("read %s artifact: %w", name, err)
 	}
 	digest := sha256.Sum256(contents)
 	db, err := sql.Open("duckdb", ":memory:")
@@ -160,12 +169,15 @@ func verifyDuckLake(ctx context.Context, path string) (string, error) {
 	// Loading the exact absolute artifact asks DuckDB to verify its official
 	// extension signature. It does not enable installation in product runtime.
 	if _, err := db.ExecContext(ctx, "LOAD '"+escapedPath+"'"); err != nil {
-		return "", fmt.Errorf("verify pinned DuckLake fixture extension: %w", err)
+		return "", fmt.Errorf("verify pinned %s fixture extension: %w", name, err)
 	}
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func installDuckLake(ctx context.Context, root, _ string) error {
+func installExtension(ctx context.Context, root, _, name string) error {
+	if !isFixtureExtension(name) {
+		return fmt.Errorf("fixture extension %q is not approved", name)
+	}
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		return fmt.Errorf("open DuckDB extension provisioner: %w", err)
@@ -175,8 +187,17 @@ func installDuckLake(ctx context.Context, root, _ string) error {
 	if _, err := db.ExecContext(ctx, "SET extension_directory = '"+escapedRoot+"'"); err != nil {
 		return fmt.Errorf("set DuckDB fixture extension directory: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, "INSTALL ducklake FROM core"); err != nil {
-		return fmt.Errorf("install pinned DuckLake fixture extension: %w", err)
+	if _, err := db.ExecContext(ctx, "INSTALL "+name+" FROM core"); err != nil {
+		return fmt.Errorf("install pinned %s fixture extension: %w", name, err)
 	}
 	return nil
+}
+
+func isFixtureExtension(name string) bool {
+	for _, approved := range fixtureExtensions {
+		if name == approved {
+			return true
+		}
+	}
+	return false
 }

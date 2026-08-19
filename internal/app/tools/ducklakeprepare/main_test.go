@@ -10,19 +10,19 @@ import (
 func TestPrepareInstallsOnceIntoExactRuntimeIdentity(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "extensions")
 	installCalls := 0
-	install := func(_ context.Context, receivedRoot, platform string) error {
+	install := func(_ context.Context, receivedRoot, platform, name string) error {
 		installCalls++
-		path := filepath.Join(receivedRoot, "v1.5.4", platform, "ducklake.duckdb_extension")
+		path := filepath.Join(receivedRoot, "v1.5.4", platform, name+".duckdb_extension")
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
 		}
 		return os.WriteFile(path, []byte("signed-fixture"), 0o600)
 	}
-	first, err := prepare(context.Background(), root, "v1.5.4", "linux_amd64_gcc4", install)
+	first, err := prepare(context.Background(), root, "v1.5.4", "linux_amd64_gcc4", "ducklake", install)
 	if err != nil {
 		t.Fatalf("prepare fixture: %v", err)
 	}
-	second, err := prepare(context.Background(), root, "v1.5.4", "linux_amd64_gcc4", install)
+	second, err := prepare(context.Background(), root, "v1.5.4", "linux_amd64_gcc4", "ducklake", install)
 	if err != nil {
 		t.Fatalf("reuse fixture: %v", err)
 	}
@@ -44,7 +44,17 @@ func TestLocateArtifactRejectsSymlink(t *testing.T) {
 	if err := os.Symlink(target, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := locateArtifact(root, "v1.5.4", "linux_amd64_gcc4"); err == nil {
+	if _, err := locateArtifact(root, "v1.5.4", "linux_amd64_gcc4", "ducklake"); err == nil {
 		t.Fatal("expected symlink artifact rejection")
+	}
+}
+
+func TestInstallExtensionRejectsUnapprovedName(t *testing.T) {
+	name := "../../httpfs; DROP TABLE secrets"
+	if _, err := prepare(context.Background(), t.TempDir(), "v1.5.4", "linux_amd64", name, nil); err == nil {
+		t.Fatal("expected unapproved artifact lookup rejection")
+	}
+	if err := installExtension(context.Background(), t.TempDir(), "linux_amd64", name); err == nil {
+		t.Fatal("expected unapproved extension rejection")
 	}
 }
