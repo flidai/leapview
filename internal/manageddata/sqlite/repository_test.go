@@ -296,6 +296,32 @@ func TestServingStateBindingsAllowMultipleCollections(t *testing.T) {
 	}
 }
 
+func TestActiveEnvironmentPointerUsesCanonicalDeliveryGenerationBinding(t *testing.T) {
+	ctx, store, repo := testRepository(t)
+	collection, revision := readyRevision(t, ctx, repo, "orders", "project-a", "connection:orders", "orders.csv", "e")
+	identity := servingIdentity("project-a", "prod", "generation-active")
+	insertProjectState(t, ctx, store, identity.ProjectID.String(), identity.GenerationID, identity.Environment, "validated")
+	if err := repo.InstallServingStateBindings(ctx, identity, []manageddata.ServingStateBinding{{
+		Identity: identity, CollectionID: collection.ID, RevisionID: revision.ID,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ExecContext(ctx, `
+		INSERT INTO delivery_target_revisions
+		  (target_id, project_id, environment, target_revision, active_generation_id, created_at, updated_at)
+		VALUES ('target-prod', 'project-a', 'prod', 7, 'generation-active', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	pointer, err := repo.ActiveEnvironmentPointer(ctx, collection.ID, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pointer.CollectionID != collection.ID || pointer.Environment != "prod" || pointer.RevisionID != revision.ID || pointer.Generation != 7 || pointer.UpdatedAt != "2026-01-02T00:00:00Z" {
+		t.Fatalf("active pointer = %#v", pointer)
+	}
+}
+
 func testRepository(t *testing.T) (context.Context, *sql.DB, *Repository) {
 	t.Helper()
 	ctx := context.Background()

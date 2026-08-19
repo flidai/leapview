@@ -48,6 +48,7 @@ type qualificationCredentials struct {
 	WorkloadToken         string `json:"workloadToken,omitempty"`
 	ProjectDataToken      string `json:"projectDataToken,omitempty"`
 	RecoveryControlToken  string `json:"recoveryControlToken,omitempty"`
+	AuditToken            string `json:"auditToken,omitempty"`
 	QualificationPassword string `json:"qualificationPassword"`
 }
 
@@ -329,7 +330,7 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	var administratorToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueAdministratorToken", map[string]any{
-		"capabilities": []string{"PROJECT_ADMIN", "RESOURCE_READ", "RESOURCE_PUBLISH"},
+		"capabilities": []string{"PROJECT_ADMIN", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH"},
 	}, &administratorToken, nil); err != nil {
 		return report, err
 	}
@@ -502,9 +503,14 @@ func (c *Controller) runQualificationAuthoring(
 	if err != nil {
 		return report, err
 	}
+	auditToken, err := createAPIToken("qualification-audit", []string{"PROJECT_ADMIN"})
+	if err != nil {
+		return report, err
+	}
 	credentials.WorkloadToken = workloadToken
 	credentials.ProjectDataToken = projectDataToken
 	credentials.RecoveryControlToken = reviewerToken.AccessToken
+	credentials.AuditToken = auditToken
 	if err := writeQualificationJSON(options.CredentialsFile, credentials); err != nil {
 		return report, fmt.Errorf("persist qualification scoped credentials: %w", err)
 	}
@@ -676,11 +682,13 @@ func qualificationCanonicalPublicationEvidence(
 	if err != nil {
 		return QualificationPublication{}, QualificationDeployment{}, err
 	}
-	if plan.Body.PlanDigest != candidate.PlanDigest ||
-		plan.Body.SourceDigest != candidate.ArtifactDigest ||
-		plan.Body.ProvenanceDigest != candidate.ProvenanceDigest ||
-		plan.Body.TargetId != candidate.TargetID {
-		return QualificationPublication{}, QualificationDeployment{}, fmt.Errorf("canonical plan evidence does not match the previewed candidate")
+	if !qualificationPlanMatchesCandidate(plan.Body, candidate) {
+		return QualificationPublication{}, QualificationDeployment{}, fmt.Errorf(
+			"canonical plan evidence does not match the previewed candidate (plan digest=%t, source digest=%t, target=%t)",
+			plan.Body.PlanDigest == candidate.PlanDigest,
+			plan.Body.SourceDigest == candidate.ArtifactDigest,
+			plan.Body.TargetId == candidate.TargetID,
+		)
 	}
 	synchronizedCandidate, err := client.GetProjectCandidate(
 		ctx,
@@ -746,6 +754,16 @@ func qualificationCanonicalPublicationEvidence(
 		GenerationID:   generation.Body.Id, PlanID: generation.Body.PlanId,
 		PlanDigest: generation.Body.PlanDigest, Status: string(generation.Body.Status),
 	}, nil
+}
+
+func qualificationPlanMatchesCandidate(plan deploymentgen.DeliveryPlanPreviewResponse, candidate QualificationCandidate) bool {
+	// Candidate provenance identifies the synchronized project artifact, while
+	// plan provenance identifies the canonical delivery inputs (including the
+	// retained source attestation). They are independently bound by the plan
+	// digest and must not be compared as if they were the same hash domain.
+	return plan.PlanDigest == candidate.PlanDigest &&
+		plan.SourceDigest == candidate.ArtifactDigest &&
+		plan.TargetId == candidate.TargetID
 }
 
 func (c *Controller) bootstrapQualificationServingGeneration(

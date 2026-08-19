@@ -119,7 +119,7 @@ func TestCandidatePlanPreservesSemanticRelationshipPathsAndQualificationScope(t 
 		AuthorizationFingerprint: deliveryPlanDigest('c'),
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
 		Compiler: release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{
-			Project: "project_delivery", DependencyChanges: []projectcompiler.ProjectPlanDependencyChange{{From: "orders", To: "customers", Type: "model", Action: "change"}, {From: "customers", To: "regions", Type: "model", Action: "change"}},
+			Project: "project_delivery", DependencyChanges: []projectcompiler.ProjectPlanDependencyChange{{From: "orders", To: "customers", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}, {From: "customers", To: "regions", Type: "uses_model", ResourceKind: string(projectgraph.KindModel), Action: "change"}},
 		}},
 	}
 	input := deployment.DeliveryCandidateBuildInput{ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: artifacts.Artifact.SourceDigest, Candidate: deployment.Candidate{ID: "candidate_relationships", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod"}}}
@@ -132,6 +132,11 @@ func TestCandidatePlanPreservesSemanticRelationshipPathsAndQualificationScope(t 
 	}
 	if len(request.Evidence.GraphImpact.IndirectlyAffected) != 2 || len(request.Evidence.Qualification.Steps) < 2 {
 		t.Fatalf("impact/qualification scope = %#v / %#v", request.Evidence.GraphImpact.IndirectlyAffected, request.Evidence.Qualification.Steps)
+	}
+	for _, affected := range request.Evidence.GraphImpact.IndirectlyAffected {
+		if affected.Kind != string(projectgraph.KindModel) {
+			t.Fatalf("indirectly affected resource = %#v, want model authorization kind", affected)
+		}
 	}
 }
 
@@ -258,6 +263,27 @@ func TestRestatementPlanUsesExplicitCandidateLevelFullRefresh(t *testing.T) {
 	plan := &deployment.DeliveryPlan{Operation: deployment.DeliveryOperationRestatement, Evidence: request.Evidence}
 	if err := validateReuseEvidenceCoverage(plan, artifacts, input.Candidate.ID); err != nil {
 		t.Fatalf("restatement candidate-level evidence rejected: %v", err)
+	}
+}
+
+func TestRestatementPlanEvidenceAcceptsStablePlanIdentityDuringPhysicalBuild(t *testing.T) {
+	artifacts := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{
+		RelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')},
+	}}
+	plan := &deployment.DeliveryPlan{
+		ID:        "plan-planning-candidate",
+		Operation: deployment.DeliveryOperationRestatement,
+		Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{
+			ResourceID: "planning-candidate",
+			Reason:     "operation requires explicit full materialization",
+		}}},
+	}
+	if err := validateReuseEvidenceCoverage(plan, artifacts, "candidate-physical-build"); err != nil {
+		t.Fatalf("durable restatement plan identity rejected during physical build: %v", err)
+	}
+	plan.Evidence.Reuse[0].Reusable = true
+	if err := validateReuseEvidenceCoverage(plan, artifacts, "candidate-physical-build"); err == nil {
+		t.Fatal("durable restatement plan identity retained a base")
 	}
 }
 

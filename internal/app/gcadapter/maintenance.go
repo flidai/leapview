@@ -42,7 +42,6 @@ func (m *Maintenance) Start(ctx context.Context) error {
 	}
 	go func() {
 		defer close(m.done)
-		m.runOnce(ctx)
 		ticker := time.NewTicker(m.interval)
 		defer ticker.Stop()
 		for {

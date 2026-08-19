@@ -21,7 +21,7 @@ const (
 var (
 	qualificationBearerPattern = regexp.MustCompile(`(?i)(Authorization: Bearer )[A-Za-z0-9._~+/-]+`)
 	qualificationSecretPattern = regexp.MustCompile(
-		`(?i)(accessToken|refreshToken|publisherToken|workloadToken|projectDataToken|recoveryControlToken|temporaryPassword|qualificationPassword|password|clientSecret|apiKey|token)"\s*:\s*"[^"]+"`,
+		`(?i)(accessToken|refreshToken|publisherToken|workloadToken|projectDataToken|recoveryControlToken|auditToken|temporaryPassword|qualificationPassword|password|clientSecret|apiKey|token)"\s*:\s*"[^"]+"`,
 	)
 	qualificationEnvSecretPattern = regexp.MustCompile(
 		`(?i)((?:[A-Z0-9_]*(?:TOKEN|PASSWORD|SECRET|API_KEY)[A-Z0-9_]*)=)[^\s]+`,

@@ -49,6 +49,10 @@ func (r browserGuardRepository) IsPlatformAdmin(context.Context, string) (bool, 
 	return r.admin, r.err
 }
 
+func (browserGuardRepository) RecordAuditEvent(context.Context, access.AuditEventInput) error {
+	return nil
+}
+
 func browserGuardModule(repo access.Repository, principal Principal, ok bool) *Module {
 	var projection func(context.Context, string) ([]access.Capability, error)
 	if guard, isGuard := repo.(browserGuardRepository); isGuard {

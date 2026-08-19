@@ -12,6 +12,8 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+	"github.com/flidai/leapview/internal/servingstate"
 )
 
 func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, database *sql.DB, persistence persistenceInputs, workflow workflowInputs, storage storageInputs) error {
@@ -27,6 +29,29 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	}
 	if workflow.refreshMaterializer != nil {
 		service.Materializer = workflow.refreshMaterializer
+	}
+	service.CanonicalExecutor = workflow.canonicalRefreshExecutor
+	service.ResolveActive = func(ctx context.Context, identity projectgraph.ServingIdentity) (refreshrun.ServingState, error) {
+		if runtime.runtimeHostModule == nil {
+			return refreshrun.ServingState{}, fmt.Errorf("active project runtime is unavailable")
+		}
+		lease, err := runtime.runtimeHostModule.Acquire(ctx)
+		if err != nil {
+			return refreshrun.ServingState{}, err
+		}
+		defer lease.Release()
+		if lease.Identity() != identity {
+			return refreshrun.ServingState{}, fmt.Errorf("refresh base serving identity changed")
+		}
+		state, err := service.ServingStates.ByID(ctx, servingstate.ID(identity.GenerationID))
+		if err != nil {
+			return refreshrun.ServingState{}, err
+		}
+		artifact, err := service.ServingStates.ArtifactByServingState(ctx, state.ID)
+		if err != nil {
+			return refreshrun.ServingState{}, err
+		}
+		return refreshrun.ServingState{State: state, Artifact: artifact}, nil
 	}
 	resolveRefreshIdentity := func(ctx context.Context) (projectgraph.ServingIdentity, error) {
 		if runtime.runtimeHostModule == nil {

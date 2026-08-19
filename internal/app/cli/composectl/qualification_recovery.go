@@ -31,9 +31,13 @@ const qualificationRecoveryActivationBarrierTimeout = 2 * time.Minute
 
 const (
 	qualificationRecoveryFullCPUs               = "1"
-	qualificationRecoveryReleaseCPUs            = "0.03"
+	qualificationRecoveryInterruptedWorkCPUs    = "0.03"
 	qualificationRecoveryReleaseCandidateKey    = "qualification-recovery-release"
 	qualificationRecoveryDeploymentCandidateKey = "qualification-recovery-deployment"
+	qualificationManagedConnectionID            = "connection:sample"
+	qualificationRefreshPipelineID              = "pipeline:evaluation-refresh"
+	qualificationRecoveryReleaseProjectName     = "recovery-release-project"
+	qualificationRecoveryDeploymentProjectName  = "recovery-deployment-project"
 )
 
 type qualificationRecoveryOptions struct {
@@ -159,6 +163,13 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil {
 		return report, err
 	}
+	// The hardened recovery client bind-mounts this project directory and runs as the
+	// non-root LeapView user. MkdirTemp creates 0700 directories, so the mount
+	// root must be made traversable before the client starts; individual files
+	// remain explicitly read-only below.
+	if err := makeQualificationProjectDirTraversable(workDir); err != nil {
+		return report, err
+	}
 	report.SchemaVersion = qualificationEvidenceSchema
 	report.Result = "failure"
 	report.Stage = "initialize"
@@ -200,6 +211,9 @@ func (c *Controller) runQualificationRecovery(
 		_, err := c.qualificationContainers.Existing(recoveryClient).Remove(cleanupCtx)
 		return ignoreQualificationNotFound(err)
 	})
+	cleanup.Add(func(cleanupCtx context.Context) error {
+		return ignoreQualificationNotFound(c.clearQualificationActivationBarrier(cleanupCtx, options.ContainerID))
+	})
 	client := &http.Client{Timeout: 30 * time.Second}
 	apiRoot := "http://127.0.0.1:8080"
 
@@ -215,7 +229,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	if err := qualificationAPI(
 		ctx, client, http.MethodGet,
-		apiRoot+"/api/v1/projects/"+urlPath(options.ProjectID)+"/connections/sample/active-revision",
+		apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/active-revision",
 		options.ProjectDataToken, nil, "", &active,
 	); err != nil {
 		return report, err
@@ -253,7 +267,7 @@ func (c *Controller) runQualificationRecovery(
 		var sessions qualificationUploadSessions
 		if apiErr := qualificationAPI(
 			waitCtx, client, http.MethodGet,
-			apiRoot+"/api/v1/projects/"+urlPath(options.ProjectID)+"/connections/sample/upload-sessions?limit=100",
+			apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/upload-sessions?limit=100",
 			options.PublisherToken, nil, "", &sessions,
 		); apiErr != nil {
 			return false, nil
@@ -297,8 +311,8 @@ func (c *Controller) runQualificationRecovery(
 	if err := qualificationAPI(
 		ctx, client, http.MethodGet,
 		fmt.Sprintf(
-			"%s/api/v1/projects/%s/connections/sample/upload-sessions/%s",
-			apiRoot, urlPath(options.ProjectID), urlPath(interruptedSession),
+			"%s%s/upload-sessions/%s",
+			apiRoot, qualificationManagedConnectionPath(options.ProjectID), urlPath(interruptedSession),
 		),
 		options.PublisherToken, nil, "", &sessionObject,
 	); err != nil {
@@ -332,7 +346,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	if err := qualificationAPI(
 		ctx, client, http.MethodGet,
-		apiRoot+"/api/v1/projects/"+urlPath(options.ProjectID)+"/connections/sample/active-revision",
+		apiRoot+qualificationManagedConnectionPath(options.ProjectID)+"/active-revision",
 		options.ProjectDataToken, nil, "", &active,
 	); err != nil {
 		return report, err
@@ -344,8 +358,8 @@ func (c *Controller) runQualificationRecovery(
 		ctx,
 		client,
 		apiRoot+fmt.Sprintf(
-			"/api/v1/projects/%s/connections/sample/upload-sessions/%s/events?limit=100",
-			urlPath(options.ProjectID), urlPath(interruptedSession),
+			"%s/upload-sessions/%s/events?limit=100",
+			qualificationManagedConnectionPath(options.ProjectID), urlPath(interruptedSession),
 		),
 		options.PublisherToken,
 		[]string{"upload_session.created", "upload_session.finalizing", "upload_session.completed"},
@@ -364,7 +378,7 @@ func (c *Controller) runQualificationRecovery(
 	if _, err := c.qualificationDocker(
 		ctx,
 		nil,
-		"update", "--cpus", qualificationRecoveryReleaseCPUs, options.ContainerID,
+		"update", "--cpus", qualificationRecoveryInterruptedWorkCPUs, options.ContainerID,
 	); err != nil {
 		return report, err
 	}
@@ -538,12 +552,22 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	report.Assertions.DeploymentActivation = true
+	if err := c.clearQualificationActivationBarrier(ctx, options.ContainerID); err != nil {
+		return report, err
+	}
 
 	if err := phases.Finish(nil); err != nil {
 		return report, err
 	}
 	report.Stage = "refresh materialization interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	// Make the execution interval observable before killing the process. On a
+	// fast or warm target the refresh can otherwise move from queued directly
+	// to succeeded between one-second status polls, leaving the recovery gate
+	// waiting for a transient state that already passed.
+	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", qualificationRecoveryInterruptedWorkCPUs, options.ContainerID); err != nil {
+		return report, err
+	}
 	var refresh struct {
 		ID string `json:"id"`
 	}
@@ -552,7 +576,7 @@ func (c *Controller) runQualificationRecovery(
 		ctx, client, http.MethodPost,
 		apiRoot+"/api/v1/projects/"+urlPath(options.ProjectID)+"/refresh-runs",
 		options.WorkloadToken,
-		map[string]string{"pipelineId": "evaluation-refresh"},
+		map[string]string{"pipelineId": qualificationRefreshPipelineID},
 		refreshIDKey,
 		&refresh,
 	); err != nil {
@@ -876,8 +900,8 @@ func (c *Controller) prepareQualificationRecoveryData(
 		return err
 	}
 	for name, title := range map[string]string{
-		"project-a": "Recovery Release Project",
-		"project-b": "Recovery Deployment Project",
+		"project-a": qualificationRecoveryReleaseProjectName,
+		"project-b": qualificationRecoveryDeploymentProjectName,
 	} {
 		target := filepath.Join(workDir, name)
 		if err := copyQualificationTree(sourceProject, target); err != nil {
@@ -940,6 +964,10 @@ func makeQualificationContainerReadable(root string) error {
 		}
 		return os.Chmod(path, mode)
 	})
+}
+
+func makeQualificationProjectDirTraversable(root string) error {
+	return os.Chmod(root, 0o755)
 }
 
 func expandQualificationCSV(source, destination string, iterations int) error {
@@ -1181,13 +1209,9 @@ func (c *Controller) armQualificationActivationBarrier(
 	containerID string,
 	workDir string,
 ) error {
-	container := c.qualificationContainers.Existing(containerID)
 	// Reached evidence is durable across a restart. Remove both sides before
 	// arming so a stale marker can never satisfy this run's bounded wait.
-	if _, err := container.Exec(ctx, nil, "rm", "-f",
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
-	); err != nil {
+	if err := c.clearQualificationActivationBarrier(ctx, containerID); err != nil {
 		return fmt.Errorf("clear qualification activation barrier markers: %w", err)
 	}
 	armedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierArmedMarker)
@@ -1203,6 +1227,14 @@ func (c *Controller) armQualificationActivationBarrier(
 		return fmt.Errorf("arm qualification activation barrier: %w", err)
 	}
 	return nil
+}
+
+func (c *Controller) clearQualificationActivationBarrier(ctx context.Context, containerID string) error {
+	_, err := c.qualificationContainers.Existing(containerID).Exec(ctx, nil, "rm", "-f",
+		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
+		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+	)
+	return err
 }
 
 func (c *Controller) waitForQualificationActivationBarrier(
@@ -1325,6 +1357,17 @@ func waitForQualificationStatus(
 			requestCtx, client, http.MethodGet, endpoint, token, nil, "", &response,
 		); err != nil {
 			return false, nil
+		}
+		if expected == "running" {
+			switch response.Status {
+			case "prepared":
+				// Canonical refresh claims move immediately from running to
+				// prepared before the delivery build begins. Both states prove
+				// that durable execution is in flight and can be interrupted.
+				return true, nil
+			case "succeeded", "failed", "cancelled", "canceled", "superseded":
+				return false, fmt.Errorf("qualification operation reached terminal status %q before running was observed", response.Status)
+			}
 		}
 		return response.Status == expected, nil
 	})
@@ -1703,6 +1746,10 @@ func mustQualificationJSON(value any) string {
 
 func urlPath(value string) string {
 	return url.PathEscape(value)
+}
+
+func qualificationManagedConnectionPath(projectID string) string {
+	return "/api/v1/projects/" + urlPath(projectID) + "/connections/" + urlPath(qualificationManagedConnectionID)
 }
 
 func errorsJoin(values ...error) error {

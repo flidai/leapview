@@ -57,6 +57,7 @@ type ProjectPlanDependencyChange struct {
 	From                  string `json:"from"`
 	To                    string `json:"to"`
 	Type                  string `json:"type"`
+	ResourceKind          string `json:"resourceKind"`
 	MaterializationImpact bool   `json:"materializationImpact,omitempty"`
 }
 
@@ -308,7 +309,7 @@ func diffProjectGraphs(authored, active projectgraph.ProjectGraph) ([]ProjectPla
 		}
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].ID < changes[j].ID })
-	dependencyChanges := diffProjectEdges(authored.Edges(), active.Edges())
+	dependencyChanges := diffProjectEdges(authored.Edges(), active.Edges(), authoredResources, activeResources)
 	summary := ProjectPlanSummary{DependencyChanges: len(dependencyChanges)}
 	for _, change := range changes {
 		switch change.Action {
@@ -342,7 +343,12 @@ func projectResourceImpact(kind, otherKind projectgraph.Kind, action string) (br
 	return breaking, materialization
 }
 
-func diffProjectEdges(authored, active []projectgraph.Edge) []ProjectPlanDependencyChange {
+func diffProjectEdges(
+	authored,
+	active []projectgraph.Edge,
+	authoredResources,
+	activeResources map[projectgraph.ResourceID]projectgraph.Resource,
+) []ProjectPlanDependencyChange {
 	key := func(edge projectgraph.Edge) string {
 		return string(edge.From) + "|" + string(edge.To) + "|" + edge.Relation
 	}
@@ -356,12 +362,12 @@ func diffProjectEdges(authored, active []projectgraph.Edge) []ProjectPlanDepende
 	result := make([]ProjectPlanDependencyChange, 0)
 	for value, edge := range authoredSet {
 		if _, ok := activeSet[value]; !ok {
-			result = append(result, projectDependencyChange("add", edge))
+			result = append(result, projectDependencyChange("add", edge, authoredResources[edge.To].Kind))
 		}
 	}
 	for value, edge := range activeSet {
 		if _, ok := authoredSet[value]; !ok {
-			result = append(result, projectDependencyChange("remove", edge))
+			result = append(result, projectDependencyChange("remove", edge, activeResources[edge.To].Kind))
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -376,9 +382,9 @@ func diffProjectEdges(authored, active []projectgraph.Edge) []ProjectPlanDepende
 	return result
 }
 
-func projectDependencyChange(action string, edge projectgraph.Edge) ProjectPlanDependencyChange {
+func projectDependencyChange(action string, edge projectgraph.Edge, resourceKind projectgraph.Kind) ProjectPlanDependencyChange {
 	return ProjectPlanDependencyChange{
-		Action: action, From: string(edge.From), To: string(edge.To), Type: edge.Relation,
+		Action: action, From: string(edge.From), To: string(edge.To), Type: edge.Relation, ResourceKind: string(resourceKind),
 		MaterializationImpact: edge.Relation == "reads_source" || edge.Relation == "uses_model" || edge.Relation == "refreshes",
 	}
 }

@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -22,6 +24,7 @@ import (
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/channel"
 	"github.com/creachadair/jrpc2/handler"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +48,24 @@ func TestQualificationCommandSurfaceBelongsToLeapviewctl(t *testing.T) {
 		if !strings.Contains(output.String(), required) {
 			t.Errorf("qualification help missing %q:\n%s", required, output.String())
 		}
+	}
+}
+
+func TestQualificationPlanEvidenceUsesSharedCandidateIdentityDomains(t *testing.T) {
+	candidate := QualificationCandidate{
+		PlanDigest: "sha256:plan", ArtifactDigest: "sha256:artifact",
+		ProvenanceDigest: "sha256:candidate-provenance", TargetID: "target-prod",
+	}
+	plan := deploymentgen.DeliveryPlanPreviewResponse{
+		PlanDigest: "sha256:plan", SourceDigest: "sha256:artifact",
+		ProvenanceDigest: "sha256:delivery-plan-provenance", TargetId: "target-prod",
+	}
+	if !qualificationPlanMatchesCandidate(plan, candidate) {
+		t.Fatal("distinct candidate and delivery-plan provenance domains were treated as an identity mismatch")
+	}
+	plan.SourceDigest = "sha256:other-artifact"
+	if qualificationPlanMatchesCandidate(plan, candidate) {
+		t.Fatal("mismatched source artifact was accepted")
 	}
 }
 
@@ -138,7 +159,7 @@ func TestQualificationRedactorBoundsAndRemovesCredentials(t *testing.T) {
 	input := strings.Repeat("ordinary line\n", 600) +
 		"Authorization: Bearer secret-token\n" +
 		"LEAPVIEW_API_TOKEN=environment-secret\n" +
-		`{"accessToken":"access","publisherToken":"publisher","workloadToken":"workload","projectDataToken":"project-data","recoveryControlToken":"recovery-control","temporaryPassword":"temporary","qualificationPassword":"qualification"}` +
+		`{"accessToken":"access","publisherToken":"publisher","workloadToken":"workload","projectDataToken":"project-data","recoveryControlToken":"recovery-control","auditToken":"audit","temporaryPassword":"temporary","qualificationPassword":"qualification"}` +
 		"\n"
 	redacted := redactQualificationLog([]byte(input), 500)
 	text := string(redacted)
@@ -150,6 +171,7 @@ func TestQualificationRedactorBoundsAndRemovesCredentials(t *testing.T) {
 		`"workload"`,
 		`"project-data"`,
 		`"recovery-control"`,
+		`"audit"`,
 		`"temporary"`,
 		`"qualification"`,
 	} {
@@ -752,6 +774,19 @@ func TestQualificationRecoveryDataIsReadableByHardenedRuntimeUser(t *testing.T) 
 	}
 }
 
+func TestQualificationRecoveryProjectDirCanBeTraversedByHardenedClient(t *testing.T) {
+	projectDir, err := os.MkdirTemp(t.TempDir(), ".qualification-recovery-*")
+	require.NoError(t, err)
+	if err := makeQualificationProjectDirTraversable(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(projectDir)
+	require.NoError(t, err)
+	if got, want := info.Mode().Perm(), os.FileMode(0o755); got != want {
+		t.Fatalf("project directory mode = %o, want %o", got, want)
+	}
+}
+
 func TestQualificationRecoveryUsesIsolatedCandidateKeys(t *testing.T) {
 	keys := []string{
 		qualificationRecoveryReleaseCandidateKey,
@@ -770,6 +805,15 @@ func TestQualificationRecoveryUsesIsolatedCandidateKeys(t *testing.T) {
 			"recovery full-speed CPU setting does not remove the fault throttle: %q",
 			qualificationRecoveryFullCPUs,
 		)
+	}
+}
+
+func TestQualificationRecoveryProjectNamesSatisfyResourceSchema(t *testing.T) {
+	pattern := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+	for _, name := range []string{qualificationRecoveryReleaseProjectName, qualificationRecoveryDeploymentProjectName} {
+		if !pattern.MatchString(name) {
+			t.Errorf("recovery project name %q does not satisfy the resource-name schema", name)
+		}
 	}
 }
 
@@ -1037,6 +1081,40 @@ func TestExpandQualificationCSVFlushesEveryGeneratedRow(t *testing.T) {
 func TestQualificationURLPathEscapesOpaqueIdentifiers(t *testing.T) {
 	if got, want := urlPath("project/with space"), "project%2Fwith%20space"; got != want {
 		t.Fatalf("escaped path = %q, want %q", got, want)
+	}
+}
+
+func TestQualificationRecoveryUsesCanonicalManagedConnectionID(t *testing.T) {
+	if got, want := qualificationManagedConnectionPath("project:leapview-evaluation"), "/api/v1/projects/project:leapview-evaluation/connections/connection:sample"; got != want {
+		t.Fatalf("managed connection path = %q, want %q", got, want)
+	}
+	if got, want := qualificationRefreshPipelineID, "pipeline:evaluation-refresh"; got != want {
+		t.Fatalf("refresh pipeline ID = %q, want %q", got, want)
+	}
+}
+
+func TestQualificationRunningWaitRejectsAlreadyTerminalOperation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"succeeded"}`)
+	}))
+	defer server.Close()
+
+	err := waitForQualificationStatus(t.Context(), server.Client(), server.URL, "token", "running")
+	if err == nil || !strings.Contains(err.Error(), `terminal status "succeeded" before running was observed`) {
+		t.Fatalf("running wait error = %v", err)
+	}
+}
+
+func TestQualificationRunningWaitAcceptsCanonicalPreparedOperation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"prepared"}`)
+	}))
+	defer server.Close()
+
+	if err := waitForQualificationStatus(t.Context(), server.Client(), server.URL, "token", "running"); err != nil {
+		t.Fatalf("prepared operation was not treated as in flight: %v", err)
 	}
 }
 

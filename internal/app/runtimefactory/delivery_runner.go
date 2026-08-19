@@ -327,8 +327,17 @@ func validateReuseEvidenceCoverage(plan *deployment.DeliveryPlan, artifacts rele
 		return nil
 	}
 	decisions := plan.Evidence.Reuse
+	// Canonical plan/build is deliberately two-phase: the persisted plan is
+	// computed with its stable planning-candidate identity, while each build
+	// operation owns a distinct physical candidate ID. Candidate-level
+	// full-refresh evidence may name either exact identity. Relation-scoped
+	// evidence below remains bound only to compiled relation IDs.
+	planCandidateID := strings.TrimPrefix(plan.ID, "plan-")
+	isCandidateResource := func(resourceID string) bool {
+		return resourceID == candidateID || (planCandidateID != "" && resourceID == planCandidateID)
+	}
 	if len(artifacts.Compiler.RelationExecution) == 0 {
-		if len(decisions) != 1 || decisions[0].ResourceID != candidateID {
+		if len(decisions) != 1 || !isCandidateResource(decisions[0].ResourceID) {
 			return fmt.Errorf("reuse evidence must contain exactly candidate resource %q", candidateID)
 		}
 		if plan.Operation != "" && plan.Operation != deployment.DeliveryOperationCodeChange && (decisions[0].Reusable || decisions[0].RetainBase) {
@@ -339,7 +348,7 @@ func validateReuseEvidenceCoverage(plan *deployment.DeliveryPlan, artifacts rele
 	// Explicit restatement/binding-style full refreshes may carry one
 	// candidate-level non-reuse statement. It is never permitted to retain a
 	// base and is kept distinct from code-change relation evidence below.
-	if len(decisions) == 1 && decisions[0].ResourceID == candidateID && plan.Operation != "" && plan.Operation != deployment.DeliveryOperationCodeChange {
+	if len(decisions) == 1 && isCandidateResource(decisions[0].ResourceID) && plan.Operation != "" && plan.Operation != deployment.DeliveryOperationCodeChange {
 		if decisions[0].Reusable || decisions[0].RetainBase {
 			return fmt.Errorf("full-refresh reuse evidence must not retain base")
 		}

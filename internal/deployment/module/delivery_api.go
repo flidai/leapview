@@ -80,6 +80,16 @@ func acceptedBuildEvidence(ctx context.Context, reader deliveryEventReader, targ
 	return fmt.Errorf("buildDeliveryPlan durable seal evidence is unavailable")
 }
 
+func (m *Module) completeDeliveryApprovalCommand(ctx context.Context, operationID, auditAction string, publication deployment.DeliveryPublication, approval deployment.Approval, eventKind string) error {
+	return m.completeDeliveryCommand(ctx, operationID, auditAction, func(ctx context.Context, reader deliveryEventReader) error {
+		event, err := reader.DeliveryEventByRequest(ctx, publication.TargetID, publication.RequestDigest, eventKind, "approval", approval.ID)
+		if err != nil {
+			return fmt.Errorf("%s durable approval evidence is unavailable: %w", operationID, err)
+		}
+		return acceptedDeliveryEvent(event, operationID)
+	})
+}
+
 // DeliveryMutationPort is implemented by the canonical delivery coordinator
 // supplied by composition. The HTTP layer only supplies typed identities and
 // CAS expectations; target admission, build sealing, and publication remain in
@@ -142,6 +152,13 @@ func (m *Module) writeDeliveryReadError(w http.ResponseWriter, r *http.Request, 
 }
 
 func (m *Module) writeDeliveryMutationError(w http.ResponseWriter, r *http.Request, err error) {
+	m.candidateLogger().WarnContext(
+		r.Context(),
+		"canonical delivery mutation failed",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"error", err,
+	)
 	status, code, message := http.StatusServiceUnavailable, "DELIVERY_INPUT_UNAVAILABLE", "Target-owned delivery inputs are temporarily unavailable"
 	switch {
 	case errors.Is(err, sql.ErrNoRows), errors.Is(err, deployment.ErrNotFound):
@@ -417,10 +434,10 @@ func (m *Module) RequestDeliveryPublicationApproval(
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	m.recordBestEffortAPIEvent(r.Context(), operationID.APIGenOperationID(), publication.ID, deploymentApprovalRequestedAuditAction, map[string]any{
-		"deploymentId": publication.ID,
-		"approvalId":   approval.ID,
-	})
+	if err := m.completeDeliveryApprovalCommand(r.Context(), operationID.APIGenOperationID(), "delivery.publication.approval_requested", publication, approval, "approval_requested"); err != nil {
+		m.writeCommandFailure(w, r, operationID, err)
+		return
+	}
 	w.Header().Set("Location", approvalLocation(project, publication.ID, approval.ID))
 	apitransport.WriteJSON(w, http.StatusCreated, approvalResponse(approval))
 }
@@ -497,15 +514,19 @@ func (m *Module) transitionDeliveryPublicationApproval(
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	eventType := deploymentApprovalRevokedAuditAction
+	eventType := "delivery.publication.approval_revoked"
+	eventKind := "approval_revoked"
 	if decision == approvalDecisionApprove {
-		eventType = deploymentApprovedAuditAction
+		eventType = "delivery.publication.approved"
+		eventKind = "approval_granted"
 	} else if decision == approvalDecisionDeny {
-		eventType = deploymentDeniedAuditAction
+		eventType = "delivery.publication.denied"
+		eventKind = "approval_rejected"
 	}
-	m.recordBestEffortAPIEvent(r.Context(), operationID.APIGenOperationID(), publication.ID, eventType, map[string]any{
-		"deploymentId": publication.ID, "approvalId": approval.ID, "approvalRevision": approval.Revision,
-	})
+	if err := m.completeDeliveryApprovalCommand(r.Context(), operationID.APIGenOperationID(), eventType, publication, approval, eventKind); err != nil {
+		m.writeCommandFailure(w, r, operationID, err)
+		return
+	}
 	apitransport.WriteJSON(w, http.StatusOK, approvalResponse(approval))
 }
 

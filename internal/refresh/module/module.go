@@ -225,6 +225,14 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
 			PipelineID: pipelineIDValue, TriggerType: trigger, RetryOf: retryOf,
 		})
+		if err != nil {
+			m.logger.ErrorContext(ctx, "queue refresh pipeline failed",
+				slog.String("project_id", identity.ProjectID.String()),
+				slog.String("serving_state_id", identity.GenerationID),
+				slog.String("pipeline_id", pipelineID),
+				slog.String("error", err.Error()),
+			)
+		}
 		return result.Run, err
 	}
 	return m, nil

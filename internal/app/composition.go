@@ -338,7 +338,7 @@ func authorizeSealedPublication(
 		if len(resources) == 0 {
 			allowed, err = authorizeProjectRole(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, capability)
 		} else {
-			allowed, err = authorizeProjectResources(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, resources, capability)
+			allowed, err = authorizeDeliveryProjectResources(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, resources, capability)
 		}
 		if err != nil {
 			return fmt.Errorf("sealed publication live authorization: %w", err)
@@ -803,6 +803,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	// runtime-host construction below; administration remains available when
 	// physical-pool admission is absent.
 	var canonicalDelivery *deploymentmodule.CanonicalDeliveryAdapter
+	var canonicalDeliveryMutations *deploymentmodule.CanonicalDeliveryMutations
 	canonicalDeliveryRequired := true
 	// Sealed production serving uses delivery-owned catalog lease/GC state;
 	// the legacy serving-state snapshot retention worker must not inspect or
@@ -1222,7 +1223,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 					CompatibilityDigest: generation.CompatibilityDigest, BaseCompatibilityDigest: generation.CompatibilityDigest, Deterministic: artifacts.Generation.Deterministic,
 				}
 			}
-			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: protectedPublishingTarget(production, cfg.EvaluationMode), RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String()}, reuse)
+			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: requiresDeliveryApproval(production, cfg.EvaluationMode, input.Operation), RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String()}, reuse)
 		}
 		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, _ string) (deployment.DeliveryPublication, error) {
 			candidateRecord, candidateErr := sealedDelivery.DeliveryCandidateByID(publishCtx, candidate)
@@ -1302,9 +1303,21 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			input.Candidate.ProvenanceDigest = retained.Digest
 			return input.Candidate, nil
 		}})
+		canonicalDeliveryMutations = &deploymentmodule.CanonicalDeliveryMutations{
+			Lifecycle:    canonicalDelivery.Lifecycle,
+			Sources:      candidateSources,
+			Artifacts:    releaseModule,
+			Plan:         canonicalDelivery.Plan,
+			PlanPreview:  canonicalDelivery.PlanPreview,
+			BuildRequest: canonicalDelivery.BuildRequest,
+			Adapter:      canonicalDelivery,
+			Publish:      canonicalDelivery.Publish,
+			Rollback:     canonicalDelivery.Rollback,
+		}
 	}
 	deploymentConfig := deploymentmodule.Config{
 		Database: store.SQLDB(), States: servingStateRepo, Runtime: deploymentRuntime,
+		DeliveryReader:     sealedDelivery,
 		ManagedData:        managedDataResolver,
 		BootstrapPolicies:  projectClaimRepository,
 		BindClaimedProject: bindClaimedProject(runtimeHostModule, environment),
@@ -1428,6 +1441,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		CandidateSources:         candidateSources,
 		CandidateArtifacts:       releaseModule,
 		CanonicalDeliveryAdapter: canonicalDelivery,
+		DeliveryMutations:        canonicalDeliveryMutations,
 		RequireCanonicalDelivery: canonicalDeliveryRequired,
 		CandidateSourceAudit:     candidateSourceAuditRecorder(accessModule),
 		CandidateSourceBlobAudit: candidateSourceAuditRecorder(accessModule),
@@ -1487,9 +1501,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			AgentSettings: store,
 			AgentConfig:   agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel},
 			Auth:          auth, Reloader: runtimeHostModule, Workload: workloadController,
-			ManagedDataValidation: managedDataModule.BindingValidation(),
-			ManagedDataResolver:   managedDataResolver,
-			DeploymentConfig:      deploymentConfig,
+			ManagedDataValidation:    managedDataModule.BindingValidation(),
+			ManagedDataResolver:      managedDataResolver,
+			CanonicalRefreshExecutor: canonicalRefreshExecutor(canonicalDeliveryMutations, sealedDelivery, instanceID),
+			EnableRefreshDispatcher:  true,
+			DeploymentConfig:         deploymentConfig,
 		},
 		runtimeAssemblyInputs{
 			RuntimeHost:          runtimeHostModule,
@@ -1573,6 +1589,16 @@ func allowsLocalEvaluationRuntime(production, evaluation bool) bool {
 
 func protectedPublishingTarget(production, evaluation bool) bool {
 	return production && !evaluation
+}
+
+func requiresDeliveryApproval(production, evaluation bool, operation deployment.DeliveryOperationKind) bool {
+	// Restatement is the sealed implementation of an authorized operational
+	// refresh. Requiring a separate deployment approval for every scheduled or
+	// manually requested refresh would leave the refresh dispatcher unable to
+	// complete. Publication still crosses the live RBAC authorization boundary
+	// and the exact target/seal CAS; only the code/policy change approval is not
+	// applicable to this data-only operation.
+	return protectedPublishingTarget(production, evaluation) && operation != deployment.DeliveryOperationRestatement
 }
 
 func readClaimedProject(repository deploymentmodule.ProjectClaimReader, environment servingstatemodule.Environment) func(context.Context) (projectgraph.ResourceID, bool, error) {

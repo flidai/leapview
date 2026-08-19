@@ -286,7 +286,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		}
 	}
 	for _, change := range artifacts.Compiler.Plan.DependencyChanges {
-		impact.IndirectlyAffected = append(impact.IndirectlyAffected, deployment.DeliveryImpactResource{ID: change.To, Kind: change.Type, Change: change.Action, Reason: "compiler dependency impact", Paths: []string{change.From + " -> " + change.To}})
+		impact.IndirectlyAffected = append(impact.IndirectlyAffected, deployment.DeliveryImpactResource{ID: change.To, Kind: change.ResourceKind, Change: change.Action, Reason: "compiler dependency impact", Paths: []string{change.From + " -> " + change.To}})
 		impact.RelationshipPaths = append(impact.RelationshipPaths, change.From+" -> "+change.To)
 	}
 	evidence := deployment.DeliveryPlanEvidence{

@@ -415,6 +415,28 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
+		`table.evaluate((element) => element.scrollIntoView({ block: 'center' }))`,
+		`rows.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+		`stateCells.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+	} {
+		if !strings.Contains(browser, required) {
+			t.Errorf("browser qualification must wait for asynchronous governed table rendering %q", required)
+		}
+	}
+	if !strings.Contains(browser, `name: 'State: SP'`) || !strings.Contains(performance, "name: `State: ${value}`") {
+		t.Error("browser qualification must assert the table cell accessibility label")
+	}
+	if !strings.Contains(performance, `name: /^Order(?: [↑↓])?$/`) {
+		t.Error("performance qualification must select only the sortable Order header")
+	}
+	if strings.Contains(browser, "encodeURIComponent(process.env.QUALIFICATION_PROJECT_ID") ||
+		!strings.Contains(browser, "Authorization: `Bearer ${credentials.auditToken}`") {
+		t.Error("browser qualification must preserve canonical project IDs and use the dedicated audit credential")
+	}
+	if strings.Contains(performance, "encodeURIComponent(projectID)") || strings.Contains(performance, "encodeURIComponent(semanticModelID)") {
+		t.Error("performance qualification must preserve canonical resource IDs in route paths")
+	}
+	for _, required := range []string{
 		"validateQualificationPerformancePolicy",
 		"evaluateQualificationPerformance",
 		"compareQualificationPerformance",
@@ -484,10 +506,13 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(authoring, "PLATFORM_ADMIN") {
 		t.Error("authoring credentials must not claim the durable platform-admin role")
 	}
-	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "Governed order rows"} {
+	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "Governed order rows", "check({ force: true })"} {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker missing %q", required)
 		}
+	}
+	if !strings.Contains(worker, "new URL(administratorPage.url())") || strings.Contains(worker, "/dashboards/sales-overview") {
+		t.Error("browser worker must follow the candidate preview's canonical dashboard redirect")
 	}
 	for _, required := range []string{"ARG LEAPVIEW_IMAGE", "FROM ${LEAPVIEW_IMAGE}", "dbus-daemon", "gnome-keyring", "USER author", "CMD [\"/usr/local/libexec/leapviewctl\", \"qualify\", \"client-worker\"]"} {
 		if !strings.Contains(clientImage, required) {

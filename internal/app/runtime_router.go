@@ -162,15 +162,16 @@ type persistenceInputs struct {
 }
 
 type workflowInputs struct {
-	managedDataValidation   refreshmodule.CandidateValidationHook
-	managedDataResolver     runtimehostmodule.ManagedDataResolver
-	refreshPipelineClock    refreshmodule.Clock
-	refreshMaterializer     refreshrun.Materializer
-	enableRefreshDispatcher bool
-	agent                   *agentmodule.Service
-	agentConfig             agentmodule.ModelConfig
-	reloader                runtimeReloader
-	deploymentConfig        deploymentmodule.Config
+	managedDataValidation    refreshmodule.CandidateValidationHook
+	managedDataResolver      runtimehostmodule.ManagedDataResolver
+	refreshPipelineClock     refreshmodule.Clock
+	refreshMaterializer      refreshrun.Materializer
+	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) error
+	enableRefreshDispatcher  bool
+	agent                    *agentmodule.Service
+	agentConfig              agentmodule.ModelConfig
+	reloader                 runtimeReloader
+	deploymentConfig         deploymentmodule.Config
 }
 
 type storageInputs struct {
@@ -240,18 +241,19 @@ type capabilityAssemblyInputs struct {
 }
 
 type workflowAssemblyInputs struct {
-	AgentSettings           agentmodule.Settings
-	ManagedDataValidation   refreshmodule.CandidateValidationHook
-	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
-	AgentConfig             agentmodule.ModelConfig
-	Auth                    *accessmodule.Auth
-	Reloader                runtimeReloader
-	Workload                workloadControl
-	DeploymentConfig        deploymentmodule.Config
-	RefreshPipelineClock    refreshmodule.Clock
-	RefreshMaterializer     refreshrun.Materializer
-	EnableRefreshDispatcher bool
-	QueryAudit              *analyticsmodule.QueryAuditSurface
+	AgentSettings            agentmodule.Settings
+	ManagedDataValidation    refreshmodule.CandidateValidationHook
+	ManagedDataResolver      runtimehostmodule.ManagedDataResolver
+	AgentConfig              agentmodule.ModelConfig
+	Auth                     *accessmodule.Auth
+	Reloader                 runtimeReloader
+	Workload                 workloadControl
+	DeploymentConfig         deploymentmodule.Config
+	RefreshPipelineClock     refreshmodule.Clock
+	RefreshMaterializer      refreshrun.Materializer
+	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) error
+	EnableRefreshDispatcher  bool
+	QueryAudit               *analyticsmodule.QueryAuditSurface
 }
 
 type runtimeAssemblyInputs struct {
@@ -414,6 +416,7 @@ func buildApplicationSurfaces(
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
 	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
+	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
 	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	runtime.queryAuditProvider = queryAuditProvider
 	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, projectID projectgraph.ResourceID) QueryMetrics {
@@ -1275,6 +1278,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return false, err
 			}
+			if deliveryApprovalDecisionOperation(operationID) {
+				if plan.ProjectID != projectID {
+					return false, nil
+				}
+				return deliveryProjectAllows(snapshot, subjects, projectID, capability)
+			}
 			resources, err := deliveryAuthorizationResources(plan)
 			if err != nil {
 				return false, err
@@ -1657,6 +1666,27 @@ func deliveryRoleAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects 
 	return false
 }
 
+// deliveryProjectAllows evaluates project-scoped administrative authority on
+// the exact project root. Unlike the role-only fallback used for graph-wide
+// resource operations, approval decisions intentionally accept either an
+// explicit project role or a canonical grant on the project resource.
+func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+	project, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	if err != nil {
+		return false, err
+	}
+	for _, subject := range subjects {
+		allowed, err := snapshot.Allows(subject, project, capability)
+		if err != nil {
+			return false, err
+		}
+		if allowed {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
 	if strings.TrimSpace(objectID) == "" {
 		return deployment.DeliveryPlan{}, sql.ErrNoRows
@@ -1694,7 +1724,7 @@ func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryRe
 			return deployment.DeliveryPlan{}, err
 		}
 		return loadPlan(seal.PlanID)
-	case "getDeliveryPublicationEvidence":
+	case "getDeliveryPublicationEvidence", "requestDeliveryPublicationApproval", "getDeliveryPublicationApproval", "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
 		publication, err := reader.DeliveryPublicationByID(ctx, objectID)
 		if err != nil {
 			return deployment.DeliveryPlan{}, err
@@ -1702,6 +1732,15 @@ func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryRe
 		return loadPlan(publication.PlanID)
 	default:
 		return deployment.DeliveryPlan{}, fmt.Errorf("unsupported delivery authorization operation %q", operationID)
+	}
+}
+
+func deliveryApprovalDecisionOperation(operationID string) bool {
+	switch operationID {
+	case "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1734,12 +1773,18 @@ func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.Reso
 	}
 	return resources, nil
 }
-
 func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
 	for _, resource := range resources {
+		resourceCapability := deliveryResourceCapability(resource, capability)
+		if handled, roleAllowed := deliveryProjectRootRoleDecision(snapshot, subjects, resource, resourceCapability); handled {
+			if !roleAllowed {
+				return false, nil
+			}
+			continue
+		}
 		allowed := false
 		for _, subject := range subjects {
-			candidate, err := snapshot.Allows(subject, resource, capability)
+			candidate, err := snapshot.Allows(subject, resource, resourceCapability)
 			if err != nil {
 				return false, err
 			}
@@ -1753,4 +1798,27 @@ func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subje
 		}
 	}
 	return true, nil
+}
+
+// deliveryProjectRootRoleDecision applies the project-root half of canonical
+// delivery authorization. Project roots deliberately accept only
+// PROJECT_ADMIN as direct grants, so a delivery resource capability on a
+// changed root must be satisfied by an explicit project role bundle.
+func deliveryProjectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resource access.ResourceRef, capability access.Capability) (handled, allowed bool) {
+	if resource.Kind() != projectgraph.KindProject || access.SupportsCapability(resource.Kind(), capability) {
+		return false, false
+	}
+	return true, deliveryRoleAllows(snapshot, subjects, capability)
+}
+
+func deliveryResourceCapability(resource access.ResourceRef, capability access.Capability) access.Capability {
+	if capability == access.CapabilityResourcePublish &&
+		!access.SupportsCapability(resource.Kind(), capability) &&
+		access.SupportsCapability(resource.Kind(), access.CapabilityResourceEdit) {
+		// Publishing a plan requires publish authority for publishable
+		// dashboards and edit authority for the non-publishable graph
+		// resources changed by that same immutable plan.
+		return access.CapabilityResourceEdit
+	}
+	return capability
 }

@@ -118,7 +118,7 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 }
 
 func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, planID, principalID, idempotencyKey string) (deployment.DeliveryBuildAttempt, error) {
-	if m == nil || m.Lifecycle == nil || m.Artifacts == nil || m.BuildRequest == nil {
+	if m == nil || m.Lifecycle == nil || m.Artifacts == nil || m.BuildRequest == nil || m.Adapter == nil || m.Adapter.ReadyCandidate == nil {
 		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("canonical delivery build coordinator is unavailable")
 	}
 	plan, err := m.Lifecycle.Store.PlanByID(ctx, planID)
@@ -152,7 +152,15 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	}
 	now := time.Now().UTC()
 	candidateID := "candidate-" + digestID(plan.ID+"\x00"+idempotencyKey)
-	candidate := deployment.Candidate{ID: candidateID, Key: plan.ID + "\x00" + idempotencyKey, TargetID: plan.TargetID, OwnerID: plan.ActorID, ArtifactDigest: plan.SourceDigest, Scope: deployment.CandidateScope{ProjectID: plan.ProjectID, Environment: plan.Environment, BaseGenerationID: plan.BaseGenerationID}, Revision: 1, CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	candidate, err := deployment.NewCandidate(deployment.CandidateStartInput{
+		ID: candidateID, Key: candidateID, TargetID: plan.TargetID, OwnerID: plan.ActorID,
+		ArtifactDigest: plan.SourceDigest,
+		Scope:          deployment.CandidateScope{ProjectID: plan.ProjectID, Environment: plan.Environment, BaseGenerationID: plan.BaseGenerationID},
+		Now:            now, ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil {
+		return deployment.DeliveryBuildAttempt{}, err
+	}
 	request := release.CandidateArtifactRequest{CandidateID: candidateID, Scope: candidate.Scope, OwnerID: principalID, ArtifactDigest: plan.SourceDigest, Source: source}
 	inspector, inspectOK := m.Artifacts.(candidateArtifactInspector)
 	if !inspectOK {
@@ -176,6 +184,7 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	// Bind it on the request so the lifecycle/repository can persist it
 	// atomically with the writer lease and attempt.
 	buildRequest.IdempotencyKey = idempotencyKey
+	var preparedArtifacts release.CandidateArtifactSet
 	buildRequest.PrepareArtifacts = func(prepareCtx context.Context, buildInput deployment.DeliveryBuildInput) (deployment.DeliveryArtifactIdentity, error) {
 		if buildInput.Attempt.ServingArtifactID != "" {
 			identity := deployment.DeliveryArtifactIdentity{ServingArtifactID: buildInput.Attempt.ServingArtifactID, ServingArtifactDigest: buildInput.Attempt.ServingArtifactDigest, ServingStateID: buildInput.Attempt.ServingStateID}
@@ -187,6 +196,7 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 			if hydrateErr != nil {
 				return deployment.DeliveryArtifactIdentity{}, hydrateErr
 			}
+			preparedArtifacts = artifacts
 			if setter, ok := buildRequest.PhasedRunner.(interface{ SetCandidateArtifacts(any) error }); ok {
 				if setErr := setter.SetCandidateArtifacts(artifacts); setErr != nil {
 					return deployment.DeliveryArtifactIdentity{}, setErr
@@ -204,6 +214,7 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 		if err != nil {
 			return deployment.DeliveryArtifactIdentity{}, err
 		}
+		preparedArtifacts = artifacts
 		if setter, ok := buildRequest.PhasedRunner.(interface{ SetCandidateArtifacts(any) error }); ok {
 			if setErr := setter.SetCandidateArtifacts(artifacts); setErr != nil {
 				return deployment.DeliveryArtifactIdentity{}, setErr
@@ -214,6 +225,33 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	result, err := m.Lifecycle.Build(ctx, buildRequest)
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
+	}
+	// Direct plan/build callers bypass CanonicalDeliveryAdapter.BuildCandidate,
+	// so they must perform the same immutable runtime/provenance retention once
+	// the physical candidate is sealed. A sealed retry returns from the
+	// lifecycle before PrepareArtifacts; rehydrate its exact bound identity so
+	// retention remains restart-safe and idempotent.
+	if preparedArtifacts.Generation.Identity.GenerationID == "" {
+		rehydrator, ok := m.Artifacts.(candidateArtifactRehydrator)
+		if !ok {
+			return deployment.DeliveryBuildAttempt{}, fmt.Errorf("durable candidate artifact rehydration is unavailable")
+		}
+		identity := release.CandidateArtifactIdentity{
+			ServingArtifactID:     result.Attempt.ServingArtifactID,
+			ServingArtifactDigest: result.Attempt.ServingArtifactDigest,
+			ServingStateID:        result.Attempt.ServingStateID,
+		}
+		preparedArtifacts, err = rehydrator.HydrateCandidateArtifacts(ctx, request, inspected, identity)
+		if err != nil {
+			return deployment.DeliveryBuildAttempt{}, err
+		}
+	}
+	ready, err := m.Adapter.ReadyCandidate(ctx, buildInput, preparedArtifacts, result)
+	if err != nil {
+		return deployment.DeliveryBuildAttempt{}, err
+	}
+	if ready.ID != candidate.ID || ready.Status != deployment.CandidateReady || ready.ProvenanceDigest == "" {
+		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("canonical delivery returned ready candidate without provenance")
 	}
 	return result.Attempt, nil
 }

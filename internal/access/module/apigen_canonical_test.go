@@ -332,6 +332,7 @@ func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.
 	call := func(secret string) int {
 		request := apigenRequest(http.MethodGet, "/api/v1/projects/project_demo/dashboard/dashboard_sales", map[string]string{"project": "project_demo", "dashboard": "dashboard_sales"})
 		request.Header.Set("Authorization", "Bearer "+secret)
+		request.Header.Set("X-Request-ID", "request_resource_denial")
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
 		return recorder.Code
@@ -349,6 +350,13 @@ func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.
 	}
 	if got := call(denySecret); got != http.StatusForbidden {
 		t.Fatalf("deny-all token status = %d, want 403", got)
+	}
+	events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{Action: "authorization.denied"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].PrincipalID != principal.ID || events[0].ResourceKind != string(projectgraph.KindDashboard) || events[0].ResourceID != resourceID.String() || events[0].Capability != access.CapabilityResourceRead || events[0].Status != "denied" || events[0].RequestID != "request_resource_denial" {
+		t.Fatalf("authorization denial audit = %#v", events)
 	}
 	if err := repository.RevokeAPIToken(t.Context(), dynamicToken.ID); err != nil {
 		t.Fatal(err)
@@ -478,6 +486,21 @@ func TestAPIGenDeviceApprovalRequiresCSRF(t *testing.T) {
 	}
 	if apiGenRequiresCSRF("getCurrentPrincipal") {
 		t.Fatal("ordinary authenticated operation unexpectedly requires device CSRF")
+	}
+}
+
+func TestDeliveryObjectIDMapsCanonicalPublicationApprovalOperations(t *testing.T) {
+	request := apigenRequest(http.MethodPost, "/", map[string]string{"publication": "publication_demo"})
+	for _, operationID := range []string{
+		"requestDeliveryPublicationApproval",
+		"getDeliveryPublicationApproval",
+		"approveDeliveryPublicationApproval",
+		"denyDeliveryPublicationApproval",
+		"revokeDeliveryPublicationApproval",
+	} {
+		if got := deliveryObjectID(operationID, request); got != "publication_demo" {
+			t.Errorf("deliveryObjectID(%q) = %q, want publication_demo", operationID, got)
+		}
 	}
 }
 
@@ -849,6 +872,62 @@ func TestAPIGenCandidatePreActivationRequiresExplicitRESTTokenPlatformAdmin(t *t
 	})
 	if status, _ := serve(errorAuthorizer, explicit); status != http.StatusServiceUnavailable {
 		t.Fatalf("admin role error status = %d, want %d", status, http.StatusServiceUnavailable)
+	}
+}
+
+func TestAPIGenActiveProjectScopedResourceCapabilityUsesRoleBinding(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: projectID, Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{
+		ID: "binding_admin", Subject: subject, Role: access.ProjectRoleAdmin,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := browserGuardModule(browserGuardRepository{}, Principal{ID: "admin"}, true)
+	module.SetCurrentEffectiveCapabilities(func(context.Context, string) ([]access.Capability, error) {
+		return snapshot.EffectiveCapabilities([]access.SubjectRef{subject})
+	})
+	contract := APIGenOperationContract{
+		OperationID: "getProjectCandidate", Method: http.MethodGet,
+		Path: "/api/v1/projects/{project}/candidates/{candidate}", Protected: true, AuthzMode: "privilege",
+		Extensions: map[string]any{
+			apiGenObjectScopeExtension: "project",
+			"x-authz":                  map[string]any{"mode": "privilege", "privilege": "RESOURCE_EDIT"},
+		},
+	}
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: snapshot}},
+		map[string]APIGenOperationContract{"getProjectCandidate": contract},
+		APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protected, ok := authorizer.Protect("getProjectCandidate", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	if !ok || protected == nil {
+		t.Fatal("active candidate authorizer was not created")
+	}
+	request := apigenRequest(http.MethodGet, "/api/v1/projects/project_demo/candidates/candidate_1", map[string]string{"project": projectID.String(), "candidate": "candidate_1"})
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("active project-scoped role status = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusNoContent)
 	}
 }
 

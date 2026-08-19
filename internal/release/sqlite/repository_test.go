@@ -46,6 +46,38 @@ func TestReleaseRepositoryRoundTripsAndValidatesImmutableProvenance(t *testing.T
 	}
 }
 
+func TestConnectionCatalogReportsActiveServingGenerationRevision(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.SQLDB()
+	identity := testServingIdentity("commerce", "prod", "generation-active")
+	insertServingState(t, store, identity)
+	revisionDigest := testDigest("9")
+	statements := []string{
+		`INSERT INTO managed_data_collections (id,project_id,connection_id,name) VALUES ('collection-orders','commerce','connection:orders','Orders')`,
+		`INSERT INTO managed_data_revisions (id,collection_id,sequence,digest,status,manifest_json,file_count,size_bytes,ready_at) VALUES ('revision-orders','collection-orders',1,'` + revisionDigest + `','ready','{"files":[]}',0,0,'2026-01-01T00:00:00Z')`,
+		`INSERT INTO delivery_target_revisions (target_id,project_id,environment,target_revision,active_generation_id,created_at,updated_at) VALUES ('target-prod','commerce','prod',3,'generation-active','2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')`,
+		`INSERT INTO managed_data_serving_state_binding_sets (project_id,environment,generation_id,binding_digest,binding_count) VALUES ('commerce','prod','generation-active','` + testDigest("8") + `',1)`,
+		`INSERT INTO managed_data_serving_state_bindings (project_id,environment,generation_id,collection_id,revision_id) VALUES ('commerce','prod','generation-active','collection-orders','revision-orders')`,
+	}
+	for _, statement := range statements {
+		_, err := db.ExecContext(t.Context(), statement)
+		require.NoError(t, err)
+	}
+	repo := NewRepository(db)
+	connections, err := repo.ListConnections(t.Context(), "commerce", "prod")
+	require.NoError(t, err)
+	if len(connections) != 1 || connections[0].ActiveRevisionID != revisionDigest {
+		t.Fatalf("connections = %#v, want active revision %q", connections, revisionDigest)
+	}
+	connection, err := repo.GetConnection(t.Context(), "commerce", "connection:orders", "prod")
+	require.NoError(t, err)
+	if connection.ActiveRevisionID != revisionDigest {
+		t.Fatalf("connection = %#v, want active revision %q", connection, revisionDigest)
+	}
+}
+
 func TestReleaseRepositoryRejectsMalformedPersistedServingIdentity(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
 	require.NoError(t, err)
@@ -202,6 +234,40 @@ func TestReleaseRepositoryLoadsReadyProvenanceByServingStateAfterRestart(t *test
 	loaded, err := restarted.ProvenanceForServingState(t.Context(), identity)
 	require.NoError(t, err)
 	require.Empty(t, cmp.Diff(provenance, loaded))
+	other := testServingIdentity("commerce", "dev", "generation_other")
+	_, err = restarted.ProvenanceForServingState(t.Context(), other)
+	require.ErrorIs(t, err, release.ErrNotFound)
+}
+
+func TestReleaseRepositoryLoadsSealedCandidateProvenanceByServingStateAfterRestart(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	identity := testServingIdentity("commerce", "dev", "generation_candidate")
+	insertServingState(t, store, identity)
+	provenance := testReleaseProvenance(t, identity)
+	repo := NewRepository(store.SQLDB())
+	_, err = repo.RetainCandidateProvenance(t.Context(), identity.ProjectID, provenance)
+	require.NoError(t, err)
+
+	restarted := NewRepository(store.SQLDB())
+	loaded, err := restarted.ProvenanceForServingState(t.Context(), identity)
+	require.NoError(t, err)
+	require.Empty(t, cmp.Diff(provenance, loaded))
+	duplicate, err := release.NewProvenance(release.ProvenanceInput{
+		Artifact: provenance.Artifact,
+		Candidate: release.CandidateProvenance{
+			ID: "cand_2", Revision: provenance.Candidate.Revision, OwnerID: provenance.Candidate.OwnerID,
+		},
+		SourceRevision: provenance.SourceRevision,
+		Plan:           provenance.Plan,
+	})
+	require.NoError(t, err)
+	_, err = repo.RetainCandidateProvenance(t.Context(), identity.ProjectID, duplicate)
+	require.NoError(t, err)
+	_, err = restarted.ProvenanceForServingState(t.Context(), identity)
+	require.ErrorIs(t, err, release.ErrConflict)
+
 	other := testServingIdentity("commerce", "dev", "generation_other")
 	_, err = restarted.ProvenanceForServingState(t.Context(), other)
 	require.ErrorIs(t, err, release.ErrNotFound)

@@ -126,8 +126,16 @@ func (r *Repository) CreatePlan(ctx context.Context, input deployment.DeliveryPl
 	if revision != plan.BaseTargetRevision || active != plan.BaseGenerationID {
 		return deployment.DeliveryPlan{}, fmt.Errorf("%w: target base changed", deployment.ErrDeliveryStale)
 	}
+	actor := plan.ActorID
+	if actor == "" {
+		actor = plan.Provenance.Builder
+	}
+	if actor == "" {
+		actor = "delivery"
+	}
+	plan.ActorID = actor
 	err = deploydb.New(tx).CreateDeliveryPlan(ctx, deploydb.CreateDeliveryPlanParams{
-		ID: plan.ID, TargetID: plan.TargetID, ProjectID: plan.ProjectID.String(), Environment: plan.Environment,
+		ID: plan.ID, TargetID: plan.TargetID, ProjectID: plan.ProjectID.String(), Environment: plan.Environment, ActorID: actor,
 		OperationKind: string(plan.Operation), SourceDigest: plan.SourceDigest, NULLIF: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest, ExecutionInputsJson: string(executionJSON),
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, ProvenanceJson: string(provenanceJSON),
@@ -159,13 +167,6 @@ func (r *Repository) CreatePlan(ctx context.Context, input deployment.DeliveryPl
 			return deployment.DeliveryPlan{}, fmt.Errorf("%w: plan id or idempotency digest is already bound", deployment.ErrDeliveryConflict)
 		}
 		return deployment.DeliveryPlan{}, err
-	}
-	actor := plan.ActorID
-	if actor == "" {
-		actor = plan.Provenance.Builder
-	}
-	if actor == "" {
-		actor = "delivery"
 	}
 	if _, err := appendDeliveryEventTx(ctx, tx, deployment.DeliveryEvent{
 		ID: deployment.DeliveryEventID(plan.TargetID, plan.Digest, "plan_created", "plan", plan.ID), TargetID: plan.TargetID, ProjectID: plan.ProjectID.String(), Environment: plan.Environment,
@@ -240,7 +241,7 @@ func deliveryPlanByIDTx(ctx context.Context, q deploydb.DBTX, id string) (deploy
 	if err != nil {
 		return deployment.DeliveryPlan{}, err
 	}
-	plan.ID, plan.TargetID, plan.ProjectID, plan.Environment = row.ID, row.TargetID, projectID, row.Environment
+	plan.ID, plan.TargetID, plan.ProjectID, plan.Environment, plan.ActorID = row.ID, row.TargetID, projectID, row.Environment, row.ActorID
 	plan.Operation, plan.SourceDigest, plan.BaseTargetRevision = deployment.DeliveryOperationKind(row.OperationKind), row.SourceDigest, row.BaseTargetRevision
 	if row.BaseGenerationID.Valid {
 		plan.BaseGenerationID = row.BaseGenerationID.String

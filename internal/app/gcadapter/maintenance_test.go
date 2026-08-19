@@ -33,3 +33,24 @@ func TestMaintenanceRunsAndSurfacesDegradedError(t *testing.T) {
 		t.Fatalf("health=%v, want %v", m.Health(), want)
 	}
 }
+
+func TestMaintenanceWaitsForFirstInterval(t *testing.T) {
+	called := make(chan struct{}, 1)
+	m, err := NewMaintenance(func(context.Context) error {
+		called <- struct{}{}
+		return nil
+	}, time.Second, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop(context.Background())
+
+	select {
+	case <-called:
+		t.Fatal("maintenance ran during process startup")
+	case <-time.After(50 * time.Millisecond):
+	}
+}

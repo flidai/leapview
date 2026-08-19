@@ -54,3 +54,22 @@ func TestAnalyticalCollectorUsesBoundedLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyticalCollectorExportsZeroProcessConnectionsWithoutProcessEnvironment(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(NewCollector(nil, nil))
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "leapview_duckdb_connections_open" {
+			continue
+		}
+		if len(family.Metric) != 1 || family.Metric[0].GetGauge().GetValue() != 0 {
+			t.Fatalf("connections-open metrics = %#v, want one zero gauge", family.Metric)
+		}
+		return
+	}
+	t.Fatal("leapview_duckdb_connections_open metric missing")
+}

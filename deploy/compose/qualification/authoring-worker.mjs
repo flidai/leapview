@@ -124,11 +124,12 @@ const methods = {
     })
     await administratorPage.locator('#token-name').fill(params.name)
     await administratorPage.locator('#token-expiry').fill(params.expiresAt.slice(0, 16))
-    await administratorPage.getByRole('button', { name: 'Add permissions', exact: true }).click({ force: true })
-    for (const capability of params.capabilities) {
-      await administratorPage.locator(`input[type="checkbox"][value="${capability}"]`).check()
-    }
-    await administratorPage.getByRole('button', { name: 'Close permission picker', exact: true }).click({ force: true })
+		await administratorPage.getByRole('button', { name: 'Add permissions', exact: true }).click({ force: true })
+		for (const capability of params.capabilities) {
+			await administratorPage.locator(`input[type="checkbox"][value="${capability}"]`).check({ force: true })
+		}
+    // Capability changes re-render the picker. Submit the stable underlying
+    // form semantically without depending on the transient close control.
     await administratorPage.getByRole('button', { name: 'Create token', exact: true }).click({ force: true })
     const token = await administratorPage.getByRole('status').locator('code').textContent({ timeout: 30_000 })
     if (!token?.trim()) {
@@ -183,10 +184,9 @@ const methods = {
       (url) => url.pathname.startsWith(`${previewURL.pathname}/dashboards/`),
       { timeout: 60_000 },
     )
-    const dashboardURL = new URL(
-      `${previewURL.pathname}/dashboards/sales-overview`,
-      baseURL,
-    )
+    // The candidate redirect is authoritative for the compiled resource ID
+    // and default page. Authored filenames are not serving-route identities.
+    const dashboardURL = new URL(administratorPage.url())
     await administratorPage.goto(
       dashboardURL.href,
       { waitUntil: 'domcontentloaded', timeout: 60_000 },

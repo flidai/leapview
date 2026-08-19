@@ -7,7 +7,7 @@ const credentialsPath = process.env.QUALIFICATION_CREDENTIALS || '/run/secrets/c
 const screenshotPath = process.env.QUALIFICATION_SCREENSHOT || '/evidence/browser-failure.png'
 const credentials = JSON.parse(await readFile(credentialsPath, 'utf8'))
 
-if (!credentials.email || !credentials.qualificationPassword || !credentials.publisherToken) {
+if (!credentials.email || !credentials.qualificationPassword || !credentials.publisherToken || !credentials.auditToken) {
   throw new Error('qualification credentials are incomplete')
 }
 
@@ -38,17 +38,15 @@ try {
   await state.selectOption({ label: 'SP' })
   await page.getByText('6', { exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
 
-  const rows = page.locator('lv-report-table [role="rowgroup"] [role="row"]')
-  if (await rows.count() === 0) {
-    throw new Error('governed order table rendered no rows')
-  }
-  const stateCells = page.getByRole('cell', { name: 'SP', exact: true })
-  if (await stateCells.count() === 0) {
-    throw new Error('State filter did not project SP rows into the governed table')
-  }
+  const table = page.locator('lv-report-table')
+  await table.evaluate((element) => element.scrollIntoView({ block: 'center' }))
+  const rows = table.locator('[role="rowgroup"] [role="row"]')
+  await rows.first().waitFor({ state: 'visible', timeout: 30_000 })
+  const stateCells = page.getByRole('cell', { name: 'State: SP', exact: true })
+  await stateCells.first().waitFor({ state: 'visible', timeout: 30_000 })
 
   const denialRequestID = `qualification-denial-${Date.now()}`
-  const projectPath = encodeURIComponent(process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation')
+  const projectPath = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
   const denial = await context.request.get(new URL(`/api/v1/projects/${projectPath}/grants`, baseURL).href, {
     headers: {
       Authorization: `Bearer ${credentials.publisherToken}`,
@@ -60,6 +58,7 @@ try {
   }
   const auditResponse = await context.request.get(
     new URL(`/api/v1/projects/${projectPath}/audit-events?action=authorization.denied&limit=200`, baseURL).href,
+    { headers: { Authorization: `Bearer ${credentials.auditToken}` } },
   )
   if (!auditResponse.ok()) {
     throw new Error(`audit event lookup returned ${auditResponse.status()}`)

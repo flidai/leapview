@@ -75,6 +75,9 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	if err := roundTrip.Validate(); err != nil {
 		t.Fatalf("round-trip plan validation: %v", err)
 	}
+	if roundTrip.ActorID != plan.ActorID {
+		t.Fatalf("round-trip plan actor = %q, want %q", roundTrip.ActorID, plan.ActorID)
+	}
 	conflict := plan
 	conflict.Provenance.SourceRevision = "different-source"
 	conflict.ProvenanceDigest = ""
@@ -158,6 +161,27 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('publisher-repo-1', 'publisher-repo-1@example.test', 'Publisher')`); err != nil {
+		t.Fatal(err)
+	}
+	approval := deployment.Approval{
+		ID: "approval-publication-repo-1", ProjectID: plan.ProjectID.String(), DeploymentID: publication.ID,
+		Environment: plan.Environment, RequestDigest: publication.RequestDigest, ReleaseID: candidate.ServingArtifactID,
+		Status: deployment.ApprovalPending, RequestedBy: "publisher-repo-1",
+		RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "credential-repo-1",
+		RequestedAt: now.Add(6 * time.Minute), ExpiresAt: now.Add(time.Hour), Revision: 1,
+	}
+	persistedApproval, err := repo.CreateApproval(t.Context(), approval)
+	if err != nil {
+		t.Fatalf("canonical publication approval: %v", err)
+	}
+	if persistedApproval.DeploymentID != publication.ID {
+		t.Fatalf("canonical publication approval parent = %q, want %q", persistedApproval.DeploymentID, publication.ID)
+	}
+	loadedApproval, err := repo.ApprovalByDeployment(t.Context(), publication.ID)
+	if err != nil || loadedApproval != persistedApproval {
+		t.Fatalf("canonical publication approval round trip = %#v, %v", loadedApproval, err)
+	}
 	if _, err := repo.CommitPublication(t.Context(), publication.ID, now.Add(2*time.Hour)); !errors.Is(err, deployment.ErrDeliveryPlanExpired) {
 		t.Fatalf("expired pending publication err=%v, want ErrDeliveryPlanExpired", err)
 	}
@@ -225,6 +249,63 @@ func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	}
 	if retry, err := repo.Rollback(t.Context(), rollbackRequest); err != nil || retry != rolledBack {
 		t.Fatalf("rollback retry=%#v err=%v", retry, err)
+	}
+}
+
+func TestDeliveryRepositoryBuildAttemptAllowsFullRefreshBaseGeneration(t *testing.T) {
+	store, repo := openDeliveryRepository(t)
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+		INSERT INTO delivery_target_revisions (target_id, project_id, environment, active_generation_id, created_at, updated_at)
+		VALUES ('target-repo-1', 'project-repo-1', 'prod', 'generation-full-refresh', ?, ?)`, deliveryTime(now), deliveryTime(now)); err != nil {
+		t.Fatal(err)
+	}
+	plan := repoDeliveryPlan(t, now)
+	plan.BaseGenerationID = "generation-full-refresh"
+	plan.Digest = ""
+	plan, err := deployment.NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreatePlan(t.Context(), plan); err != nil {
+		t.Fatal(err)
+	}
+	pool := repoDeliveryDigest('9')
+	insertDeliveryPool(t, store, pool)
+	lease := deployment.DeliveryWriterLease{
+		ID: "writer-full-refresh", AttemptID: "attempt-full-refresh", PhysicalPoolID: pool,
+		OwnerID: "builder", Epoch: 1, CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+	attempt := deployment.DeliveryBuildAttempt{
+		ID: "attempt-full-refresh", PlanID: plan.ID, PlanDigest: plan.Digest,
+		SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest,
+		BaseGenerationID: plan.BaseGenerationID, PhysicalPoolID: pool,
+		WriterLeaseID: lease.ID, CreatedAt: now,
+	}
+	persistedLease, persistedAttempt, err := repo.CreateWriterLeaseAndBuildAttempt(t.Context(), lease, attempt)
+	if err != nil {
+		t.Fatalf("full-refresh build attempt: %v", err)
+	}
+	if persistedLease.AttemptID != attempt.ID || persistedAttempt.BaseGenerationID != plan.BaseGenerationID || persistedAttempt.BaseCatalogDigest != "" || persistedAttempt.BasePhysicalPoolID != "" {
+		t.Fatalf("persisted full-refresh identities = lease:%#v attempt:%#v", persistedLease, persistedAttempt)
+	}
+	roundTrip, err := repo.DeliveryBuildAttemptByID(t.Context(), attempt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := roundTrip.Validate(); err != nil {
+		t.Fatalf("round-trip full-refresh attempt validation: %v", err)
+	}
+
+	invalid := attempt
+	invalid.ID = "attempt-partial-retained"
+	invalid.WriterLeaseID = "writer-partial-retained"
+	invalid.BaseCatalogDigest = repoDeliveryDigest('a')
+	if _, _, err := repo.CreateWriterLeaseAndBuildAttempt(t.Context(), deployment.DeliveryWriterLease{
+		ID: invalid.WriterLeaseID, AttemptID: invalid.ID, PhysicalPoolID: pool,
+		OwnerID: "builder", Epoch: 2, CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}, invalid); !errors.Is(err, deployment.ErrDeliveryInvalid) {
+		t.Fatalf("partial retained-base pair err=%v, want ErrDeliveryInvalid", err)
 	}
 }
 

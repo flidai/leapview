@@ -55,11 +55,18 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.arrowLeases, prometheus.GaugeValue, float64(arrowStats.Leases))
 	ch <- prometheus.MustNewConstMetric(c.arrowBytes, prometheus.GaugeValue, float64(arrowStats.Bytes))
 	ch <- prometheus.MustNewConstMetric(c.arrowTransientBytes, prometheus.GaugeValue, float64(arrowStats.TransientBytes))
+	openConnections, activeConnections, idleConnections := 0, 0, 0
 	if c.database != nil {
 		stats := c.database.ConnectionStats()
-		ch <- prometheus.MustNewConstMetric(c.connectionsOpen, prometheus.GaugeValue, float64(stats.OpenConnections))
-		ch <- prometheus.MustNewConstMetric(c.connectionsActive, prometheus.GaugeValue, float64(stats.InUse))
-		ch <- prometheus.MustNewConstMetric(c.connectionsIdle, prometheus.GaugeValue, float64(stats.Idle))
+		openConnections, activeConnections, idleConnections = stats.OpenConnections, stats.InUse, stats.Idle
+	}
+	// Production sealed serving intentionally has no process-owned DuckDB
+	// environment. Keep the gauge family present with zero values so metrics
+	// consumers can distinguish that valid topology from missing telemetry.
+	ch <- prometheus.MustNewConstMetric(c.connectionsOpen, prometheus.GaugeValue, float64(openConnections))
+	ch <- prometheus.MustNewConstMetric(c.connectionsActive, prometheus.GaugeValue, float64(activeConnections))
+	ch <- prometheus.MustNewConstMetric(c.connectionsIdle, prometheus.GaugeValue, float64(idleConnections))
+	if c.database != nil {
 		analytical := c.database.AnalyticalStats()
 		ch <- prometheus.MustNewConstMetric(c.connectionAcquisitions, prometheus.CounterValue, float64(analytical.ConnectionAcquisitions))
 		ch <- prometheus.MustNewConstMetric(c.extensionInitializations, prometheus.CounterValue, float64(analytical.ExtensionSuccess), "succeeded")

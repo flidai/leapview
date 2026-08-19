@@ -26,6 +26,72 @@ func NewPublicationUnitOfWork(database *sql.DB, applyAccessSnapshot func(context
 	return &PublicationUnitOfWork{db: database, applyAccessSnapshot: applyAccessSnapshot}
 }
 
+// CompleteCanonicalRefresh commits the refresh run/job tree after the sealed
+// delivery lifecycle has already published the new immutable catalog. It owns
+// only refresh workflow state; delivery remains the sole serving-root writer.
+func (u *PublicationUnitOfWork) CompleteCanonicalRefresh(ctx context.Context, job refreshrun.JobRecord) error {
+	if u == nil || u.db == nil {
+		return fmt.Errorf("refresh publication database is required")
+	}
+	if err := job.Validate(); err != nil || job.LeaseOwner == "" || job.LeaseRevision <= 0 {
+		return refreshrun.ErrLeaseLost
+	}
+	tx, err := u.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := materializedb.New(tx)
+	active, err := q.RefreshPublicationFenceActive(ctx, materializedb.RefreshPublicationFenceActiveParams{
+		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID,
+		Environment: job.Identity.Environment, TargetRevision: job.TargetRevision,
+		LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision,
+	})
+	if err != nil {
+		return err
+	}
+	if active != 1 {
+		return refreshrun.ErrLeaseLost
+	}
+	expectedRuns, err := q.CountRefreshPublicationTreeRuns(ctx, materializedb.CountRefreshPublicationTreeRunsParams{
+		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID, Environment: job.Identity.Environment,
+	})
+	if err != nil {
+		return err
+	}
+	expectedJobs, err := q.CountRefreshPublicationTreeJobs(ctx, materializedb.CountRefreshPublicationTreeJobsParams{
+		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID, Environment: job.Identity.Environment,
+	})
+	if err != nil {
+		return err
+	}
+	if expectedRuns < 1 || expectedJobs < 1 {
+		return refreshrun.ErrLeaseLost
+	}
+	completedRuns, err := q.CompleteRefreshPublicationRun(ctx, materializedb.CompleteRefreshPublicationRunParams{
+		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID,
+		Environment: job.Identity.Environment, TargetRevision: job.TargetRevision,
+		LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision,
+	})
+	if err != nil {
+		return err
+	}
+	if completedRuns != expectedRuns {
+		return refreshrun.ErrLeaseLost
+	}
+	completedJobs, err := q.CompleteRefreshPublicationJob(ctx, materializedb.CompleteRefreshPublicationJobParams{
+		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID,
+		Environment: job.Identity.Environment, LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision,
+	})
+	if err != nil {
+		return err
+	}
+	if completedJobs != expectedJobs {
+		return refreshrun.ErrLeaseLost
+	}
+	return tx.Commit()
+}
+
 func (u *PublicationUnitOfWork) Publish(ctx context.Context, identity projectgraph.ServingIdentity, servingStateID servingstate.ID, version refreshschedule.DataVersion) error {
 	if u == nil || u.db == nil {
 		return fmt.Errorf("refresh publication database is required")

@@ -355,14 +355,14 @@ ORDER BY created_at ASC, id ASC LIMIT 1;
 
 -- name: CreateDeliveryPlan :exec
 INSERT INTO delivery_plans
- (id, target_id, project_id, environment, operation_kind, source_digest,
+ (id, target_id, project_id, environment, actor_id, operation_kind, source_digest,
   base_generation_id, base_target_revision, execution_digest, execution_inputs_json,
   provenance_digest, governance_digest, provenance_json, governance_json, evidence_json, evidence_digest,
   plan_digest, status, expires_at, created_at)
-VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetDeliveryPlan :one
-SELECT id,target_id,project_id,environment,operation_kind,source_digest,base_generation_id,
+SELECT id,target_id,project_id,environment,actor_id,operation_kind,source_digest,base_generation_id,
        base_target_revision,execution_digest,execution_inputs_json,provenance_digest,
        governance_digest,plan_digest,status,expires_at,created_at,provenance_json,governance_json,evidence_json,evidence_digest
 FROM delivery_plans WHERE id = ?;
