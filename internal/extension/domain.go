@@ -40,6 +40,22 @@ type Identity struct {
 	SupportProfile   string `json:"supportProfile"`
 }
 
+// ArtifactFilenameStem is the DuckDB loader basename for a logical extension
+// name. Scanner extensions use their engine-defined *_scanner filename while
+// the manifest continues to expose the stable connector name.
+func ArtifactFilenameStem(name string) string {
+	switch name {
+	case "sqlite":
+		return "sqlite_scanner"
+	case "mysql":
+		return "mysql_scanner"
+	case "postgres":
+		return "postgres_scanner"
+	default:
+		return name
+	}
+}
+
 func (i Identity) Validate() error {
 	fields := []struct{ name, value string }{
 		{"DuckDB version", i.DuckDBVersion}, {"extension version", i.ExtensionVersion}, {"GOOS", i.GOOS}, {"GOARCH", i.GOARCH},

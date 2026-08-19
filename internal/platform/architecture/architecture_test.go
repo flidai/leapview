@@ -2270,8 +2270,8 @@ func TestProductionContainerContractExists(t *testing.T) {
 		t.Fatalf("Dockerfile downloads Go modules %d times, want one shared dependency stage", count)
 	}
 	const seededModuleCache = "type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked"
-	if count := strings.Count(text, seededModuleCache); count != 3 {
-		t.Fatalf("Dockerfile uses the seeded persistent Go module cache %d times, want source generation, map extraction, and compilation", count)
+	if count := strings.Count(text, seededModuleCache); count != 4 {
+		t.Fatalf("Dockerfile uses the seeded persistent Go module cache %d times, want source generation, map extraction, compilation, and extension-supply packaging", count)
 	}
 
 	ignored, err := os.ReadFile(filepath.Join(root, ".dockerignore"))

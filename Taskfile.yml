@@ -950,9 +950,15 @@ tasks:
       - task: site:build
 
   ci:extensions:prepare:
-    desc: Provision the pinned DuckLake and spatial artifacts used by CI documentation fixtures
+    desc: Provision CI fixtures and validate the production offline supply contract
     cmds:
       - go run ./internal/app/tools/ducklakeprepare
+      - task: extension-supply:check
+
+  extension-supply:check:
+    desc: Check generated connector/format requirements and exact supply admission contracts
+    cmds:
+      - go test ./internal/project/contracts ./internal/deployment/extensionsupply ./internal/app/tools/extensionsupply
 
   ci:pr:
     desc: Run the fast required contract for every pull-request update

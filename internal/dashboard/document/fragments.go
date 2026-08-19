@@ -136,6 +136,8 @@ func ExpandDashboardFragments(input DashboardDocument, dashboardPath, projectRoo
 		return FragmentExpansion{Document: document}, state.validateExpandedIDs(document)
 	}
 	includes := document.Spec.Includes
+	filtersPresent := document.Spec.Filters != nil
+	pagesPresent := document.Spec.Pages != nil
 	if err := state.expandIncludes(includes); err != nil {
 		return FragmentExpansion{}, err
 	}
@@ -162,6 +164,12 @@ func ExpandDashboardFragments(input DashboardDocument, dashboardPath, projectRoo
 		}
 	}
 	document.Spec.Visuals, document.Spec.Filters, document.Spec.Pages = state.visuals, state.filters, state.pages
+	if filtersPresent && document.Spec.Filters == nil {
+		document.Spec.Filters = []DashboardFilter{}
+	}
+	if pagesPresent && document.Spec.Pages == nil {
+		document.Spec.Pages = []DashboardPage{}
+	}
 	if err := attachComponents(&document, state); err != nil {
 		return FragmentExpansion{}, err
 	}

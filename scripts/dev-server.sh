@@ -202,6 +202,27 @@ runner_name() {
   fi
 }
 
+ensure_dev_extension_supply() {
+  local root="$TMP_DIR/dev-extension-supply"
+  local manifest="$root/extension-supply.json"
+  local digest_file="$manifest.sha256"
+  if ! go run ./internal/app/tools/extensionsupply --check --out "$root" --runtime-root "$root" >/dev/null 2>&1; then
+    echo "Preparing reviewed offline DuckDB extension supply for development..."
+    mkdir -p "$root"
+    go run ./internal/app/tools/extensionsupply --out "$root" --runtime-root "$root"
+  fi
+  go run ./internal/app/tools/extensionsupply --check --out "$root" --runtime-root "$root" >/dev/null || {
+    echo "Development extension supply is unavailable: $manifest" >&2
+    return 1
+  }
+  export LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH="$manifest"
+  export LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256="$(awk 'NF {print $1; exit}' "$digest_file")"
+  [[ "$LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Development extension supply digest is invalid" >&2
+    return 1
+  }
+}
+
 wait_ready() {
   local port="$1"
   local pid="$2"
@@ -450,6 +471,7 @@ start() {
   fi
 
   cd "$ROOT"
+  ensure_dev_extension_supply
   export PORT="$port"
   export LEAPVIEW_ADDR=":$port"
   export LEAPVIEW_DEV_WORKTREE="$ROOT"

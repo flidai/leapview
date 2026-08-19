@@ -161,6 +161,37 @@ func TestPublicImageIsPrimaryOnboardingContract(t *testing.T) {
 	}
 }
 
+func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
+	root := filepath.Join("..", "..")
+	dockerfile := read(t, filepath.Join(root, "Dockerfile"))
+	for _, required := range []string{
+		"FROM build AS extension-supply",
+		"./internal/app/tools/extensionsupply",
+		"COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions",
+		"LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH=/usr/local/share/leapview/extensions/extension-supply.json",
+	} {
+		if !strings.Contains(dockerfile, required) {
+			t.Fatalf("Dockerfile missing offline extension supply contract %q", required)
+		}
+	}
+	tool := read(t, filepath.Join(root, "internal", "app", "tools", "extensionsupply", "main.go"))
+	for _, required := range []string{"SET autoinstall_known_extensions = false", "SET autoload_known_extensions = false", `"LOAD '"+escaped+"'"`} {
+		if !strings.Contains(tool, required) {
+			t.Fatalf("extension supply builder missing exact-path verification contract %q", required)
+		}
+	}
+	compose := read(t, "compose.yaml")
+	if strings.Contains(compose, "DUCKDB_EXTENSION_SUPPLY") {
+		t.Fatal("standard Compose must not expose extension supply selection as authored env")
+	}
+	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
+	for _, required := range []string{"Verify target-native offline extension supply", "extension-supply.json.sha256", "duckdb_extension"} {
+		if !strings.Contains(release, required) {
+			t.Fatalf("release qualification missing extension supply check %q", required)
+		}
+	}
+}
+
 func TestFiveMinuteEvaluationContract(t *testing.T) {
 	root := filepath.Join("..", "..")
 	publicReleaseImage := readPublicReleaseImage(t)

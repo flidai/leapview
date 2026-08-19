@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/extension"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
 
@@ -23,6 +24,26 @@ func TestValidateAdmittedExtensionRequiresExactIdentity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if err := validateAdmittedExtension("httpfs", candidate); err == nil {
 				t.Fatal("invalid extension admission accepted")
+			}
+		})
+	}
+}
+
+func TestValidateAdmittedExtensionUsesScannerArtifactStems(t *testing.T) {
+	for _, name := range []string{"mysql", "postgres", "sqlite"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			admitted := AdmittedExtension{
+				Name: name, Identity: "test/" + name, Version: "1.0.0", Platform: "linux-amd64",
+				Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+				Path:   "/opt/leapview/extensions/" + extension.ArtifactFilenameStem(name) + ".duckdb_extension",
+			}
+			if err := validateAdmittedExtension(name, admitted); err != nil {
+				t.Fatalf("canonical scanner artifact rejected: %v", err)
+			}
+			admitted.Path = "/opt/leapview/extensions/" + name + ".duckdb_extension"
+			if err := validateAdmittedExtension(name, admitted); err == nil {
+				t.Fatalf("legacy logical artifact basename accepted for scanner extension")
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -40,7 +41,22 @@ func LoadDashboardDocumentForProject(path, projectRoot string) (document.Dashboa
 	if err != nil {
 		return document.DashboardDocument{}, err
 	}
+	if err := validateExpandedDashboard(expanded.Document, path, expanded.Paths); err != nil {
+		return document.DashboardDocument{}, err
+	}
 	return expanded.Document, nil
+}
+
+// validateExpandedDashboard is the one project-compilation seam for the
+// generated DTO after source-only fragment expansion. Include paths are added
+// to failures so diagnostics remain useful even though schema validation sees
+// one canonical expanded document.
+func validateExpandedDashboard(value document.DashboardDocument, path string, fragmentPaths []string) error {
+	err := document.ValidateSchema(value, path)
+	if err == nil || len(fragmentPaths) == 0 {
+		return err
+	}
+	return fmt.Errorf("%s: expanded dashboard sources [%s]: %w", path, strings.Join(fragmentPaths, ", "), err)
 }
 
 func valueOrEmpty(value *string) string {

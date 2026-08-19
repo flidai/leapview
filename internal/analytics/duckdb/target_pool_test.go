@@ -42,7 +42,7 @@ func (targetPoolTestExtensionAdmission) AdmitExtension(ctx context.Context, name
 			Name: name, Identity: identity, Version: "test-fixture", ExtensionVersion: "test-fixture",
 			DuckDBVersion: "test-runtime", GOOS: "test", GOARCH: "test", Platform: "test-test",
 			SupportProfile: "test-fixture", Digest: digest,
-			Path: "/test/extensions/" + name + ".duckdb_extension", Origin: "reviewed-local-test-fixture",
+			Path: "/test/extensions/" + extension.ArtifactFilenameStem(name) + ".duckdb_extension", Origin: "reviewed-local-test-fixture",
 			Provenance: "attest:target-pool-test", Signature: "sig:target-pool-test",
 		}, nil
 	default:
@@ -91,7 +91,7 @@ func TestTargetRuntimePoolFactoryPreparesOnlyConnectorOwnedReadOnlyProbe(t *test
 		"SET memory_limit = '67108864B'",
 		"SET max_temp_directory_size = '16777216B'",
 		"SET threads = 1",
-		"LOAD '/test/extensions/postgres.duckdb_extension'",
+		loadExtensionStatement("/test/extensions/" + extension.ArtifactFilenameStem("postgres") + ".duckdb_extension"),
 		"CREATE OR REPLACE TEMPORARY SECRET leapview_warehouse",
 		"HOST 'warehouse.internal'",
 		"PASSWORD 'source-secret'",

@@ -246,7 +246,8 @@ func validateAdmittedExtension(requested string, admitted AdmittedExtension) err
 	}
 	base := filepath.Base(admitted.Path)
 	stem := strings.TrimSuffix(base, ".duckdb_extension")
-	if !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(base, ".duckdb_extension") || stem != requested && !strings.HasPrefix(stem, requested+"-") {
+	expectedStem := extensiondomain.ArtifactFilenameStem(requested)
+	if !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(base, ".duckdb_extension") || stem != expectedStem && !strings.HasPrefix(stem, expectedStem+"-") {
 		return fmt.Errorf("extension %s admission path must be absolute", requested)
 	}
 	return nil

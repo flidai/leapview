@@ -87,6 +87,12 @@ type Config struct {
 	Origins         []Origin
 	Offline         bool
 	VerifySignature SignatureVerifier
+	// VerifySignatureAtPath performs the runtime/vendor signature and
+	// provenance check against the exact immutable path that is about to be
+	// admitted.  Packaging and DuckDB-backed adapters can use this hook to ask
+	// DuckDB to LOAD the exact file (which verifies official signatures) before
+	// it becomes visible in the content-addressed cache.
+	VerifySignatureAtPath func(context.Context, Artifact, string) error
 }
 
 // Supply implements extension.Admission.  It has no methods that can fetch
@@ -336,6 +342,20 @@ func (s *Supply) AdmitExtension(ctx context.Context, name string) (extension.Adm
 	s.mu.Lock()
 	if admitted, ok := s.admitted[name]; ok {
 		s.mu.Unlock()
+		// Admission evidence is immutable, but the cache path is a mutable
+		// filesystem boundary. Rehash and re-run the signature/provenance check
+		// on every memoized lookup so a post-admission mutation cannot be used by
+		// a subsequent DuckDB LOAD.
+		if exists, verifyErr := verifyFile(admitted.Path, admitted.Digest); !exists || verifyErr != nil {
+			return extension.AdmittedExtension{}, fmt.Errorf("%w: cached artifact changed after admission", extension.ErrExtensionIntegrity)
+		}
+		artifact, exists := s.entries[name]
+		if !exists {
+			return extension.AdmittedExtension{}, fmt.Errorf("%w: extension %q is not in the exact manifest", extension.ErrExtensionUnavailable, name)
+		}
+		if err := s.verifyCached(ctx, admitted.Path, artifact); err != nil {
+			return extension.AdmittedExtension{}, err
+		}
 		return admitted, nil
 	}
 	artifact, ok := s.entries[name]
@@ -406,10 +426,6 @@ func (s *Supply) ensureArtifact(ctx context.Context, artifact Artifact) (string,
 		}
 		return path, "cache", nil
 	}
-	if s.config.Offline {
-		return "", "", fmt.Errorf("%w: %s", extension.ErrExtensionOffline, artifact.Identity.Name)
-	}
-
 	// Manifest origin ordering is canonical; a fetch failure may fall through
 	// to the next reviewed origin, but no unconfigured origin can be tried.
 	originIDs := append([]string(nil), artifact.Origins...)
@@ -419,6 +435,10 @@ func (s *Supply) ensureArtifact(ctx context.Context, artifact Artifact) (string,
 		origin, ok := s.origins[originID]
 		if !ok || !origin.Reviewed {
 			lastErr = fmt.Errorf("%w: origin %q", extension.ErrExtensionUnapproved, originID)
+			continue
+		}
+		if s.config.Offline && !isOfflineOrigin(origin.URL) {
+			lastErr = fmt.Errorf("%w: %s", extension.ErrExtensionOffline, artifact.Identity.Name)
 			continue
 		}
 		reader, fetchErr := origin.Fetch(ctx, artifact)
@@ -446,7 +466,12 @@ func (s *Supply) ensureArtifact(ctx context.Context, artifact Artifact) (string,
 				continue
 			}
 		}
-		if err := s.atomicAdmit(path, bytes, artifact.Identity.Digest); err != nil {
+		if err := s.atomicAdmit(path, bytes, artifact.Identity.Digest, func(tempPath string) error {
+			if s.config.VerifySignatureAtPath == nil {
+				return nil
+			}
+			return s.config.VerifySignatureAtPath(ctx, artifact, tempPath)
+		}); err != nil {
 			return "", "", err
 		}
 		return path, originID, nil
@@ -457,6 +482,14 @@ func (s *Supply) ensureArtifact(ctx context.Context, artifact Artifact) (string,
 	// Adapter errors can contain endpoint details or credential-bearing driver
 	// text. Preserve only the bounded operation class in runtime diagnostics.
 	return "", "", fmt.Errorf("%w: %s", extension.ErrExtensionUnavailable, artifact.Identity.Name)
+}
+
+func isOfflineOrigin(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "" || parsed.Scheme == "file"
 }
 
 func (s *Supply) verifyCached(ctx context.Context, path string, artifact Artifact) error {
@@ -478,6 +511,11 @@ func (s *Supply) verifyCached(ctx context.Context, path string, artifact Artifac
 	if err := s.config.VerifySignature(ctx, artifact, bytes); err != nil {
 		return fmt.Errorf("%w: %v", extension.ErrExtensionIntegrity, err)
 	}
+	if s.config.VerifySignatureAtPath != nil {
+		if err := s.config.VerifySignatureAtPath(ctx, artifact, path); err != nil {
+			return fmt.Errorf("%w: %v", extension.ErrExtensionIntegrity, err)
+		}
+	}
 	return nil
 }
 
@@ -489,10 +527,7 @@ func (s *Supply) cachePath(identity extension.Identity) (string, error) {
 	// DuckDB derives the extension entrypoint from the artifact basename. Keep
 	// the canonical loader name (for example ducklake.duckdb_extension) while
 	// retaining the immutable identity in the digest directory.
-	name := identity.Name + ".duckdb_extension"
-	if identity.Name == "sqlite" {
-		name = "sqlite_scanner.duckdb_extension"
-	}
+	name := extension.ArtifactFilenameStem(identity.Name) + ".duckdb_extension"
 	path := filepath.Join(s.config.CacheDir, digest, name)
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -572,7 +607,7 @@ func verifyBytes(bytes []byte, artifact Artifact) error {
 	return nil
 }
 
-func (s *Supply) atomicAdmit(path string, bytes []byte, digest string) error {
+func (s *Supply) atomicAdmit(path string, bytes []byte, digest string, verify func(string) error) error {
 	if err := ensurePrivateCacheRoot(s.config.CacheDir); err != nil {
 		return err
 	}
@@ -585,16 +620,28 @@ func (s *Supply) atomicAdmit(path string, bytes []byte, digest string) error {
 	if existing, err := verifyFile(path, digest); existing {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".extension-*.tmp")
+	// DuckDB's exact-path LOAD uses the canonical loader basename to resolve
+	// the extension entrypoint. Stage in a private directory with that basename
+	// instead of passing a random .tmp filename to the verifier.
+	stageDir, err := os.MkdirTemp(filepath.Dir(path), ".extension-stage-*")
 	if err != nil {
 		return err
 	}
-	tmpPath := temporary.Name()
+	if err := os.Chmod(stageDir, 0o700); err != nil {
+		_ = os.RemoveAll(stageDir)
+		return err
+	}
+	tmpPath := filepath.Join(stageDir, filepath.Base(path))
+	temporary, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		_ = os.RemoveAll(stageDir)
+		return err
+	}
 	cleanup := true
 	defer func() {
 		_ = temporary.Close()
 		if cleanup {
-			_ = os.Remove(tmpPath)
+			_ = os.RemoveAll(stageDir)
 		}
 	}()
 	if err := temporary.Chmod(0o600); err != nil {
@@ -609,6 +656,11 @@ func (s *Supply) atomicAdmit(path string, bytes []byte, digest string) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
+	if verify != nil {
+		if err := verify(tmpPath); err != nil {
+			return fmt.Errorf("%w: verify staged artifact signature", extension.ErrExtensionIntegrity)
+		}
+	}
 	// Link is a no-replace admission primitive: unlike Rename it cannot
 	// overwrite a raced target. A same-content target is accepted; a different
 	// target is an integrity failure and remains untouched.
@@ -622,6 +674,9 @@ func (s *Supply) atomicAdmit(path string, bytes []byte, digest string) error {
 		return err
 	}
 	if err := os.Remove(tmpPath); err != nil {
+		return err
+	}
+	if err := os.Remove(stageDir); err != nil {
 		return err
 	}
 	cleanup = false

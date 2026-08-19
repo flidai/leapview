@@ -23,12 +23,29 @@ import (
 
 const MaxExtensionSupplyDocumentBytes = 1 << 20
 
+// PackagedSupplyPath is the only runtime default. It is baked into the
+// server image and is intentionally not present in authored/project config.
+// A sidecar digest is accepted only for this immutable image path.
+const (
+	PackagedSupplyPath       = "/usr/local/share/leapview/extensions/extension-supply.json"
+	PackagedSupplyDigestPath = "/usr/local/share/leapview/extensions/extension-supply.json.sha256"
+)
+
 // loadExtensionSupply is the only application composition point for the
 // target-owned extension supply. The document digest is checked before JSON
 // decoding, and the resulting admission/preparation object is shared by the
 // analytics and release modules.
 func Load(ctx context.Context, cfg config.Config) (*extensionsupply.Supply, error) {
-	path, err := absoluteSupplyPath(cfg.DuckDBExtensionSupplyPath)
+	rawPath := strings.TrimSpace(cfg.DuckDBExtensionSupplyPath)
+	if rawPath == "" {
+		// An image may omit the env override entirely; select the packaged
+		// default only when the fixed immutable file is actually present. Local
+		// development and tests still fail closed when no reviewed supply exists.
+		if info, statErr := os.Lstat(PackagedSupplyPath); statErr == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			rawPath = PackagedSupplyPath
+		}
+	}
+	path, err := absoluteSupplyPath(rawPath)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +53,15 @@ func Load(ctx context.Context, cfg config.Config) (*extensionsupply.Supply, erro
 	if err != nil {
 		return nil, err
 	}
-	if err := verifySupplyDigest(payload, cfg.DuckDBExtensionSupplySHA256); err != nil {
+	digest := strings.TrimSpace(cfg.DuckDBExtensionSupplySHA256)
+	if digest == "" && path == PackagedSupplyPath {
+		var digestErr error
+		digest, digestErr = ReadPackagedSupplyDigest(PackagedSupplyDigestPath)
+		if digestErr != nil {
+			return nil, digestErr
+		}
+	}
+	if err := verifySupplyDigest(payload, digest); err != nil {
 		return nil, err
 	}
 	var manifest extensionsupply.Manifest
@@ -110,6 +135,10 @@ func Load(ctx context.Context, cfg config.Config) (*extensionsupply.Supply, erro
 		CacheDir:       cacheDir,
 		Manifest:       manifest,
 		Origins:        origins,
+		// The immutable image supply is offline by construction. Explicit
+		// bounded admin/test supplies may still use their reviewed local origin
+		// adapter; loader validation never permits a network URL.
+		Offline: path == PackagedSupplyPath,
 		// The packaged document's whole-file digest is the external trust
 		// anchor. Signature/provenance references are still required and are
 		// rechecked by Supply for every cached or fetched artifact.
@@ -119,7 +148,67 @@ func Load(ctx context.Context, cfg config.Config) (*extensionsupply.Supply, erro
 			}
 			return nil
 		},
+		VerifySignatureAtPath: verifyDuckDBArtifactAtPath,
 	})
+}
+
+// verifyDuckDBArtifactAtPath asks the pinned engine to verify the exact staged
+// file. DuckDB's LOAD path performs official extension signature/provenance
+// verification. Automatic acquisition is disabled first, so a dependency
+// cannot turn this build/runtime check into a network install. The callback is
+// run before Supply links the staged file into cache.
+func verifyDuckDBArtifactAtPath(ctx context.Context, _ extensionsupply.Artifact, path string) error {
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		return fmt.Errorf("open DuckDB extension verifier: %w", err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		"SET autoinstall_known_extensions = false",
+		"SET autoload_known_extensions = false",
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("configure DuckDB extension verifier: %w", err)
+		}
+	}
+	escaped := strings.ReplaceAll(path, "'", "''")
+	if _, err := db.ExecContext(ctx, "LOAD '"+escaped+"'"); err != nil {
+		return fmt.Errorf("LOAD exact DuckDB extension artifact: %w", err)
+	}
+	return nil
+}
+
+// ReadPackagedSupplyDigest reads the build-generated SHA-256 sidecar. It is
+// deliberately narrow: callers cannot point it at arbitrary paths or follow
+// a symlink into an operator-controlled tree.
+func ReadPackagedSupplyDigest(path string) (string, error) {
+	if path != PackagedSupplyDigestPath {
+		return "", fmt.Errorf("%w: packaged DuckDB extension supply digest path is fixed", extension.ErrExtensionConfiguration)
+	}
+	if err := rejectSymlinkAncestors(path); err != nil {
+		return "", fmt.Errorf("%w: packaged DuckDB extension supply digest path: %v", extension.ErrExtensionConfiguration, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("%w: read packaged DuckDB extension supply digest", extension.ErrExtensionConfiguration)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 || info.Size() > 256 {
+		return "", fmt.Errorf("%w: packaged DuckDB extension supply digest must be a private regular file", extension.ErrExtensionConfiguration)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("%w: read packaged DuckDB extension supply digest", extension.ErrExtensionConfiguration)
+	}
+	defer file.Close()
+	contents, err := io.ReadAll(io.LimitReader(file, 257))
+	if err != nil || len(contents) > 256 {
+		return "", fmt.Errorf("%w: read packaged DuckDB extension supply digest", extension.ErrExtensionConfiguration)
+	}
+	fields := strings.Fields(string(contents))
+	if len(fields) != 1 {
+		return "", fmt.Errorf("%w: packaged DuckDB extension supply digest is not canonical", extension.ErrExtensionConfiguration)
+	}
+	return fields[0], nil
 }
 
 func absoluteSupplyPath(raw string) (string, error) {
@@ -254,7 +343,8 @@ func packagedOriginFetcher(root string) func(context.Context, extensionsupply.Ar
 			return nil, err
 		}
 		if info.IsDir() {
-			path = filepath.Join(root, artifact.Identity.Name+"-"+artifact.Identity.ExtensionVersion+"-"+artifact.Identity.Platform+".duckdb_extension")
+			name := extension.ArtifactFilenameStem(artifact.Identity.Name)
+			path = filepath.Join(root, name+"-"+artifact.Identity.ExtensionVersion+"-"+artifact.Identity.Platform+".duckdb_extension")
 		}
 		if err := rejectSymlinkAncestors(path); err != nil {
 			return nil, err

@@ -74,6 +74,22 @@ func TestSupplyAdmitsVerifiedArtifactAndOfflineLookup(t *testing.T) {
 	}
 }
 
+func TestOfflineSupplyAdmitsPackagedReviewedFileOrigin(t *testing.T) {
+	content := []byte("packaged extension bytes")
+	artifact := testArtifact("httpfs", digestFor(content), "linux-amd64")
+	supply := newSupply(t, Config{
+		Offline:  true,
+		Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}},
+		Origins: []Origin{{ID: "vendor", URL: "file:///usr/local/share/leapview/extensions/artifacts", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(content)), nil
+		}}},
+		VerifySignature: verifyOK,
+	})
+	if _, err := supply.AdmitExtension(context.Background(), "httpfs"); err != nil {
+		t.Fatalf("offline packaged file origin admission failed: %v", err)
+	}
+}
+
 func TestSupplyRejectsAdversarialManifestAndBytes(t *testing.T) {
 	content := []byte("correct bytes")
 	digest := digestFor(content)
@@ -161,6 +177,8 @@ func TestSupplyCachePathUsesDuckDBLoaderBasenames(t *testing.T) {
 	}{
 		{name: "ducklake", want: "ducklake.duckdb_extension"},
 		{name: "sqlite", want: "sqlite_scanner.duckdb_extension"},
+		{name: "mysql", want: "mysql_scanner.duckdb_extension"},
+		{name: "postgres", want: "postgres_scanner.duckdb_extension"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			artifact := testArtifact(test.name, digestFor([]byte(test.name)), "linux-amd64")
@@ -173,6 +191,54 @@ func TestSupplyCachePathUsesDuckDBLoaderBasenames(t *testing.T) {
 				t.Fatalf("cache basename = %q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestSupplySignatureVerifierSeesCanonicalStagingBasename(t *testing.T) {
+	content := []byte("signed extension bytes")
+	artifact := testArtifact("sqlite", digestFor(content), "linux-amd64")
+	var staged string
+	supply := newSupply(t, Config{
+		Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}},
+		Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/sqlite", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(content)), nil
+		}}},
+		VerifySignature: verifyOK,
+		VerifySignatureAtPath: func(_ context.Context, _ Artifact, path string) error {
+			staged = filepath.Base(path)
+			if staged != "sqlite_scanner.duckdb_extension" {
+				return fmt.Errorf("staged basename = %q", staged)
+			}
+			return nil
+		},
+	})
+	if _, err := supply.AdmitExtension(context.Background(), "sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	if staged != "sqlite_scanner.duckdb_extension" {
+		t.Fatalf("staged basename = %q", staged)
+	}
+}
+
+func TestSupplyMemoizedAdmissionRechecksCacheIntegrity(t *testing.T) {
+	content := []byte("immutable extension bytes")
+	artifact := testArtifact("httpfs", digestFor(content), "linux-amd64")
+	supply := newSupply(t, Config{
+		Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}},
+		Origins: []Origin{{ID: "vendor", URL: "file:///reviewed/httpfs", Reviewed: true, Fetch: func(context.Context, Artifact) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(content)), nil
+		}}},
+		VerifySignature: verifyOK,
+	})
+	admitted, err := supply.AdmitExtension(context.Background(), "httpfs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(admitted.Path, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := supply.AdmitExtension(context.Background(), "httpfs"); !errors.Is(err, extension.ErrExtensionIntegrity) {
+		t.Fatalf("memoized AdmitExtension() error = %v, want integrity error", err)
 	}
 }
 

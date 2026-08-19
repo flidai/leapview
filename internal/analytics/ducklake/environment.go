@@ -26,6 +26,7 @@ import (
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -112,10 +113,13 @@ type extensionLoad struct {
 	err  error
 }
 
-var approvedExtensions = map[string]struct{}{
-	"ducklake": {}, "httpfs": {}, "azure": {}, "postgres": {}, "mysql": {}, "quack": {},
-	"sqlite": {}, "excel": {}, "delta": {}, "iceberg": {}, "lance": {}, "vortex": {}, "spatial": {},
-}
+var approvedExtensions = func() map[string]struct{} {
+	result := make(map[string]struct{})
+	for _, name := range projectcontracts.RequiredExtensionNames() {
+		result[name] = struct{}{}
+	}
+	return result
+}()
 
 var (
 	ErrUnadmitted          = errors.New("DuckDB access requires workload admission")

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	configschema "github.com/flidai/leapview/internal/project/schema"
 	"gopkg.in/yaml.v3"
 )
 
@@ -64,4 +65,22 @@ func EncodeYAML(value DashboardDocument) ([]byte, error) {
 		return nil, fmt.Errorf("close dashboard document: %w", err)
 	}
 	return output.Bytes(), nil
+}
+
+// ValidateSchema validates the complete generated Dashboard DTO at the
+// canonical resource-schema boundary. Fragment expansion and all other
+// callers must use this seam so a value that decodes into the DTO cannot skip
+// final structural/schema validation before compilation or export.
+func ValidateSchema(value DashboardDocument, filename string) error {
+	content, err := EncodeYAML(value)
+	if err != nil {
+		return err
+	}
+	if filename == "" {
+		filename = "dashboard.yaml"
+	}
+	if err := configschema.ValidateBytes(configschema.KindDashboard, filename, content); err != nil {
+		return fmt.Errorf("validate canonical dashboard: %w", err)
+	}
+	return nil
 }
