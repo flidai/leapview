@@ -416,6 +416,17 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 			a.protectResources(capability, resolver, next).ServeHTTP(w, r)
 			return
 		}
+		if isAuthoringBootstrapOperation(operationID) {
+			authorized, err := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if authorized && decision.Allowed {
+				next.ServeHTTP(w, r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability)))
+				return
+			}
+		}
 		// Bootstrap is intentionally narrower than normal project RBAC: only a
 		// REST API token with an explicit capability allowlist may establish the
 		// first project operation.
@@ -434,6 +445,15 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 		}
 		next.ServeHTTP(w, r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability)))
 	}))
+}
+
+func isAuthoringBootstrapOperation(operationID string) bool {
+	switch operationID {
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *APIGenAuthorizer) resourceResolverForContractMust(operationID string) APIGenResourceResolver {

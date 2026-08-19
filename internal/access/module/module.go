@@ -267,6 +267,31 @@ func bootstrapTokenAllowsCapability(capabilities []access.Capability, required a
 		(required != access.CapabilityProjectAdmin && containsCapability(capabilities, access.CapabilityProjectAdmin))
 }
 
+// AuthorizeAuthoringBootstrapRequest admits an already-issued human/workload
+// authoring credential for the narrow project control-plane operations that
+// may race the serving-generation cutover. Unlike API-token bootstrap, this
+// path relies on the immutable authoring scope plus the current RBAC
+// projection; it never grants a credential authority it does not already
+// carry.
+func (m *Module) AuthorizeAuthoringBootstrapRequest(ctx context.Context, r *http.Request, projectID string, required access.Capability) (bool, error) {
+	if m == nil || r == nil || m.auth == nil {
+		return false, nil
+	}
+	principal, ok := m.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return false, nil
+	}
+	credential, ok := m.auth.APICredential(r)
+	if !ok || credential.Authoring == nil || credential.Authoring.Scope.ProjectID.String() != strings.TrimSpace(projectID) {
+		return false, nil
+	}
+	effective, err := m.RequestEffectiveCapabilities(ctx, r, principal.ID)
+	if err != nil {
+		return false, err
+	}
+	return bootstrapTokenAllowsCapability(effective, required), nil
+}
+
 func (m *Module) requestCredential(r *http.Request) (access.APICredential, bool) {
 	if r == nil {
 		return access.APICredential{}, false
