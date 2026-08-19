@@ -349,6 +349,9 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 	if conversionErr != nil {
 		return visualizationir.VisualizationSpec{}, fmt.Errorf("interactions: %w", conversionErr)
 	}
+	if conversionErr = promoteSelectionIdentityFields(&base); conversionErr != nil {
+		return visualizationir.VisualizationSpec{}, fmt.Errorf("selection identities: %w", conversionErr)
+	}
 	ref := func(index int) visualizationir.VisualizationFieldRef {
 		if index < 0 || index >= len(query.ResultFrame) {
 			return visualizationir.VisualizationFieldRef{}
@@ -2063,4 +2066,36 @@ func canonicalInteractions(values *[]document.DashboardInteraction, query Lowere
 		result = append(result, compiled)
 	}
 	return result, nil
+}
+
+func promoteSelectionIdentityFields(base *visualizationir.VisualizationSpecBase) error {
+	// Selection datum refs and renderer projection use the compiled mapping
+	// sources as their identity tuple. Preserve that invariant even when the
+	// authored source is otherwise a dimension or metric.
+	for _, interaction := range base.Interactions {
+		for _, mapping := range interaction.Mappings {
+			datasetIndex := -1
+			for index := range base.Datasets {
+				if base.Datasets[index].ID == mapping.Source.Dataset {
+					datasetIndex = index
+					break
+				}
+			}
+			if datasetIndex < 0 {
+				return fmt.Errorf("interaction %q references unknown dataset %q", interaction.ID, mapping.Source.Dataset)
+			}
+			fieldIndex := -1
+			for index := range base.Datasets[datasetIndex].Fields {
+				if base.Datasets[datasetIndex].Fields[index].ID == mapping.Source.Field {
+					fieldIndex = index
+					break
+				}
+			}
+			if fieldIndex < 0 {
+				return fmt.Errorf("interaction %q references unknown field %q in dataset %q", interaction.ID, mapping.Source.Field, mapping.Source.Dataset)
+			}
+			base.Datasets[datasetIndex].Fields[fieldIndex].Role = visualizationir.VisualizationFieldRoleIdentity
+		}
+	}
+	return nil
 }

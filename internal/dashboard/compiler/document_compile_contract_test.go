@@ -113,6 +113,37 @@ func TestCanonicalVisualizationSpecsUseAuthoredResultAliases(t *testing.T) {
 	}
 }
 
+func TestCanonicalVisualizationSpecPromotesSelectionSourcesToIdentity(t *testing.T) {
+	model := dashboardQueryTestModel()
+	dimensions := []visualizationdefinition.FieldBinding{{FieldID: "category", Alias: "category"}}
+	metrics := []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "revenue"}}
+	query := LoweredDashboardQuery{
+		Type: "aggregate",
+		Binding: visualizationdefinition.QueryBinding{
+			ResultShape: visualizationdefinition.ResultCategoryValue,
+			Aggregate:   &visualizationdefinition.AggregateQueryBinding{Dimensions: dimensions, Metrics: metrics},
+		},
+		ResultFrame: []DashboardQueryResultField{{Source: "category", Name: "category"}, {Source: "revenue", Name: "revenue"}},
+	}
+	targets := []string{"orders"}
+	interactions := []document.DashboardInteraction{{Value: &document.SelectionDashboardInteraction{
+		DashboardInteractionBase: document.DashboardInteractionBase{Type: "selection", Targets: &targets},
+		Type:                     "selection", Mode: document.DashboardSelectionModeMultiple,
+		Mappings: []document.DashboardInteractionMapping{{Field: "category", Value: "category"}},
+	}}}
+	spec, err := canonicalVisualizationSpec("categories", document.DashboardVisual{Type: document.DashboardVisualTypeBar, Interactions: &interactions}, query, visualizationir.CartesianVisualizationPresentation{}, nil, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := visualizationir.SpecificationBase(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base.Datasets[0].Fields[0].Role; got != visualizationir.VisualizationFieldRoleIdentity {
+		t.Fatalf("selection source role = %q, want identity", got)
+	}
+}
+
 func TestCanonicalVisualizationSpecBoxplotAndCandlestickContracts(t *testing.T) {
 	model := dashboardQueryTestModel()
 	boxplotQuery := LoweredDashboardQuery{Type: "distribution", Binding: visualizationdefinition.QueryBinding{ResultShape: visualizationdefinition.ResultDistribution, Aggregate: &visualizationdefinition.AggregateQueryBinding{Distribution: &visualizationdefinition.DistributionQueryBinding{Metric: visualizationdefinition.FieldBinding{FieldID: "revenue", Alias: "amount"}}}}, ResultFrame: []DashboardQueryResultField{{Name: "label"}, {Name: "min"}, {Name: "q1"}, {Name: "median"}, {Name: "q3"}, {Name: "max"}}}
