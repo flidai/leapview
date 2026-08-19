@@ -104,7 +104,9 @@ const methods = {
       .click({ force: true })
     await administratorPage.getByLabel('Email', { exact: true }).fill(params.email)
     await administratorPage.getByLabel('Display name', { exact: true }).fill(params.displayName)
-    await administratorPage.getByRole('button', { name: 'Create user', exact: true }).click()
+    await administratorPage
+      .getByRole('button', { name: 'Create user', exact: true })
+      .click({ force: true })
     const temporaryPassword = await administratorPage.locator('code.password-value').textContent({ timeout: 30_000 })
     if (!temporaryPassword?.trim()) {
       throw new Error(`create reviewer ${params.email} returned no temporary password`)
@@ -122,12 +124,12 @@ const methods = {
     })
     await administratorPage.locator('#token-name').fill(params.name)
     await administratorPage.locator('#token-expiry').fill(params.expiresAt.slice(0, 16))
-    await administratorPage.getByRole('button', { name: 'Add permissions', exact: true }).click()
+    await administratorPage.getByRole('button', { name: 'Add permissions', exact: true }).click({ force: true })
     for (const capability of params.capabilities) {
       await administratorPage.locator(`input[type="checkbox"][value="${capability}"]`).check()
     }
-    await administratorPage.getByRole('button', { name: 'Close permission picker', exact: true }).click()
-    await administratorPage.getByRole('button', { name: 'Create token', exact: true }).click()
+    await administratorPage.getByRole('button', { name: 'Close permission picker', exact: true }).click({ force: true })
+    await administratorPage.getByRole('button', { name: 'Create token', exact: true }).click({ force: true })
     const token = await administratorPage.getByRole('status').locator('code').textContent({ timeout: 30_000 })
     if (!token?.trim()) {
       throw new Error(`create administrator API token ${params.name} returned no token`)
