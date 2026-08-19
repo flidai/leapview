@@ -13,8 +13,8 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/storage"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 const (

@@ -24,7 +24,7 @@ import (
 	"github.com/flidai/leapview/internal/agent/ui"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
@@ -176,7 +176,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 	}
 	service := config.Service
-	workflow, durableWorkflow := config.Jobs.(jobs.WorkflowRecorder)
+	workflow, durableWorkflow := config.Jobs.(jobplatform.WorkflowRecorder)
 	if service == nil && config.Database != nil {
 		repository := newRepository(config.Database, workflow)
 		service = agent.NewService(repository, agent.Config{

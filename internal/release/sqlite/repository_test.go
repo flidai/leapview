@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/go-cmp/cmp"
 	ocidigest "github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/require"

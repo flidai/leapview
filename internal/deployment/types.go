@@ -7,8 +7,8 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/platform/digest"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 var (

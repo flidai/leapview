@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type failingDeploymentAuditStore struct{ err error }

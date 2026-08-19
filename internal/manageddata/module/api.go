@@ -11,9 +11,10 @@ import (
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type PageParams = apigenapi.PageParams
@@ -23,7 +24,7 @@ type EventHeaders = apigenapi.GenListManagedDataUploadSessionEventsHeaders
 func (m *Module) beginFinalize(ctx context.Context, request control.UploadRequest) (control.UploadResult, error) {
 	principal := request.Actor
 	if principal == "" {
-		principal = jobs.SystemPrincipalID
+		principal = jobplatform.SystemPrincipalID
 	}
 	payload, err := json.Marshal(FinalizeUploadJob{Project: request.Project, Connection: request.Connection, UploadSession: request.UploadID})
 	if err != nil {

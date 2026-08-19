@@ -10,9 +10,9 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func TestActivationWorkflowDistinguishesImmediateAndApprovalGatedStarts(t *testing.T) {

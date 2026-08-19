@@ -19,8 +19,8 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	managedfilesystem "github.com/flidai/leapview/internal/manageddata/storage/filesystem"
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	jobssqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/stretchr/testify/require"
 )
 

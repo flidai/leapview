@@ -8,14 +8,18 @@ import (
 
 var ErrStoreRequired = errors.New("async job store is required")
 
+// Enqueuer is the durable subset needed by a job producer.
 type Enqueuer interface {
 	Enqueue(context.Context, EnqueueInput) (Job, error)
 }
 
+// Canceller is the durable subset needed by a queued-job cancellation API.
 type Canceller interface {
 	Cancel(context.Context, string) error
 }
 
+// JSONEnqueueInput is EnqueueInput with a payload that is encoded as JSON by
+// EnqueueJSON.
 type JSONEnqueueInput struct {
 	ID                   string
 	Kind                 string
@@ -28,6 +32,7 @@ type JSONEnqueueInput struct {
 	Payload              any
 }
 
+// EnqueueJSON marshals input.Payload and enqueues the resulting durable job.
 func EnqueueJSON(ctx context.Context, queue Enqueuer, input JSONEnqueueInput) error {
 	if queue == nil {
 		return ErrStoreRequired
@@ -45,6 +50,7 @@ func EnqueueJSON(ctx context.Context, queue Enqueuer, input JSONEnqueueInput) er
 	return err
 }
 
+// AppendJSONEvent marshals data and appends it to the durable event stream.
 func AppendJSONEvent(ctx context.Context, store EventAppender, resourceKind, resourceID, eventType string, data any) error {
 	if store == nil {
 		return ErrStoreRequired
@@ -57,6 +63,9 @@ func AppendJSONEvent(ctx context.Context, store EventAppender, resourceKind, res
 	return err
 }
 
+// CancelQueued requests cancellation of a queued job. A claim race is
+// reported as (false, nil), since the worker that won the race owns the next
+// state transition.
 func CancelQueued(ctx context.Context, queue Canceller, id string) (bool, error) {
 	if queue == nil {
 		return false, ErrStoreRequired

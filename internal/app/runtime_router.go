@@ -33,7 +33,6 @@ import (
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	platformlifecycle "github.com/flidai/leapview/internal/platform/lifecycle"
 	"github.com/flidai/leapview/internal/platform/observability"
@@ -51,6 +50,7 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/go-chi/chi/v5"
 )
 

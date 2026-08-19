@@ -6,7 +6,7 @@ import (
 	"errors"
 
 	"github.com/flidai/leapview/internal/agent"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type JobStore interface {

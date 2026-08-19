@@ -7,8 +7,8 @@ import (
 	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 var (

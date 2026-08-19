@@ -11,7 +11,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/extension"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -250,11 +250,11 @@ func (m *Module) PublishCandidate(
 	return m.service.PublishCandidate(ctx, input)
 }
 
-func releaseStores(database *sql.DB, workflow ...jobs.WorkflowRecorder) (release.Repository, release.FinalizationUnitOfWork, release.CatalogRepository, release.DeploymentLinkage, error) {
+func releaseStores(database *sql.DB, workflow ...jobplatform.WorkflowRecorder) (release.Repository, release.FinalizationUnitOfWork, release.CatalogRepository, release.DeploymentLinkage, error) {
 	if database == nil {
 		return nil, nil, nil, nil, errors.New("release database is required")
 	}
-	var recorder jobs.WorkflowRecorder
+	var recorder jobplatform.WorkflowRecorder
 	if len(workflow) > 0 {
 		recorder = workflow[0]
 	}

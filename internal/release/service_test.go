@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/stretchr/testify/require"
 )
 

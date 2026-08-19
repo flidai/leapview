@@ -12,7 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 const (

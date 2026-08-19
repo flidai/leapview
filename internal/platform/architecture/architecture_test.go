@@ -178,6 +178,18 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 	}
 }
 
+func TestPublicJobsPackageIsPlatformOwned(t *testing.T) {
+	for _, path := range []string{"pkg/jobs", "pkg/jobs/queue"} {
+		rule, ok := ClassifyPackage(path)
+		if !ok {
+			t.Fatalf("%s is not classified", path)
+		}
+		if rule.Capability != "platform" || rule.Layer != LayerPlatform {
+			t.Fatalf("%s classification = %#v, want platform platform-layer", path, rule)
+		}
+	}
+}
+
 func TestEnterpriseAuthoringForbiddenImportsAreRejected(t *testing.T) {
 	tests := []struct {
 		name   string

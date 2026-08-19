@@ -33,9 +33,10 @@ import (
 	manageds3 "github.com/flidai/leapview/internal/manageddata/storage/s3"
 	managedtus "github.com/flidai/leapview/internal/manageddata/storage/tus"
 	"github.com/flidai/leapview/internal/platform/filesystem"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 const (
@@ -68,7 +69,7 @@ type Module struct {
 	maintenance         Maintenance
 	maintenanceWorker   *maintenanceWorker
 	jobs                JobStore
-	workflow            jobs.WorkflowRecorder
+	workflow            jobplatform.WorkflowRecorder
 	eventMu             sync.Mutex
 	bindings            *binding.Binder
 	runtimeResolver     *manageddataresolver.Resolver
@@ -114,7 +115,7 @@ type Config struct {
 	CurrentPrincipal    func(*http.Request) (Principal, bool)
 	AuthorizeConnection ConnectionAuthorizer
 	Jobs                JobStore
-	Workflow            jobs.WorkflowRecorder
+	Workflow            jobplatform.WorkflowRecorder
 	ServingStates       ServingStateReader
 	RecordAudit         func(context.Context, CommandAuditEvent) error
 }

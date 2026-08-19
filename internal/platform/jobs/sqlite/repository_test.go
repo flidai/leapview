@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func TestRepositoryPersistsClaimsReclaimsAndOrderedEvents(t *testing.T) {
@@ -21,7 +22,7 @@ func TestRepositoryPersistsClaimsReclaimsAndOrderedEvents(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 
 	created, err := repo.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "job-1", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, ResourceKind: "release", ResourceID: "release-1", EstimatedMemoryBytes: 1, Payload: []byte(`{"project":"project-a"}`),
+		ID: "job-1", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, ResourceKind: "release", ResourceID: "release-1", EstimatedMemoryBytes: 1, Payload: []byte(`{"project":"project-a"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +84,7 @@ func TestRepositoryRejectsIdempotentJobIDWithDifferentPayload(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	repo := NewRepository(store.SQLDB())
-	input := jobs.EnqueueInput{ID: "job-1", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, ResourceKind: "release", ResourceID: "release-1", EstimatedMemoryBytes: 1, Payload: []byte(`{"a":1}`)}
+	input := jobs.EnqueueInput{ID: "job-1", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, ResourceKind: "release", ResourceID: "release-1", EstimatedMemoryBytes: 1, Payload: []byte(`{"a":1}`)}
 	if _, err := repo.Enqueue(t.Context(), input); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func claimAsyncJob(t *testing.T) (*platform.Store, *Repository, jobs.Job) {
 	t.Cleanup(func() { _ = store.Close() })
 	repo := NewRepository(store.SQLDB())
 	created, err := repo.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "job-1", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{},
+		ID: "job-1", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{},
 		ResourceKind: "release", ResourceID: "release-1", EstimatedMemoryBytes: 1, Payload: []byte(`{}`),
 	})
 	if err != nil {
@@ -252,7 +253,7 @@ func TestRepositoryRecordsWorkflowAtomicallyAndIdempotently(t *testing.T) {
 		},
 		Job: jobs.EnqueueInput{
 			ID: "release:release-1:finalize", Kind: "release.finalize", WorkloadClass: "control",
-			PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, ResourceKind: "release", ResourceID: "release-1", EstimatedMemoryBytes: 1, Payload: []byte(`{"release":"release-1"}`),
+			PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, ResourceKind: "release", ResourceID: "release-1", EstimatedMemoryBytes: 1, Payload: []byte(`{"release":"release-1"}`),
 		},
 	}
 	record := func(commit bool) error {

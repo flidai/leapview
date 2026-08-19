@@ -10,7 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 	"github.com/flidai/leapview/internal/agent/ui"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type RunJob struct {

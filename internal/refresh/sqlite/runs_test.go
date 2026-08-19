@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 var testRunIdentity = projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a"}
@@ -62,7 +63,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES ('genera
 		t.Fatal(err)
 	}
 	injected := errors.New("initial lifecycle unavailable")
-	repository := NewSQLRunRepositoryWithWorkflow(store.SQLDB(), jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
+	repository := NewSQLRunRepositoryWithWorkflow(store.SQLDB(), jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
 		return injected
 	}), RunWorkflowConfig{ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued"})
 	_, err = repository.CreateRun(t.Context(), refreshrun.RunInput{
