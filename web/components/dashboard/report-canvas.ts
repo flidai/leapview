@@ -27,8 +27,12 @@ type ZoomAnchor = {
   y: number
 }
 
+// Canonical documents own grid placement, not a pixel viewport. Keep a stable
+// renderer-owned desktop canvas so resizing changes scroll/zoom, not chart geometry.
+const defaultDesktopCanvasWidth = 1366
+
 class ReportCanvas extends LitElement {
-  @property({ type: Number }) width = 1366
+  @property({ type: Number }) width = defaultDesktopCanvasWidth
   @property({ type: Number }) height = 768
   @property({ type: Number }) columns = 0
   @property({ type: Number }) rowHeight = 0
@@ -328,8 +332,11 @@ class ReportCanvas extends LitElement {
     const responsive = this.responsiveGrid()
     const viewport = this.viewportElement()
     const hostRect = this.getBoundingClientRect()
+    const layout = resolvedLayoutMode(this.layoutMode, this.autoLayoutMediaQuery?.matches)
     const nextContentWidth = responsive
-      ? Math.max(0, viewport?.clientWidth ?? hostRect.width)
+      ? layout === 'desktop'
+        ? defaultDesktopCanvasWidth
+        : Math.max(0, viewport?.clientWidth ?? hostRect.width)
       : this.width
     if (nextContentWidth <= 0) return
     let nextContentHeight = responsive ? this.padding * 2 : this.height

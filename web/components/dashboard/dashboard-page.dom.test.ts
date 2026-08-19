@@ -121,6 +121,63 @@ test('responsive report canvas derives browser geometry from canonical grid plac
   }
 })
 
+test('desktop canonical grids keep stable canvas geometry and scroll when the viewport narrows', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-report-canvas'))
+    const geometry = await page.evaluate(async () => {
+      const canvas = document.createElement('lv-report-canvas') as any
+      canvas.style.width = '1000px'
+      canvas.style.height = '600px'
+      canvas.width = 0
+      canvas.height = 0
+      canvas.columns = 12
+      canvas.rowHeight = 48
+      canvas.gap = 16
+      canvas.padding = 16
+      const visual = document.createElement('div')
+      visual.dataset.canvasVisual = ''
+      visual.dataset.col = '1'
+      visual.dataset.row = '1'
+      visual.dataset.colSpan = '6'
+      visual.dataset.rowSpan = '4'
+      canvas.append(visual)
+      document.body.append(canvas)
+      await canvas.updateComplete
+      document.dispatchEvent(new CustomEvent('lv-report-zoom-command', {
+        detail: { layout: 'desktop', mode: 'actual-size' },
+      }))
+      await canvas.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+
+      const viewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
+      const before = {
+        left: visual.style.left,
+        width: visual.style.width,
+        horizontalScroll: viewport.scrollWidth > viewport.clientWidth,
+      }
+      canvas.style.width = '800px'
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      return {
+        before,
+        after: {
+          left: visual.style.left,
+          width: visual.style.width,
+          horizontalScroll: viewport.scrollWidth > viewport.clientWidth,
+        },
+      }
+    })
+
+    expect(geometry.after.left).toBe(geometry.before.left)
+    expect(geometry.after.width).toBe(geometry.before.width)
+    expect(geometry.before.horizontalScroll).toBe(true)
+    expect(geometry.after.horizontalScroll).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
