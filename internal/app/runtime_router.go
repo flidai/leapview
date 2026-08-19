@@ -1567,13 +1567,14 @@ func bootstrapAPIGenDecision(
 	targets deliveryTargetReader,
 	targetID string,
 ) (accessmodule.APIGenBootstrapDecision, error) {
-	// Deployment status/event reads are control-plane operations. Their
-	// project-scoped RESOURCE_READ contract cannot be evaluated against the
-	// project graph (projects intentionally only support PROJECT_ADMIN), and
-	// the sealed delivery pointer advances before the in-process runtime cutover.
-	// Keep these reads on the durable, exact-claim bootstrap path through that
+	// Deployment status/event reads and candidate source synchronization are
+	// control-plane operations. Their project-scoped RESOURCE_READ/EDIT
+	// contracts cannot be evaluated against the project graph (projects
+	// intentionally only support PROJECT_ADMIN), and the sealed delivery
+	// pointer advances before the in-process runtime cutover. Keep these
+	// operations on the durable, exact-claim bootstrap path through that
 	// marker-to-runtime warm-up window.
-	if !bootstrapControlPlaneRead(operationID) {
+	if !bootstrapControlPlaneOperation(operationID) {
 		active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
 		if err != nil {
 			return accessmodule.APIGenBootstrapDecision{}, err
@@ -1601,9 +1602,10 @@ func bootstrapAPIGenDecision(
 	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowed(operationID)}, nil
 }
 
-func bootstrapControlPlaneRead(operationID string) bool {
+func bootstrapControlPlaneOperation(operationID string) bool {
 	switch operationID {
-	case "listDeployments", "getDeployment", "listDeploymentEvents":
+	case "listDeployments", "getDeployment", "listDeploymentEvents",
+		"planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization":
 		return true
 	default:
 		return false
