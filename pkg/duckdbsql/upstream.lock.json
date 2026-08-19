@@ -14,6 +14,15 @@
     "statement.json": "6625d774a91a406457da4730472aab2d82848c165cd0665805651d8d973b08b1",
     "tableref.json": "15c562d0b5286f6b1459df3b473c87f395d297262aa0a6d57016e8c8351d74c6"
   },
+  "enum_files": {
+    "src/include/duckdb/common/enums/aggregate_handling.hpp": "45451dededd4a1b93a3cce2a88cfdf08db291c09e937ed69c3469fda5830c996",
+    "src/include/duckdb/common/enums/cte_materialize.hpp": "e9910e776e52f3db458160530ff9927ca8f54ef0c717f66275ddce014129106d",
+    "src/include/duckdb/common/enums/expression_type.hpp": "664476c6c329d68677598f59065642b7a82a1a017af514204cd5d4dbd5aee524",
+    "src/include/duckdb/common/enums/order_type.hpp": "b229a0e3f50f53cfd3ca3982b2bb0d35f05b99af1b165c23e3fbaf8035c5e9ee",
+    "src/include/duckdb/common/enums/set_operation_type.hpp": "0f4ca5ad2da649f1bb3bb31f1660ad34e869ceb607c3187d51e0dcaa25b5a343",
+    "src/include/duckdb/common/types.hpp": "91dcff90f10a5a5267bcedab51e406308de6448b4f45a8a3d4e3ae9c31670356",
+    "src/include/duckdb/parser/expression/window_expression.hpp": "bca17727d129efb451eae03a3a9c8f2e94a71a288893e6c8dab3c8d8f3a147d5"
+  },
   "inventory_columns": {
     "duckdb_functions": [
       "database_name", "database_oid", "schema_name", "function_name", "alias_of",

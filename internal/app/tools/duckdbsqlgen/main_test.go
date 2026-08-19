@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/duckdb/duckdb-go/v2"
+	"github.com/flidai/leapview/pkg/duckdbsql"
+)
 
 func TestPinnedSchemaSnapshotFamilies(t *testing.T) {
 	schemas, err := loadSchemaSnapshot()
@@ -51,5 +57,75 @@ func TestSchemaRenderingIsDeterministic(t *testing.T) {
 	}
 	if first != second {
 		t.Fatal("schema rendering is not deterministic")
+	}
+}
+
+func TestInventoryRenderingPreservesDescriptiveFields(t *testing.T) {
+	tags := duckdb.OrderedMap{}
+	tags.Set("zeta", "last")
+	tags.Set("alpha", "first")
+	inventory := duckdbsql.MetadataInventory{
+		Functions: []duckdbsql.FunctionMetadata{{
+			FunctionName: "documented_fn",
+			Description:  "A descriptive function.",
+			Comment:      "A runtime comment.",
+			Tags:         stringMap(tags),
+			Examples:     []string{"SELECT documented_fn(1)"},
+		}},
+		Types: []duckdbsql.TypeMetadata{{
+			TypeName: "documented_type",
+			TypeSize: 16,
+			Comment:  "A runtime type comment.",
+			Tags:     map[string]string{"zeta": "last", "alpha": "first"},
+		}},
+	}
+	first, err := render(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := render(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("inventory rendering is not deterministic")
+	}
+	for _, want := range []string{
+		`Description: "A descriptive function."`,
+		`Comment: "A runtime comment."`,
+		`Tags: map[string]string{"alpha": "first", "zeta": "last"}`,
+		`Examples: []string{"SELECT documented_fn(1)"}`,
+		`TypeSize: 16`,
+		`Comment: "A runtime type comment."`,
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("rendered inventory missing %q", want)
+		}
+	}
+}
+
+func TestInventoryValueConversions(t *testing.T) {
+	ordered := duckdb.OrderedMap{}
+	ordered.Set("name", "value")
+	ordered.Set("count", int64(3))
+	got := stringMap(ordered)
+	if got["name"] != "value" || got["count"] != "3" {
+		t.Fatalf("stringMap = %#v", got)
+	}
+	if got := int64Value(int32(7)); got != 7 {
+		t.Fatalf("int64Value = %d, want 7", got)
+	}
+}
+
+func TestInventoryQueriesInspectCompleteRuntimeSchemas(t *testing.T) {
+	for table, query := range map[string]string{
+		"duckdb_functions": functionsSQL,
+		"duckdb_keywords":  keywordsSQL,
+		"duckdb_types":     typesSQL,
+	} {
+		want := "SELECT * FROM " + table + "()"
+		if strings.TrimSpace(query) != want {
+			t.Fatalf("%s query = %q, want %q", table, query, want)
+		}
 	}
 }

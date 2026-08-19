@@ -45,6 +45,32 @@ func TestSortInventoryIsCanonical(t *testing.T) {
 	}
 }
 
+func TestCloneMetadataInventoryDeepCopiesDocumentation(t *testing.T) {
+	source := MetadataInventory{
+		Functions: []FunctionMetadata{{
+			Description: "description",
+			Comment:     "comment",
+			Tags:        map[string]string{"owner": "duckdb"},
+			Examples:    []string{"SELECT 1"},
+		}},
+		Types: []TypeMetadata{{
+			TypeSize: 8,
+			Comment:  "type comment",
+			Tags:     map[string]string{"kind": "numeric"},
+		}},
+	}
+	clone := cloneMetadataInventory(source)
+	if clone.Functions[0].Description != source.Functions[0].Description || clone.Types[0].TypeSize != source.Types[0].TypeSize {
+		t.Fatalf("documentation fields were not copied: %#v", clone)
+	}
+	clone.Functions[0].Tags["owner"] = "changed"
+	clone.Functions[0].Examples[0] = "SELECT 2"
+	clone.Types[0].Tags["kind"] = "changed"
+	if source.Functions[0].Tags["owner"] != "duckdb" || source.Functions[0].Examples[0] != "SELECT 1" || source.Types[0].Tags["kind"] != "numeric" {
+		t.Fatalf("clone shares mutable documentation data: %#v", source)
+	}
+}
+
 func TestGeneratedDescriptorManifestMatchesLock(t *testing.T) {
 	identity, err := UpstreamSourceIdentity()
 	if err != nil {
@@ -61,8 +87,48 @@ func TestGeneratedDescriptorManifestMatchesLock(t *testing.T) {
 		}
 	}
 	inventory := GeneratedInventorySnapshot()
-	if len(inventory.Functions) == 0 || len(inventory.Keywords) == 0 || len(inventory.Types) == 0 {
-		t.Fatalf("generated inventory is empty: functions=%d keywords=%d types=%d", len(inventory.Functions), len(inventory.Keywords), len(inventory.Types))
+	if len(inventory.Functions) != 2950 || len(inventory.Keywords) != 489 || len(inventory.Types) != 244 {
+		t.Fatalf("generated inventory counts changed: functions=%d keywords=%d types=%d", len(inventory.Functions), len(inventory.Keywords), len(inventory.Types))
+	}
+	functionKinds := make(map[string]bool)
+	for _, function := range inventory.Functions {
+		functionKinds[function.FunctionType] = true
+	}
+	for _, kind := range []string{"aggregate", "macro", "pragma", "scalar", "table", "table_macro"} {
+		if !functionKinds[kind] {
+			t.Errorf("generated inventory is missing %s functions", kind)
+		}
+	}
+}
+
+func TestGeneratedInventoryPreservesRuntimeDocumentationFields(t *testing.T) {
+	inventory := GeneratedInventorySnapshot()
+	var hasDescription, hasExamples, hasTypeSize bool
+	for _, function := range inventory.Functions {
+		hasDescription = hasDescription || function.Description != ""
+		hasExamples = hasExamples || len(function.Examples) > 0
+	}
+	for _, typ := range inventory.Types {
+		hasTypeSize = hasTypeSize || typ.TypeSize != 0
+	}
+	if !hasDescription || !hasExamples || !hasTypeSize {
+		t.Fatalf("generated documentation fields missing: description=%t examples=%t type_size=%t", hasDescription, hasExamples, hasTypeSize)
+	}
+}
+
+func TestGeneratedEnumManifestMatchesLock(t *testing.T) {
+	identity, err := UpstreamSourceIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := GeneratedEnumManifestSnapshot()
+	if len(manifest) != len(identity.EnumFileSHA) {
+		t.Fatalf("enum manifest length = %d, lock has %d", len(manifest), len(identity.EnumFileSHA))
+	}
+	for _, source := range manifest {
+		if identity.EnumFileSHA[source.Path] != source.SHA256 {
+			t.Fatalf("enum source %s does not match lock", source.Path)
+		}
 	}
 }
 

@@ -1,0 +1,27 @@
+{
+  "duckdb_version": "v1.5.4",
+  "duckdb_source_commit": "08e34c447bae34eaee3723cac61f2878b6bdf787",
+  "source_root": "extension/core_functions",
+  "files": {
+    "aggregate/algebraic/functions.json": "d872177048df3a4f39a5419d3530092f4ada187cc55b9753820eb760345a004c",
+    "aggregate/distributive/functions.json": "20ff5a0623d42fb18597cceb4eb1a2c8c989f6e1241b36a72738aa507e2a0151",
+    "aggregate/holistic/functions.json": "7c0560b04982b68a6c2063cdf30ad140bbcc2b16ca0e7b317e88ab3676c5a2e8",
+    "aggregate/nested/functions.json": "b7d5f639de80d4f80246a95283ae4d6d906b6d452189a650979cbfe0c05befbe",
+    "aggregate/regression/functions.json": "9bbc4cf96d834bf617c18cd747b32ee5ae88951b30fcf14d5f2be058ebe6a3f2",
+    "scalar/array/functions.json": "6706d78adc6098d6c468dad5579d3a609b789767af943d0c112c79c6ba8d3a22",
+    "scalar/bit/functions.json": "ef4577883e44c3a716a4859ab47300082ba0dd14424b253e9d2e96665b2bc19b",
+    "scalar/blob/functions.json": "99d926286d921df57c9508eafac1d3426306f007a143afb21316ff59eab909cf",
+    "scalar/date/functions.json": "ec852be3ceca672208b2c9861e2b94314d270108943c654ddd57230e7b803e31",
+    "scalar/debug/functions.json": "668c231c8e4c854cf85d171eb3f005623042118cb193ed441c666ef888b65be5",
+    "scalar/enum/functions.json": "7b3fb6340b142f1ed60389f43f2ba6f4a2fe55dff68c817be4a4827860de6ad4",
+    "scalar/generic/functions.json": "9321ebf4b3cab636d0fd2ef74bd463e001441c25123f09fdb6311ab6ef75ecc0",
+    "scalar/list/functions.json": "14567bb7151d3bc9784e330c8fcd01e30b2b6026fdd4f95f3e5bc5f35db90ac2",
+    "scalar/map/functions.json": "384f16553d1ac74325d2bf41fd22212fdc53cc04bb0138807d69ae80c6a474f3",
+    "scalar/math/functions.json": "151a5f5061b452aff79f65e35bb7eb97e8483562ebe8eecbb0d1376fca500c4f",
+    "scalar/operators/functions.json": "c8bfe8224a2a230bae06a1b15537f247289203d2a175bd55fbd41833b071e523",
+    "scalar/random/functions.json": "b82b7fd8e9c19e5bb8b7235708d4586ee8d8a47289036335ef106f8c00fe8664",
+    "scalar/string/functions.json": "a8d39d520aa1900b01092d840b1a2c1c7c3933df4e661f5a928c51b88e31c5c9",
+    "scalar/struct/functions.json": "a20ccb5f54fd70703b939f0eb45a41b85919e257c4b817e319b640a86c6f3bb1",
+    "scalar/union/functions.json": "de615a9a63289a22127e3763a1858b401afd0d1fb55959aad516eed3c739a6d0"
+  }
+}

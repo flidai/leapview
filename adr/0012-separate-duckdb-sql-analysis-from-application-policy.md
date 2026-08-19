@@ -135,7 +135,11 @@ descriptions maintained with the pinned DuckDB source, including query-node,
 parsed-expression, table-reference, and result-modifier definitions. Function,
 keyword, and type inventories are generated from the exact pinned DuckDB
 distribution through `duckdb_functions()`, `duckdb_keywords()`, and
-`duckdb_types()`.
+`duckdb_types()`. Closed enum inventories are generated from hash-locked DuckDB
+headers. User-facing function documentation is generated separately from the
+pinned `extension/core_functions` JSON descriptors that also feed DuckDB's
+documentation build. CI verifies every snapshot against the exact source
+commit as well as regenerating it hermetically from checked-in inputs.
 
 Generated metadata describes what DuckDB exposes; it does not decide what
 LeapView authorizes. In particular, a function reported as scalar, aggregate,
@@ -144,9 +148,9 @@ deterministic, or appropriate for governed Model execution. Newly generated
 functions remain unavailable to Model SQL until the application policy admits
 them explicitly.
 
-Documentation scraping may supply examples and descriptions when their license
-and provenance are retained. It is not an authoritative grammar or admission
-source.
+Documentation metadata may supply examples and descriptions when its license
+and provenance are retained. It remains separate from the runtime overload
+inventory and is not an authoritative grammar or admission source.
 
 ### Application policy boundary
 

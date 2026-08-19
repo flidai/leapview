@@ -2061,95 +2061,78 @@ func (d *decoder) values(raw json.RawMessage) ([]Value, error) {
 	return out, nil
 }
 func validAggregateHandling(v string) bool {
-	return v == "STANDARD_HANDLING" || v == "NO_AGGREGATES_ALLOWED" || v == "FORCE_AGGREGATES"
+	return generatedEnumContains("AggregateHandling", v)
 }
 func validSetOperation(v string) bool {
-	return v == "UNION" || v == "EXCEPT" || v == "INTERSECT" || v == "UNION_BY_NAME"
+	// NONE is a valid DuckDB enum value but is not a serializable query
+	// set-operation node, so it remains intentionally excluded at this layer.
+	return v != "NONE" && generatedEnumContains("SetOperationType", v)
 }
 
 func validCTEMaterialized(value string) bool {
-	switch value {
-	case "CTE_MATERIALIZE_DEFAULT", "CTE_MATERIALIZE_ALWAYS", "CTE_MATERIALIZE_NEVER":
-		return true
-	default:
-		return false
-	}
+	return generatedEnumContains("CTEMaterialize", value)
 }
 
 func validOrderType(value string) bool {
-	return value == "ORDER_DEFAULT" || value == "ASCENDING" || value == "DESCENDING"
+	return value != "INVALID" && generatedEnumContains("OrderType", value)
 }
 
 func validOrderNullType(value string) bool {
-	return value == "ORDER_DEFAULT" || value == "NULLS_FIRST" || value == "NULLS_LAST"
+	return value != "INVALID" && generatedEnumContains("OrderByNullType", value)
 }
 
 func validWindowBoundary(value string) bool {
-	switch value {
-	case "", "UNBOUNDED_PRECEDING", "UNBOUNDED_FOLLOWING", "CURRENT_ROW_RANGE", "CURRENT_ROW_ROWS", "EXPR_PRECEDING_ROWS", "EXPR_FOLLOWING_ROWS", "EXPR_PRECEDING_RANGE", "EXPR_FOLLOWING_RANGE", "CURRENT_ROW_GROUPS", "EXPR_PRECEDING_GROUPS", "EXPR_FOLLOWING_GROUPS":
-		return true
-	default:
-		return false
-	}
+	return value == "" || (value != "INVALID" && generatedEnumContains("WindowBoundary", value))
 }
 
 func validWindowExclude(value string) bool {
-	switch value {
-	case "", "NO_OTHER", "CURRENT_ROW", "GROUP", "TIES":
-		return true
-	default:
-		return false
-	}
+	return value == "" || generatedEnumContains("WindowExcludeMode", value)
+}
+
+var supportedExpressionTypesByClass = map[string]map[string]struct{}{
+	"CONSTANT":             {"VALUE_CONSTANT": {}, "VALUE_NULL": {}, "VALUE_DEFAULT": {}},
+	"COLUMN_REF":           {"COLUMN_REF": {}},
+	"STAR":                 {"STAR": {}, "TABLE_STAR": {}},
+	"FUNCTION":             {"FUNCTION": {}, "AGGREGATE": {}, "GROUPING_FUNCTION": {}, "FUNCTION_REF": {}},
+	"OPERATOR":             {"OPERATOR_NOT": {}, "OPERATOR_IS_NULL": {}, "OPERATOR_IS_NOT_NULL": {}, "OPERATOR_UNPACK": {}, "OPERATOR_NULLIF": {}, "OPERATOR_COALESCE": {}, "ARRAY_EXTRACT": {}, "ARRAY_SLICE": {}, "STRUCT_EXTRACT": {}, "ARRAY_CONSTRUCTOR": {}, "ARROW": {}, "OPERATOR_TRY": {}, "OPERATOR_CAST": {}},
+	"CONJUNCTION":          {"CONJUNCTION_AND": {}, "CONJUNCTION_OR": {}},
+	"COMPARISON":           {"COMPARE_EQUAL": {}, "COMPARE_NOTEQUAL": {}, "COMPARE_LESSTHAN": {}, "COMPARE_GREATERTHAN": {}, "COMPARE_LESSTHANOREQUALTO": {}, "COMPARE_GREATERTHANOREQUALTO": {}, "COMPARE_IN": {}, "COMPARE_NOT_IN": {}, "COMPARE_DISTINCT_FROM": {}, "COMPARE_BETWEEN": {}, "COMPARE_NOT_BETWEEN": {}, "COMPARE_NOT_DISTINCT_FROM": {}},
+	"CAST":                 {"OPERATOR_CAST": {}, "CAST": {}},
+	"CASE":                 {"CASE_EXPR": {}},
+	"WINDOW":               {"WINDOW_AGGREGATE": {}, "WINDOW_RANK": {}, "WINDOW_RANK_DENSE": {}, "WINDOW_NTILE": {}, "WINDOW_PERCENT_RANK": {}, "WINDOW_CUME_DIST": {}, "WINDOW_ROW_NUMBER": {}, "WINDOW_FIRST_VALUE": {}, "WINDOW_LAST_VALUE": {}, "WINDOW_LEAD": {}, "WINDOW_LAG": {}, "WINDOW_NTH_VALUE": {}, "WINDOW_FILL": {}},
+	"SUBQUERY":             {"SUBQUERY": {}},
+	"BETWEEN":              {"COMPARE_BETWEEN": {}, "COMPARE_NOT_BETWEEN": {}},
+	"COLLATE":              {"COLLATE": {}},
+	"DEFAULT":              {"VALUE_DEFAULT": {}},
+	"LAMBDA":               {"LAMBDA": {}},
+	"LAMBDA_REF":           {"LAMBDA_REF": {}},
+	"PARAMETER":            {"VALUE_PARAMETER": {}},
+	"POSITIONAL_REFERENCE": {"POSITIONAL_REFERENCE": {}},
+	"TYPE":                 {"TYPE": {}},
 }
 
 func validExpressionType(class, typ string) bool {
-	switch class {
-	case "CONSTANT":
-		return typ == "VALUE_CONSTANT" || typ == "VALUE_NULL" || typ == "VALUE_DEFAULT"
-	case "COLUMN_REF":
-		return typ == "COLUMN_REF"
-	case "STAR":
-		return typ == "STAR" || typ == "TABLE_STAR"
-	case "FUNCTION":
-		return typ == "FUNCTION" || typ == "AGGREGATE" || typ == "GROUPING_FUNCTION" || typ == "FUNCTION_REF"
-	case "OPERATOR":
-		return typ == "OPERATOR_NOT" || typ == "OPERATOR_IS_NULL" || typ == "OPERATOR_IS_NOT_NULL" || typ == "OPERATOR_UNPACK" || typ == "OPERATOR_NULLIF" || typ == "OPERATOR_COALESCE" || typ == "ARRAY_EXTRACT" || typ == "ARRAY_SLICE" || typ == "STRUCT_EXTRACT" || typ == "ARRAY_CONSTRUCTOR" || typ == "ARROW" || typ == "OPERATOR_TRY" || typ == "OPERATOR_CAST"
-	case "CONJUNCTION":
-		return typ == "CONJUNCTION_AND" || typ == "CONJUNCTION_OR"
-	case "COMPARISON":
-		return typ == "COMPARE_EQUAL" || typ == "COMPARE_NOTEQUAL" || typ == "COMPARE_LESSTHAN" || typ == "COMPARE_GREATERTHAN" || typ == "COMPARE_LESSTHANOREQUALTO" || typ == "COMPARE_GREATERTHANOREQUALTO" || typ == "COMPARE_IN" || typ == "COMPARE_NOT_IN" || typ == "COMPARE_DISTINCT_FROM" || typ == "COMPARE_BETWEEN" || typ == "COMPARE_NOT_BETWEEN" || typ == "COMPARE_NOT_DISTINCT_FROM"
-	case "CAST":
-		return typ == "OPERATOR_CAST" || typ == "CAST"
-	case "CASE":
-		return typ == "CASE_EXPR"
-	case "WINDOW":
-		return typ == "WINDOW_AGGREGATE" || typ == "WINDOW_RANK" || typ == "WINDOW_RANK_DENSE" || typ == "WINDOW_NTILE" || typ == "WINDOW_PERCENT_RANK" || typ == "WINDOW_CUME_DIST" || typ == "WINDOW_ROW_NUMBER" || typ == "WINDOW_FIRST_VALUE" || typ == "WINDOW_LAST_VALUE" || typ == "WINDOW_LEAD" || typ == "WINDOW_LAG" || typ == "WINDOW_NTH_VALUE" || typ == "WINDOW_FILL"
-	case "SUBQUERY":
-		return typ == "SUBQUERY"
-	case "BETWEEN":
-		return typ == "COMPARE_BETWEEN" || typ == "COMPARE_NOT_BETWEEN"
-	case "COLLATE":
-		return typ == "COLLATE"
-	case "DEFAULT":
-		return typ == "VALUE_DEFAULT"
-	case "LAMBDA":
-		return typ == "LAMBDA"
-	case "LAMBDA_REF":
-		return typ == "LAMBDA_REF"
-	case "PARAMETER":
-		return typ == "VALUE_PARAMETER"
-	case "POSITIONAL_REFERENCE":
-		return typ == "POSITIONAL_REFERENCE"
-	case "TYPE":
-		return typ == "TYPE"
-	default:
+	if !generatedEnumContains("ExpressionClass", class) || !generatedEnumContains("ExpressionType", typ) {
 		return false
 	}
+	allowed, ok := supportedExpressionTypesByClass[class]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[typ]
+	return ok
 }
 func knownLogicalType(v string) bool {
-	switch v {
-	case "INVALID", "SQLNULL", "UNKNOWN", "ANY", "UNBOUND", "TEMPLATE", "TYPE", "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "DATE", "TIME", "TIMESTAMP_SEC", "TIMESTAMP_MS", "TIMESTAMP", "TIMESTAMP_NS", "DECIMAL", "FLOAT", "DOUBLE", "CHAR", "VARCHAR", "BLOB", "INTERVAL", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "TIMESTAMP_TZ", "TIMESTAMP_TZ_NS", "TIME_TZ", "TIME_NS", "BIT", "STRING_LITERAL", "INTEGER_LITERAL", "BIGNUM", "UHUGEINT", "HUGEINT", "POINTER", "VALIDITY", "UUID", "GEOMETRY", "STRUCT", "LIST", "MAP", "TABLE", "ENUM", "LEGACY_AGGREGATE_STATE", "LAMBDA", "ARRAY", "VARIANT", "UNION", "TUPLE", "JSON":
+	if generatedEnumContains("LogicalTypeId", v) {
 		return true
+	}
+	// JSON and extension-defined logical IDs are not core LogicalTypeId enum
+	// members. The pinned runtime catalog is the source of truth for those
+	// extension types (the parser explicitly loads json before serialization).
+	for _, typ := range generatedInventory.Types {
+		if typ.LogicalType == v || typ.TypeName == v {
+			return true
+		}
 	}
 	return false
 }

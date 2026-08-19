@@ -55,6 +55,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check out pinned DuckDB metadata sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: duckdb/duckdb
+          ref: 08e34c447bae34eaee3723cac61f2878b6bdf787
+          path: .duckdb-source
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            extension/core_functions
+            src/include/duckdb/storage/serialization
+            src/include/duckdb/common/enums/aggregate_handling.hpp
+            src/include/duckdb/common/enums/cte_materialize.hpp
+            src/include/duckdb/common/enums/expression_type.hpp
+            src/include/duckdb/common/enums/order_type.hpp
+            src/include/duckdb/common/enums/set_operation_type.hpp
+            src/include/duckdb/common/types.hpp
+            src/include/duckdb/parser/expression/window_expression.hpp
+
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
@@ -68,6 +86,11 @@ jobs:
 
       - name: Verify generated artifacts
         run: task generated:check
+
+      - name: Verify DuckDB metadata against pinned source
+        env:
+          DUCKDB_SOURCE: ${{ github.workspace }}/.duckdb-source
+        run: task duckdbsql:source:check
 
   go-application-validation:
     name: Go application tests (PR)

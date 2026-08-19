@@ -74,3 +74,45 @@ var generatedStatementVariants = []string{"CTE_NODE", "RECURSIVE_CTE_NODE", "SEL
 var generatedRelationVariants = []string{"BASE_TABLE", "COLUMN_DATA", "EMPTY_FROM", "EXPRESSION_LIST", "JOIN", "PIVOT", "SHOW_REF", "SUBQUERY", "TABLE_FUNCTION"}
 var generatedExpressionVariants = []string{"BETWEEN", "CASE", "CAST", "COLLATE", "COLUMN_REF", "COMPARISON", "CONJUNCTION", "CONSTANT", "DEFAULT", "FUNCTION", "LAMBDA", "LAMBDA_REF", "OPERATOR", "PARAMETER", "POSITIONAL_REFERENCE", "STAR", "SUBQUERY", "TYPE", "WINDOW"}
 var generatedModifierVariants = []string{"DISTINCT_MODIFIER", "LIMIT_MODIFIER", "LIMIT_PERCENT_MODIFIER", "ORDER_MODIFIER"}
+var generatedEnumManifest = []DescriptorProvenance{
+	{Path: "src/include/duckdb/common/enums/aggregate_handling.hpp", SHA256: "45451dededd4a1b93a3cce2a88cfdf08db291c09e937ed69c3469fda5830c996"},
+	{Path: "src/include/duckdb/common/enums/cte_materialize.hpp", SHA256: "e9910e776e52f3db458160530ff9927ca8f54ef0c717f66275ddce014129106d"},
+	{Path: "src/include/duckdb/common/enums/expression_type.hpp", SHA256: "664476c6c329d68677598f59065642b7a82a1a017af514204cd5d4dbd5aee524"},
+	{Path: "src/include/duckdb/common/enums/order_type.hpp", SHA256: "b229a0e3f50f53cfd3ca3982b2bb0d35f05b99af1b165c23e3fbaf8035c5e9ee"},
+	{Path: "src/include/duckdb/common/enums/set_operation_type.hpp", SHA256: "0f4ca5ad2da649f1bb3bb31f1660ad34e869ceb607c3187d51e0dcaa25b5a343"},
+	{Path: "src/include/duckdb/common/types.hpp", SHA256: "91dcff90f10a5a5267bcedab51e406308de6448b4f45a8a3d4e3ae9c31670356"},
+	{Path: "src/include/duckdb/parser/expression/window_expression.hpp", SHA256: "bca17727d129efb451eae03a3a9c8f2e94a71a288893e6c8dab3c8d8f3a147d5"},
+}
+
+var generatedAggregateHandlingValues = []string{"STANDARD_HANDLING", "NO_AGGREGATES_ALLOWED", "FORCE_AGGREGATES"}
+var generatedCTEMaterializeValues = []string{"CTE_MATERIALIZE_DEFAULT", "CTE_MATERIALIZE_ALWAYS", "CTE_MATERIALIZE_NEVER"}
+var generatedExpressionClassValues = []string{"INVALID", "AGGREGATE", "CASE", "CAST", "COLUMN_REF", "COMPARISON", "CONJUNCTION", "CONSTANT", "DEFAULT", "FUNCTION", "OPERATOR", "STAR", "SUBQUERY", "WINDOW", "PARAMETER", "COLLATE", "LAMBDA", "POSITIONAL_REFERENCE", "BETWEEN", "LAMBDA_REF", "TYPE", "BOUND_AGGREGATE", "BOUND_CASE", "BOUND_CAST", "BOUND_COLUMN_REF", "BOUND_COMPARISON", "BOUND_CONJUNCTION", "BOUND_CONSTANT", "BOUND_DEFAULT", "BOUND_FUNCTION", "BOUND_OPERATOR", "BOUND_PARAMETER", "BOUND_REF", "BOUND_SUBQUERY", "BOUND_WINDOW", "BOUND_BETWEEN", "BOUND_UNNEST", "BOUND_LAMBDA", "BOUND_LAMBDA_REF", "BOUND_EXPRESSION", "BOUND_EXPANDED"}
+var generatedExpressionTypeValues = []string{"INVALID", "OPERATOR_CAST", "OPERATOR_NOT", "OPERATOR_IS_NULL", "OPERATOR_IS_NOT_NULL", "OPERATOR_UNPACK", "COMPARE_EQUAL", "COMPARE_BOUNDARY_START", "COMPARE_NOTEQUAL", "COMPARE_LESSTHAN", "COMPARE_GREATERTHAN", "COMPARE_LESSTHANOREQUALTO", "COMPARE_GREATERTHANOREQUALTO", "COMPARE_IN", "COMPARE_NOT_IN", "COMPARE_DISTINCT_FROM", "COMPARE_BETWEEN", "COMPARE_NOT_BETWEEN", "COMPARE_NOT_DISTINCT_FROM", "COMPARE_BOUNDARY_END", "CONJUNCTION_AND", "CONJUNCTION_OR", "VALUE_CONSTANT", "VALUE_PARAMETER", "VALUE_TUPLE", "VALUE_TUPLE_ADDRESS", "VALUE_NULL", "VALUE_VECTOR", "VALUE_SCALAR", "VALUE_DEFAULT", "AGGREGATE", "BOUND_AGGREGATE", "GROUPING_FUNCTION", "WINDOW_AGGREGATE", "WINDOW_RANK", "WINDOW_RANK_DENSE", "WINDOW_NTILE", "WINDOW_PERCENT_RANK", "WINDOW_CUME_DIST", "WINDOW_ROW_NUMBER", "WINDOW_FIRST_VALUE", "WINDOW_LAST_VALUE", "WINDOW_LEAD", "WINDOW_LAG", "WINDOW_NTH_VALUE", "WINDOW_FILL", "FUNCTION", "BOUND_FUNCTION", "CASE_EXPR", "OPERATOR_NULLIF", "OPERATOR_COALESCE", "ARRAY_EXTRACT", "ARRAY_SLICE", "STRUCT_EXTRACT", "ARRAY_CONSTRUCTOR", "ARROW", "OPERATOR_TRY", "SUBQUERY", "STAR", "TABLE_STAR", "PLACEHOLDER", "COLUMN_REF", "FUNCTION_REF", "TABLE_REF", "LAMBDA_REF", "TYPE", "CAST", "BOUND_REF", "BOUND_COLUMN_REF", "BOUND_UNNEST", "COLLATE", "LAMBDA", "POSITIONAL_REFERENCE", "BOUND_LAMBDA_REF", "BOUND_EXPANDED"}
+var generatedLogicalTypeIdValues = []string{"INVALID", "SQLNULL", "UNKNOWN", "ANY", "UNBOUND", "TEMPLATE", "TYPE", "BOOLEAN", "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "DATE", "TIME", "TIMESTAMP_SEC", "TIMESTAMP_MS", "TIMESTAMP", "TIMESTAMP_NS", "DECIMAL", "FLOAT", "DOUBLE", "CHAR", "VARCHAR", "BLOB", "INTERVAL", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "TIMESTAMP_TZ", "TIME_TZ", "TIME_NS", "BIT", "STRING_LITERAL", "INTEGER_LITERAL", "BIGNUM", "UHUGEINT", "HUGEINT", "POINTER", "VALIDITY", "UUID", "GEOMETRY", "STRUCT", "LIST", "MAP", "TABLE", "ENUM", "AGGREGATE_STATE", "LAMBDA", "UNION", "ARRAY", "VARIANT"}
+var generatedOrderByNullTypeValues = []string{"INVALID", "ORDER_DEFAULT", "NULLS_FIRST", "NULLS_LAST"}
+var generatedOrderTypeValues = []string{"INVALID", "ORDER_DEFAULT", "ASCENDING", "DESCENDING"}
+var generatedSetOperationTypeValues = []string{"NONE", "UNION", "EXCEPT", "INTERSECT", "UNION_BY_NAME"}
+var generatedWindowBoundaryValues = []string{"INVALID", "UNBOUNDED_PRECEDING", "UNBOUNDED_FOLLOWING", "CURRENT_ROW_RANGE", "CURRENT_ROW_ROWS", "EXPR_PRECEDING_ROWS", "EXPR_FOLLOWING_ROWS", "EXPR_PRECEDING_RANGE", "EXPR_FOLLOWING_RANGE", "CURRENT_ROW_GROUPS", "EXPR_PRECEDING_GROUPS", "EXPR_FOLLOWING_GROUPS"}
+var generatedWindowExcludeModeValues = []string{"NO_OTHER", "CURRENT_ROW", "GROUP", "TIES"}
+
+var generatedEnumValues = map[string][]string{
+	"AggregateHandling": generatedAggregateHandlingValues,
+	"CTEMaterialize":    generatedCTEMaterializeValues,
+	"ExpressionClass":   generatedExpressionClassValues,
+	"ExpressionType":    generatedExpressionTypeValues,
+	"LogicalTypeId":     generatedLogicalTypeIdValues,
+	"OrderByNullType":   generatedOrderByNullTypeValues,
+	"OrderType":         generatedOrderTypeValues,
+	"SetOperationType":  generatedSetOperationTypeValues,
+	"WindowBoundary":    generatedWindowBoundaryValues,
+	"WindowExcludeMode": generatedWindowExcludeModeValues,
+}
+
+func generatedEnumContains(enumName, value string) bool {
+	for _, candidate := range generatedEnumValues[enumName] {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}

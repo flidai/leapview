@@ -25,13 +25,12 @@ import (
 
 const (
 	defaultOutput = "pkg/duckdbsql/metadata_generated.go"
-	functionsSQL  = `SELECT database_name, database_oid, schema_name, function_name, alias_of,
-function_type, description, comment, tags, return_type, parameters, parameter_types,
-varargs, macro_definition, has_side_effects, internal, function_oid, examples, stability, categories
-FROM duckdb_functions()`
-	keywordsSQL = `SELECT keyword_name, keyword_category FROM duckdb_keywords()`
-	typesSQL    = `SELECT database_name, database_oid, schema_name, schema_oid, type_oid, type_name,
-type_size, logical_type, type_category, comment, tags, internal, labels FROM duckdb_types()`
+	// SELECT * is intentional: assertColumns compares the complete runtime
+	// schema with the pinned lock before any row is decoded. Adding, removing,
+	// or reordering an upstream field therefore fails generation visibly.
+	functionsSQL = `SELECT * FROM duckdb_functions()`
+	keywordsSQL  = `SELECT * FROM duckdb_keywords()`
+	typesSQL     = `SELECT * FROM duckdb_types()`
 )
 
 type schemaDescriptor struct {
@@ -46,6 +45,7 @@ type schemaFamilies struct {
 	Expressions map[string]schemaDescriptor
 	Modifiers   map[string]schemaDescriptor
 	Supporting  map[string]schemaDescriptor
+	Enums       enumSchema
 }
 
 type descriptorClass struct {
@@ -67,15 +67,13 @@ type snapshotSchema struct {
 var astSchemaSnapshot []byte
 
 func main() {
-	var output, schemaOutput, source, lock string
+	var output, schemaOutput, source string
 	var check bool
 	flag.StringVar(&output, "output", defaultOutput, "generated Go output path")
 	flag.StringVar(&schemaOutput, "schema-output", "pkg/duckdbsql/ast_schema_generated.go", "generated AST schema output path")
 	flag.StringVar(&source, "source", os.Getenv("DUCKDB_SOURCE"), "pinned DuckDB source checkout (optional; validates descriptor provenance)")
-	flag.StringVar(&lock, "lock", "pkg/duckdbsql/upstream.lock.json", "upstream lock path (reserved for diagnostics)")
 	flag.BoolVar(&check, "check", false, "verify generated output is current")
 	flag.Parse()
-	_ = lock // the package embeds and validates the canonical lock file
 
 	if source != "" {
 		if err := duckdbsql.ValidateSourceCheckout(source); err != nil {
@@ -130,10 +128,23 @@ func main() {
 }
 
 func loadSchemas(source string) (schemaFamilies, error) {
+	enums, err := loadEnumSchema(source)
+	if err != nil {
+		return schemaFamilies{}, err
+	}
 	if source == "" {
-		return loadSchemaSnapshot()
+		schemas, err := loadSchemaSnapshot()
+		if err != nil {
+			return schemaFamilies{}, err
+		}
+		schemas.Enums = enums
+		return schemas, nil
 	}
 	snapshot, err := loadSchemaSnapshot()
+	if err != nil {
+		return schemaFamilies{}, err
+	}
+	snapshot.Enums, err = loadEnumSnapshot()
 	if err != nil {
 		return schemaFamilies{}, err
 	}
@@ -144,6 +155,7 @@ func loadSchemas(source string) (schemaFamilies, error) {
 	families := schemaFamilies{
 		Statements: map[string]schemaDescriptor{}, Relations: map[string]schemaDescriptor{},
 		Expressions: map[string]schemaDescriptor{}, Modifiers: map[string]schemaDescriptor{}, Supporting: map[string]schemaDescriptor{},
+		Enums: enums,
 	}
 	for family, filename := range map[string]string{
 		"statement": "query_node.json", "relation": "tableref.json", "expression": "parsed_expression.json", "modifier": "result_modifier.json",
@@ -321,9 +333,10 @@ func readFunctions(ctx context.Context, db *sql.DB, inventory *duckdbsql.Metadat
 		}
 		inventory.Functions = append(inventory.Functions, duckdbsql.FunctionMetadata{
 			DatabaseName: str(v[0]), SchemaName: str(v[2]), FunctionName: str(v[3]), AliasOf: str(v[4]),
-			FunctionType: str(v[5]), ReturnType: str(v[9]), Parameters: strs(v[10]), ParameterTypes: strs(v[11]),
+			FunctionType: str(v[5]), Description: str(v[6]), Comment: str(v[7]), Tags: stringMap(v[8]),
+			ReturnType: str(v[9]), Parameters: strs(v[10]), ParameterTypes: strs(v[11]),
 			Varargs: str(v[12]), MacroDefinition: str(v[13]), HasSideEffects: boolean(v[14]), Internal: boolean(v[15]),
-			Stability: str(v[18]), Categories: strs(v[19]),
+			Stability: str(v[18]), Categories: strs(v[19]), Examples: strs(v[17]),
 		})
 	}
 	return rows.Err()
@@ -367,8 +380,9 @@ func readTypes(ctx context.Context, db *sql.DB, inventory *duckdbsql.MetadataInv
 			return err
 		}
 		inventory.Types = append(inventory.Types, duckdbsql.TypeMetadata{
-			DatabaseName: str(v[0]), SchemaName: str(v[2]), TypeName: str(v[5]), LogicalType: str(v[7]),
-			TypeCategory: str(v[8]), Internal: boolean(v[11]), Labels: strs(v[12]),
+			DatabaseName: str(v[0]), SchemaName: str(v[2]), TypeName: str(v[5]), TypeSize: int64Value(v[6]),
+			LogicalType: str(v[7]), TypeCategory: str(v[8]), Comment: str(v[9]), Tags: stringMap(v[10]),
+			Internal: boolean(v[11]), Labels: strs(v[12]),
 		})
 	}
 	return rows.Err()
@@ -416,6 +430,108 @@ func boolean(value any) bool {
 	}
 }
 
+func int64Value(value any) int64 {
+	switch v := value.(type) {
+	case int:
+		return int64(v)
+	case int8:
+		return int64(v)
+	case int16:
+		return int64(v)
+	case int32:
+		return int64(v)
+	case int64:
+		return v
+	case uint:
+		return int64(v)
+	case uint8:
+		return int64(v)
+	case uint16:
+		return int64(v)
+	case uint32:
+		return int64(v)
+	case uint64:
+		return int64(v)
+	case float32:
+		return int64(v)
+	case float64:
+		return int64(v)
+	case []byte:
+		parsed, _ := strconv.ParseInt(string(v), 10, 64)
+		return parsed
+	case string:
+		parsed, _ := strconv.ParseInt(v, 10, 64)
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func stringMap(value any) map[string]string {
+	if value == nil {
+		return nil
+	}
+	switch v := value.(type) {
+	case duckdb.OrderedMap:
+		return orderedMapStrings(&v)
+	case *duckdb.OrderedMap:
+		if v == nil {
+			return nil
+		}
+		return orderedMapStrings(v)
+	case duckdb.Map:
+		return mapAnyStrings(map[any]any(v))
+	case map[any]any:
+		return mapAnyStrings(v)
+	case map[string]string:
+		return cloneStringMap(v)
+	case map[string]any:
+		out := make(map[string]string, len(v))
+		for key, item := range v {
+			out[key] = str(item)
+		}
+		return out
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() != reflect.Map || rv.IsNil() {
+		return nil
+	}
+	out := make(map[string]string, rv.Len())
+	iter := rv.MapRange()
+	for iter.Next() {
+		out[str(iter.Key().Interface())] = str(iter.Value().Interface())
+	}
+	return out
+}
+
+func orderedMapStrings(value *duckdb.OrderedMap) map[string]string {
+	keys, values := value.Keys(), value.Values()
+	out := make(map[string]string, len(keys))
+	for i, key := range keys {
+		out[str(key)] = str(values[i])
+	}
+	return out
+}
+
+func mapAnyStrings(value map[any]any) map[string]string {
+	out := make(map[string]string, len(value))
+	for key, item := range value {
+		out[str(key)] = str(item)
+	}
+	return out
+}
+
+func cloneStringMap(value map[string]string) map[string]string {
+	if value == nil {
+		return nil
+	}
+	out := make(map[string]string, len(value))
+	for key, item := range value {
+		out[key] = item
+	}
+	return out
+}
+
 func strs(value any) []string {
 	if value == nil {
 		return nil
@@ -453,14 +569,19 @@ func render(inventory duckdbsql.MetadataInventory) (string, error) {
 	var b strings.Builder
 	b.WriteString("// Code generated by internal/app/tools/duckdbsqlgen; DO NOT EDIT.\n")
 	fmt.Fprintf(&b, "// DuckDB %s; upstream git commit %s; Go module %s %s; bindings module %s %s.\n", identity.DuckDBVersion, identity.DuckDBGitCommit, identity.GoModule, identity.GoModuleVersion, identity.BindingsModule, identity.BindingsVersion)
-	b.WriteString("package duckdbsql\n\n")
+	b.WriteString("package duckdbsql\n\nconst (\n")
+	fmt.Fprintf(&b, "\tDuckDBVersion = %q\n", identity.DuckDBVersion)
+	fmt.Fprintf(&b, "\tDuckDBSourceCommit = %q\n", identity.DuckDBGitCommit)
+	fmt.Fprintf(&b, "\tDuckDBGoModuleVersion = %q\n", identity.GoModuleVersion)
+	fmt.Fprintf(&b, "\tDuckDBBindingsVersion = %q\n", identity.BindingsVersion)
+	b.WriteString(")\n\n")
 	b.WriteString("var generatedDescriptorManifest = []DescriptorProvenance{\n")
 	for _, name := range sortedKeys(identity.DescriptorFileSHA) {
 		fmt.Fprintf(&b, "\t{Path: %q, SHA256: %q},\n", filepath.Join(identity.DescriptorRoot, name), identity.DescriptorFileSHA[name])
 	}
 	b.WriteString("}\n\nvar generatedInventory = MetadataInventory{\n\tFunctions: []FunctionMetadata{\n")
 	for _, row := range inventory.Functions {
-		fmt.Fprintf(&b, "\t\t{DatabaseName:%q, SchemaName:%q, FunctionName:%q, AliasOf:%q, FunctionType:%q, ReturnType:%q, Parameters:%s, ParameterTypes:%s, Varargs:%q, MacroDefinition:%q, HasSideEffects:%t, Internal:%t, Stability:%q, Categories:%s},\n", row.DatabaseName, row.SchemaName, row.FunctionName, row.AliasOf, row.FunctionType, row.ReturnType, quoteStrings(row.Parameters), quoteStrings(row.ParameterTypes), row.Varargs, row.MacroDefinition, row.HasSideEffects, row.Internal, row.Stability, quoteStrings(row.Categories))
+		fmt.Fprintf(&b, "\t\t{DatabaseName:%q, SchemaName:%q, FunctionName:%q, AliasOf:%q, FunctionType:%q, Description:%q, Comment:%q, Tags:%s, ReturnType:%q, Parameters:%s, ParameterTypes:%s, Varargs:%q, MacroDefinition:%q, HasSideEffects:%t, Internal:%t, Stability:%q, Categories:%s, Examples:%s},\n", row.DatabaseName, row.SchemaName, row.FunctionName, row.AliasOf, row.FunctionType, row.Description, row.Comment, quoteStringMap(row.Tags), row.ReturnType, quoteStrings(row.Parameters), quoteStrings(row.ParameterTypes), row.Varargs, row.MacroDefinition, row.HasSideEffects, row.Internal, row.Stability, quoteStrings(row.Categories), quoteStrings(row.Examples))
 	}
 	b.WriteString("\t},\n\tKeywords: []KeywordMetadata{\n")
 	for _, row := range inventory.Keywords {
@@ -468,7 +589,7 @@ func render(inventory duckdbsql.MetadataInventory) (string, error) {
 	}
 	b.WriteString("\t},\n\tTypes: []TypeMetadata{\n")
 	for _, row := range inventory.Types {
-		fmt.Fprintf(&b, "\t\t{DatabaseName:%q, SchemaName:%q, TypeName:%q, LogicalType:%q, TypeCategory:%q, Internal:%t, Labels:%s},\n", row.DatabaseName, row.SchemaName, row.TypeName, row.LogicalType, row.TypeCategory, row.Internal, quoteStrings(row.Labels))
+		fmt.Fprintf(&b, "\t\t{DatabaseName:%q, SchemaName:%q, TypeName:%q, TypeSize:%d, LogicalType:%q, TypeCategory:%q, Comment:%q, Tags:%s, Internal:%t, Labels:%s},\n", row.DatabaseName, row.SchemaName, row.TypeName, row.TypeSize, row.LogicalType, row.TypeCategory, row.Comment, quoteStringMap(row.Tags), row.Internal, quoteStrings(row.Labels))
 	}
 	b.WriteString("\t},\n}\n")
 	formatted, err := format.Source([]byte(b.String()))
@@ -491,6 +612,7 @@ func renderSchema(schemas schemaFamilies) (string, error) {
 	}
 	b.WriteString("package duckdbsql\n\n")
 	renderSchemaMaps(&b, schemas)
+	renderEnumSchema(&b, schemas.Enums, identity.EnumFileSHA)
 	formatted, err := format.Source([]byte(b.String()))
 	if err != nil {
 		return "", fmt.Errorf("format generated schema Go: %w", err)
@@ -565,6 +687,22 @@ func quoteStrings(values []string) string {
 			b.WriteByte(',')
 		}
 		fmt.Fprintf(&b, "%q", value)
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
+func quoteStringMap(values map[string]string) string {
+	if len(values) == 0 {
+		return "nil"
+	}
+	var b strings.Builder
+	b.WriteString("map[string]string{")
+	for i, key := range sortedKeys(values) {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%q:%q", key, values[key])
 	}
 	b.WriteByte('}')
 	return b.String()

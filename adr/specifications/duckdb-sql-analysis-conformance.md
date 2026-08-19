@@ -101,9 +101,11 @@ pinned DuckDB version changes.
   stability when DuckDB exposes those fields.
 - **GEN-06:** Generated metadata must not automatically add a function or feature
   to LeapView's admission profile.
-- **GEN-07:** Documentation scraping may supply examples and descriptions when
-  useful, with source and license attribution, but must not define the grammar or
-  security policy.
+- **GEN-07:** Documentation metadata must be generated from pinned,
+  machine-readable DuckDB sources when available. Examples, descriptions,
+  aliases, categories, and variants must retain immutable source and license
+  attribution, remain separate from runtime overload metadata, and must not
+  define the grammar or security policy.
 
 ## Application policy requirements
 

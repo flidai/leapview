@@ -1,5 +1,3 @@
-// Package duckdbsql contains the pinned, descriptive SQL metadata used by the
-// SQL analysis layer.  It deliberately does not make authorization decisions.
 package duckdbsql
 
 import (
@@ -14,13 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-)
-
-const (
-	DuckDBVersion         = "v1.5.4"
-	DuckDBSourceCommit    = "08e34c447bae34eaee3723cac61f2878b6bdf787"
-	DuckDBGoModuleVersion = "v2.10504.0"
-	DuckDBBindingsVersion = "v0.10504.0"
 )
 
 //go:embed upstream.lock.json
@@ -38,17 +29,21 @@ type SourceIdentity struct {
 	BindingsVersion   string
 	DescriptorRoot    string
 	DescriptorFileSHA map[string]string
+	EnumFileSHA       map[string]string
 }
 
-// FunctionMetadata is intentionally descriptive. OIDs, comments, tags and
-// examples are omitted because they are catalog/runtime details rather than
-// stable SQL meaning and may vary between builds.
+// FunctionMetadata is intentionally descriptive. Catalog OIDs are omitted;
+// documentation and classification fields are retained when DuckDB exposes
+// them so generated metadata remains useful without becoming policy.
 type FunctionMetadata struct {
 	DatabaseName    string
 	SchemaName      string
 	FunctionName    string
 	AliasOf         string
 	FunctionType    string
+	Description     string
+	Comment         string
+	Tags            map[string]string
 	ReturnType      string
 	Parameters      []string
 	ParameterTypes  []string
@@ -58,6 +53,7 @@ type FunctionMetadata struct {
 	Internal        bool
 	Stability       string
 	Categories      []string
+	Examples        []string
 }
 
 // KeywordMetadata describes one parser keyword and its DuckDB category.
@@ -66,14 +62,17 @@ type KeywordMetadata struct {
 	Category string
 }
 
-// TypeMetadata omits catalog OIDs, size, comments and tags for the same reason
-// as FunctionMetadata: these are descriptive runtime details, not policy.
+// TypeMetadata omits catalog OIDs while retaining stable descriptive runtime
+// fields. It does not make any type-admission decision.
 type TypeMetadata struct {
 	DatabaseName string
 	SchemaName   string
 	TypeName     string
+	TypeSize     int64
 	LogicalType  string
 	TypeCategory string
+	Comment      string
+	Tags         map[string]string
 	Internal     bool
 	Labels       []string
 }
@@ -109,6 +108,7 @@ type lockFile struct {
 	BindingsVersion  string              `json:"bindings_module_version"`
 	DescriptorRoot   string              `json:"descriptor_root"`
 	DescriptorFiles  map[string]string   `json:"descriptor_files"`
+	EnumFiles        map[string]string   `json:"enum_files"`
 	InventoryColumns map[string][]string `json:"inventory_columns"`
 }
 
@@ -118,21 +118,34 @@ func GeneratedDescriptorManifestSnapshot() []DescriptorProvenance {
 	return append([]DescriptorProvenance(nil), generatedDescriptorManifest...)
 }
 
+// GeneratedEnumManifestSnapshot returns source provenance for generated
+// closed-enum inventories used by the JSON decoder.
+func GeneratedEnumManifestSnapshot() []DescriptorProvenance {
+	return append([]DescriptorProvenance(nil), generatedEnumManifest...)
+}
+
 // GeneratedInventorySnapshot returns a deep copy of descriptive runtime
 // metadata so callers cannot mutate generated process-global state.
 func GeneratedInventorySnapshot() MetadataInventory {
+	return cloneMetadataInventory(generatedInventory)
+}
+
+func cloneMetadataInventory(in MetadataInventory) MetadataInventory {
 	out := MetadataInventory{
-		Functions: append([]FunctionMetadata(nil), generatedInventory.Functions...),
-		Keywords:  append([]KeywordMetadata(nil), generatedInventory.Keywords...),
-		Types:     append([]TypeMetadata(nil), generatedInventory.Types...),
+		Functions: append([]FunctionMetadata(nil), in.Functions...),
+		Keywords:  append([]KeywordMetadata(nil), in.Keywords...),
+		Types:     append([]TypeMetadata(nil), in.Types...),
 	}
 	for i := range out.Functions {
 		out.Functions[i].Parameters = append([]string(nil), out.Functions[i].Parameters...)
 		out.Functions[i].ParameterTypes = append([]string(nil), out.Functions[i].ParameterTypes...)
 		out.Functions[i].Categories = append([]string(nil), out.Functions[i].Categories...)
+		out.Functions[i].Tags = cloneStringMap(out.Functions[i].Tags)
+		out.Functions[i].Examples = append([]string(nil), out.Functions[i].Examples...)
 	}
 	for i := range out.Types {
 		out.Types[i].Labels = append([]string(nil), out.Types[i].Labels...)
+		out.Types[i].Tags = cloneStringMap(out.Types[i].Tags)
 	}
 	return out
 }
@@ -158,10 +171,14 @@ func UpstreamSourceIdentity() (SourceIdentity, error) {
 		BindingsModule: lock.BindingsModule, BindingsVersion: lock.BindingsVersion,
 		DescriptorRoot:    lock.DescriptorRoot,
 		DescriptorFileSHA: cloneStringMap(lock.DescriptorFiles),
+		EnumFileSHA:       cloneStringMap(lock.EnumFiles),
 	}, nil
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
 	out := make(map[string]string, len(in))
 	for key, value := range in {
 		out[key] = value
@@ -223,6 +240,18 @@ func ValidateSourceCheckout(sourceDir string) error {
 			return fmt.Errorf("descriptor %s hash mismatch: got %s, want %s", name, got, want)
 		}
 	}
+	for path, want := range identity.EnumFileSHA {
+		file := filepath.Join(abs, filepath.FromSlash(path))
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("read enum source %s: %w", path, err)
+		}
+		sum := sha256.Sum256(data)
+		got := hex.EncodeToString(sum[:])
+		if got != want {
+			return fmt.Errorf("enum source %s hash mismatch: got %s, want %s", path, got, want)
+		}
+	}
 	return nil
 }
 
@@ -245,9 +274,25 @@ func SortInventory(in *MetadataInventory) {
 }
 
 func functionSortKey(value FunctionMetadata) string {
-	return strings.Join([]string{value.DatabaseName, value.SchemaName, value.FunctionName, value.AliasOf, value.FunctionType, value.ReturnType, strings.Join(value.Parameters, "\x00"), strings.Join(value.ParameterTypes, "\x00"), value.Varargs, value.MacroDefinition, fmt.Sprint(value.HasSideEffects), fmt.Sprint(value.Internal), value.Stability, strings.Join(value.Categories, "\x00")}, "\x00")
+	return strings.Join([]string{value.DatabaseName, value.SchemaName, value.FunctionName, value.AliasOf, value.FunctionType, value.Description, value.Comment, stringMapSortKey(value.Tags), value.ReturnType, strings.Join(value.Parameters, "\x00"), strings.Join(value.ParameterTypes, "\x00"), value.Varargs, value.MacroDefinition, fmt.Sprint(value.HasSideEffects), fmt.Sprint(value.Internal), value.Stability, strings.Join(value.Categories, "\x00"), strings.Join(value.Examples, "\x00")}, "\x00")
 }
 
 func typeSortKey(value TypeMetadata) string {
-	return strings.Join([]string{value.DatabaseName, value.SchemaName, value.TypeName, value.LogicalType, value.TypeCategory, fmt.Sprint(value.Internal), strings.Join(value.Labels, "\x00")}, "\x00")
+	return strings.Join([]string{value.DatabaseName, value.SchemaName, value.TypeName, fmt.Sprint(value.TypeSize), value.LogicalType, value.TypeCategory, value.Comment, stringMapSortKey(value.Tags), fmt.Sprint(value.Internal), strings.Join(value.Labels, "\x00")}, "\x00")
+}
+
+func stringMapSortKey(values map[string]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys)*2)
+	for _, key := range keys {
+		parts = append(parts, key, values[key])
+	}
+	return strings.Join(parts, "\x00")
 }
