@@ -277,19 +277,29 @@ func (m *Module) AuthorizeAuthoringBootstrapRequest(ctx context.Context, r *http
 	if m == nil || r == nil || m.auth == nil {
 		return false, nil
 	}
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	principal, ok := m.CurrentPrincipal(r)
 	if !ok || strings.TrimSpace(principal.ID) == "" {
 		return false, nil
 	}
 	credential, ok := m.auth.APICredential(r)
 	if !ok || credential.Authoring == nil || credential.Authoring.Scope.ProjectID.String() != strings.TrimSpace(projectID) {
+		logger.WarnContext(ctx, "authoring bootstrap request rejected", "reason", "credential_scope", "principal", principal.ID, "project", projectID, "credential_found", ok, "authoring", ok && credential.Authoring != nil)
 		return false, nil
 	}
 	effective, err := m.RequestEffectiveCapabilities(ctx, r, principal.ID)
 	if err != nil {
+		logger.WarnContext(ctx, "authoring bootstrap request capability lookup failed", "principal", principal.ID, "project", projectID, "required", required, "error", err)
 		return false, err
 	}
-	return bootstrapTokenAllowsCapability(effective, required), nil
+	allowed := bootstrapTokenAllowsCapability(effective, required)
+	if !allowed {
+		logger.WarnContext(ctx, "authoring bootstrap request rejected", "reason", "effective_capability", "principal", principal.ID, "project", projectID, "required", required, "effective", effective, "scope", credential.Authoring.Scope.Capabilities)
+	}
+	return allowed, nil
 }
 
 func (m *Module) requestCredential(r *http.Request) (access.APICredential, bool) {
